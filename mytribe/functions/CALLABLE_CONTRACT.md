@@ -840,6 +840,50 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   operator does not want. Documents written before the change still carry the
   field; the projection drops it.
 
+### listAllInvites (Wave 1 item 3, net-new 2026-08-09)
+- req `{ limit?: number /* int 1..500, default 200 */ }` — no household argument,
+  deliberately: this IS the every-household read.
+- res `{ invites: Array<listInvites row & { householdName: string }>, scanned: number,
+  households: number }`
+- GATE: `wrapAdminCallable`, same as `listInvites`. There is no kinfolk path and
+  there could not be one: a household reading every other household's invites is
+  the tenancy breach the gate exists to prevent.
+- Errors: `invalid-argument` with `details.validationErrors` for a bad `limit`.
+  There is no `not-found`, because there is no id to get wrong.
+- **The row projection is `listInvites`'s, imported not restated.**
+  `mapInviteDoc` and `sortInvitesNewestFirst` are shared, so `effectiveStatus`
+  and `redeemable` have one implementation and cannot drift between the two
+  callables. `householdName` is the ONLY added field.
+- **`householdName` is computed server-side, and is never blank.** `tribeId`
+  alone is unreadable in a list spanning every household. The React admin has
+  `householdLabel` in `src/api/directory.ts`, but Android has no port of it (the
+  only Kotlin copy is in the superseded `web/composeApp` tree), so client-side
+  derivation would mean a third and fourth copy of the sibilant-plural rule
+  ("Brooks" -> "the Brookses"). Same argument `effectiveStatus` makes: the
+  server does it once. Fallbacks are LOUD and name the id —
+  `(household not found: <id>)` when the `kinfolk` doc is gone,
+  `(unnamed household: <id>)` when it exists with no name,
+  `(invite carries no household id)` when the invite itself has no `tribeId`.
+  An orphaned invite is exactly the row the operator needs, so it is kept and
+  labelled rather than filtered out for want of a name.
+- One `getAll` per DISTINCT household, not one read per invite.
+- Unfiltered query capped by `limit`, then sorted newest-first in memory. No
+  composite index, same as `listInvites`. `scanned` is the pre-sort row count, so
+  a capped page is distinguishable from a total.
+- **`inviteId` is a bearer token**, exactly as under `listInvites`. It reaches
+  neither `logEvent` nor the audit payload here (counts only), and no client may
+  render or offer to copy the claim URL.
+- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry.
+  That entry carries NO `familyId`: the read spans every household, and naming
+  one of them would misreport its scope.
+- Mirrors: `auntieos-admin/src/api/members.ts#listAllInvites` +
+  `src/screens/Invites.tsx`; Android `MembersRepository.listAllInvites` +
+  `ui/members/InvitesScreen.kt`. The three move together.
+- **This screen mints nothing.** Per the invite ruling the admin's only invite is
+  inviting a PRIMARY to the portal, which is household-scoped; the PRIMARY
+  invites the secondary from MyTribe. An admin-wide surface has no household to
+  mint into, and must never grow a button that pretends otherwise.
+
 ### acceptInvite (pre-existing, verification added 2026-08-01)
 - req `{ inviteId: string }`
 - res `{ familyId: string }`

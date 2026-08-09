@@ -36,6 +36,7 @@ fun AdminDashboardScreen(
     onNavigateToTemplates: () -> Unit = {},
     onNavigateToFeatureFlags: () -> Unit = {},
     onNavigateToCoveragePackages: () -> Unit = {},
+    onNavigateToInvites: () -> Unit = {},
 ) {
     AuntieScreenScaffold(
         title = "Dashboard",
@@ -90,6 +91,15 @@ fun AdminDashboardScreen(
                     title       = "Scheduling Options",
                     description = "Google sync, blocks, holidays, special hours, and conflict settings.",
                     onClick     = onNavigateToSchedule,
+                )
+            }
+            item {
+                AdminDashTile(
+                    icon        = Lucide.Mail,
+                    accentColor = AuntieTheme.colors.kinfolkOrange,
+                    title       = "Invites",
+                    description = "Every portal invite across every household, so \"who never accepted\" is one screen instead of one per household.",
+                    onClick     = onNavigateToInvites,
                 )
             }
 

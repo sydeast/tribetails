@@ -65,6 +65,29 @@ describe('rail composition', () => {
     expect(careOps[packages]?.slug).toBe('packages');
   });
 
+  /**
+   * The admin-wide invites screen is PINNED, unlike the household-scoped
+   * "Members and invites" beside it. That one is contextual because a rail
+   * entry would have no household to open; this one is the every-household
+   * view, so it has somewhere to go from a cold start. It sits in The Den next
+   * to Directory, the screen whose households it is about, rather than becoming
+   * another URL-only screen nobody finds.
+   */
+  it('pins the admin-wide invites screen in The Den, beside Directory', () => {
+    const den = railGroup('den');
+    const directory = den.findIndex((e) => e.dest === 'directory');
+    const invites = den.findIndex((e) => e.dest === 'invites');
+    expect(directory).toBeGreaterThanOrEqual(0);
+    expect(invites).toBe(directory + 1);
+    expect(den[invites]?.title).toBe('Invites');
+    expect(den[invites]?.slug).toBe('invites');
+  });
+
+  it('keeps the household-scoped members screen contextual, and the global one not', () => {
+    expect(NAV.find((e) => e.dest === 'householdMembers')?.contextual).toBe(true);
+    expect(NAV.find((e) => e.dest === 'invites')?.contextual).toBeUndefined();
+  });
+
   it('every destination has a unique slug', () => {
     const slugs = NAV.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);

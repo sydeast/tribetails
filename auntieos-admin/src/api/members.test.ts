@@ -10,6 +10,7 @@ import {
   inviteHandle,
   inviteStatusLabel,
   inviteStatusTone,
+  listAllInvites,
   listHouseholdInvites,
   listHouseholdMembers,
   memberLabel,
@@ -177,6 +178,92 @@ describe('listHouseholdInvites', () => {
   it('propagates a callable failure fail-loud', async () => {
     call.mockRejectedValue(new Error('not-found'));
     await expect(listHouseholdInvites('nope')).rejects.toThrow('not-found');
+  });
+});
+
+describe('listAllInvites', () => {
+  it('takes no household argument and maps the household name onto every row', async () => {
+    call.mockResolvedValue({
+      invites: [
+        {
+          inviteId: 'rq_1',
+          tribeId: 'f1',
+          householdName: 'the Demos',
+          invitedEmail: 'jane@example.com',
+          status: 'PENDING',
+          effectiveStatus: 'PENDING',
+          redeemable: true,
+          createdAt: '2026-08-01T00:00:00.000Z',
+        },
+      ],
+    });
+
+    const rows = await listAllInvites();
+
+    expect(call).toHaveBeenCalledWith('listAllInvites', {});
+    expect(rows[0]).toMatchObject({
+      inviteId: 'rq_1',
+      tribeId: 'f1',
+      householdName: 'the Demos',
+      effectiveStatus: 'PENDING',
+      redeemable: true,
+    });
+  });
+
+  it('maps every other field exactly as listHouseholdInvites does', async () => {
+    const row = {
+      inviteId: 'rq_1',
+      tribeId: 'f1',
+      householdName: 'the Demos',
+      invitedEmail: 'jane@example.com',
+      secondaryLabel: 'Sister',
+      proposedRole: 'SECONDARY',
+      proposedPermissions: { messaging_direct: true },
+      status: 'EMAIL_SENT',
+      effectiveStatus: 'EXPIRED',
+      redeemable: false,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      sentToInviteeAt: '2026-05-20T00:01:00.000Z',
+      expiresAt: '2026-06-03T00:00:00.000Z',
+      revokedAt: null,
+      acceptedUid: null,
+    };
+    call.mockResolvedValue({ invites: [row] });
+    const [all] = await listAllInvites();
+    call.mockResolvedValue({ invites: [row] });
+    const [one] = await listHouseholdInvites('f1');
+
+    const { householdName, ...rest } = all!;
+    expect(householdName).toBe('the Demos');
+    expect(rest).toEqual(one);
+  });
+
+  /**
+   * FAIL LOUD. A row the server could not name is the row the operator most
+   * needs. Substituting the id, or worse a blank, would hide it in plain sight.
+   */
+  it('keeps the server’s loud marker for an unnameable household', async () => {
+    call.mockResolvedValue({
+      invites: [{ inviteId: 'rq_9', tribeId: 'gone', householdName: '(household not found: gone)' }],
+    });
+    const [row] = await listAllInvites();
+    expect(row?.householdName).toBe('(household not found: gone)');
+  });
+
+  it('says so rather than rendering a blank card when the name is missing entirely', async () => {
+    call.mockResolvedValue({ invites: [{ inviteId: 'rq_9', tribeId: 'f1' }] });
+    const [row] = await listAllInvites();
+    expect(row?.householdName).toBe('(household name missing: f1)');
+  });
+
+  it('drops a row with no invite id, which nothing could act on', async () => {
+    call.mockResolvedValue({ invites: [{ inviteId: '' }, { inviteId: 'rq_2', tribeId: 'f1' }] });
+    expect((await listAllInvites()).map((r) => r.inviteId)).toEqual(['rq_2']);
+  });
+
+  it('propagates a callable failure fail-loud rather than returning an empty list', async () => {
+    call.mockRejectedValue(new Error('permission-denied'));
+    await expect(listAllInvites()).rejects.toThrow('permission-denied');
   });
 });
 
