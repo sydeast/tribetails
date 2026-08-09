@@ -362,10 +362,13 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
       // field was added for: $137.50 collected = $127.50 applied plus a $10.00
       // GROSS tip, with $2.71 of processor fee taken out of the proceeds.
       //
-      // BOTH ROWS RECONCILE, AND THEY DO NOT COVER THE BALANCE ($167.50 of
-      // ledger against $180.00 owed), so neither the per-row caveat banner nor
-      // the "the ledger shows money this balance does not" banner renders. What
-      // is measured below is the table, not a banner standing beside it.
+      // BOTH ROWS RECONCILE, AND THEY DO NOT COVER THE BALANCE. The sum
+      // `ledgerCoversBalance` takes is `amountCents + tipCents` per row, so it
+      // is ($137.50 + $10.00) + ($30.00 + $0.00) = $177.50 of ledger against
+      // $180.00 owed. Under it by $2.50, which keeps the per-row caveat banner
+      // and the "the ledger shows money this balance does not" banner both off
+      // the screen: what is measured below is the table, not a banner standing
+      // beside it.
       ledgerPayments: [
         {
           paymentId: 'phone-ledger-001',
