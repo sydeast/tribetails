@@ -998,7 +998,8 @@ it means an over-broad subscription buys nothing and hides nothing.
 **A chargeback does not un-pay the invoice.** That was decided, deliberately, in
 `billing/stripeDispute.ts`, and here is the reasoning so nobody "fixes" it.
 The invoice keeps its `paid` status and `amountDue: 0`, and gains
-`disputeStatus` / `disputeId` / `disputeAmountCents` alongside them. Flipping it
+`disputeStatus` / `disputeId` / `disputeAmountCents` / `disputeReason` /
+`disputeEvidenceDueByMs` alongside them. Flipping it
 back to outstanding would restart the reminder cron against a household over
 their own bank's action, and writing a reversing payment row would invent a
 repayment nobody made. Where contested money ends up is the operator's call, and
@@ -1016,6 +1017,32 @@ leaves the balance is the disputed amount plus Stripe's dispute fee, and only th
 disputed amount is on the Dispute object, so a debit figure here would be wrong
 by the fee. Read the real number in the Stripe balance report. Neither field is
 ever cleared, for the reason above: the contest did happen.
+
+**`disputeEvidenceDueByMs` is the deadline, and `null` means there is not one.**
+Stripe's `evidence_details.due_by` is when evidence must be in to challenge the
+chargeback; miss it and the dispute is lost by default, so this is the field a
+`needs_response` banner counts down to. It is stored in epoch **milliseconds**,
+unformatted, like every other epoch number on these records. The client renders
+it in the operator's own timezone, because a date formatted on the server is
+formatted in the server's.
+
+`null` is a real and expected value, and **`0` is never stored**. Stripe sends
+literal `0` when the cardholder's bank allows no response at all, so a handler
+that stored it would date the deadline to 1 January 1970 and show a chargeback
+half a century overdue. Both that case and a payload carrying no
+`evidence_details` come through as `null`, meaning "no deadline to act on", not
+"the deadline was the epoch". A screen showing `null` should say the
+deadline is not stated and send the operator to the Stripe dashboard, not start
+a countdown. `disputeReason` is Stripe's `reason` (`fraudulent`,
+`product_not_received`, `duplicate`, …) mirrored from the dispute record so a
+banner can say why. It is passed through **verbatim, with no allowlist**: the
+SDK types it as a plain string, Stripe adds categories, and a reason this build
+has not seen must reach the operator rather than be dropped or relabelled.
+
+Both fields are written on the **lifecycle** events only, exactly like
+`disputeStatus`. A funds event carries the whole Dispute object, but the funds
+lane orders independently of the lifecycle lane, so a late `funds_withdrawn`
+writing them could put a stale deadline back on a dispute that already closed.
 
 The funds events deliberately send **no second notification**. The operator was
 already pinged by `invoice.payment.disputed` when the dispute opened, minutes
