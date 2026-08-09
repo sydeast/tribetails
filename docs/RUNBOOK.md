@@ -977,6 +977,8 @@ working. The handler recognises exactly these:
 | `payment_intent.payment_failed` | Writes the critical audit entry and the `invoice.charge.failed` notification. Without it a declined card is silent. |
 | `charge.dispute.created` | A chargeback. Records `stripeDisputes/{id}`, flags the invoice, writes a `critical` audit entry and sends the operator-only `invoice.payment.disputed` notification. Without it the money leaves the balance and the invoice still reads paid, with nothing anywhere saying otherwise. |
 | `charge.dispute.closed` | How the operator learns the dispute was won or lost. Updates the same record and flag. |
+| `charge.dispute.funds_withdrawn` | The money actually leaving the Stripe balance. Records `fundsState: 'withdrawn'` on the dispute and `disputeFundsState` on the invoice, plus a `critical` `BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN` audit entry. Without it nothing here distinguishes "a dispute was opened" from "the money is gone". |
+| `charge.dispute.funds_reinstated` | The money coming back. Same two fields, set to `reinstated`, audited at `info`. |
 | `checkout.session.expired` | An abandoned checkout. Clears `pendingCheckoutSessionId` / `pendingAt` off the invoice, and only when the stored id is the one that expired. |
 
 `invoice.paid` and `invoice.payment_failed` are also recognised but **unreachable**:
@@ -1002,6 +1004,24 @@ their own bank's action, and writing a reversing payment row would invent a
 repayment nobody made. Where contested money ends up is the operator's call, and
 `stripeDisputes/{disputeId}` plus the `critical` activity-log entries are the
 record it is contested. If the dispute is later **won**, nothing needs undoing.
+
+**`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
+`disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,
+`under_review`, `won`, `lost`): where the contest stands. `disputeFundsState`
+(`withdrawn` / `reinstated`, and `fundsState` on the dispute record) says whether
+the balance has actually been debited, which is an accounting fact and routinely
+disagrees: a dispute sits at `needs_response` for weeks with the money already
+gone. The funds events carry **no cents figure of their own**. The sum that
+leaves the balance is the disputed amount plus Stripe's dispute fee, and only the
+disputed amount is on the Dispute object, so a debit figure here would be wrong
+by the fee. Read the real number in the Stripe balance report. Neither field is
+ever cleared, for the reason above: the contest did happen.
+
+The funds events deliberately send **no second notification**. The operator was
+already pinged by `invoice.payment.disputed` when the dispute opened, minutes
+earlier, and is pinged again when it closes; the withdrawal asks nothing new of
+them. The loudness lives in the audit entry and an `error`-stream log line
+(`stripe.dispute.fundsWithdrawn`).
 
 The `invoice.payment.disputed` notification needs its templates seeded before the
 email and push copies can render (the in-app copy lands regardless):
