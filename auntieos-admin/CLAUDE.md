@@ -90,6 +90,21 @@ served since 2026-07-20, pinned deterministic (reduced motion, fixed clock, fixe
 timezone and locale, every non-localhost request aborted) and byte-identical
 across four runs. `web/visual/baseline.mjs:31` carries all four surfaces.
 
+The determinism still holds (re-proved 2026-08-09: three consecutive captures,
+one sha256 each, eighteen of nineteen screens at 0.000%). ONE GOLDEN IS OUT OF
+DATE, which is a different thing and reads the same from a dirty `git status`.
+`visual/react/invoice-detail.png` and `visual/baselines/react/invoice-detail.png`
+both photograph the invoice overlay as it was before `a2486f0` made the ledger
+tables scroll inside their own box (`src/components/InvoiceLedger.css:132-136`),
+so every capture since then overwrites them with the current, correct rendering
+and looks like a flake. It is not one. Until an operator either approves the new
+picture (`node web/visual/baseline.mjs update react`, moving `visual/react/` and
+`visual/baselines/react/` together) or changes the CSS back, expect exactly that
+one file to be modified after a capture run, and read a diff on any OTHER screen
+as a real regression. Nobody was told sooner because
+`npm run visual:react:verify` could not run at all until `pngjs` and
+`pixelmatch` were declared in `package.json`.
+
 That changes what the goldens are good for, not what they are. `visual/react/`
 answers "what does the shipped admin look like today", which is a regression
 question. What a screen SHOULD look like still comes from page-specs, then
