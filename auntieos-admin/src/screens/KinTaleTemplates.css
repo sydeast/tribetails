@@ -16,28 +16,17 @@
   color: var(--color-text-faint);
 }
 
-/* ── heading actions ─────────────────────────────────────────────────────── */
+/* ── step actions ────────────────────────────────────────────────────────── */
 
-.ktt__heading-actions {
+/*
+ * The "Add item" / "Add mood" control for a checklist or mood step. It used to
+ * be a DenPanel's `trailing` slot, beside that panel's title; those panels are
+ * wizard steps now and the step draws its own heading, so the action sits at the
+ * top of the step body instead, right-aligned where the panel put it.
+ */
+.ktt__step-actions {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.ktt__status {
-  font-family: var(--type-mono-family);
-  font-size: var(--type-mono-size);
-  letter-spacing: 0.04em;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
-  border: var(--border-hairline) solid var(--color-border);
-}
-.ktt__status--dirty {
-  color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
-}
-.ktt__status--saved {
-  color: var(--color-text-faint);
+  justify-content: flex-end;
 }
 
 /* ── fields ──────────────────────────────────────────────────────────────── */
