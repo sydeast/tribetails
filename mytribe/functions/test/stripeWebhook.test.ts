@@ -174,6 +174,9 @@ vi.mock('../src/lib/stripe', () => ({
     // metadata onto a Dispute, so `familyId`/`invoiceId` are NOT on this
     // payload and a handler sitting behind the webhook's metadata gate would
     // 202 every chargeback.
+    // `evidence_details` is declared REQUIRED on `interface Dispute`
+    // (Disputes.d.ts:64), so a real delivery always carries it, and the deadline
+    // it holds is the time-critical half of a `needs_response` dispute.
     if (sig === 'dispute-created') {
       return {
         id: 'evt_20',
@@ -189,6 +192,77 @@ vi.mock('../src/lib/stripe', () => ({
             reason: 'fraudulent',
             status: 'needs_response',
             is_charge_refundable: true,
+            evidence_details: { due_by: 1760000000, has_evidence: false, past_due: false, submission_count: 0 },
+          },
+        },
+      };
+    }
+    // A dispute the issuing bank allows NO response to. Stripe does not omit
+    // `due_by` for this: it sends literal 0 ("Will be 0 if the customer's bank
+    // or credit card company doesn't allow a response for this particular
+    // dispute", Disputes.d.ts:210). Storing that 0 would date the deadline to
+    // 1 January 1970 and a banner would render a 55-year-overdue chargeback.
+    if (sig === 'dispute-deadline-zero') {
+      return {
+        id: 'evt_50',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_50',
+            amount: 4200,
+            currency: 'usd',
+            charge: 'ch_50',
+            payment_intent: 'pi_20',
+            reason: 'duplicate',
+            status: 'needs_response',
+            evidence_details: { due_by: 0, has_evidence: false, past_due: false, submission_count: 0 },
+          },
+        },
+      };
+    }
+    // The SDK declares `evidence_details` required, but what arrives here is
+    // JSON off the wire: a replayed or hand-crafted payload can still omit it,
+    // which is why the handler types it loose and must not read through it
+    // blindly.
+    if (sig === 'dispute-no-evidence-details') {
+      return {
+        id: 'evt_51',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_51',
+            amount: 4200,
+            currency: 'usd',
+            charge: 'ch_51',
+            payment_intent: 'pi_20',
+            reason: 'product_not_received',
+            status: 'needs_response',
+          },
+        },
+      };
+    }
+    // `reason` is plain `string` in the pinned SDK (Disputes.d.ts:89), not a
+    // union: Stripe adds categories and this build will meet ones it has never
+    // heard of. An unknown reason must reach the operator verbatim. A banner
+    // saying nothing is better than a banner saying the wrong thing, and both
+    // are better than the handler dropping it.
+    if (sig === 'dispute-unknown-reason') {
+      return {
+        id: 'evt_52',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_52',
+            amount: 4200,
+            currency: 'usd',
+            charge: 'ch_52',
+            payment_intent: 'pi_20',
+            reason: 'cardholder_regrets_it_2031',
+            status: 'needs_response',
+            evidence_details: { due_by: 1760000000, has_evidence: false, past_due: false, submission_count: 0 },
           },
         },
       };
@@ -211,6 +285,12 @@ vi.mock('../src/lib/stripe', () => ({
             payment_intent: 'pi_20',
             reason: 'fraudulent',
             status: 'needs_response',
+            // Deliberately a DIFFERENT deadline from the lifecycle events on
+            // this same dispute. A funds event carries the whole Dispute object,
+            // and the funds lane orders independently of the lifecycle lane, so
+            // if it wrote the deadline a late withdrawal could resurrect a stale
+            // one on a settled dispute, the same trap `status` is guarded from.
+            evidence_details: { due_by: 1799999999, has_evidence: false, past_due: false, submission_count: 0 },
           },
         },
       };
@@ -259,6 +339,7 @@ vi.mock('../src/lib/stripe', () => ({
             reason: 'fraudulent',
             status: 'won',
             is_charge_refundable: false,
+            evidence_details: { due_by: 1760000000, has_evidence: true, past_due: false, submission_count: 1 },
           },
         },
       };
@@ -898,6 +979,91 @@ describe('stripeWebhook', () => {
     expect(notifyMock.enqueueNotification.mock.calls[0][0].data.disputeAmount).toBe('$137.50');
     const loud = logMock.logEvent.mock.calls.find((c) => c[0]?.event === 'stripe.dispute.created');
     expect(loud?.[0]?.severity).toBe('error');
+  });
+
+  // ── the two facts a `needs_response` banner cannot render without ─────────
+
+  it('carries the response deadline and the reason through to the invoice', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+
+    // Seconds on the wire, milliseconds in Firestore: the unit every other
+    // epoch number in this handler already travels in (`lastEventCreatedMs`).
+    // No formatting: the client renders it in the operator's locale.
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_20')!.data).toMatchObject({
+      evidenceDueByMs: 1760000000000,
+      reason: 'fraudulent',
+    });
+    expect(writes.find((w) => w.path === 'invoices/i20')!.data).toMatchObject({
+      disputeEvidenceDueByMs: 1760000000000,
+      disputeReason: 'fraudulent',
+    });
+  });
+
+  it('records NO deadline when Stripe sends due_by 0, never an epoch date', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-deadline-zero')).toEqual([200]);
+
+    // 0 is not "midnight, 1 January 1970". Stripe's own docstring says it means
+    // the issuing bank allows no response at all, so there IS no deadline to
+    // count down to and the honest record says so.
+    const dispute = writes.find((w) => w.path === 'stripeDisputes/dp_50')!.data;
+    expect(dispute.evidenceDueByMs).toBeNull();
+    expect(dispute.evidenceDueByMs).not.toBe(0);
+    const invoice = writes.find((w) => w.path === 'invoices/i20')!.data;
+    expect(invoice.disputeEvidenceDueByMs).toBeNull();
+    expect(invoice.disputeEvidenceDueByMs).not.toBe(0);
+    // The reason still lands: no deadline is not no information.
+    expect(invoice.disputeReason).toBe('duplicate');
+  });
+
+  it('records NO deadline when the payload omits evidence_details entirely', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-no-evidence-details')).toEqual([200]);
+
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_51')!.data.evidenceDueByMs).toBeNull();
+    expect(writes.find((w) => w.path === 'invoices/i20')!.data.disputeEvidenceDueByMs).toBeNull();
+  });
+
+  it('passes an unrecognized dispute reason through verbatim', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-unknown-reason')).toEqual([200]);
+
+    // Stripe adds dispute categories on its own schedule. A reason this build
+    // has never seen is stored and shown as sent. Not dropped, not coerced to
+    // `general`, not replaced with 'unknown'.
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_52')!.data.reason).toBe(
+      'cardholder_regrets_it_2031',
+    );
+    expect(writes.find((w) => w.path === 'invoices/i20')!.data.disputeReason).toBe(
+      'cardholder_regrets_it_2031',
+    );
+    expect(notifyMock.enqueueNotification.mock.calls[0][0].data.disputeReason).toBe(
+      'cardholder_regrets_it_2031',
+    );
+  });
+
+  it('does not let a funds event rewrite the deadline it happens to carry', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    // The withdrawal payload carries due_by 1799999999. The lifecycle deadline
+    // stands, for the reason `disputeStatus` is lifecycle-only: the two lanes
+    // order independently, so a late funds event writing this would put a stale
+    // deadline back on a settled dispute.
+    expect(docState['stripeDisputes/dp_20'].data!.evidenceDueByMs).toBe(1760000000000);
+    expect(docState['invoices/i20'].data!.disputeEvidenceDueByMs).toBe(1760000000000);
   });
 
   it('is idempotent under a redelivered dispute: one audit, one notification', async () => {

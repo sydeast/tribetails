@@ -105,9 +105,23 @@ interface DisputeObject {
   charge?: unknown;
   /** `string | PaymentIntent | null`; unexpanded it is the id string. */
   payment_intent?: unknown;
+  /**
+   * `reason: string` in the SDK: a PLAIN STRING, deliberately not a union, and
+   * the docstring's list (`fraudulent`, `product_not_received`, `duplicate`, …)
+   * is prose rather than a type. Stripe adds categories on its own schedule, so
+   * this is stored and mirrored verbatim with no allowlist anywhere in the path.
+   * A reason this build has never heard of reaches the operator as sent.
+   */
   reason?: string;
   status?: string;
   is_charge_refundable?: boolean;
+  /**
+   * The SDK declares `evidence_details: Dispute.EvidenceDetails` REQUIRED on
+   * `interface Dispute` (Disputes.d.ts:64), and it is typed optional here for
+   * the reason the whole interface is loose: a replayed or hand-crafted payload
+   * is JSON off the wire and can omit what the SDK swears is always present.
+   */
+  evidence_details?: { due_by?: unknown } | null;
 }
 
 /** The shape of a webhook event this module accepts. */
@@ -160,6 +174,36 @@ export function isHandledDisputeEvent(type: string): boolean {
  * lifecycle field and says nothing about whether the money has moved.
  */
 type FundsState = 'withdrawn' | 'reinstated';
+
+/**
+ * The evidence deadline, in epoch MILLISECONDS, or `null` for "there is none".
+ *
+ * This is the time-critical fact of the whole feature: a chargeback you fail to
+ * answer by this moment is lost by default, so a `needs_response` banner that
+ * cannot name the date cannot do its job.
+ *
+ * **Zero is a real value and it does not mean midnight, 1 January 1970.** The
+ * pinned SDK says so in as many words at `Disputes.d.ts:210`: "Date by which
+ * evidence must be submitted in order to successfully challenge dispute. Will
+ * be 0 if the customer's bank or credit card company doesn't allow a response
+ * for this particular dispute." Storing that 0, or a `?? 0` fallback for an
+ * absent one, would date the deadline to the epoch and render a chargeback
+ * fifty-five years overdue, which is the loudest possible way to be wrong about
+ * something a countdown is supposed to be right about. It maps to `null`,
+ * alongside an absent `evidence_details`, a null `due_by` (`due_by: number |
+ * null`, Disputes.d.ts:212) and anything non-finite. Absent is absent, the same
+ * promise `amountResolved` makes about the disputed amount.
+ *
+ * Seconds go in and milliseconds come out, matching `lastEventCreatedMs` and
+ * every other epoch number this handler stores. No formatting happens here: a
+ * date rendered in the backend is a date rendered in the SERVER'S locale and
+ * timezone, and the operator reading it is not there.
+ */
+function evidenceDueByMsOf(dispute: DisputeObject): number | null {
+  const dueBy = dispute.evidence_details?.due_by;
+  if (typeof dueBy !== 'number' || !Number.isFinite(dueBy) || dueBy <= 0) return null;
+  return dueBy * 1000;
+}
 
 function fundsStateOf(type: string): FundsState | null {
   if (type === 'charge.dispute.funds_withdrawn') return 'withdrawn';
@@ -370,6 +414,15 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
   // `amountCents: 0` would claim the bank pulled nothing back.
   const amountCents = typeof dispute.amount === 'number' ? dispute.amount : null;
 
+  // The two facts a banner needs and could not previously get. Both are read
+  // and written on the LIFECYCLE lane only, exactly like `status`, and for the
+  // same reason: a funds event carries the whole Dispute object, the funds lane
+  // orders independently of the lifecycle lane, and a late `funds_withdrawn`
+  // writing these would put a stale deadline and a stale reason back onto a
+  // dispute that has already closed.
+  const evidenceDueByMs = fundsState === null ? evidenceDueByMsOf(dispute) : null;
+  const reason = fundsState === null && typeof dispute.reason === 'string' ? dispute.reason : null;
+
   const eventCreatedMs = ((event.created ?? 0) as number) * 1000;
   const dedupeRef = db().doc(`stripeEvents/${event.id}`);
   const disputeRef = db().doc(`stripeDisputes/${disputeId}`);
@@ -510,7 +563,12 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
         // says so rather than leaving a reader to infer it from a zero.
         amountResolved: amountCents !== null,
         currency: typeof dispute.currency === 'string' ? dispute.currency : null,
-        reason: typeof dispute.reason === 'string' ? dispute.reason : null,
+        reason,
+        // Epoch ms, or null for "no deadline exists". See `evidenceDueByMsOf`:
+        // null covers both an issuer that allows no response at all and a
+        // payload that carried no deadline, and in neither case is there a date
+        // to count down to.
+        evidenceDueByMs,
         status: disputeStatus,
         isChargeRefundable: typeof dispute.is_charge_refundable === 'boolean'
           ? dispute.is_charge_refundable
@@ -535,6 +593,12 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
           disputeStatus,
           disputeId,
           disputeAmountCents: amountCents,
+          // Still a flag and nothing else, just a flag a screen can now read
+          // WHY off and BY WHEN. `disputeStatus` alone can say the operator
+          // must respond; without these two it cannot say to what, or by when,
+          // and the deadline is the part that costs money to miss.
+          disputeReason: reason,
+          disputeEvidenceDueByMs: evidenceDueByMs,
           disputeUpdatedAt: FieldValue.serverTimestamp(),
           ...(opened ? { disputedAt: FieldValue.serverTimestamp() } : {}),
         },
@@ -622,7 +686,7 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
       invoiceId: subject.invoiceId,
       subjectSource: subject.source,
       status: disputeStatus,
-      reason: dispute.reason ?? null,
+      reason,
       amountCents,
       eventId: event.id,
     },
@@ -651,7 +715,7 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
       invoiceId: subject.invoiceId,
       subjectSource: subject.source,
       disputeStatus,
-      reason: dispute.reason ?? null,
+      reason,
       amountCents,
     },
   });
@@ -664,7 +728,7 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
         ...(subject.invoiceId ? { invoiceId: subject.invoiceId } : {}),
         disputeId,
         disputeStatus: disputeStatus ?? 'unknown',
-        disputeReason: dispute.reason ?? 'not stated',
+        disputeReason: reason ?? 'not stated',
         disputeAmount: amountCents !== null ? `$${(amountCents / 100).toFixed(2)}` : 'an unknown amount',
         stripeEventId: event.id,
       },
