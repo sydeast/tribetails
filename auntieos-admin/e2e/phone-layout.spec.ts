@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { GetInvoiceLedgerResult } from '../src/contracts/invoiceContracts.generated';
+import { installCallableStubs } from './visual/callableStubs';
 
 /**
  * The dense parts of each screen at phone width: the row grids and the invoice
@@ -216,10 +218,13 @@ test('an invoice row still shows its number, who, how much and its status', asyn
  * The invoice detail overlay and the line-item editor inside it, reached from a
  * row rather than from the rail, so #209's pinned sweep never opened either.
  *
- * The LEDGER panel PR #201 added to this overlay is NOT covered: it loads
- * through the `getInvoiceLedger` callable, which this harness has no functions
- * emulator for, so it renders its error state and its real layout is unseen at
- * any viewport.
+ * The LEDGER panel PR #201 added to this overlay is not covered HERE, and the
+ * test below this one is why it now is anywhere: it loads through the
+ * `getInvoiceLedger` callable, which this harness has no functions emulator for,
+ * so in this test it renders its error state and nothing about its layout is
+ * measured. That blind spot is what let a five-day layout regression through, so
+ * it is stubbed and measured next door rather than folded in here: this test's
+ * `assertOverlayFits` forbids the very overflow a scroll box exists to allow.
  */
 test('the invoice detail overlay, its line items and its editor fit at 390px', async ({ page }) => {
   await openScreen(page, 'invoices', 'The Den · Invoices');
@@ -280,6 +285,248 @@ async function assertOverlayFits(p: Page, what: string): Promise<void> {
   expect(m.dialog, `${what} is wider than the phone`).toBeLessThanOrEqual(390);
   expect(m.over, `${what} puts content past the right edge`).toEqual([]);
 }
+
+/**
+ * THE LEDGER PANEL, which the overlay test above says in writing it cannot see.
+ *
+ * It could not because `getInvoiceLedger` has no functions emulator under this
+ * harness and renders its error banner, so Payments, Payment History and Linked
+ * visits have never been laid out at any width by any test. That blind spot cost
+ * five days: on 2026-08-04 `.invoice-ledger__table` was given `display: block;
+ * overflow-x: auto` so Payment History's eight columns could scroll, and a table
+ * set to `display: block` stops generating a table box: its rows fall into an
+ * anonymous shrink-to-fit table. BOTH ledger tables quietly stopped spanning
+ * their panel and shrank to the width of their own text. The only witness was
+ * `visual/react/invoice-detail.png`, and `npm run visual:react:verify` could not
+ * execute at all in that window (an undeclared `pngjs`, PR #311).
+ *
+ * So this test asks the three questions that fix answers, and it stubs the
+ * callable to do it, with a ledger the goldens deliberately do not carry: the
+ * approved picture has NO `ledgerPayments`, because a row there trips an anomaly
+ * banner, and an anomaly is the wrong thing to enshrine as a screen's ordinary
+ * appearance. It is exactly the right thing to measure.
+ *
+ *   - IS THE TABLE STILL A TABLE. `display: table` and a box that fills its
+ *     panel. This is the regression itself and the reason the file was opened.
+ *   - DOES PAYMENT HISTORY STILL SCROLL. Eight columns genuinely exceed 390px,
+ *     the wrapper round them is a real scroll container, and `scrollLeft` moves.
+ *   - DOES THE PAGE STAY PUT. Nothing sideways on the document, nothing wider
+ *     than the phone on the dialog.
+ *
+ * It does NOT call `assertOverlayFits`. That helper fails any dialog descendant
+ * whose right edge passes 391px, which is precisely what a table inside a scroll
+ * box is supposed to do: it is clipped and reachable, not off the screen. Running
+ * it here would forbid the fix.
+ */
+test('the invoice ledger tables span their panel at 390px, and only Payment History scrolls', async ({
+  page,
+}) => {
+  await installCallableStubs(page, {
+    // Echoes whichever invoice the first row opens, so this does not depend on
+    // the list's sort order. Everything else is a literal: a layout measurement
+    // has to mean the same thing on every run.
+    getInvoiceLedger: (payload): GetInvoiceLedgerResult => ({
+      invoiceId: String(payload['invoiceId']),
+      // The settlement rows and the invoice's own figures, exactly as the visual
+      // fixture states them for `vis-invoice-001`: $240.00 billed, $60.00
+      // collected, $180.00 still owed.
+      payments: [
+        {
+          paymentId: 'phone-payment-001',
+          amountCents: 4000,
+          method: 'Check',
+          reference: '2041',
+          paidAt: '2026-08-01T15:20:00.000Z',
+          recordedBy: 'e2e-admin',
+          sourcePaymentId: null,
+        },
+        {
+          paymentId: 'phone-payment-002',
+          amountCents: 2000,
+          method: 'Cash',
+          reference: null,
+          paidAt: '2026-08-03T18:05:00.000Z',
+          recordedBy: 'e2e-admin',
+          sourcePaymentId: null,
+        },
+      ],
+      paidCents: 6000,
+      totalCents: 24000,
+      amountDueCents: 18000,
+      // The eight-column table, in the widest state it honestly reaches: a
+      // reference string the operator's processor really produces, an "Applied
+      // to" cell carrying an invoice number with a second line under it, and six
+      // mono money cells, every one of them `white-space: nowrap`.
+      //
+      // The first row is invoice #1029's own arithmetic, which is what the fee
+      // field was added for: $137.50 collected = $127.50 applied plus a $10.00
+      // GROSS tip, with $2.71 of processor fee taken out of the proceeds.
+      //
+      // BOTH ROWS RECONCILE, AND THEY DO NOT COVER THE BALANCE. The sum
+      // `ledgerCoversBalance` takes is `amountCents + tipCents` per row, so it
+      // is ($137.50 + $10.00) + ($30.00 + $0.00) = $177.50 of ledger against
+      // $180.00 owed. Under it by $2.50, which keeps the per-row caveat banner
+      // and the "the ledger shows money this balance does not" banner both off
+      // the screen: what is measured below is the table, not a banner standing
+      // beside it.
+      ledgerPayments: [
+        {
+          paymentId: 'phone-ledger-001',
+          amountCents: 13750,
+          amountResolved: true,
+          tipCents: 1000,
+          feeCents: 271,
+          tipBasis: 'gross',
+          reconciles: true,
+          appliedCents: 12750,
+          unappliedCents: 0,
+          proceedsCents: 13479,
+          autoApply: false,
+          appliedInvoiceId: 'vis-invoice-001',
+          appliedInvoiceNumber: 'AO-2026-0184',
+          method: 'Venmo',
+          reference: 'VEN-3948172065',
+          date: '2026-08-01',
+          notes: '',
+          recordedBy: 'e2e-admin',
+        },
+        {
+          paymentId: 'phone-ledger-002',
+          amountCents: 3000,
+          amountResolved: true,
+          tipCents: 0,
+          feeCents: 0,
+          tipBasis: 'gross',
+          reconciles: true,
+          appliedCents: 3000,
+          unappliedCents: 0,
+          proceedsCents: 3000,
+          autoApply: false,
+          appliedInvoiceId: 'vis-invoice-002',
+          appliedInvoiceNumber: 'AO-2026-0183',
+          method: 'PayPal',
+          reference: 'PP-7C4419820K',
+          date: '2026-07-28',
+          notes: '',
+          recordedBy: 'e2e-admin',
+        },
+      ],
+      unlinkedKinfolkPayments: [],
+      unresolvedAmountCount: 0,
+      sessions: [
+        {
+          sessionId: 'e2e-sess-completed',
+          serviceType: 'Overnight stay',
+          status: 'completed',
+          startTime: '2026-07-31T12:00:00.000Z',
+          completedAt: '2026-07-31T12:00:00.000Z',
+          durationMinutes: null,
+          linkedBack: true,
+        },
+      ],
+      missingSessionIds: [],
+      orphanSessionIds: [],
+      truncated: false,
+    }),
+  });
+
+  await openScreen(page, 'invoices', 'The Den · Invoices');
+  await expect(page.locator('.invoices__row-main').first()).toBeVisible();
+  await page.locator('.invoices__row-main').first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  // Three tables: Payments, Payment History, Linked visits. Waiting on the
+  // count, not on the first one, because the panel renders its loading line and
+  // then its tables, and measuring in between measures nothing.
+  const tables = page.locator('.invoice-ledger__table');
+  await expect(tables, 'the ledger panel did not render its three tables').toHaveCount(3);
+
+  const measured = await page.evaluate(() => {
+    const out: {
+      caption: string;
+      display: string;
+      table: number;
+      panel: number;
+      content: number;
+      boxOverflowX: string;
+      box: number;
+    }[] = [];
+    for (const t of Array.from(document.querySelectorAll<HTMLTableElement>('.invoice-ledger__table'))) {
+      // The panel is the flex column the table is laid out in, whether or not a
+      // scroll box sits between them.
+      const box = t.parentElement!;
+      const panel = box.closest('.invoice-ledger')!;
+      out.push({
+        caption: (t.querySelector('caption')?.textContent ?? t.querySelector('th')?.textContent ?? '')
+          .trim()
+          .slice(0, 40),
+        display: getComputedStyle(t).display,
+        table: t.getBoundingClientRect().width,
+        panel: panel.clientWidth,
+        content: t.scrollWidth,
+        boxOverflowX: getComputedStyle(box).overflowX,
+        box: box.clientWidth,
+      });
+    }
+    return out;
+  });
+
+  for (const m of measured) {
+    report(
+      'ledger table',
+      `"${m.caption}…" display:${m.display}, ${m.table.toFixed(1)}px wide in a ` +
+        `${String(m.panel)}px panel, ${String(m.content)}px of content in a ${String(m.box)}px box ` +
+        `(overflow-x: ${m.boxOverflowX})`,
+    );
+  }
+
+  // THE REGRESSION, asserted directly. A table that is not `display: table`
+  // generates no table box, and every one of these must fill its panel.
+  for (const m of measured) {
+    expect(m.display, `"${m.caption}" is not rendering as a table`).toBe('table');
+    expect(
+      m.table,
+      `"${m.caption}" has shrunk to its content instead of spanning its ${String(m.panel)}px panel`,
+    ).toBeGreaterThanOrEqual(m.panel - 1);
+  }
+
+  // EXACTLY ONE of them needs a scroll box, and it is Payment History. Anything
+  // that overflows a box it cannot scroll has lost a column off the edge.
+  const scrolling = measured.filter((m) => m.content > m.box + 1);
+  expect(
+    scrolling.length,
+    `expected only Payment History to overflow, got: ${scrolling.map((m) => m.caption).join('; ')}`,
+  ).toBe(1);
+  expect(scrolling[0]!.caption).toContain('Payment history');
+  expect(
+    scrolling[0]!.boxOverflowX,
+    'Payment History overflows a box that cannot scroll',
+  ).toMatch(/auto|scroll/);
+
+  // "It scrolls" as an observation rather than a computed style: push the box
+  // sideways and it stays pushed.
+  const wrapper = page.locator('.invoice-ledger__scroll');
+  await expect(wrapper).toHaveCount(1);
+  const moved = await wrapper.evaluate((el) => {
+    el.scrollLeft = 200;
+    return el.scrollLeft;
+  });
+  report('payment history scroll', `scrollLeft came to rest at ${String(moved)}px`);
+  expect(moved, 'the Payment History box did not scroll sideways').toBeGreaterThan(0);
+
+  // And none of it moved the page or the overlay.
+  const frame = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    dialog: document.querySelector('[role="dialog"]')!.getBoundingClientRect().width,
+  }));
+  report(
+    'invoice detail with a ledger',
+    `page overflow ${String(frame.page)}px, dialog ${frame.dialog.toFixed(0)}px wide`,
+  );
+  expect(frame.page, 'the ledger scrolls the page sideways').toBeLessThanOrEqual(1);
+  expect(frame.dialog, 'the ledger made the overlay wider than the phone').toBeLessThanOrEqual(390);
+});
+
 /**
  * The form-schema editor as a workflow modal at phone width.
  *

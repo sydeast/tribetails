@@ -368,7 +368,9 @@ const ADMIN_INVITES = [
  * A handler returns the callable's `data`, or `undefined` to decline, which
  * falls through to the unserved port and the app's own error panel.
  */
-const HANDLERS: Readonly<Record<string, (payload: Record<string, unknown>) => unknown>> = {
+export type CallableHandler = (payload: Record<string, unknown>) => unknown;
+
+const HANDLERS: Readonly<Record<string, CallableHandler>> = {
   // ── invoice detail ──────────────────────────────────────────────────────
   /**
    * Keyed on the id, and declining an id it has no fixture for. A default
@@ -706,8 +708,22 @@ function corsHeaders(requested?: string): Record<string, string> {
  * still owns every other request, including the non-local abort that keeps a
  * golden from being decided by anything off this machine. Nothing here loosens
  * it: `127.0.0.1:5399` is loopback, so both rules hold at once.
+ *
+ * `overrides` REPLACES a named handler for one spec, and is how a layout test
+ * gets a screen state the goldens deliberately do not photograph. The fixtures
+ * above are the APPROVED APPEARANCE of each screen and are chosen for that:
+ * `getInvoiceLedger` sends no `ledgerPayments`, because a row there would trip
+ * the "the ledger shows money this balance does not" banner and freeze an
+ * anomaly as the ordinary picture. A phone-layout test needs the opposite, the
+ * widest state the panel can reach, and it must be able to ask for it without
+ * moving a single golden. Omitting it changes nothing, so `visual.capture.spec`
+ * keeps the exact fixtures it had.
  */
-export async function installCallableStubs(page: Page): Promise<void> {
+export async function installCallableStubs(
+  page: Page,
+  overrides: Readonly<Record<string, CallableHandler>> = {},
+): Promise<void> {
+  const handlers: Readonly<Record<string, CallableHandler>> = { ...HANDLERS, ...overrides };
   await page.route(`**/127.0.0.1:5399/**`, async (route: Route) => {
     const request = route.request();
 
@@ -725,7 +741,7 @@ export async function installCallableStubs(page: Page): Promise<void> {
     }
 
     const name = callableName(request.url());
-    const handler = HANDLERS[name];
+    const handler = handlers[name];
     if (handler === undefined) {
       await route.fallback();
       return;

@@ -183,104 +183,114 @@ function PaymentsPanel({
           (Applied to, Tip, Balance) were not missing from the SERVER: the
           callable has returned `tipCents` since this panel shipped and the panel
           simply never showed it. */}
+      {/* THE SCROLL BOX, and the only one on this screen. This table alone
+          carries eight columns, so it alone needs to scroll sideways at phone
+          width. The box is a WRAPPER rather than the table itself because
+          `overflow-x` on a `<table>` only bites once the table is also
+          `display: block`, and a block table stops generating a table box: its
+          rows fall into an anonymous shrink-to-fit table and the panel-wide
+          table collapses to the width of its own text. `.invoice-ledger__scroll`
+          carries the rest of that history. */}
       {ledgerPayments.length > 0 && (
-        <table className="invoice-ledger__table">
-          <caption className="invoice-ledger__caption">
-            Payment history. What the client actually paid, recorded for the books, and NOT counted
-            in the figures above. A row reads across as amount = applied + tip + balance; the fee is
-            the processor's cut, taken off what reaches the business rather than off the bill.
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">Transaction date</th>
-              <th scope="col">Method</th>
-              <th scope="col">Reference #</th>
-              <th scope="col" className="invoice-ledger__num">Amount</th>
-              <th scope="col">Applied to</th>
-              <th scope="col" className="invoice-ledger__num">Tip</th>
-              <th scope="col" className="invoice-ledger__num">Fee</th>
-              <th scope="col" className="invoice-ledger__num">Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ledgerPayments.map((row) => {
-              const appliedTo = ledgerRowAppliedLabel(row);
-              return (
-                <tr key={row.paymentId}>
-                  <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
-                  <td>{paymentMethodLabel(row.method)}</td>
-                  <td>
-                    {row.reference.trim() === '' ? (
-                      <span className="invoice-ledger__missing">none</span>
-                    ) : (
-                      row.reference
-                    )}
-                  </td>
-                  {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
-                      on the operator's real data the tip is already inside this
-                      figure, and adding them counts the gratuity twice.
+        <div className="invoice-ledger__scroll">
+          <table className="invoice-ledger__table">
+            <caption className="invoice-ledger__caption">
+              Payment history. What the client actually paid, recorded for the books, and NOT counted
+              in the figures above. A row reads across as amount = applied + tip + balance; the fee is
+              the processor's cut, taken off what reaches the business rather than off the bill.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Transaction date</th>
+                <th scope="col">Method</th>
+                <th scope="col">Reference #</th>
+                <th scope="col" className="invoice-ledger__num">Amount</th>
+                <th scope="col">Applied to</th>
+                <th scope="col" className="invoice-ledger__num">Tip</th>
+                <th scope="col" className="invoice-ledger__num">Fee</th>
+                <th scope="col" className="invoice-ledger__num">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledgerPayments.map((row) => {
+                const appliedTo = ledgerRowAppliedLabel(row);
+                return (
+                  <tr key={row.paymentId}>
+                    <td>{row.date.trim() === '' ? 'no date recorded' : row.date}</td>
+                    <td>{paymentMethodLabel(row.method)}</td>
+                    <td>
+                      {row.reference.trim() === '' ? (
+                        <span className="invoice-ledger__missing">none</span>
+                      ) : (
+                        row.reference
+                      )}
+                    </td>
+                    {/* THE WHOLE SUM COLLECTED, tip included. Not amount + tip:
+                        on the operator's real data the tip is already inside this
+                        figure, and adding them counts the gratuity twice.
 
-                      A row the server could not read gets no dollar figure at
-                      all. Its `amountCents` is 0 because that is the floor the
-                      schema allows, not because nothing was collected, and
-                      printing it made an unreadable row look like a payment of
-                      nothing. Same treatment the Fee cell already gives an
-                      unrecorded fee. */}
-                  <td className="invoice-ledger__num">
-                    {row.amountResolved ? (
-                      formatCentsUsd(row.amountCents)
-                    ) : (
-                      <span className="invoice-ledger__missing">could not be read</span>
-                    )}
-                  </td>
-                  <td>
-                    {appliedTo === '' ? (
-                      // Never "$0.00 applied". A payment that touched no balance
-                      // is a different fact from one that applied nothing.
-                      <span className="invoice-ledger__missing">not applied</span>
-                    ) : (
-                      <>
-                        {appliedTo}
-                        <span className="invoice-ledger__note">
-                          {formatCentsUsd(row.appliedCents)}
-                        </span>
-                      </>
-                    )}
-                  </td>
-                  <td className="invoice-ledger__num">
-                    {formatCentsUsd(row.tipCents)}
-                    {/* The tax-relevant fact, said once per row that has one:
-                        the stored tip is the GROSS. The net is derived, never
-                        stored, so nothing can lose the deductible half again. */}
-                    {row.tipCents > 0 && row.tipBasis === 'gross' && (
-                      <span className="invoice-ledger__note">gross</span>
-                    )}
-                  </td>
-                  <td className="invoice-ledger__num">
-                    {row.feeCents > 0 ? (
-                      formatCentsUsd(row.feeCents)
-                    ) : row.reconciles ? (
-                      formatCentsUsd(0)
-                    ) : (
-                      // A zero here would be a claim. On a migrated row the fee
-                      // is not zero, it is unrecorded, and those are different.
-                      <span className="invoice-ledger__missing">not recorded</span>
-                    )}
-                  </td>
-                  <td className="invoice-ledger__num">
-                    {formatCentsUsd(ledgerRowBalanceCents(row))}
-                    {/* Where the leftover went, said on the row. Auto-apply puts
-                        it into the household's account credit for a future
-                        invoice; without it the money is simply unapplied. */}
-                    {row.unappliedCents > 0 && row.autoApply && (
-                      <span className="invoice-ledger__note">held as credit</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                        A row the server could not read gets no dollar figure at
+                        all. Its `amountCents` is 0 because that is the floor the
+                        schema allows, not because nothing was collected, and
+                        printing it made an unreadable row look like a payment of
+                        nothing. Same treatment the Fee cell already gives an
+                        unrecorded fee. */}
+                    <td className="invoice-ledger__num">
+                      {row.amountResolved ? (
+                        formatCentsUsd(row.amountCents)
+                      ) : (
+                        <span className="invoice-ledger__missing">could not be read</span>
+                      )}
+                    </td>
+                    <td>
+                      {appliedTo === '' ? (
+                        // Never "$0.00 applied". A payment that touched no balance
+                        // is a different fact from one that applied nothing.
+                        <span className="invoice-ledger__missing">not applied</span>
+                      ) : (
+                        <>
+                          {appliedTo}
+                          <span className="invoice-ledger__note">
+                            {formatCentsUsd(row.appliedCents)}
+                          </span>
+                        </>
+                      )}
+                    </td>
+                    <td className="invoice-ledger__num">
+                      {formatCentsUsd(row.tipCents)}
+                      {/* The tax-relevant fact, said once per row that has one:
+                          the stored tip is the GROSS. The net is derived, never
+                          stored, so nothing can lose the deductible half again. */}
+                      {row.tipCents > 0 && row.tipBasis === 'gross' && (
+                        <span className="invoice-ledger__note">gross</span>
+                      )}
+                    </td>
+                    <td className="invoice-ledger__num">
+                      {row.feeCents > 0 ? (
+                        formatCentsUsd(row.feeCents)
+                      ) : row.reconciles ? (
+                        formatCentsUsd(0)
+                      ) : (
+                        // A zero here would be a claim. On a migrated row the fee
+                        // is not zero, it is unrecorded, and those are different.
+                        <span className="invoice-ledger__missing">not recorded</span>
+                      )}
+                    </td>
+                    <td className="invoice-ledger__num">
+                      {formatCentsUsd(ledgerRowBalanceCents(row))}
+                      {/* Where the leftover went, said on the row. Auto-apply puts
+                          it into the household's account credit for a future
+                          invoice; without it the money is simply unapplied. */}
+                      {row.unappliedCents > 0 && row.autoApply && (
+                        <span className="invoice-ledger__note">held as credit</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {/* THE ROWS THAT CANNOT BE MADE TO ADD UP, named rather than left as
           arithmetic that silently fails. This is the defect itself: the
