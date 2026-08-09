@@ -196,8 +196,22 @@ test('route map: every manifest screen resolved against the React router', () =>
  *   .den-stat-value--pending            a StatCard whose number has not arrived,
  *                                       which resolves independently of the
  *                                       region below it.
+ *   .invoice-ledger__loading            InvoiceLedger's own wait line. It does not
+ *                                       go through AsyncRegion, so none of the
+ *                                       three above reach it: it is a `<p>`, not a
+ *                                       `div`, it carries no `aria-live`, and its
+ *                                       class is its own. Without it, `settle()`
+ *                                       returned while Payment History and Linked
+ *                                       Visits were still both a single sentence,
+ *                                       and `invoice-detail` was free to photograph
+ *                                       a screen that had not finished. It is
+ *                                       transient by construction: `InvoiceLedger`
+ *                                       renders it only in the `loading ||
+ *                                       ledger === null` branch and never as a
+ *                                       standing announcement region.
  */
-const LOADING = 'div[role="status"][aria-live="polite"], .async-loading, .den-stat-value--pending';
+const LOADING =
+  'div[role="status"][aria-live="polite"], .async-loading, .den-stat-value--pending, .invoice-ledger__loading';
 
 /**
  * Waits until the screen is finished, not merely mounted.
