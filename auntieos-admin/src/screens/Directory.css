@@ -114,19 +114,12 @@
 
 /* ── card grid ───────────────────────────────────────────────────────────── */
 
-.directory__grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: var(--space-4);
-  align-items: start;
-}
-
-.directory__cell {
-  min-width: 0;
-}
+/* The grid moved to `EntityCardGrid` (components/EntityCardGrid.css), the one
+   definition behind the list-shape rule. Directory hands it this screen's mock
+   width (290px, `ui-ideas/auntieos-directory-2026-05-27.html` l.71) and opts
+   into `align="start"`, which together reproduce the copy that used to live
+   here exactly. The cell's `min-width: 0` now comes from `.entity-grid > *`,
+   since every card in every one of these grids needs it. */
 
 /* No `height`, no `overflow: hidden`, see the AO-11 note in the file header. */
 .directory__card {

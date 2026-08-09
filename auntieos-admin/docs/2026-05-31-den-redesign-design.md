@@ -62,3 +62,90 @@ read mockup HTML + current screen .kt -> rewrite Compose with Den components to 
 - MyTribe routing (Jetpack Nav) and MyTribe redesign — separate effort.
 - Android Den conversion — separate.
 - New backend/contract changes — this is presentation only.
+
+---
+
+## List shape: cards, with one named exception
+
+**Added 2026-08-09.** Operator ruling 2026-08-06, `04 CARDS  One rule for list
+shape`, prompted by the layout review's finding that Directory, Template Bank
+and Vet Clinics browsed a list with a card grid while another screen did not,
+"which may be defensible per data type, but should be a deliberate rule rather
+than an accident."
+
+### The rule
+
+**A screen that browses a set of PEER ENTITIES renders them as cards in
+`EntityCardGrid`** (`src/components/EntityCardGrid.tsx`). Directory, Vet
+Clinics and the Template Bank are the entity-browse screens today.
+
+**A single full-width column is for CHRONOLOGICAL FEEDS**, where the reading
+order is itself information: Inbox, Activity Log, Schedule, Sessions, and
+Bookings within a status section. Reflowing one of those into a grid destroys
+the only ordering it has, because a grid is read left to right before it is
+read down. These keep their column.
+
+**A sortable table is for a list read down its columns**, where every row
+carries the same small fixed field set and the operator's question is
+comparative ("which is newest", "who touched this last"). Exactly one screen
+qualifies: see the exception below.
+
+The card WIDTH is per screen, not shared. The operator's mocks draw 290px
+(Directory), 300px (Vet Clinics) and 310px (Template Bank), so `EntityCardGrid`
+takes the number as `minCardWidth` rather than imposing one. Standardizing the
+mechanism is the point; rounding three deliberate measurements together would
+be a decision none of the mocks made.
+
+### On Android
+
+A phone is one column wide, so "grid" has no analogue there and the rule cannot
+be about layout. Android's half of it is that **the item is a card carrying the
+same fields the web card carries**, as `AuntieEntityRow` inside a `DenPanel`.
+All four admin list screens already used that row; what differed was the
+FIELDS, so the Template Bank card gained the description and tags (max 4) its
+mock names and the React card had been showing all along.
+
+### The exception: Form Schemas is a table
+
+`src/screens/FormSchemas.tsx` is NOT a card grid, deliberately.
+
+Its four fields are name, version, updated, updated-by: a fixed, uniform,
+comparative field set, which is what a table is for. Both design authorities
+say so directly:
+
+- The mock, `ui-ideas/auntieos-formschema-list-2026-05-27.html`, draws a table:
+  a `.thead` with sortable Name / Version / Updated / Updated-by headers over
+  striped `.trow`s, with column weights (3 / 1 / 2 / 2) mirroring the Kotlin.
+- `page-specs/26-formschema-list.md` item 2 is titled "Sortable list +
+  clickable rows (already real, keep)", and its **Desired** reads: "mock's
+  sortable Name/Version/Updated/Updated-by table + New schema action."
+
+Converting it to cards would have put it off both. A card grid is also worse
+for this list specifically: it makes four short parallel values impossible to
+scan down, and it leaves nowhere to hang a sort.
+
+**That exception is currently UNBUILT.** The React screen ships neither shape:
+it renders stacked full-width rows with the four fields flattened into one meta
+string (`v4  ·  08-02 10:15  ·  by e2e-admin`). Building the table, sortable
+column headers included, is follow-up work with its own Android parity and its
+own golden (`visual/baselines/react/formschema-list.png`). Nobody has
+overruled the mock; the work simply has not been done.
+
+### Screens still to classify
+
+Four lists ship stacked full-width rows and have not been ruled on. None was
+named in the 2026-08-06 ruling, and each needs the feed-or-entity question
+answered before it moves:
+
+| Screen | Reads as | Likely |
+| --- | --- | --- |
+| `KinTales.tsx` | dated tales, newest first | feed, keep rows |
+| `Invoices.tsx` | dated invoices with a status | feed, keep rows |
+| `TribalIntel.tsx` | entries against a household | undecided |
+| `KinTaleTemplates.tsx` (bank list) | peer templates | entity browse, likely cards |
+
+`Invites.tsx` is a fifth case, and a different one. It ships a card grid at
+16rem, which is a fourth grid definition, while its own mock
+(`auntieos-invites-2026-05-27.html`) draws stacked `.iv` rows in a side column.
+Which of those is right needs a ruling before it is consolidated either way,
+so this PR left it alone rather than cementing the drift.

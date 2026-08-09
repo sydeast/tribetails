@@ -26,6 +26,7 @@ import { Avatar } from '../components/Avatar';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { AddKinfolkDialog } from '../components/AddKinfolkDialog';
 import { AddKinDialog, type KinfolkOption } from '../components/AddKinDialog';
+import { EntityCardGrid } from '../components/EntityCardGrid';
 import { KinfolkProfile } from './KinfolkProfile';
 import { KinView } from './KinView';
 import './Directory.css';
@@ -513,7 +514,7 @@ export function Directory({
               return <p className="directory__hint">No matches for &ldquo;{query}&rdquo;.</p>;
             }
             return (
-              <ul className="directory__grid">
+              <EntityCardGrid label="Kinfolk" minCardWidth="290px" align="start">
                 {visible.map((kf) => (
                   <KinfolkCard
                     key={kf._id}
@@ -527,7 +528,7 @@ export function Directory({
                     }
                   />
                 ))}
-              </ul>
+              </EntityCardGrid>
             );
           }}
         </AsyncRegion>
@@ -545,7 +546,7 @@ export function Directory({
               return <p className="directory__hint">No matches for &ldquo;{query}&rdquo;.</p>;
             }
             return (
-              <ul className="directory__grid">
+              <EntityCardGrid label="Kin" minCardWidth="290px" align="start">
                 {visible.map((k) => (
                   <KinCard
                     key={k._id}
@@ -564,7 +565,7 @@ export function Directory({
                     }}
                   />
                 ))}
-              </ul>
+              </EntityCardGrid>
             );
           }}
         </AsyncRegion>

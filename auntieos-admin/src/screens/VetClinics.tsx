@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { EntityCardGrid } from '../components/EntityCardGrid';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
 import { useCollection } from '../lib/firestore';
@@ -149,7 +150,7 @@ function ClinicBank({
             shared bank. Rejecting retires it, which keeps who submitted it on file rather than
             discarding the evidence.
           </p>
-          <div className="vetbank-grid">
+          <EntityCardGrid label="Clinics pending approval" minCardWidth="19rem">
             {pending.map((c) => (
               <ClinicCard
                 key={c._id}
@@ -160,7 +161,7 @@ function ClinicBank({
                 pending
               />
             ))}
-          </div>
+          </EntityCardGrid>
         </DenPanel>
       )}
 
@@ -182,7 +183,7 @@ function ClinicBank({
         {active.length === 0 && !adding ? (
           <EmptyHint>No clinic matches that search.</EmptyHint>
         ) : (
-          <div className="vetbank-grid">
+          <EntityCardGrid label="Clinic catalog" minCardWidth="19rem">
             {active.map((c) => (
               <ClinicCard
                 key={c._id}
@@ -192,7 +193,7 @@ function ClinicBank({
                 usageKnown={householdsKnown}
               />
             ))}
-          </div>
+          </EntityCardGrid>
         )}
       </DenPanel>
 
@@ -203,7 +204,7 @@ function ClinicBank({
             kept, not deleted: a household already on one still reads the name, phone and
             address it always did, and restoring one puts it back in the bank.
           </p>
-          <div className="vetbank-grid">
+          <EntityCardGrid label="Retired clinics" minCardWidth="19rem">
             {retired.map((c) => (
               <ClinicCard
                 key={c._id}
@@ -214,7 +215,7 @@ function ClinicBank({
                 retired
               />
             ))}
-          </div>
+          </EntityCardGrid>
         </DenPanel>
       )}
     </div>
@@ -284,8 +285,13 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
         : `${clinic.name ?? 'Clinic'} retired.`;
     });
 
+  // An `<li>`, not an `<article>`: this card is now an item of an
+  // `EntityCardGrid`, and the grid's list semantics are only true if its
+  // children are list items. `.vetcard` sets `display: flex`, so the tag change
+  // is semantic only, with no layout consequence. AddClinicCard below stays an
+  // `<article>` because it is rendered ABOVE the grid, not inside it.
   return (
-    <article className={`vetcard${retired ? ' vetcard--retired' : ''}`}>
+    <li className={`vetcard${retired ? ' vetcard--retired' : ''}`}>
       <header className="vetcard-top">
         <span className="vetcard-logo" aria-hidden="true">
           {clinicMonogram(clinic.name ?? '')}
@@ -405,7 +411,7 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
           {error}
         </p>
       )}
-    </article>
+    </li>
   );
 }
 

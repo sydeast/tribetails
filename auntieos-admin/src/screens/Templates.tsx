@@ -15,6 +15,7 @@ import { type Async, asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { EntityCardGrid } from '../components/EntityCardGrid';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TemplateEditor } from './TemplateEditor';
@@ -409,11 +410,11 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                     })}
                   </EmptyHint>
                 ) : (
-                  <ul className="templates__list">
+                  <EntityCardGrid label="Templates" minCardWidth="310px">
                     {visible.map((tpl) => (
-                      <TemplateRow key={tpl.templateId} tpl={tpl} onSelect={handleSelect} />
+                      <TemplateCard key={tpl.templateId} tpl={tpl} onSelect={handleSelect} />
                     ))}
-                  </ul>
+                  </EntityCardGrid>
                 )}
 
                 {loadMoreError && (
@@ -459,7 +460,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   );
 }
 
-interface TemplateRowProps {
+interface TemplateCardProps {
   tpl: TemplateSummary;
   /**
    * Always a real handler now that the editor exists (Templates.tsx supplies
@@ -470,26 +471,53 @@ interface TemplateRowProps {
   onSelect: (templateId: string) => void;
 }
 
-function TemplateRow({ tpl, onSelect }: TemplateRowProps) {
+/**
+ * One template, as a card in the shared `EntityCardGrid`.
+ *
+ * This was a full-width stacked row until the list-shape rule landed. The
+ * mock has drawn a card grid since 2026-05-27
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html`: `.grid` l.108, `.tcard`
+ * ll.110-116), and page-spec `24-template-bank.md` talks about nothing but
+ * cards ("Per-card category pill", "Card tap → readable view", "drag a
+ * template card onto a category bucket"). The row was the accident.
+ *
+ * The FIELDS are unchanged, and so is every behavior: activating the card
+ * still opens the editor overlay. The mock's card footer carries an "Edit"
+ * ghost button next to a card-tap read-only viewer; neither is built on this
+ * console (`TemplateViewOverlay` is named as not-yet-ported in the screen doc
+ * above), so this card grows neither, rather than growing a button that does
+ * what tapping the card already does.
+ */
+function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
   const category = templateCategoryDisplay(tpl.category);
   const tags = previewTags(tpl.tags, 4);
   const description = tpl.description?.trim() ?? '';
+  const subject = templateSubjectPreview(tpl);
 
+  // The mock clamps the subject to one line and the description to two
+  // (ll.125, 127). Nothing is unreachable behind the clamp: the full string is
+  // in the `title` attribute, and opening the card puts it in the editor.
   const body = (
     <>
-      <span className="templates__row-head">
-        <span className="templates__row-name">{templateRowTitle(tpl)}</span>
+      <span className="templates__card-name">{templateRowTitle(tpl)}</span>
+
+      <span className="templates__card-meta">
         {category ? <span className="templates__chip templates__chip--category">{category}</span> : null}
+        <code className="templates__card-id">{tpl.templateId}</code>
       </span>
 
-      <code className="templates__row-id">{tpl.templateId}</code>
+      <span className="templates__card-subject" title={subject}>
+        {subject}
+      </span>
 
-      <span className="templates__row-subject">{templateSubjectPreview(tpl)}</span>
-
-      {description !== '' ? <span className="templates__row-description">{description}</span> : null}
+      {description !== '' ? (
+        <span className="templates__card-description" title={description}>
+          {description}
+        </span>
+      ) : null}
 
       {tags.length > 0 ? (
-        <span className="templates__row-tags">
+        <span className="templates__card-tags">
           {tags.map((tag) => (
             <span key={tag} className="templates__chip templates__chip--tag">
               {tag}
@@ -501,8 +529,8 @@ function TemplateRow({ tpl, onSelect }: TemplateRowProps) {
   );
 
   return (
-    <li className="templates__row">
-      <button type="button" className="templates__row-main" onClick={() => onSelect(tpl.templateId)}>
+    <li className="templates__card">
+      <button type="button" className="templates__card-main" onClick={() => onSelect(tpl.templateId)}>
         {body}
       </button>
     </li>

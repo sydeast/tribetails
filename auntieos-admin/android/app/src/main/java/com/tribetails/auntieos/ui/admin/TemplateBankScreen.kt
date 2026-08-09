@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Lucide
@@ -85,6 +87,35 @@ internal fun templateBankSearchFilter(
             it.templateId.contains(q, ignoreCase = true)
     }
 }
+
+/**
+ * The description the Template Bank card shows, or null when there is none.
+ *
+ * Trimmed, and blank-is-null, so a description of spaces draws nothing rather
+ * than an empty line: the same `description !== ''` guard the React card uses
+ * (`src/screens/Templates.tsx#TemplateCard`).
+ *
+ * This and [templateCardTags] exist because the Android card was missing two of
+ * the six fields the mock's card names (`ui-ideas/auntieos-template-bank-2026-05-27.html`
+ * l.235: "title, subject, description, tags (max 4), category, key") while the
+ * React card had been showing all six. That is the Android half of the
+ * list-shape rule: one column either way on a phone, so what has to match
+ * across consoles is what the card CARRIES.
+ */
+internal fun templateCardDescription(tpl: TemplateRepository.EmailTemplate): String? =
+    tpl.description?.trim()?.takeIf { it.isNotEmpty() }
+
+/**
+ * The tags the Template Bank card shows, capped at [max].
+ *
+ * Mirrors the web's `previewTags(tpl.tags, 4)`; the cap is the mock's own
+ * "tags (max 4)", and it keeps a heavily tagged template from blowing the
+ * card's height out on either console.
+ */
+internal fun templateCardTags(
+    tpl: TemplateRepository.EmailTemplate,
+    max: Int = 4,
+): List<String> = tpl.tags.take(max)
 
 /**
  * The label for one category filter chip.
@@ -456,6 +487,7 @@ fun TemplateBankBody(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TemplateRow(
     tpl: TemplateRepository.EmailTemplate,
@@ -474,6 +506,37 @@ private fun TemplateRow(
     var basePos by remember { mutableStateOf(Offset.Zero) }
     var translation by remember { mutableStateOf(Offset.Zero) }
     var lastWindow by remember { mutableStateOf(Offset.Zero) }
+    val description = templateCardDescription(tpl)
+    val tags = templateCardTags(tpl)
+    // The card's remaining two mock fields, below the title row rather than in
+    // it: tag chips reflowing under the Edit button would read as belonging to
+    // it. Null when the template has neither, so an untagged, undescribed
+    // template draws no empty strip.
+    val supportingFields: (@Composable ColumnScope.() -> Unit)? =
+        if (description == null && tags.isEmpty()) {
+            null
+        } else {
+            {
+                if (description != null) {
+                    Text(
+                        text = description,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textFaint,
+                        // Mock l.127: up to two lines, ellipsis. Tapping the
+                        // card opens the full text, so nothing is unreachable.
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (tags.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        tags.forEach { tag ->
+                            AuntieStatusPill(label = tag, tone = AuntieStatusTone.Orange)
+                        }
+                    }
+                }
+            }
+        }
     AuntieEntityRow(
         title = tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } },
         subtitle = tpl.subject.ifBlank { "No subject set" },
@@ -528,6 +591,7 @@ private fun TemplateRow(
                 )
             }
         },
+        supporting = supportingFields,
     )
 }
 
