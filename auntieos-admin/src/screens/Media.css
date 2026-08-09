@@ -20,6 +20,27 @@
   margin: var(--space-2) 0;
 }
 
+/* The mock's top-bar count chip, sitting in DenScreenHeading's `trailing` slot.
+   Mono, pill, hairline border, with the number itself picked out in the accent
+   the way the mock's `.count em` is. */
+.media__count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
+.media__count-chip-n {
+  color: var(--color-accent);
+}
+
 /* ── type filter row ────────────────────────────────────────────────────── */
 
 .media__filter-row {
@@ -45,6 +66,16 @@
     color var(--dur-base) var(--ease-standard),
     border-color var(--dur-base) var(--ease-standard);
 }
+/* Per-type count riding inside its pill, as the mock's `.ct` does. */
+.media__chip-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  opacity: 0.6;
+}
+.media__chip[data-active='true'] .media__chip-count {
+  opacity: 0.8;
+}
+
 .media__chip[data-active='true'] {
   background: var(--color-text-primary);
   color: var(--color-background);
@@ -126,6 +157,75 @@
   background: var(--color-accent);
   border-radius: var(--radius-pill);
   padding: 0.1rem 0.5rem;
+}
+
+/**
+ * The mock's `.cap` hover strip: a gradient-to-dark caption over the bottom of
+ * the thumbnail, carrying the description and the "{date} · {uploader}" meta.
+ *
+ * It is an ENHANCEMENT, never the only route to any of it. The whole rule is
+ * wrapped in `@media (hover: hover) and (pointer: fine)`, so a touch browser
+ * never renders a strip it has no way to summon, and the always-visible
+ * `.media__tile-body` block below the tile stays the carrier on every device
+ * (matching the Android gallery, which has no hover and shows the same two
+ * lines under every cell). Outside that media query the strip is simply not
+ * painted, which is why the base rule is `display: none` rather than
+ * `opacity: 0`: an opacity-hidden strip would still eat the tile's bottom edge
+ * on a phone.
+ */
+.media__tile-caption-strip {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .media__tile-caption-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    padding: var(--space-5) var(--space-2) var(--space-2);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.92), transparent);
+    border-radius: 0 0 var(--radius-card) var(--radius-card);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-standard);
+  }
+
+  .media__tile:hover .media__tile-caption-strip {
+    opacity: 1;
+  }
+
+  .media__tile-strip-caption {
+    font-size: var(--type-label-md-size);
+    font-weight: var(--type-label-md-weight);
+    line-height: 1.3;
+    color: var(--tt-brand-cream);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .media__tile-strip-meta {
+    font-family: var(--font-mono);
+    font-size: var(--type-label-sm-size);
+    color: var(--tt-brand-cream);
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* The strip is decorative motion; respect a reduced-motion preference by
+   dropping the fade rather than the information (which is below the tile
+   anyway). */
+@media (prefers-reduced-motion: reduce) {
+  .media__tile-caption-strip {
+    transition: none;
+  }
 }
 
 .media__tile-body {
