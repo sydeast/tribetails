@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
@@ -43,6 +43,7 @@ vi.mock('./HouseholdData', () => ({
 // substitutes the params into the path the way the real one does, which is what
 // the assertion below is actually about.
 vi.mock('@tanstack/react-router', () => ({
+  linkOptions: (o: unknown) => o,
   Link: ({
     to,
     params,
@@ -269,5 +270,37 @@ describe('KinfolkProfile: sub-view wiring', () => {
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={onBack} />);
     await user.click(await screen.findByRole('button', { name: /back to directory/i }));
     expect(onBack).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Item 7b. This screen used to head itself "THE DEN · DIRECTORY", the same
+ * words the list two levels up uses, so the kicker could not tell an operator
+ * which of the two they were looking at.
+ */
+describe('KinfolkProfile: breadcrumbs', () => {
+  beforeEach(() => getKinfolkProfile.mockResolvedValue(profile()));
+
+  it('names the household as the current page under a Directory step', () => {
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByText('Jamie Halbrook')).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByText(/The Den/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * A LINK, because this profile only mounts under `/directory/{id}`: the card
+   * click navigates rather than swapping local state, so `/directory` is
+   * genuinely somewhere else and the step is middle-clickable and copyable.
+   * `KinView` next door still opens with no URL change, which is why the
+   * primitive takes callbacks at all.
+   */
+  it('walks back to the list through a real anchor', () => {
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByRole('link', { name: 'Directory' })).toHaveAttribute(
+      'href',
+      '/directory',
+    );
   });
 });

@@ -25,6 +25,7 @@ import {
   revokeInvite,
   setMemberPermissions,
 } from '../api/membersWrite';
+import { linkOptions } from '@tanstack/react-router';
 import { type Async } from '../lib/async';
 import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -305,7 +306,15 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     <div className="screen">
       <div className="d1">
         <DenScreenHeading
-          kicker="The Den · Directory"
+          // Both walkable steps are real: this screen has exactly one mount,
+          // its own `/household-members/{id}` route, so `/directory` is an
+          // anchor and the household is `onBack`, which the route resolves to
+          // `/directory/{id}`.
+          crumbs={[
+            { label: 'Directory', link: linkOptions({ to: '/directory' }) },
+            { label: householdName, onSelect: onBack },
+            { label: 'Members and invites' },
+          ]}
           title="Members and"
           accentTail="invites."
           subtitle={`Who can reach ${householdName} in MyTribe, and what each of them may do.`}

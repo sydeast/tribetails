@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type KinTaleEntry } from '../api/kinTales';
@@ -284,5 +284,30 @@ describe('KinTaleDetail: Edit / Close wiring', () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={onClose} />);
     await user.click(screen.getByRole('button', { name: /^close$/i }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * Item 7b. The kicker here read "THE DEN · KINTALES" and so did the list's, so
+ * it could not tell an operator which of the two they had open.
+ */
+describe('KinTaleDetail: breadcrumbs', () => {
+  it('names this report as the current page under a KinTales step', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByText('KinTale detail')).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByText(/The Den/i)).not.toBeInTheDocument();
+  });
+  /**
+   * `onClose`, not a link to /kintales: closing also drops `?kinTaleId=` from
+   * the URL, and a plain route link would leave it naming a report the operator
+   * has just walked away from, so a reload would reopen it.
+   */
+  it('walks back to the feed the same way Close does', async () => {
+    const onClose = vi.fn();
+    render(<KinTaleDetail kinTaleId="tale1" onClose={onClose} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    await user.click(within(nav).getByRole('button', { name: 'KinTales' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

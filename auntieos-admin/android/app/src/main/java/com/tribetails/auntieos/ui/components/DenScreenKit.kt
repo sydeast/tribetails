@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.PawPrint
 import androidx.compose.ui.text.font.FontStyle
@@ -52,12 +53,65 @@ import java.time.LocalTime
  * re-inventing layout, which keeps the whole app reading as one Den.
  */
 
+// ── breadcrumbs ─────────────────────────────────────────────────────────────
+
+/**
+ * One step of a breadcrumb trail. [onClick] null means this is the page you are
+ * ON: it renders as plain text and takes no tap, because a tappable crumb for
+ * the current page promises a journey it cannot make.
+ */
+data class DenCrumb(val label: String, val onClick: (() -> Unit)? = null)
+
+/** Separators sit BETWEEN steps, so a trail of n has n-1 of them (never -1). */
+fun crumbSeparatorCount(crumbs: Int): Int = if (crumbs <= 1) 0 else crumbs - 1
+
+/**
+ * The mocks' `.crumbs`, the Android twin of `DenBreadcrumbs` in
+ * `src/components/DenScreenKit.tsx`: mono, 12px, dim cream, a slash between
+ * steps, the current page in full cream.
+ *
+ * The slash is `clearAndSetSemantics {}` rather than merely unlabelled: without
+ * it TalkBack reads "Directory slash the Wrens slash Members and invites" and
+ * three destinations arrive as one sentence.
+ */
+@Composable
+fun DenBreadcrumbs(crumbs: List<DenCrumb>, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        crumbs.forEachIndexed { i, crumb ->
+            val onClick = crumb.onClick
+            Text(
+                text = crumb.label,
+                style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
+                color = if (onClick == null) c.textPrimary else c.textDim,
+                modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick),
+            )
+            if (i < crumbs.size - 1) {
+                Text(
+                    text = "/",
+                    style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
+                    color = c.textFaint,
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp)
+                        .clearAndSetSemantics {},
+                )
+            }
+        }
+    }
+}
+
 // ── page heading ────────────────────────────────────────────────────────────
 
 /**
  * The standard Den page heading: a small uppercase mono [kicker] in brand
  * orange, then a large serif [title] with an optional italic [accentTail]
  * (the word painted in primary), and an optional [subtitle] blurb.
+ *
+ * Pass [crumbs] on a NESTED screen and the trail takes the kicker's place. Not
+ * a style preference: the ten `.crumbs` mocks all put the trail exactly where a
+ * list screen puts its kicker, and none shows both. "THE DEN · DIRECTORY" is
+ * word for word what the Directory two levels up says, so on a nested screen it
+ * is the line with nothing to say and the trail is the line that has something.
  */
 @Composable
 fun DenScreenHeading(
@@ -66,16 +120,21 @@ fun DenScreenHeading(
     modifier: Modifier = Modifier,
     accentTail: String? = null,
     subtitle: String? = null,
+    crumbs: List<DenCrumb>? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         Column(Modifier.weight(1f)) {
-            Text(
-                text = kicker.uppercase(),
-                style = AuntieTheme.typography.mono.copy(letterSpacing = 1.6.sp, fontSize = 11.sp),
-                color = c.primary,
-            )
+            if (crumbs == null) {
+                Text(
+                    text = kicker.uppercase(),
+                    style = AuntieTheme.typography.mono.copy(letterSpacing = 1.6.sp, fontSize = 11.sp),
+                    color = c.primary,
+                )
+            } else {
+                DenBreadcrumbs(crumbs)
+            }
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(

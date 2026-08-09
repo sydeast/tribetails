@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
 import { SessionDetail } from './SessionDetail';
@@ -26,7 +26,10 @@ function entry(over: Partial<SessionEntry> = {}): SessionEntry {
 describe('SessionDetail', () => {
   it('renders the session fields from the passed entry (by value, no fetch)', () => {
     render(<SessionDetail entry={entry({ notes: 'Bring the long leash.' })} onBack={vi.fn()} />);
-    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+    // By ROLE, not by text: the breadcrumb's last step names this session too,
+    // exactly as `auntieos-kincare-detail-2026-05-27.html` shows it, so the
+    // household name is legitimately on the page twice.
+    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
     expect(screen.getByText('Dog Walk')).toBeInTheDocument();
     expect(screen.getByText('SCHEDULED')).toBeInTheDocument();
     // Timing (start/end parseable), Kin, and Notes sections all show.
@@ -70,9 +73,26 @@ describe('SessionDetail', () => {
       />,
     );
     // The head still renders (household + chip), the blank sections do not.
-    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
     expect(screen.queryByText('Timing')).toBeNull();
     expect(screen.queryByText('Notes')).toBeNull();
+  });
+
+  /**
+   * Item 7b. The kicker used to read "THE DEN · AUNTIE TIME" here and on the
+   * list, which told an operator three levels down exactly what it told them at
+   * the top. The trail says where they are and offers the way back.
+   */
+  it('says where this session sits, and walks back to the list', async () => {
+    const onBack = vi.fn();
+    render(<SessionDetail entry={entry()} onBack={onBack} />);
+
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByText('The Whitfields')).toHaveAttribute('aria-current', 'page');
+    // "Auntie Time" is what the rail calls /sessions; naming it anything else
+    // would point at a screen the operator cannot find.
+    await userEvent.click(within(nav).getByRole('button', { name: 'Auntie Time' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('shows an honest unavailable state when the entry does not resolve (null), never a blank detail', () => {

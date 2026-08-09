@@ -2,7 +2,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
+
+// The breadcrumb's "Directory" step is a real route link on the standalone
+// mount (the `/household-members/{id}` route, from which `/directory` is
+// somewhere else), and a real `Link` wants a RouterProvider no suite in this
+// tree mounts. Stood in for by the anchor it renders, the AppShell.test.tsx
+// convention.
+vi.mock('@tanstack/react-router', () => ({
+  linkOptions: (o: unknown) => o,
+  Link: ({ to, children, ...rest }: { to: string; children: ReactNode }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 const api = vi.hoisted(() => ({
   listHouseholdMembers: vi.fn(),
@@ -482,5 +496,50 @@ describe('inviteMetaLine', () => {
       invite({ sentToInviteeAt: null, createdAt: null, expiresAt: null }),
     );
     expect(line).toBe('rq_8fk29…');
+  });
+});
+
+/**
+ * Item 7b. `auntieos-members-2026-05-27.html` heads this screen
+ * `Directory / Households / the Wrens / Members`, and this screen is reachable
+ * two ways: as a sub-view of the household profile, and as its own
+ * `/household-members/{id}` route. The Directory step has to work on both, and
+ * only one of them can use a route link.
+ */
+describe('HouseholdMembers breadcrumbs', () => {
+  it('trails Directory / household / this page, with only the last as current', async () => {
+    mount();
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(nav).getByText('Members and invites')).toHaveAttribute('aria-current', 'page');
+  });
+  it('links Directory as a route, because this screen IS a route', async () => {
+    mount();
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    // An anchor, not a button: standing at /household-members/{id}, /directory
+    // is somewhere else, so it can be middle-clicked and copied like any link.
+    expect(within(nav).getByRole('link', { name: 'Directory' })).toHaveAttribute(
+      'href',
+      '/directory',
+    );
+  });
+  it('walks back to the household profile from the middle step', async () => {
+    const onBack = vi.fn();
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={onBack} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    await userEvent.click(within(nav).getByRole('button', { name: 'the Walls' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+  // Pre-existing: the /household-members/{id} route passes no name, so a cold
+  // deep link genuinely has only the id to show. Showing it is honest; showing
+  // a placeholder household name would not be.
+  it('falls back to the id when the household name has not been passed down', async () => {
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByRole('button', { name: 'fam1' })).toBeInTheDocument();
   });
 });

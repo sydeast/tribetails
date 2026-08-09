@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from '@tanstack/react-router';
+import { Link, linkOptions } from '@tanstack/react-router';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
 import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
@@ -125,11 +125,20 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack }: KinfolkP
   // reached only through its own route (`/household-members/{kinfolkId}`), so
   // there is exactly one way to open it and the URL always says it is open.
   // page-specs Decision 8 still puts it under Directory / Households /
-  // {household} / Members, which is what that path spells.
+  // {household} / Members, which is what that path spells, and what the
+  // members screen's own breadcrumb now reads.
   return (
     <div className="screen">
       <DenScreenHeading
-        kicker="The Den · Directory"
+        // A real anchor, not `onBack`: this profile only ever mounts under
+        // `/directory/{id}`, so `/directory` is somewhere else and the step can
+        // be middle-clicked and copied like any link. (`KinView` next door
+        // still opens without a URL change, which is why the primitive takes
+        // callbacks at all.)
+        crumbs={[
+          { label: 'Directory', link: linkOptions({ to: '/directory' }) },
+          { label: kinfolkName || kinfolkId },
+        ]}
         title={kinfolkName || kinfolkId}
         subtitle="Household profile."
         trailing={

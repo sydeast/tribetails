@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
 import './DenScreenKit.css';
 
@@ -30,10 +31,79 @@ export function serviceTone(serviceType: string): DenTone {
   return 'orange';
 }
 
+// ── breadcrumbs ─────────────────────────────────────────────────────────────
+
+/**
+ * One step of a breadcrumb trail. Exactly one of three shapes, and which one it
+ * is decides what gets rendered:
+ *
+ *   `link`      a real route. Renders an anchor, so it opens in a new tab, has a
+ *               copyable address, and is a link to assistive technology.
+ *   `onSelect`  a sibling VIEW of the screen you are on, which is what half of
+ *               these destinations are: opening a household from the Directory
+ *               list never changes the URL, so `<Link to="/directory">` there
+ *               resolves to the page you are standing on and clicking it does
+ *               nothing. Renders a button, which is what it actually is.
+ *   neither     the page you are on. Text, and `aria-current="page"`.
+ *
+ * `link` is `LinkProps` rather than a bare `to: string` on purpose: the router
+ * is typed through the `Register` declaration in `router.tsx`, so a made-up path
+ * fails `npm run typecheck` instead of rendering a dead crumb. Build one with
+ * `linkOptions({ to: '/directory' })`, the same way `AppShell` builds the rail.
+ */
+export interface Crumb {
+  label: string;
+  link?: LinkProps;
+  onSelect?: () => void;
+}
+
+/**
+ * The mocks' `.crumbs`: mono, 12px, .04em tracking, a slash between entries.
+ *
+ * The `<ol>` is not decoration. A trail is ordered, and its order is the
+ * meaning; a screen reader announcing "list, 3 items" before "Directory" is
+ * telling the operator how deep they are, which is the entire complaint this
+ * answers.
+ */
+export function DenBreadcrumbs({ crumbs }: { crumbs: readonly Crumb[] }) {
+  return (
+    <nav className="den-crumbs" aria-label="Breadcrumb">
+      <ol>
+        {crumbs.map((crumb, i) => (
+          // Keyed by position, not label: a trail legitimately repeats a word
+          // ("Directory / Kinfolk / Directory" is not a bug), and two <li>s with
+          // the same key silently drop one of them.
+          <li key={`${i}-${crumb.label}`}>
+            <CrumbStep crumb={crumb} />
+            {i < crumbs.length - 1 && (
+              <span className="den-crumbs-sep" aria-hidden="true">
+                /
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
+function CrumbStep({ crumb }: { crumb: Crumb }) {
+  if (crumb.link !== undefined) {
+    return <Link {...crumb.link}>{crumb.label}</Link>;
+  }
+  if (crumb.onSelect !== undefined) {
+    return (
+      <button type="button" className="den-crumbs-step" onClick={crumb.onSelect}>
+        {crumb.label}
+      </button>
+    );
+  }
+  return <span aria-current="page">{crumb.label}</span>;
+}
+
 // ── page heading ────────────────────────────────────────────────────────────
 
-interface DenScreenHeadingProps {
-  kicker: string;
+interface DenScreenHeadingBase {
   title: string;
   /** Painted in primary and italic, the way the Den heading emphasises its last word. */
   accentTail?: string;
@@ -43,11 +113,30 @@ interface DenScreenHeadingProps {
 }
 
 /**
- * The standard Den page heading: uppercase mono kicker, serif title with an
- * optional italic accent tail, optional subtitle blurb, optional trailing slot.
+ * A heading carries EITHER a section kicker or a breadcrumb trail, never both
+ * and never neither.
+ *
+ * Not a style rule: the ten `.crumbs` mocks all put the trail exactly where a
+ * list screen puts its kicker, and not one of them shows the two together.
+ * "THE DEN · DIRECTORY" reads identically on the list and three levels down, so
+ * on a nested screen it is the line that has nothing to say and the trail is the
+ * line that does. Expressed as a union so a nested screen cannot keep the stale
+ * kicker by accident.
+ */
+type DenScreenHeadingProps = DenScreenHeadingBase &
+  (
+    | { kicker: string; crumbs?: never }
+    | { crumbs: readonly Crumb[]; kicker?: never }
+  );
+
+/**
+ * The standard Den page heading: uppercase mono kicker (or a breadcrumb trail
+ * in its place), serif title with an optional italic accent tail, optional
+ * subtitle blurb, optional trailing slot.
  */
 export function DenScreenHeading({
   kicker,
+  crumbs,
   title,
   accentTail,
   subtitle,
@@ -59,7 +148,11 @@ export function DenScreenHeading({
       <div className="den-heading-main">
         {/* Uppercased in CSS, not here, so the accessible name keeps the author's
             casing instead of being read out as shouting by a screen reader. */}
-        <p className="den-heading-kicker">{kicker}</p>
+        {crumbs === undefined ? (
+          <p className="den-heading-kicker">{kicker}</p>
+        ) : (
+          <DenBreadcrumbs crumbs={crumbs} />
+        )}
         <h1 className="den-heading-title">
           {accentTail ? `${title} ` : title}
           {accentTail !== undefined && <em className="den-heading-accent">{accentTail}</em>}
