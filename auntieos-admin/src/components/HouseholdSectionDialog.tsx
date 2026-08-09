@@ -3,6 +3,7 @@ import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
 import {
+  EDITABLE_HOUSEHOLD_SECTIONS,
   sectionErrors,
   validateHouseholdData,
   type HouseholdFieldSpec,
@@ -38,6 +39,14 @@ interface Props {
  * rejection leaves every edit exactly where the operator left it under a
  * persistent Banner. The success TOAST is not raised here, the caller raises it,
  * so the confirmation outlives this component's unmount.
+ *
+ * TEXT SECTIONS ONLY, and the refusal below is enforced here rather than trusted
+ * to the caller. `EDITABLE_HOUSEHOLD_SECTIONS` is the list of sections whose
+ * values are prose an operator types; the veterinary section is not on it,
+ * because its two real values are `vet_clinics` document ids picked by search.
+ * Rendering those as text boxes is how a household ends up pointed at an
+ * arbitrary clinic, and saving from here also patched the seven retired
+ * free-text vet keys straight back onto the record. See `VetSectionDialog`.
  */
 export function HouseholdSectionDialog({ section, kinfolkName, record, onClose, onSaved }: Props) {
   // Seeded from the WHOLE record, not just this section, so validation runs over
@@ -56,6 +65,27 @@ export function HouseholdSectionDialog({ section, kinfolkName, record, onClose, 
   const closeUnlessSaving = useCallback(() => {
     if (!saving) onClose();
   }, [saving, onClose]);
+
+  // After every hook, so the refusal cannot make them conditional. No fieldset
+  // and no Save button in this branch: a guard that only blocked the write would
+  // still have put a raw document id in an editable box on the way there.
+  if (!EDITABLE_HOUSEHOLD_SECTIONS.some((s) => s.id === section.id)) {
+    return (
+      <Dialog
+        title={`${section.title} · ${kinfolkName}`}
+        onClose={onClose}
+        footer={<GhostButton label="Close" onClick={onClose} />}
+      >
+        <Banner tone="error" title="This section has no text form">
+          <p>
+            {section.title} is chosen from the shared vet bank by search, so there is nothing here
+            to type. Nothing was changed. Close this and use Edit veterinary, which searches the
+            bank.
+          </p>
+        </Banner>
+      </Dialog>
+    );
+  }
 
   function set(key: keyof HouseholdFields, value: string) {
     setValues((current) => ({ ...current, [key]: value }));

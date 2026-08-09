@@ -6,6 +6,7 @@ import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKi
 import { GhostButton } from '../components/Buttons';
 import { MaskedValue } from '../components/MaskedValue';
 import { HouseholdSectionDialog } from '../components/HouseholdSectionDialog';
+import { VetSectionDialog } from '../components/VetSectionDialog';
 import { useToast } from '../components/Toast';
 import { useOneShot } from '../lib/useOneShot';
 import { getTestScope } from '../lib/testScope';
@@ -151,8 +152,30 @@ function HouseholdRecordView({
   const state: Async<HouseholdRecord | null> =
     saved !== null ? { status: 'ready', data: saved } : loaded;
 
-  const dialogFor = (record: HouseholdRecord) =>
-    editing === null ? null : (
+  /**
+   * Which editor a section gets, decided by the section itself.
+   *
+   * The veterinary section stores `vet_clinics` ids, so it goes to the picker;
+   * everything else is prose an operator types. `HouseholdSectionDialog` also
+   * enforces this on its own side (`EDITABLE_HOUSEHOLD_SECTIONS`), so a future
+   * caller that forgets the branch gets a refusal rather than a text box holding
+   * a raw document id.
+   */
+  const dialogFor = (record: HouseholdRecord) => {
+    if (editing === null) return null;
+    if (editing.editor === 'vetPicker') {
+      return (
+        <VetSectionDialog
+          section={editing}
+          kinfolkName={household}
+          record={record}
+          clinics={clinics}
+          onClose={() => setEditing(null)}
+          onSaved={(next) => handleSaved(next, editing)}
+        />
+      );
+    }
+    return (
       <HouseholdSectionDialog
         section={editing}
         kinfolkName={household}
@@ -161,6 +184,7 @@ function HouseholdRecordView({
         onSaved={(next) => handleSaved(next, editing)}
       />
     );
+  };
 
   return (
     <>
