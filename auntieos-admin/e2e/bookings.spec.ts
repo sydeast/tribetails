@@ -24,6 +24,11 @@ test.beforeEach(async ({ page }) => {
 
 test('the seeded visits arrive through the real rules and listener', async ({ page }) => {
   const list = page.locator('.bookings__list');
+  // The two finished visits sit in History, which opens on request, so they are
+  // not in the DOM until this press. Everything after it is the same assertion
+  // this test has always made.
+  await page.getByRole('button', { name: 'Show 2 finished' }).click();
+
   // Four since 2026-08-01, when `SEEDED_BOOKINGS.today` was added so that
   // Schedule's agenda (which lists the SELECTED day, defaulting to today) has a
   // row to render at all. The loop below is what carries the weight; the count
@@ -33,6 +38,41 @@ test('the seeded visits arrive through the real rules and listener', async ({ pa
   for (const seeded of Object.values(SEEDED_BOOKINGS)) {
     await expect(page.getByText(seeded.kinfolkName, { exact: true })).toBeVisible();
   }
+});
+
+test('the three status sections count the real rows they hold', async ({ page }) => {
+  // The browser-side half of `groupBookingsByStatus`. The unit tests classify
+  // literals written in a test file; this classifies documents Firestore
+  // returned, through the real listener, with production's mixed status casing
+  // in them ('SCHEDULED', 'completed', 'CANCELLED').
+  const pending = page.getByRole('group', { name: /^Pending approval/ });
+  const scheduled = page.getByRole('group', { name: /^Scheduled/ });
+  const history = page.getByRole('group', { name: /^History/ });
+
+  // Nothing seeded is DRAFT or PENDING, so this section proves the empty case:
+  // it keeps its heading and says what it is waiting for.
+  await expect(pending.locator('.bookings__section-count')).toHaveText('0');
+  await expect(pending.getByText('Nothing is waiting on a reply.')).toBeVisible();
+
+  await expect(scheduled.locator('.bookings__section-count')).toHaveText('2');
+  await expect(scheduled.locator('li')).toHaveCount(2);
+
+  // The count is honest while the rows are still collapsed: that is the whole
+  // point of putting it in the heading.
+  await expect(history.locator('.bookings__section-count')).toHaveText('2');
+  await expect(history.locator('li')).toHaveCount(0);
+  await history.getByRole('button', { name: 'Show 2 finished' }).click();
+  await expect(history.locator('li')).toHaveCount(2);
+});
+
+test('a status chip collapses the screen to that one section', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Cancelled' }).click();
+  await expect(page.getByRole('group', { name: /^History/ })).toBeVisible();
+  await expect(page.getByRole('group', { name: /^Pending approval/ })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: /^Scheduled/ })).toHaveCount(0);
+  // Asked for by name, so History is open: a second press to see what the chip
+  // already named would be asking twice.
+  await expect(page.getByText(SEEDED_BOOKINGS.cancelled.kinfolkName, { exact: true })).toBeVisible();
 });
 
 test('a lowercase status is still classified as completed', async ({ page }) => {

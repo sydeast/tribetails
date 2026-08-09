@@ -28,10 +28,15 @@ vi.mock('../api/inbox', async (orig) => ({
 }));
 
 // The in-screen thread detail view (opened when propless) loads via this callable.
-const { getConversationThread } = vi.hoisted(() => ({ getConversationThread: vi.fn() }));
+// `markAllThreadsRead` is the bulk clear behind the messages panel's header action.
+const { getConversationThread, markAllThreadsRead } = vi.hoisted(() => ({
+  getConversationThread: vi.fn(),
+  markAllThreadsRead: vi.fn(),
+}));
 vi.mock('../api/inboxThread', async (orig) => ({
   ...(await orig<typeof import('../api/inboxThread')>()),
   getConversationThread,
+  markAllThreadsRead,
 }));
 
 // FOUR bounded listeners come through this hook: the four Channels streams
@@ -121,6 +126,7 @@ beforeEach(() => {
   useCollection.mockReset();
   streams();
   bulkMarkNotificationsRead.mockReset().mockResolvedValue(1);
+  markAllThreadsRead.mockReset();
 });
 
 /**
@@ -291,7 +297,11 @@ describe('Inbox screen', () => {
       // Both dates are >1 day from the fixed "today" (2026-07-20), so both
       // render as "Weekday, Mon DD" labels, never Today/Tomorrow/Yesterday,
       // newest first per groupThreadsByDay.
-      const headers = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+      //
+      // Level FOUR, not three: the day groups now nest inside the waiting/
+      // answered status sections, which own level three. `groupThreadsByDay`
+      // still runs (the AO-18 local-day fix is unchanged), one level deeper.
+      const headers = screen.getAllByRole('heading', { level: 4 }).map((h) => h.textContent);
       expect(headers).toEqual(['Sat, Jul 18', 'Thu, Jul 16']);
     });
   });
@@ -325,6 +335,123 @@ describe('Inbox screen', () => {
     await screen.findByText('The Alvarez Household');
     const row = screen.getByText('The Alvarez Household').closest('.inbox__row-main');
     expect(row?.tagName).toBe('BUTTON');
+  });
+});
+
+/**
+ * Status grouping + the bulk clear (PR7 / item 6).
+ *
+ * The two are one feature: the operator's question on opening the Inbox is
+ * "who is waiting on me", and the answer is either a short list to work or a
+ * pile to clear. Day grouping stays underneath both sections, so the AO-18
+ * local-day guarantee is untouched.
+ */
+describe('Inbox waiting/answered sections', () => {
+  it('sorts the list into Waiting on a reply above Answered', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Waiting Household');
+    const sections = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(sections).toEqual(['Waiting on a reply', 'Answered']);
+  });
+
+  it('says a section is empty rather than dropping its header', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k1', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Answered Household');
+    expect(screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' })).toBeInTheDocument();
+    expect(screen.getByText('Nothing is waiting on a reply.')).toBeInTheDocument();
+  });
+
+  it('drops the Answered header under the Unread chip rather than claiming nothing was answered', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Answered Household');
+    await userEvent.click(screen.getByRole('tab', { name: 'Unread' }));
+    // "Answered / Nothing answered yet" here would be a falsehood: the answered
+    // thread exists, the filter is hiding it.
+    expect(screen.queryByRole('heading', { level: 3, name: 'Answered' })).toBeNull();
+    expect(screen.queryByText('No answered threads yet.')).toBeNull();
+    expect(screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' })).toBeInTheDocument();
+  });
+
+  it('still groups each section by LOCAL day underneath (groupThreadsByDay is not replaced)', async () => {
+    await withFixedToday(new Date(2026, 6, 16, 12, 0, 0), async () => {
+      listConversations.mockResolvedValue([
+        thread({ kinfolkId: 'k1', lastMessageAtMs: Date.parse('2026-07-17T01:00:00.000Z') }),
+      ]);
+      render(<Inbox />);
+      expect(await screen.findByText('Today', { selector: '.inbox__day-header' })).toBeInTheDocument();
+    });
+  });
+});
+
+describe('Inbox "Mark all read"', () => {
+  it('clears the badge and reports the count after marking all read', async () => {
+    listConversations
+      .mockResolvedValueOnce([
+        thread({ kinfolkId: 'k1', unreadForAdmin: true }),
+        thread({ kinfolkId: 'k2', unreadForAdmin: true }),
+      ])
+      .mockResolvedValue([
+        thread({ kinfolkId: 'k1', unreadForAdmin: false }),
+        thread({ kinfolkId: 'k2', unreadForAdmin: false }),
+      ]);
+    markAllThreadsRead.mockResolvedValue({ cleared: 4 });
+    render(<Inbox />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('4 threads marked read');
+    // The count came from a RELOAD, not an optimistic local edit.
+    expect(listConversations).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/unread/)).toBeNull();
+  });
+
+  it('leaves the badge alone and shows the error when the write fails', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
+    markAllThreadsRead.mockRejectedValue(new Error('unavailable'));
+    render(<Inbox />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('unavailable');
+    expect(screen.getByText(/unread/)).toBeInTheDocument();
+  });
+
+  it('says "1 thread" for a single cleared thread, not "1 threads"', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
+    markAllThreadsRead.mockResolvedValue({ cleared: 1 });
+    render(<Inbox />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('1 thread marked read');
+  });
+
+  it('is absent with nothing unread, rather than offering a control that would clear nothing', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: false })]);
+    render(<Inbox />);
+    await screen.findByText('The Alvarez Household');
+    expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull();
+  });
+
+  it('does not fire the callable twice while the first write is still in flight', async () => {
+    listConversations.mockResolvedValue([thread({ kinfolkId: 'k1', unreadForAdmin: true })]);
+    let release: (v: { cleared: number }) => void = () => {};
+    markAllThreadsRead.mockReturnValue(
+      new Promise<{ cleared: number }>((resolve) => {
+        release = resolve;
+      }),
+    );
+    render(<Inbox />);
+    const button = await screen.findByRole('button', { name: 'Mark all read' });
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(markAllThreadsRead).toHaveBeenCalledTimes(1);
+    release({ cleared: 1 });
   });
 });
 

@@ -850,6 +850,23 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
 
+    /**
+     * Clears the admin-side unread flag on EVERY thread waiting on a reply and
+     * returns how many the server actually cleared.
+     *
+     * The count is the server's own, never a local guess: the callable bounds
+     * one call, so a long backlog can leave threads still unread, and the caller
+     * re-reads the list rather than assuming an empty inbox. A response with no
+     * `cleared` field fails the Result instead of degrading to zero.
+     */
+    suspend fun markAllThreadsRead(): Result<Int> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("markAllThreadsRead").call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.inbox.decodeClearedCount(raw)
+            ?: error("markAllThreadsRead returned no count")
+    }.onFailure { AuntieLog.e("markAllThreadsRead failed", it) }
+
     // ── Dashboard widget callables (AO-35/39/40/41) ──────────────────────────
     // Admin-gated MyTribe callables backing the hidden-by-default Home widgets.
     // Fail-loud: every failure (missing Mapbox key, missing supply, etc) rides the

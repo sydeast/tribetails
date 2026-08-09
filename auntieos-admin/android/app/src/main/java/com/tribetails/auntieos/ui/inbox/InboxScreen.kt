@@ -34,10 +34,11 @@ import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Den-redesign port of the web Inbox screen: the Twilio voicemail / call / SMS /
-// email surface. Bulk mark-read lives on the Notifications screen (the `notifications`
-// collection that bulkMarkNotificationsRead operates on), not here; this Inbox keeps
-// the per-thread reply / mark path.
+// Den-redesign port of the web Inbox screen: the kinfolk<->auntie message
+// threads (MessagesSection) above the Twilio voicemail / call / SMS / email
+// surface. Bulk mark-read covers the MESSAGE THREADS, via markAllThreadsRead.
+// The four Twilio channels still have no shared per-entry read model, so they
+// keep the per-entry reply / mark path and no bulk control.
 // ─────────────────────────────────────────────────────────────────────────────
 
 private enum class Channel(val label: String, val icon: ImageVector) {
@@ -85,6 +86,8 @@ fun InboxScreen(
     val threadLoading by viewModel.threadLoading.collectAsState()
     val conversationError by viewModel.conversationError.collectAsState()
     val isReplying by viewModel.isReplying.collectAsState()
+    val bulkReadResult by viewModel.bulkReadResult.collectAsState()
+    val bulkReadInFlight by viewModel.bulkReadInFlight.collectAsState()
 
     var filter by remember { mutableStateOf(Channel.All) }
     var toastMessage  by remember { mutableStateOf<String?>(null) }
@@ -152,15 +155,21 @@ fun InboxScreen(
                         threadLoading = threadLoading,
                         error = conversationError,
                         isReplying = isReplying,
+                        bulkReadResult = bulkReadResult,
+                        bulkReadInFlight = bulkReadInFlight,
                         onOpen = viewModel::openConversation,
                         onReply = viewModel::sendReply,
+                        onMarkAllRead = viewModel::markAllThreadsRead,
                     )
                 }
 
-                // Note: bulk mark-read is wired for real on the Notifications screen
-                // (the `notifications` collection that bulkMarkNotificationsRead
-                // operates on). This Inbox is the Twilio voicemail/call/SMS/email
-                // surface; per-thread reply/mark stays the path here.
+                // Bulk mark-read exists for MESSAGE THREADS (above, via the
+                // markAllThreadsRead callable) and for the Notifications screen's
+                // own `notifications` collection. It deliberately does NOT exist
+                // for the Twilio voicemail/call/SMS/email section below: those
+                // four channels have no shared per-entry read model, so a button
+                // there would have nothing honest to write (page-specs/20-inbox.md
+                // item 6 keeps it dark until `markAllInboxRead` is built).
 
                 item {
                     val entries = buildList {
@@ -548,6 +557,15 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
 // threads. listConversations -> thread list; opening a thread fetches messages
 // (and clears the admin unread) and reveals a reply box wired to
 // replyToConversation. Fail-loud: load / send errors surface in a banner.
+//
+// Grouped WAITING-FIRST (groupThreadsByWaiting, parity with the React admin's
+// src/lib/inboxFormat.ts): the operator's first question is who is waiting on
+// them, and a flat newest-first list buries three live threads under ninety
+// finished ones. Both headers always render, empty or not, for the reason
+// spelled out on that function.
+//
+// "Mark all read" clears every waiting thread through the server and re-reads
+// the list; it is offered only when something is genuinely waiting.
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun MessagesSection(
@@ -558,8 +576,11 @@ private fun MessagesSection(
     threadLoading: Boolean,
     error: String?,
     isReplying: Boolean,
+    bulkReadResult: String?,
+    bulkReadInFlight: Boolean,
     onOpen: (String) -> Unit,
     onReply: (String) -> Unit,
+    onMarkAllRead: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -575,6 +596,18 @@ private fun MessagesSection(
                     Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.error)
                 }
             }
+            bulkReadResult?.let { msg ->
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            // Offered only when something is actually waiting: a control that
+            // would clear nothing is a dead control.
+            if (unreadConversationCount(conversations) > 0) {
+                GhostButton(
+                    label = if (bulkReadInFlight) "Marking…" else "Mark all read",
+                    onClick = onMarkAllRead,
+                    enabled = !bulkReadInFlight,
+                )
+            }
             when {
                 loading && conversations.isEmpty() ->
                     Text("Loading messages…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -584,7 +617,23 @@ private fun MessagesSection(
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textDim,
                     )
-                else -> conversations.forEach { conv ->
+                else -> groupThreadsByWaiting(conversations).forEach { section ->
+                  Text(
+                      section.label,
+                      style = AuntieTheme.typography.labelLarge,
+                      color = if (section.key == ThreadSectionKey.WAITING) c.textPrimary else c.textDim,
+                  )
+                  if (section.threads.isEmpty()) {
+                      // The header stays: an absent section reads the same as
+                      // one that has not loaded.
+                      Text(
+                          if (section.key == ThreadSectionKey.WAITING) "Nothing is waiting on a reply."
+                          else "No answered threads yet.",
+                          style = AuntieTheme.typography.bodySmall,
+                          color = c.textDim,
+                      )
+                  }
+                  section.threads.forEach { conv ->
                     val selected = conv.kinfolkId == selectedId
                     Row(
                         modifier = Modifier
@@ -657,6 +706,7 @@ private fun MessagesSection(
                             )
                         }
                     }
+                  }
                 }
             }
         }
