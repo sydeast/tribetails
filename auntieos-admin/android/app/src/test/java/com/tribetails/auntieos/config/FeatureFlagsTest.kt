@@ -25,7 +25,7 @@ class FeatureFlagsTest {
         )
     }
 
-    @Test fun registry_has10Keys_allNamespaced() {
+    @Test fun registry_has11Keys_allNamespaced() {
         // 29 finished/always-on flags have been retired. The latest 6 (Stage 2 Step 2)
         // were built for real, not gated, so their flags are gone:
         //   directory.lastVisit (per-kinfolk last-completed-visit date, lastVisitByKinfolk),
@@ -50,8 +50,11 @@ class FeatureFlagsTest {
         // gated. The shared-with-web registry target is 9; the android-only WARNING-8
         // flag (auntieos.inboundComms.serverAuthoritative) adds one android key on top,
         // so the android registry is 10 (web stays 9 - the inbound-push persistence path
-        // it gates is android-only).
-        assertEquals(10, FeatureFlags.KEYS.size)
+        // it gates is android-only). The Inbox arrangement A/B flag
+        // (auntieos.inbox.waitingSections) is shared with web and makes it 11 here, 10
+        // there; it is a TRIAL and is meant to be deleted once the operator picks an
+        // arrangement, which is when these two numbers go back to 10 and 9.
+        assertEquals(11, FeatureFlags.KEYS.size)
         assertTrue(FeatureFlags.KEYS.all { it.startsWith("auntieos.") })
         assertEquals(FeatureFlags.KEYS.size, FeatureFlags.KEYS.toSet().size) // no dup keys
     }
@@ -109,6 +112,26 @@ class FeatureFlagsTest {
         assertFalse(FeatureFlags.ALWAYS_ON.contains(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP))
         val on = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP to true))
         assertTrue(on.communicateCommsRecap)
+    }
+
+    // The Inbox arrangement A/B trial. The ONLY gated flag here that defaults ON,
+    // because both of its arms are finished code and the default has to be the
+    // arrangement already shipping: merging must not re-lay out anyone's Inbox.
+    @Test fun inboxWaitingSections_defaultsOn_inKeys_notAlwaysOn_andFlipsOff() {
+        assertTrue(FeatureFlags().inboxWaitingSections)
+        assertTrue(FeatureFlags.KEYS.contains(FeatureFlags.KEY_INBOX_WAITING_SECTIONS))
+        // NOT always-on: an ALWAYS_ON key gets no toggle row and ignores remote
+        // overrides, which are exactly the two things an A/B trial needs.
+        assertFalse(FeatureFlags.ALWAYS_ON.contains(FeatureFlags.KEY_INBOX_WAITING_SECTIONS))
+        val off = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_INBOX_WAITING_SECTIONS to false))
+        assertFalse(off.inboxWaitingSections)
+        assertEquals(off, FeatureFlags.fromMap(off.toMap()))
+    }
+
+    @Test fun inboxWaitingSections_keyMatchesWeb_forTheSharedFirestoreDoc() {
+        // One doc, three clients: this string is how the operator's single choice
+        // reaches both the React admin and android.
+        assertEquals("auntieos.inbox.waitingSections", FeatureFlags.KEY_INBOX_WAITING_SECTIONS)
     }
 
     // WARNING-8: android-only flag that gates client-side persistence of inbound

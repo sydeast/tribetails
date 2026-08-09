@@ -45,7 +45,24 @@ internal data class FlagMeta(val key: String, val label: String, val detail: Str
 internal val FLAGS: List<FlagMeta> = listOf(
     FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: AI comms recap", "AI-summarised 'where things last left off' box in the recipient-context panel (Phase 1)."),
     FlagMeta(FeatureFlags.KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE, "Inbound comms: server authoritative (WARNING-8)", "ON = stop this device writing inbound call/voicemail/SMS records from FCM pushes; the server Twilio webhooks become the sole writer (closes the spoofed-push vuln). Flip ON only AFTER verifying the server path, or records may be lost."),
+    FlagMeta(FeatureFlags.KEY_INBOX_WAITING_SECTIONS, "Inbox: waiting/answered sections", "ON (the default): message threads sit under \"Waiting on a reply\" and \"Answered\". OFF: one flat list, the arrangement before this. Both are finished; pick either. Shared with the web admin, and it takes effect on the next app load here."),
 )
+
+/**
+ * What a row's toggle SHOWS for [key], given the raw override map
+ * `repo.getFeatureFlags()` returned.
+ *
+ * That map is SPARSE: it holds only the keys somebody has actually written, so
+ * a flag nobody has touched is absent from it. Reading that absence as "off"
+ * was harmless while every gated flag defaulted off. The Inbox arrangement flag
+ * defaults ON, and the same reading would draw its toggle OFF beside the
+ * sections it gates, then turn the operator's first tap into a write of `true`
+ * that changes nothing: a control that looks broken because it is being asked
+ * to undo something already undone. Resolving through
+ * [FeatureFlags.fromOverrides] makes the row show the value the app is running.
+ */
+internal fun flagRowValue(overrides: Map<String, Boolean>, key: String): Boolean =
+    FeatureFlags.fromOverrides(overrides).toMap()[key] ?: false
 
 /**
  * Admin Feature Flags screen (Android parity with web `FeatureFlagsScreen`). Lists the
@@ -101,7 +118,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         FLAGS.forEach { meta ->
-                            val current = ov[meta.key] ?: false
+                            val current = flagRowValue(ov, meta.key)
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,

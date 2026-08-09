@@ -11,10 +11,13 @@ import {
   threadDayLabel,
   groupThreadsByDay,
   groupThreadsByWaiting,
+  inboxArrangementFromFlags,
   unreadThreadCount,
   localDateIso,
   type ThreadReadState,
+  type InboxArrangement,
 } from '../lib/inboxFormat';
+import { getFeatureFlags } from '../api/featureFlags';
 import { inboxSection } from '../lib/inboxSections';
 import { type Async } from '../lib/async';
 import { useCollection } from '../lib/firestore';
@@ -134,7 +137,17 @@ interface InboxProps {
  * (`threadSender`) through positive enumerations, never negation (the
  * `sessionFormat.ts` / AO-12 convention), and groups the FILTERED rows TWICE.
  *
- * ── TWO LEVELS OF GROUPING, AND WHY BOTH ──────────────────────────────────
+ * ── TWO ARRANGEMENTS, ONE FLAG, BOTH REAL ─────────────────────────────────
+ * `auntieos.inbox.waitingSections` (Admin → More → Feature Flags) picks which
+ * of the two the list is drawn in, and it is read fresh on every mount so
+ * flipping it and opening the Inbox is enough to see the other one. ON, the
+ * default, is the sectioned arrangement described below. OFF is the
+ * arrangement that preceded PR #301: one flat list grouped by local day, with
+ * the day headers back at h3. Nothing else changes between the two: the filter
+ * chips, the unread badge, the rows and "Mark all read" are the same feature on
+ * either side. `lib/featureFlagsCatalog.ts` carries the flag's exit plan.
+ *
+ * ── TWO LEVELS OF GROUPING (ARM A), AND WHY BOTH ──────────────────────────
  * `groupThreadsByWaiting` splits the list into "Waiting on a reply" and
  * "Answered", because the operator's first question is who is waiting on them,
  * and a strictly chronological list buries three live threads under ninety
@@ -197,6 +210,32 @@ export function Inbox({ onSelectThread }: InboxProps) {
   }, []);
 
   useEffect(() => load(), [load]);
+
+  // ── which arrangement to draw (the A/B flag) ────────────────────────────
+  //
+  // Read fresh on every mount, NOT through `useSharedOneShot`: a five-minute
+  // cache would swallow the flip the operator just made, and the whole point of
+  // this flag is that flipping it and opening the Inbox shows the other layout.
+  // One extra callable, on one screen, is what buys that.
+  //
+  // `null` means "not decided yet", and the list waits for it (below). A
+  // FAILED read is not left null: it resolves to the catalog default, because
+  // `false` here is the other arrangement rather than a safe off, and a flag
+  // call that failed must never be the thing that re-lays out the Inbox.
+  const [arrangement, setArrangement] = useState<InboxArrangement | null>(null);
+  useEffect(() => {
+    let live = true;
+    getFeatureFlags()
+      .then((flags) => {
+        if (live) setArrangement(inboxArrangementFromFlags(flags));
+      })
+      .catch(() => {
+        if (live) setArrangement(inboxArrangementFromFlags({}));
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // Bulk mark-read. The ref, not the state, is the re-entrancy guard: a second
   // click can land before React has re-rendered with `status: 'working'`, and
@@ -301,6 +340,25 @@ export function Inbox({ onSelectThread }: InboxProps) {
           }
         >
           {(data) => {
+            // The flag decides the SHAPE of everything below, so drawing rows
+            // before it resolves would show one arrangement and then redraw in
+            // the other, on the one screen whose whole purpose is comparing
+            // them. The wait is a single callable bounded by lib/fns's 20s
+            // timeout, and a failure resolves to the default rather than
+            // hanging here (see the effect above).
+            if (arrangement === null) {
+              // `div[role=status][aria-live=polite]` is the app's ONE in-flight
+              // marker (components/AsyncRegion.tsx), and the visual harness
+              // waits on exactly that selector before it photographs a screen.
+              // A bare `<p role="status">` would not do: the Inbox already
+              // keeps a permanent one for announcements, which is why the
+              // harness ignores that shape.
+              return (
+                <div role="status" aria-live="polite">
+                  <p className="inbox__hint">Reading the inbox layout setting…</p>
+                </div>
+              );
+            }
             // Row-open handler: an external onSelectThread wins; otherwise open the
             // in-screen ConversationThread, resolving the household name from this
             // same loaded row (no second lookup).
@@ -315,17 +373,24 @@ export function Inbox({ onSelectThread }: InboxProps) {
             // that same array (the Sessions.tsx/Invoices.tsx .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = data.filter((row) => activeFilter.test(threadReadState(row.unreadForAdmin)));
-            // Status FIRST, day WITHIN it. `groupThreadsByDay` is not replaced:
-            // it still decides every date header, so the AO-18 local-day fix
-            // applies inside both sections exactly as it did on the flat list.
+            // ARM A, the arrangement that ships by default: status FIRST, day
+            // WITHIN it. `groupThreadsByDay` is not replaced; it still decides
+            // every date header, so the AO-18 local-day fix applies inside both
+            // sections exactly as it did on the flat list.
             //
             // An empty section still renders its header, but only when the
             // active filter would have LET rows into it. Under the Unread chip,
             // "Answered / Nothing answered yet" would be a plain falsehood:
             // there ARE answered threads, the filter is hiding them.
-            const sections = groupThreadsByWaiting(visible).filter(
-              (s) => s.threads.length > 0 || activeFilter.test(SECTION_READ_STATE[s.key]),
-            );
+            //
+            // Empty under ARM B, which has no sections at all: computing them
+            // there would be work whose result the flat branch throws away.
+            const sections =
+              arrangement === 'waitingSections'
+                ? groupThreadsByWaiting(visible).filter(
+                    (s) => s.threads.length > 0 || activeFilter.test(SECTION_READ_STATE[s.key]),
+                  )
+                : [];
 
             return (
               <>
@@ -347,6 +412,27 @@ export function Inbox({ onSelectThread }: InboxProps) {
 
                 {visible.length === 0 ? (
                   <EmptyHint>Nothing matches this filter.</EmptyHint>
+                ) : arrangement === 'flatByDay' ? (
+                  // ── ARM B: the arrangement that preceded PR #301 ─────────
+                  // One flat list, `groupThreadsByDay` at the top level, day
+                  // headers back up to h3 because nothing sits above them here.
+                  // Byte-for-byte the markup #301 replaced, so what the
+                  // operator compares is the real previous Inbox and not a
+                  // reconstruction of it.
+                  <ul className="inbox__list">
+                    {groupThreadsByDay(visible).map((g) => (
+                      <li key={g.dayKeyValue} className="inbox__day-group">
+                        <h3 className="inbox__day-header">
+                          {threadDayLabel(g.dayKeyValue, todayIso)}
+                        </h3>
+                        <ul className="inbox__day-rows">
+                          {g.rows.map((row) => (
+                            <ThreadRow key={row.kinfolkId} row={row} onSelectThread={openHandler} />
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <ul className="inbox__sections">
                     {sections.map((section) => (

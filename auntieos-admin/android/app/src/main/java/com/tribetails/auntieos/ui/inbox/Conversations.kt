@@ -85,7 +85,13 @@ fun unreadConversationCount(list: List<ConversationSummary>): Int = list.count {
 // operator's actual question ("is anyone waiting on me") outright.
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum class ThreadSectionKey { WAITING, ANSWERED }
+/**
+ * [FLAT] is not a third section. It is the SINGLE pseudo-section the flat
+ * arrangement returns so both arms of the A/B flag hand the screen the same
+ * type, and it carries an empty label because that arrangement draws no header
+ * at all. `MessagesSection` renders a header for every key except this one.
+ */
+enum class ThreadSectionKey { WAITING, ANSWERED, FLAT }
 
 data class ThreadSection(
     val key: ThreadSectionKey,
@@ -108,6 +114,27 @@ fun groupThreadsByWaiting(list: List<ConversationSummary>): List<ThreadSection> 
         ThreadSection(ThreadSectionKey.ANSWERED, "Answered", answered),
     )
 }
+
+/**
+ * The thread list's shape under whichever arrangement the operator's
+ * `auntieos.inbox.waitingSections` flag has selected.
+ *
+ * ON: the waiting/answered sections above, the arrangement PR #301 shipped.
+ * OFF: one headerless run of threads in the server's own newest-first order,
+ * which is exactly what android's Inbox showed before #301. Android never
+ * grouped this list by calendar day (the React admin did, and its OFF arm keeps
+ * its day headers), so this arm restores what android actually had rather than
+ * importing the other client's layout.
+ *
+ * Pure, and the only place the flag changes the list's shape, so both arms are
+ * decided in one testable function instead of inside a Composable.
+ */
+fun arrangeThreads(
+    list: List<ConversationSummary>,
+    waitingSections: Boolean,
+): List<ThreadSection> =
+    if (waitingSections) groupThreadsByWaiting(list)
+    else listOf(ThreadSection(ThreadSectionKey.FLAT, "", list))
 
 /**
  * The number of threads `markAllThreadsRead` actually cleared, or null when the

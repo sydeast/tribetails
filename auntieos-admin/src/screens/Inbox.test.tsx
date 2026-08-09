@@ -70,7 +70,18 @@ vi.mock('../api/notifications', async (orig) => ({
   bulkMarkNotificationsRead,
 }));
 
+// The screen reads `auntieos.inbox.waitingSections` on every mount to decide
+// which of the two arrangements to draw. Mocked here so no test reaches a real
+// callable; `beforeEach` defaults it to the shipped ON arm, and the A/B suite
+// below is the only place that turns it off.
+const { getFeatureFlags } = vi.hoisted(() => ({ getFeatureFlags: vi.fn() }));
+vi.mock('../api/featureFlags', async (orig) => ({
+  ...(await orig<typeof import('../api/featureFlags')>()),
+  getFeatureFlags,
+}));
+
 import { Inbox } from './Inbox';
+import { KEY_INBOX_WAITING_SECTIONS, DEFAULTS } from '../lib/featureFlagsCatalog';
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
@@ -127,7 +138,17 @@ beforeEach(() => {
   streams();
   bulkMarkNotificationsRead.mockReset().mockResolvedValue(1);
   markAllThreadsRead.mockReset();
+  // Every flag resolved to its catalog default, which is what the real
+  // `api/featureFlags.getFeatureFlags` hands back for an empty override doc.
+  // That means the whole suite runs the DEFAULT arrangement unless a test says
+  // otherwise, so the A/B flag can never quietly change what the rest asserts.
+  getFeatureFlags.mockReset().mockResolvedValue({ ...DEFAULTS });
 });
+
+/** Resolve the flag read to a specific arrangement for the next render. */
+function arrangement(waitingSections: boolean): void {
+  getFeatureFlags.mockResolvedValue({ ...DEFAULTS, [KEY_INBOX_WAITING_SECTIONS]: waitingSections });
+}
 
 /**
  * Only the day-grouping/label tests fake the clock, and fake ONLY `Date`
@@ -391,6 +412,127 @@ describe('Inbox waiting/answered sections', () => {
       render(<Inbox />);
       expect(await screen.findByText('Today', { selector: '.inbox__day-header' })).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * The A/B flag `auntieos.inbox.waitingSections`. ON is the sectioned
+ * arrangement #301 shipped (asserted by the suite above); OFF restores the
+ * arrangement that preceded it, one flat list grouped by local calendar day.
+ *
+ * Both arms are the real screen. The flag decides the ARRANGEMENT and nothing
+ * else: the filter chips, the badge, the row markup and "Mark all read" are the
+ * same feature on either side, so the tests below check that the OFF arm is a
+ * different shape, not a smaller product.
+ */
+describe('Inbox arrangement flag (auntieos.inbox.waitingSections)', () => {
+  it('OFF: draws one flat list with no waiting/answered headers', async () => {
+    arrangement(false);
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-answered', kinfolkName: 'Answered Household', unreadForAdmin: false }),
+      thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Waiting Household');
+    expect(screen.getByText('Answered Household')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Waiting on a reply' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Answered' })).toBeNull();
+    expect(screen.queryByText('Nothing is waiting on a reply.')).toBeNull();
+  });
+
+  it('OFF: day headers come back to the top level as h3, keeping the AO-18 local day', async () => {
+    await withFixedToday(new Date(2026, 6, 16, 12, 0, 0), async () => {
+      arrangement(false);
+      // 8pm CDT on 2026-07-16; a raw UTC slice would file it under the 17th.
+      listConversations.mockResolvedValue([
+        thread({ lastMessageAtMs: Date.parse('2026-07-17T01:00:00.000Z') }),
+      ]);
+      render(<Inbox />);
+      const header = await screen.findByText('Today', { selector: '.inbox__day-header' });
+      expect(header.tagName).toBe('H3');
+      expect(screen.queryByText('Tomorrow', { selector: '.inbox__day-header' })).toBeNull();
+    });
+  });
+
+  it('OFF: orders the day groups newest first, the pre-#301 activity-feed order', async () => {
+    await withFixedToday(new Date(2026, 6, 20, 12, 0, 0), async () => {
+      arrangement(false);
+      listConversations.mockResolvedValue([
+        thread({
+          kinfolkId: 'k-earlier',
+          kinfolkName: 'Earlier Household',
+          lastMessageAtMs: Date.parse('2026-07-16T20:00:00.000Z'),
+        }),
+        thread({
+          kinfolkId: 'k-later',
+          kinfolkName: 'Later Household',
+          lastMessageAtMs: Date.parse('2026-07-18T20:00:00.000Z'),
+        }),
+      ]);
+      render(<Inbox />);
+      await screen.findByText('Later Household');
+      const days = screen
+        .getAllByRole('heading', { level: 3 })
+        .map((h) => h.textContent);
+      expect(days).toEqual(['Sat, Jul 18', 'Thu, Jul 16']);
+    });
+  });
+
+  it('OFF: an emptying filter still says what emptied it', async () => {
+    arrangement(false);
+    listConversations.mockResolvedValue([thread({ unreadForAdmin: false })]);
+    render(<Inbox />);
+    await screen.findByText('The Alvarez Household');
+    await userEvent.click(screen.getByRole('tab', { name: 'Unread' }));
+    expect(screen.getByText('Nothing matches this filter.')).toBeInTheDocument();
+  });
+
+  it('OFF: "Mark all read" is still a working control, because the flag governs arrangement only', async () => {
+    arrangement(false);
+    listConversations
+      .mockResolvedValueOnce([thread({ unreadForAdmin: true })])
+      .mockResolvedValue([thread({ unreadForAdmin: false })]);
+    markAllThreadsRead.mockResolvedValue({ cleared: 1 });
+    render(<Inbox />);
+    await screen.findByText('The Alvarez Household');
+    await userEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
+    expect(await screen.findByText('1 thread marked read')).toBeInTheDocument();
+    expect(markAllThreadsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON: draws the waiting/answered sections', async () => {
+    arrangement(true);
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
+    ]);
+    render(<Inbox />);
+    await screen.findByText('Waiting Household');
+    expect(screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' })).toBeInTheDocument();
+  });
+
+  // A flag read that fails must not decide the arrangement by accident. `false`
+  // is not a safe "off" for this flag, it is the other layout, so a failed read
+  // falls back to the catalog default and the operator sees today's Inbox.
+  it('falls back to the shipped sections when the flag read fails, and still lists the threads', async () => {
+    getFeatureFlags.mockRejectedValue(new Error('getFeatureFlags failed'));
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k-waiting', kinfolkName: 'Waiting Household', unreadForAdmin: true }),
+    ]);
+    render(<Inbox />);
+    expect(await screen.findByText('Waiting Household')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Waiting on a reply' })).toBeInTheDocument();
+  });
+
+  // Drawing rows before the flag resolves would flash one arrangement and then
+  // redraw in the other, on the one screen whose whole point is comparing them.
+  it('holds the list until the arrangement is known, rather than flashing the wrong one', async () => {
+    getFeatureFlags.mockReturnValue(new Promise(() => {})); // never settles
+    listConversations.mockResolvedValue([thread({})]);
+    render(<Inbox />);
+    expect(
+      await screen.findByText('Reading the inbox layout setting…'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('The Alvarez Household')).toBeNull();
   });
 });
 

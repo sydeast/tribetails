@@ -15,7 +15,9 @@ import {
   groupThreadsByWaiting,
   localDateIso,
   replyBlocker,
+  inboxArrangementFromFlags,
 } from './inboxFormat';
+import { KEY_INBOX_WAITING_SECTIONS } from './featureFlagsCatalog';
 
 // File-scope TZ pin: several suites below (threadDayKey/threadClock,
 // groupThreadsByDay) assert LOCAL day/time derived from a UTC-instant epoch
@@ -244,6 +246,33 @@ describe('groupThreadsByWaiting', () => {
     ];
     groupThreadsByWaiting(rows);
     expect(rows.map((r) => r._id)).toEqual(['a', 'b']);
+  });
+});
+
+/**
+ * The Inbox A/B flag's one decision point. The interesting cases are all about
+ * what happens when the flag map does NOT carry a usable answer: the fallback
+ * must be the catalog default (the sections that ship today), never `false`,
+ * because `false` is not a safe "off" here, it is the OTHER arrangement.
+ */
+describe('inboxArrangementFromFlags', () => {
+  it('draws the waiting/answered sections when the flag is on', () => {
+    expect(inboxArrangementFromFlags({ [KEY_INBOX_WAITING_SECTIONS]: true })).toBe('waitingSections');
+  });
+
+  it('draws the flat day-grouped list when the operator turns the flag off', () => {
+    expect(inboxArrangementFromFlags({ [KEY_INBOX_WAITING_SECTIONS]: false })).toBe('flatByDay');
+  });
+
+  it('falls back to the shipped arrangement for a flag map that never mentions the key', () => {
+    expect(inboxArrangementFromFlags({})).toBe('waitingSections');
+    expect(inboxArrangementFromFlags({ 'auntieos.totally.bogus': false })).toBe('waitingSections');
+  });
+
+  it('falls back to the shipped arrangement for a non-boolean value on the key', () => {
+    // Wire JSON from a stale function revision, or a hand-edited Firestore doc.
+    const wire = { [KEY_INBOX_WAITING_SECTIONS]: 'no' } as unknown as Record<string, boolean>;
+    expect(inboxArrangementFromFlags(wire)).toBe('waitingSections');
   });
 });
 

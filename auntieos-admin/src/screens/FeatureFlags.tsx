@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getFeatureFlags, setFeatureFlags, type FeatureFlags as Flags } from '../api/featureFlags';
-import { KEY_COMMUNICATE_COMMS_RECAP } from '../lib/featureFlagsCatalog';
+import {
+  KEY_COMMUNICATE_COMMS_RECAP,
+  KEY_INBOX_WAITING_SECTIONS,
+} from '../lib/featureFlagsCatalog';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -28,6 +31,12 @@ export const FLAGS: readonly FlagMeta[] = [
     label: 'Communicate: comms recap',
     detail:
       'AI-generated 1-2 sentence recap of recent communications in the recipient context panel (recap_recent_comms callable).',
+  },
+  {
+    key: KEY_INBOX_WAITING_SECTIONS,
+    label: 'Inbox: waiting/answered sections',
+    detail:
+      'ON (the default): message threads sit under "Waiting on a reply" and "Answered", each still grouped by day. OFF: one flat list grouped by day, the arrangement before this. Both are finished; pick either. Open the Inbox to see the change, no reload needed.',
   },
 ];
 
