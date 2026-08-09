@@ -18,33 +18,65 @@ class KinTaleLogsCountTest {
 
     @Test
     fun statesTheLoadedCountWhenNothingWasExcluded() {
-        assertEquals("12 loaded", resultCountLabel(loaded = 12, matching = 12, isLoading = false))
+        assertEquals(
+            "12 loaded",
+            resultCountLabel(loaded = 12, matching = 12, isLoading = false, hasError = false),
+        )
     }
 
     @Test
     fun statesBothNumbersOnceTheSearchExcludedSomething() {
-        assertEquals("3 of 12 loaded", resultCountLabel(loaded = 12, matching = 3, isLoading = false))
+        assertEquals(
+            "3 of 12 loaded",
+            resultCountLabel(loaded = 12, matching = 3, isLoading = false, hasError = false),
+        )
     }
 
     @Test
     fun anHonestZeroKeepsTheDenominatorTheOperatorCanSee() {
-        assertEquals("0 of 12 loaded", resultCountLabel(loaded = 12, matching = 0, isLoading = false))
+        assertEquals(
+            "0 of 12 loaded",
+            resultCountLabel(loaded = 12, matching = 0, isLoading = false, hasError = false),
+        )
     }
 
     @Test
     fun claimsNoCountAtAllWhileTheFirstReadIsStillInFlight() {
-        assertNull(resultCountLabel(loaded = 0, matching = 0, isLoading = true))
+        assertNull(resultCountLabel(loaded = 0, matching = 0, isLoading = true, hasError = false))
+    }
+
+    @Test
+    fun claimsNoCountAtAllWhenTheReadFAILEDRatherThanAConfidentZero() {
+        // The failed read leaves isLoading false and the list empty, which is
+        // indistinguishable from an empty workspace unless the chip stays away.
+        assertNull(resultCountLabel(loaded = 0, matching = 0, isLoading = false, hasError = true))
     }
 
     @Test
     fun keepsShowingTheCountWhileAPullToRefreshReloadsAlreadyReadRows() {
         // A refresh over rows already on screen is not an unknown count.
-        assertEquals("12 loaded", resultCountLabel(loaded = 12, matching = 12, isLoading = true))
+        assertEquals(
+            "12 loaded",
+            resultCountLabel(loaded = 12, matching = 12, isLoading = true, hasError = false),
+        )
+    }
+
+    @Test
+    fun keepsTheCountWhenAREFRESHFailsOverRowsAlreadyOnScreen() {
+        // Those 12 rows are still on screen and still 12. A failed refresh is
+        // not a reason to stop describing what the operator can see.
+        assertEquals(
+            "12 loaded",
+            resultCountLabel(loaded = 12, matching = 12, isLoading = false, hasError = true),
+        )
     }
 
     @Test
     fun aProvenEmptyWindowIsAllowedToSayZero() {
-        assertEquals("0 loaded", resultCountLabel(loaded = 0, matching = 0, isLoading = false))
+        assertEquals(
+            "0 loaded",
+            resultCountLabel(loaded = 0, matching = 0, isLoading = false, hasError = false),
+        )
     }
 
     // ── listOutcome ─────────────────────────────────────────────────────────

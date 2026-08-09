@@ -98,6 +98,11 @@ fun KinTaleLogsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val kinfolkList by viewModel.kinfolkDirectory.collectAsState()
     val triageResult by viewModel.triageResult.collectAsState()
+    // Read for the count chip only. A failed read leaves `isLoading` false and
+    // the list empty, so without this the chip would report "0 loaded" about a
+    // collection it never managed to read. The screen's own empty state over a
+    // failed read is a separate, pre-existing gap and is untouched here.
+    val loadError by viewModel.error.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(ReportSort.Newest) }
     var activeSheet by remember { mutableStateOf<TriageSheet?>(null) }
@@ -125,6 +130,7 @@ fun KinTaleLogsScreen(
         loaded = nonOrphanActive.size,
         matching = matching.size,
         isLoading = isLoading,
+        hasError = loadError != null,
     )
     val outcome = listOutcome(
         loaded = nonOrphanActive.size,
@@ -831,11 +837,16 @@ internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<K
 /**
  * The result-count chip's text, or null for "render no chip at all".
  *
- * Null is the whole reason this is a function. Before the first read lands there
- * is no count, and a pill reading "0 loaded" over a collection nobody has
- * managed to read yet is a confident zero about an unknown, which is the exact
- * failure class this app refuses. A pull-to-refresh over rows already on screen
- * is NOT that case, so the chip survives a reload rather than blinking out.
+ * Null is the whole reason this is a function. Before the first read lands, or
+ * after one has failed, there is no count, and a pill reading "0 loaded" over a
+ * collection nobody has managed to read is a confident zero about an unknown,
+ * which is the exact failure class this app refuses. A FAILED read is the
+ * sharper half of that: it leaves `isLoading` false and the list empty, so
+ * nothing else in the state distinguishes it from an empty workspace.
+ *
+ * Rows already on screen settle it either way. A refresh, failed or in flight,
+ * over twelve visible rows still leaves twelve visible rows, so the chip keeps
+ * describing them rather than blinking out.
  *
  * "loaded" rather than a bare number, and the same word the web screen uses: it
  * is a fact about the rows this screen has, and the line under the search field
@@ -845,8 +856,13 @@ internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<K
  * excluded, not by whether a control is set, so a search that happens to match
  * every row reads as the plain count rather than as the noise "12 of 12".
  */
-internal fun resultCountLabel(loaded: Int, matching: Int, isLoading: Boolean): String? {
-    if (isLoading && loaded == 0) return null
+internal fun resultCountLabel(
+    loaded: Int,
+    matching: Int,
+    isLoading: Boolean,
+    hasError: Boolean,
+): String? {
+    if (loaded == 0 && (isLoading || hasError)) return null
     return if (matching == loaded) "$loaded loaded" else "$matching of $loaded loaded"
 }
 
