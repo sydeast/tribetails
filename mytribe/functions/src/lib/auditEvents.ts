@@ -247,6 +247,10 @@ export const AUDIT_EVENTS = {
   // only the kinfolkId + message id.
   CONVERSATION_MESSAGE_SENT: 'CONVERSATION_MESSAGE_SENT',
   CONVERSATION_REPLIED: 'CONVERSATION_REPLIED',
+  // markAllThreadsRead: ONE row for the whole bulk clear, carrying the count and
+  // the thread ids it touched. A state change over other people's messages
+  // should be attributable, the same reason the notifications bulk read is.
+  CONVERSATIONS_BULK_READ: 'CONVERSATIONS_BULK_READ',
 
   // RULING O-6 (docs/RULING_O-6_OPERATOR_TRUST_2026-07-13.md) hardening 2:
   // staff cross-tenant power is total (any kinfolkId, any household), so the

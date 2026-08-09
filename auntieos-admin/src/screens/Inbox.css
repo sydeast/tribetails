@@ -61,6 +61,48 @@
   color: var(--color-background);
 }
 
+/* ── status sections (waiting / answered) ────────────────────────────────── */
+
+/*
+ * The outer level of the two-level grouping: waiting first, answered second,
+ * each holding its own day groups. The separation is a rule and a wider gap
+ * rather than a colour, so the two sections read apart in any theme and with
+ * no reliance on hue. The section's own heading is the label either way.
+ */
+.inbox__sections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.inbox__status-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.inbox__status-group + .inbox__status-group {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+.inbox__status-header {
+  margin: 0;
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  letter-spacing: var(--type-label-lg-tracking);
+  color: var(--color-text-primary);
+}
+
+/* Answered is the settled pile, so its heading recedes; waiting keeps full
+   contrast because it is the section holding work. */
+.inbox__status-group[data-status='answered'] .inbox__status-header {
+  color: var(--color-text-dim);
+}
+
 /* ── day groups ──────────────────────────────────────────────────────────── */
 
 .inbox__list {

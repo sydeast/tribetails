@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listConversations, type ConversationSummary } from '../api/inbox';
 import {
   threadReadState,
@@ -10,6 +10,7 @@ import {
   threadMachineTime,
   threadDayLabel,
   groupThreadsByDay,
+  groupThreadsByWaiting,
   unreadThreadCount,
   localDateIso,
   type ThreadReadState,
@@ -22,6 +23,7 @@ import { DenScreenHeading, DenPanel, EmptyHint, ErrorHint } from '../components/
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
 import { ConversationThread } from './ConversationThread';
+import { markAllThreadsRead } from '../api/inboxThread';
 import {
   VOICEMAILS_QUERY,
   CALLS_QUERY,
@@ -68,6 +70,31 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'unread', label: 'Unread', test: (s) => s === 'unread' },
 ];
 
+/**
+ * Which read state each waiting/answered section holds, so the filter chips and
+ * the sections agree by construction rather than through a second hand-written
+ * mapping that could drift from `groupThreadsByWaiting`.
+ */
+const SECTION_READ_STATE: Record<'waiting' | 'answered', ThreadReadState> = {
+  waiting: 'unread',
+  answered: 'read',
+};
+
+/**
+ * What the bulk "Mark all read" write is doing right now.
+ *
+ * There is deliberately no optimistic branch. The nav rail's badge reads the
+ * SAME `unreadForAdmin` flag off its own listener (`lib/useUnreadInbox.ts`), so
+ * a local clear that the server then refused would leave every screen in the
+ * app printing a zero that is not true. The count reported below always comes
+ * from the server's own answer, and the list is re-read afterwards.
+ */
+type BulkReadState =
+  | { status: 'idle' }
+  | { status: 'working' }
+  | { status: 'done'; cleared: number }
+  | { status: 'failed'; message: string };
+
 interface InboxProps {
   /**
    * Row-open override. The router mounts this screen PROPLESS, and in that case
@@ -105,11 +132,22 @@ interface InboxProps {
  * stream),
  * classifies every row's read state (`threadReadState`) and last sender
  * (`threadSender`) through positive enumerations, never negation (the
- * `sessionFormat.ts` / AO-12 convention), and groups the FILTERED rows by
- * LOCAL calendar day (`groupThreadsByDay`, the AO-18 fix applied to this
- * callable's epoch-ms `lastMessageAtMs`, see `lib/inboxFormat.ts`), newest day
- * and newest thread first, the activity-feed order Notifications.tsx also
- * uses (the inverse of Sessions.tsx's chronological schedule order).
+ * `sessionFormat.ts` / AO-12 convention), and groups the FILTERED rows TWICE.
+ *
+ * ── TWO LEVELS OF GROUPING, AND WHY BOTH ──────────────────────────────────
+ * `groupThreadsByWaiting` splits the list into "Waiting on a reply" and
+ * "Answered", because the operator's first question is who is waiting on them,
+ * and a strictly chronological list buries three live threads under ninety
+ * finished ones. `groupThreadsByDay` then runs INSIDE each section, so the
+ * AO-18 local-day fix (applied to this callable's epoch-ms `lastMessageAtMs`,
+ * see `lib/inboxFormat.ts`) still decides every date header, newest day and
+ * newest thread first, the activity-feed order Notifications.tsx also uses
+ * (the inverse of Sessions.tsx's chronological schedule order). The day
+ * grouping was not replaced; it moved one level down.
+ *
+ * The panel's "Mark all read" action clears every waiting thread server-side
+ * (`markAllThreadsRead`) and then re-reads the list. Never optimistically: see
+ * `BulkReadState` above.
  *
  * Opening a row hands off to the sibling `ConversationThread` view, which
  * reads the thread and sends the reply (unless a caller overrides selection
@@ -160,6 +198,33 @@ export function Inbox({ onSelectThread }: InboxProps) {
 
   useEffect(() => load(), [load]);
 
+  // Bulk mark-read. The ref, not the state, is the re-entrancy guard: a second
+  // click can land before React has re-rendered with `status: 'working'`, and
+  // two in-flight calls would report two different counts for one action.
+  const [bulkRead, setBulkRead] = useState<BulkReadState>({ status: 'idle' });
+  const bulkReadInFlight = useRef(false);
+  const markAllRead = useCallback(() => {
+    if (bulkReadInFlight.current) return;
+    bulkReadInFlight.current = true;
+    setBulkRead({ status: 'working' });
+    markAllThreadsRead()
+      .then((res) => {
+        bulkReadInFlight.current = false;
+        setBulkRead({ status: 'done', cleared: res.cleared });
+        // Re-read rather than assume: `cleared` is bounded server-side, so a
+        // long backlog can leave threads still unread, and the badge must show
+        // what is genuinely left.
+        load();
+      })
+      .catch((err: unknown) => {
+        bulkReadInFlight.current = false;
+        setBulkRead({
+          status: 'failed',
+          message: `markAllThreadsRead failed: ${err instanceof Error ? err.message : 'Mark all read failed'}`,
+        });
+      });
+  }, [load]);
+
   // Badge semantics: counts unread message threads only. The nav rail's count
   // (lib/useUnreadInbox.ts) counts the SAME threads off ONE bounded listener
   // to keep the two numbers in sync. Notifications live on the Notifications
@@ -199,7 +264,31 @@ export function Inbox({ onSelectThread }: InboxProps) {
         }
       />
 
-      <DenPanel title={messagesSection.title} subtitle={messagesSection.subtitle}>
+      <DenPanel
+        title={messagesSection.title}
+        subtitle={messagesSection.subtitle}
+        trailing={
+          // Offered only when something is actually waiting. A permanently
+          // visible control that would clear nothing is the dead-control
+          // anti-pattern this screen already avoids on its rows.
+          unreadCount !== null && unreadCount > 0 ? (
+            <GhostButton
+              label={bulkRead.status === 'working' ? 'Marking…' : 'Mark all read'}
+              onClick={markAllRead}
+              disabled={bulkRead.status === 'working'}
+            />
+          ) : undefined
+        }
+      >
+        {bulkRead.status === 'done' && (
+          <p className="inbox__hint" role="status" aria-live="polite">
+            {bulkRead.cleared === 1
+              ? '1 thread marked read'
+              : `${bulkRead.cleared} threads marked read`}
+          </p>
+        )}
+        {bulkRead.status === 'failed' && <ErrorHint>{bulkRead.message}</ErrorHint>}
+
         <AsyncRegion
           state={threads}
           what="messages"
@@ -226,7 +315,17 @@ export function Inbox({ onSelectThread }: InboxProps) {
             // that same array (the Sessions.tsx/Invoices.tsx .find()! comment).
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = data.filter((row) => activeFilter.test(threadReadState(row.unreadForAdmin)));
-            const groups = groupThreadsByDay(visible);
+            // Status FIRST, day WITHIN it. `groupThreadsByDay` is not replaced:
+            // it still decides every date header, so the AO-18 local-day fix
+            // applies inside both sections exactly as it did on the flat list.
+            //
+            // An empty section still renders its header, but only when the
+            // active filter would have LET rows into it. Under the Unread chip,
+            // "Answered / Nothing answered yet" would be a plain falsehood:
+            // there ARE answered threads, the filter is hiding them.
+            const sections = groupThreadsByWaiting(visible).filter(
+              (s) => s.threads.length > 0 || activeFilter.test(SECTION_READ_STATE[s.key]),
+            );
 
             return (
               <>
@@ -246,18 +345,38 @@ export function Inbox({ onSelectThread }: InboxProps) {
                   ))}
                 </div>
 
-                {groups.length === 0 ? (
+                {visible.length === 0 ? (
                   <EmptyHint>Nothing matches this filter.</EmptyHint>
                 ) : (
-                  <ul className="inbox__list">
-                    {groups.map((g) => (
-                      <li key={g.dayKeyValue} className="inbox__day-group">
-                        <h3 className="inbox__day-header">{threadDayLabel(g.dayKeyValue, todayIso)}</h3>
-                        <ul className="inbox__day-rows">
-                          {g.rows.map((row) => (
-                            <ThreadRow key={row.kinfolkId} row={row} onSelectThread={openHandler} />
-                          ))}
-                        </ul>
+                  <ul className="inbox__sections">
+                    {sections.map((section) => (
+                      <li key={section.key} className="inbox__status-group" data-status={section.key}>
+                        <h3 className="inbox__status-header">{section.label}</h3>
+                        {section.threads.length === 0 ? (
+                          // The header stays. An absent section reads the same
+                          // as one that has not loaded; an empty one answers
+                          // "is anyone waiting on me" outright.
+                          <EmptyHint>
+                            {section.key === 'waiting'
+                              ? 'Nothing is waiting on a reply.'
+                              : 'No answered threads yet.'}
+                          </EmptyHint>
+                        ) : (
+                          <ul className="inbox__list">
+                            {groupThreadsByDay(section.threads).map((g) => (
+                              <li key={g.dayKeyValue} className="inbox__day-group">
+                                <h4 className="inbox__day-header">
+                                  {threadDayLabel(g.dayKeyValue, todayIso)}
+                                </h4>
+                                <ul className="inbox__day-rows">
+                                  {g.rows.map((row) => (
+                                    <ThreadRow key={row.kinfolkId} row={row} onSelectThread={openHandler} />
+                                  ))}
+                                </ul>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>

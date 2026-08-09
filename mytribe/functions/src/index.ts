@@ -331,6 +331,7 @@ export {
   replyToConversation,
   markConversationRead,
 } from './admin/conversations';
+export { markAllThreadsRead } from './admin/markAllThreadsRead';
 export { sendKinfolkMessage, getMyConversation, markThreadRead } from './portal/sendKinfolkMessage';
 export { generate } from './portal/generate';
 export { generateInvoicePdf } from './admin/generateInvoicePdf';

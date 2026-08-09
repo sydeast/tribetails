@@ -61,4 +61,55 @@ class ConversationsTest {
         )
         assertEquals(2, unreadConversationCount(list))
     }
+
+    // ── waiting/answered grouping (parity with src/lib/inboxFormat.ts) ────────
+
+    @Test fun groupThreadsByWaitingPutsWaitingFirst() {
+        val sections = groupThreadsByWaiting(
+            listOf(
+                ConversationSummary("a", "A", "", 2, "auntie", false, 1),
+                ConversationSummary("b", "B", "", 1, "kinfolk", true, 1),
+            ),
+        )
+        assertEquals(listOf(ThreadSectionKey.WAITING, ThreadSectionKey.ANSWERED), sections.map { it.key })
+        assertEquals(listOf("b"), sections[0].threads.map { it.kinfolkId })
+        assertEquals(listOf("a"), sections[1].threads.map { it.kinfolkId })
+    }
+
+    @Test fun groupThreadsByWaitingKeepsBothSectionsWhenOneIsEmpty() {
+        val sections = groupThreadsByWaiting(
+            listOf(ConversationSummary("a", "A", "", 1, "auntie", false, 1)),
+        )
+        assertEquals(2, sections.size)
+        assertEquals(ThreadSectionKey.WAITING, sections[0].key)
+        assertEquals("Waiting on a reply", sections[0].label)
+        assertTrue(sections[0].threads.isEmpty())
+    }
+
+    @Test fun groupThreadsByWaitingReturnsBothSectionsForNoThreadsAtAll() {
+        val sections = groupThreadsByWaiting(emptyList())
+        assertEquals(2, sections.size)
+        assertTrue(sections.all { it.threads.isEmpty() })
+    }
+
+    @Test fun groupThreadsByWaitingAgreesWithTheBadgeCount() {
+        val list = listOf(
+            ConversationSummary("a", "A", "", 1, "kinfolk", true, 1),
+            ConversationSummary("b", "B", "", 1, "auntie", false, 1),
+            ConversationSummary("c", "C", "", 1, "kinfolk", true, 1),
+        )
+        assertEquals(unreadConversationCount(list), groupThreadsByWaiting(list)[0].threads.size)
+    }
+
+    // ── markAllThreadsRead payload decode ────────────────────────────────────
+
+    @Test fun decodeClearedCountReadsTheServersOwnNumber() =
+        assertEquals(4, decodeClearedCount(mapOf("ok" to true, "cleared" to 4.0)))
+
+    @Test fun decodeClearedCountRefusesToGuessWhenTheFieldIsMissing() {
+        // A missing count is a broken response, not "zero cleared": reporting
+        // zero would tell the operator nothing happened when it may well have.
+        assertNull(decodeClearedCount(mapOf("ok" to true)))
+        assertNull(decodeClearedCount(null))
+    }
 }
