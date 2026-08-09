@@ -7,6 +7,20 @@
  * chip block, since KinTale states need their own distinct hues).
  */
 
+/* The result-count chip in the list panel's header (the mock's SUGGESTION #3).
+   Mono and dim, the same pill FormSchemas uses for its own count, because it
+   reads the list rather than acting on it. */
+.kintales__count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
 .kintales__summary {
   display: flex;
   gap: var(--space-3);

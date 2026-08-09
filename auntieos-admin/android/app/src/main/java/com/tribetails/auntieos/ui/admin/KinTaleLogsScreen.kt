@@ -73,7 +73,6 @@ import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
-// SUGGESTION FLAG (ships dark): list-level search over the already-loaded reports.
 private enum class Bucket(val label: String) {
     Failed ("Needs another look"),
     Drafts ("Drafts"),
@@ -99,6 +98,11 @@ fun KinTaleLogsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val kinfolkList by viewModel.kinfolkDirectory.collectAsState()
     val triageResult by viewModel.triageResult.collectAsState()
+    // Read for the count chip only. A failed read leaves `isLoading` false and
+    // the list empty, so without this the chip would report "0 loaded" about a
+    // collection it never managed to read. The screen's own empty state over a
+    // failed read is a separate, pre-existing gap and is untouched here.
+    val loadError by viewModel.error.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(ReportSort.Newest) }
     var activeSheet by remember { mutableStateOf<TriageSheet?>(null) }
@@ -117,8 +121,23 @@ fun KinTaleLogsScreen(
 
     // List search (always on, finished + wired). Client-side filter over loaded
     // KinTales only; no server-side report search exists.
-    val grouped = sortReports(nonOrphanActive.filter { matchesSearch(it, searchQuery) }, sortMode)
-        .groupBy { bucketFor(it) }
+    val matching = nonOrphanActive.filter { matchesSearch(it, searchQuery) }
+    val grouped = sortReports(matching, sortMode).groupBy { bucketFor(it) }
+
+    // The two readings of that filter, both decided in one place so the chip in
+    // the heading and the list below it can never tell different stories.
+    val countLabel = resultCountLabel(
+        loaded = nonOrphanActive.size,
+        matching = matching.size,
+        isLoading = isLoading,
+        hasError = loadError != null,
+    )
+    val outcome = listOutcome(
+        loaded = nonOrphanActive.size,
+        matching = matching.size,
+        orphans = orphans.size,
+        isLoading = isLoading,
+    )
 
     AuntieScreenScaffold(title = "KinTales", onBack = onBack) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -138,6 +157,11 @@ fun KinTaleLogsScreen(
                         kicker   = "The Den · KinTales",
                         title    = "KinTales",
                         subtitle = "Every recap that goes home to a Kinfolk after care",
+                        // The result-count chip (mock SUGGESTION 3). Absent, not
+                        // zero, until there is something real to count.
+                        trailing = countLabel?.let {
+                            { AuntieStatusPill(label = it, mono = true) }
+                        },
                     )
 
                     // List search (always on). Client-side filter over loaded KinTales
@@ -161,19 +185,25 @@ fun KinTaleLogsScreen(
                     // KT1 (A8): operator-chosen ordering for the list (organizes Sent).
                     SortChipRow(selected = sortMode, onSelect = { sortMode = it })
 
-                    if (nonOrphanActive.isEmpty() && orphans.isEmpty() && !isLoading) {
-                        EmptyState()
-                    } else {
-                        if (orphans.isNotEmpty()) {
-                            NeedsTriageSection(
-                                orphans     = orphans,
-                                onAssign    = { activeSheet = TriageSheet.Assign(it) },
-                                onDuplicate = { activeSheet = TriageSheet.Duplicate(it) },
-                                onArchive   = { activeSheet = TriageSheet.Archive(it) },
-                            )
-                        }
+                    // The triage queue is drawn from the outcome above, never
+                    // filtered by the search: an untriaged migration row is work
+                    // owed regardless of what the operator typed, and hiding it
+                    // behind a query would quietly retire it.
+                    if (orphans.isNotEmpty()) {
+                        NeedsTriageSection(
+                            orphans     = orphans,
+                            onAssign    = { activeSheet = TriageSheet.Assign(it) },
+                            onDuplicate = { activeSheet = TriageSheet.Duplicate(it) },
+                            onArchive   = { activeSheet = TriageSheet.Archive(it) },
+                        )
+                    }
 
-                        Bucket.entries.forEach { bucket ->
+                    when (outcome) {
+                        // The pull-refresh indicator is already saying this.
+                        ListOutcome.Loading -> Unit
+                        ListOutcome.Empty   -> EmptyState()
+                        ListOutcome.NoMatch -> NoMatchState()
+                        ListOutcome.Rows    -> Bucket.entries.forEach { bucket ->
                             val items = grouped[bucket].orEmpty()
                             if (items.isNotEmpty()) {
                                 BucketGroup(
@@ -721,6 +751,35 @@ private fun EmptyState() {
     }
 }
 
+/**
+ * A search that matched none of the loaded KinTales, said out loud.
+ *
+ * Deliberately worded apart from [EmptyState]'s "No KinTales found": one means
+ * the workspace has none, the other means this query has none, and a screen that
+ * renders the same nothing for both is the defect. Same copy as the web screen's
+ * own no-match hint.
+ */
+@Composable
+private fun NoMatchState() {
+    DenPanel(title = "KinTales") {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AuntieIconTile(icon = Lucide.Search, tone = AuntieStatusTone.Neutral, size = 44.dp)
+            Text(
+                text  = "Nothing in the loaded KinTales matches this search.",
+                style = AuntieTheme.typography.headlineSmall,
+                color = AuntieTheme.colors.textPrimary,
+            )
+            EmptyHint("Clear the search to see them all again.")
+        }
+    }
+}
+
 @Composable
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "SENT"   -> AuntieStatusTone.Success
@@ -775,7 +834,63 @@ internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<K
     )
 }
 
-/** SUGGESTION: list-level search predicate (Kinfolk name, service, body). */
+/**
+ * The result-count chip's text, or null for "render no chip at all".
+ *
+ * Null is the whole reason this is a function. Before the first read lands, or
+ * after one has failed, there is no count, and a pill reading "0 loaded" over a
+ * collection nobody has managed to read is a confident zero about an unknown,
+ * which is the exact failure class this app refuses. A FAILED read is the
+ * sharper half of that: it leaves `isLoading` false and the list empty, so
+ * nothing else in the state distinguishes it from an empty workspace.
+ *
+ * Rows already on screen settle it either way. A refresh, failed or in flight,
+ * over twelve visible rows still leaves twelve visible rows, so the chip keeps
+ * describing them rather than blinking out.
+ *
+ * "loaded" rather than a bare number, and the same word the web screen uses: it
+ * is a fact about the rows this screen has, and the line under the search field
+ * already says those rows are what the search covers.
+ *
+ * Both platforms pick between the two forms by whether anything was actually
+ * excluded, not by whether a control is set, so a search that happens to match
+ * every row reads as the plain count rather than as the noise "12 of 12".
+ */
+internal fun resultCountLabel(
+    loaded: Int,
+    matching: Int,
+    isLoading: Boolean,
+    hasError: Boolean,
+): String? {
+    if (loaded == 0 && (isLoading || hasError)) return null
+    return if (matching == loaded) "$loaded loaded" else "$matching of $loaded loaded"
+}
+
+/** What the list area below the triage section should render. See [listOutcome]. */
+internal enum class ListOutcome { Loading, Empty, NoMatch, Rows }
+
+/**
+ * Which of the four list states is true, decided once so the buckets and the
+ * copy can never disagree.
+ *
+ * [NoMatch] exists because it used to be unrepresentable: a search that excluded
+ * every row left this screen rendering a search field over nothing at all, with
+ * no line saying why, and no way to tell that from an empty workspace. The two
+ * are different facts and the screen now says which one it means.
+ *
+ * Orphans are counted separately from [loaded] and never suppress the triage
+ * section: a search that empties the list does not settle an untriaged migration
+ * row, and orphans on their own are content, not an empty workspace.
+ */
+internal fun listOutcome(loaded: Int, matching: Int, orphans: Int, isLoading: Boolean): ListOutcome =
+    when {
+        loaded == 0 && orphans == 0 && isLoading -> ListOutcome.Loading
+        loaded == 0 && orphans == 0              -> ListOutcome.Empty
+        loaded > 0 && matching == 0              -> ListOutcome.NoMatch
+        else                                     -> ListOutcome.Rows
+    }
+
+/** List-level search predicate (Kinfolk name, service, body). */
 internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
