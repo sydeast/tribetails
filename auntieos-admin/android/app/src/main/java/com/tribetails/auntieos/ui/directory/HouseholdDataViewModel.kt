@@ -65,12 +65,24 @@ class HouseholdDataViewModel(
     private val _uiState = MutableStateFlow(HouseholdDataUiState())
     val uiState: StateFlow<HouseholdDataUiState> = _uiState.asStateFlow()
 
+    /**
+     * The record AS THE SERVER LAST GAVE IT TO US, and the baseline every save
+     * diffs against. Never re-read to compute a diff: a fresh read would hand
+     * back the very concurrent edit the diff exists to leave alone.
+     *
+     * Advanced only after a save the server accepted, so a failed save keeps the
+     * operator's edit pending instead of swallowing it.
+     */
+    private var loadedHouseholdData = HouseholdData()
+
     fun loadHouseholdData(kinfolkId: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             repository.getHouseholdData(kinfolkId).onSuccess { data ->
+                val record = data ?: HouseholdData(kinfolkId = kinfolkId)
+                loadedHouseholdData = record
                 _uiState.value = _uiState.value.copy(
-                    householdData = data ?: HouseholdData(kinfolkId = kinfolkId),
+                    householdData = record,
                     isLoading = false
                 )
             }.onFailure { error ->
@@ -285,6 +297,24 @@ class HouseholdDataViewModel(
         )
     }
 
+    /**
+     * Saves ONLY what the operator actually changed.
+     *
+     * This used to hand the repository the whole in-memory model, which then
+     * went to Firestore as `.set(model, merge())`. `merge()` guards fields
+     * OUTSIDE the written map and does nothing about stale ones inside it, so
+     * every field this screen loaded went back at its old value and reverted
+     * whatever the React admin had changed in the meantime - the household's
+     * vet among them ([HouseholdData.primaryVetClinicId]). React fixed the same
+     * bug from its side first and says why: `src/api/householdData.ts:110-127`,
+     * citing the 2026-07-20 `familyKinPath` loss.
+     *
+     * NOTHING CHANGED MEANS NOTHING IS WRITTEN, not even the stamp. `updatedAt`
+     * says when the record last changed; moving it for a save that changed
+     * nothing makes it lie, and the repository already refuses to round-trip it
+     * for the same reason. The screen still reports success, because "saved" and
+     * "nothing to save" are the same outcome to the operator.
+     */
     fun saveHouseholdData() {
         val householdData = _uiState.value.householdData
         if (householdData.kinfolkId.isBlank()) {
@@ -292,10 +322,38 @@ class HouseholdDataViewModel(
             return
         }
 
+        // No document yet: the create path writes the whole record, because there
+        // is nothing on the server to clobber.
+        if (householdData.id.isBlank()) {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+                repository.saveHouseholdData(householdData).onSuccess {
+                    loadedHouseholdData = householdData
+                    _uiState.value = _uiState.value.copy(isSaving = false, isSuccess = true)
+                }.onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        error = "Failed to save household data: ${error.message}"
+                    )
+                }
+            }
+            return
+        }
+
+        val changes = householdFieldChanges(loadedHouseholdData, householdData)
+        if (changes.isEmpty()) {
+            _uiState.value = _uiState.value.copy(isSaving = false, isSuccess = true, error = null)
+            return
+        }
+
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, error = null)
 
-            repository.saveHouseholdData(householdData).onSuccess {
+            repository.updateHouseholdFields(householdData.id, changes).onSuccess {
+                // The baseline moves to what the server now holds. Without this a
+                // second save re-sends the first save's fields, which is the same
+                // clobber one step later.
+                loadedHouseholdData = householdData
                 _uiState.value = _uiState.value.copy(
                     isSaving = false,
                     isSuccess = true
