@@ -26,6 +26,7 @@
     { "screen": "notifications", "webRoute": "#/notifications", "rejected": [], "punchlist": "F4", "notes": "no mock has ever existed for this screen" },
     { "screen": "payments", "webRoute": "#/payments", "rejected": ["paymentsShouldLiveUnderIndyKinfolkAdminViewOnly.html"], "punchlist": "F5" },
     { "screen": "training-documents", "webRoute": "#/training-docs", "rejected": ["notwhattrainingdocswassupposetobe-kill.html"] },
-    { "screen": "template-assignment", "webRoute": "#/template-assignment", "rejected": [], "notes": "ui-ideas holds no template-assignment file; which rejected template mock was meant for this screen is not recorded" }
+    { "screen": "template-assignment", "webRoute": "#/template-assignment", "rejected": [], "notes": "ui-ideas holds no template-assignment file; which rejected template mock was meant for this screen is not recorded" },
+    { "screen": "invites", "webRoute": "#/invites", "rejected": [], "notes": "REACT-ONLY screen, shipped by #307. It has no Compose entry point and never had a mockup, so it belongs here rather than under screens, where every entry must name a live file in ui-ideas. It is listed at all because the react surface reads BOTH lists (see e2e/visual/manifest.ts): pendingRemock means no approved DESIGN, which is a fact about build-report.mjs and irrelevant to a golden of the shipped screen. The nav entry this screen added is what moved every other golden on 2026-08-09, and it was the one screen the sweep could not photograph." }
   ]
 }
