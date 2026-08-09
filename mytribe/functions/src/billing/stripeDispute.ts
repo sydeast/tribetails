@@ -121,7 +121,15 @@ interface DisputeObject {
    * the reason the whole interface is loose: a replayed or hand-crafted payload
    * is JSON off the wire and can omit what the SDK swears is always present.
    */
-  evidence_details?: { due_by?: unknown } | null;
+  evidence_details?: {
+    due_by?: unknown;
+    /** `has_evidence: boolean`, required, Disputes.d.ts:217. */
+    has_evidence?: unknown;
+    /** `past_due: boolean`, required, Disputes.d.ts:221. */
+    past_due?: unknown;
+    /** `submission_count: number`, required, Disputes.d.ts:225. */
+    submission_count?: unknown;
+  } | null;
 }
 
 /** The shape of a webhook event this module accepts. */
@@ -203,6 +211,75 @@ function evidenceDueByMsOf(dispute: DisputeObject): number | null {
   const dueBy = dispute.evidence_details?.due_by;
   if (typeof dueBy !== 'number' || !Number.isFinite(dueBy) || dueBy <= 0) return null;
   return dueBy * 1000;
+}
+
+/**
+ * HAS THE OPERATOR ALREADY ANSWERED? The three facts that separate two disputes
+ * a countdown alone renders identically.
+ *
+ * Until these existed, an operator who filed evidence a week ago and one who has
+ * sent nothing at all saw the same banner and the same "4 days left". Those are
+ * opposite situations: the first is waiting on Stripe and should be left alone,
+ * the second is four days from losing the money by default. `evidenceDueByMs`
+ * cannot tell them apart because it is the same date for both.
+ *
+ * `null` on any field means WE WERE NOT TOLD, and it is not the same as the
+ * value being false or zero.
+ *
+ *  - **`submissionCount` is the one that says "sent".** `submission_count:
+ *    number` (Disputes.d.ts:225), "The number of times evidence has been
+ *    submitted. Typically, you may only submit evidence once." A count of 0 is
+ *    a MEASUREMENT (Stripe counted, and there were none), so it is stored as
+ *    0, which is the exact opposite of what `due_by` does with its zero. There,
+ *    0 is Stripe's sentinel for "no deadline exists" and storing it would print
+ *    an epoch date. Here, 0 is the fact that drives the loudest banner in the
+ *    feature, and nulling it would throw away the reason the feature exists.
+ *    Only a non-integer, a negative, or an absent field reads as unknown.
+ *  - **`hasEvidence` says STAGED, not sent.** `has_evidence: boolean`
+ *    (Disputes.d.ts:217), "Whether evidence has been staged for this dispute."
+ *    Staging is saving a draft on the dispute; submitting is the act that
+ *    starts the clock on Stripe's side and increments `submission_count`. So
+ *    `hasEvidence: true` with `submissionCount: 0` is a half-finished draft
+ *    that has NOT been filed, and a screen treating it as "answered" would tell
+ *    an operator to stand down four days before they lose the money. The two
+ *    are mirrored separately so nothing downstream has to conflate them.
+ *  - **`pastDue` does NOT mean "the deadline has passed".** `past_due: boolean`
+ *    (Disputes.d.ts:221), "Whether the last evidence submission was submitted
+ *    past the due date. Defaults to `false` if no evidence submissions have
+ *    occurred. If `true`, then delivery of the latest evidence is *not*
+ *    guaranteed." It is a fact about a SUBMISSION, not about the clock, and by
+ *    Stripe's own documented default it stays `false` forever for the operator
+ *    who never sent anything, which is precisely the operator most in need of
+ *    an overdue warning. It therefore does not replace comparing `due_by` against
+ *    the clock; it adds a state that comparison could never produce, namely
+ *    "you did answer, and you answered late, so do not assume it landed."
+ *
+ * All three come off the wire loose for the reason the whole interface is
+ * loose: the SDK declares them required and a replayed or hand-crafted payload
+ * still omits them. A wrong-typed value is unknown, never coerced.
+ */
+interface EvidenceState {
+  hasEvidence: boolean | null;
+  pastDue: boolean | null;
+  submissionCount: number | null;
+}
+
+const EVIDENCE_STATE_UNKNOWN: EvidenceState = {
+  hasEvidence: null,
+  pastDue: null,
+  submissionCount: null,
+};
+
+function evidenceStateOf(dispute: DisputeObject): EvidenceState {
+  const details = dispute.evidence_details;
+  if (!details || typeof details !== 'object') return EVIDENCE_STATE_UNKNOWN;
+  const count = details.submission_count;
+  return {
+    hasEvidence: typeof details.has_evidence === 'boolean' ? details.has_evidence : null,
+    pastDue: typeof details.past_due === 'boolean' ? details.past_due : null,
+    // `>= 0`, not `> 0`: zero submissions is the answer, not the absence of one.
+    submissionCount: typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : null,
+  };
 }
 
 function fundsStateOf(type: string): FundsState | null {
@@ -422,6 +499,12 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
   // dispute that has already closed.
   const evidenceDueByMs = fundsState === null ? evidenceDueByMsOf(dispute) : null;
   const reason = fundsState === null && typeof dispute.reason === 'string' ? dispute.reason : null;
+  // And the third: whether the operator has already answered. Same lane and the
+  // same reason. A funds event's payload carries an evidence state too, and a
+  // late `funds_withdrawn` writing it could tell an operator who has sent
+  // nothing that they already responded, on the one screen whose job is to say
+  // otherwise while there is still time to act.
+  const evidence = fundsState === null ? evidenceStateOf(dispute) : EVIDENCE_STATE_UNKNOWN;
 
   const eventCreatedMs = ((event.created ?? 0) as number) * 1000;
   const dedupeRef = db().doc(`stripeEvents/${event.id}`);
@@ -569,6 +652,14 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
         // payload that carried no deadline, and in neither case is there a date
         // to count down to.
         evidenceDueByMs,
+        // Has the operator answered, and was the answer late? See
+        // `evidenceStateOf`: `submissionCount: 0` is a counted zero and stays 0,
+        // `hasEvidence` is staged rather than sent, `evidencePastDue` is about
+        // a submission rather than about the clock, and null on any of them
+        // means the payload did not say.
+        hasEvidence: evidence.hasEvidence,
+        evidencePastDue: evidence.pastDue,
+        evidenceSubmissionCount: evidence.submissionCount,
         status: disputeStatus,
         isChargeRefundable: typeof dispute.is_charge_refundable === 'boolean'
           ? dispute.is_charge_refundable
@@ -599,6 +690,14 @@ export async function handleStripeDisputeEvent(event: DisputeEvent): Promise<num
           // and the deadline is the part that costs money to miss.
           disputeReason: reason,
           disputeEvidenceDueByMs: evidenceDueByMs,
+          // And WHETHER THEY ALREADY ANSWERED, which the deadline cannot say.
+          // Two disputes with the same date on them are the same banner today,
+          // and one of them is waiting on Stripe while the other is days from
+          // losing by default. Null means the payload did not say, which is not
+          // the same as nothing having been sent.
+          disputeHasEvidence: evidence.hasEvidence,
+          disputeEvidencePastDue: evidence.pastDue,
+          disputeEvidenceSubmissionCount: evidence.submissionCount,
           disputeUpdatedAt: FieldValue.serverTimestamp(),
           ...(opened ? { disputedAt: FieldValue.serverTimestamp() } : {}),
         },

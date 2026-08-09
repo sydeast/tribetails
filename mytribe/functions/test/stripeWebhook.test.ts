@@ -267,6 +267,33 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
+    // A dispute the operator HAS ALREADY ANSWERED. Same `needs_response`
+    // status and the same live deadline as `dispute-created`, so the only thing
+    // separating the two payloads is the evidence state, which is the point:
+    // before this fixture existed the two were indistinguishable downstream,
+    // and one of them is waiting on Stripe while the other must act today.
+    // `submission_count: 1` is the fact that says "sent" ("The number of times
+    // evidence has been submitted", Disputes.d.ts:225); `has_evidence` only
+    // says something was STAGED (Disputes.d.ts:217), which is not the same act.
+    if (sig === 'dispute-evidence-submitted') {
+      return {
+        id: 'evt_53',
+        type: 'charge.dispute.created',
+        created: 2000,
+        data: {
+          object: {
+            id: 'dp_53',
+            amount: 4200,
+            currency: 'usd',
+            charge: 'ch_53',
+            payment_intent: 'pi_20',
+            reason: 'fraudulent',
+            status: 'needs_response',
+            evidence_details: { due_by: 1760000000, has_evidence: true, past_due: false, submission_count: 1 },
+          },
+        },
+      };
+    }
     // The accounting mirrors of created/closed, on the SAME dispute (dp_20).
     // These say the money actually left the Stripe balance and came back;
     // `status` on the payload is the lifecycle field and the handler must NOT
@@ -285,12 +312,15 @@ vi.mock('../src/lib/stripe', () => ({
             payment_intent: 'pi_20',
             reason: 'fraudulent',
             status: 'needs_response',
-            // Deliberately a DIFFERENT deadline from the lifecycle events on
-            // this same dispute. A funds event carries the whole Dispute object,
-            // and the funds lane orders independently of the lifecycle lane, so
-            // if it wrote the deadline a late withdrawal could resurrect a stale
-            // one on a settled dispute, the same trap `status` is guarded from.
-            evidence_details: { due_by: 1799999999, has_evidence: false, past_due: false, submission_count: 0 },
+            // Deliberately a DIFFERENT deadline, and now a different evidence
+            // state too, from the lifecycle events on this same dispute. A funds
+            // event carries the whole Dispute object, and the funds lane orders
+            // independently of the lifecycle lane, so if it wrote either one a
+            // late withdrawal could resurrect stale values on a settled dispute,
+            // the same trap `status` is guarded from. Every field here disagrees
+            // with `dispute-created`, so a handler that leaked any of them onto
+            // the record fails a test rather than passing one by coincidence.
+            evidence_details: { due_by: 1799999999, has_evidence: true, past_due: true, submission_count: 3 },
           },
         },
       };
@@ -1064,6 +1094,95 @@ describe('stripeWebhook', () => {
     // deadline back on a settled dispute.
     expect(docState['stripeDisputes/dp_20'].data!.evidenceDueByMs).toBe(1760000000000);
     expect(docState['invoices/i20'].data!.disputeEvidenceDueByMs).toBe(1760000000000);
+  });
+
+  // ── has the operator already answered? ───────────────────────────────────
+  // Without this, an operator who submitted evidence a week ago and one who has
+  // sent nothing at all read the same banner and the same countdown. One of
+  // them is waiting; the other is about to lose the money by default.
+
+  it('carries the evidence submission state through to the invoice', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-evidence-submitted')).toEqual([200]);
+
+    expect(writes.find((w) => w.path === 'stripeDisputes/dp_53')!.data).toMatchObject({
+      evidenceSubmissionCount: 1,
+      hasEvidence: true,
+      evidencePastDue: false,
+    });
+    expect(writes.find((w) => w.path === 'invoices/i20')!.data).toMatchObject({
+      disputeEvidenceSubmissionCount: 1,
+      disputeHasEvidence: true,
+      disputeEvidencePastDue: false,
+    });
+  });
+
+  it('records a submission count of zero as zero, because none is a real answer', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+
+    // The MIRROR IMAGE of the `due_by` zero. There, 0 is Stripe's sentinel for
+    // "no deadline exists" and must not be stored. Here, 0 is the measurement:
+    // Stripe counted the submissions and there were none. Nulling it would
+    // throw away the fact that drives the loudest banner in the feature.
+    const dispute = writes.find((w) => w.path === 'stripeDisputes/dp_20')!.data;
+    expect(dispute.evidenceSubmissionCount).toBe(0);
+    expect(dispute.evidenceSubmissionCount).not.toBeNull();
+    expect(dispute.hasEvidence).toBe(false);
+    expect(dispute.evidencePastDue).toBe(false);
+    const invoice = writes.find((w) => w.path === 'invoices/i20')!.data;
+    expect(invoice.disputeEvidenceSubmissionCount).toBe(0);
+    expect(invoice.disputeHasEvidence).toBe(false);
+    expect(invoice.disputeEvidencePastDue).toBe(false);
+  });
+
+  it('records the evidence state as UNKNOWN when the payload omits evidence_details', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-no-evidence-details')).toEqual([200]);
+
+    // "Nobody has sent anything" and "we were not told" are different facts and
+    // a screen must be able to tell them apart. A default of `0`/`false` here
+    // would turn silence into an accusation that the operator has done nothing,
+    // and that accusation drives the most urgent banner on the invoice.
+    const dispute = writes.find((w) => w.path === 'stripeDisputes/dp_51')!.data;
+    expect(dispute.evidenceSubmissionCount).toBeNull();
+    expect(dispute.evidenceSubmissionCount).not.toBe(0);
+    expect(dispute.hasEvidence).toBeNull();
+    expect(dispute.hasEvidence).not.toBe(false);
+    expect(dispute.evidencePastDue).toBeNull();
+    expect(dispute.evidencePastDue).not.toBe(false);
+    const invoice = writes.find((w) => w.path === 'invoices/i20')!.data;
+    expect(invoice.disputeEvidenceSubmissionCount).toBeNull();
+    expect(invoice.disputeHasEvidence).toBeNull();
+    expect(invoice.disputeEvidencePastDue).toBeNull();
+  });
+
+  it('does not let a funds event rewrite the evidence state it happens to carry', async () => {
+    docState['invoices/i20'] = { exists: true, data: { kinfolkId: 'f20', status: 'paid', amountDue: 0 } };
+    docState['stripePayments/pi_20'] = { exists: true, data: { familyId: 'f20', invoiceId: 'i20' } };
+
+    expect(await deliver('dispute-created')).toEqual([200]);
+    expect(await deliver('dispute-funds-withdrawn')).toEqual([200]);
+
+    // The withdrawal payload claims three submissions, staged evidence and a
+    // late filing. All three are ignored: the balance moving says nothing about
+    // whether the operator has answered, and the funds lane orders independently
+    // of the lifecycle lane, so a late withdrawal writing these would tell an
+    // operator who has sent nothing that they already responded.
+    const dispute = docState['stripeDisputes/dp_20'].data!;
+    expect(dispute.evidenceSubmissionCount).toBe(0);
+    expect(dispute.hasEvidence).toBe(false);
+    expect(dispute.evidencePastDue).toBe(false);
+    const invoice = docState['invoices/i20'].data!;
+    expect(invoice.disputeEvidenceSubmissionCount).toBe(0);
+    expect(invoice.disputeHasEvidence).toBe(false);
+    expect(invoice.disputeEvidencePastDue).toBe(false);
   });
 
   it('is idempotent under a redelivered dispute: one audit, one notification', async () => {
