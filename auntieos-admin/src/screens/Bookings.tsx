@@ -55,16 +55,110 @@ interface FilterDef {
   key: FilterKey;
   label: string;
   test: (state: BookingState) => boolean;
+  /**
+   * The one status section this chip lives inside, or `null` for "All". Picking
+   * a chip collapses the screen to that section: a "Completed" chip that still
+   * drew an empty "Pending approval" heading above its rows would be asking the
+   * operator to read two headings to learn one thing.
+   */
+  section: BookingSectionKey | null;
 }
 
 const FILTERS: readonly FilterDef[] = [
-  { key: 'all', label: 'All', test: () => true },
-  { key: 'draft', label: 'Draft', test: (s) => s === 'draft' },
-  { key: 'pending', label: 'Pending', test: (s) => s === 'pending' },
-  { key: 'scheduled', label: 'Scheduled', test: (s) => s === 'scheduled' },
-  { key: 'completed', label: 'Completed', test: (s) => s === 'completed' },
-  { key: 'cancelled', label: 'Cancelled', test: (s) => s === 'cancelled' },
+  { key: 'all', label: 'All', test: () => true, section: null },
+  { key: 'draft', label: 'Draft', test: (s) => s === 'draft', section: 'pending' },
+  { key: 'pending', label: 'Pending', test: (s) => s === 'pending', section: 'pending' },
+  { key: 'scheduled', label: 'Scheduled', test: (s) => s === 'scheduled', section: 'scheduled' },
+  { key: 'completed', label: 'Completed', test: (s) => s === 'completed', section: 'history' },
+  { key: 'cancelled', label: 'Cancelled', test: (s) => s === 'cancelled', section: 'history' },
 ];
+
+// ── status sections ─────────────────────────────────────────────────────────
+
+export type BookingSectionKey = 'pending' | 'scheduled' | 'history';
+
+export interface BookingSection {
+  key: BookingSectionKey;
+  label: string;
+  rows: BookingEntry[];
+}
+
+interface SectionDef {
+  key: BookingSectionKey;
+  label: string;
+  test: (state: BookingState) => boolean;
+  /** Shown in place of the rows when the section holds none. */
+  emptyHint: string;
+}
+
+/**
+ * The mock's three headings, and the ONE place a status is mapped to a bucket.
+ *
+ * Every predicate is a POSITIVE membership test against the enumerated
+ * `BookingState`, the same discipline FILTERS above keeps. `unknown` is filed
+ * under History deliberately: a row whose status this tree does not recognize
+ * still has to appear somewhere, and the History stat card has counted it since
+ * this screen shipped. A section set that covered five of the six states would
+ * make a real booking invisible, which is the failure mode `lib/bookingFormat.ts`
+ * exists to prevent.
+ *
+ * `pending` holds DRAFT and PENDING together: both are pre-visit states that
+ * have not become a scheduled visit, which is what the "Pending" stat card and
+ * BookingScreen.kt's "Pending approval" have always meant.
+ */
+const SECTIONS: readonly SectionDef[] = [
+  {
+    key: 'pending',
+    label: 'Pending approval',
+    test: (s) => s === 'draft' || s === 'pending',
+    emptyHint: 'Nothing is waiting on a reply.',
+  },
+  {
+    key: 'scheduled',
+    label: 'Scheduled',
+    test: (s) => s === 'scheduled',
+    emptyHint: 'Nothing on the books. A request moves here once you approve it.',
+  },
+  {
+    key: 'history',
+    label: 'History',
+    test: (s) => s === 'completed' || s === 'cancelled' || s === 'unknown',
+    emptyHint: 'No finished visits yet.',
+  },
+];
+
+/**
+ * Split the streamed rows into the mock's three status sections.
+ *
+ * Always returns all three, in this order, EMPTY ONES INCLUDED, so the screen
+ * can say what a section is waiting for rather than silently dropping the
+ * heading and leaving the operator to wonder whether it failed to load.
+ *
+ * Input order is preserved inside each section. `BOOKINGS_QUERY` already
+ * orders by `createdAt` descending server-side, so re-sorting here would either
+ * duplicate that or quietly disagree with it.
+ */
+export function groupBookingsByStatus(rows: readonly BookingEntry[]): BookingSection[] {
+  const views = rows.map((entry) => ({ entry, state: bookingState({ status: entry.status }) }));
+  return SECTIONS.map((section) => ({
+    key: section.key,
+    label: section.label,
+    rows: views.filter((v) => section.test(v.state)).map((v) => v.entry),
+  }));
+}
+
+/**
+ * The count one section carries, for the stat strip above the list.
+ *
+ * The strip reads through the SAME grouping the headings do, so a stat card and
+ * the heading under it cannot drift apart; before this they were three separate
+ * filter expressions that happened to agree. Non-null: `groupBookingsByStatus`
+ * returns one entry per SECTIONS member and `key` is a member, TS just cannot
+ * see that through `.find()` (the same reason FILTERS.find() below is asserted).
+ */
+function sectionSize(rows: readonly BookingEntry[], key: BookingSectionKey): number {
+  return groupBookingsByStatus(rows).find((s) => s.key === key)!.rows.length;
+}
 
 interface BookingsProps {
   /**
@@ -124,6 +218,10 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
+  // History opens on request and stays open. It is the biggest section by far
+  // and the least urgent, so it starts behind its own count rather than pushing
+  // the live bookings off the first screen.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // The overlay's own selection state, used only when no external
   // onSelectBooking is supplied (see BookingsProps's doc above).
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -248,30 +346,14 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
     activeIndex: FILTERS.findIndex((f) => f.key === filter),
   });
 
-  // "Pending" mirrors BookingScreen.kt's "Pending approval" stat: DRAFT and
-  // PENDING are both pre-visit states (BookingCreateScreen's Save-draft /
-  // Submit-request outcomes) that have not yet become a real scheduled visit.
-  const pendingCount = asyncScalar(
-    rows,
-    (data) => rowViewsFor(data).filter((r) => r.state === 'draft' || r.state === 'pending').length,
-  );
-  const scheduledCount = asyncScalar(
-    rows,
-    (data) => rowViewsFor(data).filter((r) => r.state === 'scheduled').length,
-  );
-  // "History" mirrors the wasm's own
-  // `history = sessions.filter { status !in {SCHEDULED, DRAFT, PENDING} }`:
-  // everything that has left the pending/scheduled lifecycle. Composed here
-  // from three POSITIVELY enumerated states (never a negation), and, unlike
-  // the wasm's own gap, this deliberately still counts an `unknown` status
-  // row rather than letting it vanish from every stat uncounted.
-  const historyCount = asyncScalar(
-    rows,
-    (data) =>
-      rowViewsFor(data).filter(
-        (r) => r.state === 'completed' || r.state === 'cancelled' || r.state === 'unknown',
-      ).length,
-  );
+  // Every card reads through SECTIONS, so a stat and the section heading of the
+  // same name cannot drift apart. They used to be three separate filter
+  // expressions that happened to agree. The reasoning for what each bucket
+  // holds, DRAFT+PENDING under "Pending" and an unrecognized status under
+  // "History", now lives in one place, on SECTIONS.
+  const pendingCount = asyncScalar(rows, (data) => sectionSize(data, 'pending'));
+  const scheduledCount = asyncScalar(rows, (data) => sectionSize(data, 'scheduled'));
+  const historyCount = asyncScalar(rows, (data) => sectionSize(data, 'history'));
 
   // The row the detail sheet shows, resolved from the SAME live stream `rows`
   // already holds (never a second fetch): once a write round-trips through
@@ -345,6 +427,12 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
             // .find().
             const activeFilter = FILTERS.find((f) => f.key === filter)!;
             const visible = views.filter((v) => activeFilter.test(v.state));
+            // Group what the chip left, not the whole stream: with "Completed"
+            // picked, History must hold the completed rows only, not the
+            // cancelled ones it also owns under "All".
+            const sections = groupBookingsByStatus(visible.map((v) => v.entry)).filter(
+              (s) => activeFilter.section === null || activeFilter.section === s.key,
+            );
 
             return (
               <>
@@ -367,18 +455,24 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
                 {visible.length === 0 ? (
                   <EmptyHint>Nothing matches this filter.</EmptyHint>
                 ) : (
-                  <ul className="bookings__list">
-                    {visible.map((v) => (
-                      <BookingRow
-                        key={v.entry._id}
-                        view={v}
-                        onSelectBooking={handleSelectBooking}
-                        selecting={selecting}
-                        picked={selectedIds.has(v.entry._id)}
-                        onTogglePick={toggleRow}
-                      />
-                    ))}
-                  </ul>
+                  sections.map((section) => (
+                    <BookingSectionBlock
+                      key={section.key}
+                      section={section}
+                      // History is where the volume is: 94 of the 100 rows on
+                      // the live screen. Collapsed under "All" so the six live
+                      // bookings are not read last, and open when a chip asked
+                      // for it, since asking again would be asking twice.
+                      collapsed={
+                        section.key === 'history' && activeFilter.section === null && !historyOpen
+                      }
+                      onExpand={() => setHistoryOpen(true)}
+                      onSelectBooking={handleSelectBooking}
+                      selecting={selecting}
+                      selectedIds={selectedIds}
+                      onTogglePick={toggleRow}
+                    />
+                  ))
                 )}
               </>
             );
@@ -440,6 +534,72 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
         <NewBookingDialog onClose={() => setShowCreate(false)} onCreated={handleCreated} />
       )}
     </div>
+  );
+}
+
+// ── one status section ──────────────────────────────────────────────────────
+
+interface BookingSectionBlockProps {
+  section: BookingSection;
+  collapsed: boolean;
+  onExpand: () => void;
+  onSelectBooking: (bookingId: string) => void;
+  selecting: boolean;
+  selectedIds: ReadonlySet<string>;
+  onTogglePick: (bookingId: string) => void;
+}
+
+/**
+ * One of the mock's three status blocks: a heading, the count beside it, and
+ * either the rows, a collapsed control, or a line saying what the section is
+ * waiting for.
+ *
+ * `role="group"` with `aria-labelledby`, not a bare `<section>`: a named
+ * `<section>` is a landmark REGION, and three landmarks for three parts of one
+ * list would tell a screen-reader user this page has three top-level areas when
+ * it has one. The heading still carries the name either way.
+ *
+ * The count lives INSIDE the heading rather than beside it so it is part of the
+ * section's accessible name: "History 94" answers "how much is under here"
+ * without moving focus into the section to count.
+ */
+function BookingSectionBlock({
+  section,
+  collapsed,
+  onExpand,
+  onSelectBooking,
+  selecting,
+  selectedIds,
+  onTogglePick,
+}: BookingSectionBlockProps) {
+  const headingId = `bookings-section-${section.key}`;
+  // Non-null: SECTIONS is what produced this section's key.
+  const def = SECTIONS.find((s) => s.key === section.key)!;
+
+  return (
+    <section className="bookings__section" role="group" aria-labelledby={headingId}>
+      <h3 className="bookings__section-head" id={headingId}>
+        {section.label} <span className="bookings__section-count">{section.rows.length}</span>
+      </h3>
+      {section.rows.length === 0 ? (
+        <EmptyHint>{def.emptyHint}</EmptyHint>
+      ) : collapsed ? (
+        <GhostButton label={`Show ${section.rows.length} finished`} onClick={onExpand} />
+      ) : (
+        <ul className="bookings__list">
+          {rowViewsFor(section.rows).map((v) => (
+            <BookingRow
+              key={v.entry._id}
+              view={v}
+              onSelectBooking={onSelectBooking}
+              selecting={selecting}
+              picked={selectedIds.has(v.entry._id)}
+              onTogglePick={onTogglePick}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

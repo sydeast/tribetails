@@ -87,6 +87,65 @@ private fun intervalsOverlap(
     endB: LocalDateTime
 ): Boolean = startA.isBefore(endB) && endA.isAfter(startB)
 
+// ── booking status sections ────────────────────────────────────────────────
+
+/** The three status blocks the Bookings mock heads with a live count. */
+enum class BookingSectionKey { PENDING, SCHEDULED, HISTORY }
+
+/**
+ * One status block: the heading it carries and the rows under it. The twin of
+ * the React admin's `BookingSection` (src/screens/Bookings.tsx), so the two
+ * platforms answer "which section is this booking in" the same way.
+ */
+data class BookingSection(
+    val key: BookingSectionKey,
+    val label: String,
+    val rows: List<EnhancedBooking>,
+)
+
+/**
+ * Split bookings into the mock's three sections: ALWAYS all three, always in
+ * this order, EMPTY ONES INCLUDED, so the screen can say what a section is
+ * waiting for rather than dropping the heading and leaving the operator to
+ * wonder whether it failed to load.
+ *
+ * Every branch is a POSITIVE membership test against `BookingStatus`, never a
+ * negation of the other buckets: all four enum members are named here, so no
+ * booking can fall through into no section at all. That is the same discipline
+ * `src/lib/bookingFormat.ts` keeps on the web side, where the status is free
+ * text and an unrecognized one is filed under History for the same reason.
+ *
+ * Sort order is per section because the sections are read for different
+ * reasons: Scheduled is a to-do list, so it reads soonest first, and History is
+ * a record, so it reads most recent first. Pending keeps the order the stream
+ * delivered.
+ *
+ * Pure; tested in `BookingSectionsTest`.
+ */
+internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSection> = listOf(
+    BookingSection(
+        key = BookingSectionKey.PENDING,
+        label = "Pending approval",
+        rows = rows.filter { it.status == BookingStatus.DRAFT },
+    ),
+    BookingSection(
+        key = BookingSectionKey.SCHEDULED,
+        label = "Scheduled",
+        rows = rows.filter { it.status == BookingStatus.ACCEPTED }.sortedBy { it.startDateTime },
+    ),
+    BookingSection(
+        key = BookingSectionKey.HISTORY,
+        label = "History",
+        rows = rows
+            .filter { it.status == BookingStatus.COMPLETED || it.status == BookingStatus.REJECTED }
+            .sortedByDescending { it.startDateTime },
+    ),
+)
+
+/** One section by key. Always present: `groupBookingsByStatus` returns all three. */
+internal fun List<BookingSection>.section(key: BookingSectionKey): BookingSection =
+    first { it.key == key }
+
 enum class CalendarViewType(val displayName: String) {
     DAY("Day"),
     WEEK("Week"),
@@ -121,9 +180,14 @@ fun ScheduleViewScreen(
         }
     }
 
-    val pendingBookings = remember(filteredBookings) {
-        filteredBookings.filter { it.status == BookingStatus.DRAFT }
-    }
+    // The one classification the stat strip and the three section headings both
+    // read, so a card and the heading of the same name cannot drift apart. They
+    // used to be four separate filter expressions that happened to agree.
+    val bookingSections = remember(filteredBookings) { groupBookingsByStatus(filteredBookings) }
+    val pendingSection = bookingSections.section(BookingSectionKey.PENDING)
+    val scheduledSection = bookingSections.section(BookingSectionKey.SCHEDULED)
+    val historySection = bookingSections.section(BookingSectionKey.HISTORY)
+    val pendingBookings = pendingSection.rows
 
     val weekDays = remember(state.selectedDate) { androidWeekStripDays(state.selectedDate) }
     val selectedDayBookings = remember(filteredBookings, state.selectedDate) {
@@ -165,15 +229,11 @@ fun ScheduleViewScreen(
     }
 
     // Booking sections (mirror the Bookings web spec): pending DRAFT requests,
-    // confirmed/active ACCEPTED, and history (completed + cancelled).
-    val scheduledBookings = remember(filteredBookings) {
-        filteredBookings.filter { it.status == BookingStatus.ACCEPTED }
-            .sortedBy { it.startDateTime }
-    }
-    val historyBookings = remember(filteredBookings) {
-        filteredBookings.filter { it.status == BookingStatus.COMPLETED || it.status == BookingStatus.REJECTED }
-            .sortedByDescending { it.startDateTime }
-    }
+    // confirmed/active ACCEPTED, and history (completed + cancelled). All three
+    // come off `bookingSections` above; see `groupBookingsByStatus` for why the
+    // per-section sort order differs.
+    val scheduledBookings = scheduledSection.rows
+    val historyBookings = historySection.rows
     // Organized history (spec 15 item 4): split by outcome, each most-recent-first.
     val completedHistory = remember(historyBookings) {
         historyBookings.filter { it.status == BookingStatus.COMPLETED }
@@ -390,23 +450,23 @@ fun ScheduleViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     StatCard(
-                        label = "Pending approval",
-                        value = pendingBookings.size.toString(),
+                        label = pendingSection.label,
+                        value = pendingSection.rows.size.toString(),
                         trend = "awaiting a reply",
                         tone = AuntieStatusTone.Orange,
                         feature = true,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
-                        label = "Scheduled",
-                        value = scheduledBookings.size.toString(),
+                        label = scheduledSection.label,
+                        value = scheduledSection.rows.size.toString(),
                         trend = "on the books",
                         tone = AuntieStatusTone.Teal,
                         modifier = Modifier.weight(1f),
                     )
                     StatCard(
-                        label = "History",
-                        value = historyBookings.size.toString(),
+                        label = historySection.label,
+                        value = historySection.rows.size.toString(),
                         trend = "completed and cancelled",
                         tone = AuntieStatusTone.Purple,
                         modifier = Modifier.weight(1f),
@@ -485,13 +545,13 @@ fun ScheduleViewScreen(
             // ── Pending approval (DRAFT requests) ──
             item {
                 DenPanel(
-                    title = "Pending approval",
+                    title = pendingSection.label,
                     subtitle = "New booking requests waiting on your call.",
                     trailing = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             // AO-25: create a multi-date / recurring request (envelope model).
                             AuntieTextBtn(onClick = { viewModel.showNewRequestDialog() }) { Text("+ New request") }
-                            SectionCount(pendingBookings.size.toString())
+                            SectionCount(pendingSection.rows.size.toString())
                         }
                     },
                 ) {
@@ -523,9 +583,9 @@ fun ScheduleViewScreen(
             // ── Scheduled (ACCEPTED) ──
             item {
                 DenPanel(
-                    title = "Scheduled",
+                    title = scheduledSection.label,
                     subtitle = "Approved visits on the calendar.",
-                    trailing = { SectionCount(scheduledBookings.size.toString()) },
+                    trailing = { SectionCount(scheduledSection.rows.size.toString()) },
                 ) {
                     if (scheduledBookings.isEmpty()) {
                         EmptyHint("Nothing scheduled. Approved requests appear here.")
@@ -557,9 +617,9 @@ fun ScheduleViewScreen(
             // (Show more), and show the real count instead of a literal "recent".
             item {
                 DenPanel(
-                    title = "History",
+                    title = historySection.label,
                     subtitle = "Completed and cancelled visits, most recent first.",
-                    trailing = { SectionCount(historyBookings.size.toString()) },
+                    trailing = { SectionCount(historySection.rows.size.toString()) },
                 ) {
                     if (historyBookings.isEmpty()) {
                         EmptyHint("No past visits yet.")
