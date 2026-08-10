@@ -34,6 +34,7 @@ data class KinTaleUiState(
     // Opener of the last generated draft; fed back as avoid_opening on regenerate.
     val lastOpening: String? = null,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
+    val reportLoadFailed: Boolean = false,
     val error: String? = null,
     val sentSuccessfully: Boolean = false,
     // Phase 14: admin-authored KINTALE form_schemas (appliesTo == KINTALE), DISTINCT
@@ -76,9 +77,50 @@ class KinTaleReportViewModel(
     private var commentsJob: Job? = null
     private var commentsTaleId: String? = null
 
+    /**
+     * The KinTale exactly as Firestore handed it over, and the only thing a save is
+     * allowed to diff against.
+     *
+     * NULL UNTIL THE REPORT IS KNOWN TO EXIST ON THE SERVER, which is the whole of
+     * the second fix. A new draft has no baseline because it has no document yet;
+     * [persistDraft] creates one on first content. A RESUMED draft whose read
+     * FAILED also has no baseline, and there [persistDraft] refuses - see
+     * [reportExistsOnServer] for why those two cases must not be confused.
+     *
+     * It advances only after a write the server accepted, and only to the snapshot
+     * that write actually carried, so a keystroke typed while a save was in flight
+     * is not marked saved by it.
+     */
+    private var reportBaseline: KinCareReport? = null
+
+    /**
+     * Whether the report being edited is known to exist in Firestore.
+     *
+     * `null` = a genuinely new draft: nothing to read, nothing to lose, create on
+     * first content. `false` = a resume whose read failed or found nothing: there
+     * IS a document (or there was) and we do not have it, so nothing may be written
+     * over it. `true` = resumed, baseline held.
+     *
+     * Two booleans would let "new" and "failed to read" collapse into one another,
+     * which is precisely the bug: `getOrNull() ?: scaffoldReport(...)` made a failed
+     * read indistinguishable from a fresh start, and the first keystroke then
+     * persisted a blank scaffold over a half-written KinTale.
+     */
+    private var reportExistsOnServer: Boolean? = null
+
+    /** The arguments of the last [load], so [retryLoad] can repeat it exactly. */
+    private var loadedSessionId: String? = null
+    private var loadedReportId: String? = null
+
     fun load(sessionId: String, existingReportId: String?) {
+        loadedSessionId = sessionId
+        loadedReportId = existingReportId
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            _uiState.value = _uiState.value.copy(
+                isLoading = true,
+                error = null,
+                reportLoadFailed = false,
+            )
 
             val session = kinCareRepository.getKinCareSession(sessionId).getOrNull()
 
@@ -104,10 +146,46 @@ class KinTaleReportViewModel(
 
             // Resume an existing draft if a reportId was passed; otherwise scaffold IN-MEMORY only.
             // Draft is NOT persisted to Firestore until the first content change (Auntie's Q3).
-            val report = if (existingReportId != null) {
-                kinCareRepository.getKinCareReport(existingReportId).getOrNull() ?: scaffoldReport(session, template)
+            //
+            // A FAILED RESUME-READ IS NOT A NEW DRAFT, and conflating the two was the
+            // worse of this screen's two data-loss bugs. This used to read
+            // `getKinCareReport(id).getOrNull() ?: scaffoldReport(session, template)`,
+            // so a transient read failure - offline on a driveway, a permission blip,
+            // a timeout - fell through to a BLANK scaffold carrying the same session
+            // prefill. The screen rendered an empty editor over a real report, and the
+            // first content change persisted it. A sitter's half-written KinTale was
+            // replaced by an empty one, silently, with nothing raised anywhere.
+            //
+            // A read that FAILED and a read that found NOTHING are both refusals: an
+            // id was passed, so a document is expected, and we do not have it. Neither
+            // is saveable, and the screen offers a retry instead of an editor.
+            val report: KinCareReport
+            if (existingReportId != null) {
+                val read = kinCareRepository.getKinCareReport(existingReportId)
+                val resumed = read.getOrNull()
+                if (resumed == null) {
+                    reportBaseline = null
+                    reportExistsOnServer = false
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        session = session,
+                        kinfolk = kinfolk,
+                        kinList = kinList,
+                        template = template,
+                        reportLoadFailed = true,
+                        error = read.exceptionOrNull()
+                            ?.let { "Couldn't open this KinTale: ${it.message ?: "unknown error"}" }
+                            ?: "Couldn't open this KinTale: it is no longer in the KinTale log.",
+                    )
+                    return@launch
+                }
+                report = resumed
+                reportBaseline = resumed
+                reportExistsOnServer = true
             } else {
-                scaffoldReport(session, template)
+                report = scaffoldReport(session, template)
+                reportBaseline = null
+                reportExistsOnServer = null
             }
 
             // Hydrate uploaded media (only meaningful for resumed drafts)
@@ -134,8 +212,19 @@ class KinTaleReportViewModel(
                 gpsRoute = session.gpsSummary?.route.orEmpty(),
                 kinTaleSchemas = schemas.getOrDefault(emptyList()),
                 schemaError = schemas.exceptionOrNull()?.let { it.message ?: "Couldn't load custom fields" },
+                reportLoadFailed = false,
             )
         }
+    }
+
+    /**
+     * Re-run the last [load]. Offered by the screen behind the "Couldn't open this
+     * KinTale" banner, because a refusal the operator cannot act on is just a
+     * dead end - the read that failed was usually transient.
+     */
+    fun retryLoad() {
+        val sessionId = loadedSessionId ?: return
+        load(sessionId, loadedReportId)
     }
 
     /** Phase 14: update one KINTALE custom-field answer (in-memory; persisted on save/send). */
@@ -278,45 +367,102 @@ class KinTaleReportViewModel(
     private fun responseKey(fieldKey: String, kinId: String): String =
         if (kinId.isBlank()) fieldKey else "$kinId|$fieldKey"
 
-    /** Persist the draft. Creates the Firestore record on first call when content exists. */
+    /**
+     * Persist the draft: create the Firestore record on the first content change,
+     * and thereafter write only the fields that CHANGED since the copy the server
+     * handed over.
+     *
+     * WHY A DIFF. `updateKinCareReport` used to take the whole [KinCareReport] under
+     * `SetOptions.merge()`, which protects fields outside the written map and does
+     * nothing about stale fields inside it - so every blur wrote all 30 modelled
+     * fields back at the values this client last loaded. `kin_care_reports` has four
+     * writers, three of them not this screen, so that reverted send state and orphan
+     * triage decisions made while a draft sat open. `KinCareReportDiff.kt` holds the
+     * field map and the reasoning; #312, #315, #327 and #332 are the same fix on
+     * five sibling documents.
+     *
+     * REFUSED OUTRIGHT when the report was supposed to be read and was not
+     * ([reportExistsOnServer] false). That is not a save that can be retried into
+     * correctness - the local model is a blank scaffold, and writing it is the data
+     * loss. The screen surfaces the banner and a retry instead.
+     *
+     * NOTHING CHANGED MEANS NOTHING IS WRITTEN, not even the stamp. Blur fires
+     * whether or not the operator typed anything, so this is the common case, not
+     * the corner one - and `updatedAt` is what the operator reads as "my work is
+     * safe as of then".
+     */
     fun persistDraft() {
-        val state = _uiState.value
-        val report = state.report
+        val report = _uiState.value.report
+        if (reportExistsOnServer == false) {
+            // A blank scaffold standing in for a KinTale we failed to read. Writing
+            // it is the loss; refusing is the fix.
+            _uiState.value = _uiState.value.copy(
+                saveStatus = SaveStatus.ERROR,
+                error = "This KinTale never opened, so it can't be saved. Tap Retry to load it.",
+            )
+            return
+        }
         if (!hasContent(report)) return // nothing to save yet - keep the ghost out of Firestore
 
+        val baseline = reportBaseline
+        if (baseline != null) {
+            // The snapshot this write carries. The baseline advances to THIS, not to
+            // whatever the report holds when the write returns, so a keystroke typed
+            // while the save was in flight is not marked saved by it.
+            val snapshot = report
+            val changes = kinCareReportFieldChanges(baseline, snapshot)
+            if (changes.isEmpty()) {
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.SAVED)
+                return
+            }
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isSaving = true)
+                kinCareRepository.updateKinCareReportFields(snapshot.id, changes).fold(
+                    onSuccess = {
+                        reportBaseline = snapshot
+                        _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
+                    },
+                    onFailure = { e ->
+                        AuntieLog.e("KinTale draft save failed", e)
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            saveStatus = SaveStatus.ERROR,
+                            error = "Couldn't save: ${e.message}",
+                        )
+                    },
+                )
+            }
+            return
+        }
+
+        // No baseline and no failed read: a brand-new draft reaching Firestore for
+        // the first time. The created report becomes the baseline, so the very next
+        // save diffs against it instead of re-sending everything just written.
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true)
-            try {
-                if (report.id.isBlank()) {
-                    val newId = kinCareRepository.createKinCareReport(report).getOrNull()
-                    if (newId != null) {
-                        _uiState.value = _uiState.value.copy(
-                            report = _uiState.value.report.copy(id = newId),
-                            isSaving = false,
-                            saveStatus = SaveStatus.SAVED
-                        )
-                    } else {
-                        _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.ERROR)
-                    }
-                } else {
-                    kinCareRepository.updateKinCareReport(_uiState.value.report).fold(
-                        onSuccess = {
-                            _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
-                        },
-                        onFailure = { e ->
-                            AuntieLog.e("KinTale autosave failed", e)
-                            _uiState.value = _uiState.value.copy(
-                                isSaving = false,
-                                saveStatus = SaveStatus.ERROR,
-                                error = "Couldn't save: ${e.message}"
-                            )
-                        }
+            val snapshot = _uiState.value.report
+            kinCareRepository.createKinCareReport(snapshot).fold(
+                onSuccess = { newId ->
+                    reportBaseline = snapshot.copy(id = newId)
+                    reportExistsOnServer = true
+                    _uiState.value = _uiState.value.copy(
+                        report = _uiState.value.report.copy(id = newId),
+                        isSaving = false,
+                        saveStatus = SaveStatus.SAVED,
                     )
-                }
-            } catch (e: Exception) {
-                AuntieLog.e("KinTale persistDraft crashed", e)
-                _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.ERROR)
-            }
+                },
+                onFailure = { e ->
+                    // No id was minted, so the retry must be another CREATE rather
+                    // than a patch of a document that does not exist. Leaving the
+                    // baseline null is what keeps that true.
+                    AuntieLog.e("KinTale draft create failed", e)
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        saveStatus = SaveStatus.ERROR,
+                        error = "Couldn't save: ${e.message}",
+                    )
+                },
+            )
         }
     }
 
@@ -380,6 +526,13 @@ class KinTaleReportViewModel(
             return
         }
 
+        if (reportExistsOnServer == false) {
+            _uiState.value = _uiState.value.copy(
+                error = "This KinTale never opened, so it can't be sent. Tap Retry to load it.",
+            )
+            return
+        }
+
         if (!hasContent(report)) {
             _uiState.value = _uiState.value.copy(error = "Nothing to send yet - fill in some details.")
             return
@@ -387,15 +540,40 @@ class KinTaleReportViewModel(
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSending = true)
-            // Make sure latest state is persisted (and create on first call if needed)
-            if (report.id.isBlank()) {
-                val newId = kinCareRepository.createKinCareReport(report).getOrNull()
-                if (newId != null) {
+            // Persist the latest state first (creating the record if this is its
+            // first write), as the same field-level diff an ordinary save uses.
+            //
+            // A REJECTED PRE-SEND SAVE NOW ABORTS THE SEND. This used to be
+            // `.getOrNull()` on both branches, so a write the server refused was
+            // discarded and the notification went out anyway - announcing to the
+            // kinfolk a KinTale whose content the server never took. The auntie saw
+            // "sent" and the tale that arrived was the previous revision.
+            val baseline = reportBaseline
+            val preSave: Result<Unit> = if (baseline == null) {
+                kinCareRepository.createKinCareReport(report).map { newId ->
+                    reportBaseline = report.copy(id = newId)
+                    reportExistsOnServer = true
                     _uiState.value = _uiState.value.copy(report = _uiState.value.report.copy(id = newId))
                 }
             } else {
-                kinCareRepository.updateKinCareReport(report).getOrNull()
+                val changes = kinCareReportFieldChanges(baseline, report)
+                if (changes.isEmpty()) {
+                    Result.success(Unit)
+                } else {
+                    kinCareRepository.updateKinCareReportFields(report.id, changes)
+                        .map { reportBaseline = report }
+                }
             }
+            preSave.onFailure { e ->
+                AuntieLog.e("KinTale pre-send save failed", e)
+                _uiState.value = _uiState.value.copy(
+                    isSending = false,
+                    saveStatus = SaveStatus.ERROR,
+                    error = "Couldn't save before sending: ${e.message ?: "unknown error"}",
+                )
+                return@launch
+            }
+
             val savedReport = _uiState.value.report
             if (savedReport.id.isBlank()) {
                 _uiState.value = _uiState.value.copy(isSending = false, error = "Couldn't save before sending.")

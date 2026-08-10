@@ -200,7 +200,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
-        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
         coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
             Result.success(VisitNotifier.DispatchResult(dispatchIds = listOf("n8n_77", "n8n_88"), suppressed = false))
 
@@ -231,7 +231,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
-        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
         coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any()) } returns
             Result.failure(IllegalStateException("session not booking-originated"))
 
@@ -513,7 +513,7 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
         coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep1")
-        coEvery { mockKinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
         val vm = buildViewModel()
         vm.load("ses1", null)
         advanceUntilIdle()

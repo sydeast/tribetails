@@ -555,7 +555,10 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("Failed to create kin care report", it) }
 
     /**
-     * Saves an operator's edits to one KinTale.
+     * Saves an operator's edits to one KinTale as the fields those edits CHANGED,
+     * and nothing else. [changes] comes from `kinCareReportFieldChanges`, whose
+     * KDoc holds the four-writer picture this document has and why only six of its
+     * 30 fields may ever leave this method.
      *
      * MERGE, never a bare set(). A bare set() replaces the whole document, so
      * every field the backend writes but [KinCareReport] does not declare is
@@ -571,48 +574,50 @@ class KinCareRepository(
      * Also erased: `_migratedFrom` / `_migratedAt`, the provenance the May
      * visit_logs migration stamped (`migrate_visit_logs_to_kin_care_reports.py:93-94`).
      *
-     * NOT fixed by declaring the fields on [KinCareReport]. That would make this
-     * client an OWNER of pipeline state it does not manage, and swap a loud bug
-     * for a quiet one: `.set()` would round-trip whatever the client last read,
-     * so a save racing the pipeline writes `pending` back over the `in_progress`
-     * claim and the report gets reconciled twice; and any report loaded before
-     * the field existed decodes to the Kotlin default `""`, which matches no
-     * query at all. It would also cover only the fields we know about TODAY -
-     * the next server-side field added is silently deleted again. Merge closes
-     * the class, and is what the `kinfolk` / `kin` writers chose on 07-21 for
-     * the identical bug; `kin_care_reports` was the site missed.
+     * A FIELD MAP MAKES THAT ARGUMENT STRONGER, NOT REDUNDANT. The payload now
+     * names only the keys that changed, so the fields the reconcile pass owns are
+     * outside the written map rather than merely preserved by it - but merge is
+     * still what tells Firestore to overlay rather than replace, and a field map
+     * passed to a bare `set()` would delete every key it does not name. Merge
+     * stays, and it is now the second line of defence rather than the only one.
      *
-     * STILL A WHOLE-MODEL WRITE, and knowingly so. Merge closes the DELETION
-     * class above; it does nothing about the stale fields inside the written
-     * map, so a draft loaded an hour ago still writes its whole modelled self
-     * back and reverts a concurrent edit. `kinfolk`, `kin`, `household_data`,
-     * `business_settings` and `coverage_package_config` moved to field-level diffs
-     * for exactly that, which leaves THIS the last
-     * android write of a whole model that a live screen still issues. It is
-     * deliberately left for its own change, because the KinTale editor has two
-     * write paths and an autosave to reason about (`KinTaleReportViewModel:302,397`).
-     * Triaged, not overlooked.
+     * NOT fixed by declaring the pipeline's fields on [KinCareReport]. That would
+     * make this client an OWNER of state it does not manage, and swap a loud bug
+     * for a quiet one: a save racing the pipeline writes `pending` back over the
+     * `in_progress` claim and the report gets reconciled twice; and any report
+     * loaded before the field existed decodes to the Kotlin default `""`, which
+     * matches no query at all.
      *
-     * Merge costs nothing here: the data class serialises every modelled field,
-     * including blanked ones, so a deliberate clear still ships. Subcollections
-     * (`comments`, `reactions` - `mytribe/functions/src/portal/kinTaleEngagement.ts`)
-     * were never at risk either way; a document write does not touch them.
+     * NOTHING CHANGED MEANS NOTHING IS WRITTEN, enforced here rather than trusted
+     * of the caller. `updatedAt` says when the KinTale last changed, and moving it
+     * for a save that changed nothing makes it lie - which matters more once the
+     * editor autosaves, because the operator reads that stamp as "my work is
+     * safe as of then".
+     *
+     * A deliberate clear still ships: an emptied title or a removed photo differs
+     * from the loaded value, so the differ names it and the blank/empty value goes
+     * out. Subcollections (`comments`, `reactions` -
+     * `mytribe/functions/src/portal/kinTaleEngagement.ts`) were never at risk
+     * either way; a document write does not touch them.
      *
      * `updatedAt` stays [getCurrentTimestamp] rather than moving to
      * `serverTimestamp()` as updateKinfolk did: [KinCareReport.updatedAt] is a
      * `String` and every reader parses it as ISO-8601, so a Timestamp here would
      * be type drift, not a fix.
      */
-    suspend fun updateKinCareReport(report: KinCareReport): Result<Unit> = runCatching {
+    suspend fun updateKinCareReportFields(
+        reportId: String,
+        changes: Map<String, Any?>,
+    ): Result<Unit> = runCatching {
+        require(reportId.isNotBlank()) { "updateKinCareReportFields called with no report id" }
+        require(changes.isNotEmpty()) { "updateKinCareReportFields called with no changed fields" }
         authGate.ensureAuthenticated()
-        firestore.collection("kin_care_reports").document(report.id)
-            .set(
-                report.copy(updatedAt = getCurrentTimestamp()),
-                com.google.firebase.firestore.SetOptions.merge(),
-            )
+        val payload: Map<String, Any?> = changes + mapOf("updatedAt" to getCurrentTimestamp())
+        firestore.collection("kin_care_reports").document(reportId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
             .await()
         Unit
-    }.onFailure { AuntieLog.e("Failed to update kin care report ${report.id}", it) }
+    }.onFailure { AuntieLog.e("Failed to update kin care report $reportId", it) }
 
     suspend fun markReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
