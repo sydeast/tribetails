@@ -1979,6 +1979,36 @@ class AuntieRepository(
 
     // --- Comms log writes used by notifications/inbox actions ---
 
+    /**
+     * Records an inbound call from the FCM push that raised the incoming-call
+     * screen, onto the document Twilio's webhook also writes.
+     *
+     * TWO WRITERS, ONE DOCUMENT. `mytribe/functions/src/twilio/twilioInbound.ts`
+     * (`twilioInboundCallHandler`) merge-upserts `calls_log/{CallSid}` with the
+     * call's `recordingUrl`, `durationSec`, `status` and the
+     * `kinfolkId`/`kinfolkName` it resolved from the caller's number. This client
+     * knows none of those. It knows who called, what the push transcribed, and
+     * the popup link.
+     *
+     * IT IS ONE TRANSACTION, not a read and then a write. The old shape read the
+     * document with a plain `get()`, rebuilt the whole [CallLog] from it and
+     * bare-`set()` that back, so a webhook landing in the gap was fully REVERTED
+     * - recording, duration, status and the kinfolk match all snapped back to
+     * what the phone had read a moment earlier. A transaction closes that gap
+     * rather than narrowing it: Firestore re-runs the block if the document
+     * changed underneath it.
+     *
+     * THE RECORDING URL IS WRITTEN ONLY WHEN THE PUSH CARRIES ONE. It used to be
+     * assigned unconditionally (`recordingUrl = popupUrl`), so a push without a
+     * popup link wrote a blank straight over the recording URL Twilio had
+     * already stored. There is no second copy of that link on this system, so
+     * losing it loses the way back to the recording.
+     *
+     * `status` and `timestamp` are written only when the stored document does not
+     * already carry them. Restating a value read a moment ago is how the other
+     * writer's work gets undone, and inside a transaction there is nothing to be
+     * gained by it.
+     */
     suspend fun upsertInboundCallLog(
         callSid: String,
         callerNumber: String,
@@ -1988,19 +2018,21 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         val id = callSid.ifBlank { UUID.randomUUID().toString() }
         val doc = firestore.collection("calls_log").document(id)
-        val existing = doc.get().await().toObject(CallLog::class.java)
         val now = getCurrentTimestamp()
-        val call = (existing ?: CallLog()).copy(
-            id = id,
-            counterpartNumber = callerNumber,
-            direction = "inbound",
-            status = existing?.status?.takeIf { it.isNotBlank() } ?: "ringing",
-            transcript = transcript,
-            recordingUrl = popupUrl,
-            timestamp = existing?.timestamp?.takeIf { it.isNotBlank() } ?: now,
-            twilioCallSid = callSid
-        )
-        doc.set(call).await()
+        firestore.runTransaction { txn ->
+            val snapshot = txn.get(doc)
+            val existing = if (snapshot.exists()) snapshot.toObject(CallLog::class.java) else null
+            val payload = linkedMapOf<String, Any?>(
+                "counterpartNumber" to callerNumber,
+                "direction" to "inbound",
+                "transcript" to transcript,
+                "twilioCallSid" to callSid,
+            )
+            if (popupUrl.isNotBlank()) payload["recordingUrl"] = popupUrl
+            if (existing?.status.isNullOrBlank()) payload["status"] = "ringing"
+            if (existing?.timestamp.isNullOrBlank()) payload["timestamp"] = now
+            txn.set(doc, payload, com.google.firebase.firestore.SetOptions.merge())
+        }.await()
         id
     }.onFailure { AuntieLog.e("Failed to upsert inbound call", it) }
 
