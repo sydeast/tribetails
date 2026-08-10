@@ -2157,13 +2157,44 @@ class AuntieRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Failed to create KinTale template", it) }
 
-    suspend fun updateKinTaleTemplate(template: KinTaleTemplate): Result<Unit> = runCatching {
+    /**
+     * Writes ONLY the template fields that actually changed, plus the stamp.
+     *
+     * This replaced a whole-model `updateKinTaleTemplate(template)` whose BARE
+     * `.set()` - no merge option at all - REPLACED the document. This collection
+     * has already paid for that shape: `ChecklistItem.required` was stripped
+     * from every template for as long as the field was missing from the Kotlin
+     * model. `KinTaleTemplateDiff.kt` names the fields, their other writers, and
+     * what each loss costs a person.
+     *
+     * MERGE IS THE LOAD-BEARING PART HERE, not the diff. Merge is the only thing
+     * that can preserve a field this client cannot name, and the desktop admin's
+     * `deleted` soft-delete flag is exactly that. The diff is what stops the
+     * secondary loss: the React admin is a concurrent writer of the fields this
+     * model DOES own, and `mytribe/functions/src/portal/getMyKinTales.ts` reads
+     * `checklistItems` server-side to label the rows a kinfolk sees, so putting
+     * a stale copy back deletes rows from a family's visit recap.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped from the value that was
+     * read, so it cannot freeze and lie about when the template last changed.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
+     * could only move the stamp, claiming a change that never happened. The
+     * ViewModel skips the call outright when the diff is empty.
+     */
+    suspend fun updateKinTaleTemplateFields(
+        templateId: String,
+        changes: Map<String, Any?>,
+    ): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        firestore.collection("kintale_templates").document(template.id)
-            .set(template.copy(updatedAt = getCurrentTimestamp()))
+        require(templateId.isNotBlank()) { "updateKinTaleTemplateFields needs a kintale_templates document id" }
+        require(changes.isNotEmpty()) { "updateKinTaleTemplateFields called with no changed fields" }
+        val payload: Map<String, Any?> = changes + mapOf("updatedAt" to getCurrentTimestamp())
+        firestore.collection("kintale_templates").document(templateId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
             .await()
         Unit
-    }.onFailure { AuntieLog.e("Failed to update KinTale template ${template.id}", it) }
+    }.onFailure { AuntieLog.e("Failed to update KinTale template $templateId", it) }
 
     suspend fun deleteKinTaleTemplate(templateId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
