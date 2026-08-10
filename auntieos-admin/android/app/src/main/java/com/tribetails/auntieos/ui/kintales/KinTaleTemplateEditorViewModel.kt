@@ -8,6 +8,7 @@ import com.tribetails.auntieos.data.model.ChecklistItem
 import com.tribetails.auntieos.data.model.ChecklistScope
 import com.tribetails.auntieos.data.model.KinTaleTemplate
 import com.tribetails.auntieos.data.model.MoodOption
+import com.tribetails.auntieos.data.model.kinTaleTemplateFieldChanges
 import com.tribetails.auntieos.data.model.ReviewBoosterConfig
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.util.AuntieLog
@@ -20,6 +21,17 @@ import java.util.UUID
 data class TemplateEditorUiState(
     val isLoading: Boolean = true,
     val template: KinTaleTemplate = KinTaleTemplate(),
+    /**
+     * The template exactly as Firestore handed it to us, and the baseline every
+     * save diffs against. Null means there is no stored document to preserve:
+     * a brand-new template, or one the list no longer holds.
+     *
+     * It advances only after an ACCEPTED save, so a failed write is retried in
+     * full rather than quietly reduced to the difference from an edit that never
+     * landed. It is never re-read from Firestore either: a re-read would hand
+     * back the very concurrent edit the diff exists to preserve.
+     */
+    val loaded: KinTaleTemplate? = null,
     val isNew: Boolean = false,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val isSaving: Boolean = false,
@@ -39,7 +51,14 @@ class KinTaleTemplateEditorViewModel(
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
             val all = repository.getKinTaleTemplates().getOrDefault(emptyList())
-            val template = if (templateId.isNullOrBlank() || templateId == "new") {
+            val isNew = templateId.isNullOrBlank() || templateId == "new"
+            // The stored document, or null when there is none to preserve. An
+            // id that matches nothing in the collection is NOT a blank template
+            // to start editing: saving it would either create a stray document
+            // or write over a template we never read. Kept null so `persist`
+            // refuses rather than guessing.
+            val stored = if (isNew) null else all.firstOrNull { it.id == templateId }
+            val template = if (isNew) {
                 // New template scaffold
                 KinTaleTemplate(
                     name = "New Template",
@@ -49,7 +68,7 @@ class KinTaleTemplateEditorViewModel(
                     moodOptions = DefaultKinTaleTemplate.template.moodOptions
                 )
             } else {
-                all.firstOrNull { it.id == templateId } ?: KinTaleTemplate()
+                stored ?: KinTaleTemplate()
             }
 
             val onlyDefault = template.isDefault && all.count { it.isDefault } <= 1
@@ -57,8 +76,10 @@ class KinTaleTemplateEditorViewModel(
             _uiState.value = TemplateEditorUiState(
                 isLoading = false,
                 template = template,
-                isNew = templateId.isNullOrBlank() || templateId == "new",
-                isOnlyDefault = onlyDefault
+                loaded = stored,
+                isNew = isNew,
+                isOnlyDefault = onlyDefault,
+                error = if (!isNew && stored == null) TEMPLATE_NOT_LOADED else null
             )
         }
     }
@@ -177,7 +198,21 @@ class KinTaleTemplateEditorViewModel(
         _uiState.value = _uiState.value.copy(template = transform(_uiState.value.template))
     }
 
-    /** Persist template. Called from UI on field blur or section change. */
+    /**
+     * Persist template. Called from UI on field blur or section change, so
+     * consecutive saves are the norm, not the exception.
+     *
+     * A CREATE writes the whole model, and must: there is no stored document,
+     * so there is nothing to clobber, no sibling-written field to delete, and a
+     * new template must not save only the fields that happen to differ from a
+     * Kotlin default.
+     *
+     * An EDIT writes only what changed since [TemplateEditorUiState.loaded],
+     * under merge - see `KinTaleTemplateDiff.kt` for what the old whole-model
+     * bare `.set()` cost. A save that changed nothing writes nothing and reports
+     * success: blurring a field you did not edit is something an operator really
+     * does, and the template does hold what they asked for.
+     */
     fun persist() {
         val state = _uiState.value
         val template = state.template
@@ -188,8 +223,10 @@ class KinTaleTemplateEditorViewModel(
                 if (state.isNew && template.id.isBlank()) {
                     repository.createKinTaleTemplate(template).fold(
                         onSuccess = { newId ->
+                            val created = template.copy(id = newId)
                             _uiState.value = _uiState.value.copy(
-                                template = template.copy(id = newId),
+                                template = created,
+                                loaded = created,
                                 isNew = false,
                                 isSaving = false,
                                 saveStatus = SaveStatus.SAVED
@@ -205,11 +242,32 @@ class KinTaleTemplateEditorViewModel(
                         }
                     )
                 } else {
-                    repository.updateKinTaleTemplate(template).fold(
+                    val loaded = state.loaded
+                    if (loaded == null) {
+                        // Nothing was read, so there is no baseline to diff and no
+                        // way to write without guessing at the stored document.
+                        AuntieLog.e("Template update refused: no loaded baseline for ${template.id}")
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            saveStatus = SaveStatus.ERROR,
+                            error = TEMPLATE_NOT_LOADED
+                        )
+                        return@launch
+                    }
+                    val changes = kinTaleTemplateFieldChanges(loaded, template)
+                    if (changes.isEmpty()) {
+                        _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
+                        return@launch
+                    }
+                    repository.updateKinTaleTemplateFields(template.id, changes).fold(
                         onSuccess = {
                             // If we just toggled isDefault on, demote any other default templates
                             if (template.isDefault) demoteOtherDefaults(template.id)
-                            _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
+                            _uiState.value = _uiState.value.copy(
+                                loaded = template,
+                                isSaving = false,
+                                saveStatus = SaveStatus.SAVED
+                            )
                         },
                         onFailure = { e ->
                             AuntieLog.e("Template update failed", e)
@@ -228,11 +286,21 @@ class KinTaleTemplateEditorViewModel(
         }
     }
 
-    /** Ensure only one template is marked default. */
+    /**
+     * Ensure only one template is marked default.
+     *
+     * ONE FIELD, on a template the operator never opened. The React admin does
+     * exactly this - `batch.update(ref, { isDefault: false })` - and this used to
+     * write the whole sibling model back instead, which both reverted whatever
+     * had changed on it since the read and, when that read was stale, could
+     * re-assert a second `isDefault: true`. Which of two defaults wins is
+     * whatever order the snapshot arrived in, so that ambiguity is exactly what
+     * the flag exists to resolve.
+     */
     private suspend fun demoteOtherDefaults(keepId: String) {
         val all = repository.getKinTaleTemplates().getOrDefault(emptyList())
         all.filter { it.isDefault && it.id != keepId }.forEach { other ->
-            repository.updateKinTaleTemplate(other.copy(isDefault = false))
+            repository.updateKinTaleTemplateFields(other.id, mapOf("isDefault" to false))
         }
     }
 
@@ -246,5 +314,14 @@ class KinTaleTemplateEditorViewModel(
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    private companion object {
+        /**
+         * Named for what the operator is looking at - a list of template names -
+         * rather than for the document id, which names nothing on their screen.
+         */
+        const val TEMPLATE_NOT_LOADED =
+            "This template is no longer loaded. Reopen it from the template list before saving."
     }
 }
