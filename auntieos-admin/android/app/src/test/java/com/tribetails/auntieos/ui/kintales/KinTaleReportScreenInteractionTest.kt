@@ -57,7 +57,7 @@ class KinTaleReportScreenInteractionTest {
         coEvery { repo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { kinCareRepo.getKinCareReport("demo-report-1") } returns Result.success(AndroidDemoFixtures.kinTaleReport)
         coEvery { repo.getMediaFiles("demo-s1", MediaEntityType.VISIT_LOG) } returns Result.success(AndroidDemoFixtures.kinTaleMedia)
-        coEvery { kinCareRepo.updateKinCareReport(any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.createKinCareReport(any()) } returns Result.success("demo-report-1")
         val vm = KinTaleReportViewModel(
             repository = repo,

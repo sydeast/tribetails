@@ -143,6 +143,36 @@ fun KinTaleReportScreen(
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     AuntieSpinner(modifier = Modifier.size(32.dp), color = AuntieTheme.colors.kinfolkOrange)
                 }
+            } else if (state.reportLoadFailed) {
+                // A RESUME WHOSE READ FAILED GETS NO EDITOR. Rendering the blank
+                // scaffold here is what let a transient read failure replace a
+                // half-written KinTale with an empty one on the next keystroke: the
+                // editor looked like a fresh draft and saved like one. The read is
+                // offered again instead.
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Couldn't open this KinTale",
+                        icon = Lucide.CircleAlert,
+                        trailing = { GhostButton(label = "Retry", onClick = viewModel::retryLoad) },
+                        body = {
+                            Text(
+                                state.error ?: "This KinTale didn't load, so it isn't safe to edit yet.",
+                                style = AuntieTheme.typography.bodyMedium,
+                                color = AuntieTheme.colors.error,
+                            )
+                        },
+                    )
+                    Text(
+                        "The saved KinTale is untouched. Nothing typed here would reach it, so " +
+                            "load it again before writing.",
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
             } else {
                 Column(
                     modifier = Modifier

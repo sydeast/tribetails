@@ -34,7 +34,7 @@ import org.junit.Test
  * Two things are pinned here, and they only mean something together:
  *
  *  1. the model does NOT carry the pipeline's fields (and should not start
- *     carrying them - see [updateKinCareReport]'s note on why owning that state
+ *     carrying them - see [updateKinCareReportFields]'s note on why owning that state
  *     client-side trades this bug for a quieter one), so
  *  2. the write MUST be a merge, because merge is the only thing that can
  *     preserve a field the client cannot name.
@@ -102,6 +102,18 @@ class KinCareReportReconcileMergeTest {
         return if (write.merge) stored + incoming else incoming
     }
 
+    /**
+     * The same replay for a FIELD-MAP payload, which is what a KinTale save now
+     * sends. The payload is the map itself, so what lands is exactly its keys - and
+     * that is the property the whole change turns on.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun serverDocAfterFieldWrite(stored: Map<String, Any>): Map<String, Any?> {
+        val write = requireNotNull(recorded) { "the repository issued no document write at all" }
+        val incoming = write.payload as Map<String, Any?>
+        return if (write.merge) stored + incoming else incoming
+    }
+
     // ── the premise: the client cannot name these fields ──────────────────────
 
     @Test
@@ -133,14 +145,14 @@ class KinCareReportReconcileMergeTest {
             "reconcileClaimedAt" to "",
             "_migratedFrom" to "visit_logs/vl-88",
         )
-        val report = KinCareReport(sessionId = "sess-1", bodyCopy = "operator's edit")
 
         val result = runBlocking {
-            repo("kin_care_reports", report.id).updateKinCareReport(report)
+            repo("kin_care_reports", "rep-1")
+                .updateKinCareReportFields("rep-1", mapOf("bodyCopy" to "operator's edit"))
         }
 
         assertTrue(result.isSuccess)
-        val after = serverDocAfterWrite(stored, KinCareReport::class.java)
+        val after = serverDocAfterFieldWrite(stored)
         // The whole point. Lose this and the report drops out of
         // `.where("reconcileStatus", "==", "pending")` and is never reconciled.
         assertEquals("pending", after["reconcileStatus"])
@@ -148,34 +160,104 @@ class KinCareReportReconcileMergeTest {
         assertNotNull(after["reconcileNotes"])
         assertNotNull(after["reconcileClaimedAt"])
         assertEquals("visit_logs/vl-88", after["_migratedFrom"])
+        assertEquals("operator's edit", after["bodyCopy"])
     }
 
+    /**
+     * THE FIELD MAP IS THE FIRST LINE OF DEFENCE AND MERGE IS STILL THE SECOND.
+     *
+     * The payload now names only the keys that changed, so the pipeline's fields sit
+     * OUTSIDE the written map rather than merely being preserved by it. Merge still
+     * matters: the same field map handed to a bare `set()` would delete every key it
+     * does not name, which on this document is most of them.
+     */
     @Test
-    fun `saving a KinTale still writes every modelled field, blanked ones included`() {
-        // Merge must not become a way to sneak stale data through: a field the
-        // operator deliberately cleared has to reach the server as cleared, not
-        // fall back to whatever was stored.
+    fun `a KinTale field write is a merge, not a document replacement`() {
+        runBlocking {
+            repo("kin_care_reports", "rep-1")
+                .updateKinCareReportFields("rep-1", mapOf("title" to "a new headline"))
+        }.getOrThrow()
+
+        assertTrue("a field-level write must merge", requireNotNull(recorded).merge)
+    }
+
+    /**
+     * THE FIELDS THIS EDITOR DOES NOT OWN NEVER REACH THE WIRE, which is the whole
+     * of the change on this collection. Before it, every save carried all 30
+     * modelled fields at the values the client last read, reverting a triage
+     * decision or a send made while the draft sat open.
+     */
+    @Test
+    fun `a KinTale field write carries only the named fields plus the stamp`() {
+        val stored = mapOf<String, Any>(
+            "triageStatus" to "assigned",
+            "triagedBy" to "admin-1",
+            "status" to "SENT",
+        )
+
+        runBlocking {
+            repo("kin_care_reports", "rep-1")
+                .updateKinCareReportFields("rep-1", mapOf("bodyCopy" to "operator's edit"))
+        }.getOrThrow()
+
+        @Suppress("UNCHECKED_CAST")
+        val payload = requireNotNull(recorded).payload as Map<String, Any?>
+        assertEquals(setOf("bodyCopy", "updatedAt"), payload.keys)
+
+        val after = serverDocAfterFieldWrite(stored)
+        assertEquals("assigned", after["triageStatus"])
+        assertEquals("admin-1", after["triagedBy"])
+        assertEquals("SENT", after["status"])
+    }
+
+    /**
+     * A field the operator deliberately CLEARED still reaches the server as cleared.
+     * Whether a blank is a change is decided against the loaded baseline in the
+     * ViewModel; whatever the differ names is written verbatim here.
+     */
+    @Test
+    fun `a cleared field is written as the blank the operator left`() {
         val stored = mapOf<String, Any>("title" to "an old headline", "reconcileStatus" to "pending")
-        val report = KinCareReport(sessionId = "sess-1", title = "")
 
-        runBlocking { repo("kin_care_reports", report.id).updateKinCareReport(report) }.getOrThrow()
+        runBlocking {
+            repo("kin_care_reports", "rep-1").updateKinCareReportFields("rep-1", mapOf("title" to ""))
+        }.getOrThrow()
 
-        val after = serverDocAfterWrite(stored, KinCareReport::class.java)
-        assertEquals("written-by-client", after["title"])
+        val after = serverDocAfterFieldWrite(stored)
+        assertEquals("", after["title"])
         assertEquals("pending", after["reconcileStatus"])
+    }
+
+    /**
+     * AN EMPTY WRITE IS REFUSED RATHER THAN STAMPED. `updatedAt` says when the
+     * KinTale last changed, and moving it for a save that changed nothing makes it
+     * lie - which matters more once the editor autosaves, because the operator
+     * reads that stamp as "my work is safe as of then".
+     */
+    @Test
+    fun `a write with no changed fields is refused and touches nothing`() {
+        val result = runBlocking {
+            repo("kin_care_reports", "rep-1").updateKinCareReportFields("rep-1", emptyMap())
+        }
+
+        assertTrue(result.isFailure)
+        assertNull("no document write may be issued at all", recorded)
     }
 
     @Test
     fun `saving a KinTale stamps updatedAt rather than round-tripping the read value`() {
-        val report = KinCareReport(sessionId = "sess-1", updatedAt = "1999-01-01T00:00:00Z")
+        runBlocking {
+            repo("kin_care_reports", "rep-1")
+                .updateKinCareReportFields("rep-1", mapOf("updatedAt" to "1999-01-01T00:00:00Z"))
+        }.getOrThrow()
 
-        runBlocking { repo("kin_care_reports", report.id).updateKinCareReport(report) }.getOrThrow()
-
-        val written = requireNotNull(recorded).payload as KinCareReport
-        assertTrue(written.updatedAt != "1999-01-01T00:00:00Z")
+        @Suppress("UNCHECKED_CAST")
+        val payload = requireNotNull(recorded).payload as Map<String, Any?>
+        val written = payload["updatedAt"] as String
+        assertTrue(written != "1999-01-01T00:00:00Z")
         // ISO-8601 String, not a Firestore Timestamp: every reader of
         // KinCareReport.updatedAt parses it as a String.
-        assertTrue(written.updatedAt.endsWith("Z"))
+        assertTrue(written.endsWith("Z"))
     }
 
     // ── the sibling site ──────────────────────────────────────────────────────
