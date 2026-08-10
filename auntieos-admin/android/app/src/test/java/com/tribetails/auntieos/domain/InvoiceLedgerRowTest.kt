@@ -1,8 +1,11 @@
 package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
+import java.util.Locale
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -13,6 +16,15 @@ import org.junit.Test
  * easier to be sure of when nothing has to be composed to read it.
  */
 class InvoiceLedgerRowTest {
+
+    // The date cell is formatted for the operator's locale, so the expected
+    // spelling below is pinned rather than inherited from whatever machine runs
+    // the suite. Restored afterwards so nothing else in the JVM inherits it.
+    private val hostLocale = Locale.getDefault()
+
+    @Before fun pinLocale() = Locale.setDefault(Locale.US)
+
+    @After fun restoreLocale() = Locale.setDefault(hostLocale)
 
     private fun row(
         amountCents: Long = 13750L,
@@ -26,6 +38,8 @@ class InvoiceLedgerRowTest {
         autoApply: Boolean = false,
         appliedInvoiceId: String = "",
         appliedInvoiceNumber: String = "",
+        method: String = "Venmo",
+        date: String = "2026-07-20",
     ) = GetInvoiceLedgerResultLedgerPayment(
         paymentId = "p1",
         amountCents = amountCents,
@@ -40,9 +54,9 @@ class InvoiceLedgerRowTest {
         autoApply = autoApply,
         appliedInvoiceId = appliedInvoiceId,
         appliedInvoiceNumber = appliedInvoiceNumber,
-        method = "Venmo",
+        method = method,
         reference = "",
-        date = "2026-07-20",
+        date = date,
         notes = "",
         recordedBy = null,
     )
@@ -77,6 +91,63 @@ class InvoiceLedgerRowTest {
     @Test
     fun `a payment that touched no balance says nothing rather than zero`() {
         assertEquals("", ledgerRowAppliedLabel(row()))
+    }
+
+    // ── Transaction date ──────────────────────────────────────────────────────
+    //
+    // The field is FREE TEXT and the server says so: getInvoiceLedger.ts calls it
+    // "FREE TEXT on this collection, like every legacy billing date. Not parsed."
+    // These pin both halves of the rule: read it when it can be read, and print
+    // what is stored the rest of the time. Never a prefix of it.
+
+    @Test
+    fun `an operator-typed date survives whole rather than becoming a different one`() {
+        // The shape the repo's fixtures hold. `take(10)` made this "February 1",
+        // which is a real date and is not this payment's.
+        assertEquals("February 17, 2026", ledgerRowDateLabel(row(date = "February 17, 2026")))
+    }
+
+    @Test
+    fun `an ISO day is spelled out for the operator instead of left as machine text`() {
+        assertEquals("Jul 20, 2026", ledgerRowDateLabel(row(date = "2026-07-20")))
+    }
+
+    @Test
+    fun `an ISO instant keeps its stored day and loses only the clock`() {
+        // The literal characters of the day, never a zone conversion: a payment
+        // stored as the 20th is shown as the 20th wherever the phone is.
+        assertEquals("Jul 20, 2026", ledgerRowDateLabel(row(date = "2026-07-20T23:32:00Z")))
+    }
+
+    @Test
+    fun `an ambiguous slash date is not guessed at`() {
+        // 07/24 is unreadable as written: month-first and day-first cannot be
+        // told apart, so it prints as stored rather than being decided for her.
+        assertEquals("07/24/2026", ledgerRowDateLabel(row(date = "07/24/2026")))
+    }
+
+    @Test
+    fun `a day that does not exist is shown as stored, not rolled into the next month`() {
+        assertEquals("2026-02-30", ledgerRowDateLabel(row(date = "2026-02-30")))
+    }
+
+    @Test
+    fun `no date at all is said in words`() {
+        assertEquals("no date recorded", ledgerRowDateLabel(row(date = "")))
+        assertEquals("no date recorded", ledgerRowDateLabel(row(date = "   ")))
+    }
+
+    // ── Method ────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a recorded method is the method`() {
+        assertEquals("Venmo", ledgerRowMethodLabel(row(method = "Venmo")))
+    }
+
+    @Test
+    fun `a blank method is an absence, not a method called payment`() {
+        assertEquals("no method recorded", ledgerRowMethodLabel(row(method = "")))
+        assertEquals("no method recorded", ledgerRowMethodLabel(row(method = "  ")))
     }
 
     // ── Fee ───────────────────────────────────────────────────────────────────
