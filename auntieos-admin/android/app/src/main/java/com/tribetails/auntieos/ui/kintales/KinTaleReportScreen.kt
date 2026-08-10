@@ -363,6 +363,26 @@ fun KinTaleReportScreen(
                 .background(AuntieTheme.colors.background)
                 .padding(16.dp)
         ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The draft saves itself, so it has to say so - and say WHEN it last
+            // succeeded. A silent autosave that fails is worse than none, because
+            // the sitter stops thinking about whether the work is safe.
+            if (!isSent) {
+                val savedAt = state.lastSavedAtMillis
+                val (autosaveLabel, autosaveColor) = when {
+                    state.isSaving -> "Saving..." to AuntieTheme.colors.kinfolkOrange
+                    state.saveStatus == SaveStatus.ERROR ->
+                        "Not saved. Still on this phone only." to AuntieTheme.colors.error
+                    state.hasUnsavedChanges -> "Unsaved changes" to AuntieTheme.colors.textDim
+                    savedAt != null -> "Saved ${formatSavedAt(savedAt)}" to AuntieTheme.colors.success
+                    else -> "Saves as you write" to AuntieTheme.colors.textDim
+                }
+                Text(
+                    autosaveLabel,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = autosaveColor,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -370,6 +390,7 @@ fun KinTaleReportScreen(
                 GhostButton(
                     label = when {
                         isSent -> "Saved"
+                        state.hasUnsavedChanges || state.saveStatus == SaveStatus.ERROR -> "Save now"
                         state.saveStatus == SaveStatus.SAVED && !state.isSaving -> "Draft saved"
                         else -> "Save Draft"
                     },
@@ -386,9 +407,19 @@ fun KinTaleReportScreen(
                     leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(18.dp)) }
                 )
             }
+            }
         }
     }
 }
+
+/**
+ * The clock time of the last accepted save, as the sitter would read it off a
+ * watch. Deliberately not "2 minutes ago": a relative label goes stale the moment
+ * the screen stops recomposing, and this one is a promise about their work.
+ */
+internal fun formatSavedAt(millis: Long): String =
+    java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+        .format(java.util.Date(millis))
 
 // ───────────────────────────── Hero ─────────────────────────────
 
