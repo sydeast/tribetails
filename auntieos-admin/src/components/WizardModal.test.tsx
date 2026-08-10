@@ -141,6 +141,83 @@ describe('WizardModal: validation belongs to the step that owns the field', () =
   });
 });
 
+/**
+ * The screenshot review of 2026-08-09 caught the form schema wizard greeting a
+ * BRAND NEW schema with "Fix on this step: Schema id is required. Schema name is
+ * required." and "3 things left to fix", before the operator had typed anything.
+ * An error describes something the operator did; an empty form they just opened
+ * is not that.
+ *
+ * `pristine` is how a caller says "nothing has happened here yet". The errors
+ * are still passed in full, so the save stays blocked and the rail can still
+ * find them: what changes is only when the operator is TOLD.
+ */
+describe('WizardModal: a pristine step is not accused of being empty', () => {
+  function pristineSteps(): WizardStep[] {
+    const steps = threeSteps({
+      schema: ['Schema id is required.', 'Schema name is required.'],
+      fields: ['At least one field is required.'],
+    });
+    steps[0]!.pristine = true;
+    steps[1]!.pristine = true;
+    return steps;
+  }
+
+  it('says nothing on the step, nothing on the rail, and nothing beside Next', () => {
+    render(<Harness steps={pristineSteps()} />);
+    expect(screen.queryByText('Fix on this step')).toBeNull();
+    expect(screen.queryByText('Schema id is required.')).toBeNull();
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+    expect(screen.queryByRole('button', { name: /left to fix/ })).toBeNull();
+  });
+
+  it('speaks up for the step the operator has touched while the untouched one stays quiet', () => {
+    const steps = pristineSteps();
+    steps[0]!.pristine = false;
+    render(<Harness steps={steps} />);
+    expect(screen.getByText('Schema id is required.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 2 things to fix');
+    // The count beside Next is what the operator has been shown, not the truth
+    // it is still hiding: claiming 3 while naming 2 is its own bug report.
+    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('2 things left to fix');
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+  });
+
+  it('reveals everything on the first finish attempt, lands on the first problem, and does not finish', async () => {
+    const onFinish = vi.fn();
+    render(<Harness steps={pristineSteps()} initial="review" onFinish={onFinish} />);
+
+    // Enabled, because a disabled button with no stated reason is the other way
+    // to strand an operator: the click is what earns the explanation.
+    const finish = screen.getByRole('button', { name: 'Save schema' });
+    expect(finish).toBeEnabled();
+    await userEvent.click(finish);
+
+    expect(onFinish).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Schema', level: 3 })).toBeTruthy();
+    expect(screen.getByText('Schema id is required.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 1 thing to fix');
+    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('3 things left to fix');
+  });
+
+  it('blocks finish the old way once the problems are on screen', async () => {
+    render(<Harness steps={pristineSteps()} initial="review" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Save schema' }));
+    await userEvent.click(screen.getByRole('button', { name: /^3 Review/ }));
+    expect(screen.getByRole('button', { name: 'Save schema' })).toBeDisabled();
+  });
+
+  it('finishes normally when a pristine step has nothing wrong with it', async () => {
+    const onFinish = vi.fn();
+    const steps = threeSteps();
+    steps[0]!.pristine = true;
+    render(<Harness steps={steps} initial="review" onFinish={onFinish} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(onFinish).toHaveBeenCalledOnce();
+  });
+});
+
 describe('WizardModal: flow-level notices', () => {
   it('shows a notice above the rail, on every step, because it belongs to the flow not a step', async () => {
     function WithNotice() {
