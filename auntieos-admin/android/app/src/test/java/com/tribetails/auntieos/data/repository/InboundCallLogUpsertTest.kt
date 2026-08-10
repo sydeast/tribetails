@@ -224,14 +224,25 @@ class InboundCallLogUpsertTest {
         assertEquals("Hi, calling about Tuesday", payload()["transcript"])
     }
 
+    /**
+     * A push can arrive without a CallSid. There is no document to converge on
+     * then, so the call gets one of its own rather than being dropped or written
+     * to a document named empty.
+     */
     @Test
     fun `a blank CallSid still lands on a document of its own`() {
-        val result = upsert(
-            repo(null).also { every { collection.document(any()) } returns docRef },
-        )
+        val result = runBlocking {
+            repo(null).upsertInboundCallLog(
+                callSid = "",
+                callerNumber = "+15125550147",
+                transcript = "Hi, calling about Tuesday",
+            )
+        }
 
         assertTrue(result.isSuccess)
-        assertTrue(result.getOrThrow().isNotBlank())
+        val id = result.getOrThrow()
+        assertTrue("a blank CallSid must not become a blank document id", id.isNotBlank())
+        assertEquals("", payload()["twilioCallSid"])
     }
 
     private companion object {
