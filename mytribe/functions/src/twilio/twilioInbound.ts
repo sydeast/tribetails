@@ -280,32 +280,111 @@ export async function twilioInboundCallHandler(req: Request, res: Response): Pro
     return;
   }
 
-  const from = body.From || '';
-  const match = await matchKinfolkByPhone(from);
-  // Twilio call status callbacks send CallDuration; recording callbacks send
-  // RecordingDuration. Accept either so the duration is populated whichever
-  // callback fires.
-  const durationRaw = Number(body.CallDuration || body.RecordingDuration || 0);
-  const doc = {
-    counterpartNumber: from,
+  // ONLY WHAT THIS CALLBACK ACTUALLY ASSERTS.
+  //
+  // Several callbacks land on this one document and they do NOT carry the same
+  // fields. A callback that omits a field is SILENT about it; it is not saying
+  // the field is empty, and turning that silence into `|| ''` erased another
+  // writer's work. What each one carries, from Twilio's own parameter tables:
+  //
+  //   recordingStatusCallback (twilio.com/docs/voice/twiml/record)
+  //     AccountSid, CallSid, RecordingSid, RecordingUrl, RecordingStatus,
+  //     RecordingDuration, RecordingChannels, RecordingStartTime,
+  //     RecordingSource, RecordingTrack. NO From/To, NO CallStatus, NO
+  //     CallDuration. It is the ONLY callback carrying a <Record>-verb
+  //     recording's URL.
+  //
+  //   call statusCallback (CallbackSource="call-progress-events")
+  //     the full TwiML voice-request set (From, To, Caller, Called, Direction,
+  //     CallStatus...) plus CallDuration, Timestamp and SequenceNumber.
+  //     CallDuration is "only present in the completed event"; RecordingUrl
+  //     appears here only in the completed event and only "if record is set on
+  //     the <Dial>" — never for a <Record>-verb recording.
+  //
+  // Twilio on ordering: events "are made as separate HTTP requests, and there
+  // is no guarantee they will arrive in the same order", so no field may depend
+  // on which callback lands first.
+  //
+  // WHO OWNS WHAT on calls_log/{CallSid}:
+  //   recordingUrl  — TWILIO owns it. Written only when a callback carries a
+  //                   RecordingUrl. There is no second copy of that link on
+  //                   this system, so a blank write loses the recording.
+  //   transcript    — THE APP owns it, and this handler NEVER writes it. No
+  //                   callback reaching this endpoint carries one
+  //                   (TranscriptionText goes to twilioInboundVoicemail), so
+  //                   the server has nothing to say about it. Do not re-add the
+  //                   key: `transcript: ''` here wiped what the FCM push wrote
+  //                   (AuntieRepository.upsertInboundCallLog), on every call.
+  //   reconcile*    — RECONCILE owns them after the seed below. PR #344 settled
+  //                   the same ownership question on the android side.
+  const from = (body.From || '').trim();
+  // Only look up a kinfolk when this callback actually names a number. A
+  // callback that carries no From is not evidence there is no kinfolk.
+  const match = from ? await matchKinfolkByPhone(from) : null;
+  const asserted: Record<string, unknown> = {
     direction: 'inbound',
-    status: body.CallStatus || 'completed',
-    transcript: '',
-    recordingUrl: body.RecordingUrl || '',
-    durationSec: Number.isFinite(durationRaw) ? durationRaw : 0,
-    timestamp: nowIso(),
     twilioCallSid: sid,
+  };
+  if (from) asserted.counterpartNumber = from;
+  // A miss writes nothing: reconcile_comms.py does the authoritative
+  // last-10-digit match later and must not find its own work undone.
+  if (match?.kinfolkId) {
+    asserted.kinfolkId = match.kinfolkId;
+    asserted.kinfolkName = match.kinfolkName;
+  }
+  const callStatus = (body.CallStatus || '').trim();
+  // No `|| 'completed'` default: a recording callback carries no CallStatus,
+  // and claiming "completed" would overwrite a real no-answer/busy/failed.
+  if (callStatus) asserted.status = callStatus;
+  const recordingUrl = (body.RecordingUrl || '').trim();
+  if (recordingUrl) asserted.recordingUrl = recordingUrl;
+  // Status callbacks send CallDuration, recording callbacks RecordingDuration.
+  // Neither present means unknown, which is not the same fact as zero seconds.
+  const durationRaw = (body.CallDuration || body.RecordingDuration || '').trim();
+  if (durationRaw) {
+    const duration = Number(durationRaw);
+    if (Number.isFinite(duration)) asserted.durationSec = duration;
+  }
+
+  // Fields that must EXIST on the document but must never be restated:
+  //   reconcileStatus/reconciledAt/reconcileNotes — reconcile_comms.py finds
+  //     work with .where('reconcileStatus','==','pending') and claims a doc by
+  //     flipping pending -> in_progress in a transaction. Restating 'pending'
+  //     un-claims a doc mid-run and lets a second worker fold the same call
+  //     into the dossier twice, and blanks the notes explaining an error.
+  //   timestamp — the Inbox sorts on it; the first writer's value is the one
+  //     that means anything, and nowIso() on every callback walks it forward.
+  //   kinfolkId/kinfolkName/voicemailLogId — the android CallLog schema shape
+  //     for a freshly created doc (nothing writes voicemailLogId yet).
+  //
+  // Seeded per KEY, not per document, and that distinction is load-bearing: the
+  // FCM push creates calls_log/{CallSid} without a reconcileStatus, so seeding
+  // only when the DOCUMENT is absent would leave every phone-first call
+  // invisible to reconcile forever.
+  const seeds: Record<string, unknown> = {
+    timestamp: nowIso(),
+    kinfolkId: null,
+    kinfolkName: '',
     voicemailLogId: '',
-    kinfolkId: match.kinfolkId,
-    kinfolkName: match.kinfolkName,
     reconcileStatus: 'pending',
     reconciledAt: '',
     reconcileNotes: '',
   };
 
-  // merge-upsert: a recording callback and a later status callback for the same
-  // CallSid converge on one doc rather than duplicating.
-  await db().collection(CALLS).doc(sid).set(doc, { merge: true });
+  // One transaction, mirroring the android writer PR #344 landed: the seed
+  // decision is made from the document as it is at write time, not from a state
+  // read moments earlier that a concurrent callback may already have moved on.
+  const ref = db().collection(CALLS).doc(sid);
+  await db().runTransaction(async (txn) => {
+    const snap = await txn.get(ref);
+    const stored = (snap.exists ? snap.data() : undefined) ?? {};
+    const payload: Record<string, unknown> = { ...asserted };
+    for (const [key, value] of Object.entries(seeds)) {
+      if (!(key in stored) && !(key in payload)) payload[key] = value;
+    }
+    // merge: everything this callback did not mention is left exactly as it is.
+    txn.set(ref, payload, { merge: true });
+  });
   logEvent({ severity: 'info', function: 'twilioInboundCall', event: 'twilioInboundCall.wrote', extra: { sid } });
   res.status(200).json({ ok: true });
 }

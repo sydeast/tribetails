@@ -7,12 +7,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // a retry upserts (idempotent), with reconcileStatus="pending" + a sortable
 // timestamp so reconcile_comms.py and the Inbox readers keep working.
 
-// --- in-memory Firestore double: records set() calls keyed by collection/id ---
+// --- in-memory Firestore double -------------------------------------------
+// It records every set() AND applies it to a stored document with Firestore's
+// real merge semantics, so a test can replay two Twilio callbacks in sequence
+// and assert what the DOCUMENT ends up holding. Asserting only the payload of a
+// single set() is what let `recordingUrl: body.RecordingUrl || ''` survive
+// review: the payload looked fine in isolation, and the loss only appears when
+// a second callback lands on the first one's document.
 interface SetCall {
   collection: string;
   id: string;
   data: Record<string, unknown>;
   options: { merge?: boolean } | undefined;
+  /** true when the write went through runTransaction rather than a bare set(). */
+  viaTransaction: boolean;
 }
 
 // A kinfolk record returned by the phone-match query, keyed by the E.164 value
@@ -27,6 +35,9 @@ interface KinfolkRow {
 
 const mocks = vi.hoisted(() => ({
   sets: [] as SetCall[],
+  // the stored documents, keyed `${collection}/${id}`
+  docs: new Map<string, Record<string, unknown>>(),
+  transactions: 0,
   validateRequest: vi.fn(),
   // rows the mocked kinfolk collection holds; matched by exact field equality
   kinfolk: [] as KinfolkRow[],
@@ -34,38 +45,74 @@ const mocks = vi.hoisted(() => ({
   kinfolkQueryThrows: false,
 }));
 
-vi.mock('../src/lib/firestoreAdmin', () => ({
-  db: () => ({
-    collection: (collection: string) => {
-      if (collection === 'kinfolk') {
-        // Supports .where(field,'==',value).limit(n).get() used by the phone match.
-        const makeQuery = (field: string, value: unknown) => ({
-          limit: (_n: number) => ({
-            get: () => {
-              if (mocks.kinfolkQueryThrows) return Promise.reject(new Error('kinfolk read boom'));
-              const hit = mocks.kinfolk.find((r) => r[field as keyof KinfolkRow] === value);
-              return Promise.resolve({
-                empty: !hit,
-                docs: hit ? [{ id: hit.id, data: () => hit }] : [],
-              });
-            },
-          }),
-        });
-        return {
-          where: (field: string, _op: string, value: unknown) => makeQuery(field, value),
-        };
-      }
-      return {
-        doc: (id: string) => ({
-          set: (data: Record<string, unknown>, options?: { merge?: boolean }) => {
-            mocks.sets.push({ collection, id, data, options });
-            return Promise.resolve();
-          },
-        }),
-      };
+vi.mock('../src/lib/firestoreAdmin', () => {
+  const write = (
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+    options: { merge?: boolean } | undefined,
+    viaTransaction: boolean,
+  ) => {
+    mocks.sets.push({ collection, id, data, options, viaTransaction });
+    const key = `${collection}/${id}`;
+    const prior = mocks.docs.get(key);
+    // merge:true leaves fields the payload does not mention alone; without it
+    // the document is replaced wholesale. Same rule Firestore applies.
+    mocks.docs.set(key, options?.merge && prior ? { ...prior, ...data } : { ...data });
+  };
+  const makeDocRef = (collection: string, id: string) => ({
+    __collection: collection,
+    __id: id,
+    set: (data: Record<string, unknown>, options?: { merge?: boolean }) => {
+      write(collection, id, data, options, false);
+      return Promise.resolve();
     },
-  }),
-}));
+  });
+  const snapshotOf = (collection: string, id: string) => {
+    const stored = mocks.docs.get(`${collection}/${id}`);
+    return { exists: stored !== undefined, data: () => (stored ? { ...stored } : undefined) };
+  };
+  type Ref = ReturnType<typeof makeDocRef>;
+  return {
+    db: () => ({
+      collection: (collection: string) => {
+        if (collection === 'kinfolk') {
+          // Supports .where(field,'==',value).limit(n).get() used by the phone match.
+          const makeQuery = (field: string, value: unknown) => ({
+            limit: (_n: number) => ({
+              get: () => {
+                if (mocks.kinfolkQueryThrows) return Promise.reject(new Error('kinfolk read boom'));
+                const hit = mocks.kinfolk.find((r) => r[field as keyof KinfolkRow] === value);
+                return Promise.resolve({
+                  empty: !hit,
+                  docs: hit ? [{ id: hit.id, data: () => hit }] : [],
+                });
+              },
+            }),
+          });
+          return {
+            where: (field: string, _op: string, value: unknown) => makeQuery(field, value),
+          };
+        }
+        return { doc: (id: string) => makeDocRef(collection, id) };
+      },
+      runTransaction: async <T>(fn: (txn: unknown) => Promise<T>): Promise<T> => {
+        mocks.transactions += 1;
+        return fn({
+          get: (ref: Ref) => Promise.resolve(snapshotOf(ref.__collection, ref.__id)),
+          set: (ref: Ref, data: Record<string, unknown>, options?: { merge?: boolean }) => {
+            write(ref.__collection, ref.__id, data, options, true);
+          },
+        });
+      },
+    }),
+  };
+});
+
+/** The document the handlers left behind, or undefined if none was written. */
+function storedDoc(collection: string, id: string): Record<string, unknown> | undefined {
+  return mocks.docs.get(`${collection}/${id}`);
+}
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('twilio', () => ({
   default: { validateRequest: (...args: unknown[]) => mocks.validateRequest(...args) },
@@ -73,6 +120,8 @@ vi.mock('twilio', () => ({
 
 beforeEach(() => {
   mocks.sets.length = 0;
+  mocks.docs.clear();
+  mocks.transactions = 0;
   mocks.validateRequest.mockReset();
   mocks.kinfolk.length = 0;
   mocks.kinfolkQueryThrows = false;
@@ -138,6 +187,89 @@ async function loadHandler(name: string) {
   const mod = await import('../src/twilio/twilioInbound');
   return (mod as Record<string, any>)[`${name}Handler`];
 }
+
+// --- REAL Twilio callback bodies -------------------------------------------
+// Verbatim from Twilio's own parameter tables, not a hand-trimmed fixture. The
+// point of these three is what they DO NOT contain:
+//
+//   RECORDING_STATUS_CALLBACK  — recordingStatusCallback on <Record>/<Dial>.
+//     Parameters (twilio.com/docs/voice/twiml/record, /voice/api/call-resource):
+//     AccountSid, CallSid, RecordingSid, RecordingUrl, RecordingStatus,
+//     RecordingDuration, RecordingChannels, RecordingStartTime, RecordingSource,
+//     RecordingTrack (+ ErrorCode / EncryptionDetails). There is NO From, NO To,
+//     NO CallStatus and NO CallDuration in that list. It is the ONLY callback
+//     that carries the recording of a <Record>-verb recording.
+//
+//   RINGING_STATUS_CALLBACK / COMPLETED_STATUS_CALLBACK — the call
+//     statusCallback (CallbackSource="call-progress-events"). Carries the full
+//     TwiML voice-request parameter set plus CallStatus, CallDuration
+//     ("Only present in the completed event"), Timestamp and SequenceNumber.
+//     RecordingUrl appears here ONLY in the completed event AND only "if record
+//     is set on the <Dial>", never for a <Record>-verb recording.
+//
+// Twilio on ordering: "The order in which the events were fired, starting from
+// 0. Although events are fired in order, they are made as separate HTTP
+// requests, and there is no guarantee they will arrive in the same order."
+// So neither arrival order can be assumed, and both are exercised below.
+const CALL_SID = 'CA5987df4d600665d67f53e1bd4cec76d6';
+const REC_URL = 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Recordings/REb719';
+const CALLER = '+12015550123';
+
+const RECORDING_STATUS_CALLBACK: Record<string, string> = {
+  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  CallSid: CALL_SID,
+  RecordingSid: 'REb719a56ceca43b2d06967983570e658a',
+  RecordingUrl: REC_URL,
+  RecordingStatus: 'completed',
+  RecordingDuration: '42',
+  RecordingChannels: '1',
+  RecordingStartTime: 'Tue, 28 May 2019 02:18:02 +0000',
+  RecordingSource: 'RecordVerb',
+  RecordingTrack: 'both',
+  ErrorCode: '0',
+};
+
+const RINGING_STATUS_CALLBACK: Record<string, string> = {
+  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  ApiVersion: '2010-04-01',
+  CallSid: CALL_SID,
+  CallStatus: 'ringing',
+  Called: '+12015550199',
+  CalledCity: 'NEWARK',
+  CalledCountry: 'US',
+  CalledState: 'NJ',
+  CalledZip: '07102',
+  Caller: CALLER,
+  CallerCity: 'NEWARK',
+  CallerCountry: 'US',
+  CallerState: 'NJ',
+  CallerZip: '07102',
+  Direction: 'inbound',
+  From: CALLER,
+  To: '+12015550199',
+  CallbackSource: 'call-progress-events',
+  SequenceNumber: '1',
+  Timestamp: 'Tue, 28 May 2019 02:17:55 +0000',
+  StirStatus: 'A',
+};
+
+const COMPLETED_STATUS_CALLBACK: Record<string, string> = {
+  ...RINGING_STATUS_CALLBACK,
+  CallStatus: 'completed',
+  CallDuration: '42',
+  SequenceNumber: '3',
+  Timestamp: 'Tue, 28 May 2019 02:18:37 +0000',
+};
+
+// Only a call recorded via `record` on <Dial> puts the recording on the status
+// callback as well. Kept separate so no test accidentally relies on a recording
+// URL reaching the status callback when it would not.
+const COMPLETED_STATUS_CALLBACK_WITH_RECORDING: Record<string, string> = {
+  ...COMPLETED_STATUS_CALLBACK,
+  RecordingUrl: REC_URL,
+  RecordingSid: 'REb719a56ceca43b2d06967983570e658a',
+  RecordingDuration: '42',
+};
 
 describe.each(HANDLERS)('$name — guard (WARNING-8)', ({ name, sidKey }) => {
   it('FAILS CLOSED 403 when TWILIO_AUTH_TOKEN is unset', async () => {
@@ -331,26 +463,23 @@ describe('twilioInboundCall — valid signed request', () => {
   it('writes calls_log/{CallSid} with the exact android schema', async () => {
     const handler = await loadHandler('twilioInboundCall');
     const { res, captured } = captureRes();
-    await handler(
-      makeReq({
-        headers: { 'x-twilio-signature': 'sig' },
-        body: { From: '+15553334444', CallSid: 'CA123', RecordingUrl: 'https://rec/c', RecordingDuration: '42', CallStatus: 'completed' },
-      }),
-      res,
-    );
+    // A documented `completed` call status callback for a call recorded via
+    // record on <Dial> — the one callback that carries BOTH the caller's number
+    // and a RecordingUrl, so every schema field lands from a single request.
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: COMPLETED_STATUS_CALLBACK_WITH_RECORDING }), res);
     expect(mocks.sets.length).toBe(1);
     const w = mocks.sets[0];
     expect(w.collection).toBe('calls_log');
-    expect(w.id).toBe('CA123');
+    expect(w.id).toBe('CA5987df4d600665d67f53e1bd4cec76d6');
     expect(w.options).toEqual({ merge: true });
-    expect(w.data).toMatchObject({
-      counterpartNumber: '+15553334444', // calls match by counterpartNumber
+    const stored = storedDoc('calls_log', 'CA5987df4d600665d67f53e1bd4cec76d6')!;
+    expect(stored).toMatchObject({
+      counterpartNumber: '+12015550123', // calls match by counterpartNumber
       direction: 'inbound',
       status: 'completed',
-      transcript: '',
-      recordingUrl: 'https://rec/c',
-      durationSec: 42, // Number(RecordingDuration)
-      twilioCallSid: 'CA123',
+      recordingUrl: 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Recordings/REb719',
+      durationSec: 42, // Number(CallDuration)
+      twilioCallSid: 'CA5987df4d600665d67f53e1bd4cec76d6',
       voicemailLogId: '',
       kinfolkId: null,
       kinfolkName: '',
@@ -358,17 +487,25 @@ describe('twilioInboundCall — valid signed request', () => {
       reconciledAt: '',
       reconcileNotes: '',
     });
-    expect(w.data.timestamp).not.toBe('');
+    expect(stored.timestamp).not.toBe('');
+    // `transcript` is NOT in this list and that is deliberate: no callback
+    // reaching this endpoint carries one, so the server never writes the field.
+    expect(Object.prototype.hasOwnProperty.call(stored, 'transcript')).toBe(false);
     expect(captured.status).toBe(200);
     expect(captured.body).toMatchObject({ ok: true });
   });
 
-  it('defaults status to "completed" and duration to 0 when absent/non-numeric', async () => {
+  it('writes NO status and NO duration when the callback asserts neither', async () => {
+    // A recording callback carries no CallStatus. Defaulting to "completed"
+    // would state as fact something Twilio did not say — and would overwrite a
+    // real `no-answer` (see the ordering suite below). A non-numeric duration
+    // is likewise not a reason to claim the call lasted zero seconds.
     const handler = await loadHandler('twilioInboundCall');
     const { res } = captureRes();
-    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+1', CallSid: 'CA0', RecordingDuration: 'notanumber' } }), res);
-    expect(mocks.sets[0].data.status).toBe('completed');
-    expect(mocks.sets[0].data.durationSec).toBe(0);
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+12015550123', CallSid: 'CA0', RecordingDuration: 'notanumber' } }), res);
+    const stored = storedDoc('calls_log', 'CA0')!;
+    expect(Object.prototype.hasOwnProperty.call(stored, 'status')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(stored, 'durationSec')).toBe(false);
   });
 
   it('is idempotent on CallSid (merge-upsert)', async () => {
@@ -387,7 +524,7 @@ describe('twilioInboundCall — valid signed request', () => {
     expect(mocks.sets.length).toBe(0);
   });
 
-  it('uses CallDuration when present (status callback), else 0', async () => {
+  it('uses CallDuration when present (status callback)', async () => {
     const handler = await loadHandler('twilioInboundCall');
     const { res } = captureRes();
     await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+1', CallSid: 'CADUR', CallDuration: '17' } }), res);
@@ -417,6 +554,167 @@ describe('voicemail doc id falls back to CallSid', () => {
     await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+1' } }), res);
     expect(captured.status).toBe(400);
     expect(mocks.sets.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Several callbacks, one calls_log document. A callback that does not mention a
+// field is SILENT about it — it is not asserting the field is empty. Every case
+// below replays real Twilio bodies in sequence and asserts what SURVIVED.
+// ---------------------------------------------------------------------------
+describe('twilioInboundCall — a later callback must not erase an earlier one', () => {
+  beforeEach(() => {
+    process.env.TWILIO_AUTH_TOKEN = 'tok';
+    mocks.validateRequest.mockReturnValue(true);
+  });
+
+  async function post(body: Record<string, string>) {
+    const handler = await loadHandler('twilioInboundCall');
+    const { res, captured } = captureRes();
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body }), res);
+    return captured;
+  }
+
+  it('a status callback carrying no RecordingUrl does NOT erase the recording URL', async () => {
+    // recordingStatusCallback lands the only link to the audio…
+    await post(RECORDING_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({ recordingUrl: REC_URL });
+    // …then the call's own `completed` status callback arrives. It carries no
+    // RecordingUrl (a <Record>-verb recording never appears on it), so it has
+    // nothing to say about the recording and must leave it alone.
+    await post(COMPLETED_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      recordingUrl: REC_URL,
+      status: 'completed',
+      durationSec: 42,
+    });
+  });
+
+  it('a recording callback arriving AFTER the status callback still lands the URL', async () => {
+    // Twilio: events "are made as separate HTTP requests, and there is no
+    // guarantee they will arrive in the same order". Neither order may lose.
+    await post(COMPLETED_STATUS_CALLBACK);
+    await post(RECORDING_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      recordingUrl: REC_URL,
+      status: 'completed',
+      counterpartNumber: CALLER,
+    });
+  });
+
+  it('a ringing status callback does not erase a recording URL or blank the duration', async () => {
+    await post(RECORDING_STATUS_CALLBACK);
+    await post(RINGING_STATUS_CALLBACK); // no CallDuration, no RecordingUrl
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      recordingUrl: REC_URL,
+      durationSec: 42, // from RecordingDuration, not reset to 0
+      status: 'ringing',
+    });
+  });
+
+  it('NEVER writes `transcript` — the app owns that field', async () => {
+    // The phone writes the push's transcript (AuntieRepository.upsertInboundCallLog).
+    mocks.docs.set(`calls_log/${CALL_SID}`, {
+      transcript: 'caller asked to move Tuesday to Thursday',
+      counterpartNumber: CALLER,
+      direction: 'inbound',
+      status: 'ringing',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(RECORDING_STATUS_CALLBACK);
+    await post(COMPLETED_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      transcript: 'caller asked to move Tuesday to Thursday',
+    });
+    // Not merely "wrote the same value back" — the key is never in a payload.
+    for (const w of mocks.sets) {
+      expect(Object.prototype.hasOwnProperty.call(w.data, 'transcript')).toBe(false);
+    }
+  });
+
+  it('a recording callback (which carries no From) does not blank the caller or the kinfolk match', async () => {
+    mocks.kinfolk.push({ id: 'kin1', firstName: 'Ada', lastName: 'Lovelace', phoneNumber: CALLER });
+    await post(RINGING_STATUS_CALLBACK); // carries From -> matches kin1
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      counterpartNumber: CALLER,
+      kinfolkId: 'kin1',
+      kinfolkName: 'Ada Lovelace',
+    });
+    await post(RECORDING_STATUS_CALLBACK); // no From at all
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      counterpartNumber: CALLER,
+      kinfolkId: 'kin1',
+      kinfolkName: 'Ada Lovelace',
+    });
+  });
+
+  it('a recording callback does not overwrite a real CallStatus with "completed"', async () => {
+    await post({ ...RINGING_STATUS_CALLBACK, CallStatus: 'no-answer', SequenceNumber: '2' });
+    await post(RECORDING_STATUS_CALLBACK); // carries RecordingStatus, never CallStatus
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({ status: 'no-answer' });
+  });
+
+  it('does not resurrect a reconciled call back to pending or wipe its notes', async () => {
+    // reconcile_comms.py claims a doc by flipping pending -> in_progress inside
+    // a transaction, then writes the outcome. Restating 'pending' un-claims it
+    // and lets a second worker fold the same call into the dossier twice.
+    mocks.docs.set(`calls_log/${CALL_SID}`, {
+      counterpartNumber: CALLER,
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kin1',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(RECORDING_STATUS_CALLBACK);
+    await post(COMPLETED_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kin1',
+    });
+  });
+
+  it('does not un-claim a doc reconcile has moved to in_progress', async () => {
+    mocks.docs.set(`calls_log/${CALL_SID}`, {
+      reconcileStatus: 'in_progress',
+      reconcileClaimedAt: '2026-08-02T09:00:00.000Z',
+    });
+    await post(COMPLETED_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({ reconcileStatus: 'in_progress' });
+  });
+
+  it('does not move the timestamp the first writer set', async () => {
+    mocks.docs.set(`calls_log/${CALL_SID}`, { timestamp: '2026-08-01T10:00:00.000Z' });
+    await post(COMPLETED_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({ timestamp: '2026-08-01T10:00:00.000Z' });
+  });
+
+  it('SEEDS reconcileStatus + timestamp when the stored doc lacks them — including on a doc the phone created', async () => {
+    // reconcile_comms.py finds work with .where('reconcileStatus','==','pending'),
+    // so that key MUST exist. The phone's upsert never writes it, so seeding
+    // only on a doc this handler created would leave phone-first calls invisible
+    // to reconcile forever. The seed is per-KEY, not per-document.
+    mocks.docs.set(`calls_log/${CALL_SID}`, {
+      counterpartNumber: CALLER,
+      direction: 'inbound',
+      transcript: 'from the push',
+      twilioCallSid: CALL_SID,
+      status: 'ringing',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(RECORDING_STATUS_CALLBACK);
+    expect(storedDoc('calls_log', CALL_SID)).toMatchObject({
+      reconcileStatus: 'pending',
+      reconciledAt: '',
+      reconcileNotes: '',
+      timestamp: '2026-08-01T10:00:00.000Z', // seeded key added, existing one untouched
+    });
+  });
+
+  it('reads and writes inside ONE transaction so a concurrent writer cannot be reverted', async () => {
+    await post(RECORDING_STATUS_CALLBACK);
+    expect(mocks.transactions).toBe(1);
+    expect(mocks.sets.every((w) => w.viaTransaction)).toBe(true);
   });
 });
 
@@ -467,13 +765,15 @@ describe('kinfolk phone match (WARNING-8 req 4)', () => {
     expect(captured.status).toBe(200);
   });
 
-  it('fail-soft: kinfolk read error does NOT fail the webhook (writes null, 200)', async () => {
+  it('fail-soft: kinfolk read error does NOT fail the webhook (still writes, 200)', async () => {
     mocks.kinfolkQueryThrows = true; // valid number so we reach the query, which throws
     const handler = await loadHandler('twilioInboundCall');
     const { res, captured } = captureRes();
     await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+12015550123', CallSid: 'CAERR' } }), res);
     expect(mocks.sets.length).toBe(1);
-    expect(mocks.sets[0].data.kinfolkId).toBeNull();
+    // A failed lookup is not evidence there is no kinfolk, so it writes nothing
+    // to kinfolkId — reconcile_comms.py does the authoritative match later.
+    expect(storedDoc('calls_log', 'CAERR')).toMatchObject({ kinfolkId: null });
     expect(captured.status).toBe(200);
   });
 
