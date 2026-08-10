@@ -108,17 +108,52 @@ class ServiceManagementViewModel(
         }
     }
 
+    /**
+     * Saves a base-service edit as a DIFF against the copy Firestore handed us.
+     *
+     * The baseline is the row in [ServiceManagementState.baseServices] with the
+     * same id - the loaded copy the edit dialog was seeded from, never a
+     * re-read: re-reading to diff would hand back exactly the concurrent edit
+     * this is protecting. A baseline that has gone missing (the list reloaded
+     * out from under an open dialog) fails loud rather than falling back to a
+     * default model and writing ten Kotlin defaults over a real service.
+     *
+     * Nothing changed means nothing is written, not even the stamp, and no audit
+     * entry claiming an edit that did not happen. The baseline advances via
+     * [loadBaseServices] only after a save the server accepted.
+     */
     fun updateBaseService(service: BaseService) {
         viewModelScope.launch {
+            val loaded = _state.value.baseServices.firstOrNull { it.id == service.id }
+            if (loaded == null) {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    // The title, not the document id: the operator is looking at
+                    // a service list, and "svc-1" names nothing they can see.
+                    errorMessage = "\"${service.title}\" is no longer loaded. Reopen it and try again.",
+                )
+                return@launch
+            }
+
+            val changes = baseServiceFieldChanges(loaded, service)
+            if (changes.isEmpty()) {
+                _state.value = _state.value.copy(isLoading = false, errorMessage = null)
+                return@launch
+            }
+
             _state.value = _state.value.copy(isLoading = true)
 
-            val result = serviceRepository.updateBaseService(service)
+            val result = serviceRepository.updateBaseServiceFields(service.id, changes)
 
             if (result.isSuccess) {
                 loadBaseServices() // Refresh the list
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
-                    repository       = com.tribetails.auntieos.AuntieOSApp.instance.repository,
+                    // The repository this ViewModel is already handed, not
+                    // AuntieOSApp.instance.repository. Reaching past it for the
+                    // global is why no test could reach this success branch at
+                    // all: the lateinit throws off-device.
+                    repository       = auntieRepository,
                     actionType       = "BASE_SERVICE_UPDATED",
                     description      = "Updated base service \"${service.title}\"",
                     targetId         = service.id,

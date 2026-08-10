@@ -9,6 +9,7 @@ import com.tribetails.auntieos.data.repository.ServiceRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -46,6 +47,9 @@ class ServiceManagementViewModelTest {
         // Unified settings: ServiceManagementViewModel now reads/writes the
         // BusinessSettings doc via AuntieRepository.
         coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings())
+        // The audit trail a successful save fires. Stubbed so the success branch
+        // is reachable off-device at all.
+        coEvery { auntieRepo.logActivity(any()) } returns Result.success(Unit)
     }
 
     @After
@@ -102,14 +106,17 @@ class ServiceManagementViewModelTest {
 
     @Test
     fun `createBaseService reloads base services on success`() = runTest(testDispatcher) {
-        val service = BaseService(id = "s1", title = "New Walk")
+        // Blank id: create mints the id, and the repository now REFUSES a
+        // non-blank one rather than bare-setting the whole model over an
+        // existing document. See ServiceRepository.createBaseService.
         coEvery { mockRepo.createBaseService(any()) } returns Result.success("s1")
-        coEvery { mockRepo.getBaseServices(any()) } returns Result.success(listOf(service))
+        coEvery { mockRepo.getBaseServices(any()) } returns
+            Result.success(listOf(BaseService(id = "s1", title = "New Walk")))
 
         val vm = buildViewModel()
         advanceUntilIdle()
 
-        vm.createBaseService(service)
+        vm.createBaseService(BaseService(title = "New Walk"))
         advanceUntilIdle()
 
         assertEquals(1, vm.state.value.baseServices.size)
@@ -117,14 +124,79 @@ class ServiceManagementViewModelTest {
 
     @Test
     fun `updateBaseService sets errorMessage on failure`() = runTest(testDispatcher) {
-        coEvery { mockRepo.updateBaseService(any()) } returns Result.failure(RuntimeException("Update failed"))
+        val loaded = BaseService(id = "s1", title = "Dog Walk")
+        coEvery { mockRepo.getBaseServices(any()) } returns Result.success(listOf(loaded))
+        coEvery { mockRepo.updateBaseServiceFields(any(), any()) } returns
+            Result.failure(RuntimeException("Update failed"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
 
-        vm.updateBaseService(BaseService(id = "s1", title = "Updated"))
+        vm.updateBaseService(loaded.copy(title = "Updated"))
         advanceUntilIdle()
 
+        assertNotNull(vm.state.value.errorMessage)
+    }
+
+    /**
+     * The diff, at the ViewModel seam: only the field the operator actually
+     * changed reaches the repository. The loaded row is the baseline, so the
+     * `isActive` this screen read cannot ride along and undo a soft delete made
+     * elsewhere since.
+     */
+    @Test
+    fun `updateBaseService sends only the changed field`() = runTest(testDispatcher) {
+        val loaded = BaseService(id = "s1", title = "Dog Walk", basePrice = 25.0, isActive = true)
+        coEvery { mockRepo.getBaseServices(any()) } returns Result.success(listOf(loaded))
+        val sent = slot<Map<String, Any?>>()
+        coEvery { mockRepo.updateBaseServiceFields("s1", capture(sent)) } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.updateBaseService(loaded.copy(basePrice = 30.0))
+        advanceUntilIdle()
+
+        assertEquals(setOf("basePrice"), sent.captured.keys)
+        assertEquals(30.0, sent.captured["basePrice"])
+    }
+
+    /**
+     * A save that changed nothing could only move the stamp and fire an audit
+     * entry, both claiming an edit that never happened. It must not reach
+     * Firestore at all.
+     */
+    @Test
+    fun `updateBaseService writes nothing when the operator changed nothing`() = runTest(testDispatcher) {
+        val loaded = BaseService(id = "s1", title = "Dog Walk", basePrice = 25.0)
+        coEvery { mockRepo.getBaseServices(any()) } returns Result.success(listOf(loaded))
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.updateBaseService(loaded.copy())
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { mockRepo.updateBaseServiceFields(any(), any()) }
+        assertNull(vm.state.value.errorMessage)
+    }
+
+    /**
+     * No baseline means no honest diff. Falling back to a default model would
+     * write ten Kotlin defaults over a real service, which is the exact
+     * default-model-over-a-real-record shape PR #315 removed elsewhere.
+     */
+    @Test
+    fun `updateBaseService refuses to save a service it never loaded`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getBaseServices(any()) } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.updateBaseService(BaseService(id = "ghost", title = "Updated"))
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { mockRepo.updateBaseServiceFields(any(), any()) }
         assertNotNull(vm.state.value.errorMessage)
     }
 
