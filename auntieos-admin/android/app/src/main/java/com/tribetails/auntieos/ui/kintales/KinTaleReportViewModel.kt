@@ -13,6 +13,7 @@ import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,16 @@ data class KinTaleUiState(
     val lastOpening: String? = null,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val reportLoadFailed: Boolean = false,
+    // ── Autosave, as the sitter sees it ──
+    // When the last write the SERVER ACCEPTED happened, epoch millis, null until
+    // one has. "Draft saved" with no time on it reads the same whether the last
+    // write was two seconds or two hours ago, and the sitter is being asked to
+    // trust it with work they cannot see.
+    val lastSavedAtMillis: Long? = null,
+    // Whether the report currently differs from the copy the server holds.
+    // Recomputed from the field diff rather than tracked by a flag, so it cannot
+    // drift out of agreement with what a save would actually write.
+    val hasUnsavedChanges: Boolean = false,
     val error: String? = null,
     val sentSuccessfully: Boolean = false,
     // Phase 14: admin-authored KINTALE form_schemas (appliesTo == KINTALE), DISTINCT
@@ -68,7 +79,27 @@ class KinTaleReportViewModel(
     private val mediaUploader: MediaUploadManager = AuntieOSApp.instance.mediaUploadManager,
     private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier,
     private val commentsRepo: KinTaleCommentsRepository = KinTaleCommentsRepository(),
+    /** Injected so the saved-at stamp is assertable rather than wall-clock luck. */
+    private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
+
+    companion object {
+        /**
+         * How long the sitter must stop typing before the draft saves itself.
+         *
+         * Three seconds is chosen against the two neighbours it has to sit
+         * between. Shorter and an ordinary mid-sentence think-pause becomes a
+         * write, on a screen whose users are outdoors on phone data. Longer and
+         * the window of work a dropped session can lose stops feeling like
+         * "the last thing I typed".
+         *
+         * It is a FLOOR on how often typing alone can write, not a period: the
+         * timer is reset by every keystroke and cancelled by every blur, so a
+         * sitter typing steadily for a minute produces one write at the end of
+         * it, not twenty.
+         */
+        const val AUTOSAVE_DEBOUNCE_MS = 3_000L
+    }
 
     private val _uiState = MutableStateFlow(KinTaleUiState())
     val uiState: StateFlow<KinTaleUiState> = _uiState.asStateFlow()
@@ -111,6 +142,59 @@ class KinTaleReportViewModel(
     /** The arguments of the last [load], so [retryLoad] can repeat it exactly. */
     private var loadedSessionId: String? = null
     private var loadedReportId: String? = null
+
+    /**
+     * The pending autosave, if the sitter is mid-burst. Exactly one may exist.
+     *
+     * THE AUTOSAVE IS A TIMER IN FRONT OF [persistDraft], NOT A SECOND WRITE PATH.
+     * This screen already persisted on blur, on section change, on every toggle and
+     * mood pick, on media add/remove, on Back and on Save Draft. Adding an
+     * independent writer would have given one edit two ways to reach Firestore and
+     * made them race; instead every trigger funnels through [persistDraft], and
+     * [persistDraft] cancels whatever timer is outstanding. One edit, one write.
+     */
+    private var autosaveJob: Job? = null
+
+    /**
+     * Schedule a save for [AUTOSAVE_DEBOUNCE_MS] after the last keystroke.
+     *
+     * Called only by the TEXT paths. Toggles, mood picks and media already persist
+     * immediately, and putting them on a delay would be a downgrade.
+     */
+    private fun scheduleAutosave() {
+        // A KinTale we failed to read is not saveable at all, and a timer ticking
+        // over its blank scaffold is the continuous version of that bug.
+        if (reportExistsOnServer == false) return
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch {
+            delay(AUTOSAVE_DEBOUNCE_MS)
+            // Cleared BEFORE the call, so persistDraft's own cancel cannot cancel
+            // the coroutine it is currently running inside.
+            autosaveJob = null
+            persistDraft()
+        }
+    }
+
+    /**
+     * Recompute whether the draft differs from the copy the server holds.
+     *
+     * Derived from the same field diff a save would send rather than tracked by a
+     * dirty flag, so the marker the sitter reads cannot drift from what is actually
+     * pending: retyping a word to the value it already had leaves nothing unsaved,
+     * and it says so.
+     */
+    private fun syncUnsavedMarker() {
+        val state = _uiState.value
+        val baseline = reportBaseline
+        val dirty = when {
+            reportExistsOnServer == false -> false // nothing here is savable anyway
+            baseline == null -> hasContent(state.report) // a new draft with content, not yet created
+            else -> kinCareReportFieldChanges(baseline, state.report).isNotEmpty()
+        }
+        if (dirty != state.hasUnsavedChanges) {
+            _uiState.value = state.copy(hasUnsavedChanges = dirty)
+        }
+    }
 
     fun load(sessionId: String, existingReportId: String?) {
         loadedSessionId = sessionId
@@ -227,10 +311,18 @@ class KinTaleReportViewModel(
         load(sessionId, loadedReportId)
     }
 
-    /** Phase 14: update one KINTALE custom-field answer (in-memory; persisted on save/send). */
+    /**
+     * Phase 14: update one KINTALE custom-field answer.
+     *
+     * Now autosaved. This used to be in-memory until an explicit save or send,
+     * which made a typed custom-field answer the one piece of written work on this
+     * screen that a killed process lost outright. A deliberate behavior change.
+     */
     fun updateFormValue(key: String, value: String) {
         val current = _uiState.value.report
         _uiState.value = _uiState.value.copy(report = current.copy(formValues = current.formValues + (key to value)))
+        syncUnsavedMarker()
+        scheduleAutosave()
     }
 
     private fun scaffoldReport(session: KinCareSession, template: KinTaleTemplate): KinCareReport =
@@ -248,12 +340,18 @@ class KinTaleReportViewModel(
             status = ReportStatus.DRAFT.name
         )
 
-    // --- Field updates (in-memory; persisted via persistDraft on blur / section change) ---
+    // --- Field updates ---
+    //
+    // Text edits schedule the autosave; the blur / section-change / toggle paths
+    // below still persist immediately and cancel that timer. Which trigger wins is
+    // simply whichever comes first, and neither writes twice.
 
     fun updateBodyCopy(text: String) {
         _uiState.value = _uiState.value.copy(
             report = _uiState.value.report.copy(bodyCopy = text)
         )
+        syncUnsavedMarker()
+        scheduleAutosave()
     }
 
     /**
@@ -314,11 +412,13 @@ class KinTaleReportViewModel(
         }
     }
 
-    /** Update the cover headline in-memory; persisted via persistDraft on blur. */
+    /** Update the cover headline; autosaved on the typing pause, and on blur. */
     fun updateTitle(text: String) {
         _uiState.value = _uiState.value.copy(
             report = _uiState.value.report.copy(title = text)
         )
+        syncUnsavedMarker()
+        scheduleAutosave()
     }
 
     fun setBoolField(fieldKey: String, kinId: String, value: Boolean) {
@@ -333,7 +433,9 @@ class KinTaleReportViewModel(
 
     fun setStringField(fieldKey: String, kinId: String, value: String) {
         mutateField(fieldKey, kinId) { it.copy(stringValue = value) }
-        // string changes save on blur, not every keystroke
+        // Free text: the typing pause, or the blur, whichever comes first. Never
+        // every keystroke.
+        scheduleAutosave()
     }
 
     /** Set a checklist item response (true/false) for a given scope. kinId blank for PER_VISIT. */
@@ -358,6 +460,7 @@ class KinTaleReportViewModel(
             put(key, transform(existing))
         }
         _uiState.value = _uiState.value.copy(report = current.copy(fieldResponses = updated))
+        syncUnsavedMarker()
     }
 
     fun responseFor(fieldKey: String, kinId: String): FieldResponse =
@@ -392,6 +495,13 @@ class KinTaleReportViewModel(
      * safe as of then".
      */
     fun persistDraft() {
+        // Every trigger funnels through here, so an immediate persist retires the
+        // pending timer rather than letting it write the same edit a second time.
+        // The autosave coroutine clears this reference before calling in, so this
+        // never cancels the coroutine it is running inside.
+        autosaveJob?.cancel()
+        autosaveJob = null
+
         val report = _uiState.value.report
         if (reportExistsOnServer == false) {
             // A blank scaffold standing in for a KinTale we failed to read. Writing
@@ -412,7 +522,9 @@ class KinTaleReportViewModel(
             val snapshot = report
             val changes = kinCareReportFieldChanges(baseline, snapshot)
             if (changes.isEmpty()) {
-                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.SAVED)
+                // Nothing to send. The saved-at stamp does NOT move: it says when
+                // the server last took something, and a no-op save took nothing.
+                _uiState.value = _uiState.value.copy(saveStatus = SaveStatus.SAVED, hasUnsavedChanges = false)
                 return
             }
             viewModelScope.launch {
@@ -420,7 +532,14 @@ class KinTaleReportViewModel(
                 kinCareRepository.updateKinCareReportFields(snapshot.id, changes).fold(
                     onSuccess = {
                         reportBaseline = snapshot
-                        _uiState.value = _uiState.value.copy(isSaving = false, saveStatus = SaveStatus.SAVED)
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            saveStatus = SaveStatus.SAVED,
+                            lastSavedAtMillis = now(),
+                        )
+                        // Against the ADVANCED baseline, so anything typed while
+                        // this write was in flight is still correctly unsaved.
+                        syncUnsavedMarker()
                     },
                     onFailure = { e ->
                         AuntieLog.e("KinTale draft save failed", e)
@@ -449,7 +568,9 @@ class KinTaleReportViewModel(
                         report = _uiState.value.report.copy(id = newId),
                         isSaving = false,
                         saveStatus = SaveStatus.SAVED,
+                        lastSavedAtMillis = now(),
                     )
+                    syncUnsavedMarker()
                 },
                 onFailure = { e ->
                     // No id was minted, so the retry must be another CREATE rather

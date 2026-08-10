@@ -100,6 +100,10 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        // The editor now autosaves what is typed, so the create this test
+        // never needed has to be stubbed. A requirement of the code, not
+        // test hygiene.
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-auto")
 
         val vm = buildViewModel()
         vm.load("ses1", null)
@@ -173,6 +177,10 @@ class KinTaleReportViewModelTest {
         coEvery { mockKinCareRepo.getKinCareSession("ses-nk") } returns Result.success(sessionNoKinfolk)
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        // The editor now autosaves what is typed, so the create this test
+        // never needed has to be stubbed. A requirement of the code, not
+        // test hygiene.
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-auto")
 
         val vm = buildViewModel()
         vm.load("ses-nk", null)
@@ -257,6 +265,10 @@ class KinTaleReportViewModelTest {
         coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
         coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
         coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        // The editor now autosaves what is typed, so the create this test
+        // never needed has to be stubbed. A requirement of the code, not
+        // test hygiene.
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-auto")
 
         val vm = buildViewModel()
         vm.load("ses1", null)
