@@ -8,13 +8,38 @@ import kotlinx.coroutines.tasks.await
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-class ServiceRepository() {
+class ServiceRepository(
+    /**
+     * Test seam only, the same shape [KinCareRepository] already takes.
+     * Production call sites pass nothing, so `firestore` below still resolves
+     * `FirebaseFirestore.getInstance()` on first use. The `by lazy` is
+     * load-bearing: it was an eager `val` before, which meant a test could not
+     * construct this class at all without Firebase's static init.
+     */
+    private val firestoreProvider: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() },
+) {
 
-    private val firestore = FirebaseFirestore.getInstance()
+    private val firestore by lazy { firestoreProvider() }
 
     // === Base Services ===
 
+    /**
+     * CREATES a new service in the shared catalog. Whole-document write, which
+     * is correct exactly here: there is no document yet, so there is nothing to
+     * clobber and none of the portal's server-read fields
+     * ([BASE_SERVICE_PORTAL_OWNED]) exists to delete.
+     *
+     * EDITING an existing service goes through [updateBaseServiceFields]. This
+     * used to take that path too - a non-blank id selected
+     * `document(service.id)` and then bare-`set()` the whole model over it, an
+     * update wearing a create's name. Same precedent as
+     * `AuntieRepository.saveHouseholdData`: the non-blank id now fails loud
+     * rather than quietly re-opening the path `BaseServiceDiff.kt` closed.
+     */
     suspend fun createBaseService(service: BaseService): Result<String> = runCatching {
+        require(service.id.isBlank()) {
+            "createBaseService creates; edit ${service.id} through updateBaseServiceFields"
+        }
         AuntieLog.i("Creating base service: ${service.title}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val serviceWithTimestamp = service.copy(
@@ -22,14 +47,10 @@ class ServiceRepository() {
             updatedAt = now
         )
 
-        val docRef = if (service.id.isBlank()) {
-            firestore.collection("base_services").document()
-        } else {
-            firestore.collection("base_services").document(service.id)
-        }
+        val docRef = firestore.collection("base_services").document()
 
         docRef.set(serviceWithTimestamp).await()
-        AuntieLog.d("Base service created/updated with ID: ${docRef.id}")
+        AuntieLog.d("Base service created with ID: ${docRef.id}")
         docRef.id
     }.onFailure { AuntieLog.e("Error creating base service", it) }
 
@@ -55,15 +76,46 @@ class ServiceRepository() {
         }
     }.onFailure { AuntieLog.e("Error fetching base service $serviceId", it) }
 
-    suspend fun updateBaseService(service: BaseService): Result<Unit> = runCatching {
-        AuntieLog.i("Updating base service: ${service.id}")
+    /**
+     * Writes ONLY the base-service fields that actually changed, plus the stamp.
+     *
+     * This replaced a whole-model `updateBaseService(service)` whose BARE
+     * `.set(serviceWithTimestamp)` - no merge option at all - REPLACED the
+     * document, deleting the seven portal fields the MyTribe functions read and
+     * [BaseService] does not declare. `BaseServiceDiff.kt` names those fields,
+     * their readers, and what each deletion costs a person.
+     *
+     * MERGE IS THE LOAD-BEARING PART HERE, not the diff. Merge is the only
+     * thing that can preserve a field this client cannot name, and the portal's
+     * `priceCents` / `active` are exactly that. The diff is what stops the
+     * secondary loss: two phones (or one stale screen) are concurrent writers of
+     * the fields this model DOES own, so renaming a service used to put the
+     * `isActive` that screen read minutes ago back over a soft delete made
+     * since.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped from the value that was
+     * read, so it cannot freeze and lie about when the service last changed (the
+     * rule [AuntieRepository.updateHouseholdFields] follows). ISO-8601 String
+     * rather than `serverTimestamp()`, matching every other date on this model.
+     *
+     * An empty [changes] is a caller bug, not a no-op to absorb: such a write
+     * could only move the stamp, claiming a change that never happened. The
+     * ViewModel skips the call outright when the diff is empty.
+     */
+    suspend fun updateBaseServiceFields(
+        documentId: String,
+        changes: Map<String, Any?>,
+    ): Result<Unit> = runCatching {
+        require(documentId.isNotBlank()) { "updateBaseServiceFields needs a base_services document id" }
+        require(changes.isNotEmpty()) { "updateBaseServiceFields called with no changed fields" }
+        AuntieLog.i("Updating base service $documentId: ${changes.keys.joinToString()}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        val serviceWithTimestamp = service.copy(updatedAt = now)
+        val payload: Map<String, Any?> = changes + mapOf("updatedAt" to now)
 
-        firestore.collection("base_services").document(service.id)
-            .set(serviceWithTimestamp).await()
+        firestore.collection("base_services").document(documentId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
         Unit
-    }.onFailure { AuntieLog.e("Error updating base service ${service.id}", it) }
+    }.onFailure { AuntieLog.e("Error updating base service $documentId", it) }
 
     suspend fun deleteBaseService(serviceId: String): Result<Unit> = runCatching {
         AuntieLog.w("Soft deleting base service: $serviceId")
