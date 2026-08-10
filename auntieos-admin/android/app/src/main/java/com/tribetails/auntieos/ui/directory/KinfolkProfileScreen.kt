@@ -31,6 +31,7 @@ import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.domain.kinfolkInvoiceFeedLabel
 import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
@@ -296,8 +297,10 @@ fun KinfolkProfileScreen(
                         title = "INVOICES",
                         emptyMsg = "No invoices for this kinfolk yet.",
                         lines = state.kinfolkInvoices.map { inv ->
-                            (inv.invoiceNumber.ifBlank { "Invoice" } +
-                                (if (inv.date.isNotBlank()) " · ${inv.date.take(10)}" else "")) to
+                            // `invoices.date` is free text (PR #241 confirmed it in
+                            // production). The label is built in the domain so what
+                            // it does with that string is testable.
+                            kinfolkInvoiceFeedLabel(inv) to
                                 ("$" + "%.2f".format(if (inv.amountDue > 0) inv.amountDue else inv.total))
                         },
                     )

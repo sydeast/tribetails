@@ -3,11 +3,23 @@ package com.tribetails.auntieos.domain
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
+import java.util.Locale
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 
 /** Android mirror of web KinfolkProfileFeedsTest. */
 class KinfolkProfileFeedsTest {
+
+    // The invoice row's date is spelled for the operator's locale, so the
+    // expected spelling below is pinned rather than inherited from whatever
+    // machine runs the suite. Restored after, the way #339 does it.
+    private val hostLocale = Locale.getDefault()
+
+    @Before fun pinLocale() = Locale.setDefault(Locale.US)
+
+    @After fun restoreLocale() = Locale.setDefault(hostLocale)
 
     @Test
     fun upcoming_keepsFutureScheduledForKinfolk_sortedAsc() {
@@ -41,5 +53,62 @@ class KinfolkProfileFeedsTest {
             Invoice(id = "other", kinfolkId = "k2", date = "2026-07-01"),
         )
         assertEquals(listOf("i2", "i1"), invoicesForKinfolk(invs, "k1").map { it.id })
+    }
+
+    // ── The INVOICES row label ────────────────────────────────────────────────
+    //
+    // `invoices.date` is FREE TEXT and it was confirmed as such in production by
+    // PR #241: the collection holds operator-typed strings like "February 17,
+    // 2026". This row printed `date.take(10)` of it.
+
+    @Test
+    fun `an operator-typed invoice date survives whole rather than becoming a different one`() {
+        // Ten characters of this is "February 1": a real date, not this
+        // invoice's, and nothing on the row says it was cut.
+        assertEquals(
+            "1029 · February 17, 2026",
+            kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "February 17, 2026")),
+        )
+    }
+
+    @Test
+    fun `a stored ISO day is spelled out instead of left as machine text`() {
+        assertEquals(
+            "1029 · Jul 20, 2026",
+            kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "2026-07-20")),
+        )
+    }
+
+    @Test
+    fun `an ISO instant keeps its stored day and loses only the clock`() {
+        // The literal characters of the day, never a zone conversion: an invoice
+        // stamped the 20th reads as the 20th wherever the phone is.
+        assertEquals(
+            "1029 · Jul 20, 2026",
+            kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "2026-07-20T23:32:00Z")),
+        )
+    }
+
+    @Test
+    fun `an ambiguous slash date is not guessed at`() {
+        // Month-first and day-first cannot be told apart, so it prints as stored.
+        assertEquals(
+            "1029 · 07/24/2026",
+            kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "07/24/2026")),
+        )
+    }
+
+    @Test
+    fun `an invoice with no date is its number alone, not a number trailing a separator`() {
+        assertEquals("1029", kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "")))
+        assertEquals("1029", kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "1029", date = "   ")))
+    }
+
+    @Test
+    fun `an invoice with no number is still named`() {
+        assertEquals(
+            "Invoice · Jul 20, 2026",
+            kinfolkInvoiceFeedLabel(Invoice(id = "i1", invoiceNumber = "", date = "2026-07-20")),
+        )
     }
 }

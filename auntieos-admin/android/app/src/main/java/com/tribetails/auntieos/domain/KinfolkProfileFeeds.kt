@@ -39,6 +39,25 @@ fun recentTalesFor(
         .take(limit)
         .toList()
 
+/**
+ * The left-hand line of one row in the profile's INVOICES card: the invoice
+ * number, and the date it carries when it carries one.
+ *
+ * Lifted out of the composable so the string is unit-testable, which is the
+ * whole reason it is here: this expression used to end in `inv.date.take(10)`.
+ * See [freeTextDateLabel] for why ten characters of `invoices.date` is a
+ * different date rather than a shorter one.
+ *
+ * A blank date drops the whole ` · ` segment, as it always has, so the row is
+ * the invoice number alone rather than a number trailing a separator into
+ * nothing.
+ */
+fun kinfolkInvoiceFeedLabel(invoice: Invoice): String {
+    val number = invoice.invoiceNumber.ifBlank { "Invoice" }
+    val date = freeTextDateLabel(invoice.date)
+    return if (date.isEmpty()) number else "$number · $date"
+}
+
 /** Invoices for [kinfolkId], most recent first. */
 fun invoicesForKinfolk(
     invoices: List<Invoice>,
