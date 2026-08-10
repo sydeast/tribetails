@@ -128,7 +128,9 @@ class ServiceManagementViewModel(
             if (loaded == null) {
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    errorMessage = "Service ${service.id} is no longer loaded; reopen it and try again",
+                    // The title, not the document id: the operator is looking at
+                    // a service list, and "svc-1" names nothing they can see.
+                    errorMessage = "\"${service.title}\" is no longer loaded. Reopen it and try again.",
                 )
                 return@launch
             }
