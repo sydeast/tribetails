@@ -131,7 +131,27 @@ class ServiceRepository(
 
     // === Supplemental Services ===
 
+    /**
+     * CREATES a supplemental service. Whole-document write, which is correct
+     * exactly here: there is no document yet, so there is nothing to clobber.
+     *
+     * A non-blank id used to select `document(service.id)` and bare-`set()` the
+     * whole model over it - an update wearing a create's name, through the write
+     * mode that REPLACES a document. Same precedent as
+     * [createBaseService] and `AuntieRepository.saveHouseholdData`: it fails
+     * loud rather than silently replacing a stored document.
+     *
+     * There is no `updateSupplementalService` to redirect to, and that is the
+     * point: android has no supplemental-service EDIT screen at all
+     * (`AddSupplementalServiceDialog` takes no `initial`), so an id arriving
+     * here can only be a mistake, and the honest answer is to say so rather than
+     * to quietly become the update path nobody designed.
+     */
     suspend fun createSupplementalService(service: SupplementalService): Result<String> = runCatching {
+        require(service.id.isBlank()) {
+            "createSupplementalService creates; android has no supplemental-service edit path, " +
+                "so it must not replace supplemental_services/${service.id}"
+        }
         AuntieLog.i("Creating supplemental service: ${service.title}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val serviceWithTimestamp = service.copy(
@@ -139,14 +159,10 @@ class ServiceRepository(
             updatedAt = now
         )
 
-        val docRef = if (service.id.isBlank()) {
-            firestore.collection("supplemental_services").document()
-        } else {
-            firestore.collection("supplemental_services").document(service.id)
-        }
+        val docRef = firestore.collection("supplemental_services").document()
 
         docRef.set(serviceWithTimestamp).await()
-        AuntieLog.d("Supplemental service created/updated with ID: ${docRef.id}")
+        AuntieLog.d("Supplemental service created with ID: ${docRef.id}")
         docRef.id
     }.onFailure { AuntieLog.e("Error creating supplemental service", it) }
 
@@ -178,7 +194,16 @@ class ServiceRepository(
 
     // === Surcharges ===
 
+    /**
+     * CREATES a surcharge; editing one goes through [updateSurcharge], which is
+     * the path `AddSurchargeDialog` already takes on its Edit route. A non-blank
+     * id used to fall into a whole-document bare `.set()` here instead - see
+     * [createSupplementalService] for the shape and the precedent.
+     */
     suspend fun createSurcharge(surcharge: Surcharge): Result<String> = runCatching {
+        require(surcharge.id.isBlank()) {
+            "createSurcharge creates; edit ${surcharge.id} through updateSurcharge"
+        }
         AuntieLog.i("Creating surcharge: ${surcharge.title}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val surchargeWithTimestamp = surcharge.copy(
@@ -186,11 +211,7 @@ class ServiceRepository(
             updatedAt = now
         )
 
-        val docRef = if (surcharge.id.isBlank()) {
-            firestore.collection("surcharges").document()
-        } else {
-            firestore.collection("surcharges").document(surcharge.id)
-        }
+        val docRef = firestore.collection("surcharges").document()
 
         docRef.set(surchargeWithTimestamp).await()
         docRef.id
@@ -217,7 +238,11 @@ class ServiceRepository(
 
     // === Discounts ===
 
+    /** CREATES a discount; editing one goes through [updateDiscount]. See [createSurcharge]. */
     suspend fun createDiscount(discount: Discount): Result<String> = runCatching {
+        require(discount.id.isBlank()) {
+            "createDiscount creates; edit ${discount.id} through updateDiscount"
+        }
         AuntieLog.i("Creating discount: ${discount.title}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val discountWithTimestamp = discount.copy(
@@ -225,11 +250,7 @@ class ServiceRepository(
             updatedAt = now
         )
 
-        val docRef = if (discount.id.isBlank()) {
-            firestore.collection("discounts").document()
-        } else {
-            firestore.collection("discounts").document(discount.id)
-        }
+        val docRef = firestore.collection("discounts").document()
 
         docRef.set(discountWithTimestamp).await()
         docRef.id
@@ -255,7 +276,19 @@ class ServiceRepository(
 
     // === Promo Codes ===
 
+    /**
+     * CREATES a promo code; editing one goes through [updatePromoCode]. See
+     * [createSurcharge].
+     *
+     * The one with a redemption counter on it: `PromoCode.usedCount` is a
+     * running total, so a whole-document replace here would not merely revert
+     * fields, it would reset how many times the code has been redeemed to
+     * whatever the client happened to be holding.
+     */
     suspend fun createPromoCode(promoCode: PromoCode): Result<String> = runCatching {
+        require(promoCode.id.isBlank()) {
+            "createPromoCode creates; edit ${promoCode.id} through updatePromoCode"
+        }
         AuntieLog.i("Creating promo code: ${promoCode.code}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val promoCodeWithTimestamp = promoCode.copy(
@@ -263,11 +296,7 @@ class ServiceRepository(
             updatedAt = now
         )
 
-        val docRef = if (promoCode.id.isBlank()) {
-            firestore.collection("promo_codes").document()
-        } else {
-            firestore.collection("promo_codes").document(promoCode.id)
-        }
+        val docRef = firestore.collection("promo_codes").document()
 
         docRef.set(promoCodeWithTimestamp).await()
         docRef.id
