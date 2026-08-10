@@ -704,16 +704,33 @@ class BookingRepository(
 
     // === Time Slots ===
 
+    /**
+     * Creates a NEW blocked/available window. A create, and only a create.
+     *
+     * This used to choose its document with
+     * `if (id.isBlank()) document() else document(id)` and then bare-`set()` the
+     * whole model over whatever was already there - an UPDATE wearing a create's
+     * name, through the write mode that REPLACES a document rather than patching
+     * it. That is the branch #337 and #343 removed from six service creates, and
+     * on THIS collection it is the very write that erases the server's
+     * `createdBy`/`updatedAt` (see [BookingTimeSlotDiff]).
+     *
+     * No screen reaches the branch: [EnhancedSchedulingViewModel.blockTimeSlot]
+     * always builds a blank-id slot. That is exactly why it is worth shutting
+     * rather than leaving as a convenience - a whole-document replace nothing
+     * calls, waiting for the first caller that passes an id and does not know
+     * what it costs. Edits go through [updateTimeSlotFields].
+     */
     suspend fun createTimeSlot(timeSlot: BookingTimeSlot): Result<String> = runCatching {
+        require(timeSlot.id.isBlank()) {
+            "createTimeSlot creates; an existing slot is edited with updateTimeSlotFields, " +
+                "so it must not replace booking_time_slots/${timeSlot.id}"
+        }
         AuntieLog.d("Creating time slot for date: ${timeSlot.date}")
         val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         val timeSlotWithTimestamp = timeSlot.copy(createdAt = now)
 
-        val docRef = if (timeSlot.id.isBlank()) {
-            firestore.collection("booking_time_slots").document()
-        } else {
-            firestore.collection("booking_time_slots").document(timeSlot.id)
-        }
+        val docRef = firestore.collection("booking_time_slots").document()
 
         docRef.set(timeSlotWithTimestamp).await()
         AuntieLog.d("Time slot created with ID: ${docRef.id}")
@@ -766,12 +783,41 @@ class BookingRepository(
         awaitClose { registration.remove() }
     }
 
-    suspend fun updateTimeSlot(timeSlot: BookingTimeSlot): Result<Unit> = runCatching {
-        AuntieLog.d("Updating time slot: ${timeSlot.id}")
-        firestore.collection("booking_time_slots").document(timeSlot.id)
-            .set(timeSlot).await()
+    /**
+     * Patches ONE `booking_time_slots/{id}` with the fields that actually
+     * changed, and a fresh `updatedAt`.
+     *
+     * [changes] comes from [bookingTimeSlotFieldChanges] against the copy
+     * Firestore handed the caller - never a re-read, and never a
+     * freshly-constructed [BookingTimeSlot], against which every field differs
+     * and the diff degrades back into the whole-model write this replaces.
+     *
+     * REPLACES `updateTimeSlot(BookingTimeSlot)`, which wrote the whole model
+     * with a BARE `.set()`. Two server writers put fields on these documents
+     * that the Kotlin model does not declare (`createdBy`, `updatedAt`), and a
+     * bare set DELETES every field it cannot name. [BookingTimeSlotDiff] sets
+     * out what each of those is worth, and why the loss is latent today rather
+     * than historical: `firestore.rules:798` denies every client write to this
+     * collection, so the dangerous shape never reached the server.
+     *
+     * An EMPTY change set is refused rather than written. The only thing such a
+     * write could do is move `updatedAt` - a stamp this client does not even
+     * read - to claim an edit that never happened, in a field the server owns.
+     */
+    suspend fun updateTimeSlotFields(
+        timeSlotId: String,
+        changes: Map<String, Any?>,
+    ): Result<Unit> = runCatching {
+        require(timeSlotId.isNotBlank()) { "updateTimeSlotFields needs a booking_time_slots document id" }
+        require(changes.isNotEmpty()) { "updateTimeSlotFields called with no changed fields" }
+        AuntieLog.d("Updating time slot: $timeSlotId (${changes.keys.joinToString()})")
+        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val payload: Map<String, Any?> = changes + mapOf("updatedAt" to now)
+        firestore.collection("booking_time_slots").document(timeSlotId)
+            .set(payload, com.google.firebase.firestore.SetOptions.merge())
+            .await()
         Unit
-    }.onFailure { AuntieLog.e("Error updating time slot ${timeSlot.id}", it) }
+    }.onFailure { AuntieLog.e("Error updating time slot $timeSlotId", it) }
 
     suspend fun deleteTimeSlot(timeSlotId: String): Result<Unit> = runCatching {
         AuntieLog.w("Deleting time slot: $timeSlotId")
