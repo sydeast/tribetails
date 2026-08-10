@@ -276,12 +276,33 @@ function PaymentsPanel({
                         <span className="invoice-ledger__missing">not recorded</span>
                       )}
                     </td>
+                    {/* NO BALANCE ON A ROW WHOSE AMOUNT COULD NOT BE READ. The
+                        server works this out as amount - applied - tip, and on
+                        such a row the amount it subtracted from was the schema's
+                        floor of 0 rather than a reading, so what falls out is
+                        arithmetic over a non-number. "-$127.50" printed here
+                        reads as a real over-application against a real payment,
+                        and it is neither. The caveat below names the row.
+
+                        A GENUINELY NEGATIVE BALANCE IS STILL SHOWN, signed and
+                        in full. An over-application on a row whose amount WAS
+                        read is a real fact about real money, and hiding it would
+                        trade one lie for another. Only the unreadable case
+                        changes, and it is the same treatment Android's Balance
+                        slot gives it (`ui/invoices/InvoiceDetailScreen.kt`). */}
                     <td className="invoice-ledger__num">
-                      {formatCentsUsd(ledgerRowBalanceCents(row))}
+                      {row.amountResolved ? (
+                        formatCentsUsd(ledgerRowBalanceCents(row))
+                      ) : (
+                        <span className="invoice-ledger__missing">could not be read</span>
+                      )}
                       {/* Where the leftover went, said on the row. Auto-apply puts
                           it into the household's account credit for a future
-                          invoice; without it the money is simply unapplied. */}
-                      {row.unappliedCents > 0 && row.autoApply && (
+                          invoice; without it the money is simply unapplied.
+                          Not said at all on an unreadable row: that leftover came
+                          out of the same arithmetic, so claiming it was held
+                          re-asserts the figure the cell just declined to give. */}
+                      {row.amountResolved && row.unappliedCents > 0 && row.autoApply && (
                         <span className="invoice-ledger__note">held as credit</span>
                       )}
                     </td>

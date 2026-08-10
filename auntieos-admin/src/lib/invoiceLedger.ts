@@ -113,7 +113,16 @@ export function ledgerRowTotalCents(
  * `amount` INCLUDES the tip. That is the shape of the operator's real data and
  * it is why `ledgerRowTotalCents` above must not be what a row renders.
  */
-/** The "Balance" column: what is left of the payment after the bill and the tip. */
+/**
+ * The "Balance" column: what is left of the payment after the bill and the tip.
+ *
+ * IT MEANS NOTHING ON A ROW WHOSE `amountResolved` IS FALSE, and the caller is
+ * what has to know that. The server derived it from an amount it could not
+ * read, falling back to the schema's floor of 0, so what comes out is
+ * arithmetic over a non-number rather than a leftover. Kept pure here and
+ * guarded at the point of display in `InvoiceLedger.tsx`, the same split
+ * Android's `PaymentRow` uses.
+ */
 export function ledgerRowBalanceCents(
   row: Pick<GetInvoiceLedgerResultLedgerPayment, 'unappliedCents'>,
 ): number {

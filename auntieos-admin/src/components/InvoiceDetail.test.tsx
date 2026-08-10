@@ -1385,9 +1385,21 @@ describe('payment history columns', () => {
    * document-wide search for that string cannot distinguish them.
    */
   async function amountCellText(): Promise<string> {
+    return ledgerCellText(3);
+  }
+  /**
+   * The BALANCE cell, located the same way and for the same reason: a real
+   * $0.00 balance and a balance nobody can vouch for are different facts that
+   * a document-wide text search cannot tell apart.
+   */
+  async function balanceCellText(): Promise<string> {
+    return ledgerCellText(7);
+  }
+  /** One cell of the single ledger row, by column index. */
+  async function ledgerCellText(column: number): Promise<string> {
     const table = await screen.findByRole('table', { name: /Payment history/i });
     const bodyRow = within(table).getAllByRole('row')[1]!;
-    return within(bodyRow).getAllByRole('cell')[3]!.textContent ?? '';
+    return within(bodyRow).getAllByRole('cell')[column]!.textContent ?? '';
   }
   it('renders every column her production screen has, plus the fee', async () => {
     renderWithRow();
@@ -1461,6 +1473,83 @@ describe('payment history columns', () => {
     // for another.
     renderWithRow({ amountCents: 0, amountResolved: true, tipCents: 0, feeCents: 0, reconciles: true });
     expect(await amountCellText()).toBe('$0.00');
+    expect(screen.queryByText(/could not be read/i)).toBeNull();
+  });
+  /**
+   * ── THE BALANCE ON A ROW WHOSE AMOUNT COULD NOT BE READ ────────────────
+   *
+   * The server derives the balance as amount - applied - tip. On an unresolved
+   * row the amount it subtracted from was `CentsSchema`'s floor of 0 rather
+   * than a reading, so the figure that falls out is arithmetic over a
+   * non-number. Printing it renders "-$127.50", which reads as a real
+   * over-application against a real payment, and it is neither. Android's
+   * Balance slot has said "could not be read" here since PR #319; this is the
+   * web half of the same promise.
+   */
+  it('does NOT print a dollar figure for the balance of a row whose amount could not be read', async () => {
+    renderWithRow({
+      amountCents: 0,
+      amountResolved: false,
+      appliedCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      reconciles: true,
+      unappliedCents: -12750,
+      appliedInvoiceId: 'inv1',
+      appliedInvoiceNumber: '1042',
+    });
+    expect(await balanceCellText()).toMatch(/could not be read/i);
+    // The fake over-application, named exactly. This is the string the operator
+    // would otherwise read as money applied past what the payment covers.
+    expect(await balanceCellText()).not.toContain('$127.50');
+    expect(await balanceCellText()).not.toContain('$0.00');
+  });
+  it('does not claim the leftover on such a row is held as credit either', async () => {
+    // `unappliedCents` is positive here, but it came out of the same arithmetic
+    // over a non-number. Saying where a leftover went re-asserts the figure the
+    // cell beside it has just declined to vouch for.
+    renderWithRow({
+      amountCents: 0,
+      amountResolved: false,
+      appliedCents: 0,
+      tipCents: 0,
+      feeCents: 0,
+      reconciles: true,
+      unappliedCents: 12000,
+      autoApply: true,
+    });
+    expect(await balanceCellText()).toMatch(/could not be read/i);
+    expect(screen.queryByText('held as credit')).toBeNull();
+  });
+  it('still shows a REAL over-application as a negative figure, which is not hidden or clamped', async () => {
+    // The honest case the suppression above must not swallow. More was applied
+    // than this payment covers, the amount behind it WAS read, and the operator
+    // has to see it.
+    renderWithRow({
+      amountCents: 12250,
+      amountResolved: true,
+      appliedCents: 12750,
+      tipCents: 0,
+      feeCents: 0,
+      reconciles: true,
+      unappliedCents: -500,
+    });
+    expect(await balanceCellText()).toBe('-$5.00');
+    expect(screen.getByText(/does not balance/i)).toBeInTheDocument();
+  });
+  it('still prints a REAL $0.00 balance, which is a reading and not an absence', async () => {
+    // Invoice #1029 itself: amount(137.50) = applied(127.50) + tip(10.00) + 0.
+    renderWithRow({
+      amountCents: 13750,
+      amountResolved: true,
+      appliedCents: 12750,
+      tipCents: 1000,
+      feeCents: 271,
+      tipBasis: 'gross',
+      reconciles: true,
+      unappliedCents: 0,
+    });
+    expect(await balanceCellText()).toBe('$0.00');
     expect(screen.queryByText(/could not be read/i)).toBeNull();
   });
   it('says a migrated fee is NOT RECORDED, never $0.00, because zero would be a claim', async () => {
