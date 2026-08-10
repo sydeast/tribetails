@@ -241,10 +241,21 @@ class AdminSettingsViewModel(
 
     // ---- User profile ----
 
+    /**
+     * The `users/{uid}` document as Firestore last handed it over, and the only
+     * thing a profile save may diff against. Null while the document does not
+     * exist: [uiState] falls back to a blank [UserProfile] so the form can
+     * render, and diffing against that fallback would write ten Kotlin defaults
+     * over a real profile. A null baseline therefore means CREATE, which is the
+     * one case where writing the whole model is correct.
+     */
+    private var profileBaseline: UserProfile? = null
+
     fun loadUserProfile() {
         val user = FirebaseAuth.getInstance().currentUser ?: return
         viewModelScope.launch {
             repository.observeUserProfile(user.uid).collect { stored ->
+                profileBaseline = stored
                 val profile = stored ?: UserProfile(
                     uid = user.uid,
                     email = user.email.orEmpty(),
@@ -272,7 +283,7 @@ class AdminSettingsViewModel(
                 uid = user.uid,
                 email = current.email.ifBlank { user.email.orEmpty() },
             )
-            repository.saveUserProfile(toSave).fold(
+            repository.saveUserProfile(profileBaseline, toSave).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
                         profile = toSave,
@@ -292,8 +303,17 @@ class AdminSettingsViewModel(
 
     /**
      * 17.4 Nav editor: persist this admin's bottom-nav customization onto users/{uid}.
-     * Copies the tokens onto the loaded profile (saveUserProfile overwrites the doc, so
-     * theme/branding/dashboard are preserved). Fail loud on a write failure.
+     * Writes `navConfig` and nothing else, so a theme or dashboard saved elsewhere
+     * since this screen loaded survives. Fail loud on a write failure.
+     *
+     * This used to RE-READ the profile before writing the whole model back, to
+     * narrow the window in which it clobbered another screen's pref. Both halves
+     * are gone: the diff against [profileBaseline] is what actually closes that
+     * window, and a re-read could not, because the whole-model write still
+     * reverted anything saved between the re-read and the save. Keeping the
+     * re-read alongside the diff would be worse than either, since the re-read
+     * returns the concurrent edit the diff exists to preserve and would make it
+     * look unchanged.
      */
     fun saveNavConfig(tokens: List<String>) {
         val user = FirebaseAuth.getInstance().currentUser ?: run {
@@ -301,17 +321,13 @@ class AdminSettingsViewModel(
             return
         }
         viewModelScope.launch {
-            // Re-read the latest profile before merge so a pref another screen saved
-            // (dashboard / theme / branding) since this screen loaded is never clobbered
-            // (saveUserProfile overwrites the whole doc). Falls back to the in-memory copy.
-            val fresh = runCatching { repository.observeUserProfile(user.uid).first() }.getOrNull()
-                ?: _uiState.value.profile
-            val toSave = fresh.copy(
+            val base = profileBaseline ?: _uiState.value.profile
+            val toSave = base.copy(
                 uid = user.uid,
-                email = fresh.email.ifBlank { user.email.orEmpty() },
+                email = base.email.ifBlank { user.email.orEmpty() },
                 navConfig = tokens,
             )
-            repository.saveUserProfile(toSave).fold(
+            repository.saveUserProfile(profileBaseline, toSave).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(profile = toSave, profileSaveSuccess = true, error = null)
                 },
@@ -337,7 +353,7 @@ class AdminSettingsViewModel(
             ).fold(
                 onSuccess = { mediaFile ->
                     val updated = _uiState.value.profile.copy(photoUrl = mediaFile.storageUrl)
-                    repository.saveUserProfile(updated.copy(uid = user.uid)).fold(
+                    repository.saveUserProfile(profileBaseline, updated.copy(uid = user.uid)).fold(
                         onSuccess = {
                             _uiState.value = _uiState.value.copy(
                                 profile = updated,
