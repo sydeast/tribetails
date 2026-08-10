@@ -437,7 +437,7 @@ class HomeViewModelTest {
         coVerify(exactly = 1) { mockRepo.saveDashboardLayout(layoutB) }
         // A read-then-whole-document-write is what could clobber a theme or nav pref
         // saved from another screen in the gap. Neither call may happen.
-        coVerify(exactly = 0) { mockRepo.saveUserProfile(any()) }
+        coVerify(exactly = 0) { mockRepo.saveUserProfile(any(), any()) }
         verify(exactly = 0) { mockRepo.observeUserProfile(any()) }
     }
 

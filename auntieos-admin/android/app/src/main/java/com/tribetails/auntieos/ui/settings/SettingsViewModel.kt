@@ -55,9 +55,14 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
             // operator across web/desktop/android. Fail loud if the cloud write fails.
             val user = FirebaseAuth.getInstance().currentUser ?: return@launch
             val repo = AuntieOSApp.instance.repository
-            val current = repo.observeUserProfile(user.uid).first()
-                ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
-            repo.saveUserProfile(current.withTheme(mode)).onFailure { e ->
+            // `stored` is kept SEPARATELY from the fallback: null means the
+            // document does not exist yet, which is the only case where a
+            // whole-model write is correct. Handing the fallback in as a
+            // baseline would diff the operator's real profile against ten Kotlin
+            // defaults and write all of them.
+            val stored = repo.observeUserProfile(user.uid).first()
+            val current = stored ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
+            repo.saveUserProfile(stored, current.withTheme(mode)).onFailure { e ->
                 _themeSyncError.value = "Theme saved on this device, but cloud sync failed: ${e.message}"
             }
         }
@@ -95,11 +100,11 @@ class SettingsViewModel(private val appContext: Context) : ViewModel() {
             appearanceSaveMutex.withLock {
                 val user = FirebaseAuth.getInstance().currentUser ?: return@withLock
                 val repo = AuntieOSApp.instance.repository
-                val current = repo.observeUserProfile(user.uid).first()
-                    ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
+                val stored = repo.observeUserProfile(user.uid).first()
+                val current = stored ?: UserProfile(uid = user.uid, email = user.email.orEmpty())
                 val pers = appContext.personalizationFlow().first()
                 val merged = current.withAccent(pers.accent).withDensity(pers.density).withFontScale(pers.fontScale)
-                repo.saveUserProfile(merged).onFailure { e ->
+                repo.saveUserProfile(stored, merged).onFailure { e ->
                     _appearanceSyncError.value = "Appearance saved on this device, but cloud sync failed: ${e.message}"
                 }
             }

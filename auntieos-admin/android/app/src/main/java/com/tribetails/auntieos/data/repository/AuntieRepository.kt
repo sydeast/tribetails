@@ -61,8 +61,15 @@ class AuntieRepository(
      * constructor param.
      */
     functionsOverride: FirebaseFunctions? = null,
+    /**
+     * Test seam only, the same shape [KinCareRepository], [InvoiceRepository]
+     * and [KinTaleCommentsRepository] already take. Production call sites pass
+     * nothing, so `firestore` below still resolves
+     * `FirebaseFirestore.getInstance()` lazily on first use.
+     */
+    firestoreProvider: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() },
 ) {
-    private val firestore by lazy { FirebaseFirestore.getInstance() }
+    private val firestore by lazy(firestoreProvider)
     private val storage by lazy { FirebaseStorage.getInstance() }
     private val auth by lazy { FirebaseAuth.getInstance() }
     private val functions by lazy { functionsOverride ?: FirebaseFunctions.getInstance("us-central1") }
@@ -2511,20 +2518,70 @@ class AuntieRepository(
         (raw["householdCount"] as? Number)?.toInt() ?: 0
     }.onFailure { AuntieLog.e("Failed to archive vet clinic", it) }
 
-    suspend fun saveUserProfile(profile: UserProfile): Result<Unit> = runCatching {
+    /**
+     * Saves the operator's own `users/{uid}` profile.
+     *
+     * [loaded] is the document as Firestore handed it over, or null when there
+     * is none yet, and that distinction picks the write:
+     *
+     * NULL, so the document does not exist: a whole-model write is correct, and
+     * correct only here. There is nothing to clobber and none of
+     * [USER_PROFILE_SERVER_WRITTEN] exists to delete.
+     *
+     * NON-NULL: writes ONLY the fields that changed, plus the stamp, under
+     * merge. This replaced a BARE `.set(profile)` - no merge option, so the
+     * write REPLACED the document and deleted `dashboardWidgetsUpdatedAt`, which
+     * the `saveDashboardLayout` callable stamps and this model has never
+     * declared. `UserProfileDiff.kt` names the three writers of this document
+     * and what the whole-model write cost each of them.
+     *
+     * Merge is the load-bearing half: it is the only thing that can preserve a
+     * field the client cannot name. The diff closes the second loss, the one
+     * `merge()` alone would leave open: the profile this screen read minutes ago
+     * carries a stale `dashboardWidgets` and stale display fields, and writing
+     * them back reverted the layout the operator arranged on the web and the
+     * six fields the React account editor patches.
+     *
+     * `updatedAt` is STAMPED here, never round-tripped from the value that was
+     * read (the rule [updateHouseholdFields] and [updateBusinessSettingsFields]
+     * follow). ISO-8601 String, matching what this app has always written;
+     * `setMediaProfilePhoto` merges a `serverTimestamp` into the same field,
+     * which is why [UserProfile.updatedAt] is held raw and read through
+     * `updatedAtIso()`.
+     *
+     * Nothing changed means nothing is written, not even the stamp: such a write
+     * could only claim an edit that never happened. That is reported as success,
+     * because from the caller's side the profile does now hold what they asked
+     * for - unlike the diff-empty cases elsewhere, this one is reachable by an
+     * operator pressing Save on an untouched form rather than only by a bug.
+     */
+    suspend fun saveUserProfile(loaded: UserProfile?, edited: UserProfile): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        require(profile.uid.isNotBlank()) { "UserProfile.uid is required to save." }
+        require(edited.uid.isNotBlank()) { "UserProfile.uid is required to save." }
         val ts = getCurrentTimestamp()
-        val toWrite = profile.copy(
-            id = profile.uid,
-            updatedAt = ts,
-            createdAt = profile.createdAtIso().ifBlank { ts },
-        )
-        firestore.collection("users").document(profile.uid)
-            .set(toWrite)
-            .await()
-        Unit
-    }.onFailure { AuntieLog.e("Failed to save user profile ${profile.uid}", it) }
+        val docRef = firestore.collection("users").document(edited.uid)
+
+        if (loaded == null) {
+            docRef.set(
+                edited.copy(
+                    id = edited.uid,
+                    updatedAt = ts,
+                    createdAt = edited.createdAtIso().ifBlank { ts },
+                )
+            ).await()
+            AuntieLog.d("Created user profile ${edited.uid}")
+            return@runCatching
+        }
+
+        val changes = userProfileFieldChanges(loaded, edited)
+        if (changes.isEmpty()) {
+            AuntieLog.d("User profile ${edited.uid} unchanged; nothing written")
+            return@runCatching
+        }
+        val payload: Map<String, Any?> = changes + mapOf("updatedAt" to ts)
+        docRef.set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
+        AuntieLog.d("User profile ${edited.uid} updated: ${changes.keys.joinToString()}")
+    }.onFailure { AuntieLog.e("Failed to save user profile ${edited.uid}", it) }
 
     /**
      * 17.3 Dashboard: persist THIS operator's Home widget layout, and nothing else.
