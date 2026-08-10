@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import java.util.Locale
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -56,8 +57,19 @@ class InvoiceDetailLedgerColumnsTest {
     @get:Rule
     val rule = createComposeRule()
 
-    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
-    @After fun tearDown() = Dispatchers.resetMain()
+    // The date cell is formatted for the operator's locale, so the locale is
+    // pinned here rather than inherited from whatever machine runs CI.
+    private val hostLocale = Locale.getDefault()
+
+    @Before fun setUp() {
+        Locale.setDefault(Locale.US)
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+    }
+
+    @After fun tearDown() {
+        Dispatchers.resetMain()
+        Locale.setDefault(hostLocale)
+    }
 
     private val invoice = Invoice(
         id = "inv1",
@@ -88,6 +100,7 @@ class InvoiceDetailLedgerColumnsTest {
         appliedInvoiceId: String = "inv1",
         appliedInvoiceNumber: String = "1029",
         method: String = "Venmo",
+        date: String = "2026-07-20",
     ) = GetInvoiceLedgerResultLedgerPayment(
         paymentId = paymentId,
         amountCents = amountCents,
@@ -104,7 +117,7 @@ class InvoiceDetailLedgerColumnsTest {
         appliedInvoiceNumber = appliedInvoiceNumber,
         method = method,
         reference = "",
-        date = "2026-07-20",
+        date = date,
         notes = "",
         recordedBy = null,
     )
@@ -316,6 +329,66 @@ class InvoiceDetailLedgerColumnsTest {
         rule.onNodeWithText("FEE").assertExists()
         rule.onNodeWithText("not recorded").assertExists()
         rule.onNodeWithText("without its processor fee", substring = true).assertExists()
+    }
+
+    // ── The transaction date and the method ───────────────────────────────────
+    //
+    // `payments.date` is FREE TEXT and the server says so in the contract these
+    // rows are decoded from: "FREE TEXT on this collection, like every legacy
+    // billing date. Not parsed." The row printed the first ten characters of it.
+    // On the shape the collection actually holds that is not a shortened date,
+    // it is a DIFFERENT one, and a plausible-looking different one.
+
+    @Test
+    fun `an operator-typed date is shown whole, not chopped into a different day`() {
+        // "February 17, 2026" truncated to ten characters is "February 1", which
+        // is a real date, is not this payment's date, and looks like nothing
+        // went wrong. The fixtures across this repo store exactly this shape.
+        mount(Result.success(ledger(ledgerPayments = listOf(row(date = "February 17, 2026")))))
+        rule.onNodeWithText("February 17, 2026").assertExists()
+        rule.onNodeWithText("February 1").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a date the record does not have is named as missing, not drawn as a dash`() {
+        // Web says "no date recorded". A bare "-" is a glyph the operator has to
+        // interpret, and it sits in the same place a real date would.
+        mount(Result.success(ledger(ledgerPayments = listOf(row(date = "")))))
+        rule.onNodeWithText("no date recorded").assertExists()
+        // ONE dash survives on this screen and it is not this row: the header's
+        // "Due date" detail line, which this fixture leaves unset and which is
+        // out of scope here. Counting rather than banning says which is which,
+        // and still fails if the payment row starts drawing one again.
+        rule.onAllNodesWithText("-").assertCountEquals(1)
+    }
+
+    @Test
+    fun `a stored ISO day is read and spelled out, and an instant loses only its clock`() {
+        // The one case truncation was reaching for. Parsed properly it can be
+        // formatted for the operator instead of shown as machine text, and the
+        // DAY on screen is always the day in the record: `formatJoinDate` reads
+        // the literal characters and never shifts a zone.
+        mount(
+            Result.success(
+                ledger(
+                    ledgerPayments = listOf(
+                        row(date = "2026-07-20"),
+                        row(paymentId = "pay_iso_instant", date = "2026-07-20T14:32:00Z"),
+                    ),
+                ),
+            ),
+        )
+        rule.onAllNodesWithText("Jul 20, 2026").assertCountEquals(2)
+        rule.onNodeWithText("2026-07-20T").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a payment with no recorded method does not get handed the word payment`() {
+        // `ifBlank { "payment" }` reads as a method called "payment" sitting in
+        // the slot where "Venmo" goes. Web says "no method recorded".
+        mount(Result.success(ledger(ledgerPayments = listOf(row(method = "")))))
+        rule.onNodeWithText("no method recorded").assertExists()
+        rule.onNodeWithText("payment").assertDoesNotExist()
     }
 
     // ── Nothing here vs nothing read ──────────────────────────────────────────

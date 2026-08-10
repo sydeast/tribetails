@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
+import com.tribetails.auntieos.util.formatJoinDate
 
 /**
  * HOW TO SAY A LEDGER ROW OUT LOUD, on Android.
@@ -48,6 +49,60 @@ fun ledgerRowAppliedLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
     val id = row.appliedInvoiceId.trim()
     if (id.isNotEmpty()) return id
     return ""
+}
+
+/**
+ * The "Transaction date" cell: the day the record actually names, never ten
+ * characters of it.
+ *
+ * THE FIELD IS FREE TEXT AND THE SERVER SAYS SO. `getInvoiceLedger.ts` documents
+ * it as "FREE TEXT on this collection, like every legacy billing date. Not
+ * parsed." The row used to print `date.take(10)`, which is a bet on `YYYY-MM-DD`
+ * that the contract explicitly declines to make. On the shape this collection
+ * really holds (`February 17, 2026`, in the repo's own fixtures) ten characters
+ * is `February 1`: not a shortened date but a DIFFERENT one, plausible enough
+ * that nothing on the invoice screen looks wrong. That is the defect this
+ * exists to stop.
+ *
+ * SO WHY PARSE AT ALL, rather than print the string and be done? Because the
+ * truncation was reaching for something real: an ISO instant rendered raw is
+ * machine text, and the operator is reading a bill. When the stored value IS a
+ * day this app can read, it is formatted for her locale; when it is anything
+ * else it passes through exactly as stored.
+ *
+ * [formatJoinDate] already solves precisely this and is reused rather than
+ * re-derived: it reads the LITERAL characters of the day and never shifts a
+ * zone, so the day on screen is always the day in the record, only re-spelled.
+ * It refuses `07/24/2026` and friends on purpose, because month-first and
+ * day-first are indistinguishable for the first twelve days of any month, and
+ * those pass through untouched too.
+ *
+ * `""` says so in words, matching the web ledger's `no date recorded`. The old
+ * `-` sat in the same place a real date would and left the operator to work out
+ * which kind of nothing it meant.
+ */
+fun ledgerRowDateLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
+    val stored = row.date.trim()
+    if (stored.isEmpty()) return "no date recorded"
+    return formatJoinDate(stored)
+}
+
+/**
+ * The "Method" cell: how the money arrived, or the plain fact that nobody wrote
+ * it down.
+ *
+ * The twin of the web's `paymentMethodLabel`, down to the string. This row used
+ * to say `payment` for a blank method, which reads as a method CALLED "payment"
+ * sitting in the slot where "Venmo" goes: an absence dressed as a reading.
+ *
+ * The words are the web's own rather than the bare `not recorded` this screen
+ * uses inside [ledgerRowFeeLabel], because that cell has a "FEE" label beside it
+ * to supply the noun and this one is an unlabelled line under the amount. It is
+ * the same voice, not a third one.
+ */
+fun ledgerRowMethodLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
+    val method = row.method.trim()
+    return if (method.isEmpty()) "no method recorded" else method
 }
 
 /**

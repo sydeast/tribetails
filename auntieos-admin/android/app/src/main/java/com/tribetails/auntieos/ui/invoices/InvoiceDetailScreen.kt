@@ -69,7 +69,9 @@ import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.ledgerCaveats
 import com.tribetails.auntieos.domain.ledgerRowAppliedLabel
 import com.tribetails.auntieos.domain.ledgerRowBalanceCents
+import com.tribetails.auntieos.domain.ledgerRowDateLabel
 import com.tribetails.auntieos.domain.ledgerRowFeeLabel
+import com.tribetails.auntieos.domain.ledgerRowMethodLabel
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieCheckbox
@@ -1231,8 +1233,11 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
 @Composable
 private fun PaymentRow(payment: GetInvoiceLedgerResultLedgerPayment, showDivider: Boolean) {
     val c = AuntieTheme.colors
-    val dateLabel = payment.date.take(10).ifBlank { "-" }
-    val method = payment.method.ifBlank { "payment" }
+    // Both of these were assumptions about a field the server documents as free
+    // text. See [ledgerRowDateLabel] for what ten characters of "February 17,
+    // 2026" reads as, and why the fix is not a bare passthrough.
+    val dateLabel = ledgerRowDateLabel(payment)
+    val method = ledgerRowMethodLabel(payment)
     val appliedTo = ledgerRowAppliedLabel(payment)
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
