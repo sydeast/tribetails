@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
-import com.tribetails.auntieos.util.formatJoinDate
 
 /**
  * HOW TO SAY A LEDGER ROW OUT LOUD, on Android.
@@ -64,28 +63,18 @@ fun ledgerRowAppliedLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
  * that nothing on the invoice screen looks wrong. That is the defect this
  * exists to stop.
  *
- * SO WHY PARSE AT ALL, rather than print the string and be done? Because the
- * truncation was reaching for something real: an ISO instant rendered raw is
- * machine text, and the operator is reading a bill. When the stored value IS a
- * day this app can read, it is formatted for her locale; when it is anything
- * else it passes through exactly as stored.
+ * THE READING ITSELF NOW LIVES IN [freeTextDateLabel], because the same field
+ * shape turned up on two more Android surfaces (the kinfolk profile's invoice
+ * feed and the invoice header's due date) and three copies of one rule is how
+ * the three drift apart. What stays here is the only part that is this row's
+ * own: the words for a date nobody wrote down.
  *
- * [formatJoinDate] already solves precisely this and is reused rather than
- * re-derived: it reads the LITERAL characters of the day and never shifts a
- * zone, so the day on screen is always the day in the record, only re-spelled.
- * It refuses `07/24/2026` and friends on purpose, because month-first and
- * day-first are indistinguishable for the first twelve days of any month, and
- * those pass through untouched too.
- *
- * `""` says so in words, matching the web ledger's `no date recorded`. The old
- * `-` sat in the same place a real date would and left the operator to work out
- * which kind of nothing it meant.
+ * `no date recorded` is the web ledger's phrasing. The old `-` sat in the same
+ * place a real date would and left the operator to work out which kind of
+ * nothing it meant.
  */
-fun ledgerRowDateLabel(row: GetInvoiceLedgerResultLedgerPayment): String {
-    val stored = row.date.trim()
-    if (stored.isEmpty()) return "no date recorded"
-    return formatJoinDate(stored)
-}
+fun ledgerRowDateLabel(row: GetInvoiceLedgerResultLedgerPayment): String =
+    freeTextDateLabel(row.date).ifEmpty { "no date recorded" }
 
 /**
  * The "Method" cell: how the money arrived, or the plain fact that nobody wrote

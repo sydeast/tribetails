@@ -65,6 +65,7 @@ import com.tribetails.auntieos.domain.invoiceDisputeDeadline
 import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceDisputeReasonGloss
 import com.tribetails.auntieos.domain.invoiceDisputeTimeLeft
+import com.tribetails.auntieos.domain.freeTextDateLabel
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.ledgerCaveats
 import com.tribetails.auntieos.domain.ledgerRowAppliedLabel
@@ -377,9 +378,16 @@ private fun invoiceDetailBody(
                     // Names both figures: a part-paid invoice that only showed
                     // what is left would hide the payment already collected.
                     partPaid != null -> "${formatCentsUsd(partPaid.paidCents)} of ${formatMoney(invoice.total)} paid"
-                    overdue -> "past due ${invoice.dueDate.trim().take(10)}"
+                    // `invoices.dueDate` is free text, same family as the
+                    // ledger's payment date: see [freeTextDateLabel] for why
+                    // ten characters of it is a different day, not a shorter
+                    // one. The `past due` branch could not be reached by free
+                    // text - `invoiceIsOverdue` declines anything it cannot
+                    // read as ISO - but it printed a raw instant, and both
+                    // branches now say the same day the record says.
+                    overdue -> "past due ${freeTextDateLabel(invoice.dueDate)}"
                     state == InvoiceState.OPEN ->
-                        "due ${invoice.dueDate.trim().take(10).ifBlank { "soon" }}"
+                        "due ${freeTextDateLabel(invoice.dueDate).ifBlank { "soon" }}"
                     state == InvoiceState.PAID -> "paid in full"
                     state == InvoiceState.DRAFT -> "not sent yet"
                     state == InvoiceState.QUOTE -> "quoted, not billed"
