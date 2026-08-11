@@ -166,16 +166,34 @@ export async function mintVoiceAccessTokenHandler(
   const accountSid = requireSid(TWILIO_ACCOUNT_SID.value(), 'TWILIO_ACCOUNT_SID', 'AC');
   const apiKeySid = requireSid(TWILIO_API_KEY_SID.value(), 'TWILIO_API_KEY_SID', 'SK');
   const apiKeySecret = requireSecret(TWILIO_API_KEY_SECRET.value(), 'TWILIO_API_KEY_SECRET');
-  const twimlAppSid = requireSid(TWIML_APP_SID.value(), 'TWIML_APP_SID', 'AP');
 
-  // The push credential is OPTIONAL on purpose: without it the SDK still places
-  // and receives calls while the app is in the foreground, and only the
-  // wake-from-background push is lost. Refusing the whole token over it would
-  // turn a degraded feature into a dead one.
+  // ── TWO OPTIONAL SIDS, AND WHY OPTIONAL IS THE HONEST ANSWER ───────────────
   //
-  // A MALFORMED one is different from an ABSENT one, though, and is not waved
-  // through: a grant carrying a bad pushCredentialSid is rejected by Twilio at
-  // registration, which fails harder than simply omitting it.
+  // `outgoingApplicationSid` governs what happens when this device PLACES a
+  // call. `incomingAllow` governs whether it can RECEIVE one. Twilio treats
+  // them as independent, and a grant carrying only `incomingAllow` is valid.
+  //
+  // This function used to demand a TwiML Application before it would mint
+  // anything. The admin app has no outbound calling at all (`Voice.connect`
+  // appears nowhere in it), so that requirement blocked the entire feature on a
+  // resource nothing would ever use, and sent the operator into the Twilio
+  // console to create one for no reason.
+  //
+  // Failing loud on missing configuration is right. Inventing a requirement the
+  // provider does not have is not, and the two are easy to confuse while
+  // writing the first one. Absent now means "no outbound calling", which is the
+  // truth about this app.
+  //
+  // The push credential is optional for the same shape of reason: without it
+  // the SDK still places and receives calls while the app is open, and only the
+  // wake-from-background push is lost.
+  //
+  // A MALFORMED value is NOT waved through in either case. A grant carrying a
+  // bad SID is rejected by Twilio at registration, which fails harder and later
+  // than simply omitting the field.
+  const twimlAppRaw = TWIML_APP_SID.value().trim();
+  const twimlAppSid = twimlAppRaw ? requireSid(twimlAppRaw, 'TWIML_APP_SID', 'AP') : '';
+
   const pushCredentialRaw = PUSH_CREDENTIAL_SID.value().trim();
   const pushCredentialSid = pushCredentialRaw
     ? requireSid(pushCredentialRaw, 'PUSH_CREDENTIAL_SID', 'CR')
@@ -190,7 +208,7 @@ export async function mintVoiceAccessTokenHandler(
   const VoiceGrant = AccessToken.VoiceGrant;
 
   const grant = new VoiceGrant({
-    outgoingApplicationSid: twimlAppSid,
+    ...(twimlAppSid ? { outgoingApplicationSid: twimlAppSid } : {}),
     incomingAllow: true,
     ...(pushCredentialSid ? { pushCredentialSid } : {}),
   });

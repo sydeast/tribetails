@@ -54,7 +54,9 @@ export const VOICE_SECRETS: readonly SecretSpec[] = [
   { name: 'TWILIO_ACCOUNT_SID', prefix: 'AC', required: true, purpose: 'the account tokens are minted against' },
   { name: 'TWILIO_API_KEY_SID', prefix: 'SK', required: true, purpose: 'signs the admin app voice token' },
   { name: 'TWILIO_API_KEY_SECRET', prefix: null, required: true, purpose: 'the other half of the signing key' },
-  { name: 'TWIML_APP_SID', prefix: 'AP', required: true, purpose: 'answers the admin app leg of a screened call' },
+  // Optional, matching mintVoiceAccessToken: it governs OUTBOUND calls from the
+  // app, and the app places none. Absent means no outbound calling, not an outage.
+  { name: 'TWIML_APP_SID', prefix: 'AP', required: false, purpose: 'runs when the admin app PLACES a call, which it does not do today' },
   { name: 'PUSH_CREDENTIAL_SID', prefix: 'CR', required: false, purpose: 'wakes the admin app for an incoming call' },
 ];
 
@@ -100,6 +102,17 @@ export function checkShape(spec: SecretSpec, raw: string | null): Finding {
     }
   }
   return { name: spec.name, verdict: 'ok', detail: `${value.length} chars, well formed` };
+}
+
+/**
+ * The endpoint used to prove the API key pair works.
+ *
+ * Extracted and exported ONLY so a test can pin it, because the wrong choice
+ * here is silent and expensive: it does not error, it reports a healthy
+ * credential as broken and names a fix that cannot work.
+ */
+export function apiKeyProbeUrl(accountSid: string): string {
+  return `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls.json?PageSize=1`;
 }
 
 function readSecret(name: string, project: string): string | null {
@@ -164,17 +177,31 @@ export async function main(argv: string[]): Promise<void> {
   console.log('\n  Against Twilio:');
 
   if (shapeOk('TWILIO_ACCOUNT_SID') && shapeOk('TWILIO_API_KEY_SID') && shapeOk('TWILIO_API_KEY_SECRET')) {
-    const status = await twilioStatus(
-      `https://api.twilio.com/2010-04-01/Accounts/${account}.json`,
-      keySid!,
-      keySecret!,
-    );
+    // NOT /Accounts/{sid}.json, and getting that wrong cost two needless key
+    // rotations. Twilio's own key-type table: "Standard: Access to all Twilio
+    // API resources, EXCEPT for Accounts (/Accounts) or Keys resources." Only a
+    // Main key can read the Accounts endpoint.
+    //
+    // So the obvious "can this credential talk to Twilio at all" probe is the
+    // one endpoint a correct Standard key is guaranteed to be refused. This
+    // script reported 401 against a working key and told the operator their
+    // secret was probably lost and to create a new one. They did. Twice. The
+    // replacement failed identically, because the key was never the problem.
+    //
+    // Calls is the probe instead: a Standard key reaches it, and it is the
+    // resource this feature actually uses, since screening places an outbound
+    // call to the operator. PageSize=1 keeps it cheap.
+    const status = await twilioStatus(apiKeyProbeUrl(account!), keySid!, keySecret!);
     const ok = status === 200;
     if (!ok) {
       findings.push({
         name: 'TWILIO_API_KEY_SID',
         verdict: 'rejected',
-        detail: `Twilio rejected the key pair (HTTP ${status}). An API key secret is shown once at creation; if it was not captured, create a new key.`,
+        detail:
+          `Twilio rejected the key pair for /Calls (HTTP ${status}). ` +
+          `Check the SID and secret belong to the SAME key first, since they are set separately. ` +
+          `A Restricted key also fails here and cannot sign Access Tokens at all; this needs a Standard or Main key. ` +
+          `Only if the pair is genuinely mismatched is a new key required, because the secret is shown once at creation.`,
       });
     }
     console.log(`  ${ok ? 'ok  ' : 'FAIL'}  api key authenticates       HTTP ${status}`);

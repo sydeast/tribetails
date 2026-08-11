@@ -1,6 +1,9 @@
 package com.tribetails.auntieos.ui.calls
 
 import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.functions.FirebaseFunctions
@@ -54,6 +57,9 @@ class CallsViewModelVoicemailTest {
 
     private val testDispatcher = UnconfinedTestDispatcher()
 
+    /** Owns every ViewModel this class builds, so [tearDown] can cancel them. */
+    private val viewModelStore = ViewModelStore()
+
     private lateinit var repository: AuntieRepository
     private lateinit var context: Context
 
@@ -87,6 +93,11 @@ class CallsViewModelVoicemailTest {
 
     @After
     fun tearDown() {
+        // BEFORE resetMain, and the order is the fix. Clearing the store cancels
+        // viewModelScope, and that cancellation has to run while the test's main
+        // dispatcher is still installed. Reset first and the cancellation itself
+        // would need the dispatcher it just removed.
+        viewModelStore.clear()
         CallEventStore.clearActiveCall()
         unmockkObject(CallInviteManager)
         Dispatchers.resetMain()
@@ -117,8 +128,33 @@ class CallsViewModelVoicemailTest {
     private fun failingFunctions(message: String = "UNAVAILABLE"): FirebaseFunctions =
         functionsAnswering(Tasks.forException(RuntimeException(message)), payload = null)
 
-    private fun buildViewModel(functions: FirebaseFunctions) =
-        CallsViewModel(context, repository, functionsProvider = { functions })
+    /**
+     * Builds the ViewModel through a [ViewModelStore] so [tearDown] can cancel it.
+     *
+     * NOT a style preference. `CallsViewModel.init` launches an unbounded
+     * `CallInviteManager.voiceCallState.collect` on `viewModelScope`, and that
+     * flow is a StateFlow on a process-wide `object`, so it outlives any single
+     * test. Constructing the ViewModel directly and walking away left a live
+     * collector subscribed to it after this class called `Dispatchers.resetMain()`.
+     *
+     * The next plain-JVM test in the same Gradle worker to WRITE that flow then
+     * had to resume that orphan on a main dispatcher that no longer existed, and
+     * failed with `DispatchException` for a reason that had nothing to do with
+     * it. It surfaced in `CallInviteManagerTest` one class away, and only on a
+     * full `--rerun-tasks` run rather than per-class, which is exactly why this
+     * class's own CI was green while it was leaking.
+     *
+     * `ViewModelStore.clear()` is the supported way to reach `viewModelScope`
+     * cancellation from a unit test.
+     */
+    private fun buildViewModel(functions: FirebaseFunctions): CallsViewModel {
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                CallsViewModel(context, repository, functionsProvider = { functions }) as T
+        }
+        return ViewModelProvider(viewModelStore, factory)[CallsViewModel::class.java]
+    }
 
     @Test
     fun `a failed screening action is reported as a failure, not as success`() = runTest(testDispatcher) {
@@ -199,4 +235,37 @@ class CallsViewModelVoicemailTest {
         assertEquals("CA-wire", sent["callSid"])
         assertEquals("reject", sent["action"])
     }
+
+    /**
+     * Pins the leak fix itself, rather than trusting that [tearDown] does its job.
+     *
+     * A ViewModel this class built must be genuinely DEAD once the store is
+     * cleared. If `viewModelScope` survived, so would the
+     * `CallInviteManager.voiceCallState` collector started in `init`, and it
+     * would go on to poison an unrelated test class in the same Gradle worker.
+     *
+     * `sendToVoicemail` is the observable proxy: it does its work inside
+     * `viewModelScope`, so a cancelled scope means the callable is never
+     * reached. Asserted through a public entry point on purpose, because
+     * reaching into the scope directly would test the framework rather than
+     * this class's disposal of it.
+     */
+    @Test
+    fun `a cleared ViewModel is dead, which is what stops it leaking into the next test`() =
+        runTest(testDispatcher) {
+            val functions = succeedingFunctions()
+            val vm = buildViewModel(functions)
+
+            // Alive: the call goes out.
+            vm.sendToVoicemail("CA-before-clear")
+            advanceUntilIdle()
+            verify(exactly = 1) { functions.getHttpsCallable("screenCallAction") }
+
+            viewModelStore.clear()
+
+            // Dead: nothing further reaches the wire, because the scope is gone.
+            vm.sendToVoicemail("CA-after-clear")
+            advanceUntilIdle()
+            verify(exactly = 1) { functions.getHttpsCallable("screenCallAction") }
+        }
 }
