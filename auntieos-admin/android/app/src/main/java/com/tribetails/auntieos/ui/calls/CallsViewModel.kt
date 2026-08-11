@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.calls
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.model.CallEvent
 import com.tribetails.auntieos.data.model.VoicemailEvent
 import com.tribetails.auntieos.data.model.*
@@ -14,13 +15,10 @@ import com.tribetails.auntieos.voice.AudioRoute
 import com.tribetails.auntieos.voice.CallInviteManager
 import com.tribetails.auntieos.voice.CallInviteManager.VoiceCallState
 import com.tribetails.auntieos.voice.IncomingCallNotificationService
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.coroutines.tasks.await
 import java.time.Instant
 
 data class CallsUiState(
@@ -38,13 +36,28 @@ data class CallsUiState(
 
 class CallsViewModel(
     private val appContext: Context,
-    private val repository: AuntieRepository
+    private val repository: AuntieRepository,
+    // Same seam the domain repos use (see InvoiceRepository): a provider, resolved
+    // lazily, so constructing the ViewModel never touches a Firebase singleton and a
+    // unit test can hand in a mocked FirebaseFunctions.
+    functionsProvider: () -> FirebaseFunctions = { FirebaseFunctions.getInstance("us-central1") }
 ) : ViewModel() {
+
+    private val functions: FirebaseFunctions by lazy(functionsProvider)
 
     private val _actionResult     = MutableStateFlow<String?>(null)
     private val _isActing         = MutableStateFlow(false)
     private val _jumpToVoicemails = MutableStateFlow(false)
     private val _isRefreshing     = MutableStateFlow(false)
+
+    /**
+     * One event per completed [sendToVoicemail], carrying whether the server actually
+     * took the action. A screen that has to DO something different on failure (the
+     * lock-screen [CallScreenActivity] stays put instead of closing) needs more than
+     * the human-readable [CallsUiState.actionResult] string.
+     */
+    private val _voicemailResults = MutableSharedFlow<Result<Unit>>(extraBufferCapacity = 4)
+    val voicemailResults: SharedFlow<Result<Unit>> = _voicemailResults.asSharedFlow()
 
     private val callStatus: StateFlow<FourFlags> =
         combine(
@@ -200,21 +213,44 @@ class CallsViewModel(
     fun availableRoutes(context: Context): Set<AudioRoute> =
         CallInviteManager.availableRoutes(context)
 
+    /**
+     * Rejects the ringing invite on this device, then tells the server to park the
+     * caller in voicemail, and REPORTS WHAT ACTUALLY HAPPENED.
+     *
+     * The old version fired a bare-OkHttp GET at a retired Twilio Serverless host,
+     * threw the response away with `.execute().close()`, swallowed every exception,
+     * and then said "Caller sent to voicemail." either way. Against a dead host that
+     * is a lie the operator has no way to see: the caller kept ringing into nothing
+     * while the phone said the voicemail hand-off worked.
+     *
+     * [CallEventStore.resolveActiveCall] runs on BOTH paths on purpose. The local
+     * reject already ended the invite, so leaving the ringing banner up would be its
+     * own falsehood; what differs is the message and the [voicemailResults] outcome.
+     */
     fun sendToVoicemail(callSid: String) {
         AuntieLog.i("Sending call $callSid to voicemail")
         viewModelScope.launch {
             _isActing.value = true
             CallInviteManager.reject(appContext)
-            try {
-                val url = "${TWILIO_BASE}/screen-action?callSid=$callSid&action=reject"
-                withContext(Dispatchers.IO) {
-                    OkHttpClient().newCall(Request.Builder().url(url).get().build()).execute().close()
-                }
-            } catch (e: Exception) {
-                AuntieLog.e("Failed to notify Twilio of rejection", e)
+
+            val outcome = runCatching {
+                functions
+                    .getHttpsCallable(SCREEN_CALL_ACTION)
+                    .call(mapOf("callSid" to callSid, "action" to ACTION_REJECT))
+                    .await()
+                Unit
             }
+
             CallEventStore.resolveActiveCall("rejected")
-            _actionResult.value = "Caller sent to voicemail."
+
+            outcome.onSuccess {
+                _actionResult.value = "Caller sent to voicemail."
+            }.onFailure { e ->
+                AuntieLog.e("screenCallAction reject failed for $callSid", e)
+                _actionResult.value =
+                    "Could not send the caller to voicemail: ${e.message ?: "the server did not answer"}"
+            }
+            _voicemailResults.tryEmit(outcome)
             _isActing.value = false
         }
     }
@@ -232,7 +268,9 @@ class CallsViewModel(
     }
 
     companion object {
-        private const val TWILIO_BASE = "https://tribetailsattendant-8587.twil.io"
+        /** Server callable that screens a ringing call. Args: { callSid, action }. */
+        const val SCREEN_CALL_ACTION = "screenCallAction"
+        const val ACTION_REJECT      = "reject"
     }
 
     private data class FourFlags(
