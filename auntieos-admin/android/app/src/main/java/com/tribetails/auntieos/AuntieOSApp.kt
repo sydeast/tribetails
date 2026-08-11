@@ -121,8 +121,13 @@ class AuntieOSApp : Application() {
             }
         }
 
+        // Voice tokens come from the admin-gated `mintVoiceAccessToken` callable
+        // now, not from the public Twilio Functions endpoint, so this takes the
+        // repository rather than a Retrofit binding. `repository` is read at call
+        // time; a later `rebuildRepository` swaps only the n8n base URL, which
+        // callables do not use, so the captured instance stays correct.
         try {
-            VoiceTokenManager.initialize(this, RetrofitClient.buildTwilio(), appScope)
+            VoiceTokenManager.initialize(this, repository, appScope)
         } catch (e: Exception) {
             AuntieLog.e("Failed to initialize VoiceTokenManager", e)
         }

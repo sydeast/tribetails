@@ -25,6 +25,7 @@ import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.voice.VoiceAccessToken
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
@@ -1879,6 +1880,46 @@ class AuntieRepository(
         AuntieLog.i("FCM token registered via callable")
         Unit
     }.onFailure { AuntieLog.e("Failed to register FCM device token", it) }
+
+    // --- Twilio Voice access token ---
+
+    /**
+     * Mint a Twilio Voice SDK access token for this signed-in admin.
+     *
+     * Replaces a Retrofit GET against `https://tribetailsattendant-8587.twil.io/get-token`,
+     * which was PUBLIC (no arguments, no check, a token granting `incomingAllow`
+     * for the `auntie` identity to anyone who knew the URL) and which 404s today.
+     * The `mintVoiceAccessToken` callable is admin gated and derives the identity
+     * server side, so neither the caller nor this method can name one.
+     *
+     * NO PAYLOAD ON PURPOSE. Everything the server needs is the caller's own auth
+     * context. Sending an identity here is the hole the callable exists to close,
+     * so this is the no-argument `call()` overload and must stay that way.
+     *
+     * The failure stays a raw `FirebaseFunctionsException` rather than being
+     * flattened to a message: the callable throws `failed-precondition` with
+     * `details.secret` naming the Twilio secret that is missing or malformed, and
+     * `VoiceTokenManager.classifyTokenFailure` turns that into a banner naming
+     * it. A message-only failure would throw that away.
+     */
+    suspend fun mintVoiceAccessToken(): Result<VoiceAccessToken> = runCatching {
+        authGate.ensureAuthenticated()
+        val raw = functions.getHttpsCallable("mintVoiceAccessToken").call().await().data
+        val data = raw as? Map<*, *>
+            ?: throw IllegalStateException("mintVoiceAccessToken returned no data")
+        // Every field is required and none is guessed. A token assembled out of a
+        // half-read response fails later, at Twilio registration, where the cause
+        // is no longer visible.
+        val token = (data["token"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("mintVoiceAccessToken returned no token")
+        val identity = (data["identity"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("mintVoiceAccessToken returned no identity")
+        // Read as Number, not as Long: the callable wire hands small integers back
+        // as Integer, so `as Long` would ClassCastException on a 3600 second TTL.
+        val expiresInSeconds = (data["expiresInSeconds"] as? Number)?.toLong()
+            ?: throw IllegalStateException("mintVoiceAccessToken returned no expiresInSeconds")
+        VoiceAccessToken(token = token, identity = identity, expiresInSeconds = expiresInSeconds)
+    }.onFailure { AuntieLog.e("Failed to mint a Twilio Voice access token", it) }
 
     // --- Firestore streams for comms history (survives app restart) ---
 

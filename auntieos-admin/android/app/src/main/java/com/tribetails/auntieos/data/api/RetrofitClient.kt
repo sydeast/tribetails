@@ -20,7 +20,6 @@ object RetrofitClient {
 
     const val DEFAULT_BASE_URL = "https://n8n.tribetails.com/"
     const val LEGACY_N8N_HOST = "auntie.tribetails.com"
-    const val TWILIO_BASE_URL  = "https://tribetailsattendant-8587.twil.io/"
 
     /**
      * Retrofit's `baseUrl(String)` REJECTS a URL that does not end in '/'
@@ -58,21 +57,14 @@ object RetrofitClient {
             .create(N8nApi::class.java)
     }
 
-    // Twilio Functions client
-    fun buildTwilio(): TwilioApi {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(loggingInterceptor())
-            .build()
-
-        return Retrofit.Builder()
-            .baseUrl(TWILIO_BASE_URL)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(TwilioApi::class.java)
-    }
+    // No Twilio client here any more. `buildTwilio` used to bind a Retrofit
+    // TwilioApi to https://tribetailsattendant-8587.twil.io/, whose `get-token`
+    // handler was PUBLIC: no arguments, no auth check, and it returned a token
+    // granting `incomingAllow` for the `auntie` identity, so anyone with the URL
+    // could register as that client and answer the business's inbound calls. It
+    // had also been 404ing, which is how the app shipped with voice quietly
+    // unregistered. Token minting now goes through the admin-gated
+    // `mintVoiceAccessToken` callable (AuntieRepository, VoiceTokenManager).
 
     // No Mapbox client here any more. `buildMapboxGeocoding` used to hand back
     // a Retrofit binding to api.mapbox.com that callers authenticated with
