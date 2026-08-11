@@ -30,11 +30,30 @@ const mocks = vi.hoisted(() => ({
   settingsReadThrows: false,
   validateRequest: vi.fn(),
   logEvent: vi.fn(),
+  sendCallInvitePush: vi.fn(),
+  callsCreate: vi.fn(),
+  conferenceList: vi.fn(),
+  conferenceUpdate: vi.fn(),
 }));
 
 vi.mock('../src/lib/logger', () => ({ logEvent: (...args: unknown[]) => mocks.logEvent(...args) }));
 vi.mock('twilio', () => ({
   default: { validateRequest: (...args: unknown[]) => mocks.validateRequest(...args) },
+}));
+
+vi.mock('../src/twilio/voicePush', () => ({
+  sendCallInvitePush: (invite: unknown) => mocks.sendCallInvitePush(invite),
+}));
+
+vi.mock('../src/lib/twilio', () => ({
+  getTwilioFromNumber: () => '+18054636550',
+  getTwilio: async () => ({
+    calls: { create: (opts: unknown) => mocks.callsCreate(opts) },
+    conferences: Object.assign(
+      (sid: string) => ({ update: (opts: unknown) => mocks.conferenceUpdate(sid, opts) }),
+      { list: (opts: unknown) => mocks.conferenceList(opts) },
+    ),
+  }),
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => {
@@ -114,6 +133,14 @@ beforeEach(() => {
   mocks.settingsReadThrows = false;
   mocks.validateRequest.mockReset();
   mocks.logEvent.mockReset();
+  mocks.sendCallInvitePush.mockReset();
+  mocks.sendCallInvitePush.mockResolvedValue({ delivered: 1, attempted: 1, pruned: 0 });
+  mocks.callsCreate.mockReset();
+  mocks.callsCreate.mockResolvedValue({ sid: 'CAoperatorleg' });
+  mocks.conferenceList.mockReset();
+  mocks.conferenceList.mockResolvedValue([{ sid: 'CFtest' }]);
+  mocks.conferenceUpdate.mockReset();
+  mocks.conferenceUpdate.mockResolvedValue({});
   delete process.env.TWILIO_AUTH_TOKEN;
   delete process.env.TWILIO_VOICE_BASE_URL;
   delete process.env.TWILIO_INBOUND_VOICEMAIL_URL;
@@ -159,15 +186,27 @@ function captureRes(): { res: any; captured: CapturedRes } {
 }
 
 function makeReq(
-  opts: { method?: string; path?: string; headers?: Record<string, string>; body?: Record<string, string> } = {},
+  opts: {
+    method?: string;
+    path?: string;
+    headers?: Record<string, string>;
+    body?: Record<string, string>;
+    query?: Record<string, string>;
+  } = {},
 ): any {
   const headers = opts.headers ?? {};
   const path = opts.path ?? '/';
+  const query = opts.query ?? {};
+  const qs = Object.keys(query).length
+    ? '?' + Object.entries(query).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+    : '';
   return {
     method: opts.method ?? 'POST',
     hostname: 'us-central1-test.cloudfunctions.net',
     path,
-    originalUrl: path,
+    // Twilio signs the URL INCLUDING the query string, so originalUrl carries it.
+    originalUrl: `${path}${qs}`,
+    query,
     header: (name: string) => headers[name.toLowerCase()],
     body: opts.body ?? {},
   };
@@ -208,11 +247,12 @@ async function call(
   path: string,
   body: Record<string, string> = {},
   at?: number,
+  query?: Record<string, string>,
 ): Promise<CapturedRes> {
   if (at !== undefined) vi.setSystemTime(at);
   const handler = await loadHandler();
   const { res, captured } = captureRes();
-  await handler(makeReq({ path, headers: { 'x-twilio-signature': 'sig' }, body }), res);
+  await handler(makeReq({ path, headers: { 'x-twilio-signature': 'sig' }, body, query }), res);
   return captured;
 }
 
@@ -453,10 +493,20 @@ describe('twilioVoice — routing', () => {
     expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
   });
 
-  it('sends 3 to voicemail too, because a live connect does not exist yet', async () => {
+  it('sends 3 to the screening prompt during open hours', async () => {
     configureAuthentic();
-    const captured = await call('/route', { Digits: '3', CallSid: CALL_SID });
-    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
+    const captured = await call('/route', { Digits: '3', CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/screen</Redirect>`);
+  });
+
+  it('REFUSES 3 after hours, so nobody rings the operator at midnight', async () => {
+    // The after-hours greeting never offers 3, but a caller who knows the menu
+    // can still press it. Hours are re-resolved on the keypress rather than
+    // carried from the greeting, so a call that spans closing time is handled.
+    configureAuthentic();
+    const captured = await call('/route', { Digits: '3', CallSid: CALL_SID }, CLOSED_INSTANT);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/retry</Redirect>`);
+    expect(captured.text).not.toContain('/screen');
   });
 
   it('sends any other digit to the retry', async () => {
@@ -490,6 +540,164 @@ describe('twilioVoice — routing', () => {
     const logged = mocks.logEvent.mock.calls.map((c) => c[0]);
     expect(logged).toContainEqual(
       expect.objectContaining({ severity: 'error', event: 'twilioVoice.unknown-path' }),
+    );
+  });
+});
+
+describe('twilioVoice — screening', () => {
+  const CONF = `conf_${CALL_SID}`;
+
+  it('asks who is calling with speech, not digits', async () => {
+    configureAuthentic();
+    const captured = await call('/screen', { CallSid: CALL_SID });
+    expect(captured.text).toContain('<Gather input="speech" speechTimeout="auto"');
+    expect(captured.text).toContain(`action="${BASE}/screen-connect"`);
+    expect(captured.text).toContain(spoken('tell me your name and what you'));
+  });
+
+  it('a caller who says nothing still reaches a voicemail box', async () => {
+    configureAuthentic();
+    const captured = await call('/screen', {});
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
+  });
+
+  it('pushes the caller name and reason to the operator before ringing', async () => {
+    configureAuthentic();
+    await call('/screen-connect', {
+      CallSid: CALL_SID,
+      From: '+16195001530',
+      SpeechResult: 'Hi it is Dana about Tuesday',
+    });
+    expect(mocks.sendCallInvitePush).toHaveBeenCalledWith({
+      callSid: CALL_SID,
+      callerNumber: '+16195001530',
+      transcript: 'Hi it is Dana about Tuesday',
+    });
+  });
+
+  it('rings the operator client, not a phone number', async () => {
+    configureAuthentic();
+    await call('/screen-connect', { CallSid: CALL_SID, From: '+16195001530', SpeechResult: 'hi' });
+    expect(mocks.callsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'client:auntie',
+        from: '+18054636550',
+        timeout: 30,
+        statusCallbackEvent: ['no-answer', 'busy', 'failed', 'canceled', 'completed'],
+      }),
+    );
+    const opts = mocks.callsCreate.mock.calls[0][0];
+    expect(opts.url).toBe(`${BASE}/connect?conference=${encodeURIComponent(CONF)}`);
+  });
+
+  it('parks the caller in the conference as a NON-moderator, on hold', async () => {
+    // The operator's arrival is what starts the conference. If the caller could
+    // start it, they would sit in silence in an empty room instead of on hold.
+    configureAuthentic();
+    const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
+    expect(captured.text).toContain('startConferenceOnEnter="false"');
+    expect(captured.text).toContain(`waitUrl="${BASE}/hold"`);
+    expect(captured.text).toContain(CONF);
+  });
+
+  it('FALLS THROUGH to the missed path when the conference ends', async () => {
+    // The reason this design needs no REST injection: when the conference ends
+    // the Dial verb completes and TwiML continues to the next verb.
+    configureAuthentic();
+    const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/missed</Redirect>`);
+  });
+
+  it('sends the caller to voicemail when NOBODY could be reached', async () => {
+    // No push delivered and the dial failed. Holding them would be a lie.
+    configureAuthentic();
+    mocks.sendCallInvitePush.mockResolvedValue({ delivered: 0, attempted: 0, pruned: 0 });
+    mocks.callsCreate.mockRejectedValue(new Error('twilio down'));
+    const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
+    expect(captured.text).not.toContain('Conference');
+  });
+
+  it('still connects when the PUSH fails but the phone rings', async () => {
+    // She gets a call with no context rather than no call at all.
+    configureAuthentic();
+    mocks.sendCallInvitePush.mockResolvedValue({ delivered: 0, attempted: 1, pruned: 0 });
+    const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
+    expect(captured.text).toContain('Conference');
+  });
+
+  it('sanitizes the spoken transcript before it is carried anywhere', async () => {
+    configureAuthentic();
+    await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: '  <b>Dana</b>  ' });
+    const pushed = mocks.sendCallInvitePush.mock.calls[0][0];
+    expect(pushed.transcript).not.toContain('<b>');
+  });
+
+  it('the operator leg joins as MODERATOR, and her leaving ends it', async () => {
+    configureAuthentic();
+    const captured = await call('/connect', {}, undefined, { conference: CONF });
+    expect(captured.text).toContain('startConferenceOnEnter="true"');
+    expect(captured.text).toContain('endConferenceOnExit="true"');
+    expect(captured.text).toContain(CONF);
+  });
+
+  it('refuses a connect with no conference rather than bridging into nothing', async () => {
+    configureAuthentic();
+    const captured = await call('/connect', {});
+    expect(captured.text).toContain('<Hangup/>');
+    expect(mocks.logEvent.mock.calls.map((c) => c[0])).toContainEqual(
+      expect.objectContaining({ severity: 'error', event: 'twilioVoice.connect.no-conference' }),
+    );
+  });
+
+  it('hold plays something rather than dead air', async () => {
+    configureAuthentic();
+    const captured = await call('/hold', {});
+    expect(captured.text).toContain(spoken('connecting you now'));
+    expect(captured.text).toContain('<Pause length="15"/>');
+  });
+
+  it.each([['no-answer'], ['busy'], ['failed'], ['canceled']])(
+    'ends the conference on a %s operator leg, releasing the caller',
+    async (status) => {
+      configureAuthentic();
+      await call('/screen-status', { CallStatus: status }, undefined, { conference: CONF });
+      expect(mocks.conferenceUpdate).toHaveBeenCalledWith('CFtest', { status: 'completed' });
+    },
+  );
+
+  it('does NOT end the conference on completed, which fires on a call she took', async () => {
+    configureAuthentic();
+    await call('/screen-status', { CallStatus: 'completed' }, undefined, { conference: CONF });
+    expect(mocks.conferenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('tolerates a conference that already ended', async () => {
+    configureAuthentic();
+    mocks.conferenceList.mockResolvedValue([]);
+    const captured = await call('/screen-status', { CallStatus: 'no-answer' }, undefined, {
+      conference: CONF,
+    });
+    expect(captured.status).toBe(200);
+    expect(mocks.conferenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('offers a voicemail after a missed call', async () => {
+    configureAuthentic();
+    const captured = await call('/missed', { CallSid: CALL_SID });
+    expect(captured.text).toContain(spoken("I'm sorry I missed your call"));
+    expect(captured.text).toContain(`action="${BASE}/route"`);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/goodbye</Redirect>`);
+  });
+
+  it('signs the query string too, which Twilio includes in the hash', async () => {
+    configureAuthentic();
+    await call('/connect', {}, undefined, { conference: CONF });
+    expect(mocks.validateRequest).toHaveBeenCalledWith(
+      'tok',
+      'sig',
+      `${BASE}/connect?conference=${encodeURIComponent(CONF)}`,
+      {},
     );
   });
 });
