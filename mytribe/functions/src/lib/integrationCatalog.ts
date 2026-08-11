@@ -109,16 +109,42 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
   {
     key: 'twilio',
     name: 'Twilio',
-    purpose: 'SMS to kinfolk: visit notifications, broadcasts, and replies from the Inbox.',
+    purpose:
+      'SMS to kinfolk: visit notifications, broadcasts, and replies from the Inbox. Also the ' +
+      'business phone line, which twilioVoice answers.',
     secrets: [
       { name: 'TWILIO_ACCOUNT_SID', required: true, purpose: 'Identifies the Twilio account messages are sent from.' },
       { name: 'TWILIO_AUTH_TOKEN', required: true, purpose: 'Signs sends, and verifies the delivery-status callback.' },
       { name: 'TWILIO_FROM_NUMBER', required: true, purpose: 'The number kinfolk see. A send with no from number fails.' },
+      // The Voice SDK set. Not required for SMS, so an unset one must not read
+      // as an outage, but every one is needed before the admin app can answer.
+      {
+        name: 'TWILIO_API_KEY_SID',
+        required: false,
+        purpose: 'Signs the admin app voice token. Revokable on its own, so voice can be cut off without rotating the account auth token.',
+      },
+      {
+        name: 'TWILIO_API_KEY_SECRET',
+        required: false,
+        purpose: 'The other half of the voice signing key. Twilio shows it once at creation and never again.',
+      },
+      {
+        name: 'TWIML_APP_SID',
+        required: false,
+        purpose: 'The TwiML Application whose Voice URL answers the admin app leg of a screened call.',
+      },
+      {
+        name: 'PUSH_CREDENTIAL_SID',
+        required: false,
+        purpose: 'Lets Twilio wake the admin app for an incoming call. Without it, calling works only while the app is open.',
+      },
     ],
     externalStep:
       'Delivery receipts need the twilioStatusCallback URL registered on the messaging service in ' +
       'console.twilio.com. Without it messages still send, and every one of them stays "sent" forever ' +
-      'because nothing reports back that it arrived.',
+      'because nothing reports back that it arrived. The inbound VOICE line is separate: the ' +
+      "number's \"A call comes in\" webhook must point at the twilioVoice function, and " +
+      'TWILIO_VOICE_BASE_URL must name that exact URL, or every call is refused with a 403.',
     ownedBySection: '',
   },
   {
