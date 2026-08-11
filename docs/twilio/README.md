@@ -27,13 +27,48 @@ Keep that distinction in mind below — "set the Twilio env vars" means
 different vars in different places depending on which integration you're
 touching.
 
+## The Studio Flow no longer answers the phone
+
+As of 2026-08-11 the inbound business call flow is **TwiML served from
+`mytribe/functions/src/twilio/twilioVoice.ts`**, not the Studio Flow. The flow
+is left published and untouched so that repointing the number's Voice webhook at
+it is a one-field rollback.
+
+It was replaced because it had been telling every caller, at every hour, that
+the business was closed. Two independent breaks, either one fatal:
+
+- The deployed `/check-hours` computed `isOpen`, discarded it, and returned the
+  literal `{ is_open: false }` with a `// or true` comment beside it. The copy in
+  this repo (`auntieos-admin/twilio-service/functions/check-hours.js`) is a
+  different, correct implementation that returns `"yes"`/`"no"`. It was never
+  what ran.
+- The flow's `split_hours` compared the whole HTTP body against the string
+  `"yes"`. The body was JSON, so the match could never fire and every call fell
+  through `noMatch` to the after-hours greeting. Fixing the function alone would
+  not have helped: `{"is_open":true}` is not `"yes"` either.
+
+The flow's `failed -> open_hours_greeting` fail-open transition never fired,
+because a 200 carrying a useless answer is not a failure. All four executions
+Twilio retained logged `success`. The account holds zero queue resources, and
+Twilio creates a queue on first `<Enqueue>`, which is independent proof that the
+press-3 live-connect path had never once executed.
+
+**Do not treat `auntieos-admin/studio_flow_v2.json` or
+`docs/twilio/studio-flow-reference.md` as descriptions of what runs.** Both are
+retained as history. The blueprint in particular is subtitled "Twilio Assets
+Edition" and routes six `.mp3` greetings that do not exist:
+`auntieos-admin/twilio-service/assets/` is empty and all six URLs 404. The live
+flow used text-to-speech, which is what `twilioVoice.ts` reproduces.
+
 ## Where the code lives
 
 | Integration | Path | Deploy mechanism |
 |---|---|---|
-| Business voice service | `auntieos-admin/twilio-service/functions/` | `twilio-run deploy` (Twilio Serverless) |
-| Studio Flow definition | `auntieos-admin/studio_flow_v2.json` | Import into Twilio Console → Studio |
-| Studio Flow blueprint (human-readable) | `docs/twilio/studio-flow-reference.md` | reference only |
+| **Business voice flow (LIVE)** | `mytribe/functions/src/twilio/twilioVoice.ts` | `firebase deploy --only functions:mytribe:twilioVoice` |
+| Business hours resolution | `mytribe/functions/src/lib/businessHours.ts` | (same) |
+| Business voice service (screening, Voice SDK) | `auntieos-admin/twilio-service/functions/` | `twilio-run deploy` (Twilio Serverless) |
+| Studio Flow definition (SUPERSEDED, kept for rollback) | `auntieos-admin/studio_flow_v2.json` | Import into Twilio Console → Studio |
+| Studio Flow blueprint (SUPERSEDED, and drifted) | `docs/twilio/studio-flow-reference.md` | history only |
 | Kinfolk app outbound SMS | `mytribe/functions/src/lib/twilio.ts`, `src/notifications/senders/smsChannel.ts`, `src/admin/sendExternalMessage.ts`, `src/admin/broadcastMessage.ts` | `firebase deploy --only functions` |
 | Kinfolk app inbound webhooks | `mytribe/functions/src/twilio/twilioInbound.ts` | deployed as Cloud Run services (`twilioinboundsms`, `twilioinboundvoicemail`, `twilioinboundcall`) |
 | Smoke tests | `mytribe/functions/docs/NOTIFICATION_SMOKE_TESTS.md` | — |
