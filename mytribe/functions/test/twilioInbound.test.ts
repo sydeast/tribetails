@@ -271,6 +271,110 @@ const COMPLETED_STATUS_CALLBACK_WITH_RECORDING: Record<string, string> = {
   RecordingDuration: '42',
 };
 
+// --- REAL voicemail callback bodies ----------------------------------------
+// TWO DIFFERENT CALLBACKS land on voicemails/{RecordingSid}, and the difference
+// between them is the whole bug. Both tables are on twilio.com/docs/voice/twiml/record.
+//
+//   VOICEMAIL_RECORDING_CALLBACK — recordingStatusCallback. Parameters:
+//     AccountSid, CallSid, RecordingSid, RecordingUrl, RecordingStatus,
+//     RecordingDuration, RecordingChannels, RecordingStartTime, RecordingSource,
+//     RecordingTrack. It is the ONLY one carrying RecordingDuration, and it
+//     carries NO From, NO Caller and NO TranscriptionText.
+//
+//   VOICEMAIL_TRANSCRIPTION_CALLBACK — transcribeCallback, which Twilio
+//     describes as carrying "the standard TwiML request parameters as well as
+//     transcription specific ones": TranscriptionSid, TranscriptionText,
+//     TranscriptionStatus, TranscriptionUrl, RecordingSid, RecordingUrl,
+//     CallSid, AccountSid, From, To, CallStatus, ApiVersion, Direction,
+//     ForwardedFrom. It is the ONLY one carrying TranscriptionText, and there is
+//     NO RecordingDuration anywhere in that table.
+//
+// So each callback is the sole source of a field the other one never mentions:
+// the recording callback owns the duration, the transcription callback owns the
+// text and the caller's number. Neither may speak for the other, and Twilio
+// guarantees no ordering between separate webhook requests, so both arrival
+// orders are exercised below.
+const VM_CALL_SID = 'CAaa1e6f7c9b3d4e5f8a0b1c2d3e4f5a6b';
+const VM_REC_SID = 'RE9f2c4b8a1d6e3f5c7b9a0d2e4f6a8b1c';
+const VM_REC_URL = 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Recordings/RE9f2c';
+const VM_CALLER = '+12015550188';
+const VM_TRANSCRIPT = 'Hi Auntie, it is Ada. Could we move Tuesday to Thursday please?';
+
+const VOICEMAIL_RECORDING_CALLBACK: Record<string, string> = {
+  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  CallSid: VM_CALL_SID,
+  RecordingSid: VM_REC_SID,
+  RecordingUrl: VM_REC_URL,
+  RecordingStatus: 'completed',
+  RecordingDuration: '31',
+  RecordingChannels: '1',
+  RecordingStartTime: 'Tue, 28 May 2019 02:18:02 +0000',
+  RecordingSource: 'RecordVerb',
+  RecordingTrack: 'both',
+  ErrorCode: '0',
+};
+
+const VOICEMAIL_TRANSCRIPTION_CALLBACK: Record<string, string> = {
+  TranscriptionSid: 'TR7d3e1a95c2b84f60ae1d7f2c8b9a0e34',
+  TranscriptionText: VM_TRANSCRIPT,
+  TranscriptionStatus: 'completed',
+  TranscriptionUrl: 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Transcriptions/TR7d3e',
+  RecordingSid: VM_REC_SID,
+  RecordingUrl: VM_REC_URL,
+  CallSid: VM_CALL_SID,
+  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  From: VM_CALLER,
+  To: '+12015550199',
+  CallStatus: 'completed',
+  ApiVersion: '2010-04-01',
+  Direction: 'inbound',
+};
+
+// "The status of the transcription attempt: either `completed` or `failed`."
+// A failed attempt produces no text — which is not a statement that the
+// transcript is empty, still less a licence to erase one already stored.
+const VOICEMAIL_FAILED_TRANSCRIPTION_CALLBACK: Record<string, string> = (() => {
+  const { TranscriptionText: _drop, ...rest } = VOICEMAIL_TRANSCRIPTION_CALLBACK;
+  return { ...rest, TranscriptionStatus: 'failed' };
+})();
+
+// --- REAL inbound SMS/MMS callback body ------------------------------------
+// twilio.com/docs/messaging/guides/webhook-request: MessageSid, SmsSid,
+// SmsMessageSid, AccountSid, MessagingServiceSid, From, To, Body, NumMedia,
+// NumSegments (+ MediaContentType{N}/MediaUrl{N} and the From*/To* geo fields).
+//
+// Only ONE callback is wired here (the number's "A MESSAGE COMES IN" webhook),
+// so the second writer is Twilio itself: the webhook retry policy retries "on
+// any 5xx response from your web server", "on TCP connect or TLS handshake
+// failure" and "on no response received within read timeout", up to 5 attempts,
+// and a retry is the SAME request — same MessageSid, same body — replayed.
+const SMS_SID = 'SM1a2b3c4d5e6f708192a3b4c5d6e7f809';
+const SMS_FROM = '+12015550123';
+const SMS_BODY = 'Can Auntie come Thursday instead of Tuesday?';
+
+const INBOUND_SMS_CALLBACK: Record<string, string> = {
+  MessageSid: SMS_SID,
+  SmsSid: SMS_SID,
+  SmsMessageSid: SMS_SID,
+  AccountSid: 'AC18d5c6f2003e8710de63b2f9c412b145',
+  MessagingServiceSid: 'MG9752274e9e519418a7406176694466fa',
+  From: SMS_FROM,
+  To: '+12015550199',
+  Body: SMS_BODY,
+  NumMedia: '0',
+  NumSegments: '1',
+  SmsStatus: 'received',
+  ApiVersion: '2010-04-01',
+  FromCity: 'NEWARK',
+  FromState: 'NJ',
+  FromZip: '07102',
+  FromCountry: 'US',
+  ToCity: '',
+  ToState: 'NJ',
+  ToZip: '',
+  ToCountry: 'US',
+};
+
 describe.each(HANDLERS)('$name — guard (WARNING-8)', ({ name, sidKey }) => {
   it('FAILS CLOSED 403 when TWILIO_AUTH_TOKEN is unset', async () => {
     // token unset -> twilioVerify returns false WITHOUT consulting validateRequest
@@ -327,26 +431,40 @@ describe('twilioInboundSms — valid signed request', () => {
   it('writes sms_messages/{MessageSid} with the exact android schema', async () => {
     const handler = await loadHandler('twilioInboundSms');
     const { res, captured } = captureRes();
+    // Twilio's documented inbound MMS body, not a hand-trimmed one.
     await handler(
       makeReq({
         headers: { 'x-twilio-signature': 'sig' },
-        body: { From: '+15551234567', To: '+15559990000', Body: 'hi there', MessageSid: 'SM123', NumMedia: '2', MediaUrl0: 'https://m/0', MediaUrl1: 'https://m/1' },
+        body: {
+          ...INBOUND_SMS_CALLBACK,
+          NumMedia: '2',
+          MediaContentType0: 'image/jpeg',
+          MediaUrl0: 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Messages/SM1a2b/Media/ME01',
+          MediaContentType1: 'image/png',
+          MediaUrl1: 'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Messages/SM1a2b/Media/ME02',
+        },
       }),
       res,
     );
     expect(mocks.sets.length).toBe(1);
     const w = mocks.sets[0];
     expect(w.collection).toBe('sms_messages');
-    expect(w.id).toBe('SM123'); // doc id == SID
+    expect(w.id).toBe(SMS_SID); // doc id == SID
     expect(w.options).toEqual({ merge: true });
-    expect(w.data).toMatchObject({
-      counterpartNumber: '+15551234567', // phone in the right field
+    // The DOCUMENT, not one payload in isolation — asserting the payload alone
+    // is how the write shape this file now guards survived review on calls_log.
+    const stored = storedDoc('sms_messages', SMS_SID)!;
+    expect(stored).toMatchObject({
+      counterpartNumber: SMS_FROM, // phone in the right field
       direction: 'inbound',
       subType: 'sms',
-      body: 'hi there',
-      mediaUrls: ['https://m/0', 'https://m/1'],
+      body: SMS_BODY,
+      mediaUrls: [
+        'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Messages/SM1a2b/Media/ME01',
+        'https://api.twilio.com/2010-04-01/Accounts/AC18d5/Messages/SM1a2b/Media/ME02',
+      ],
       status: 'received',
-      twilioMessageSid: 'SM123',
+      twilioMessageSid: SMS_SID,
       kinfolkId: null,
       kinfolkName: '',
       threadId: '',
@@ -354,19 +472,38 @@ describe('twilioInboundSms — valid signed request', () => {
       reconciledAt: '',
       reconcileNotes: '',
     });
-    expect(typeof w.data.timestamp).toBe('string');
-    expect(w.data.timestamp).not.toBe(''); // sortable ISO timestamp set
+    expect(typeof stored.timestamp).toBe('string');
+    expect(stored.timestamp).not.toBe(''); // sortable ISO timestamp set
     // empty TwiML, text/xml, 200
     expect(captured.status).toBe(200);
     expect(captured.headers['Content-Type']).toBe('text/xml');
     expect(captured.text).toBe('<Response></Response>');
   });
 
-  it('writes an empty mediaUrls array when NumMedia is 0/absent', async () => {
+  it('SEEDS an empty mediaUrls array when NumMedia is absent — and never re-blanks it', async () => {
+    // REWRITTEN. This used to assert `mocks.sets[0].data.mediaUrls` equalled []
+    // for a body with no NumMedia — i.e. that the handler manufactures "no
+    // media" out of a request that never mentioned media, the same move that
+    // blanked recordings and transcripts on calls_log. [] on a fresh document
+    // is a SEED (the android SmsMessage shape wants the key); it is not a fact
+    // a later silent request may restate.
     const handler = await loadHandler('twilioInboundSms');
     const { res } = captureRes();
-    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: { From: '+1', Body: 'x', MessageSid: 'SM0' } }), res);
-    expect(mocks.sets[0].data.mediaUrls).toEqual([]);
+    const { NumMedia: _drop, ...noNumMedia } = INBOUND_SMS_CALLBACK;
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: noNumMedia }), res);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ mediaUrls: [] });
+
+    // Now a request that DOES carry media, then one that is silent about it.
+    mocks.docs.clear();
+    await handler(
+      makeReq({
+        headers: { 'x-twilio-signature': 'sig' },
+        body: { ...INBOUND_SMS_CALLBACK, NumMedia: '1', MediaUrl0: 'https://m/0' },
+      }),
+      captureRes().res,
+    );
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: noNumMedia }), captureRes().res);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ mediaUrls: ['https://m/0'] });
   });
 
   it('is idempotent: same MessageSid merge-upserts (no duplicate id)', async () => {
@@ -395,28 +532,30 @@ describe('twilioInboundVoicemail — valid signed request', () => {
   });
 
   it('writes voicemails/{RecordingSid} with the exact android schema', async () => {
+    // REWRITTEN. The old version drove a hand-trimmed body and asserted
+    // `durationSec: 0` on the write payload — a request carrying no
+    // RecordingDuration (the transcribe callback never does) reported as a
+    // zero-second voicemail. That assertion pinned the defect rather than
+    // guarding against it. The fixture is now Twilio's documented
+    // transcribeCallback body, the assertion is on the stored DOCUMENT, and the
+    // 0 is labelled as what it is: a seed, raised by the recording callback.
     const handler = await loadHandler('twilioInboundVoicemail');
     const { res, captured } = captureRes();
-    await handler(
-      makeReq({
-        headers: { 'x-twilio-signature': 'sig' },
-        body: { From: '+15551112222', TranscriptionText: 'call me back', RecordingSid: 'RE123', RecordingUrl: 'https://rec/1', CallSid: 'CA999' },
-      }),
-      res,
-    );
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body: VOICEMAIL_TRANSCRIPTION_CALLBACK }), res);
     expect(mocks.sets.length).toBe(1);
     const w = mocks.sets[0];
     expect(w.collection).toBe('voicemails');
-    expect(w.id).toBe('RE123');
+    expect(w.id).toBe(VM_REC_SID);
     expect(w.options).toEqual({ merge: true });
-    expect(w.data).toMatchObject({
-      callerNumber: '+15551112222', // voicemails match by callerNumber
-      transcript: 'call me back',
-      audioUrl: 'https://rec/1',
+    const stored = storedDoc('voicemails', VM_REC_SID)!;
+    expect(stored).toMatchObject({
+      callerNumber: VM_CALLER, // voicemails match by callerNumber
+      transcript: VM_TRANSCRIPT,
+      audioUrl: VM_REC_URL,
       direction: 'inbound',
       replyStatus: 'unread',
-      twilioCallSid: 'CA999',
-      durationSec: 0,
+      twilioCallSid: VM_CALL_SID,
+      durationSec: 0, // SEED only — see the ordering suite for the real 31
       kinfolkId: null,
       kinfolkName: '',
       repliedAt: '',
@@ -425,7 +564,7 @@ describe('twilioInboundVoicemail — valid signed request', () => {
       reconciledAt: '',
       reconcileNotes: '',
     });
-    expect(w.data.timestamp).not.toBe('');
+    expect(stored.timestamp).not.toBe('');
     expect(captured.status).toBe(200);
     expect(captured.body).toMatchObject({ ok: true });
   });
@@ -713,6 +852,254 @@ describe('twilioInboundCall — a later callback must not erase an earlier one',
 
   it('reads and writes inside ONE transaction so a concurrent writer cannot be reverted', async () => {
     await post(RECORDING_STATUS_CALLBACK);
+    expect(mocks.transactions).toBe(1);
+    expect(mocks.sets.every((w) => w.viaTransaction)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Two callbacks, one voicemails document. The recording status callback and the
+// transcribeCallback each carry a field the other never mentions, so whichever
+// lands second used to erase the first one's work.
+// ---------------------------------------------------------------------------
+describe('twilioInboundVoicemail — a later callback must not erase an earlier one', () => {
+  beforeEach(() => {
+    process.env.TWILIO_AUTH_TOKEN = 'tok';
+    mocks.validateRequest.mockReturnValue(true);
+  });
+
+  async function post(body: Record<string, string>) {
+    const handler = await loadHandler('twilioInboundVoicemail');
+    const { res, captured } = captureRes();
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body }), res);
+    return captured;
+  }
+
+  it('a recording status callback does NOT blank the transcript', async () => {
+    // transcribeCallback is the ONLY source of TranscriptionText on this system.
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ transcript: VM_TRANSCRIPT });
+    // The recording status callback's parameter table has no TranscriptionText
+    // in it at all, so it is silent about the transcript, not asserting it away.
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      transcript: VM_TRANSCRIPT,
+      audioUrl: VM_REC_URL,
+      durationSec: 31,
+    });
+  });
+
+  it('a transcription callback does NOT zero the duration', async () => {
+    // The other order. RecordingDuration appears ONLY on the recording status
+    // callback; the transcribeCallback table has no duration field, so
+    // `Number(body.RecordingDuration || 0)` reported a 31-second voicemail as 0.
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ durationSec: 31 });
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      durationSec: 31,
+      transcript: VM_TRANSCRIPT,
+      callerNumber: VM_CALLER,
+    });
+  });
+
+  it('a recording status callback (no From, no Caller) does not blank the caller or the kinfolk match', async () => {
+    mocks.kinfolk.push({ id: 'kinVm', firstName: 'Ada', lastName: 'Lovelace', phoneNumber: VM_CALLER });
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      callerNumber: VM_CALLER,
+      kinfolkId: 'kinVm',
+      kinfolkName: 'Ada Lovelace',
+    });
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      callerNumber: VM_CALLER,
+      kinfolkId: 'kinVm',
+      kinfolkName: 'Ada Lovelace',
+    });
+  });
+
+  it('a FAILED transcription attempt does not erase a transcript already stored', async () => {
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    await post(VOICEMAIL_FAILED_TRANSCRIPTION_CALLBACK); // no TranscriptionText
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ transcript: VM_TRANSCRIPT });
+  });
+
+  it('does not re-mark a replied voicemail unread or wipe the reply it points at', async () => {
+    // replyStatus/repliedAt/replyLogId are the APP's: an Auntie listens, replies,
+    // and the phone records which outbound log answered this voicemail. A late
+    // Twilio callback restating `replyStatus: 'unread'` puts the voicemail back
+    // in the unread queue and drops the link to the reply.
+    mocks.docs.set(`voicemails/${VM_REC_SID}`, {
+      callerNumber: VM_CALLER,
+      replyStatus: 'replied',
+      repliedAt: '2026-08-02T09:00:00.000Z',
+      replyLogId: 'log_7742',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      replyStatus: 'replied',
+      repliedAt: '2026-08-02T09:00:00.000Z',
+      replyLogId: 'log_7742',
+    });
+  });
+
+  it('does not resurrect a reconciled voicemail back to pending or wipe its notes', async () => {
+    mocks.docs.set(`voicemails/${VM_REC_SID}`, {
+      callerNumber: VM_CALLER,
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kinVm',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kinVm',
+    });
+  });
+
+  it('does not un-claim a voicemail reconcile has moved to in_progress', async () => {
+    mocks.docs.set(`voicemails/${VM_REC_SID}`, { reconcileStatus: 'in_progress' });
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ reconcileStatus: 'in_progress' });
+  });
+
+  it('does not move the timestamp the first writer set', async () => {
+    mocks.docs.set(`voicemails/${VM_REC_SID}`, { timestamp: '2026-08-01T10:00:00.000Z' });
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ timestamp: '2026-08-01T10:00:00.000Z' });
+  });
+
+  it('a fail-soft kinfolk read error on a later callback does not wipe the match', async () => {
+    mocks.kinfolk.push({ id: 'kinVm', firstName: 'Ada', lastName: 'Lovelace', phoneNumber: VM_CALLER });
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK);
+    mocks.kinfolkQueryThrows = true;
+    await post(VOICEMAIL_TRANSCRIPTION_CALLBACK); // Twilio retry; kinfolk read now throws
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({ kinfolkId: 'kinVm', kinfolkName: 'Ada Lovelace' });
+  });
+
+  it('SEEDS reconcileStatus + timestamp when the stored doc lacks them — including on a doc the phone created', async () => {
+    // reconcile_comms.py finds work with .where('reconcileStatus','==','pending').
+    // createInboundVoicemailLog on the phone can create the document first, so
+    // the seed must be per-KEY: a per-document seed would leave every
+    // phone-first voicemail invisible to reconcile forever.
+    mocks.docs.set(`voicemails/${VM_REC_SID}`, {
+      callerNumber: VM_CALLER,
+      direction: 'inbound',
+      transcript: 'from the push',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(storedDoc('voicemails', VM_REC_SID)).toMatchObject({
+      reconcileStatus: 'pending',
+      reconciledAt: '',
+      reconcileNotes: '',
+      replyStatus: 'unread',
+      timestamp: '2026-08-01T10:00:00.000Z', // seeded key added, existing one untouched
+      transcript: 'from the push', // and the push's transcript survives
+    });
+  });
+
+  it('reads and writes inside ONE transaction so a concurrent writer cannot be reverted', async () => {
+    await post(VOICEMAIL_RECORDING_CALLBACK);
+    expect(mocks.transactions).toBe(1);
+    expect(mocks.sets.every((w) => w.viaTransaction)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One callback, one sms_messages document — and Twilio's own retry policy
+// replaying it. A retry is not new information; it must not undo anything that
+// happened between the first delivery and the replay.
+// ---------------------------------------------------------------------------
+describe('twilioInboundSms — a Twilio retry must not erase what happened since', () => {
+  beforeEach(() => {
+    process.env.TWILIO_AUTH_TOKEN = 'tok';
+    mocks.validateRequest.mockReturnValue(true);
+  });
+
+  async function post(body: Record<string, string>) {
+    const handler = await loadHandler('twilioInboundSms');
+    const { res, captured } = captureRes();
+    await handler(makeReq({ headers: { 'x-twilio-signature': 'sig' }, body }), res);
+    return captured;
+  }
+
+  it('does not resurrect a reconciled SMS back to pending or wipe its notes', async () => {
+    // The read timeout is the ordinary case: reconcile_comms.py claims and folds
+    // the message while Twilio is still waiting, then Twilio retries and the
+    // handler restated `reconcileStatus: 'pending'` with blank notes over it.
+    await post(INBOUND_SMS_CALLBACK);
+    const stored = storedDoc('sms_messages', SMS_SID)!;
+    expect(stored.reconcileStatus).toBe('pending');
+    mocks.docs.set(`sms_messages/${SMS_SID}`, {
+      ...stored,
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kin1',
+    });
+    await post(INBOUND_SMS_CALLBACK); // byte-identical retry
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({
+      reconcileStatus: 'done',
+      reconciledAt: '2026-08-02T09:00:00.000Z',
+      reconcileNotes: 'folded into dossier kin1',
+    });
+  });
+
+  it('does not un-claim an SMS reconcile has moved to in_progress', async () => {
+    mocks.docs.set(`sms_messages/${SMS_SID}`, { reconcileStatus: 'in_progress' });
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ reconcileStatus: 'in_progress' });
+  });
+
+  it('does not move the timestamp the first delivery set', async () => {
+    // The Inbox sorts on it. A retry seconds or minutes later is not a new
+    // message and must not reorder the thread.
+    mocks.docs.set(`sms_messages/${SMS_SID}`, { timestamp: '2026-08-01T10:00:00.000Z' });
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ timestamp: '2026-08-01T10:00:00.000Z' });
+  });
+
+  it('does not wipe the threadId something else assigned', async () => {
+    await post(INBOUND_SMS_CALLBACK);
+    mocks.docs.set(`sms_messages/${SMS_SID}`, { ...storedDoc('sms_messages', SMS_SID)!, threadId: 'thread_kin1' });
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ threadId: 'thread_kin1' });
+  });
+
+  it('a fail-soft kinfolk read error on the retry does not wipe the match', async () => {
+    mocks.kinfolk.push({ id: 'kin1', firstName: 'Ada', lastName: 'Lovelace', phoneNumber: SMS_FROM });
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ kinfolkId: 'kin1' });
+    mocks.kinfolkQueryThrows = true; // transient kinfolk read fault on the retry
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({ kinfolkId: 'kin1', kinfolkName: 'Ada Lovelace' });
+  });
+
+  it('SEEDS reconcileStatus + timestamp when the stored doc lacks them — including on a doc the phone created', async () => {
+    mocks.docs.set(`sms_messages/${SMS_SID}`, {
+      counterpartNumber: SMS_FROM,
+      direction: 'inbound',
+      subType: 'sms',
+      body: SMS_BODY,
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+    await post(INBOUND_SMS_CALLBACK);
+    expect(storedDoc('sms_messages', SMS_SID)).toMatchObject({
+      reconcileStatus: 'pending',
+      reconciledAt: '',
+      reconcileNotes: '',
+      threadId: '',
+      timestamp: '2026-08-01T10:00:00.000Z',
+    });
+  });
+
+  it('reads and writes inside ONE transaction so a concurrent writer cannot be reverted', async () => {
+    await post(INBOUND_SMS_CALLBACK);
     expect(mocks.transactions).toBe(1);
     expect(mocks.sets.every((w) => w.viaTransaction)).toBe(true);
   });
