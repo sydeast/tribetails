@@ -76,8 +76,13 @@ function nowIso(): string {
  * Fail-soft (not fail-loud) is correct HERE specifically: a no-match or a
  * transient kinfolk-read error must not 4xx/5xx Twilio (which would trigger
  * retries and, worse, lose the authenticated inbound record). The record is
- * still written with kinfolkId=null + reconcileStatus='pending', so nothing is
- * dropped and nothing is fabricated.
+ * still written, so nothing is dropped and nothing is fabricated.
+ *
+ * BECAUSE A FAULT AND A GENUINE MISS ARE INDISTINGUISHABLE HERE, every caller
+ * writes the result only on a HIT. A freshly created document gets
+ * kinfolkId=null + reconcileStatus='pending' from its seeds; a document that
+ * already carries a match keeps it, because a read that threw is not evidence
+ * the kinfolk went away.
  */
 async function matchKinfolkByPhone(
   rawNumber: string,
@@ -170,6 +175,45 @@ async function guard(
   return (req.body ?? {}) as Record<string, string>;
 }
 
+/**
+ * Merge-write ONE Twilio callback onto its document, in one transaction.
+ *
+ * `asserted` is what the callback in hand actually says. `seeds` are the keys
+ * that must EXIST on the document for a consumer to find it at all, but that
+ * this handler must never restate once they are there.
+ *
+ * THE SEED IS PER KEY, NOT PER DOCUMENT, and the distinction is load-bearing:
+ * a document that already exists but lacks `reconcileStatus` is invisible to
+ * reconcile_comms.py's `.where('reconcileStatus','==','pending')` FOREVER, so
+ * `if (!snap.exists)` would be the wrong test. Any writer that is not this
+ * handler can leave that state behind (the e2e fixtures in
+ * auntieos-admin/e2e/seed.rows.ts do exactly that today), and on calls_log the
+ * FCM push does.
+ *
+ * One runTransaction, mirroring the android writer PR #344 landed and the call
+ * handler PR #345 landed: the seed decision is taken from the document as it is
+ * at write time, not from a read taken moments earlier that a concurrent
+ * callback may already have moved past.
+ */
+async function writeCallback(
+  collection: string,
+  id: string,
+  asserted: Record<string, unknown>,
+  seeds: Record<string, unknown>,
+): Promise<void> {
+  const ref = db().collection(collection).doc(id);
+  await db().runTransaction(async (txn) => {
+    const snap = await txn.get(ref);
+    const stored = (snap.exists ? snap.data() : undefined) ?? {};
+    const payload: Record<string, unknown> = { ...asserted };
+    for (const [key, value] of Object.entries(seeds)) {
+      if (!(key in stored) && !(key in payload)) payload[key] = value;
+    }
+    // merge: everything this callback did not mention is left exactly as it is.
+    txn.set(ref, payload, { merge: true });
+  });
+}
+
 /** Gather MediaUrl0..MediaUrlN from a Twilio inbound-SMS body into an array. */
 function collectMediaUrls(body: Record<string, string>): string[] {
   const count = Number(body.NumMedia || 0);
@@ -197,27 +241,88 @@ export async function twilioInboundSmsHandler(req: Request, res: Response): Prom
     return;
   }
 
-  const from = body.From || '';
-  const match = await matchKinfolkByPhone(from);
-  const doc = {
-    counterpartNumber: from,
+  // ONLY WHAT THIS CALLBACK ACTUALLY ASSERTS.
+  //
+  // One webhook is wired here (the number's "A MESSAGE COMES IN" URL), so the
+  // second writer landing on sms_messages/{MessageSid} is Twilio itself. Its
+  // retry policy retries "on any 5xx response from your web server", "on TCP
+  // connect or TLS handshake failure" and "on no response received within read
+  // timeout", up to 5 attempts. A retry is the SAME request replayed — same
+  // MessageSid, same Body — so it carries NO new information, and the read
+  // timeout is the ordinary case: reconcile claims and folds the message while
+  // Twilio is still waiting, then the retry arrives and undoes it.
+  //
+  // Parameters Twilio documents for this request
+  // (twilio.com/docs/messaging/guides/webhook-request): MessageSid, SmsSid,
+  // SmsMessageSid, AccountSid, MessagingServiceSid, From, To, Body, NumMedia,
+  // NumSegments, plus MediaContentType{N}/MediaUrl{N} and the From*/To* geo
+  // fields. Nothing about the reconcile pipeline, the thread, or when the Inbox
+  // should sort the message is in that list.
+  //
+  // WHO OWNS WHAT on sms_messages/{MessageSid}:
+  //   counterpartNumber, body, mediaUrls — TWILIO owns them, and they are
+  //                   written from the keys the request actually carries. A
+  //                   request with no Body key is silent about the text, not
+  //                   asserting the message was blank.
+  //   threadId      — NOT this handler's. smsChannelMirror.findExistingThread
+  //                   reads it off the inbound row to thread an operator's
+  //                   reply, so restating '' on a retry unthreads the
+  //                   conversation. Seeded once and then left alone.
+  //   status        — 'received' is an invariant of THIS endpoint, not a guess:
+  //                   every request reaching it is an inbound message that has
+  //                   been received, and Twilio's own SmsStatus on it says
+  //                   `received`. If the operator ever points the incoming
+  //                   message STATUS callback (which reports `receiving` then
+  //                   `received`, with no ordering guarantee) at this URL, this
+  //                   is the line to revisit.
+  //   reconcile*    — RECONCILE owns them after the seed. reconcile_comms.py
+  //                   finds work with .where('reconcileStatus','==','pending')
+  //                   and claims a doc by flipping pending -> in_progress in a
+  //                   transaction. Restating 'pending' un-claims it mid-run and
+  //                   lets a second worker fold the same SMS into the dossier
+  //                   twice, and blanks the notes explaining an error result.
+  const from = (body.From || '').trim();
+  // Only look up a kinfolk when this request actually names a number, and write
+  // the result only on a HIT: matchKinfolkByPhone is deliberately fail-soft, so
+  // a transient kinfolk read fault on a retry returns a miss that would
+  // otherwise erase a good match. reconcile_comms.py does the authoritative
+  // last-10-digit match later and must not find its own work undone.
+  const match = from ? await matchKinfolkByPhone(from) : null;
+  const asserted: Record<string, unknown> = {
     direction: 'inbound',
     subType: 'sms',
-    body: sanitizePlainText(body.Body || ''),
-    mediaUrls: collectMediaUrls(body),
-    timestamp: nowIso(),
     status: 'received',
     twilioMessageSid: sid,
-    kinfolkId: match.kinfolkId,
-    kinfolkName: match.kinfolkName,
+  };
+  if (from) asserted.counterpartNumber = from;
+  if (match?.kinfolkId) {
+    asserted.kinfolkId = match.kinfolkId;
+    asserted.kinfolkName = match.kinfolkName;
+  }
+  // Key presence, not truthiness: an inbound MMS can legitimately carry an
+  // empty Body, and `NumMedia: '0'` is a real statement that there is no media.
+  if ('Body' in body) asserted.body = sanitizePlainText(body.Body || '');
+  if ('NumMedia' in body) asserted.mediaUrls = collectMediaUrls(body);
+
+  // Keys that must EXIST but must never be restated. `reconcileStatus` must, or
+  // reconcile's equality query never sees the record; `timestamp` must, or the
+  // Inbox's orderBy('timestamp') drops the row; `counterpartNumber` must, or
+  // smsChannelMirror's counterpartNumber+timestamp thread lookup cannot see it.
+  // The rest keep the android SmsMessage shape (Models.kt) for a fresh doc.
+  const seeds: Record<string, unknown> = {
+    counterpartNumber: '',
+    body: '',
+    mediaUrls: [],
+    timestamp: nowIso(),
+    kinfolkId: null,
+    kinfolkName: '',
     threadId: '',
     reconcileStatus: 'pending',
     reconciledAt: '',
     reconcileNotes: '',
   };
 
-  // merge:true -> a Twilio retry with the same MessageSid upserts the same doc.
-  await db().collection(SMS).doc(sid).set(doc, { merge: true });
+  await writeCallback(SMS, sid, asserted, seeds);
   logEvent({ severity: 'info', function: 'twilioInboundSms', event: 'twilioInboundSms.wrote', extra: { sid } });
   respondTwiml(res);
 }
@@ -240,20 +345,93 @@ export async function twilioInboundVoicemailHandler(req: Request, res: Response)
     return;
   }
 
-  const caller = body.From || body.Caller || '';
-  const match = await matchKinfolkByPhone(caller);
-  const durationRaw = Number(body.RecordingDuration || 0);
-  const doc = {
-    callerNumber: caller,
-    transcript: sanitizePlainText(body.TranscriptionText || ''),
-    audioUrl: body.RecordingUrl || '',
-    direction: 'inbound',
+  // ONLY WHAT THIS CALLBACK ACTUALLY ASSERTS.
+  //
+  // TWO DIFFERENT CALLBACKS land on this one document, and each is the sole
+  // source of a field the other never mentions. Both parameter tables are on
+  // twilio.com/docs/voice/twiml/record:
+  //
+  //   recordingStatusCallback
+  //     AccountSid, CallSid, RecordingSid, RecordingUrl, RecordingStatus,
+  //     RecordingDuration, RecordingChannels, RecordingStartTime,
+  //     RecordingSource, RecordingTrack. It is the ONLY one carrying
+  //     RecordingDuration, and it carries NO From, NO Caller and NO
+  //     TranscriptionText.
+  //
+  //   transcribeCallback — "the standard TwiML request parameters as well as
+  //     transcription specific ones": TranscriptionSid, TranscriptionText,
+  //     TranscriptionStatus, TranscriptionUrl, RecordingSid, RecordingUrl,
+  //     CallSid, AccountSid, From, To, CallStatus, ApiVersion, Direction,
+  //     ForwardedFrom. It is the ONLY one carrying TranscriptionText, and there
+  //     is NO RecordingDuration anywhere in that table.
+  //
+  // Twilio gives no ordering guarantee between separate webhook requests, so
+  // whichever lands second must not speak for the first.
+  //
+  // WHO OWNS WHAT on voicemails/{RecordingSid}:
+  //   transcript    — the TRANSCRIBE callback owns it, and only it. The
+  //                   recording status callback has no TranscriptionText in its
+  //                   parameter table at all, so `|| ''` turned that silence
+  //                   into an erasure of the only copy of what the caller said.
+  //                   A `TranscriptionStatus: failed` attempt carries no text
+  //                   either, and a failed attempt is not a blank voicemail.
+  //   durationSec   — the RECORDING status callback owns it, and only it. The
+  //                   transcribe callback carries no duration, so `Number(...
+  //                   || 0)` reported a 31-second voicemail as zero seconds.
+  //   callerNumber  — the TRANSCRIBE callback owns it (From/Caller). A
+  //                   recording callback naming no number is not evidence there
+  //                   is no caller, and the kinfolk match hangs off it.
+  //   audioUrl,
+  //   twilioCallSid — TWILIO owns them; both callbacks carry RecordingUrl and
+  //                   CallSid, so both may state them.
+  //   replyStatus,
+  //   repliedAt,
+  //   replyLogId    — THE APP owns them and this handler never restates them.
+  //                   An Auntie listens and replies (AuntieRepository
+  //                   markVoicemailRead/markVoicemailReplied, and the web's
+  //                   markVoicemail in api/inboxChannelsWrite.ts); restating
+  //                   `replyStatus: 'unread'` on a late callback puts a handled
+  //                   voicemail back in the unread queue and drops the link to
+  //                   the reply that answered it.
+  //   reconcile*    — RECONCILE owns them after the seed, exactly as on
+  //                   calls_log (PR #345) and on the android side (PR #344).
+  const caller = (body.From || body.Caller || '').trim();
+  // Fail-soft means a miss is also what a transient kinfolk read fault returns,
+  // so only a HIT is written — a fault on a later callback must not erase a
+  // match an earlier one made. reconcile_comms.py matches authoritatively later.
+  const match = caller ? await matchKinfolkByPhone(caller) : null;
+  const asserted: Record<string, unknown> = { direction: 'inbound' };
+  if (caller) asserted.callerNumber = caller;
+  if (match?.kinfolkId) {
+    asserted.kinfolkId = match.kinfolkId;
+    asserted.kinfolkName = match.kinfolkName;
+  }
+  const transcript = sanitizePlainText(body.TranscriptionText || '').trim();
+  if (transcript) asserted.transcript = transcript;
+  const audioUrl = (body.RecordingUrl || '').trim();
+  if (audioUrl) asserted.audioUrl = audioUrl;
+  const callSid = (body.CallSid || '').trim();
+  if (callSid) asserted.twilioCallSid = callSid;
+  const durationRaw = (body.RecordingDuration || '').trim();
+  if (durationRaw) {
+    const duration = Number(durationRaw);
+    if (Number.isFinite(duration)) asserted.durationSec = duration;
+  }
+
+  // Keys that must EXIST but must never be restated. `reconcileStatus` must, or
+  // reconcile's equality query never sees the record; `timestamp` must, or the
+  // Inbox's orderBy('timestamp') drops the row. The rest keep the android
+  // VoicemailLog shape (Models.kt) for a freshly created document.
+  const seeds: Record<string, unknown> = {
+    callerNumber: '',
+    transcript: '',
+    audioUrl: '',
+    durationSec: 0,
+    twilioCallSid: '',
     timestamp: nowIso(),
+    kinfolkId: null,
+    kinfolkName: '',
     replyStatus: 'unread',
-    twilioCallSid: body.CallSid || '',
-    durationSec: Number.isFinite(durationRaw) ? durationRaw : 0,
-    kinfolkId: match.kinfolkId,
-    kinfolkName: match.kinfolkName,
     repliedAt: '',
     replyLogId: '',
     reconcileStatus: 'pending',
@@ -261,7 +439,7 @@ export async function twilioInboundVoicemailHandler(req: Request, res: Response)
     reconcileNotes: '',
   };
 
-  await db().collection(VOICEMAILS).doc(sid).set(doc, { merge: true });
+  await writeCallback(VOICEMAILS, sid, asserted, seeds);
   logEvent({ severity: 'info', function: 'twilioInboundVoicemail', event: 'twilioInboundVoicemail.wrote', extra: { sid } });
   res.status(200).json({ ok: true });
 }
@@ -360,7 +538,7 @@ export async function twilioInboundCallHandler(req: Request, res: Response): Pro
   // Seeded per KEY, not per document, and that distinction is load-bearing: the
   // FCM push creates calls_log/{CallSid} without a reconcileStatus, so seeding
   // only when the DOCUMENT is absent would leave every phone-first call
-  // invisible to reconcile forever.
+  // invisible to reconcile forever. See writeCallback above.
   const seeds: Record<string, unknown> = {
     timestamp: nowIso(),
     kinfolkId: null,
@@ -371,20 +549,7 @@ export async function twilioInboundCallHandler(req: Request, res: Response): Pro
     reconcileNotes: '',
   };
 
-  // One transaction, mirroring the android writer PR #344 landed: the seed
-  // decision is made from the document as it is at write time, not from a state
-  // read moments earlier that a concurrent callback may already have moved on.
-  const ref = db().collection(CALLS).doc(sid);
-  await db().runTransaction(async (txn) => {
-    const snap = await txn.get(ref);
-    const stored = (snap.exists ? snap.data() : undefined) ?? {};
-    const payload: Record<string, unknown> = { ...asserted };
-    for (const [key, value] of Object.entries(seeds)) {
-      if (!(key in stored) && !(key in payload)) payload[key] = value;
-    }
-    // merge: everything this callback did not mention is left exactly as it is.
-    txn.set(ref, payload, { merge: true });
-  });
+  await writeCallback(CALLS, sid, asserted, seeds);
   logEvent({ severity: 'info', function: 'twilioInboundCall', event: 'twilioInboundCall.wrote', extra: { sid } });
   res.status(200).json({ ok: true });
 }
