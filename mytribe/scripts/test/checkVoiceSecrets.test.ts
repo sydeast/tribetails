@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { checkShape, parseProject, VOICE_SECRETS, type SecretSpec } from '../checkVoiceSecrets';
+import {
+  apiKeyProbeUrl,
+  checkShape,
+  parseProject,
+  VOICE_SECRETS,
+  type SecretSpec,
+} from '../checkVoiceSecrets';
 
 const AP: SecretSpec = {
   name: 'TWIML_APP_SID',
@@ -99,5 +105,30 @@ describe('parseProject', () => {
   it('refuses a flag as the value', () => {
     expect(() => parseProject(['--project', '--verbose'])).toThrow('--project requires a value');
     expect(() => parseProject(['--project'])).toThrow('--project requires a value');
+  });
+});
+
+describe('apiKeyProbeUrl', () => {
+  const ACCOUNT = 'AC00000000000000000000000000000001';
+  it('NEVER probes the Accounts endpoint, which Standard keys cannot read', () => {
+    // The bug this pins, in full. Twilio's key-type table says a Standard key
+    // has "access to all Twilio API resources, EXCEPT for Accounts (/Accounts)
+    // or Keys resources". This script originally probed exactly that endpoint,
+    // so it reported HTTP 401 for a perfectly good key and printed advice to
+    // create a new one. The operator did, twice, and the replacement failed the
+    // same way, because the key was never the problem.
+    const url = apiKeyProbeUrl(ACCOUNT);
+    expect(url).not.toMatch(new RegExp(`/Accounts/${ACCOUNT}\\.json`));
+    expect(url).not.toContain('/Keys');
+  });
+  it('probes Calls, which a Standard key reaches and this feature actually uses', () => {
+    // Screening places an outbound call to the operator, so Calls is not an
+    // arbitrary reachable endpoint, it is the permission that has to work.
+    expect(apiKeyProbeUrl(ACCOUNT)).toBe(
+      `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT}/Calls.json?PageSize=1`,
+    );
+  });
+  it('asks for one row rather than a page of call history', () => {
+    expect(apiKeyProbeUrl(ACCOUNT)).toContain('PageSize=1');
   });
 });
