@@ -869,9 +869,21 @@ deploy time. `functions:secrets:set` mints version N+1 and binds it to nothing;
 the running function keeps reading version N until a deploy resolves the name
 again. Rotating a value without redeploying leaves the old one live, and setting
 a value for the first time leaves the runtime reading nothing at all. Release
-step 5 checks for this now (see the deploy section); by hand it is
-`firebase deploy --only functions:mytribe`, with the codebase prefix, because a
-bare name matches nothing.
+step 5 checks for this now (see the deploy section).
+
+By hand, **redeploy the functions that declare the secret, not the codebase.**
+The version pin is per function, so `--only functions:mytribe` spends half an
+hour and a fleet's worth of the 60-per-minute mutation budget to move one
+binding. Get the names from the pairs listing below, then:
+
+```bash
+scripts/safe-deploy.sh mytribe -- firebase deploy \
+  --only "functions:mytribe:NAME1,functions:mytribe:NAME2"
+```
+
+The `functions:mytribe:` prefix on each name is mandatory; a bare name matches
+nothing and deploys nothing without saying so. Fall back to the whole codebase
+only when the name cannot be attributed to a subset.
 
 Two ways to read the declarations out of the built artifact rather than guessing
 from source, which cannot see arrays built from spreads:
@@ -939,20 +951,105 @@ looks like nothing happening:
 firebase functions:secrets:access STRIPE_SECRET_KEY --project auntieos-ttpc
 ```
 
-`sk_live_` is production, `sk_test_` is test mode. `STRIPE_WEBHOOK_SECRET` starts
-`whsec_` and is **per endpoint**: a secret copied from a different endpoint fails
-signature verification on every delivery, which surfaces as 400s in the dashboard
-rather than as silence.
+**Read the middle segment, not the prefix.** `_live_` is production and `_test_`
+is test mode, and both `sk_` (secret key) and `rk_` (restricted key) carry that
+segment. Stripe now steers new integrations to restricted keys, so an `rk_live_`
+is a correct production key and a check that only looks for `sk_live_` calls it
+wrong.
 
-### 2. Redeploy, or the secret is not live
+`STRIPE_WEBHOOK_SECRET` starts `whsec_` and is **per endpoint**: a secret copied
+from a different endpoint fails signature verification on every delivery, which
+surfaces as 400s in the dashboard rather than as silence.
+
+#### If it is a restricted key, these are the permissions it needs
+
+A restricted key carries an explicit permission list, and a missing one does not
+announce itself. Exactly four Stripe API calls exist in `mytribe/functions/src`,
+and this is the whole list:
+
+| Permission | Access | The call that needs it |
+|---|---|---|
+| Checkout Sessions | write | `stripe.checkout.sessions.create` in `portal/payInvoice.ts:103` |
+| PaymentIntents | read | `stripe.paymentIntents.retrieve` in `billing/stripeWebhook.ts:272` and `billing/stripeDispute.ts:360` |
+| Charges | read | `stripe.charges.retrieve` in `billing/stripeDispute.ts:399` |
+| Balance transactions | read | the `expand: ['latest_charge.balance_transaction']` on that same retrieve at `billing/stripeWebhook.ts:272-274` |
+
+**Balance transactions is the one that fails silently, and it is the one people
+leave off.** It is not a call of its own; it is an expansion riding the
+PaymentIntent retrieve, and it is how the REAL fee Stripe charged is captured
+instead of the published rate. Without the permission the expansion comes back
+empty, the retrieve itself still succeeds, and `stripeWebhook.ts` does the
+honest thing with nothing: `feeCents` is **omitted from the payments document**
+and `feeResolved: false` is written beside it, because a `feeCents: 0` would be
+a claim that Stripe charged nothing. The only other signal is one `warn` line,
+`stripe.fee.unresolved`. Every payment still applies, the invoice still reads
+paid, and the fee column is empty forever. Check for that log line before
+believing the fee data.
+
+Two things need **no** permission:
+
+- **Webhook signature verification.** `verifyStripeWebhook`
+  (`mytribe/functions/src/lib/stripe.ts:44-52`) calls
+  `client.webhooks.constructEvent(rawBody, signatureHeader, secret)`, which is a
+  local HMAC against `STRIPE_WEBHOOK_SECRET`. It never reaches Stripe, so an API
+  key permission cannot fix a signature failure and a signature failure never
+  means the key is under-scoped. The SDK client it goes through is constructed
+  with `STRIPE_SECRET_KEY` only because the constructor demands a key.
+- **Refunds, Customers, Products and Prices.** Nothing in this codebase writes
+  any of them. `payInvoice` builds its line item from inline `price_data`, so no
+  Price object is created. Refunds are ignored by the standing ruling (see step
+  4). Grant none of these; a key that can refund is a key that can refund by
+  accident.
+
+### 2. Redeploy the functions that declare it, and not the other 220
 
 gcfv2 pins the secret *version* resolved at deploy time. Setting a value and not
 redeploying leaves the function reading the old version, or nothing at all on a
 first set. This has bitten before.
 
+**The pin is per function, so redeploy per function.** `--only functions:mytribe`
+hands the CLI the whole fleet, roughly 220 functions, against a hard 60 mutations
+per minute per region (see "The quota that was actually refusing the deploy"). A
+full run for one secret costs about half an hour, hits 429s, and can still finish
+with a handful of functions failed. Naming the ones that declare the secret costs
+under two minutes.
+
+Ask the built artifact which functions those are, rather than grepping. The
+`secrets:` arrays are built from spreads of shared constants, so a regex either
+misses them or over-matches:
+
 ```bash
-firebase deploy --only functions:mytribe --project auntieos-ttpc
+npm run build:functions                                        # from the repo root
+node scripts/declared-secrets.js --by-function STRIPE_SECRET_KEY
 ```
+
+It prints `FUNCTION<tab>SECRET` pairs. Deploy exactly the names it printed, comma
+separated, each carrying the `functions:mytribe:` prefix:
+
+```bash
+scripts/safe-deploy.sh mytribe -- firebase deploy \
+  --only "functions:mytribe:NAME1,functions:mytribe:NAME2"
+```
+
+`STRIPE_WEBHOOK_SECRET` is declared on `stripeWebhook` alone
+(`mytribe/functions/src/billing/stripeWebhook.ts:553`), so rotating the signing
+secret is a one-function deploy:
+
+```bash
+scripts/safe-deploy.sh mytribe -- firebase deploy --only "functions:mytribe:stripeWebhook"
+```
+
+The prefix is not optional: a bare `--only functions:stripeWebhook` matches
+nothing and deploys nothing, quietly. If the script cannot answer, because the
+build is stale or the name resolves nowhere, deploy the full codebase rather
+than guessing a shorter list, and expect the half hour.
+
+**When a full deploy leaves functions failed with 429, retry just those.** The
+failures are still serving their previous revision, so this is mixed-version, not
+an outage, and a named retry of six functions finishes in a minute and a half.
+"A deploy failed partway and left named functions undeployed" under *When
+something breaks* has the command that lists them and the check that each one is
+serving its **new** revision afterward.
 
 ### 3. Register the endpoint
 
@@ -964,6 +1061,14 @@ https://us-central1-auntieos-ttpc.cloudfunctions.net/stripeWebhook
 ```
 
 Stripe Dashboard → Developers → Webhooks → Add endpoint.
+
+A gen-2 deploy prints the Cloud Run form of the same endpoint instead
+(`https://stripewebhook-jhpz5ib3tq-uc.a.run.app`). Both route to the same
+service and either works here, because Stripe signs the request **body**, not
+the URL. Use the `cloudfunctions.net` form anyway: it is what every other doc in
+this repo quotes, and it does not change when a service is recreated. For Twilio
+the choice is not cosmetic. See *Activating the Twilio inbound webhooks* below,
+where the URL is part of the signature.
 
 ### 4. Subscribe the events the code actually handles
 
@@ -1111,13 +1216,22 @@ Make one real payment through the portal, then check in the Firebase console for
 1. `stripeEvents` has a new document. **If it is empty, nothing has ever gotten
    through**, whatever the Stripe dashboard says.
 2. A root `payments` doc exists with `stripeEventId` set, an `amountCents` in
-   integer cents, and a `feeCents`.
+   integer cents, and `feeResolved: true` alongside a `feeCents`.
 3. The invoice reads paid, and the household got the `invoice.payment.applied`
    notification.
 
 If 1 fails, the endpoint is not subscribed to the right events or the signing
 secret is wrong. If 1 passes and 3 fails, the problem is downstream of delivery
 and the logs will name it.
+
+**`feeResolved: false` with no `feeCents` is a different failure from all of
+those, and everything else on the checklist still passes.** The payment landed
+correctly; only the fee did not resolve. On a restricted key the usual cause is
+the missing Balance transactions read permission from step 1. Otherwise it is a
+transient Stripe fault on that one retrieve, which the handler swallows on
+purpose so a fee lookup can never fail a real payment. `stripe.fee.unresolved`
+in the logs separates "it happened once" from "it happens every time", and
+every time means the permission.
 
 ### Recovering payments taken while disconnected
 
@@ -1130,6 +1244,141 @@ notification, exactly as if it had arrived on time.
 
 This is why the fix is not just forward-looking, and it is a better answer than
 hand-entering the payments.
+
+---
+
+## Activating the Twilio inbound webhooks
+
+Three deployed functions turn inbound SMS, voicemail and calls into Firestore
+records: `twilioInboundSms`, `twilioInboundVoicemail` and `twilioInboundCall`
+(`mytribe/functions/src/twilio/twilioInbound.ts`). Deploying them activates
+nothing. Until Twilio is pointed at them they receive no traffic, and until the
+matching URL is pinned they answer **403**.
+
+`docs/twilio/README.md` is the fuller Twilio picture: both integrations, the
+account's known issues, the Studio Flow. This section is the part that costs an
+operator an evening.
+
+### The three URL pins are environment variables, NOT secrets
+
+| Env var | Set on | Value |
+|---|---|---|
+| `TWILIO_INBOUND_SMS_URL` | `twilioinboundsms` | `https://us-central1-auntieos-ttpc.cloudfunctions.net/twilioInboundSms` |
+| `TWILIO_INBOUND_VOICEMAIL_URL` | `twilioinboundvoicemail` | `.../twilioInboundVoicemail` |
+| `TWILIO_INBOUND_CALL_URL` | `twilioinboundcall` | `.../twilioInboundCall` |
+
+**`firebase functions:secrets:set` on these three names does nothing.** A gcfv2
+function is mounted only the secrets its own `secrets:` array declares, and all
+three exports declare `['TWILIO_AUTH_TOKEN', 'SENTRY_DSN']` and nothing else
+(`twilioInbound.ts:557-590`). The handlers read the URLs straight off
+`process.env` (`twilioInbound.ts:136`), which a Secret Manager entry never
+reaches. A value created there sits in the project looking set, and the function
+never sees it. That is the same shape as the `GOOGLE_CALENDAR_ID` failure in
+the Secrets section, and worth checking for first if one of these was "already
+configured".
+
+Set them as Cloud Run environment variables instead. These are `gcloud`
+commands, so the operator runs them:
+
+```bash
+gcloud run services update twilioinboundsms --region us-central1 \
+  --update-env-vars TWILIO_INBOUND_SMS_URL=https://us-central1-auntieos-ttpc.cloudfunctions.net/twilioInboundSms
+gcloud run services update twilioinboundvoicemail --region us-central1 \
+  --update-env-vars TWILIO_INBOUND_VOICEMAIL_URL=https://us-central1-auntieos-ttpc.cloudfunctions.net/twilioInboundVoicemail
+gcloud run services update twilioinboundcall --region us-central1 \
+  --update-env-vars TWILIO_INBOUND_CALL_URL=https://us-central1-auntieos-ttpc.cloudfunctions.net/twilioInboundCall
+```
+
+Service names are the lowercased export names. The alternative route is three
+lines in `mytribe/functions/.env` followed by a deploy of those three functions;
+that file is for non-secret configuration only, and a URL is not a secret.
+**Nothing in this repo establishes whether a `gcloud`-set variable survives the
+next `firebase deploy` of the same function**, so after any redeploy of these
+three, re-read the value before trusting it:
+
+```bash
+gcloud run services describe twilioinboundsms --region us-central1 \
+  --format='value(spec.template.spec.containers[0].env)'
+```
+
+### Why the URL has to match character for character
+
+Twilio's signature is an HMAC over the **exact URL it POSTed to** plus the form
+parameters. `twilioVerify` prefers the pinned env value and falls back to
+rebuilding the URL from the request when it is unset:
+
+```ts
+const url = (process.env[urlEnv] || '').trim() || `https://${req.hostname}${req.originalUrl}`;
+```
+
+That fallback is a coin flip. Behind Cloud Functions and its proxies the
+observed `req.hostname` and `req.originalUrl` can differ from what Twilio
+hashed, and when they do `validateRequest` returns false, the handler answers
+**403 `bad-signature`**, and the log line is `twilioInboundSms.verify.fail`,
+which reads as a signature or credentials problem and is really a missing
+config. A trailing slash, `http` instead of `https`, or the console holding the
+`.run.app` form while the env holds the `cloudfunctions.net` form all produce
+the identical 403. Both URL forms reach the same service, so either is fine as
+long as **the console and the env var hold the identical string**. Use the
+`cloudfunctions.net` form, since that is what the rest of these docs quote.
+
+**With `TWILIO_AUTH_TOKEN` unset, all three fail closed with 403** and no
+signature is checked at all (`twilioInbound.ts:133-134`). That is deliberate, so
+a forged request can never be accepted before activation, but it means an
+unmounted auth token and a mismatched URL look exactly alike from the outside.
+Rule the token out first: it is a real declared secret on all three functions,
+so `functions:secrets:set` plus a redeploy of those three is the fix for that
+one.
+
+### Each surface needs TWO Twilio callbacks, both pointed at the same function
+
+This is the part that is not visible from the Twilio console, and getting it
+half right loses data permanently rather than loudly. Settled by PRs #345 and
+#347; the field-by-field ownership tables live in the handler comments.
+
+**Calls → `twilioInboundCall`.** Two callbacks land on `calls_log/{CallSid}` and
+neither carries what the other does:
+
+- the `<Record>` **recordingStatusCallback** carries `RecordingUrl` and no
+  `CallStatus`;
+- the **call statusCallback** carries `CallStatus` and, for a `<Record>`-verb
+  recording, no `RecordingUrl`. Twilio only puts one there when `record` is set
+  on the `<Dial>`.
+
+Wire only the status callback and no call ever gets a recording link, and there
+is no second copy of that link anywhere in this system. Wire only the recording
+callback and every call's status stays whatever the FCM push guessed. The
+handler writes each field only when a callback actually states it, precisely so
+the second one to arrive cannot blank the first. Twilio gives no ordering
+guarantee between separate requests.
+
+**Voicemail → `twilioInboundVoicemail`.** Same shape on
+`voicemails/{RecordingSid}`:
+
+- **transcribeCallback** carries `TranscriptionText`, and `From`/`Caller`, and
+  no `RecordingDuration`;
+- the `<Record>` **recordingStatusCallback** carries `RecordingDuration` and no
+  transcript, no `From` and no `Caller`.
+
+Wire only the transcription callback, the obvious single choice since it is the
+one with the words in it, and every voicemail's duration stays 0 forever.
+Wire only the recording callback and there is no transcript, no caller number,
+and so no kinfolk match either.
+
+In the Studio Flow's "Record Voicemail" widget that means setting **both** the
+Transcription Callback URL and the Recording Status Callback URL, both POST,
+both to the `twilioInboundVoicemail` URL. Pointing two callbacks at one function
+is correct and intended: they write disjoint fields onto one document, keyed by
+`RecordingSid`.
+
+### Prove it
+
+Text the number and look for a new `sms_messages` document keyed by the Twilio
+`MessageSid`. Leave a voicemail and check `voicemails` has both a `transcript`
+and a non-zero `durationSec`. One without the other means one of the two
+callbacks is not wired. Complete a call and check `calls_log` has both a
+`status` and a `recordingUrl`. A 403 in the function's logs means the URL pin
+and the console disagree, or the auth token is not mounted.
 
 ---
 
@@ -1515,6 +1764,7 @@ that answered no; using it that way reproduces 2026-08-01 exactly.
 | `README.md` | What the repo is, why one repo |
 | `auntieos-admin/CLAUDE.md` | Vertical-slice rule, error-handling philosophy |
 | `mytribe/functions/CALLABLE_CONTRACT.md` | Canonical request and response shapes |
+| `docs/twilio/README.md` | Both Twilio integrations, the Studio Flow, the live account's known issues |
 | `scripts/safe-deploy.sh` | Deploy guards, with the reasoning in the header |
 | `scripts/release.sh` | The production run, step by step, with why each step is where it is |
 | `scripts/release.test.sh` | Runs the release script against a throwaway repo and stubbed CLIs |

@@ -65,18 +65,31 @@ SENDGRID_FROM_EMAIL=
 MY_EMAIL=
 ```
 
-**Kinfolk app (mytribe/functions)** — set as Firebase Functions secrets, not
-plain env vars, so they're pulled from Secret Manager at deploy time:
+**Kinfolk app (mytribe/functions)**, set as Firebase Functions secrets so
+they're pulled from Secret Manager at deploy time:
 
 ```
 TWILIO_ACCOUNT_SID
 TWILIO_AUTH_TOKEN
 TWILIO_FROM_NUMBER            # see "known issue" below before setting this
 TWILIO_STATUS_CALLBACK_URL
+```
+
+The three inbound URL pins are **plain environment variables, not secrets**, and
+setting them with `functions:secrets:set` mounts nothing:
+
+```
 TWILIO_INBOUND_SMS_URL        # https://us-central1-<project>.cloudfunctions.net/twilioInboundSms
 TWILIO_INBOUND_VOICEMAIL_URL  # https://us-central1-<project>.cloudfunctions.net/twilioInboundVoicemail
 TWILIO_INBOUND_CALL_URL       # https://us-central1-<project>.cloudfunctions.net/twilioInboundCall
 ```
+
+A gcfv2 function is mounted only the secrets its own `secrets:` array declares,
+and all three inbound handlers declare `['TWILIO_AUTH_TOKEN', 'SENTRY_DSN']`
+(`mytribe/functions/src/twilio/twilioInbound.ts:557-590`). They read the URLs
+off `process.env` (`:136`), which a Secret Manager entry never reaches. Set them
+with the `gcloud run services update` commands in step 7 below. `docs/RUNBOOK.md`
+§ *Activating the Twilio inbound webhooks* has the failure modes.
 
 ## Getting Twilio connected from scratch
 
@@ -137,10 +150,16 @@ developer to the existing one), do this in order:
      `twilioInboundSms` URL above.
    - **Voicemail:** in the Studio Flow's "Record Voicemail" widget, set
      Transcription Callback URL and Recording Status Callback URL → the
-     `twilioInboundVoicemail` URL, method POST.
+     `twilioInboundVoicemail` URL, method POST. **Both, not either.** The
+     transcription callback is the only one carrying `TranscriptionText`; the
+     recording one is the only one carrying `RecordingDuration`. Wire just the
+     transcription callback and every voicemail's `durationSec` stays 0.
    - **Call status:** set the number's Voice "Call Status Changes" webhook (or
-     the Studio "Trigger" widget's status callback) → the
-     `twilioInboundCall` URL, POST.
+     the Studio "Trigger" widget's status callback) **and** the recording's
+     `recordingStatusCallback` → the `twilioInboundCall` URL, POST. **Both.**
+     The status callback carries `CallStatus` but no `RecordingUrl` for a
+     `<Record>`-verb recording; the recording callback carries the URL and no
+     status. Wire one and you lose the other permanently.
    Verify: text the number → check Firestore `sms_messages` for a new doc
    keyed by the Twilio `MessageSid`. Leave a voicemail → `voicemails` gets a
    doc. Complete a call → `calls_log` gets a doc. A `403` in
@@ -154,11 +173,15 @@ developer to the existing one), do this in order:
    `BUd494947c...`) — brand registration can build on one of those instead of
    starting cold.
 9. **Set the mytribe Functions secrets** (`TWILIO_ACCOUNT_SID`,
-   `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, plus the inbound URLs from step
-   7) via `firebase functions:secrets:set <NAME> --project <project>`, then
-   `firebase deploy --only functions`. `mytribe/functions/docs/NOTIFICATION_SMOKE_TESTS.md`
-   has the full pre-flight checklist for exercising the send/receive path
-   afterward.
+   `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `TWILIO_STATUS_CALLBACK_URL`)
+   via `firebase functions:secrets:set <NAME> --project <project>`, then
+   redeploy the functions that declare them
+   (`node scripts/declared-secrets.js --by-function TWILIO` names them; a whole
+   codebase deploy for one secret costs half an hour to the mutation-rate
+   quota). The three `TWILIO_INBOUND_*_URL` pins are **not** secrets and are not
+   set this way; they are the step 7 env vars.
+   `mytribe/functions/docs/NOTIFICATION_SMOKE_TESTS.md` has the full pre-flight
+   checklist for exercising the send/receive path afterward.
 
 Local dev note: setting `SEND_SUPPRESS=1` on the mytribe functions makes
 `getTwilio()` return a stub that logs sends instead of contacting Twilio, so
