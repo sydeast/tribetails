@@ -6,9 +6,14 @@ import com.twilio.voice.CancelledCallInvite
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -32,10 +37,28 @@ class CallInviteManagerTest {
         every { this@mockk.callSid } returns callSid
     }
 
+    /**
+     * voiceCallState is a StateFlow on a process-wide object, and CallsViewModel
+     * collects it on viewModelScope, which is Dispatchers.Main. A ViewModel built
+     * by an earlier test in this JVM stays subscribed after that test calls
+     * resetMain, so writing the flow here has to resume an orphaned collector on
+     * a main dispatcher that no longer exists, and setValue throws
+     * DispatchException. Installing one makes this test independent of whichever
+     * suite ran before it. StandardTestDispatcher rather than Unconfined so the
+     * orphan is queued, never run: executing another test's ViewModel body from
+     * inside this one is not something to invite.
+     */
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(StandardTestDispatcher())
+    }
+
     @After
     fun tearDown() {
         // Drops any invite the test left behind so the next test starts clean.
+        // Before resetMain, because reject writes the state flow.
         CallInviteManager.reject(mockk(relaxed = true))
+        Dispatchers.resetMain()
     }
 
     @Test

@@ -12,7 +12,6 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.R
-import com.tribetails.auntieos.data.api.RetrofitClient
 import com.tribetails.auntieos.ui.calls.CallScreenActivity
 import com.tribetails.auntieos.voice.CallInviteManager
 import com.tribetails.auntieos.voice.VoiceTokenManager
@@ -314,16 +313,15 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
         // A rotated FCM token invalidates the binding Twilio holds, so the Voice
         // SDK has to re-register or the SDK push above never arrives again.
         // Saving the token to our own backend is not enough on its own.
-        try {
-            VoiceTokenManager.onFcmTokenRefresh(
-                applicationContext,
-                RetrofitClient.buildTwilio(),
-                token,
-                serviceScope
-            )
-        } catch (e: Exception) {
-            Log.e("AuntieFCM", "Voice SDK re-registration after token refresh failed", e)
-        }
+        //
+        // Passed straight through, with no guard and no pre-filtering, because
+        // VoiceTokenManager owns every one of those decisions. It refuses a blank
+        // token with a stated reason, it ignores the call when it was never
+        // initialized, and it sets Working itself before going on to register and
+        // settle. A local blank check would duplicate its state machine; a local
+        // try/catch would only mask a bug in it, since it captured the repository
+        // and scope at initialize() and does its own work inside a coroutine.
+        VoiceTokenManager.onFcmTokenRefresh(token)
     }
 
     companion object {

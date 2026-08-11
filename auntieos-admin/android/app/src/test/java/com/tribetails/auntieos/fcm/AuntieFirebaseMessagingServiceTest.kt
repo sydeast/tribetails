@@ -4,7 +4,15 @@ import android.app.NotificationManager
 import android.content.Context
 import com.google.firebase.messaging.RemoteMessage
 import com.tribetails.auntieos.ui.calls.CallScreenActivity
+import com.tribetails.auntieos.voice.VoiceAccessToken
+import com.tribetails.auntieos.voice.VoiceRegistrar
+import com.tribetails.auntieos.voice.VoiceTokenManager
+import com.tribetails.auntieos.voice.VoiceTokenState
 import com.twilio.voice.MessageListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -39,6 +47,18 @@ class AuntieFirebaseMessagingServiceTest {
     private val handledPayloads = mutableListOf<Map<String, String>>()
     private var handledListener: MessageListener? = null
 
+    /** Records what onNewToken drove into the Voice SDK registration. */
+    private class RecordingRegistrar : VoiceRegistrar {
+        val registrations = mutableListOf<Pair<String, String>>()
+
+        override fun register(accessToken: String, fcmToken: String, onResult: (Throwable?) -> Unit) {
+            registrations += accessToken to fcmToken
+            onResult(null)
+        }
+    }
+
+    private lateinit var voiceScope: CoroutineScope
+
     @Before
     fun setUp() {
         controller = Robolectric.buildService(AuntieFirebaseMessagingService::class.java).create()
@@ -50,6 +70,11 @@ class AuntieFirebaseMessagingServiceTest {
             handledListener = listener
             true
         }
+
+        // VoiceTokenManager is an object, so one test's cached token would
+        // otherwise outlive it into the next.
+        voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        VoiceTokenManager.resetForTests()
     }
 
     @After
@@ -57,7 +82,19 @@ class AuntieFirebaseMessagingServiceTest {
         AuntieFirebaseMessagingService.voiceMessageHandler = realVoiceHandler
         notificationManager.cancelAll()
         controller.destroy()
+        // Cancel before the reset: the near-expiry re-mint job lives on this
+        // scope and would otherwise outlive the test that started it.
+        voiceScope.cancel()
+        VoiceTokenManager.resetForTests()
     }
+
+    private fun configureVoice(registrar: VoiceRegistrar) = VoiceTokenManager.configure(
+        mint = { Result.success(VoiceAccessToken("jwt-1", "auntie", 3600L)) },
+        registrar = registrar,
+        fcmTokenProvider = { "fcm-before-rotation" },
+        now = { 0L },
+        scope = voiceScope,
+    )
 
     private fun push(data: Map<String, String>): RemoteMessage =
         RemoteMessage.Builder("auntieos@fcm.googleapis.com")
@@ -249,6 +286,49 @@ class AuntieFirebaseMessagingServiceTest {
 
         assertEquals(1, shadowOf(notificationManager).size())
         assertEquals(0, handledPayloads.size)
+    }
+
+    // ── FCM token rotation ───────────────────────────────────────────────
+
+    @Test
+    fun a_rotated_fcm_token_re_registers_the_voice_sdk_with_the_new_token() {
+        val registrar = RecordingRegistrar()
+        configureVoice(registrar)
+
+        service.onNewToken("fcm-after-rotation")
+
+        // The NEW token, not the one the manager captured at initialize. Saving
+        // the token to our own backend leaves Twilio pushing to the dead one.
+        assertEquals(listOf("jwt-1" to "fcm-after-rotation"), registrar.registrations)
+        assertEquals(
+            VoiceTokenState.Registered(identity = "auntie", expiresAtMillis = 3_600_000L),
+            VoiceTokenManager.state.value
+        )
+    }
+
+    @Test
+    fun a_blank_rotated_token_is_refused_by_the_manager_rather_than_registered() {
+        // The call site passes the token through unfiltered on purpose, so this
+        // pins that the manager's own refusal is what handles it.
+        val registrar = RecordingRegistrar()
+        configureVoice(registrar)
+
+        service.onNewToken("")
+
+        assertTrue(registrar.registrations.isEmpty())
+        assertTrue(
+            "a blank token must land as a stated failure, not silence",
+            VoiceTokenManager.state.value is VoiceTokenState.Failed
+        )
+    }
+
+    @Test
+    fun a_rotated_token_before_voice_was_initialized_is_ignored_not_crashed() {
+        // resetForTests left VoiceTokenManager with no scope, which is the state
+        // a token rotation before AuntieOSApp.onCreate would hit.
+        service.onNewToken("fcm-too-early")
+
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
     }
 
     @Test
