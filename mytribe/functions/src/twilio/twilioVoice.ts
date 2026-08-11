@@ -6,6 +6,9 @@ import { wrapHttp } from '../lib/wrapHttp';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { guardVoice } from './twilioSignature';
 import { resolveBusinessOpenNow, type BusinessOpenState } from '../lib/businessHours';
+import { sendCallInvitePush } from './voicePush';
+import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
+import { sanitizePlainText } from '../lib/richText';
 
 /**
  * The business phone line, as TwiML served from this repo.
@@ -109,8 +112,15 @@ const VOICEMAIL_CALLBACK_ENV = 'TWILIO_INBOUND_VOICEMAIL_URL';
 const SPEECH = {
   OPEN_GREETING:
     "Hey, you've reached Tribe Tails Pet Care, this is Auntie's line. " +
-    "I can't pick up live just yet, so press 3 or 4 to leave me a voicemail " +
-    "and I'll get right back to you.",
+    'Press 3 to talk to me right now, or press 4 to leave me a voicemail.',
+  /** Asked before ringing the operator, so she sees who it is before answering. */
+  SCREEN_PROMPT:
+    "Alright, after the tone, tell me your name and what you're calling about, " +
+    "and I'll hop on the line.",
+  HOLD: 'Just a moment, connecting you now.',
+  MISSED:
+    "I'm sorry I missed your call. To leave a voicemail, press 4. " +
+    'Otherwise, have a wonderful day.',
   CLOSED_GREETING:
     "Hey, you've reached Tribe Tails Pet Care. We're closed right now. " +
     "If you'd like to leave me a voicemail, press 4. Or send a text to this " +
@@ -128,6 +138,33 @@ const GATHER_TIMEOUT_SECONDS = 8;
 
 /** Matches the flow's Record Voicemail widgets: 3 minutes, `#` to finish. */
 const VOICEMAIL_MAX_LENGTH_SECONDS = 180;
+
+/**
+ * The Twilio Client identity the admin app registers as. Must match
+ * `CLIENT_IDENTITY` in `admin/mintVoiceAccessToken.ts`: that file mints the
+ * token for this name and this file dials it, so a change in one without the
+ * other rings an identity nobody is registered as, which fails as SILENCE
+ * rather than as an error.
+ */
+const OPERATOR_CLIENT_IDENTITY = 'auntie';
+
+/**
+ * How long the operator's phone rings before the caller is released to the
+ * missed-call path. Deliberately shorter than the 55s the retired service used:
+ * a caller who has already said their name is listening to hold music the whole
+ * time, and a minute of it reads as an abandoned line.
+ */
+const OPERATOR_RING_SECONDS = 30;
+
+/** One block of hold audio. Twilio re-requests the wait URL until the wait ends. */
+const HOLD_PAUSE_SECONDS = 15;
+
+/**
+ * Call statuses that mean the operator never picked up. `completed` is
+ * deliberately ABSENT: it fires when a call she DID take ends normally, and
+ * ending the conference on it would be a no-op at best and a race at worst.
+ */
+const UNANSWERED_STATUSES = new Set(['no-answer', 'busy', 'failed', 'canceled']);
 
 /**
  * XML-escape a value bound into TwiML.
@@ -268,24 +305,228 @@ async function handleEntry(req: Request, res: Response, body: Record<string, str
 /**
  * The pressed digit.
  *
- * 3 and 4 both reach voicemail today. 3 is still accepted rather than dropped
- * because callers who have used this line before know it as the "talk to a
- * person" key, and refusing it would strand exactly the people most likely to
- * press it. When the live connect returns, 3 diverges here and nowhere else.
+ * 3 is the live connect, and it is only offered during open hours: the
+ * after-hours greeting never mentions it, so a 3 pressed then falls to the
+ * retry rather than ringing the operator at midnight.
  */
-function handleRoute(req: Request, res: Response, body: Record<string, string>): void {
+function handleRoute(req: Request, res: Response, body: Record<string, string>, open: boolean): void {
   const digits = (body.Digits || '').trim();
   logEvent({
     severity: 'info',
     function: 'twilioVoice',
     event: 'twilioVoice.route',
-    extra: { sid: (body.CallSid || '').trim(), digits },
+    extra: { sid: (body.CallSid || '').trim(), digits, open },
   });
-  if (digits === '3' || digits === '4') {
+  if (digits === '3' && open) {
+    sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/screen'))}</Redirect>`);
+    return;
+  }
+  if (digits === '4') {
     sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/voicemail'))}</Redirect>`);
     return;
   }
   sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/retry'))}</Redirect>`);
+}
+
+/** The conference a screened call is bridged in. One per inbound call. */
+export function conferenceName(callSid: string): string {
+  return `conf_${callSid}`;
+}
+
+/**
+ * Ask who is calling, so the operator can decide before answering.
+ *
+ * Speech, not digits: the answer is read aloud on her phone. `speechTimeout`
+ * is "auto" so a caller who pauses mid-sentence is not cut off.
+ */
+function handleScreen(req: Request, res: Response): void {
+  sendTwiml(
+    res,
+    `<Gather input="speech" speechTimeout="auto" timeout="6" ` +
+      `action="${xmlEscape(selfUrl(req, '/screen-connect'))}" method="POST">` +
+      say(SPEECH.SCREEN_PROMPT) +
+      `</Gather>` +
+      // A caller who says nothing still gets a voicemail box rather than a
+      // hangup. Saying nothing is not the same as wanting nothing.
+      `<Redirect method="POST">${xmlEscape(selfUrl(req, '/voicemail'))}</Redirect>`,
+  );
+}
+
+/**
+ * Ring the operator, and park the caller in a conference while she decides.
+ *
+ * ── WHY A CONFERENCE AND NOT A QUEUE ──────────────────────────────────────────
+ *
+ * The Studio flow this replaces used `<Enqueue>` and then REST-injected new
+ * TwiML onto the caller's live call to yank them out of the queue and into a
+ * conference. Two mechanisms fighting over one leg, which is where its race
+ * conditions came from: on a reject the caller could still be in the queue,
+ * never having entered the conference, so ending the conference did nothing.
+ *
+ * Here the caller goes straight into the conference as a non-moderator and
+ * hears hold music. The operator's leg joins as the moderator, and her joining
+ * is what starts it. That gives the missed-call path for free: when the
+ * conference ends, or never starts, this `<Dial>` verb simply COMPLETES and
+ * TwiML continues to the next verb. No injection, no queue, no race.
+ */
+async function handleScreenConnect(
+  req: Request,
+  res: Response,
+  body: Record<string, string>,
+): Promise<void> {
+  const sid = (body.CallSid || '').trim();
+  const from = (body.From || '').trim();
+  const transcript = sanitizePlainText(body.SpeechResult || '').trim();
+  const conference = conferenceName(sid);
+
+  // Tell the operator's phone who is calling. Fail-soft: this never throws, and
+  // an undelivered push is logged as an outage rather than dropping the caller.
+  const push = await sendCallInvitePush({ callSid: sid, callerNumber: from, transcript });
+
+  const dialed = await dialOperator(req, sid, conference);
+
+  // Nobody was told AND nobody was rung: holding the caller would be a lie.
+  if (push.delivered === 0 && !dialed) {
+    logEvent({
+      severity: 'error',
+      function: 'twilioVoice',
+      event: 'twilioVoice.screen.unreachable',
+      extra: { sid },
+    });
+    sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/voicemail'))}</Redirect>`);
+    return;
+  }
+
+  sendTwiml(
+    res,
+    `<Dial><Conference startConferenceOnEnter="false" endConferenceOnExit="false" beep="false" ` +
+      `waitUrl="${xmlEscape(selfUrl(req, '/hold'))}" waitMethod="POST">` +
+      `${xmlEscape(conference)}</Conference></Dial>` +
+      // Reached when the conference ends or never starts: rejected, missed, or
+      // hung up on her side. The caller is still on the line.
+      `<Redirect method="POST">${xmlEscape(selfUrl(req, '/missed'))}</Redirect>`,
+  );
+}
+
+/**
+ * Places the outbound leg to the operator's registered Voice SDK client.
+ *
+ * Returns false rather than throwing: a Twilio API fault must not cost the
+ * caller their call, and `handleScreenConnect` needs to know so it can fall
+ * back to voicemail instead of parking them in a conference nobody will join.
+ */
+async function dialOperator(req: Request, callSid: string, conference: string): Promise<boolean> {
+  try {
+    const client = await getTwilio();
+    await client.calls.create({
+      to: `client:${OPERATOR_CLIENT_IDENTITY}`,
+      from: getTwilioFromNumber(),
+      url: `${selfUrl(req, '/connect')}?conference=${encodeURIComponent(conference)}`,
+      method: 'POST',
+      statusCallback: `${selfUrl(req, '/screen-status')}?conference=${encodeURIComponent(conference)}`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['no-answer', 'busy', 'failed', 'canceled', 'completed'],
+      timeout: OPERATOR_RING_SECONDS,
+    });
+    return true;
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'twilioVoice',
+      event: 'twilioVoice.screen.dial-failed',
+      extra: { sid: callSid, err: (err as Error)?.message },
+    });
+    return false;
+  }
+}
+
+/**
+ * The operator's leg. She is the moderator: her arrival starts the conference
+ * and her departure ends it, which drops the caller to `/missed`.
+ */
+function handleConnect(req: Request, res: Response): void {
+  const conference = String(req.query?.conference ?? '').trim();
+  if (!conference) {
+    logEvent({
+      severity: 'error',
+      function: 'twilioVoice',
+      event: 'twilioVoice.connect.no-conference',
+    });
+    sendTwiml(res, '<Hangup/>');
+    return;
+  }
+  sendTwiml(
+    res,
+    `<Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">` +
+      `${xmlEscape(conference)}</Conference></Dial>`,
+  );
+}
+
+/**
+ * Hold music. Twilio requests this repeatedly for as long as the caller waits,
+ * so it does not need to loop itself.
+ */
+function handleHold(_req: Request, res: Response): void {
+  sendTwiml(res, say(SPEECH.HOLD) + `<Pause length="${HOLD_PAUSE_SECONDS}"/>`);
+}
+
+/**
+ * The operator did not pick up. Ends the conference so the caller's `<Dial>`
+ * completes and they fall through to `/missed` instead of holding forever.
+ */
+async function handleScreenStatus(req: Request, res: Response, body: Record<string, string>): Promise<void> {
+  const status = (body.CallStatus || '').trim();
+  const conference = String(req.query?.conference ?? '').trim();
+  if (!UNANSWERED_STATUSES.has(status) || !conference) {
+    res.status(200).json({ ok: true });
+    return;
+  }
+  await endConference(conference, `status:${status}`);
+  res.status(200).json({ ok: true });
+}
+
+/**
+ * Ends a conference by name, which releases every leg still in it.
+ *
+ * Fail-soft and idempotent: a conference that already ended, or never started
+ * because the operator never answered, is not an error. Twilio answers 404 for
+ * both and there is nothing to do about either.
+ */
+export async function endConference(conference: string, reason: string): Promise<boolean> {
+  try {
+    const client = await getTwilio();
+    const found = await client.conferences.list({ friendlyName: conference, status: 'in-progress', limit: 1 });
+    const target = found[0];
+    if (!target) return false;
+    await client.conferences(target.sid).update({ status: 'completed' });
+    logEvent({
+      severity: 'info',
+      function: 'twilioVoice',
+      event: 'twilioVoice.conference.ended',
+      extra: { conference, reason },
+    });
+    return true;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'twilioVoice',
+      event: 'twilioVoice.conference.end-failed',
+      extra: { conference, reason, err: (err as Error)?.message },
+    });
+    return false;
+  }
+}
+
+/** One more chance at a voicemail after a call the operator did not take. */
+function handleMissed(req: Request, res: Response): void {
+  sendTwiml(
+    res,
+    `<Gather numDigits="1" timeout="${GATHER_TIMEOUT_SECONDS}" ` +
+      `action="${xmlEscape(selfUrl(req, '/route'))}" method="POST">` +
+      say(SPEECH.MISSED) +
+      `</Gather>` +
+      `<Redirect method="POST">${xmlEscape(selfUrl(req, '/goodbye'))}</Redirect>`,
+  );
 }
 
 /** One more chance, then the text nudge. A third round would just be a phone tree. */
@@ -359,11 +600,35 @@ export async function twilioVoiceHandler(req: Request, res: Response): Promise<v
     case '/':
       await handleEntry(req, res, body);
       return;
-    case '/route':
-      handleRoute(req, res, body);
+    case '/route': {
+      // Hours are resolved again rather than carried from the greeting. It is
+      // one extra read per keypress, and it means a 3 pressed after closing
+      // time cannot ring the operator because the caller was mid-call when the
+      // business shut.
+      const state = await resolveBusinessOpenNow(db(), Date.now());
+      handleRoute(req, res, body, state.open);
       return;
+    }
     case '/retry':
       handleRetry(req, res);
+      return;
+    case '/screen':
+      handleScreen(req, res);
+      return;
+    case '/screen-connect':
+      await handleScreenConnect(req, res, body);
+      return;
+    case '/connect':
+      handleConnect(req, res);
+      return;
+    case '/hold':
+      handleHold(req, res);
+      return;
+    case '/screen-status':
+      await handleScreenStatus(req, res, body);
+      return;
+    case '/missed':
+      handleMissed(req, res);
       return;
     case '/voicemail':
       handleVoicemail(req, res);
@@ -399,7 +664,19 @@ export const twilioVoice = onRequest(
     region: 'us-central1',
     memory: '512MiB',
     minInstances: 1,
-    secrets: ['TWILIO_AUTH_TOKEN', 'SENTRY_DSN'],
+    // TWILIO_ACCOUNT_SID + TWILIO_FROM_NUMBER are for the OUTBOUND leg that
+    // rings the operator; AUNTIE_OPERATOR_UIDS lets the push sender resolve the
+    // admin roster when businessSettings/admins has not been seeded yet.
+    // Without that binding it reads as undefined and resolveBusinessAdminUids
+    // throws, which this file turns into a logged outage rather than a dropped
+    // call, but the caller still loses the live connect.
+    secrets: [
+      'TWILIO_AUTH_TOKEN',
+      'TWILIO_ACCOUNT_SID',
+      'TWILIO_FROM_NUMBER',
+      'AUNTIE_OPERATOR_UIDS',
+      'SENTRY_DSN',
+    ],
     ...FULL_CPU,
   },
   wrapHttp('twilioVoice', twilioVoiceHandler),

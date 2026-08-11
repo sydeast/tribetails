@@ -365,6 +365,10 @@ export { setFeatureFlags } from './admin/setFeatureFlags';
 // Replaces the PUBLIC get-token endpoint on the Twilio Serverless service, which
 // let anyone who knew the URL mint a token and answer the business's calls.
 export { mintVoiceAccessToken } from './admin/mintVoiceAccessToken';
+// Accept/reject for a screened inbound call. Replaces an unauthenticated GET
+// that returned plain text to a caller parsing JSON, so every success read as
+// a network error.
+export { screenCallAction } from './admin/screenCallAction';
 export { logActivity } from './admin/logActivity';
 export { getNotificationCatalog } from './notifications/getNotificationCatalog';
 // Dashboard-widget callables (AO-35/39/40/41): all admin-gated.
