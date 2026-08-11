@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.fcm
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
@@ -12,17 +13,76 @@ import com.google.firebase.messaging.RemoteMessage
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.R
 import com.tribetails.auntieos.ui.calls.CallScreenActivity
+import com.tribetails.auntieos.voice.CallInviteManager
+import com.tribetails.auntieos.voice.VoiceTokenManager
+import com.twilio.voice.CallException
+import com.twilio.voice.CallInvite
+import com.twilio.voice.CancelledCallInvite
+import com.twilio.voice.MessageListener
+import com.twilio.voice.Voice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+/**
+ * Two completely different pushes can announce the same incoming call, and
+ * mixing them up is why the app went so long without ever ringing:
+ *
+ *  1. The TWILIO VOICE SDK push. Sent by Twilio itself to the FCM token that
+ *     [VoiceTokenManager] registered. Its data payload carries `twi_message_type`
+ *     and a pile of other `twi_*` keys that only the SDK can decode. It MUST be
+ *     handed to [Voice.handleMessage], which parses it and calls back with a
+ *     [CallInvite]. That CallInvite is the only object able to accept or reject
+ *     the call leg, so this push is the one that actually rings the phone.
+ *
+ *  2. The CUSTOM `type == "call_invite"` push. Sent by our own backend, with the
+ *     human-readable context the SDK payload does not carry: callSid,
+ *     callerNumber and the screening transcript. It raises the screening UI so
+ *     the user can see WHO is calling and WHY.
+ *
+ * They are complementary, not alternatives: the SDK push rings, the custom push
+ * explains. Both branches below must keep working.
+ */
 class AuntieFirebaseMessagingService : FirebaseMessagingService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * Bridge from the Voice SDK's parsed callbacks into [CallInviteManager],
+     * which owns the invite the UI answers or rejects. Before this existed,
+     * `activeInvite` was permanently null and answer()/reject() returned
+     * immediately doing nothing.
+     */
+    private val voiceMessageListener = object : MessageListener {
+        override fun onCallInvite(callInvite: CallInvite) {
+            Log.d(TAG, "Voice SDK call invite for sid ${callInvite.callSid}")
+            CallInviteManager.onCallInvite(callInvite)
+        }
+
+        override fun onCancelledCallInvite(
+            cancelledCallInvite: CancelledCallInvite,
+            callException: CallException?
+        ) {
+            // CallInviteManager takes no exception, so log it here rather than
+            // dropping the only signal that a cancellation was an error.
+            if (callException != null) {
+                Log.w(TAG, "Cancelled call invite carried an error: ${callException.message}")
+            }
+            CallInviteManager.onCancelledCallInvite(cancelledCallInvite)
+        }
+    }
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
+
+        // Twilio Voice SDK push - checked FIRST because Twilio owns the shape of
+        // this payload and we do not. Our own `type` / `notificationKey` routing
+        // keys are ours to keep clear of it, not the other way round.
+        if (isVoiceSdkPush(remoteMessage.data)) {
+            handleVoiceSdkPush(remoteMessage.data)
+            return
+        }
 
         // Catalog-dispatched push (MyTribe notification subsystem) - identified by
         // `data.notificationKey` presence. Title/body live in remoteMessage.notification,
@@ -52,6 +112,9 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
 
         when (remoteMessage.data["type"]) {
             "call_invite" -> {
+                // OUR push, not Twilio's. Carries the screening context (who is
+                // calling, what they said) and raises CallScreenActivity. It does
+                // NOT create a Voice SDK call leg - the SDK push above does that.
                 val callSid = remoteMessage.data["callSid"]
                 val callerNumber = remoteMessage.data["callerNumber"]
                 val transcript = remoteMessage.data["transcript"]
@@ -103,6 +166,29 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
                 )
             }
             else -> Log.w("AuntieFCM", "Unrecognized FCM type: ${remoteMessage.data["type"]}")
+        }
+    }
+
+    /**
+     * Hands the raw data payload to the Voice SDK. The SDK decodes it and calls
+     * back on [voiceMessageListener] - synchronously, in practice, which is why
+     * no notification is raised here: the invite reaches CallInviteManager and
+     * the UI reacts to its state flow.
+     */
+    private fun handleVoiceSdkPush(data: Map<String, String>) {
+        val handled = try {
+            voiceMessageHandler(applicationContext, data, voiceMessageListener)
+        } catch (e: Exception) {
+            Log.e(TAG, "Voice.handleMessage threw on a twi_message_type push", e)
+            false
+        }
+        if (!handled) {
+            // Do not fall through to the `type` routing: a Twilio payload has no
+            // `type` key, so it would only land in the unrecognized branch.
+            Log.w(
+                TAG,
+                "Voice SDK rejected a push with twi_message_type=${data[TWILIO_MESSAGE_TYPE_KEY]}"
+            )
         }
     }
 
@@ -176,6 +262,12 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun showCallNotification(callSid: String?, callerNumber: String?, transcript: String?) {
+        // Per-call id, derived from the callSid, so a second incoming call does
+        // not overwrite the first one's notification. This used to be notify(1,
+        // ...) with a hardcoded literal while every sibling used a named
+        // constant.
+        val notificationId = callNotificationId(callSid)
+
         // Create the intent to launch your Screening Activity
         val fullScreenIntent = Intent(this, CallScreenActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -184,8 +276,12 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
             putExtra(EXTRA_TRANSCRIPT, transcript)
         }
 
+        // The request code must vary with the call too. With a fixed 0 and
+        // FLAG_UPDATE_CURRENT both calls share one PendingIntent, so the second
+        // call's extras overwrite the first call's - distinct notifications that
+        // both open the same screening screen.
         val fullScreenPendingIntent = PendingIntent.getActivity(
-            this, 0, fullScreenIntent,
+            this, notificationId, fullScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -200,7 +296,7 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
             .build()
 
         try {
-            NotificationManagerCompat.from(this).notify(1, notification)
+            NotificationManagerCompat.from(this).notify(notificationId, notification)
         } catch (e: SecurityException) {
             Log.e("AuntieFCM", "Notification permission missing")
         }
@@ -214,9 +310,49 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
         serviceScope.launch {
             AuntieOSApp.instance.repository.saveDeviceToken(token)
         }
+        // A rotated FCM token invalidates the binding Twilio holds, so the Voice
+        // SDK has to re-register or the SDK push above never arrives again.
+        // Saving the token to our own backend is not enough on its own.
+        //
+        // Passed straight through, with no guard and no pre-filtering, because
+        // VoiceTokenManager owns every one of those decisions. It refuses a blank
+        // token with a stated reason, it ignores the call when it was never
+        // initialized, and it sets Working itself before going on to register and
+        // settle. A local blank check would duplicate its state machine; a local
+        // try/catch would only mask a bug in it, since it captured the repository
+        // and scope at initialize() and does its own work inside a coroutine.
+        VoiceTokenManager.onFcmTokenRefresh(token)
     }
 
     companion object {
+        private const val TAG = "AuntieFCM"
+
+        /**
+         * Key Twilio puts in every Voice SDK data payload. Its presence, not our
+         * `type` field, is what identifies a push the SDK must parse.
+         */
+        internal const val TWILIO_MESSAGE_TYPE_KEY = "twi_message_type"
+
+        /**
+         * Seam over [Voice.handleMessage]. Production always uses the real SDK
+         * call; unit tests swap it so routing can be asserted without the Voice
+         * SDK's native library. Signature matches the SDK's Map overload:
+         * `handleMessage(Context, Map<String, String>, MessageListener): Boolean`.
+         */
+        internal var voiceMessageHandler: (Context, Map<String, String>, MessageListener) -> Boolean =
+            { context, data, listener -> Voice.handleMessage(context, data, listener) }
+
+        internal fun isVoiceSdkPush(data: Map<String, String>): Boolean =
+            data.containsKey(TWILIO_MESSAGE_TYPE_KEY)
+
+        /**
+         * Distinct notification id per call, so two calls arriving close together
+         * are two notifications instead of one overwriting the other. A missing
+         * callSid falls back to the base, which is still its own reserved slot.
+         */
+        internal fun callNotificationId(callSid: String?): Int =
+            NOTIFICATION_ID_CALL_BASE + ((callSid?.hashCode() ?: 0) and 0xFFFF)
+
         const val ACTION_OPEN_CALL = "com.tribetails.auntieos.OPEN_CALL"
         const val ACTION_OPEN_VOICEMAIL = "com.tribetails.auntieos.OPEN_VOICEMAIL"
         const val ACTION_OPEN_MESSAGE = "com.tribetails.auntieos.OPEN_MESSAGE"
@@ -238,5 +374,9 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
         // the catalog key hash, low 16 bits + offset. Prevents collision across
         // different catalog keys while still bucketing per notification type.
         private const val NOTIFICATION_ID_CATALOG_BASE = 3000
+        // Incoming-call notifications use IDs in [70000, 135536) - derived from
+        // the callSid hash, low 16 bits + offset. Sits above the catalog range,
+        // which tops out at 68535, so the two can never collide.
+        internal const val NOTIFICATION_ID_CALL_BASE = 70000
     }
 }
