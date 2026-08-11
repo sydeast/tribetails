@@ -362,6 +362,9 @@ export { triageOrphanReport } from './admin/triageOrphanReport';
 export { listOrphanReports } from './admin/listOrphanReports';
 export { verifyActivityLogChain } from './admin/verifyActivityLogChain';
 export { setFeatureFlags } from './admin/setFeatureFlags';
+// Replaces the PUBLIC get-token endpoint on the Twilio Serverless service, which
+// let anyone who knew the URL mint a token and answer the business's calls.
+export { mintVoiceAccessToken } from './admin/mintVoiceAccessToken';
 export { logActivity } from './admin/logActivity';
 export { getNotificationCatalog } from './notifications/getNotificationCatalog';
 // Dashboard-widget callables (AO-35/39/40/41): all admin-gated.
