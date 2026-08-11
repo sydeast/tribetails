@@ -90,6 +90,12 @@ export interface MintVoiceAccessTokenResult {
 }
 
 /**
+ * Every Twilio resource id is a two-letter prefix followed by 32 hex digits.
+ * Exactly 34 characters, always.
+ */
+const SID_PATTERN = /^[A-Z]{2}[0-9a-f]{32}$/;
+
+/**
  * Reads a required secret, or throws naming exactly which one is missing.
  *
  * Fail-loud per the project's error policy: a token minted against a blank key
@@ -109,21 +115,71 @@ function requireSecret(value: string, name: string): string {
   return trimmed;
 }
 
+/**
+ * The same, plus the shape.
+ *
+ * ── WHY PRESENCE IS NOT ENOUGH, LEARNED THE HARD WAY ──────────────────────────
+ *
+ * On 2026-08-11 all four of these secrets were set and every existing check
+ * passed. `lib/declaredSecrets.ts`'s release preflight was satisfied, because it
+ * asks whether a secret EXISTS. `requireSecret` above was satisfied, because it
+ * asks whether a secret is NON-BLANK. Both answered yes. And yet:
+ *
+ *   TWIML_APP_SID          33 characters. Twilio 404s it. The application had
+ *                          never been created; the value was a stand-in.
+ *   TWILIO_API_KEY_SID +
+ *   TWILIO_API_KEY_SECRET  401 as credentials.
+ *
+ * `functions:secrets:set` echoes nothing as you type, so a paste that drops a
+ * character is invisible at the moment it happens and stays invisible until a
+ * caller cannot be answered. Checking presence and calling that "configured" is
+ * the identical mistake to a Studio widget logging `success` on a 200 that
+ * carried the wrong answer.
+ *
+ * A shape check is cheap, runs on every mint, and turns "the phone mysteriously
+ * cannot register" into a message naming the secret and what is wrong with it.
+ * It cannot prove the id refers to a resource that exists — only Twilio can
+ * answer that, and not on this hot path — so `scripts/checkVoiceSecrets.ts`
+ * does the live check as an operator step.
+ */
+function requireSid(value: string, name: string, prefix: string): string {
+  const sid = requireSecret(value, name);
+  if (!SID_PATTERN.test(sid) || !sid.startsWith(prefix)) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Voice calling is misconfigured: ${name} is not a valid Twilio ${prefix} id. ` +
+        `Expected ${prefix} followed by 32 hex characters (34 total), got ${sid.length} ` +
+        `character${sid.length === 1 ? '' : 's'} starting "${sid.slice(0, 2)}". ` +
+        `A short value is usually a truncated paste; re-copy it from the Twilio console.`,
+      { code: 'malformed_secret', secret: name, expectedPrefix: prefix, actualLength: sid.length },
+    );
+  }
+  return sid;
+}
+
 export async function mintVoiceAccessTokenHandler(
   req: CallableRequest<unknown>,
 ): Promise<MintVoiceAccessTokenResult> {
   // wrapAdminCallable has already asserted both of these.
   const uid = req.auth!.uid;
 
-  const accountSid = requireSecret(TWILIO_ACCOUNT_SID.value(), 'TWILIO_ACCOUNT_SID');
-  const apiKeySid = requireSecret(TWILIO_API_KEY_SID.value(), 'TWILIO_API_KEY_SID');
+  const accountSid = requireSid(TWILIO_ACCOUNT_SID.value(), 'TWILIO_ACCOUNT_SID', 'AC');
+  const apiKeySid = requireSid(TWILIO_API_KEY_SID.value(), 'TWILIO_API_KEY_SID', 'SK');
   const apiKeySecret = requireSecret(TWILIO_API_KEY_SECRET.value(), 'TWILIO_API_KEY_SECRET');
-  const twimlAppSid = requireSecret(TWIML_APP_SID.value(), 'TWIML_APP_SID');
+  const twimlAppSid = requireSid(TWIML_APP_SID.value(), 'TWIML_APP_SID', 'AP');
+
   // The push credential is OPTIONAL on purpose: without it the SDK still places
   // and receives calls while the app is in the foreground, and only the
   // wake-from-background push is lost. Refusing the whole token over it would
   // turn a degraded feature into a dead one.
-  const pushCredentialSid = PUSH_CREDENTIAL_SID.value().trim();
+  //
+  // A MALFORMED one is different from an ABSENT one, though, and is not waved
+  // through: a grant carrying a bad pushCredentialSid is rejected by Twilio at
+  // registration, which fails harder than simply omitting it.
+  const pushCredentialRaw = PUSH_CREDENTIAL_SID.value().trim();
+  const pushCredentialSid = pushCredentialRaw
+    ? requireSid(pushCredentialRaw, 'PUSH_CREDENTIAL_SID', 'CR')
+    : '';
 
   // Loaded inside the handler, never at file scope. A file-scope twilio import
   // is charged to the cold start of all ~227 functions in index.js; six SDKs

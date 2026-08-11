@@ -68,13 +68,27 @@ beforeEach(() => {
   for (const name of SECRET_ENV) delete process.env[name];
 });
 
+/**
+ * Well-formed SIDs: a two-letter prefix and 32 hex digits, 34 characters.
+ *
+ * Spelled out at full length rather than as short stand-ins because the shape
+ * check below is the point of half this suite, and `'APtest'` would fail it.
+ * That is not a fixture inconvenience, it is the bug being reproduced: the real
+ * `TWIML_APP_SID` in production was 33 characters and every existing check
+ * passed it.
+ */
+const ACCOUNT_SID = 'AC00000000000000000000000000000001';
+const API_KEY_SID = 'SK00000000000000000000000000000002';
+const TWIML_APP = 'AP00000000000000000000000000000003';
+const PUSH_CRED = 'CR00000000000000000000000000000004';
+
 /** All five configured, the state after the operator finishes Twilio setup. */
 function configureAll(): void {
-  process.env.TWILIO_ACCOUNT_SID = 'ACtest';
-  process.env.TWILIO_API_KEY_SID = 'SKtest';
+  process.env.TWILIO_ACCOUNT_SID = ACCOUNT_SID;
+  process.env.TWILIO_API_KEY_SID = API_KEY_SID;
   process.env.TWILIO_API_KEY_SECRET = 'keysecret';
-  process.env.TWIML_APP_SID = 'APtest';
-  process.env.PUSH_CREDENTIAL_SID = 'CRtest';
+  process.env.TWIML_APP_SID = TWIML_APP;
+  process.env.PUSH_CREDENTIAL_SID = PUSH_CRED;
 }
 
 async function loadHandler() {
@@ -102,11 +116,11 @@ describe('mintVoiceAccessToken', () => {
 
     expect(mocks.accessTokens).toHaveLength(1);
     const minted = mocks.accessTokens[0]!;
-    expect(minted.accountSid).toBe('ACtest');
-    expect(minted.keySid).toBe('SKtest');
+    expect(minted.accountSid).toBe(ACCOUNT_SID);
+    expect(minted.keySid).toBe(API_KEY_SID);
     expect(minted.keySecret).toBe('keysecret');
     expect(minted.grants).toEqual([
-      { outgoingApplicationSid: 'APtest', incomingAllow: true, pushCredentialSid: 'CRtest' },
+      { outgoingApplicationSid: TWIML_APP, incomingAllow: true, pushCredentialSid: PUSH_CRED },
     ]);
   });
 
@@ -167,10 +181,88 @@ describe('mintVoiceAccessToken', () => {
     const out = await handler(adminReq());
     expect(out.token).toBe('jwt-for-auntie');
     expect(mocks.accessTokens[0]!.grants[0]).toEqual({
-      outgoingApplicationSid: 'APtest',
+      outgoingApplicationSid: TWIML_APP,
       incomingAllow: true,
     });
     expect(mocks.accessTokens[0]!.grants[0]).not.toHaveProperty('pushCredentialSid');
+  });
+
+  it('THE NEAR MISS: refuses a TWIML_APP_SID one character short', async () => {
+    // Exactly what was in production on 2026-08-11. 33 characters instead of
+    // 34, from a paste that dropped the last one. It was non-blank, so every
+    // check in place at the time passed it, and Twilio 404s it. Without this
+    // guard the callable mints a token that fails at registration with nothing
+    // naming the cause.
+    configureAll();
+    process.env.TWIML_APP_SID = TWIML_APP.slice(0, -1);
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('TWIML_APP_SID'),
+      details: { code: 'malformed_secret', secret: 'TWIML_APP_SID', actualLength: 33 },
+    });
+    expect(mocks.accessTokens).toHaveLength(0);
+  });
+
+  it('says WHAT is wrong, not merely that something is', async () => {
+    configureAll();
+    process.env.TWIML_APP_SID = TWIML_APP.slice(0, -1);
+    const handler = await loadHandler();
+    const err = await handler(adminReq()).catch((e) => e);
+    // An operator reading this in a log should be able to act without opening
+    // the source: which secret, what was expected, what arrived.
+    expect(err.message).toContain('TWIML_APP_SID');
+    expect(err.message).toContain('34 total');
+    expect(err.message).toContain('33 character');
+    expect(err.message).toContain('truncated paste');
+  });
+
+  it.each([
+    ['TWILIO_ACCOUNT_SID', 'AC'],
+    ['TWILIO_API_KEY_SID', 'SK'],
+    ['TWIML_APP_SID', 'AP'],
+  ])('refuses %s carrying the WRONG PREFIX (%s expected)', async (name, prefix) => {
+    // A SID pasted into the wrong prompt is the other half of this mistake, and
+    // it has the right length, so only the prefix distinguishes it.
+    configureAll();
+    process.env[name] = 'ZZ00000000000000000000000000000009';
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'malformed_secret', secret: name, expectedPrefix: prefix },
+    });
+  });
+
+  it('refuses a SID with non-hex characters', async () => {
+    configureAll();
+    process.env.TWIML_APP_SID = 'APzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz';
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      details: { code: 'malformed_secret', secret: 'TWIML_APP_SID' },
+    });
+  });
+
+  it('refuses a MALFORMED push credential rather than waving it through', async () => {
+    // Absent is fine and degrades gracefully. Malformed is not: a grant
+    // carrying a bad pushCredentialSid is rejected by Twilio at registration,
+    // which fails harder than simply omitting it.
+    configureAll();
+    process.env.PUSH_CREDENTIAL_SID = PUSH_CRED.slice(0, -1);
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      details: { code: 'malformed_secret', secret: 'PUSH_CREDENTIAL_SID', expectedPrefix: 'CR' },
+    });
+  });
+
+  it('accepts uppercase hex, which Twilio does not emit but a console copy can carry', async () => {
+    // Deliberately NOT accepted: Twilio SIDs are lowercase hex. Documenting the
+    // decision as a test so a future "be lenient" change is a conscious one.
+    configureAll();
+    process.env.TWIML_APP_SID = 'AP0000000000000000000000000000000A';
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      details: { code: 'malformed_secret' },
+    });
   });
 
   it('records the mint against the calling uid', async () => {
