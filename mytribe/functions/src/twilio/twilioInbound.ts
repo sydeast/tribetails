@@ -6,6 +6,12 @@ import { wrapHttp } from '../lib/wrapHttp';
 import { normalizeE164 } from '../lib/phoneNormalize';
 import { sanitizePlainText } from '../lib/richText';
 import { FULL_CPU } from '../lib/runtimeOptions';
+// Signature verification and the POST/403 guard moved to twilioSignature.ts so
+// the voice handler shares one implementation of these rules rather than
+// growing a second, subtly different copy. Behaviour is unchanged; the
+// describe.each guard battery in test/twilioInbound.test.ts still proves it
+// through these three handlers.
+import { guard } from './twilioSignature';
 
 /**
  * WARNING-8: server-authoritative inbound comms writes.
@@ -117,62 +123,10 @@ async function matchKinfolkByPhone(
   return miss;
 }
 
-/**
- * Verify a Twilio inbound webhook signature. Mirrors `twilioVerify` in
- * engagementWebhooks.ts: FAIL CLOSED when TWILIO_AUTH_TOKEN is unset (cannot
- * prove the request), then `twilio.validateRequest(token, X-Twilio-Signature,
- * fullUrl, params)`.
- *
- * Twilio signs the EXACT public URL it POSTs to, so behind Cloud Functions /
- * proxies the observed `req.hostname`+`originalUrl` can drift from what Twilio
- * hashed. We therefore prefer a per-webhook env override (urlEnv) set by the
- * operator to the exact public function URL, and only fall back to deriving the
- * absolute URL from the request when that env is unset.
- */
-async function twilioVerify(req: Request, urlEnv: string): Promise<boolean> {
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!token) return false; // fail closed: cannot verify without the auth token
-  const sig = req.header('X-Twilio-Signature') ?? '';
-  const url = (process.env[urlEnv] || '').trim() || `https://${req.hostname}${req.originalUrl}`;
-  const params = (req.body ?? {}) as Record<string, string>;
-  try {
-    // Loaded here, not at file scope: only these three webhooks and
-    // twilioStatusCallback need the SDK, and a file-scope import charged it to
-    // the cold start of every other function in `index.js`. The fail-closed
-    // token check above still runs before anything is loaded.
-    const { default: twilio } = await import('twilio');
-    return twilio.validateRequest(token, sig, url, params);
-  } catch {
-    return false;
-  }
-}
-
 /** Respond with empty TwiML so Twilio does not auto-reply to the sender. */
 function respondTwiml(res: Response): void {
   res.set('Content-Type', 'text/xml');
   res.status(200).send('<Response></Response>');
-}
-
-/**
- * Shared guard: 405 on non-POST, 403 on bad/unverifiable signature. Returns the
- * parsed form body when the request is authentic, else null (response sent).
- */
-async function guard(
-  req: Request,
-  res: Response,
-  fn: string,
-  urlEnv: string,
-): Promise<Record<string, string> | null> {
-  if (req.method !== 'POST') {
-    res.status(405).end();
-    return null;
-  }
-  if (!(await twilioVerify(req, urlEnv))) {
-    logEvent({ severity: 'warn', function: fn, event: `${fn}.verify.fail` });
-    res.status(403).json({ error: 'bad-signature' });
-    return null;
-  }
-  return (req.body ?? {}) as Record<string, string>;
 }
 
 /**
