@@ -50,6 +50,13 @@ class VoiceTokenManagerTest {
         }
     }
 
+    /** A registrar that dies before it ever reaches its listener. */
+    private class ThrowingRegistrar(private val thrown: Throwable) : VoiceRegistrar {
+        override fun register(accessToken: String, fcmToken: String, onResult: (Throwable?) -> Unit) {
+            throw thrown
+        }
+    }
+
     @Before
     fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
@@ -301,6 +308,174 @@ class VoiceTokenManagerTest {
             val state = VoiceTokenManager.state.value
             assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
             assertTrue((state as VoiceTokenState.Failed).message.contains("AccessTokenInvalid"))
+        }
+
+    // ── every exit leaves the flow saying something true ────────────────────
+    //
+    // The bug these pin: `currentAccessToken` set `Working` before minting, and
+    // ONLY the registration callback ever moved the flow off it. A caller that
+    // got a perfectly good token therefore left the screen on a spinner that
+    // would never resolve, reporting "still trying" about work that had already
+    // finished. A silent null and a permanent spinner are the same defect.
+
+    @Test
+    fun `currentAccessToken re-minting a stale token lands on Registered, never stuck on Working`() =
+        runBlocking {
+            // THE REGRESSION TEST. Fails against the previous commit with
+            // Working, because the re-mint takes the branch that used to set it
+            // and no registration follows to clear it.
+            var mints = 0
+            var clock = 0L
+            configure(
+                mint = {
+                    mints++
+                    Result.success(token(value = "jwt-$mints"))
+                },
+                now = { clock },
+            )
+            VoiceTokenManager.mintAndRegister()
+            assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+
+            // Inside the 5 minute skew, so this read re-mints, and it registers
+            // nothing.
+            clock = 3_540_000L
+            assertEquals("jwt-2", VoiceTokenManager.currentAccessToken())
+            assertEquals(2, mints)
+
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected Registered, got $state", state is VoiceTokenState.Registered)
+            state as VoiceTokenState.Registered
+            assertEquals("auntie", state.identity)
+            // And carrying the NEW expiry, an hour past the re-mint. A stale
+            // expiry here would have the UI counting down to a lapse that has
+            // already been dealt with.
+            assertEquals(3_540_000L + 3_600_000L, state.expiresAtMillis)
+        }
+
+    @Test
+    fun `currentAccessToken serving a cached token leaves Registered exactly as it was`() =
+        runBlocking {
+            var mints = 0
+            configure(
+                mint = {
+                    mints++
+                    Result.success(token(value = "jwt-$mints"))
+                },
+            )
+            VoiceTokenManager.mintAndRegister()
+
+            assertEquals("jwt-1", VoiceTokenManager.currentAccessToken())
+
+            assertEquals(1, mints)
+            assertEquals(
+                VoiceTokenState.Registered("auntie", 3_600_000L),
+                VoiceTokenManager.state.value,
+            )
+        }
+
+    @Test
+    fun `currentAccessToken does not repaint a registration failure as success`() = runBlocking {
+        // The other half of "say something true". Minting works here; what
+        // failed is the SDK registration, so the device still will not ring, and
+        // a token read must not overwrite that sentence with Registered.
+        val registrar = RecordingRegistrar(failure = RuntimeException("AccessTokenInvalid"))
+        configure(mint = { Result.success(token()) }, registrar = registrar)
+        VoiceTokenManager.mintAndRegister()
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Failed)
+
+        assertEquals("jwt-1", VoiceTokenManager.currentAccessToken())
+
+        val state = VoiceTokenManager.state.value
+        assertTrue("expected the failure to stand, got $state", state is VoiceTokenState.Failed)
+        assertTrue((state as VoiceTokenState.Failed).message.contains("AccessTokenInvalid"))
+    }
+
+    @Test
+    fun `currentAccessToken before any registration leaves Idle rather than claiming Registered`() =
+        runBlocking {
+            // Minting a token registers nothing, so "registration has not been
+            // attempted" is still the true statement. Not Working, and not a
+            // Registered this device has not earned.
+            configure(mint = { Result.success(token()) })
+
+            assertEquals("jwt-1", VoiceTokenManager.currentAccessToken())
+
+            assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+        }
+
+    @Test
+    fun `refresh ends on Registered, not on Working`() = runBlocking {
+        val registrar = RecordingRegistrar()
+        configure(mint = { Result.success(token()) }, registrar = registrar)
+
+        VoiceTokenManager.refresh()
+
+        assertEquals(listOf("jwt-1" to "fcm-abc"), registrar.registrations)
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+    }
+
+    @Test
+    fun `refresh ends on a terminal failure when the mint is refused`() = runBlocking {
+        configure(mint = { Result.failure(RuntimeException("unavailable")) })
+
+        VoiceTokenManager.refresh()
+
+        val state = VoiceTokenManager.state.value
+        assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
+    }
+
+    @Test
+    fun `onFcmTokenRefresh ends on Registered, not on Working`() = runBlocking {
+        val registrar = RecordingRegistrar()
+        configure(mint = { Result.success(token()) }, registrar = registrar)
+        VoiceTokenManager.mintAndRegister()
+
+        VoiceTokenManager.onFcmTokenRefresh("fcm-rotated")
+
+        val state = VoiceTokenManager.state.value
+        assertTrue("expected Registered, got $state", state is VoiceTokenState.Registered)
+    }
+
+    @Test
+    fun `onFcmTokenRefresh ends on a terminal failure when the mint is refused`() = runBlocking {
+        configure(mint = { Result.failure(RuntimeException("unavailable")) })
+
+        VoiceTokenManager.onFcmTokenRefresh("fcm-rotated")
+
+        val state = VoiceTokenManager.state.value
+        assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
+    }
+
+    @Test
+    fun `onFcmTokenRefresh with a blank token says so instead of registering nothing`() =
+        runBlocking {
+            val registrar = RecordingRegistrar()
+            configure(mint = { Result.success(token()) }, registrar = registrar)
+
+            VoiceTokenManager.onFcmTokenRefresh("   ")
+
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
+            assertTrue((state as VoiceTokenState.Failed).message.contains("blank token"))
+            assertTrue(registrar.registrations.isEmpty())
+        }
+
+    @Test
+    fun `a registrar that throws before reporting leaves Failed, not a permanent Working`() =
+        runBlocking {
+            // `Voice.register` is a third-party static. If it throws on the way
+            // in, its listener never fires, and without the guard the flow would
+            // sit on Working for the life of the process.
+            configure(
+                mint = { Result.success(token()) },
+                registrar = ThrowingRegistrar(IllegalStateException("Voice SDK not initialized")),
+            )
+
+            VoiceTokenManager.mintAndRegister()
+
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
+            assertTrue((state as VoiceTokenState.Failed).message.contains("Voice SDK not initialized"))
         }
 
     @Test
