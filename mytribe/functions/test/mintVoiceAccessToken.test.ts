@@ -151,7 +151,6 @@ describe('mintVoiceAccessToken', () => {
     ['TWILIO_ACCOUNT_SID'],
     ['TWILIO_API_KEY_SID'],
     ['TWILIO_API_KEY_SECRET'],
-    ['TWIML_APP_SID'],
   ])('REFUSES with failed-precondition naming %s when it is unset', async (missing) => {
     configureAll();
     delete process.env[missing];
@@ -164,11 +163,40 @@ describe('mintVoiceAccessToken', () => {
     expect(mocks.accessTokens).toHaveLength(0);
   });
 
-  it('treats a blank secret as unset rather than minting against an empty key', async () => {
+  it('treats a blank REQUIRED secret as unset rather than minting against an empty key', async () => {
     configureAll();
-    process.env.TWIML_APP_SID = '   ';
+    process.env.TWILIO_API_KEY_SID = '   ';
     const handler = await loadHandler();
     await expect(handler(adminReq())).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+  it('MINTS WITHOUT a TwiML app, because this app never places outbound calls', async () => {
+    // Twilio treats outgoingApplicationSid and incomingAllow as independent, and
+    // a grant carrying only incomingAllow is valid. Requiring the app blocked the
+    // whole feature on a resource nothing uses, and sent the operator into the
+    // console to create one for no reason.
+    configureAll();
+    delete process.env.TWIML_APP_SID;
+    const handler = await loadHandler();
+    const out = await handler(adminReq());
+    expect(out.token).toBe('jwt-for-auntie');
+    expect(mocks.accessTokens[0]!.grants[0]).not.toHaveProperty('outgoingApplicationSid');
+    expect(mocks.accessTokens[0]!.grants[0]).toMatchObject({ incomingAllow: true });
+  });
+  it('mints with NEITHER optional sid, receiving calls only', async () => {
+    configureAll();
+    delete process.env.TWIML_APP_SID;
+    delete process.env.PUSH_CREDENTIAL_SID;
+    const handler = await loadHandler();
+    await handler(adminReq());
+    expect(mocks.accessTokens[0]!.grants[0]).toEqual({ incomingAllow: true });
+  });
+  it('STILL REFUSES a malformed TwiML app, because absent and wrong are different', async () => {
+    configureAll();
+    process.env.TWIML_APP_SID = TWIML_APP.slice(0, -1);
+    const handler = await loadHandler();
+    await expect(handler(adminReq())).rejects.toMatchObject({
+      details: { code: 'malformed_secret', secret: 'TWIML_APP_SID' },
+    });
   });
 
   it('still mints WITHOUT the push credential, degrading rather than dying', async () => {

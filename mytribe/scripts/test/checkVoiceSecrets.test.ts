@@ -71,11 +71,14 @@ describe('checkShape', () => {
 });
 
 describe('VOICE_SECRETS', () => {
-  it('marks only the push credential optional, matching the callable', () => {
-    // mintVoiceAccessToken degrades without the push credential and refuses
-    // without the other four. The two lists must not drift.
+  it('marks exactly the two optional secrets optional, matching the callable', () => {
+    // mintVoiceAccessToken degrades without the TwiML app (no outbound calling)
+    // and without the push credential (no wake from background), and refuses
+    // without the other three. The two lists must not drift: a secret this
+    // script calls blocking that the callable does not would send an operator
+    // chasing a resource nothing needs, which is the errand this change removes.
     const optional = VOICE_SECRETS.filter((s) => !s.required).map((s) => s.name);
-    expect(optional).toEqual(['PUSH_CREDENTIAL_SID']);
+    expect(optional.sort()).toEqual(['PUSH_CREDENTIAL_SID', 'TWIML_APP_SID']);
   });
 
   it('declares a prefix for every SID and none for the key secret', () => {

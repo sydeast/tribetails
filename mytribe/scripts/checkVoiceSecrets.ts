@@ -54,7 +54,9 @@ export const VOICE_SECRETS: readonly SecretSpec[] = [
   { name: 'TWILIO_ACCOUNT_SID', prefix: 'AC', required: true, purpose: 'the account tokens are minted against' },
   { name: 'TWILIO_API_KEY_SID', prefix: 'SK', required: true, purpose: 'signs the admin app voice token' },
   { name: 'TWILIO_API_KEY_SECRET', prefix: null, required: true, purpose: 'the other half of the signing key' },
-  { name: 'TWIML_APP_SID', prefix: 'AP', required: true, purpose: 'answers the admin app leg of a screened call' },
+  // Optional, matching mintVoiceAccessToken: it governs OUTBOUND calls from the
+  // app, and the app places none. Absent means no outbound calling, not an outage.
+  { name: 'TWIML_APP_SID', prefix: 'AP', required: false, purpose: 'runs when the admin app PLACES a call, which it does not do today' },
   { name: 'PUSH_CREDENTIAL_SID', prefix: 'CR', required: false, purpose: 'wakes the admin app for an incoming call' },
 ];
 
