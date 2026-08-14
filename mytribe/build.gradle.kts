@@ -55,10 +55,10 @@ kotlin {
         val firebaseMain by creating {
             dependsOn(commonMain.get())
             dependencies {
-                implementation("dev.gitlive:firebase-auth:2.5.0")
-                implementation("dev.gitlive:firebase-firestore:2.5.0")
-                implementation("dev.gitlive:firebase-functions:2.5.0")
-                implementation("dev.gitlive:firebase-messaging:2.5.0")
+                implementation("dev.gitlive:firebase-auth:2.6.0")
+                implementation("dev.gitlive:firebase-firestore:2.6.0")
+                implementation("dev.gitlive:firebase-functions:2.6.0")
+                implementation("dev.gitlive:firebase-messaging:2.6.0")
             }
         }
         // firebaseMain = gitlive client SDK source set, only for android + js.
@@ -136,7 +136,7 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.51.0")
+            implementation("io.sentry:sentry-android:8.52.0")
         }
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
