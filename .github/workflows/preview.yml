@@ -1,32 +1,51 @@
 name: PR preview
 
-# Deploys the React admin to a Firebase Hosting PREVIEW CHANNEL and comments the
+# Deploys each web app to a Firebase Hosting PREVIEW CHANNEL and comments the
 # URL on the pull request, so a change can be looked at before it merges.
 #
-# Why Firebase preview channels and not Vercel: the app depends on Hosting
-# rewrites that map /api/generate, /api/send-message and
-# /api/cloudinary/sign-upload onto Cloud Functions (auntieos-admin/firebase.json).
-# A Vercel preview would not carry those rewrites, so Ask Auntie, broadcast send
-# and media upload would all be broken in every preview, which is exactly the
-# kind of change most worth previewing. A preview channel is the same platform
-# as production, so what you look at behaves like the real thing.
+# Why Firebase preview channels and not Vercel: both apps depend on Hosting
+# rewrites that map onto Cloud Functions. The admin maps /api/generate,
+# /api/send-message and /api/cloudinary/sign-upload (auntieos-admin/firebase.json);
+# the portal maps /share/** onto getSharedKinTalePage (mytribe/firebase.json). A
+# Vercel preview would carry neither, so Ask Auntie, broadcast send, media upload
+# and shared KinTale pages would all be broken in every preview, which is exactly
+# the kind of change most worth previewing. A preview channel is the same
+# platform as production, so what you look at behaves like the real thing.
 #
 # The channel is per pull request and expires on its own, so old previews do not
-# pile up against the site's channel limit.
+# pile up against a site's channel limit.
+#
+# BOTH APPS, since 2026-08-16. Until then this file deployed the admin only, so
+# a portal change could not be clicked before it merged: the one half of the
+# product whose defects get found by walking it was the half with no preview.
+# A portal-only PR published an admin URL and looked like it had been previewed.
+#
+# SHARED CHANGES PREVIEW BOTH. `packages/**` and the root lockfile are inputs to
+# each app's bundle, so a change to either is a change to both, and previewing
+# only one would leave the other's regression to be found in production.
 
 on:
   pull_request:
     branches: ['**']
+    # The UNION of what the two jobs care about. The per-app split is the
+    # `changes` job below; a workflow-level path filter cannot express it,
+    # because `paths` gates the whole file.
     paths:
       - 'auntieos-admin/src/**'
       - 'auntieos-admin/index.html'
       - 'auntieos-admin/package.json'
       - 'auntieos-admin/vite.config.ts'
       - 'auntieos-admin/firebase.json'
-      # auntieos-admin is an npm workspace member (PR25a): it resolves
-      # against the ROOT package.json/package-lock.json, not one of its own,
-      # and packages/geo is a workspace dependency it declares (unused until
-      # PR18, but present now). Same reasoning as ci.yml's `admin` job.
+      - 'mytribe/web/src/**'
+      - 'mytribe/web/index.html'
+      - 'mytribe/web/public/**'
+      - 'mytribe/web/package.json'
+      - 'mytribe/web/vite.config.ts'
+      - 'mytribe/firebase.json'
+      # Both apps are npm workspace members (PR25a): they resolve against the
+      # ROOT package.json/package-lock.json, not one of their own, and
+      # packages/geo is a workspace dependency both declare. Same reasoning as
+      # ci.yml's `admin` and `portal` jobs.
       - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
@@ -37,8 +56,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      admin: ${{ steps.filter.outputs.admin }}
+      portal: ${{ steps.filter.outputs.portal }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            admin:
+              - 'auntieos-admin/src/**'
+              - 'auntieos-admin/index.html'
+              - 'auntieos-admin/package.json'
+              - 'auntieos-admin/vite.config.ts'
+              - 'auntieos-admin/firebase.json'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/preview.yml'
+            portal:
+              - 'mytribe/web/src/**'
+              - 'mytribe/web/index.html'
+              - 'mytribe/web/public/**'
+              - 'mytribe/web/package.json'
+              - 'mytribe/web/vite.config.ts'
+              - 'mytribe/firebase.json'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/preview.yml'
+
   preview:
     name: Deploy preview channel
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     # `pull_request` (not pull_request_target) on purpose: a fork PR then runs
     # WITHOUT access to the service account, so untrusted code can never reach
@@ -112,4 +170,77 @@ jobs:
         if: steps.cred.outputs.present != 'true'
         run: |
           echo "::warning title=No preview deployed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so no preview URL was published. The build and tests above still ran."
+          echo "Set it with: gh secret set FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC --repo sydeast/tribetails < service-account.json"
+
+  preview-portal:
+    name: Deploy portal preview channel
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: mytribe/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # Root lockfile, same as the admin job: mytribe/web is a workspace
+          # member and has no lockfile of its own.
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+        working-directory: .
+
+      # Do not preview something that does not compile or whose tests fail.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$SA" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to preview channel
+        if: steps.cred.outputs.present == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          projectId: auntieos-ttpc
+          # `mytribe`, where the portal's firebase.json and .firebaserc live.
+          # The build ran in mytribe/web; the hosting config one level up is
+          # what maps the target to a site and carries the /share/** rewrite.
+          entryPoint: mytribe
+          # `kinfolk_portal`, the target scripts/release.sh deploys to
+          # production (hosting:kinfolk_portal), so the preview mirrors the
+          # live site. NOT `mytribe_beta`: that target points at the
+          # mytribe-kinfolk-beta site, which is a different audience, and a
+          # preview that matched the beta rather than production would be
+          # judged against the wrong thing.
+          target: kinfolk_portal
+          expires: 7d
+
+      - name: Report no preview
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::warning title=No portal preview deployed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so no preview URL was published. The build and tests above still ran."
           echo "Set it with: gh secret set FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC --repo sydeast/tribetails < service-account.json"
