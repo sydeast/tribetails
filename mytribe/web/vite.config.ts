@@ -27,6 +27,13 @@ export default defineConfig({
         // The app bundle plus fonts/JS chunks generateSW used to precache
         // automatically; injectManifest needs the same globs told explicitly.
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+        // The issue recorder's standalone bundle is a static asset the app
+        // never loads: it exists so the bookmarklet can pull it from this
+        // site's own origin past the CSP. Precaching it would push 190 KB
+        // through every kinfolk's service worker to support a tool only the
+        // operator ever triggers. Measured: the precache went from 69 entries
+        // and 1827 KiB to 70 and 2024 KiB before this line was added.
+        globIgnores: ['**/__recorder.js'],
       },
       includeAssets: ['apple-touch-icon.png'],
       manifest: {

@@ -37,6 +37,32 @@ import { router } from './router';
 // is still captured. No-op (with a visible console line) when no VITE_SENTRY_DSN.
 initSentry();
 
+/**
+ * The issue recorder, for walking the app and marking what is wrong.
+ *
+ * OFF UNLESS ASKED FOR, and asked for by a variable nothing in the deploy path
+ * sets. `VITE_ISSUE_RECORDER` is written in one place, the `dev:record` script
+ * in this package's `package.json`, so a hosting build substitutes `undefined`
+ * for the whole `import.meta.env` access at build time, the condition folds to
+ * a constant false, and rolldown drops the branch together with the dynamic
+ * import and all of rrweb. Same mechanism as the emulator gate in
+ * `lib/firebase.ts`, and checked the same way: after `npm run build`,
+ * `dist/assets/*.js` contains no occurrence of `rrweb`, `issue-recorder` or
+ * `VITE_ISSUE_RECORDER`.
+ *
+ * A DYNAMIC import, not a static one. A static import would put rrweb in the
+ * module graph of every build and rely on tree-shaking to remove it, which is
+ * a weaker guarantee than the branch never being reachable.
+ *
+ * The live site gets the same recorder from a bookmarklet instead, because
+ * shipping it to every kinfolk to catch the operator's bugs is the wrong trade.
+ */
+if (import.meta.env.VITE_ISSUE_RECORDER === '1') {
+  void import('@tribetails/issue-recorder').then(({ startRecorder }) => {
+    startRecorder({ app: 'portal' });
+  });
+}
+
 // Kick off the reCAPTCHA interceptor install immediately (the Kotlin app had
 // a race where sign-in could beat it; every auth call also awaits it).
 void ensureRecaptcha();

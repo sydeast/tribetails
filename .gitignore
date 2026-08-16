@@ -30,3 +30,12 @@ node_modules
 **/ui-ideas/**/*.jpg
 **/ui-ideas/**/*.jpeg
 visual-WRONGKILL/
+
+# The issue recorder's standalone bundle, copied into each app's public/ by its
+# `prebuild` so the live site serves it from its own origin. That origin is the
+# point: both sites send a CSP whose script-src is 'self' plus a few Google
+# hosts, so the bookmarklet can only load a script the site itself serves.
+# BUILD OUTPUT, not source. It is rebuilt from packages/issue-recorder on every
+# app build, and a committed copy would go stale against the source beside it.
+**/public/__recorder.js
+packages/issue-recorder/dist/
