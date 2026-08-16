@@ -1,0 +1,18 @@
+{
+  "_comment": "Emulator config for the MyTribe portal's Cypress harness ONLY (see web/cypress/). Kept separate from firebase.json, which is what deploys functions, rules and hosting and whose emulator block is the DEV set on 9099/8080/5001. IT SITS AT mytribe/ RATHER THAN mytribe/web/ BECAUSE firebase-tools refuses a rules path outside the config's own directory, and running against the real firestore.rules is the whole point: a permissive stand-in would make every authenticated spec prove nothing, and a third copy under web/ would drift from the file mytribe/CLAUDE.md names as the source of truth. THE PORTS ARE DELIBERATELY NOT THE DEFAULTS and not the dev set: an e2e run must never silently attach to an emulator somebody left running and then report a green earned against their data. They also differ from the admin harness's 9399/8385, so both suites can run at once. NO FUNCTIONS EMULATOR IS DECLARED HERE, AND 5499 IS RESERVED AND UNSERVED. web/src/lib/firebase.ts pins the Functions SDK at 127.0.0.1:5499 during an e2e run so a callable CANNOT resolve to a deployed us-central1 URL, and nothing listens on it, so an unstubbed callable fails locally and loudly instead of quietly leaving the machine. Do not hand 5499 to anything, and do not add a functions block here without reading auntieos-admin/docs/runbooks/e2e.md first: serving mytribe/functions would register its 18 auth and firestore triggers against web/cypress/seed.ts's writes and mutate the very rows the specs assert on.",
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9499
+    },
+    "firestore": {
+      "port": 8485
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

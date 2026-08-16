@@ -1,0 +1,22 @@
+{
+  "//": "Cypress transpiles specs WITHOUT type-checking them, exactly as Playwright does, so nothing would ever report a rotted selector helper or fixture import. `npm run e2e:cy:tsc` runs this and `npm run e2e:cy` runs that first, matching the arrangement `e2e/tsconfig.json` documents for the Playwright suite. It does not extend the app's tsconfig for the same reason that one does not: that file's `include` is src-only and its `types` array pulls in jest-dom, which has no business in a Cypress file.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["cypress", "node"]
+  },
+  "include": [".", "../cypress.config.ts"]
+}
