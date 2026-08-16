@@ -33,6 +33,31 @@ import { ToastProvider } from './components/Toast';
 // is still captured. No-op (with a visible console line) when no VITE_SENTRY_DSN.
 initSentry();
 
+/**
+ * The issue recorder, for walking the app and marking what is wrong.
+ *
+ * OFF UNLESS ASKED FOR, and asked for by a variable nothing in the deploy path
+ * sets. `VITE_ISSUE_RECORDER` is written in one place, the `dev:record` script
+ * in this package's `package.json`, so a hosting build substitutes `undefined`
+ * for the whole `import.meta.env` access at build time, the condition folds to
+ * a constant false, and rolldown drops the branch together with the dynamic
+ * import and all of rrweb. Same mechanism as the emulator gate in
+ * `lib/firebase.ts`, and verified the same way with a grep over `dist/assets`.
+ *
+ * A DYNAMIC import, not a static one. A static import would put rrweb in the
+ * module graph of every build and rely on tree-shaking to remove it, which is a
+ * weaker guarantee than the branch never being reachable.
+ *
+ * The live site gets the same recorder from the bookmarklet instead
+ * (`packages/issue-recorder/README.md`), which loads `/__recorder.js` from the
+ * site's own origin so the page's CSP does not refuse it.
+ */
+if (import.meta.env.VITE_ISSUE_RECORDER === '1') {
+  void import('@tribetails/issue-recorder').then(({ startRecorder }) => {
+    startRecorder({ app: 'admin' });
+  });
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, refetchOnWindowFocus: false },
