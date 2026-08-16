@@ -1,0 +1,18 @@
+{
+  "name": "@tribetails/issue-recorder",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Walk the app, hit a hotkey when something is wrong, and let the recorder capture why. Session replay plus a per-mark snapshot of route, console, callables and the element under the cursor. Dev-only in the apps; never in a production build. No build step: consumed as TypeScript source through each app's Vite setup, same as @tribetails/geo.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "rrweb": "^2.0.0-alpha.4"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

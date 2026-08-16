@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:record": "VITE_ISSUE_RECORDER=1 vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
@@ -26,7 +27,8 @@
     "@tribetails/geo": "*",
     "firebase": "^12.16.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "@tribetails/issue-recorder": "*"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
