@@ -78,6 +78,22 @@ export function startRecorder(config: RecorderConfig): Recorder {
     maskAllInputs: true,
     recordCanvas: false,
     collectFonts: false,
+    /**
+     * THE RECORDER MUST NOT RECORD ITSELF.
+     *
+     * The overlay is in the page's DOM, so without this rrweb captures it like
+     * anything else and every replayed screenshot has the dot sitting in the
+     * corner, with the panel and whatever the operator typed into it in shot
+     * whenever it was open. That was in the first three screenshots this
+     * produced.
+     *
+     * `blockSelector` keeps the subtree out of the recording rather than
+     * masking its text, which is what a control panel deserves: it is not part
+     * of the screen being reported on. The replay side hides the placeholder as
+     * well (`scripts/walk-to-issues/replay.mjs`), so nothing of the recorder
+     * reaches the picture.
+     */
+    blockSelector: '[data-issue-recorder]',
   });
 
   /** Persisted on a timer so a reload mid-walk costs at most this much. */
