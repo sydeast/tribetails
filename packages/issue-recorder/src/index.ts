@@ -112,7 +112,7 @@ export function startRecorder(config: RecorderConfig): Recorder {
     },
   });
 
-  return {
+  const recorder: Recorder = {
     walk,
     stop: async () => {
       window.clearInterval(persist);
@@ -122,4 +122,23 @@ export function startRecorder(config: RecorderConfig): Recorder {
       await saveWalk(walk());
     },
   };
+
+  /**
+   * The handle, on `window`, for BOTH entry points rather than only the
+   * bookmarklet's.
+   *
+   * It used to be set in `bookmarklet.ts` alone, which meant a walk recorded by
+   * the dev overlay could only be got at through the export button: no way to
+   * read the current walk from the console, and no way for a script to drive a
+   * walk and collect it. That asymmetry is invisible until somebody hits it,
+   * and then it reads as the recorder having failed to start.
+   *
+   * It is also what the bookmarklet's double-click guard tests, so setting it
+   * here closes a race the guard had on its own: `bookmarklet.ts` awaits an
+   * IndexedDB read before calling this, and two clicks inside that await would
+   * both have found the handle undefined.
+   */
+  (window as unknown as { __ttIssueRecorder?: Recorder }).__ttIssueRecorder = recorder;
+
+  return recorder;
 }

@@ -29,6 +29,8 @@ import type { RecordedApp } from './types';
 declare global {
   interface Window {
     __ttIssueRecorder?: { stop: () => Promise<void> };
+    /** Claimed synchronously, see the guard at the bottom of this file. */
+    __ttIssueRecorderStarting?: boolean;
   }
 }
 
@@ -84,9 +86,17 @@ async function detectIdentity(): Promise<string | null> {
  * is no visible difference between a page where it has been clicked and one
  * where it has not, until the dot appears. A second recorder would double every
  * rrweb event and split the marks across two walks.
+ *
+ * THE FLAG IS CLAIMED SYNCHRONOUSLY, before the identity read below, and that
+ * is the whole point of having a second flag at all. `startRecorder` sets
+ * `__ttIssueRecorder` itself, but only once it runs, and this waits on an
+ * IndexedDB read first. Two clicks a few hundred milliseconds apart would both
+ * see an undefined handle and both start a recorder. Nothing between the click
+ * and this line yields, so a flag set here cannot be raced.
  */
-if (window.__ttIssueRecorder === undefined) {
+if (window.__ttIssueRecorder === undefined && window.__ttIssueRecorderStarting !== true) {
+  window.__ttIssueRecorderStarting = true;
   void detectIdentity().then((identity) => {
-    window.__ttIssueRecorder = startRecorder({ app: detectApp(), identity });
+    startRecorder({ app: detectApp(), identity });
   });
 }

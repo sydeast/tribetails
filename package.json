@@ -19,6 +19,7 @@
     "test": "npm run test:functions && npm run test:geo && npm run test:admin && npm run test:portal",
     "test:functions": "npm --prefix mytribe/functions test",
     "test:geo": "npm --prefix packages/geo test",
+    "test:recorder": "npm --prefix packages/issue-recorder test",
     "test:admin": "npm --prefix auntieos-admin test",
     "test:portal": "npm --prefix mytribe/web test",
     "test:android": "cd auntieos-admin/android && ./gradlew testDebugUnitTest",
