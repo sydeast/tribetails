@@ -33,8 +33,28 @@ ones that happen against real data.
 
 ## On the live sites
 
-Save this as a bookmark, once per browser. The name is up to you; the URL is
-the whole tool.
+**Easiest: add `?__record=1` to any URL.**
+
+```
+https://kinfolk.tribetails.com/home?__record=1
+https://auntie.tribetails.com/directory?__record=1
+```
+
+That is a plain URL. Bookmark it normally, type it by hand, send it to someone
+in a message. The dot appears as the page loads.
+
+Prefer this to the bookmarklet below. The bookmarklet is one line of
+`javascript:` saved as a bookmark, and browsers fight that in ways this repo
+does not control: Chrome strips the `javascript:` scheme when the URL is pasted
+into the address bar, DevTools refuses pasted code until you type
+`allow pasting`, and a privacy extension is free to block a script called
+`__recorder.js`. Every one of those failures looks the same from the outside,
+which is a dot that never appears.
+
+### The bookmarklet
+
+Still supported, and useful when you are already on a page and do not want to
+reload it. Save it as a bookmark, once per browser.
 
 ```
 javascript:(function(){var s=document.createElement('script');s.src='/__recorder.js?'+Date.now();document.body.appendChild(s)})()

@@ -45,37 +45,46 @@ them. The reference implementation is the Kinfolk portal's wizard
 
 ---
 
-## DESIGN AUTHORITY: TWO SOURCES, AND RENDERED PNGS ARE NEITHER
+## DESIGN AUTHORITY: ui-ideas, AND RENDERED PNGS ARE NOT
 
-When you need to know what a screen should look like, read these, in this order:
+**`page-specs/` IS GONE. The operator deleted all 31 files on 2026-08-16.** Do
+not go looking for them, and do not recreate them: a spec nobody wrote is not
+authority, it is invention. This section used to name them as source 1 and told
+you to start at `00-INDEX.md`, which is why the instruction is being retired in
+writing rather than quietly edited out.
 
-1. `page-specs/*.md`, 31 numbered specs, each with an archived/live banner.
-   Start at `00-INDEX.md` (spec to screen) and `00-DEPENDENCIES.md`. These are
-   TRACKED as of 2026-08-06 and are present in every clone and worktree. They
-   were gitignored until then, which is why older notes tell you to reach for an
-   absolute path; you no longer need to.
-2. `ui-ideas/*.html`, the operator's mockups. Two rules that are not optional:
-   anything under `ui-ideas/WrongUIDesigns-UpdateKill/` is a REJECTED design and
-   must never be built from, and a filename carrying a directive
-   (`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is
-   part of the spec.
+Plans, code comments and archived handoffs across this tree still cite them by
+number ("per page-spec 17"). Those citations are history, not a pointer to a
+file you can open. If you genuinely need to read what one said, it is in git at
+`c3fe6af` (`git show c3fe6af:auntieos-admin/page-specs/17-invoice-detail.md`),
+but treat it as a record of what was once decided, not as current authority.
 
-   TRACKED as of 2026-08-06, and therefore PUBLIC. The HTML was scrubbed of six
-   real client identities before being committed, so **a new mock must not carry
-   a real client name, address, or phone number.** Use the fictional households
-   already in the set (the Wrens, Devlins, Sparrows, Mercers, Rowans, Mallorys)
-   and a 555 phone number.
+When you need to know what a screen should look like, read `ui-ideas/*.html`.
+Those are the operator's ACTUAL MOCKS for this app, and now the only design
+authority in this tree.
 
-   The IMAGES are still gitignored: `ui-ideas/**/*.png` cannot be scrubbed by
-   find-and-replace, and one of them is a third-party product screenshot. They
-   exist on the operator's disk only. If a task depends on one, say so rather
-   than assuming the folder is empty.
+Two rules that are not optional: anything under
+`ui-ideas/WrongUIDesigns-UpdateKill/` is a REJECTED design and must never be
+built from, and a filename carrying a directive
+(`...-cardsShouldOpenDisplayingFullerDetails.html`) means that directive is part
+of the spec.
 
-Both paths are this tree's only. The Kinfolk portal keeps its own mockups in
-`mytribe/ui-ideas/` and has no page-specs; see `mytribe/CLAUDE.md`. A portal
-screen is never answered from here.
+TRACKED as of 2026-08-06, and therefore PUBLIC. The HTML was scrubbed of six
+real client identities before being committed, so **a new mock must not carry a
+real client name, address, or phone number.** Use the fictional households
+already in the set (the Wrens, Devlins, Sparrows, Mercers, Rowans, Mallorys) and
+a 555 phone number.
 
-`visual/mockups/` is Playwright output rendered from source 2 at some past
+The IMAGES are still gitignored: `ui-ideas/**/*.png` cannot be scrubbed by
+find-and-replace, and one of them is a third-party product screenshot. They
+exist on the operator's disk only. If a task depends on one, say so rather than
+assuming the folder is empty.
+
+That path is this tree's only. The Kinfolk portal keeps its own mockups in
+`mytribe/ui-ideas/`; see `mytribe/CLAUDE.md`. A portal screen is never answered
+from here.
+
+`visual/mockups/` is Playwright output rendered from the mockups at some past
 moment. It is never itself a design source. On 2026-08-01 the operator deleted it
 along with `visual/baselines/`, because both held the pre-ruling concept round and
 captures of the superseded Compose app, and agents kept building from them. The
@@ -107,8 +116,8 @@ as a real regression. Nobody was told sooner because
 
 That changes what the goldens are good for, not what they are. `visual/react/`
 answers "what does the shipped admin look like today", which is a regression
-question. What a screen SHOULD look like still comes from page-specs, then
-ui-ideas. `visual/web/`, `visual/desktop/` and `visual/android/` remain captures
+question. What a screen SHOULD look like comes from `ui-ideas/`, which is now
+the only source. `visual/web/`, `visual/desktop/` and `visual/android/` remain captures
 of the superseded Compose app and answer nothing.
 
 A screen with no live mockup does not get one invented. It waits for the operator

@@ -78,6 +78,22 @@ export function startRecorder(config: RecorderConfig): Recorder {
     maskAllInputs: true,
     recordCanvas: false,
     collectFonts: false,
+    /**
+     * THE RECORDER MUST NOT RECORD ITSELF.
+     *
+     * The overlay is in the page's DOM, so without this rrweb captures it like
+     * anything else and every replayed screenshot has the dot sitting in the
+     * corner, with the panel and whatever the operator typed into it in shot
+     * whenever it was open. That was in the first three screenshots this
+     * produced.
+     *
+     * `blockSelector` keeps the subtree out of the recording rather than
+     * masking its text, which is what a control panel deserves: it is not part
+     * of the screen being reported on. The replay side hides the placeholder as
+     * well (`scripts/walk-to-issues/replay.mjs`), so nothing of the recorder
+     * reaches the picture.
+     */
+    blockSelector: '[data-issue-recorder]',
   });
 
   /** Persisted on a timer so a reload mid-walk costs at most this much. */
@@ -112,14 +128,40 @@ export function startRecorder(config: RecorderConfig): Recorder {
     },
   });
 
-  return {
+  const recorder: Recorder = {
     walk,
     stop: async () => {
       window.clearInterval(persist);
       stopRecording?.();
       passive.stop();
       unmount();
+      // THE GLOBALS GO WITH IT. Leaving them set is what made a stopped
+      // recorder impossible to restart: the bookmarklet's guard reads them,
+      // found a handle for a recorder that was no longer mounted, and returned
+      // silently. From the outside that is a bookmark that does nothing, which
+      // is indistinguishable from every other way this can fail.
+      delete (window as unknown as { __ttIssueRecorder?: Recorder }).__ttIssueRecorder;
+      delete (window as unknown as { __ttIssueRecorderStarting?: boolean }).__ttIssueRecorderStarting;
       await saveWalk(walk());
     },
   };
+
+  /**
+   * The handle, on `window`, for BOTH entry points rather than only the
+   * bookmarklet's.
+   *
+   * It used to be set in `bookmarklet.ts` alone, which meant a walk recorded by
+   * the dev overlay could only be got at through the export button: no way to
+   * read the current walk from the console, and no way for a script to drive a
+   * walk and collect it. That asymmetry is invisible until somebody hits it,
+   * and then it reads as the recorder having failed to start.
+   *
+   * It is also what the bookmarklet's double-click guard tests, so setting it
+   * here closes a race the guard had on its own: `bookmarklet.ts` awaits an
+   * IndexedDB read before calling this, and two clicks inside that await would
+   * both have found the handle undefined.
+   */
+  (window as unknown as { __ttIssueRecorder?: Recorder }).__ttIssueRecorder = recorder;
+
+  return recorder;
 }

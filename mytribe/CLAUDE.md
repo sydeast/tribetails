@@ -53,8 +53,10 @@ because Firebase looks in the default codebase and finds nothing there.
 ## DESIGN AUTHORITY: ui-ideas, and three of its files are invisible in a clone
 
 Portal mockups are `mytribe/ui-ideas/*.html`, 22 flat files, all stamped
-`2026-05-31` in their names. There is no `mytribe/page-specs/`, and the admin's
-`auntieos-admin/ui-ideas/` and `page-specs/` describe a different application.
+`2026-05-31` in their names. There has never been a `mytribe/page-specs/`, and
+the admin's `auntieos-admin/ui-ideas/` describes a different application. (The
+admin's own `page-specs/` was deleted by the operator on 2026-08-16, so neither
+tree has one now; see `auntieos-admin/CLAUDE.md`.)
 Never answer a portal screen from the admin tree, or the reverse.
 
 A filename carrying a directive means that directive is part of the spec. The

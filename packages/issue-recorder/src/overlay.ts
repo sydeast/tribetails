@@ -113,8 +113,26 @@ export function mountOverlay(handlers: OverlayHandlers): () => void {
    */
   let lastHovered: Element | null = null;
   const onPointerMove = (event: PointerEvent) => {
-    const target = event.composedPath()[0];
-    if (target instanceof Element && target.closest('[data-issue-recorder]') === null) {
+    const path = event.composedPath();
+    const target = path[0];
+    // THE HOST IS FOUND IN THE COMPOSED PATH, NOT WITH `closest`.
+    //
+    // This read `target.closest('[data-issue-recorder]') === null`, which
+    // silently excluded nothing. The attribute is on the host element while the
+    // dot and the panel live in its shadow root, and `closest` walks
+    // `parentElement`, which is null at the top of a shadow tree. So it never
+    // reached the host, never matched, and every pointer move over the
+    // recorder's own controls was recorded as the thing being reported on.
+    //
+    // It bit exactly the path the README documents: clicking the dot to open
+    // the panel means the pointer crossed the dot, so the mark came out about a
+    // `button.dot` instead of the screen. The Ctrl+Shift+X path was unaffected,
+    // which is why it survived the first round of manual testing.
+    //
+    // `composedPath()` is the right tool because it is the one thing that
+    // crosses the shadow boundary: for an event inside the shadow tree it lists
+    // the inner nodes AND the host.
+    if (target instanceof Element && !path.includes(host)) {
       lastHovered = target;
     }
   };
@@ -150,10 +168,22 @@ export function mountOverlay(handlers: OverlayHandlers): () => void {
     const act = (event.target as HTMLElement).dataset.act;
     if (act === 'save') commit();
     if (act === 'export') {
-      void handlers.onExport().then((filename) => {
-        panel.hidden = true;
-        flash(`Exported ${filename}`);
-      });
+      // The catch is not decoration. A rejected export with no handler leaves
+      // the operator looking at an unchanged panel, no toast and no error,
+      // believing a walk they just spent twenty minutes on has been saved. The
+      // walk is still in IndexedDB at that point, so saying so is the
+      // difference between a recoverable annoyance and a lost afternoon.
+      handlers
+        .onExport()
+        .then((filename) => {
+          panel.hidden = true;
+          flash(`Exported ${filename}`);
+        })
+        .catch((err: unknown) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.error('[issue-recorder] export failed:', err);
+          flash(`Export failed: ${reason}. The walk is still saved in this browser.`);
+        });
     }
   });
 

@@ -37,6 +37,7 @@ jobs:
       mytribeRules: ${{ steps.filter.outputs.mytribeRules }}
       portal: ${{ steps.filter.outputs.portal }}
       mytribeGradle: ${{ steps.filter.outputs.mytribeGradle }}
+      recorder: ${{ steps.filter.outputs.recorder }}
       scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - uses: actions/checkout@v7
@@ -168,6 +169,28 @@ jobs:
               - 'mytribe/settings.gradle.kts'
               - 'mytribe/src/**'
               - 'mytribe/gradle/**'
+              - '.github/workflows/ci.yml'
+            # Its own filter even though `admin` and `portal` both already
+            # watch 'packages/**', because what those two jobs do with a
+            # recorder change is not the same as running the recorder's tests.
+            #
+            # Both apps import '@tribetails/issue-recorder' from their
+            # main.tsx, so their typechecks do reach its src/ through the
+            # workspace symlink. Neither reaches its *.test.ts files, which are
+            # outside both apps' tsconfig include, and neither runs a single
+            # one of them: before this job the package had no test script and
+            # no runner anywhere in CI. It also typechecks under stricter flags
+            # than either app sets (noUncheckedIndexedAccess,
+            # exactOptionalPropertyTypes in packages/issue-recorder/tsconfig.json),
+            # so its own tsc is not a repeat of theirs either.
+            #
+            # Cheap on purpose: no emulators, no browser, no build. It watches
+            # the root lockfile because the package resolves vitest from the
+            # workspace root rather than a lockfile of its own, the same way
+            # `admin` and `portal` do.
+            recorder:
+              - 'packages/issue-recorder/**'
+              - 'package-lock.json'
               - '.github/workflows/ci.yml'
             scripts:
               - 'scripts/**'
@@ -550,6 +573,39 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+
+  recorder:
+    name: Issue recorder
+    needs: changes
+    if: needs.changes.outputs.recorder == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/issue-recorder
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # Root lockfile: packages/* are npm workspace members (see the root
+          # package.json's "workspaces"), so this package's vitest resolves at
+          # the repo root, not from a lockfile of its own.
+          cache-dependency-path: package-lock.json
+      # Overrides the job default so the install runs where the workspace root
+      # (and its lockfile) actually is. Every later step keeps the job default
+      # of packages/issue-recorder.
+      - run: npm ci
+        working-directory: .
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      # No production build step, unlike `admin` and `portal`. This package has
+      # no bundle that ships: `build:bookmarklet` is run by each app's
+      # `prebuild`, so it is already exercised by those two jobs, and running it
+      # a third time here would gate the recorder's tests on a build nobody
+      # deploys from.
 
   deploy-guard:
     name: Deploy guard

@@ -15,6 +15,8 @@
 
     "dev:admin": "npm --prefix auntieos-admin run dev",
     "dev:portal": "npm --prefix mytribe/web run dev",
+    "dev:record:admin": "npm --prefix auntieos-admin run dev:record",
+    "dev:record:portal": "npm --prefix mytribe/web run dev:record",
 
     "test": "npm run test:functions && npm run test:geo && npm run test:admin && npm run test:portal",
     "test:functions": "npm --prefix mytribe/functions test",
