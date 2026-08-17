@@ -62,6 +62,35 @@ if (import.meta.env.VITE_ISSUE_RECORDER === '1') {
     startRecorder({ app: 'portal' });
   });
 }
+/**
+ * THE SAME RECORDER, ASKED FOR BY URL: add `?__record=1` to any page.
+ *
+ * WHY THIS EXISTS ALONGSIDE THE BOOKMARKLET. The bookmarklet is one line of
+ * `javascript:` saved as a bookmark, and browsers fight that in ways that have
+ * nothing to do with this repo: Chrome strips the `javascript:` scheme when the
+ * URL is pasted into the address bar, DevTools refuses pasted code until you
+ * type "allow pasting", and a privacy extension is free to block a script named
+ * `__recorder.js`. Every one of those failures looks identical from the outside,
+ * which is a dot that does not appear. A query string is a plain URL that can be
+ * bookmarked normally and typed by hand.
+ *
+ * IT LOADS THE STANDALONE FILE, NOT THE MODULE. `/__recorder.js` is fetched with
+ * a script tag rather than imported, and that is the whole point: an
+ * `import('@tribetails/issue-recorder')` reachable from a production branch
+ * would put rrweb in the module graph and ship a lazy chunk of it to every
+ * kinfolk, which is exactly what the build gate above exists to prevent. A
+ * script tag is invisible to the bundler, so the 190 KB stays a static asset
+ * that nobody downloads unless they ask for it by URL.
+ *
+ * Same origin, so the site's own CSP (`script-src 'self'`) allows it. The
+ * cache-buster matters because Hosting serves assets with a long max-age.
+ */
+if (new URLSearchParams(window.location.search).has('__record')) {
+  const recorder = document.createElement('script');
+  recorder.src = `/__recorder.js?${String(Date.now())}`;
+  document.head.appendChild(recorder);
+}
+
 
 // Kick off the reCAPTCHA interceptor install immediately (the Kotlin app had
 // a race where sign-in could beat it; every auth call also awaits it).

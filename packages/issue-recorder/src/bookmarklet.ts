@@ -94,7 +94,19 @@ async function detectIdentity(): Promise<string | null> {
  * see an undefined handle and both start a recorder. Nothing between the click
  * and this line yields, so a flag set here cannot be raced.
  */
-if (window.__ttIssueRecorder === undefined && window.__ttIssueRecorderStarting !== true) {
+/**
+ * THE MOUNTED OVERLAY IS THE TEST, not the handle.
+ *
+ * Asking `window.__ttIssueRecorder === undefined` looked equivalent and was
+ * not: `stop()` used to leave the handle behind, so a stopped recorder read as
+ * a running one and re-running the bookmarklet did nothing at all, forever,
+ * with no dot and no error. `stop()` now clears the globals too, and this
+ * checks the DOM as well so the two can never disagree again. Whether the
+ * overlay is on the page is the question actually being asked.
+ */
+const alreadyRunning = document.querySelector('[data-issue-recorder]') !== null;
+
+if (!alreadyRunning && window.__ttIssueRecorderStarting !== true) {
   window.__ttIssueRecorderStarting = true;
   void detectIdentity().then((identity) => {
     startRecorder({ app: detectApp(), identity });

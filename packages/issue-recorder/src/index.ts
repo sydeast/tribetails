@@ -135,6 +135,13 @@ export function startRecorder(config: RecorderConfig): Recorder {
       stopRecording?.();
       passive.stop();
       unmount();
+      // THE GLOBALS GO WITH IT. Leaving them set is what made a stopped
+      // recorder impossible to restart: the bookmarklet's guard reads them,
+      // found a handle for a recorder that was no longer mounted, and returned
+      // silently. From the outside that is a bookmark that does nothing, which
+      // is indistinguishable from every other way this can fail.
+      delete (window as unknown as { __ttIssueRecorder?: Recorder }).__ttIssueRecorder;
+      delete (window as unknown as { __ttIssueRecorderStarting?: boolean }).__ttIssueRecorderStarting;
       await saveWalk(walk());
     },
   };
