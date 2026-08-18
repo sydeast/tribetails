@@ -61,13 +61,30 @@ interface ActionDef {
   run: (bookingId: string) => Promise<void>;
 }
 
+/**
+ * CONFIRM COPY IS WRITTEN IN THE FUTURE TENSE, AND THE CONFIRM BUTTON NEVER
+ * REPEATS THE TRIGGER'S LABEL. Both rules exist because of the same walk.
+ *
+ * The panel below used to render only `confirmBody`, and that copy was in the
+ * present tense. Pressing "Mark Completed" replaced the buttons with the
+ * sentence "Sandy Demo's visit is marked Completed." beside a second button
+ * also labelled "Mark Completed". The operator read the sentence as a report
+ * that the write had happened and the button as the CTA coming back, pressed
+ * Back, and moved on. Marks 6 through 9 of the 2026-08-17 admin walk are that
+ * one misreading: 20 minutes on /bookings, 74 network requests, and not one
+ * call to `transitionBookingStatus`. Then "why does it still say Scheduled".
+ *
+ * So a confirm body says what WILL happen, and a confirm label is never a
+ * string the operator has already pressed once.
+ */
+
 const APPROVE: ActionDef = {
   kind: 'approve',
   label: 'Approve',
   tone: 'primary',
   confirmTitle: 'Approve this booking?',
-  confirmBody: (name) => `${name}'s request moves to Scheduled and appears on the calendar.`,
-  confirmLabel: 'Approve booking',
+  confirmBody: (name) => `${name}'s request will move to Scheduled and appear on the calendar.`,
+  confirmLabel: 'Yes, approve it',
   run: approveBooking,
 };
 
@@ -76,8 +93,8 @@ const REJECT: ActionDef = {
   label: 'Reject',
   tone: 'ghost',
   confirmTitle: 'Reject this booking?',
-  confirmBody: (name) => `${name}'s request is cancelled. This cannot be undone.`,
-  confirmLabel: 'Reject booking',
+  confirmBody: (name) => `${name}'s request will be cancelled. This cannot be undone.`,
+  confirmLabel: 'Yes, reject it',
   run: rejectBooking,
 };
 
@@ -86,8 +103,8 @@ const CANCEL: ActionDef = {
   label: 'Cancel',
   tone: 'ghost',
   confirmTitle: 'Cancel this scheduled visit?',
-  confirmBody: (name) => `${name}'s visit is cancelled. This cannot be undone.`,
-  confirmLabel: 'Cancel visit',
+  confirmBody: (name) => `${name}'s visit will be cancelled. This cannot be undone.`,
+  confirmLabel: 'Yes, cancel the visit',
   run: cancelBooking,
 };
 
@@ -96,8 +113,8 @@ const COMPLETE: ActionDef = {
   label: 'Mark Completed',
   tone: 'primary',
   confirmTitle: 'Mark this visit completed?',
-  confirmBody: (name) => `${name}'s visit is marked Completed.`,
-  confirmLabel: 'Mark Completed',
+  confirmBody: (name) => `${name}'s visit will be marked Completed and leave the scheduled list.`,
+  confirmLabel: 'Yes, mark it completed',
   run: (id) => markBookingCompleted(id, new Date().toISOString()),
 };
 
@@ -445,6 +462,13 @@ export function BookingStatusActions({ entry, onDone }: BookingStatusActionsProp
         </div>
       ) : (
         <>
+          {/* The question, rendered. The dialog above has always shown
+              `confirmTitle` (it is the Dialog's own title); this panel showed
+              only the body, which is how a confirm step came to look exactly
+              like the state before it. */}
+          <p className="booking-actions__confirmTitle" role="heading" aria-level={3}>
+            {confirming.confirmTitle}
+          </p>
           <p className="booking-actions__confirm">{confirming.confirmBody(displayName)}</p>
           <div className="booking-actions__row">
             <GhostButton

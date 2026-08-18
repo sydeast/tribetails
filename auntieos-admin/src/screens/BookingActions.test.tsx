@@ -137,7 +137,7 @@ describe('BookingActions: Approve', () => {
     const onClose = vi.fn();
     render(<BookingActions entry={entry({ _id: 'ses-9', status: 'DRAFT' })} onClose={onClose} />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /approve booking/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
     expect(approveBooking).toHaveBeenCalledWith('ses-9');
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -155,7 +155,7 @@ describe('BookingActions: Approve', () => {
     const onClose = vi.fn();
     render(<BookingActions entry={entry({ status: 'DRAFT' })} onClose={onClose} />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /approve booking/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
     expect(await screen.findByText(/approve failed: permission-denied/i)).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -170,7 +170,7 @@ describe('BookingActions: Approve', () => {
     );
     render(<BookingActions entry={entry({ status: 'DRAFT' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: /approve booking/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, approve it/i }));
     expect(screen.getByRole('button', { name: /^back$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /working/i })).toBeDisabled();
     resolveWrite?.();
@@ -182,7 +182,7 @@ describe('BookingActions: Reject / Cancel', () => {
     rejectBooking.mockResolvedValue(undefined);
     render(<BookingActions entry={entry({ _id: 'ses-1', status: 'PENDING' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
-    await userEvent.click(screen.getByRole('button', { name: /reject booking/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, reject it/i }));
     expect(rejectBooking).toHaveBeenCalledWith('ses-1');
   });
 
@@ -190,7 +190,7 @@ describe('BookingActions: Reject / Cancel', () => {
     cancelBooking.mockResolvedValue(undefined);
     render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await userEvent.click(screen.getByRole('button', { name: /cancel visit/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
     expect(cancelBooking).toHaveBeenCalledWith('ses-2');
     expect(rejectBooking).not.toHaveBeenCalled();
   });
@@ -212,7 +212,7 @@ describe('BookingActions: a server refusal the offer-map did not predict', () =>
     const onClose = vi.fn();
     render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={onClose} />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await userEvent.click(screen.getByRole('button', { name: /cancel visit/i }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
     expect(
       await screen.findByText(/cannot cancel a booking in status completed/i),
     ).toBeInTheDocument();
@@ -225,7 +225,7 @@ describe('BookingActions: a server refusal the offer-map did not predict', () =>
     );
     render(<BookingActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
-    await userEvent.click(screen.getByRole('button', { name: /^mark completed$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
     expect(await screen.findByText(/not a status this app recognizes/i)).toBeInTheDocument();
   });
 });
@@ -235,7 +235,7 @@ describe('BookingActions: Mark Completed', () => {
     markBookingCompleted.mockResolvedValue(undefined);
     render(<BookingActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
-    await userEvent.click(screen.getByRole('button', { name: /^mark completed$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
     expect(markBookingCompleted).toHaveBeenCalledWith('ses-3', expect.any(String));
     const [, iso] = markBookingCompleted.mock.calls[0] as [string, string];
     expect(Number.isNaN(Date.parse(iso))).toBe(false);
@@ -324,9 +324,46 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
   it('confirms IN PLACE, never by opening a second dialog inside the sheet', async () => {
     render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
-    expect(screen.getByText(/request is cancelled\. This cannot be undone\./i)).toBeInTheDocument();
+    expect(screen.getByText(/request will be cancelled\. This cannot be undone\./i)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(rejectBooking).not.toHaveBeenCalled();
+  });
+  /**
+   * THE 2026-08-17 WALK. The confirm step rendered only the body, and the body
+   * was present tense: "Sandy Demo's visit is marked Completed." next to a
+   * button also labelled "Mark Completed". The operator read that as the write
+   * having landed and the CTA having come back, pressed Back, and reported the
+   * booking as stuck on Scheduled. The walk's own network log is the proof:
+   * 20 minutes on /bookings, 74 requests, zero calls to transitionBookingStatus.
+   *
+   * The suite at the time was green, because every test clicked the trigger and
+   * then clicked the confirm and asserted the write. None of them looked at
+   * whether the two steps could be told apart. These three do.
+   */
+  it('renders the QUESTION on the confirm step, not just the consequence', async () => {
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    expect(screen.getByRole('heading', { name: 'Mark this visit completed?' })).toBeInTheDocument();
+  });
+  it('states the outcome in the future tense, never as something already done', async () => {
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    expect(screen.getByText(/will be marked Completed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/is marked Completed\./i)).toBeNull();
+  });
+  it('never labels the confirm button with the string the operator just pressed', async () => {
+    for (const [status, trigger] of [
+      ['SCHEDULED', 'Mark Completed'],
+      ['SCHEDULED', 'Cancel'],
+      ['PENDING', 'Approve'],
+      ['PENDING', 'Reject'],
+    ] as const) {
+      const { unmount } = render(<BookingStatusActions entry={entry({ status })} onDone={vi.fn()} />);
+      await userEvent.click(screen.getByRole('button', { name: trigger }));
+      // The trigger is gone, and nothing on the confirm step wears its name.
+      expect(screen.queryByRole('button', { name: trigger })).toBeNull();
+      unmount();
+    }
   });
   it('Back returns to the buttons without writing anything', async () => {
     render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
@@ -340,7 +377,7 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     const onDone = vi.fn();
     render(<BookingStatusActions entry={entry({ _id: 'ses-9', status: 'PENDING' })} onDone={onDone} />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Approve booking' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, approve it' }));
     expect(approveBooking).toHaveBeenCalledWith('ses-9');
     expect(onDone).toHaveBeenCalledOnce();
   });
@@ -348,7 +385,7 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     markBookingCompleted.mockResolvedValue(undefined);
     render(<BookingStatusActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onDone={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
-    await userEvent.click(screen.getByRole('button', { name: /^mark completed$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
     expect(markBookingCompleted).toHaveBeenCalledWith('ses-3', expect.any(String));
     const [, iso] = markBookingCompleted.mock.calls[0] as [string, string];
     expect(Number.isNaN(Date.parse(iso))).toBe(false);
@@ -358,9 +395,9 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     const onDone = vi.fn();
     render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={onDone} />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel visit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, cancel the visit' }));
     expect(await screen.findByText(/cancel failed: permission-denied/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cancel visit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Yes, cancel the visit' })).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
 });
