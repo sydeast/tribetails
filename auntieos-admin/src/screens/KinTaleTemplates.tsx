@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useCollection } from '../lib/firestore';
+import { type Async } from '../lib/async';
 import {
   KINTALE_TEMPLATES_QUERY,
   decodeKinTaleTemplate,
   pickInitialTemplate,
 } from '../api/kinTaleTemplates';
 import { saveKinTaleTemplate } from '../api/kinTaleTemplatesWrite';
+import { getBusinessSettings } from '../api/settings';
+import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { listChecklistBank, saveChecklistBankItem } from '../api/checklistBank';
 import {
   bankItemsForScope,
@@ -13,7 +16,12 @@ import {
   checklistItemFromBank,
   type ChecklistBankItem,
 } from '../lib/checklistBank';
-import { type ChecklistItem, type FieldCondition, type KinTaleTemplate } from '../lib/kinTale/model';
+import {
+  ConditionSource,
+  type ChecklistItem,
+  type FieldCondition,
+  type KinTaleTemplate,
+} from '../lib/kinTale/model';
 import {
   conditionSourceOptions,
   conditionSummary,
@@ -38,9 +46,9 @@ import {
   reorderChecklistItem,
   reorderMood,
   seedTemplateDraft,
-  serviceKeysToText,
+  serviceTypeChoices,
   sortedMoods,
-  textToServiceKeys,
+  toggleServiceTypeKey,
   updateChecklistItem,
   updateCondition,
   updateMood,
@@ -95,8 +103,14 @@ import './KinTaleTemplates.css';
  *
  * PORT NOTES, disclosed rather than silent:
  *  - Service types: the Compose editor has no service-type field; this port adds
- *    a comma-separated editor for `serviceTypeKeys` (per the task), the same CSV
- *    affordance `FormSchemaEditor` uses for select options.
+ *    a checkbox per KinCare type, read from `business_settings.serviceRates`
+ *    (`serviceOptionsFromRates`, the same catalog Schedule and the new-visit
+ *    dialog read; name + duration + price since #373). It used to be a
+ *    comma-separated free-text field, which mark 23 of the 2026-08-17 walk ruled
+ *    out for the whole screen: a known set of choices must be represented as
+ *    that set, not typed. A key the template already stores that the catalog no
+ *    longer recognises (renamed, retired, or the catalog failed to load) is
+ *    still shown, checked, and flagged rather than silently dropped.
  *  - Checklist item `key` is auto-managed (`item_N`), exactly as Compose does it;
  *    it is never a hand-typed field, so it round-trips without an input.
  *  - The shared "checklist bank" quick-add is WIRED (`listChecklistBank` /
@@ -124,6 +138,7 @@ export function KinTaleTemplates() {
   const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [banner, setBanner] = useState<ScreenBanner | null>(null);
   const [bank, setBank] = useState<readonly ChecklistBankItem[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<Async<ServiceOption[]>>({ status: 'loading' });
 
   // The shared bank, loaded once (the archive's `LaunchedEffect(Unit)`). A read
   // failure names itself in the banner rather than leaving an empty quick-add
@@ -140,6 +155,32 @@ export function KinTaleTemplates() {
         setBanner({
           tone: 'error',
           text: `Couldn't load the checklist bank: ${err instanceof Error ? err.message : 'unknown error'}`,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The operator's real KinCare types, read ONCE at screen level (same
+  // `business_settings.serviceRates` + `serviceDurations` Schedule and the
+  // new-visit dialog read) so the "Service types" checkboxes and the
+  // SERVICE_TYPE condition-value suggestions both draw from one catalog. A
+  // failed load is kept as its own error state rather than falling back to an
+  // empty list: the Basic Settings step reads it directly, so it can still
+  // show what the draft already has selected instead of silently losing them.
+  useEffect(() => {
+    let cancelled = false;
+    void getBusinessSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setServiceCatalog({ status: 'ready', data: serviceOptionsFromRates(s.serviceRates, s.serviceDurations) });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setServiceCatalog({
+          status: 'error',
+          message: err instanceof Error ? err.message : 'unknown error',
         });
       });
     return () => {
@@ -238,6 +279,7 @@ export function KinTaleTemplates() {
           isNew={editing.isNew}
           siblings={templates.map((t) => ({ _id: t._id, isDefault: t.isDefault }))}
           bank={bank}
+          serviceCatalog={serviceCatalog}
           onSaveToBank={handleSaveToBank}
           onSaved={handleSaved}
           onClose={() => setEditing(null)}
@@ -302,6 +344,8 @@ interface TemplateWizardProps {
   /** Every stored template's id + default flag, for exclusivity on save. */
   siblings: ReadonlyArray<{ _id: string; isDefault: boolean }>;
   bank: readonly ChecklistBankItem[];
+  /** The operator's KinCare types, for the Service types checkboxes and the SERVICE_TYPE condition suggestions. */
+  serviceCatalog: Async<ServiceOption[]>;
   /** Writes to the shared bank and refreshes it. Rejects on failure; this reports it. */
   onSaveToBank: (text: string, scope: string) => Promise<void>;
   onSaved: (templateId: string) => void;
@@ -326,6 +370,7 @@ function TemplateWizard({
   isNew,
   siblings,
   bank,
+  serviceCatalog,
   onSaveToBank,
   onSaved,
   onClose,
@@ -334,6 +379,7 @@ function TemplateWizard({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<ScreenBanner | null>(null);
+  const serviceTypeNames = serviceCatalog.status === 'ready' ? serviceCatalog.data.map((o) => o.name) : [];
   const [step, setStep] = useState('basic');
 
   // The editor's one validation rule, owned by the step that owns the field, so
@@ -397,7 +443,14 @@ function TemplateWizard({
       label: 'Basic settings',
       blurb: 'Name it, and say when it applies.',
       errors: nameErrors,
-      body: <BasicSettingsStep draft={draft} patch={patch} displacesDefault={displacesDefault} />,
+      body: (
+        <BasicSettingsStep
+          draft={draft}
+          patch={patch}
+          displacesDefault={displacesDefault}
+          serviceCatalog={serviceCatalog}
+        />
+      ),
     },
     {
       key: 'sections',
@@ -418,6 +471,7 @@ function TemplateWizard({
                 items={draft.checklistItems}
                 onItems={(items) => patch({ checklistItems: items })}
                 bank={bank}
+                serviceTypeNames={serviceTypeNames}
                 onSaveToBank={(text, scope) => void saveToBank(text, scope)}
               />
             ),
@@ -433,6 +487,7 @@ function TemplateWizard({
                 items={draft.checklistItems}
                 onItems={(items) => patch({ checklistItems: items })}
                 bank={bank}
+                serviceTypeNames={serviceTypeNames}
                 onSaveToBank={(text, scope) => void saveToBank(text, scope)}
               />
             ),
@@ -486,7 +541,12 @@ function BasicSettingsStep({
   draft,
   patch,
   displacesDefault,
-}: StepBodyProps & { displacesDefault: boolean }) {
+  serviceCatalog,
+}: StepBodyProps & { displacesDefault: boolean; serviceCatalog: Async<ServiceOption[]> }) {
+  const serviceTypesLabelId = useId();
+  const catalogNames = serviceCatalog.status === 'ready' ? serviceCatalog.data.map((o) => o.name) : [];
+  const choices = serviceTypeChoices(catalogNames, draft.serviceTypeKeys);
+
   return (
     <>
       <label className="ktt__field">
@@ -517,23 +577,56 @@ function BasicSettingsStep({
           className="ktt__textarea"
           value={draft.defaultEmailMessage}
           onChange={(e) => patch({ defaultEmailMessage: e.target.value })}
-          placeholder="The note that opens the recap."
+          placeholder="The note that opens the recap. Write what actually happened on this visit."
           rows={3}
         />
       </label>
+      <p className="ktt__note">
+        No default on purpose: a canned message here invited sending it unedited. Auntie writes it fresh
+        each time.
+      </p>
 
-      <label className="ktt__field">
-        <span className="ktt__label">Service types</span>
-        <input
-          type="text"
-          className="ktt__input"
-          value={serviceKeysToText(draft.serviceTypeKeys)}
-          onChange={(e) => patch({ serviceTypeKeys: textToServiceKeys(e.target.value) })}
-          placeholder="Comma separated, e.g. Dog Walk, Drop-in"
-        />
-        {/* Outside the accessible name on purpose (a hint inside <label> would join it). */}
-      </label>
-      <p className="ktt__note">Leave blank to let this template match any service type.</p>
+      <div className="ktt__field">
+        <span className="ktt__label" id={serviceTypesLabelId}>
+          Service types
+        </span>
+        {serviceCatalog.status === 'loading' && <p className="ktt__hint">Loading your KinCare types…</p>}
+        {serviceCatalog.status === 'error' && (
+          <p className="ktt__note ktt__note--error" role="alert">
+            Couldn&rsquo;t load your KinCare types ({serviceCatalog.message}). Anything already picked is
+            still shown below and can be unticked; picking a new type will work again once the load
+            recovers.
+          </p>
+        )}
+        {serviceCatalog.status === 'ready' && serviceCatalog.data.length === 0 && (
+          <p className="ktt__hint">No KinCare types configured yet. Add them in Settings first.</p>
+        )}
+        {choices.length > 0 && (
+          <div role="group" aria-labelledby={serviceTypesLabelId} className="ktt__serviceTypes">
+            {choices.map((choice) => (
+              <label
+                key={choice.name}
+                className={choice.stale ? 'ktt__chip ktt__chip--stale' : 'ktt__chip'}
+              >
+                <input
+                  type="checkbox"
+                  checked={choice.checked}
+                  onChange={(e) =>
+                    patch({
+                      serviceTypeKeys: toggleServiceTypeKey(draft.serviceTypeKeys, choice.name, e.target.checked),
+                    })
+                  }
+                />
+                <span>{choice.name}</span>
+                {choice.stale && (
+                  <span className="ktt__chip-flag">not in your current KinCare types</span>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="ktt__note">Leave every box unticked to let this template match any service type.</p>
 
       <ToggleRow
         label="Make default template"
@@ -629,6 +722,8 @@ interface ChecklistSectionProps {
   items: ChecklistItem[];
   onItems: (items: ChecklistItem[]) => void;
   bank: readonly ChecklistBankItem[];
+  /** The real KinCare type names, for the SERVICE_TYPE condition's value suggestions. */
+  serviceTypeNames: readonly string[];
   onSaveToBank: (text: string, scope: string) => void;
 }
 
@@ -637,7 +732,15 @@ interface ChecklistSectionProps {
  * wizard step body now, and the step already draws the heading and the blurb, so
  * a panel inside it would title the same section twice.
  */
-function ChecklistSection({ scope, addLabel, items, onItems, bank, onSaveToBank }: ChecklistSectionProps) {
+function ChecklistSection({
+  scope,
+  addLabel,
+  items,
+  onItems,
+  bank,
+  serviceTypeNames,
+  onSaveToBank,
+}: ChecklistSectionProps) {
   const rows = scope === 'PER_PET' ? perPetItems(items) : perVisitItems(items);
   return (
     <>
@@ -656,6 +759,7 @@ function ChecklistSection({ scope, addLabel, items, onItems, bank, onSaveToBank 
               isFirst={idx === 0}
               isLast={idx === rows.length - 1}
               onItems={onItems}
+              serviceTypeNames={serviceTypeNames}
               onSaveToBank={onSaveToBank}
             />
           ))}
@@ -717,10 +821,19 @@ interface ChecklistItemCardProps {
   isFirst: boolean;
   isLast: boolean;
   onItems: (items: ChecklistItem[]) => void;
+  serviceTypeNames: readonly string[];
   onSaveToBank: (text: string, scope: string) => void;
 }
 
-function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank }: ChecklistItemCardProps) {
+function ChecklistItemCard({
+  item,
+  items,
+  isFirst,
+  isLast,
+  onItems,
+  serviceTypeNames,
+  onSaveToBank,
+}: ChecklistItemCardProps) {
   const label = item.text.trim() || 'this item';
 
   function update(patch: Partial<ChecklistItem>) {
@@ -792,7 +905,11 @@ function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank
         />
       </div>
 
-      <ConditionsEditor conditions={item.conditions} onConditions={setConditions} />
+      <ConditionsEditor
+        conditions={item.conditions}
+        onConditions={setConditions}
+        serviceTypeNames={serviceTypeNames}
+      />
     </li>
   );
 }
@@ -802,9 +919,11 @@ function ChecklistItemCard({ item, items, isFirst, isLast, onItems, onSaveToBank
 interface ConditionsEditorProps {
   conditions: FieldCondition[];
   onConditions: (conditions: FieldCondition[]) => void;
+  /** The real KinCare type names, offered as suggestions on a SERVICE_TYPE condition's value. */
+  serviceTypeNames: readonly string[];
 }
 
-function ConditionsEditor({ conditions, onConditions }: ConditionsEditorProps) {
+function ConditionsEditor({ conditions, onConditions, serviceTypeNames }: ConditionsEditorProps) {
   return (
     <div className="ktt__conditions">
       <div className="ktt__conditions-head">
@@ -823,6 +942,7 @@ function ConditionsEditor({ conditions, onConditions }: ConditionsEditorProps) {
               condition={cond}
               onChange={(next) => onConditions(updateCondition(conditions, idx, next))}
               onRemove={() => onConditions(removeCondition(conditions, idx))}
+              serviceTypeNames={serviceTypeNames}
             />
           ))}
         </ul>
@@ -835,12 +955,15 @@ interface ConditionRowProps {
   condition: FieldCondition;
   onChange: (next: FieldCondition) => void;
   onRemove: () => void;
+  serviceTypeNames: readonly string[];
 }
 
-function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
+function ConditionRow({ condition, onChange, onRemove, serviceTypeNames }: ConditionRowProps) {
   const catalog = attributeCatalogForSource(condition.source);
   const showAttribute = conditionUsesAttributeKey(condition.source);
   const showValue = conditionUsesValueInput(condition.op);
+  const isServiceType = condition.source === ConditionSource.SERVICE_TYPE;
+  const serviceTypeListId = useId();
 
   // Preserve a forward-compatible unknown source/op the current build does not
   // model, rather than silently snapping the <select> to a known value on render.
@@ -916,7 +1039,19 @@ function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
             value={condition.value}
             onChange={(e) => onChange({ ...condition, value: e.target.value })}
             placeholder={valuePlaceholder(condition.source)}
+            // Suggestions only, never a hard constraint: CONTAINS matches a
+            // substring, and a session may still carry a retired service-type
+            // name, so this stays free text with the known catalog offered as
+            // a `<datalist>` rather than a `<select>`.
+            list={isServiceType && serviceTypeNames.length > 0 ? serviceTypeListId : undefined}
           />
+          {isServiceType && serviceTypeNames.length > 0 && (
+            <datalist id={serviceTypeListId}>
+              {serviceTypeNames.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          )}
         </label>
       )}
 

@@ -77,6 +77,41 @@
   margin-top: var(--space-4);
 }
 
+.ktt__note--error {
+  color: var(--color-error);
+}
+
+/* ── service-type checkboxes ─────────────────────────────────────────────── */
+/*
+ * A checkbox per real KinCare type, replacing the old comma-separated text
+ * box (mark 23, 2026-08-17 walk: a known set of choices must be represented
+ * as that set). Same chip shape `NewBookingWizardSteps`' Kin picker uses for
+ * the same kind of "pick some from a known list" control.
+ */
+.ktt__serviceTypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.ktt__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.ktt__chip--stale {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+.ktt__chip-flag {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}
+
 /* ── template picker ─────────────────────────────────────────────────────── */
 
 .ktt__picker {

@@ -245,19 +245,60 @@ export function sortedMoods(moods: readonly MoodOption[]): MoodOption[] {
   return [...moods].sort((a, b) => a.order - b.order);
 }
 
-// ── service-type keys (comma-separated editing) ──────────────────────────────
+// ── service-type keys (catalog-backed picking, not free text) ────────────────
+//
+// `serviceTypeKeys` used to be edited as a hand-typed comma-separated field: a
+// mistype silently created a key that matched nothing, or duplicated an
+// existing one under a second spelling. Mark 23 of the 2026-08-17 walk ruled
+// this out for the whole screen: "open text boxes in places where WE KNOW
+// there can only be one of a few choices should represent that knowledge."
+// The KinCare types (`business_settings.serviceRates`, name + duration + price
+// since #373) are exactly that known set, so the editor now offers a checkbox
+// per catalog name instead of a text box.
 
-/** The service-type keys as a single comma-separated field value. */
-export function serviceKeysToText(keys: readonly string[]): string {
-  return keys.join(', ');
+/** One row in the service-type checkbox list. */
+export interface ServiceTypeChoice {
+  name: string;
+  checked: boolean;
+  /**
+   * True when this name is on the template but NOT in the current KinCare
+   * catalog (renamed, retired, or the catalog failed to load). Rendered
+   * checked and flagged rather than dropped, so the operator sees exactly
+   * what is stored and can correct or remove it deliberately, instead of the
+   * value silently vanishing off the template on save.
+   */
+  stale: boolean;
 }
 
-/** Parse the comma-separated field back into a trimmed, non-empty key list. */
-export function textToServiceKeys(text: string): string[] {
-  return text
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+/**
+ * Every catalog name, checked against what the template already stores, PLUS
+ * any stored name the catalog does not recognise (appended after, flagged
+ * stale). Every stored key is represented by exactly one row: nothing the
+ * template already has is ever silently omitted from the list.
+ */
+export function serviceTypeChoices(
+  catalogNames: readonly string[],
+  selectedKeys: readonly string[],
+): ServiceTypeChoice[] {
+  const selected = new Set(selectedKeys);
+  const catalog = new Set(catalogNames);
+  const known = catalogNames.map((name) => ({ name, checked: selected.has(name), stale: false }));
+  const stale = selectedKeys
+    .filter((name) => !catalog.has(name))
+    .map((name) => ({ name, checked: true, stale: true }));
+  return [...known, ...stale];
+}
+
+/** Ticking/unticking one name: add it once, or drop every occurrence. */
+export function toggleServiceTypeKey(
+  selectedKeys: readonly string[],
+  name: string,
+  checked: boolean,
+): string[] {
+  if (checked) {
+    return selectedKeys.includes(name) ? [...selectedKeys] : [...selectedKeys, name];
+  }
+  return selectedKeys.filter((k) => k !== name);
 }
 
 // ── new-template drafts ──────────────────────────────────────────────────────

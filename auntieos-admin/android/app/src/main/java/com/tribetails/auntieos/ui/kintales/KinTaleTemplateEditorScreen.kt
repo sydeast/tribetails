@@ -162,10 +162,11 @@ private fun BasicSettingsSection(
             )
         }
 
-        LabeledField(label = "Default Email Message", helper = "This message will be sent to clients when the report card is emailed.") {
+        LabeledField(label = "Default Email Message", helper = "No default on purpose: the message is the story of the visit, and Auntie writes it fresh each time.") {
             AuntieField(
                 value = state.template.defaultEmailMessage,
                 onValueChange = viewModel::updateDefaultEmailMessage,
+                placeholder = "The note that opens the recap.",
                 singleLine = false,
                 minLines = 2,
                 modifier = Modifier

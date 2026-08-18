@@ -63,7 +63,10 @@ class KinTaleTemplateEditorViewModel(
                 KinTaleTemplate(
                     name = "New Template",
                     description = "",
-                    defaultEmailMessage = "I had a wonderful time caring for your furry friends! Here's how they did today.",
+                    // Blank, not the old canned line: the message is the story of
+                    // the visit, and a default invited sending it unedited (2026-08-17
+                    // walk mark 23). Matches the KinTaleTemplate data-class default.
+                    defaultEmailMessage = "",
                     isDefault = all.none { it.isDefault },
                     moodOptions = DefaultKinTaleTemplate.template.moodOptions
                 )
