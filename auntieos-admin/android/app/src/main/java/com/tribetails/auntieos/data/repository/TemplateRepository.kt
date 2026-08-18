@@ -36,6 +36,28 @@ class TemplateRepository(
         val active: Boolean,
     )
 
+    /**
+     * One row of the routing table, from listCatalogKeys.
+     *
+     * [defaultTemplateId] is what dispatch falls back to with no binding, which for
+     * every catalog row is the key itself: `lib/sendFromTemplate.ts` looks for
+     * `notificationTemplateBindings/{key}` and, finding nothing, reads
+     * `emailTemplates/{key}`. [resolvedTemplateId] is what it sends today. When the
+     * two differ, a binding is overriding the default.
+     */
+    data class CatalogKey(
+        val key: String,
+        val label: String,
+        val category: String?,
+        val audience: String?,
+        /** 'catalog', 'direct-send', or 'legacy'. */
+        val source: String,
+        val defaultTemplateId: String,
+        val hasDefaultTemplate: Boolean,
+        val bound: Boolean,
+        val resolvedTemplateId: String,
+    )
+
     suspend fun listTemplates(): Result<List<EmailTemplate>> = runCatching {
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listTemplates").call(emptyMap<String, Any>()).await().data as? Map<String, Any?>
@@ -137,34 +159,75 @@ class TemplateRepository(
     }.onFailure { AuntieLog.e("TemplateRepository.unassignTemplate failed", it) }
 
     /**
-     * Every catalog key an admin can bind, via the read-only listCatalogKeys
-     * callable. Optional case-insensitive substring filter. Comparing these against
-     * the bound catalog keys yields the "unbound" set surfaced in Template Assignment.
+     * The routing table: every catalog key, and what it sends right now.
      *
-     * Until issue #383 was fixed the callable returned the keys already BOUND, a read
-     * of the same collection this diff subtracts, so the unbound set was always empty
-     * and the panel below had never once rendered. The callable now returns the
-     * notification catalog plus the direct-send keys, and it still carries `keys`
-     * alongside its richer `rows`, which is why this decode is unchanged.
+     * `resolvedTemplateId` is the server's own answer, computed the same way
+     * `resolveTemplateId` computes it at send time, including the rule that an
+     * INACTIVE binding falls back to the name-matched default rather than sending
+     * nothing. Comparing it with [CatalogKey.defaultTemplateId] is how a client
+     * tells an override from a default without re-implementing the rule.
+     *
+     * Optional case-insensitive substring filter on key or label.
      */
-    suspend fun listCatalogKeys(filter: String? = null): Result<List<String>> = runCatching {
+    suspend fun listCatalogKeys(filter: String? = null): Result<List<CatalogKey>> = runCatching {
         val payload = buildMap<String, Any> {
             filter?.takeIf { it.isNotBlank() }?.let { put("filter", it) }
         }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listCatalogKeys").call(payload).await().data as? Map<String, Any?>
             ?: error("listCatalogKeys: non-map payload")
-        (raw["keys"] as? List<*>).orEmpty().mapNotNull { it as? String }
+        (raw["rows"] as? List<*>).orEmpty().mapNotNull { item ->
+            val m = item as? Map<*, *> ?: return@mapNotNull null
+            val key = m["key"] as? String ?: return@mapNotNull null
+            // A row missing defaultTemplateId would make every key look overridden,
+            // so it falls back to the key, which is what the naming convention says.
+            val default = m["defaultTemplateId"] as? String ?: key
+            CatalogKey(
+                key = key,
+                label = m["label"] as? String ?: key,
+                category = m["category"] as? String,
+                audience = m["audience"] as? String,
+                source = m["source"] as? String ?: "catalog",
+                defaultTemplateId = default,
+                hasDefaultTemplate = m["hasDefaultTemplate"] as? Boolean ?: false,
+                bound = m["bound"] as? Boolean ?: false,
+                resolvedTemplateId = m["resolvedTemplateId"] as? String ?: default,
+            )
+        }
     }.onFailure { AuntieLog.e("TemplateRepository.listCatalogKeys failed", it) }
 }
 
 /**
- * Pure: catalog keys that exist in the dispatcher's catalog but have no binding doc.
- * [catalogKeys] is the listCatalogKeys result; [boundKeys] is the set of catalogKey
- * values from listBindings. Returns the unbound keys, sorted, with blanks dropped.
- * Pure; unit-tested. Mirrors the web unbound-keys diff.
+ * Pure: whether a binding is actually steering [row] right now.
+ *
+ * Read off the server's resolution rather than recomputed: `resolveTemplateId`
+ * falls back to the default when a binding is missing OR paused, and
+ * `resolvedTemplateId` already reflects that. Mirrors the web helper of the same name.
  */
-internal fun unboundCatalogKeys(catalogKeys: List<String>, boundKeys: Collection<String>): List<String> {
-    val bound = boundKeys.filter { it.isNotBlank() }.toSet()
-    return catalogKeys.filter { it.isNotBlank() && it !in bound }.distinct().sorted()
+internal fun isOverridden(row: TemplateRepository.CatalogKey): Boolean =
+    row.resolvedTemplateId != row.defaultTemplateId
+
+/**
+ * Pure: where the template this key sends came from, in words. Mirrors the web copy
+ * exactly, so the two screens cannot drift into telling different stories.
+ */
+internal fun routingSource(row: TemplateRepository.CatalogKey): String = when {
+    isOverridden(row) -> "override, assigned by an admin"
+    row.bound -> "binding is paused, so the name-matched default applies"
+    else -> "default, matched by name"
 }
+
+/**
+ * Pure: whether the template this key resolves to is actually missing.
+ *
+ * For a name-matched default the server already checked ([CatalogKey.hasDefaultTemplate]).
+ * For an override the check is against the loaded bank, and only when the bank loaded:
+ * an unavailable listTemplates must not paint every override as broken.
+ */
+internal fun resolvedTemplateMissing(
+    row: TemplateRepository.CatalogKey,
+    bankTemplateIds: Set<String>,
+    bankLoaded: Boolean,
+): Boolean =
+    if (isOverridden(row)) bankLoaded && row.resolvedTemplateId !in bankTemplateIds
+    else !row.hasDefaultTemplate

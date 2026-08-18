@@ -29,24 +29,62 @@ function keyOptionLabel(row: CatalogKeyRow): string {
 }
 
 /**
+ * Whether a binding is actually steering this key right now.
+ *
+ * Read off the server's own answer rather than recomputed here: `resolveTemplateId`
+ * falls back to the default when a binding is missing OR inactive, and
+ * `resolvedTemplateId` already reflects that. Comparing it with `defaultTemplateId`
+ * is the whole test, and it keeps the resolution rule in one place, on the server.
+ */
+function isOverridden(row: CatalogKeyRow): boolean {
+  return row.resolvedTemplateId !== row.defaultTemplateId;
+}
+
+/** Where the template this key sends came from, in words. */
+function routingSource(row: CatalogKeyRow): string {
+  if (isOverridden(row)) return 'override, assigned by an admin';
+  if (row.bound) return 'binding is paused, so the name-matched default applies';
+  return 'default, matched by name';
+}
+
+/**
  * Template ASSIGNMENT manager (AO-56), ported from `TemplateAssignmentScreen.kt`:
  * the surface Templates.tsx's own doc comment named as "a wholly separate
- * screen ... not this bank list at all". Binds a notification catalog key to an
- * email template so dispatch knows which template to send.
+ * screen ... not this bank list at all".
  *
- * Reads `listTemplateBindings` (the current bindings), `listTemplates` (the
- * bank, for the picker and for showing each binding's template TITLE, not just
- * its id), and `listCatalogKeys` (every key that can be bound). Writes via
- * `assignTemplate` (upsert a binding) and `unassignTemplate` (remove one).
- * Unassign is the half AO-56 was missing: without it a bound template can never
- * be deleted, because `deleteTemplate` refuses while a binding still points at it.
+ * WHAT THIS SCREEN IS ACTUALLY SHOWING, because the old version got it wrong in a
+ * way that was technically true (issue #384). It used to list the
+ * `notificationTemplateBindings` collection under the heading "Current bindings",
+ * and on the 2026-08-17 walk that collection was empty, so the screen said the
+ * business had no template routing at all. The operator knew better: "current
+ * bindings being empty is false as some templates are already being sent out."
  *
- * The catalog key is picked, never typed (issues #382/#383). It was a free-text
- * box because `listCatalogKeys` returned only the keys already bound, so there
- * was no list to pick from; a misspelling wrote a binding that dispatch would
- * never read and reported success. The picker is the visible half of that fix;
- * the callable now refuses an unreal key outright, and this screen repeats its
- * words when it does.
+ * They were right, and the callable was too. Routing happens by NAME.
+ * `lib/sendFromTemplate.ts` looks for `notificationTemplateBindings/{catalogKey}`
+ * and, finding nothing, falls through to `emailTemplates/{catalogKey}`. All 44
+ * catalog rows have `templates.email === key`, so every send today takes that
+ * fallback. Bindings are an OVERRIDE layer on top of a system that already works,
+ * and an empty override layer is not an empty routing table.
+ *
+ * So the second panel is the routing table, not the collection: every catalog key,
+ * the template that renders it right now, and which of the two put it there. A key
+ * whose default template document does not exist is called out loudly, because
+ * that key throws `email template missing` on its next send.
+ *
+ * Two limits the screen states rather than implies:
+ *  - An override applies to EMAIL only. `senders/smsChannel.ts` and
+ *    `senders/pushChannel.ts` read the template ids frozen in the catalog and never
+ *    call `resolveTemplateId`.
+ *  - The binding's `audience` field is written and read back, and no sender consults
+ *    it. The control is kept because the stored value is the operator's, but it is
+ *    labelled for what it is.
+ *
+ * Reads `listCatalogKeys` (the routing table), `listTemplateBindings` (the override
+ * layer, for the editor's audience/trigger/active state) and `listTemplates` (the
+ * bank, for titles). Writes via `assignTemplate` and `unassignTemplate`.
+ *
+ * The catalog key is picked, never typed (issues #382/#383): a misspelling used to
+ * write a binding dispatch would never read and report success.
  *
  * Fail-loud throughout: every write names its callable on rejection, buttons
  * disable while a call is in flight, and Unassign is confirm-gated (it changes
@@ -132,7 +170,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   useEffect(() => loadTemplates(), [loadTemplates]);
   useEffect(() => loadCatalog(), [loadCatalog]);
 
-  // templateId -> title, so a binding renders "Booking confirmed", not "tmpl_x".
+  // templateId -> title, so a row renders "Booking confirmed", not "tmpl_x".
   const titleById = useMemo(() => {
     const map = new Map<string, string>();
     if (templates.status === 'ready') {
@@ -141,13 +179,36 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     return map;
   }, [templates]);
 
+  const bindingByKey = useMemo(() => {
+    const map = new Map<string, TemplateBinding>();
+    if (bindings.status === 'ready') {
+      for (const b of bindings.data) map.set(b.catalogKey, b);
+    }
+    return map;
+  }, [bindings]);
+
   const templateOptions = templates.status === 'ready' ? templates.data : [];
   const catalogRows = catalog.status === 'ready' ? catalog.data : [];
   // Only real keys are offered for a NEW binding. A legacy key still appears
   // when you open the binding that already uses it, so nothing goes invisible.
   const keyOptions = useMemo(() => bindableKeys(catalogRows), [catalogRows]);
   const editingRow = catalogRows.find((r) => r.key === editingKey) ?? null;
-  const unboundCount = keyOptions.filter((r) => !r.bound).length;
+  const overrideCount = catalogRows.filter(isOverridden).length;
+
+  /**
+   * Whether the template this key resolves to is actually missing.
+   *
+   * For a name-matched default the server already checked (`hasDefaultTemplate`).
+   * For an override the check is against the loaded bank, so it is only made when
+   * the bank loaded: an unavailable `listTemplates` must not paint every override
+   * as broken.
+   */
+  function resolvedTemplateMissing(row: CatalogKeyRow): boolean {
+    if (!isOverridden(row)) return !row.hasDefaultTemplate;
+    return templates.status === 'ready' && !titleById.has(row.resolvedTemplateId);
+  }
+
+  const brokenCount = catalogRows.filter(resolvedTemplateMissing).length;
 
   function resetForm() {
     setEditingKey(null);
@@ -156,15 +217,21 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     setAudience('');
   }
 
-  function startChange(binding: TemplateBinding) {
+  /**
+   * Open the editor on one catalog key. An unbound key has no binding doc yet, so
+   * the form opens seeded with the template it resolves to today: saving then
+   * writes the first override for that key rather than starting from blank.
+   */
+  function startChange(row: CatalogKeyRow) {
     setActionError(null);
     setNotice(null);
-    setEditingKey(binding.catalogKey);
-    setCatalogKey(binding.catalogKey);
-    setTemplateId(binding.templateId);
+    const existing = bindingByKey.get(row.key);
+    setEditingKey(row.key);
+    setCatalogKey(row.key);
+    setTemplateId(existing?.templateId ?? row.resolvedTemplateId);
     // Re-send the current audience so a re-assign doesn't null it (assignTemplate
     // merges `audience ?? null`); '' means the binding had none.
-    setAudience(binding.audience ?? '');
+    setAudience(existing?.audience ?? '');
   }
 
   const canAssign = catalogKey !== '' && templateId !== '' && !saving;
@@ -211,7 +278,11 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       const res = await unassignTemplate(key);
       setUnassigning(false);
       setPendingUnassign(null);
-      setNotice(res.removed ? `Unassigned ${key}.` : `${key} was already unassigned.`);
+      setNotice(
+        res.removed
+          ? `Removed the override on ${key}. It goes back to the template named after the key.`
+          : `${key} had no override to remove.`,
+      );
       // If the form was editing the key just removed, drop back to a blank assign.
       if (editingKey === key) resetForm();
       loadBindings();
@@ -227,8 +298,8 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       <DenScreenHeading
         kicker="The Den · Admin"
         title="Template"
-        accentTail="Assignments"
-        subtitle="Bind a notification catalog key to the email template dispatch sends for it."
+        accentTail="Routing"
+        subtitle="Every catalog key already sends a template. A binding is an override on top of that."
         trailing={<GhostButton label="Back to Template Bank" onClick={onClose} />}
       />
 
@@ -244,11 +315,11 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       )}
 
       <DenPanel
-        title={editingKey ? `Change binding: ${editingKey}` : 'Assign a template'}
+        title={editingKey ? `Override: ${editingKey}` : 'Override a catalog key'}
         subtitle={
           editingKey
-            ? 'Pick the template this catalog key should dispatch.'
-            : 'Pick the catalog key, then the template dispatch should send for it.'
+            ? 'Pick the template this catalog key should send instead of its name-matched default.'
+            : 'Pick a catalog key, then the template it should send instead of its name-matched default.'
         }
       >
         {templates.status === 'error' && (
@@ -256,9 +327,12 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
             Template list unavailable, so the picker is empty: {templates.message}
           </p>
         )}
+        {/* The routing table below owns this failure's message and its retry, so
+            this says only what it costs HERE and does not repeat the detail. */}
         {catalog.status === 'error' && (
           <p className="tassign__templates-error" role="alert">
-            Catalog keys unavailable, so there is nothing to pick from: {catalog.message}
+            Catalog keys did not load, so there is nothing to pick from. The routing table below
+            carries the error and a retry.
           </p>
         )}
         <div className="tassign__form">
@@ -310,7 +384,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           </label>
 
           <label className="tassign__field">
-            <span className="tassign__label">Audience (optional)</span>
+            <span className="tassign__label">Audience (stored, unused)</span>
             <select
               className="tassign__input"
               value={audience}
@@ -329,82 +403,126 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           <div className="tassign__form-actions">
             {editingKey && <GhostButton label="Cancel" onClick={resetForm} disabled={saving} />}
             <PrimaryButton
-              label={saving ? 'Assigning…' : editingKey ? 'Update binding' : 'Assign'}
+              label={saving ? 'Saving…' : editingKey ? 'Save override' : 'Save'}
               onClick={() => void handleAssign()}
               disabled={!canAssign}
               busy={saving}
             />
           </div>
         </div>
-        {catalog.status === 'ready' && (
-          <p className="tassign__hint">
-            {keyOptions.length} catalog keys, {unboundCount} with no binding yet. An unbound key
-            still sends: dispatch falls back to the template named after the key.
-          </p>
-        )}
+        <p className="tassign__hint">
+          An override changes the EMAIL template only. SMS and push read the template ids frozen
+          in the catalog and never look at a binding. Audience is written to the binding and no
+          sender reads it, so it records intent and changes nothing.
+        </p>
       </DenPanel>
 
-      <DenPanel title="Current bindings" subtitle="Every catalog key that dispatch currently maps to a template.">
+      <DenPanel
+        title="What each key sends today"
+        subtitle="Every catalog key, the template that renders it right now, and where that choice came from."
+      >
+        {/* The table itself comes from listCatalogKeys, so a bindings failure does
+            not make it wrong. It does cost the audience line and the editor's
+            starting state, and staying quiet about that would be the same kind of
+            true-but-misleading this screen exists to stop. */}
+        {bindings.status === 'error' && (
+          <p className="tassign__templates-error" role="alert">
+            {bindings.message}. Each key's resolved template below is still correct, but the
+            audience recorded on an override is not shown and the editor opens without it.
+          </p>
+        )}
         <AsyncRegion
-          state={bindings}
-          what="bindings"
+          state={catalog}
+          what="the routing table"
           isEmpty={(rows) => rows.length === 0}
-          loading={<p className="tassign__hint">Loading bindings…</p>}
-          empty={<EmptyHint>No catalog keys are bound yet. Assign one above.</EmptyHint>}
+          loading={<p className="tassign__hint">Loading the routing table…</p>}
+          empty={
+            <EmptyHint>
+              listCatalogKeys returned no keys. The catalog is compiled into the backend, so this
+              should not be possible; treat it as a broken deploy rather than an empty setup.
+            </EmptyHint>
+          }
         >
           {(rows) => (
-            <ul className="tassign__list">
-              {rows.map((b) => (
-                <li key={b.catalogKey} className="tassign__row">
-                  <div className="tassign__row-main">
-                    <code className="tassign__row-key">{b.catalogKey}</code>
-                    <span className="tassign__row-template">
-                      {titleById.get(b.templateId) ?? b.templateId ?? '(no template)'}
-                    </span>
-                    <span className="tassign__row-meta">
-                      {b.audience ? `audience: ${b.audience}` : 'no audience'}
-                      {' · '}
-                      <span
-                        className={
-                          b.active ? 'tassign__badge tassign__badge--on' : 'tassign__badge tassign__badge--off'
-                        }
-                      >
-                        {b.active ? 'active' : 'inactive'}
-                      </span>
-                    </span>
-                  </div>
+            <>
+              <p className="tassign__hint">
+                {rows.length} keys route today. {overrideCount} of them through an override, the
+                rest by name.
+                {brokenCount > 0 &&
+                  ` ${brokenCount === 1 ? '1 key resolves' : `${brokenCount} keys resolve`} to a template document that does not exist and will throw on the next send.`}
+              </p>
+              <ul className="tassign__list">
+                {rows.map((row) => {
+                  const binding = bindingByKey.get(row.key);
+                  const missing = resolvedTemplateMissing(row);
+                  return (
+                    <li key={row.key} className="tassign__row">
+                      <div className="tassign__row-main">
+                        <code className="tassign__row-key">{row.key}</code>
+                        <span className="tassign__row-template">
+                          sends {titleById.get(row.resolvedTemplateId) ?? row.resolvedTemplateId}
+                        </span>
+                        <span className="tassign__row-meta">
+                          <span
+                            className={
+                              isOverridden(row)
+                                ? 'tassign__badge tassign__badge--on'
+                                : 'tassign__badge tassign__badge--off'
+                            }
+                          >
+                            {routingSource(row)}
+                          </span>
+                          {binding?.audience ? ` · audience: ${binding.audience}` : ''}
+                        </span>
+                        {missing && (
+                          <span className="tassign__row-broken" role="alert">
+                            No emailTemplates/{row.resolvedTemplateId} document. This key throws
+                            "email template missing" on its next send.
+                          </span>
+                        )}
+                      </div>
 
-                  {pendingUnassign === b.catalogKey ? (
-                    <div className="tassign__confirm">
-                      <span className="tassign__confirm-copy">Unassign this key?</span>
-                      <GhostButton
-                        label="Cancel"
-                        onClick={() => setPendingUnassign(null)}
-                        disabled={unassigning}
-                      />
-                      <PrimaryButton
-                        label={unassigning ? 'Unassigning…' : 'Unassign'}
-                        onClick={() => void confirmUnassign(b.catalogKey)}
-                        disabled={unassigning}
-                        busy={unassigning}
-                      />
-                    </div>
-                  ) : (
-                    <div className="tassign__row-actions">
-                      <GhostButton label="Change" onClick={() => startChange(b)} />
-                      <GhostButton
-                        label="Unassign"
-                        onClick={() => {
-                          setActionError(null);
-                          setNotice(null);
-                          setPendingUnassign(b.catalogKey);
-                        }}
-                      />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
+                      {pendingUnassign === row.key ? (
+                        <div className="tassign__confirm">
+                          <span className="tassign__confirm-copy">
+                            Drop this override and go back to the name-matched default?
+                          </span>
+                          <GhostButton
+                            label="Cancel"
+                            onClick={() => setPendingUnassign(null)}
+                            disabled={unassigning}
+                          />
+                          <PrimaryButton
+                            label={unassigning ? 'Removing…' : 'Remove override'}
+                            onClick={() => void confirmUnassign(row.key)}
+                            disabled={unassigning}
+                            busy={unassigning}
+                          />
+                        </div>
+                      ) : (
+                        <div className="tassign__row-actions">
+                          <GhostButton
+                            label={row.bound ? 'Change override' : 'Override'}
+                            onClick={() => startChange(row)}
+                          />
+                          {/* Only a key with a binding doc has anything to remove. */}
+                          {row.bound && (
+                            <GhostButton
+                              label="Remove override"
+                              onClick={() => {
+                                setActionError(null);
+                                setNotice(null);
+                                setPendingUnassign(row.key);
+                              }}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
         </AsyncRegion>
       </DenPanel>

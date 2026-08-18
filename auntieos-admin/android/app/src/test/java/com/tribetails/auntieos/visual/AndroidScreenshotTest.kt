@@ -440,11 +440,12 @@ class AndroidScreenshotTest {
         val repo = mockk<TemplateRepository>(relaxed = true)
         coEvery { repo.listBindings() } returns Result.success(AndroidDemoFixtures.templateBindings)
         coEvery { repo.listTemplates() } returns Result.success(AndroidDemoFixtures.emailTemplates)
-        // Stage 2 tail: the screen now reads the dispatcher catalog via listCatalogKeys
-        // and renders the unbound-catalog hint from the diff. Feed a deterministic catalog
-        // (two bound + one unbound key) so the hint panel renders the same every run.
+        // The screen IS the routing table now (#384), so the catalog rows are what it
+        // renders. Deterministic and covering every state the row can be in: one
+        // override, one paused binding that falls back to its name-matched default,
+        // one key routed purely by name, and one whose template document is missing.
         coEvery { repo.listCatalogKeys(any()) } returns Result.success(
-            listOf("kincare.booking.confirm", "billing.invoice.sent", "kincare.tale.published"),
+            AndroidDemoFixtures.catalogRoutingRows,
         )
         compose.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {
