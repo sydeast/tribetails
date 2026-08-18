@@ -11,7 +11,6 @@ import {
   BookingBehaviorSection,
   MyTribePortalSection,
   BUSINESS_PROFILE_FIELDS,
-  WEATHER_AREA_FIELDS,
   PAYMENT_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
@@ -67,10 +66,8 @@ import './Settings.css';
 type SectionId =
   | 'businessProfile'
   | 'businessHours'
-  | 'weather'
   | 'timeOff'
   | 'kinCare'
-  | 'booking'
   | 'payments'
   | 'branding'
   | 'mytribe'
@@ -83,10 +80,8 @@ type SectionId =
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'businessProfile', label: 'Business profile' },
   { id: 'businessHours', label: 'Business hours' },
-  { id: 'weather', label: 'Weather area' },
   { id: 'timeOff', label: 'Time off' },
   { id: 'kinCare', label: 'KinCare types' },
-  { id: 'booking', label: 'Booking behavior' },
   { id: 'payments', label: 'Payments' },
   { id: 'branding', label: 'Branding' },
   { id: 'mytribe', label: 'MyTribe portal' },
@@ -274,34 +269,36 @@ function renderDataSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
+    // THREE PANELS, ONE TAB. Weather area was one text box and Booking
+    // behavior was two toggles, each behind its own nav entry. Mark 16 of the
+    // 2026-08-17 walk: "move this and weather area to related setting pages. it
+    // does not need to be its own page with so little fields", and the operator
+    // named Business profile as where they go.
+    //
+    // Booking behavior stays its own PANEL rather than being folded into the
+    // fields above, because the two save differently: the text fields stage a
+    // draft behind a Save button, the toggles write on every flip. Merging them
+    // into one panel would put a Save button next to controls that have already
+    // saved.
     case 'businessProfile':
       return (
-        <TextFieldsSection
-          title="Business profile"
-          subtitle="Who kinfolk and invoices contact."
-          data={data}
-          fields={BUSINESS_PROFILE_FIELDS}
-          onSave={persist}
-        />
+        <>
+          <TextFieldsSection
+            title="Business profile"
+            subtitle="Who kinfolk and invoices contact, and the area the Home weather widgets cover."
+            data={data}
+            fields={BUSINESS_PROFILE_FIELDS}
+            onSave={persist}
+          />
+          <BookingBehaviorSection data={data} onSave={persist} />
+        </>
       );
     case 'businessHours':
       return <BusinessHoursEditor data={data} onSave={persist} />;
-    case 'weather':
-      return (
-        <TextFieldsSection
-          title="Weather area"
-          subtitle="Coverage area for the Home weather widgets. A city, metro, or ZIP (e.g. &ldquo;Austin, TX&rdquo;), not a street address."
-          data={data}
-          fields={WEATHER_AREA_FIELDS}
-          onSave={persist}
-        />
-      );
     case 'timeOff':
       return <TimeOffEditor data={data} onSave={persist} />;
     case 'kinCare':
       return <KinCareRatesEditor data={data} onSave={persist} />;
-    case 'booking':
-      return <BookingBehaviorSection data={data} onSave={persist} />;
     case 'payments':
       return (
         <TextFieldsSection
