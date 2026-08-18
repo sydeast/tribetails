@@ -82,7 +82,7 @@ export function CoveragePackageBuilder() {
         kicker="Care Ops · Pricing"
         title="Coverage"
         accentTail="package builder."
-        subtitle="Set your visit menu and this client's rules, then build packages — mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day."
+        subtitle="Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. Your saved visit menu is at the foot of the screen."
       />
 
       <AsyncRegion
@@ -485,52 +485,33 @@ function Builder({ initial, onSaved }: BuilderProps) {
         </Banner>
       ) : null}
 
-      {/* Visit menu */}
+      {/* Coverage window (dates) */}
       <DenPanel
-        title="Visit menu"
-        subtitle="Your service lengths, prices, and type. Overnights price as a window; visits are per-drop-in."
-        trailing={<GhostButton label="Restore defaults" onClick={restoreDefaults} />}
+        title="Coverage window"
+        subtitle="The stay's dates. Packages price across this range; not saved with the menu."
+        trailing={hasQuote ? <GhostButton label="Start new quote" onClick={startNewQuote} /> : undefined}
         className="cpb__noprint"
       >
-        <ul className="cpb__list">
-          {durations.map((d) => (
-            <li key={d.id} className="cpb__durationRow">
-              <input className="cpb__input cpb__input--grow" aria-label="Service name" value={d.label} onChange={(e) => updateDuration(d.id, 'label', e.target.value)} />
-              <span className="cpb__unitField">
-                <input className="cpb__input cpb__input--num" type="number" min="1" aria-label="Length in minutes" value={d.minutes} onChange={(e) => updateDuration(d.id, 'minutes', e.target.value)} />
-                <span className="cpb__unit">min</span>
-              </span>
-              <span className="cpb__unitField">
-                <span className="cpb__unit cpb__unit--lead">$</span>
-                <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" aria-label="Price" value={d.price} onChange={(e) => updateDuration(d.id, 'price', e.target.value)} />
-              </span>
-              <select className="cpb__input cpb__kindSelect" aria-label="Type" value={d.kind} onChange={(e) => updateDuration(d.id, 'kind', e.target.value)}>
-                <option value="visit">Visit</option>
-                <option value="overnight">Overnight</option>
-              </select>
-              <IconButton icon={<TrashGlyph />} label={`Remove ${d.label}`} destructive onClick={() => removeDuration(d.id)} />
-            </li>
-          ))}
-        </ul>
-        <div className="cpb__addRow">
-          <input className="cpb__input cpb__input--grow" placeholder="New service name" value={newDuration.label} onChange={(e) => setNewDuration({ ...newDuration, label: e.target.value })} />
-          <span className="cpb__unitField">
-            <input className="cpb__input cpb__input--num" type="number" min="1" placeholder="min" aria-label="New length" value={newDuration.minutes} onChange={(e) => setNewDuration({ ...newDuration, minutes: e.target.value })} />
-            <span className="cpb__unit">min</span>
-          </span>
-          <span className="cpb__unitField">
-            <span className="cpb__unit cpb__unit--lead">$</span>
-            <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" placeholder="0.00" aria-label="New price" value={newDuration.price} onChange={(e) => setNewDuration({ ...newDuration, price: e.target.value })} />
-          </span>
-          <select className="cpb__input cpb__kindSelect" aria-label="New type" value={newDuration.kind} onChange={(e) => setNewDuration({ ...newDuration, kind: e.target.value as DurationKind })}>
-            <option value="visit">Visit</option>
-            <option value="overnight">Overnight</option>
-          </select>
-          <PrimaryButton label="Add" leading={<PlusGlyph />} onClick={addDuration} />
+        <div className="cpb__ruleRow">
+          <label className="cpb__field">
+            <span className="cpb__fieldLabel">Client (optional)</span>
+            <input className="cpb__input" placeholder="Kinfolk name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
+          </label>
+          <label className="cpb__field">
+            <span className="cpb__fieldLabel">Start</span>
+            <input className="cpb__input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+          <label className="cpb__field">
+            <span className="cpb__fieldLabel">End</span>
+            <input className="cpb__input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </label>
         </div>
-        <p className="cpb__hint">
-          An overnight's length decides how much of the next morning it covers: a 12hr overnight from 9:00 PM runs to 9:00 AM, so anything before then is already covered.
-        </p>
+        {days > 0 ? (
+          <p className="cpb__dayCount">
+            <CalendarGlyph />
+            {days} day{days !== 1 ? 's' : ''} of coverage · {nights} night{nights !== 1 ? 's' : ''} available
+          </p>
+        ) : null}
       </DenPanel>
 
       {/* Coverage rules */}
@@ -589,35 +570,6 @@ function Builder({ initial, onSaved }: BuilderProps) {
           <Banner tone="warning" title="Check your entry" className="cpb__banner">
             {error}
           </Banner>
-        ) : null}
-      </DenPanel>
-
-      {/* Coverage window (dates) */}
-      <DenPanel
-        title="Coverage window"
-        subtitle="The stay's dates. Packages price across this range; not saved with the menu."
-        trailing={hasQuote ? <GhostButton label="Start new quote" onClick={startNewQuote} /> : undefined}
-        className="cpb__noprint"
-      >
-        <div className="cpb__ruleRow">
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">Client (optional)</span>
-            <input className="cpb__input" placeholder="Kinfolk name" value={clientName} onChange={(e) => setClientName(e.target.value)} />
-          </label>
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">Start</span>
-            <input className="cpb__input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </label>
-          <label className="cpb__field">
-            <span className="cpb__fieldLabel">End</span>
-            <input className="cpb__input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </label>
-        </div>
-        {days > 0 ? (
-          <p className="cpb__dayCount">
-            <CalendarGlyph />
-            {days} day{days !== 1 ? 's' : ''} of coverage · {nights} night{nights !== 1 ? 's' : ''} available
-          </p>
         ) : null}
       </DenPanel>
 
@@ -749,6 +701,54 @@ function Builder({ initial, onSaved }: BuilderProps) {
             ))}
           </div>
         )}
+      </DenPanel>
+
+      {/* Visit menu */}
+      <DenPanel
+        title="Visit menu"
+        subtitle="Your service lengths, prices, and type. Overnights price as a window; visits are per-drop-in."
+        trailing={<GhostButton label="Restore defaults" onClick={restoreDefaults} />}
+        className="cpb__noprint"
+      >
+        <ul className="cpb__list">
+          {durations.map((d) => (
+            <li key={d.id} className="cpb__durationRow">
+              <input className="cpb__input cpb__input--grow" aria-label="Service name" value={d.label} onChange={(e) => updateDuration(d.id, 'label', e.target.value)} />
+              <span className="cpb__unitField">
+                <input className="cpb__input cpb__input--num" type="number" min="1" aria-label="Length in minutes" value={d.minutes} onChange={(e) => updateDuration(d.id, 'minutes', e.target.value)} />
+                <span className="cpb__unit">min</span>
+              </span>
+              <span className="cpb__unitField">
+                <span className="cpb__unit cpb__unit--lead">$</span>
+                <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" aria-label="Price" value={d.price} onChange={(e) => updateDuration(d.id, 'price', e.target.value)} />
+              </span>
+              <select className="cpb__input cpb__kindSelect" aria-label="Type" value={d.kind} onChange={(e) => updateDuration(d.id, 'kind', e.target.value)}>
+                <option value="visit">Visit</option>
+                <option value="overnight">Overnight</option>
+              </select>
+              <IconButton icon={<TrashGlyph />} label={`Remove ${d.label}`} destructive onClick={() => removeDuration(d.id)} />
+            </li>
+          ))}
+        </ul>
+        <div className="cpb__addRow">
+          <input className="cpb__input cpb__input--grow" placeholder="New service name" value={newDuration.label} onChange={(e) => setNewDuration({ ...newDuration, label: e.target.value })} />
+          <span className="cpb__unitField">
+            <input className="cpb__input cpb__input--num" type="number" min="1" placeholder="min" aria-label="New length" value={newDuration.minutes} onChange={(e) => setNewDuration({ ...newDuration, minutes: e.target.value })} />
+            <span className="cpb__unit">min</span>
+          </span>
+          <span className="cpb__unitField">
+            <span className="cpb__unit cpb__unit--lead">$</span>
+            <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" placeholder="0.00" aria-label="New price" value={newDuration.price} onChange={(e) => setNewDuration({ ...newDuration, price: e.target.value })} />
+          </span>
+          <select className="cpb__input cpb__kindSelect" aria-label="New type" value={newDuration.kind} onChange={(e) => setNewDuration({ ...newDuration, kind: e.target.value as DurationKind })}>
+            <option value="visit">Visit</option>
+            <option value="overnight">Overnight</option>
+          </select>
+          <PrimaryButton label="Add" leading={<PlusGlyph />} onClick={addDuration} />
+        </div>
+        <p className="cpb__hint">
+          An overnight's length decides how much of the next morning it covers: a 12hr overnight from 9:00 PM runs to 9:00 AM, so anything before then is already covered.
+        </p>
       </DenPanel>
 
       {/* Day-by-day detail + quote (also the print surface) */}
