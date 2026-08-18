@@ -1,1 +1,1 @@
-Tribe Tails: a {{score}}-star rating just came in. Review it and follow up here: []
+Tribe Tails: a {{score}}-star rating just came in.

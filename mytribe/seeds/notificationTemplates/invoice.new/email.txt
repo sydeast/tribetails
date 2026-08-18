@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, your invoice ({{invoiceNumber}}) for {{kinName}}'s care is r
 
 You can review everything and pay whenever it works for you. Thank you for trusting me with your Kin.
 
-View and pay here: []
-
 With care, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

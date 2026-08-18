@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, I just wrapped up with {{kinName}} and wrote the whole visit
 
 Grab a coffee and give it a read.
 
-Read the KinTale here: []
-
 With care, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

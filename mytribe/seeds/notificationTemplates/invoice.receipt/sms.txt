@@ -1,1 +1,1 @@
-It's Auntie. Your receipt for invoice {{invoiceNumber}} ({{amount}}, paid in full) is ready. View it here: []
+It's Auntie. Your receipt for invoice {{invoiceNumber}} ({{amount}}, paid in full) is ready.

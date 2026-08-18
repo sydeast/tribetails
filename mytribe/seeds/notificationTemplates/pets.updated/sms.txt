@@ -1,1 +1,1 @@
-It's Auntie. {{kinName}}'s profile was updated and I've got the latest. Review it here: []
+It's Auntie. {{kinName}}'s profile was updated and I've got the latest.

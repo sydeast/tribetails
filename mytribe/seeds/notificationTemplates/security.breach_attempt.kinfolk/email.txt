@@ -12,6 +12,4 @@ Incident record: securityIncidents/{{incidentId}}
 
 Please look into who started that reset. If you see repeated attempts from the same IP, consider blocking it and reaching out to the Kinfolk directly to confirm they are safe.
 
-Open the incident record here: []
-
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.
