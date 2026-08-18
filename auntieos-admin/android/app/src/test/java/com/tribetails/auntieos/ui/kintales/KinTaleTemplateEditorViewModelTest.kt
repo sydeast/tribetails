@@ -236,4 +236,18 @@ class KinTaleTemplateEditorViewModelTest {
 
         assertEquals(setOf("description"), capturedChanges().keys)
     }
+
+    /**
+     * Mark 23 of the 2026-08-17 walk: the message is the story of the visit, so
+     * a canned line here invited sending it unedited. Matches the web port's
+     * `newTemplateDraft`/`seedTemplateDraft`, which now get the same blank from
+     * `DEFAULT_KINTALE_TEMPLATE.defaultEmailMessage`.
+     */
+    @Test
+    fun `a brand-new template scaffold carries no default message`() = runTest(testDispatcher) {
+        val vm = KinTaleTemplateEditorViewModel(repository = repo).also { it.load("new") }
+        advanceUntilIdle()
+
+        assertEquals("", vm.uiState.value.template.defaultEmailMessage)
+    }
 }

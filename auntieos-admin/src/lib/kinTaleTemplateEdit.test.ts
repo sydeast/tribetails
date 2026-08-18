@@ -17,8 +17,8 @@ import {
   reorderChecklistItem,
   reorderMood,
   seedTemplateDraft,
-  serviceKeysToText,
-  textToServiceKeys,
+  serviceTypeChoices,
+  toggleServiceTypeKey,
   updateChecklistItem,
   updateCondition,
   updateMood,
@@ -200,11 +200,32 @@ describe('mood options', () => {
   });
 });
 
-describe('service-type keys CSV round-trip', () => {
-  it('joins and splits, trimming blanks', () => {
-    expect(serviceKeysToText(['Dog Walk', 'Drop-in'])).toBe('Dog Walk, Drop-in');
-    expect(textToServiceKeys('Dog Walk,  Drop-in ,,')).toEqual(['Dog Walk', 'Drop-in']);
-    expect(textToServiceKeys('')).toEqual([]);
+describe('service-type checkbox list (catalog-backed, no free text)', () => {
+  it('lists every catalog name, checked against what the template already stores', () => {
+    const choices = serviceTypeChoices(['Dog Walk', 'Drop-in', 'Overnight'], ['Drop-in']);
+    expect(choices).toEqual([
+      { name: 'Dog Walk', checked: false, stale: false },
+      { name: 'Drop-in', checked: true, stale: false },
+      { name: 'Overnight', checked: false, stale: false },
+    ]);
+  });
+
+  it('a stored key the catalog no longer recognises is kept, checked, and flagged stale', () => {
+    const choices = serviceTypeChoices(['Dog Walk'], ['Dog Walk', 'Retired Visit']);
+    expect(choices).toEqual([
+      { name: 'Dog Walk', checked: true, stale: false },
+      { name: 'Retired Visit', checked: true, stale: true },
+    ]);
+  });
+
+  it('an empty catalog still shows every stored key, all flagged stale', () => {
+    expect(serviceTypeChoices([], ['Dog Walk'])).toEqual([{ name: 'Dog Walk', checked: true, stale: true }]);
+  });
+
+  it('toggleServiceTypeKey adds once on check, drops on uncheck', () => {
+    expect(toggleServiceTypeKey(['Dog Walk'], 'Drop-in', true)).toEqual(['Dog Walk', 'Drop-in']);
+    expect(toggleServiceTypeKey(['Dog Walk'], 'Dog Walk', true)).toEqual(['Dog Walk']);
+    expect(toggleServiceTypeKey(['Dog Walk', 'Drop-in'], 'Dog Walk', false)).toEqual(['Drop-in']);
   });
 });
 
@@ -222,6 +243,11 @@ describe('new-template drafts', () => {
     expect(d._id).toBe('');
     expect(d.name).toBe('New template');
     expect(d.isDefault).toBe(false);
+  });
+
+  it('neither draft prefills a default message: mark 23 of the 2026-08-17 walk', () => {
+    expect(seedTemplateDraft().defaultEmailMessage).toBe('');
+    expect(newTemplateDraft().defaultEmailMessage).toBe('');
   });
 
   it('drafts are deep clones: editing one never mutates the shared default constant', () => {
