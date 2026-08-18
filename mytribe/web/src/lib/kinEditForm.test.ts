@@ -20,7 +20,6 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     ageYears: 3,
     photoUrl: null,
     status: 'active',
-    aiBlurb: null,
     feedingInstructions: 'Twice a day',
     walkingInstructions: null,
     medications: null,

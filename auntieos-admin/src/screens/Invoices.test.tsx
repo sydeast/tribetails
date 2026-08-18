@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
@@ -21,13 +21,15 @@ vi.mock('../lib/firestore', () => ({ useCollection }));
 // Invoices.tsx) both reach these callables. Mocked here so nothing under this
 // suite ever attempts a real httpsCallable round-trip, matching the
 // InvoiceCreate.test.tsx / InvoiceDetail.test.tsx convention.
-const { createInvoice, createQuote, sendInvoiceReminder, markInvoicePaid, generateReceipt } = vi.hoisted(() => ({
-  createInvoice: vi.fn(),
-  createQuote: vi.fn(),
-  sendInvoiceReminder: vi.fn(),
-  markInvoicePaid: vi.fn(),
-  generateReceipt: vi.fn(),
-}));
+const { createInvoice, createQuote, sendInvoiceReminder, markInvoicePaid, generateReceipt, recordPayment } =
+  vi.hoisted(() => ({
+    createInvoice: vi.fn(),
+    createQuote: vi.fn(),
+    sendInvoiceReminder: vi.fn(),
+    markInvoicePaid: vi.fn(),
+    generateReceipt: vi.fn(),
+    recordPayment: vi.fn(),
+  }));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
   createInvoice,
@@ -35,6 +37,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   sendInvoiceReminder,
   markInvoicePaid,
   generateReceipt,
+  recordPayment,
 }));
 
 import { Invoices } from './Invoices';
@@ -261,6 +264,46 @@ describe('Invoices screen', () => {
     expect(within(screen.getByRole('dialog')).getByText('The Whitfields')).toBeInTheDocument();
   });
 
+  /**
+   * Mark 10 of the 2026-08-17 walk. The list normalizes its rows through
+   * `normalizeInvoice` before rendering them; the detail sheet was handed the
+   * RAW document out of the same page, so one screen's two halves disagreed
+   * about the same invoice. On test-kinfolk-001-invoice-open, whose `client`
+   * and `invoiceNumber` are simply absent, that reached the server as
+   * `{"client":null,"invoiceNumber":null}` and `recordPayment` answered 400.
+   * Both fields are optional on the contract. Neither may be null.
+   */
+  it('hands the detail sheet a normalized invoice, so an absent field never leaves as null', async () => {
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'settled' as const,
+      totalCents: 4000,
+      paidCents: 4000,
+      amountDueCents: 0,
+      overpaidCents: 0,
+    });
+    recordPayment.mockResolvedValue({ ok: true, confirmationEmailSent: false, creditedToAccountCents: 0 });
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({
+          _id: 'inv-42',
+          client: null as unknown as string,
+          invoiceNumber: null as unknown as string,
+        }),
+      ]),
+    );
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /the whitfields/i }));
+    await screen.findByRole('dialog');
+    const dialog = within(screen.getByRole('dialog'));
+    await userEvent.click(dialog.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(dialog.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalled());
+    const [args] = recordPayment.mock.calls[0] as [Record<string, unknown>];
+    expect(args['client']).toBe('');
+    expect(args['invoiceNumber']).toBe('');
+    expect(Object.entries(args).filter(([, v]) => v === null)).toEqual([]);
+  });
   it('closing InvoiceDetail returns to the list', async () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'inv-42' })]));
     render(<Invoices />);

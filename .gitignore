@@ -39,3 +39,6 @@ visual-WRONGKILL/
 # app build, and a committed copy would go stale against the source beside it.
 **/public/__recorder.js
 packages/issue-recorder/dist/
+
+# Recorded walks and their drafts (walk exports are tens of MB)
+.walks/

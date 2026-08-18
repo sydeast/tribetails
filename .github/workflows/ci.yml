@@ -310,10 +310,27 @@ jobs:
   # committed goldens is a LOCAL run (`npm run visual:react` then
   # `npm run visual:react:verify` from auntieos-admin/), on the machine that
   # recorded them.
+  # TURNED OFF ON 2026-08-18 BY OPERATOR RULING: "turn off visual regression
+  # its probably blocking the ui changes i've been trying to implement".
+  #
+  # It was. This job photographs the pull request and its base, then fails on
+  # ANY pixel difference at threshold 0%, and the step below named "Stand the
+  # base's capture up as the golden" deletes whatever goldens the branch
+  # committed. There is no way for a change to declare itself intended, so
+  # every deliberate UI change was permanently red until it merged, and the
+  # only way to ship one was to merge past a failing check. A gate that cannot
+  # be satisfied does not stop regressions; it teaches everyone to ignore red.
+  #
+  # What it detected is still worth having, so nothing here is deleted. Making
+  # it usable again means giving it an approval path: honour the goldens the
+  # branch committed, or gate the failure behind the absence of a label the
+  # author applies after reading the diff. Until then it runs on demand only,
+  # and the same comparison is available locally with `npm run visual:react`
+  # then `npm run visual:react:verify` from auntieos-admin/.
   admin-visual:
     name: React admin visual regression
     needs: changes
-    if: needs.changes.outputs.adminVisual == 'true' && github.event_name == 'pull_request'
+    if: needs.changes.outputs.adminVisual == 'true' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       # Two checkouts in two directories rather than one tree checked out
