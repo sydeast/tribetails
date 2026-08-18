@@ -354,11 +354,24 @@ fun ScheduleViewScreen(
                 )
             }
 
-            // B7 (A8): colour key for the schedule. Reads the auntie's REAL service
-            // types (BusinessSettings.serviceRates), ordered by duration (B9), painted
-            // with the same serviceTone the agenda rows use so the key always matches.
+            // B7 (A8): colour key for the schedule, painted with the same
+            // serviceTone the agenda rows use so the key always matches.
+            //
+            // #392 (operator mark 5, 2026-08-17 walk): SCOPED to the types
+            // actually present in the CURRENT view (`filteredBookings` -- the
+            // same set the day agenda, week strip and month grid below already
+            // render, service/kinfolk picker filters included -- narrowed to
+            // `state.selectedDate`/`state.viewMode`'s visible range via
+            // `bookingsInScheduleView`), never the operator's whole configured
+            // `serviceRates` and never every booking regardless of range. A
+            // type on screen but missing from `serviceRates` still gets a row;
+            // an empty view yields an empty legend rather than a stale full
+            // list. ORDER is unchanged: duration via `sortServiceTypesByDuration`
+            // (B9), the operator-stated `serviceDurations` value first, the
+            // length parsed out of the name as fallback.
+            val bookingsInView = bookingsInScheduleView(filteredBookings, state.selectedDate, state.viewMode)
             val legendTypes = sortServiceTypesByDuration(
-                state.businessSettings.serviceRates.keys.toList(),
+                distinctServiceTypes(bookingsInView.map { it.baseServiceTitle }),
                 state.businessSettings.serviceDurations,
             )
             if (legendTypes.isNotEmpty()) {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { SCHEDULE_SESSIONS_QUERY, SCHEDULE_BUSY_SLOTS_QUERY, type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
 import {
@@ -22,6 +22,8 @@ import {
   sessionWindow,
   sessionDayLabel,
 } from '../lib/sessionFormat';
+import { sortServiceTypesByDuration } from '../lib/newBooking';
+import { getBusinessSettings } from '../api/settings';
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { asyncScalar } from '../lib/async';
@@ -79,11 +81,24 @@ interface ScheduleProps {
  * (`createBlockedTimeSlot`), and the New Visit / `createKinCareSession` flow.
  * Reschedule itself is no longer deferred, it lives in the detail sheet.
  *
- * ALSO DEFERRED: the service-type legend orders alphabetically rather than by
- * configured duration. That would need a single-document read of
- * `business_settings`, and `lib/firestore.ts` only has a bounded COLLECTION
- * listener (`useCollection`) today, no single-doc hook. Flagged rather than
- * bolted on ad hoc; see `lib/scheduleFormat.ts#distinctServiceTypes`.
+ * THE LEGEND, TWO RULES (operator mark 5, 2026-08-17, issue #392). SCOPE: the
+ * legend lists only the service types actually present on the days currently
+ * on screen (`daysInView`, the same set the "in view" stat card counts from),
+ * not the whole bounded 300-session stream and not the operator's whole
+ * configured set — it changes with date navigation, the view-mode tabs, and
+ * an empty view legitimately shows no legend at all. A type on screen but
+ * never configured in Settings still gets a row; scope comes from the
+ * sessions, not from `business_settings`. ORDER: sorted by duration via
+ * `sortServiceTypesByDuration` (`lib/newBooking.ts`), the same two-source
+ * rule #373 gave the Android legend (`ServiceTypeSort.kt`) — an
+ * operator-stated `business_settings.serviceDurations` value first, the
+ * length parsed out of the type's own name as fallback, unresolvable last.
+ * The previous version of this comment claimed duration ordering needed a
+ * single-doc hook `lib/firestore.ts` didn't have; that was false the whole
+ * time — `api/settings.ts#getBusinessSettings` is exactly that one-shot read,
+ * and `NewBookingDialog.tsx` already fetches it the same way this screen now
+ * does. See `lib/scheduleFormat.ts#distinctServiceTypes` for the raw
+ * (unordered) extraction this legend is built from.
  *
  * NOT deferred, DECLINED (2026-07-25, Task 7.1). The superseded Compose screen
  * hides the busy-blocks error banner unless a calendar id is configured
@@ -108,6 +123,33 @@ export function Schedule({ onSelect }: ScheduleProps) {
   // sheet always re-reads from the live stream (a reschedule that lands while
   // it is open re-renders it with the new window instead of a stale copy).
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
+
+  // One-shot read of `business_settings.serviceDurations`, purely to ORDER the
+  // legend (see the screen doc comment above). Same `getBusinessSettings` +
+  // `live`-guard shape as `NewBookingDialog.tsx`'s service-options fetch. `{}`
+  // both before this resolves and if it fails: `sortServiceTypesByDuration`
+  // treats a missing entry as "no stated duration", which falls through to
+  // parsing the length out of the type's own name — the one fallback every
+  // type has always had, and the only ordering this legend could show before
+  // #373 added the stored attribute at all. That is an honest degrade to a
+  // real, pre-existing ordering, not a fabricated one, so it fails quiet
+  // rather than surfacing a banner over what is a display-order nicety, not
+  // schedule data.
+  const [serviceDurations, setServiceDurations] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    getBusinessSettings()
+      .then((settings) => {
+        if (live) setServiceDurations(settings.serviceDurations);
+      })
+      .catch(() => {
+        // See the state's own doc comment: leaving `serviceDurations` at `{}`
+        // is the correct degrade here, not an omission.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const daysInView = useMemo(() => {
     switch (view) {
@@ -173,7 +215,14 @@ export function Schedule({ onSelect }: ScheduleProps) {
           {(sessions) => {
             const byDay = sessionsByLocalDay(sessions);
             const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
-            const legend = distinctServiceTypes(sessions);
+            // SCOPED to the days on screen (`daysInView`, the same set the "in
+            // view" stat card counts from), never the whole bounded 300-session
+            // stream and never the operator's whole configured set: navigating
+            // the date range or switching Day/Week/Month changes `daysInView`,
+            // which changes the legend along with it, and a view with nothing
+            // scheduled yields an empty legend rather than a stale full list.
+            const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
+            const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
             const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
             const selectedBusy = busyByDate.get(selected) ?? [];
             // Re-resolved from the stream every render, so the sheet closes on
