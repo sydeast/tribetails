@@ -111,10 +111,15 @@ export function allInFuture(startTimesMs: number[], nowMs: number): boolean {
  * map first and only falls back to the legacy `base_services` collection when it
  * is empty.
  *
- * There is NO duration field anywhere on this doc: the duration lives inside the
- * NAME ("30Minute", "2Hrs"), which is why sorting needs a parse rather than a
- * lookup, and why `durationMinutes` is nullable — a name like "Consultation"
- * genuinely states no duration and must not be assigned an invented one.
+ * DURATION HAS TWO SOURCES, in this order. `business_settings.serviceDurations`
+ * is the operator stating the length outright, keyed by the same name; the
+ * parse out of the NAME ("30Minute", "2Hrs") is the fallback. It used to be the
+ * only source, which is why `durationMinutes` is nullable: a name like
+ * "Consultation" states no duration and must not be assigned an invented one.
+ *
+ * The stored value wins whenever it is present and parses. That map is sparse,
+ * nothing backfills it, and a type saved before it existed keeps the length its
+ * name always implied.
  */
 export interface ServiceOption {
   /** The map KEY, trimmed. This is the canonical name sent to the callable. */
@@ -184,15 +189,34 @@ function durationRank(minutes: number | null): number {
  * rate (a legacy doc that stored a number) reads as '' rather than throwing on
  * `.trim()`, the `lib/coerce.ts` rule.
  */
-export function serviceOptionsFromRates(rates: Record<string, string>): ServiceOption[] {
+export function serviceOptionsFromRates(
+  rates: Record<string, string>,
+  durations: Record<string, string> = {},
+): ServiceOption[] {
   return Object.entries(rates)
     .map(([key, rate]) => ({
       name: key.trim(),
       rate: typeof rate === 'string' ? rate.trim() : '',
-      durationMinutes: serviceDurationMinutes(key),
+      durationMinutes: storedDurationMinutes(durations[key]) ?? serviceDurationMinutes(key),
     }))
     .filter((option) => option.name !== '')
     .sort((a, b) => durationRank(a.durationMinutes) - durationRank(b.durationMinutes));
+}
+/**
+ * Minutes off a stored `serviceDurations` value, or null when there is nothing
+ * usable there.
+ *
+ * Null rather than 0 on junk, so a mistyped duration falls through to the name
+ * parse instead of declaring the service instantaneous. Zero and negatives are
+ * refused for the same reason: a visit with no length is not a length.
+ */
+export function storedDurationMinutes(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const minutes = Number(trimmed);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  return Math.round(minutes);
 }
 
 /** Chip text: "30Minute · $25", or just the name when no rate is set. */

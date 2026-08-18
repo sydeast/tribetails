@@ -71,6 +71,7 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "businessAddress" to SettingsDiffField({ it.businessAddress }),
     "timeZone" to SettingsDiffField({ it.timeZone }),
     "serviceRates" to SettingsDiffField({ it.serviceRates }),
+    "serviceDurations" to SettingsDiffField({ it.serviceDurations }),
     "businessHours" to SettingsDiffField({ it.businessHours }),
     // --- GPS / tracking ---
     "enableGPSTrackingForAllVisits" to SettingsDiffField({ it.enableGPSTrackingForAllVisits }),
