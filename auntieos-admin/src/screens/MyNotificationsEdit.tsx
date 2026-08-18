@@ -21,7 +21,13 @@ import {
   sectionedNotifications,
   userChannelChoice,
 } from '../lib/myNotificationsFormat';
-import { applyBulkToggle, prefsEqual, setUserChannelChoice } from '../lib/myNotificationsEdit';
+import {
+  applyBulkToggle,
+  applyBulkToggleAll,
+  prefsEqual,
+  setUserChannelChoice,
+  type BulkToggleScope,
+} from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
@@ -117,6 +123,23 @@ export function MyNotificationsEdit() {
     setJustSaved(false);
   }
 
+  // Page-level select-all (#390): flips every editable channel across BOTH
+  // hats into the draft in one go. `applyBulkToggle` is gate-scoped per
+  // stream, so this chains it once per hat via `applyBulkToggleAll` rather
+  // than flattening both hats' entries into one call. Same no-auto-save
+  // model as the section buttons: stages the draft, the operator still
+  // commits with Save.
+  function bulkToggleAll(on: boolean) {
+    const matrix = state.status === 'ready' ? state.data.matrix : null;
+    if (!matrix) return;
+    const scopes: BulkToggleScope[] = [
+      { entries: adminVisibleNotifications(matrix, STREAM_BUSINESS), stream: STREAM_BUSINESS },
+      { entries: adminVisibleNotifications(matrix, STREAM_STAFF), stream: STREAM_STAFF },
+    ];
+    setDraft((prev) => (prev ? applyBulkToggleAll(prev, matrix, scopes, on) : prev));
+    setJustSaved(false);
+  }
+
   function discard() {
     if (savedPrefs) setDraft(savedPrefs);
     setSaveError(null);
@@ -189,6 +212,20 @@ export function MyNotificationsEdit() {
         {({ matrix }) =>
           draft === null ? null : (
             <>
+              {/* The page-level pair (#390): the only control that actually means
+                  "every editable channel on this page", across both hats. Its own
+                  bar and its solid Primary "All on" keep it visually distinct from
+                  the per-section Ghost pairs below, which are each named for their
+                  own narrower scope. */}
+              <div
+                className="mynotif__page-actions"
+                role="group"
+                aria-label="Set every editable channel on this page"
+              >
+                <span className="mynotif__page-actions-label">Every notification below</span>
+                <PrimaryButton label="All on" onClick={() => bulkToggleAll(true)} />
+                <GhostButton label="All off" onClick={() => bulkToggleAll(false)} />
+              </div>
               <NotifHatSection
                 title="As the owner"
                 subtitle="The business side: bookings, invoices, payments, security, ratings."
@@ -249,8 +286,17 @@ function NotifHatSection({
                 role="group"
                 aria-label={`Set every editable channel in ${section.title}`}
               >
-                <GhostButton label="All on" onClick={() => onBulkChange(entries, stream, true)} />
-                <GhostButton label="All off" onClick={() => onBulkChange(entries, stream, false)} />
+                {/* Named after the section, not bare "All on"/"All off" (#390): the
+                    page-level pair below is the only control that means the whole
+                    page, and its label has to be the one thing these are not. */}
+                <GhostButton
+                  label={`All on: ${section.title}`}
+                  onClick={() => onBulkChange(entries, stream, true)}
+                />
+                <GhostButton
+                  label={`All off: ${section.title}`}
+                  onClick={() => onBulkChange(entries, stream, false)}
+                />
               </div>
             </div>
             <div className="mynotif__rows">

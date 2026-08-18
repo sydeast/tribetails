@@ -74,6 +74,41 @@ export function applyBulkToggle(
   return next;
 }
 
+/** One stream's visible rows, paired with the stream that scopes their gate lookup. */
+export interface BulkToggleScope {
+  entries: readonly NotificationCatalogEntry[];
+  stream: NotifStream;
+}
+
+/**
+ * Select-all for the WHOLE PAGE (#390): flips every editable channel of every
+ * visible notification across every hat (business + staff) into a single new
+ * prefs object. "Editable" is per-stream (`adminGateEnabledChannels` reads the
+ * gate for that stream), so this cannot just flatten both hats' entries into
+ * one `applyBulkToggle` call — it chains one `applyBulkToggle` per stream,
+ * threading the accumulating prefs through so nothing an earlier stream set
+ * is lost. The whole page still commits in ONE `saveMyAdminNotificationPrefs`
+ * write, same as the section-level bulk.
+ *
+ * Before this, the page's "All on" was nine per-section buttons, none of
+ * which came close to covering the page (the largest section reached 8 of 29
+ * notifications). This is the one control that actually means "all on" for
+ * the page; the per-section buttons remain as a narrower, explicitly-labeled
+ * convenience alongside it.
+ */
+export function applyBulkToggleAll(
+  prefs: AdminNotificationPrefs,
+  matrix: NotificationMatrix,
+  scopes: readonly BulkToggleScope[],
+  on: boolean,
+): AdminNotificationPrefs {
+  let next = prefs;
+  for (const { entries, stream } of scopes) {
+    next = applyBulkToggle(next, matrix, entries, stream, on);
+  }
+  return next;
+}
+
 /**
  * Structural equality over the plain JSON-like prefs shape (booleans and
  * string-keyed records only), independent of key insertion order. Drives the

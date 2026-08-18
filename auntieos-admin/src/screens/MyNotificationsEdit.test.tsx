@@ -179,16 +179,23 @@ describe('MyNotificationsEdit screen', () => {
     expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
   });
 
-  it('section All on flips every editable channel and commits them in ONE save', async () => {
-    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({ key: 'k' })] }));
+  it('section All on is named for its own section, flips only that section, and commits in ONE save', async () => {
+    // #390 regression fixture: TWO sections (visit -> "Bookings and visits",
+    // invoice -> "Billing and payments"), not the one-entry catalog that used
+    // to make the bug invisible. A bare `/^all on$/i` query would throw here
+    // on multiple matches unless the section buttons are named for their
+    // scope, which is exactly what this test is pinning down.
+    getNotificationMatrix.mockResolvedValue(
+      matrix({ catalog: [entry({ key: 'k1', category: 'visit' }), entry({ key: 'k2', category: 'invoice' })] }),
+    );
     render(<MyNotificationsEdit />);
 
-    // Wait for the section to render, then flip the whole section on.
-    const smsRow = (await screen.findByText('Text (SMS)')).closest('.mynotif__channel-row') as HTMLElement;
+    const [firstSmsLabel] = await screen.findAllByText('Text (SMS)');
+    const smsRow = firstSmsLabel!.closest('.mynotif__channel-row') as HTMLElement;
     const smsToggle = within(smsRow).getByRole('switch');
     expect(smsToggle).toHaveAttribute('aria-checked', 'false');
 
-    await userEvent.click(screen.getByRole('button', { name: /^all on$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^all on: bookings and visits$/i }));
     // The section's editable toggles are now on (default-off sms visibly flipped).
     expect(smsToggle).toHaveAttribute('aria-checked', 'true');
 
@@ -196,7 +203,9 @@ describe('MyNotificationsEdit screen', () => {
 
     await waitFor(() =>
       expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
-        byKey: { k: { email: true, sms: true, push: true } },
+        // Only k1 (Bookings and visits) moved. k2 (Billing and payments) is
+        // untouched by this section's button, the whole point of the scope fix.
+        byKey: { k1: { email: true, sms: true, push: true } },
         byCategory: {},
         marketingOptIn: {},
       }),
@@ -205,7 +214,7 @@ describe('MyNotificationsEdit screen', () => {
     expect(saveMyAdminNotificationPrefs).toHaveBeenCalledTimes(1);
   });
 
-  it('section All off does not fake a forced channel off, and still saves once', async () => {
+  it('section All off is named for its own section, does not fake a forced channel off, and still saves once', async () => {
     // email is catalog-required (forced); only sms/push are editable.
     getNotificationMatrix.mockResolvedValue(
       matrix({ catalog: [entry({ key: 'k', required: { email: true } })] }),
@@ -213,12 +222,84 @@ describe('MyNotificationsEdit screen', () => {
     render(<MyNotificationsEdit />);
     await screen.findByText('As the owner');
 
-    await userEvent.click(screen.getByRole('button', { name: /^all off$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^all off: bookings and visits$/i }));
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() =>
       expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
         byKey: { k: { sms: false, push: false } },
+        byCategory: {},
+        marketingOptIn: {},
+      }),
+    );
+    expect(saveMyAdminNotificationPrefs).toHaveBeenCalledTimes(1);
+  });
+
+  it('page All on resolves uniquely and covers every section on the page, both hats included (#390)', async () => {
+    // A multi-section, multi-hat catalog: k1 and k2 land in two different
+    // "As the owner" sections, k3 lands in "As the Auntie". Before the fix,
+    // every section rendered its own bare "All on" button, so
+    // `getByRole('button', { name: /^all on$/i })` would throw on multiple
+    // matches here (the regression signal from #390). After the fix, the
+    // section buttons are named for their scope and this query resolves to
+    // the one page-level button.
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [
+          entry({ key: 'k1', category: 'visit' }), // "Bookings and visits" (owner)
+          entry({ key: 'k2', category: 'invoice' }), // "Billing and payments" (owner)
+          entry({ key: 'k3', category: 'kintale', audiences: new Set([STREAM_STAFF]) }), // "KinTales and comments" (auntie)
+        ],
+      }),
+    );
+    render(<MyNotificationsEdit />);
+    await screen.findByText('As the owner');
+    await screen.findByText('As the Auntie');
+
+    const allOnButton = screen.getByRole('button', { name: /^all on$/i });
+    await userEvent.click(allOnButton);
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
+        // Every notification on the page moved, not just the biggest section.
+        byKey: {
+          k1: { email: true, sms: true, push: true },
+          k2: { email: true, sms: true, push: true },
+          k3: { email: true, sms: true, push: true },
+        },
+        byCategory: {},
+        marketingOptIn: {},
+      }),
+    );
+    expect(saveMyAdminNotificationPrefs).toHaveBeenCalledTimes(1);
+  });
+
+  it('page All off covers every section on the page and does not fake a forced channel off', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [
+          entry({ key: 'k1', category: 'visit' }),
+          entry({ key: 'k2', category: 'invoice', required: { email: true } }),
+          entry({ key: 'k3', category: 'kintale', audiences: new Set([STREAM_STAFF]) }),
+        ],
+      }),
+    );
+    render(<MyNotificationsEdit />);
+    await screen.findByText('As the owner');
+    await screen.findByText('As the Auntie');
+
+    await userEvent.click(screen.getByRole('button', { name: /^all off$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
+        byKey: {
+          k1: { email: false, sms: false, push: false },
+          // k2's email is forced on; the bulk flip must skip it, not fake it off.
+          k2: { sms: false, push: false },
+          k3: { email: false, sms: false, push: false },
+        },
         byCategory: {},
         marketingOptIn: {},
       }),
