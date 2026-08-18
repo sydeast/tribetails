@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.ui.draw.clip
 import com.tribetails.auntieos.ui.components.AuntieSpinner
@@ -70,6 +71,9 @@ import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.util.CallEventStore
 import com.tribetails.auntieos.util.MessageStore
 import com.tribetails.auntieos.util.VoicemailStore
+import com.tribetails.auntieos.voice.VoiceRegistrationNotice
+import com.tribetails.auntieos.voice.VoiceTokenManager
+import com.tribetails.auntieos.voice.voiceRegistrationNotice
 import com.tribetails.auntieos.util.fcmTokenFlow
 import kotlinx.coroutines.launch
 
@@ -385,6 +389,46 @@ private fun TestModeBanner(testTribeId: String) {
     }
 }
 
+/**
+ * Says so when this phone is not registered to receive business calls.
+ *
+ * Shell level, beside [TestModeBanner], for the same reason that one is: the
+ * fact is true of the whole app rather than of a screen. Putting it on the calls
+ * screen instead would mean the operator only learns their phone cannot ring on
+ * the days they think to go and look, and the failure this reports is one they
+ * otherwise notice as customers who never got through (#433).
+ *
+ * "Try again" re-mints immediately, for the operator who has just gone and fixed
+ * whatever the banner named. It is not the recovery path (a sign-in and the
+ * bounded retry inside `VoiceTokenManager` are), so nothing here depends on this
+ * screen being open or this button being pressed.
+ */
+@Composable
+private fun VoiceRegistrationBanner(notice: VoiceRegistrationNotice) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        com.tribetails.auntieos.ui.components.AuntieBanner(
+            tone = com.tribetails.auntieos.ui.components.AuntieBannerTone.Error,
+            title = notice.title,
+            icon = Lucide.PhoneOff,
+            trailing = {
+                TextButton(onClick = { VoiceTokenManager.refresh() }) {
+                    Text(
+                        text = "Try again",
+                        style = AuntieTheme.typography.labelMedium,
+                        color = AuntieTheme.colors.error,
+                    )
+                }
+            },
+        ) {
+            Text(
+                text = notice.detail,
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
+    }
+}
+
 @Composable
 private fun AuthenticatedNavHost(
     startOnCalls: Boolean,
@@ -472,6 +516,11 @@ private fun AuthenticatedNavHost(
     // Stage 0C / Phase 2: REAL shell global search overlay (kinfolk / kin / KinTale).
     var searchOpen by remember { mutableStateOf(false) }
 
+    // #433: the first production consumer VoiceTokenManager.state has ever had.
+    // Every failure it classifies used to reach the operator as nothing at all,
+    // while the consequence was inbound business calls that never arrived.
+    val voiceState by VoiceTokenManager.state.collectAsState()
+
     CompositionLocalProvider(LocalFeatureFlags provides flags) {
     Box(modifier = Modifier.fillMaxSize().background(AuntieTheme.colors.background)) {
     Column(
@@ -495,6 +544,7 @@ private fun AuthenticatedNavHost(
         if (testMode.active) {
             TestModeBanner(testTribeId = testMode.testTribeId)
         }
+        voiceRegistrationNotice(voiceState)?.let { VoiceRegistrationBanner(notice = it) }
         NavHost(
             navController    = navController,
             startDestination = startRoute,
