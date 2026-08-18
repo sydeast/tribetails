@@ -188,7 +188,7 @@ function InvoiceDisputeBanner({ dispute, nowMs }: { dispute: InvoiceDispute; now
 
   if (!dispute.open) {
     return (
-      <Banner tone="info" title="Dispute won" className="invoice-detail__dispute">
+      <Banner tone="info" title="Dispute won" dismissible className="invoice-detail__dispute">
         <p>
           This payment was disputed and the dispute was resolved in your favor. Nothing was
           undone, because nothing needed undoing: the invoice was never un-paid while the contest
@@ -994,7 +994,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         )}
 
         {archived && !notice && (
-          <Banner tone="info" title="Archived">
+          <Banner tone="info" title="Archived" dismissible>
             This invoice is out of the working list and out of the outstanding and billed totals. It
             has not been deleted or cancelled, and the household can still see it and still pay it.
           </Banner>

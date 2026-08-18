@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Banner, type BannerTone } from './Banner';
+import { Dialog } from './Dialog';
 
 /**
  * The a11y half of this file is the point of the port, not decoration.
@@ -82,6 +84,120 @@ describe('Banner dismiss', () => {
 
     // An unlabelled X button is exactly the wasm failure mode in DOM clothing.
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #406: a banner with nothing external to notify (no local state to clear)
+ * used to have no way to offer a close button at all. `dismissible` is the
+ * component-level fix — one prop, no screen-side plumbing — and it carries
+ * the same Escape/focus-restore contract `onDismiss` banners get for free.
+ */
+describe('Banner dismissible (#406)', () => {
+  it('renders a close button with dismissible and no onDismiss', () => {
+    render(
+      <Banner tone="info" title="Archived" dismissible>
+        Out of the working list.
+      </Banner>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('removes itself from the DOM on click', async () => {
+    render(
+      <Banner tone="info" title="Archived" dismissible>
+        Out of the working list.
+      </Banner>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    // Folded/hidden-but-present would still pass toBeVisible()-style checks
+    // in jsdom; assert it is actually gone.
+    expect(screen.queryByText('Out of the working list.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+
+  it('removes itself on Escape while focus is inside it', async () => {
+    const user = userEvent.setup();
+    render(
+      <Banner tone="info" title="Archived" dismissible>
+        Out of the working list.
+      </Banner>,
+    );
+
+    screen.getByRole('button', { name: 'Dismiss' }).focus();
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByText('Out of the working list.')).toBeNull();
+  });
+
+  it('does not dismiss on Escape when focus is elsewhere on the page', async () => {
+    const user = userEvent.setup();
+    render(
+      <div>
+        <button type="button">Somewhere else</button>
+        <Banner tone="info" title="Archived" dismissible>
+          Out of the working list.
+        </Banner>
+      </div>,
+    );
+
+    screen.getByRole('button', { name: 'Somewhere else' }).focus();
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByText('Out of the working list.')).toBeInTheDocument();
+  });
+
+  it('returns focus to whatever opened it', async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [archived, setArchived] = useState(false);
+      return (
+        <div>
+          <button type="button" onClick={() => setArchived(true)}>
+            Archive
+          </button>
+          {archived && (
+            <Banner tone="info" title="Archived" dismissible>
+              Out of the working list.
+            </Banner>
+          )}
+        </div>
+      );
+    }
+
+    render(<Harness />);
+    // Clicking Archive both triggers the mount AND leaves focus on the
+    // button that caused it — the same sequence a real "Archive" action
+    // would produce, and what the banner's mount-time snapshot should catch.
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(screen.getByRole('button', { name: 'Archive' })).toHaveFocus();
+  });
+
+  it('stays inside an open Dialog: Escape on the banner does not close the dialog', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      <Dialog title="Invoice #123" onClose={onClose}>
+        <Banner tone="info" title="Archived" dismissible>
+          Out of the working list.
+        </Banner>
+      </Dialog>,
+    );
+
+    screen.getByRole('button', { name: 'Dismiss' }).focus();
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByText('Out of the working list.')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Invoice #123' })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 
