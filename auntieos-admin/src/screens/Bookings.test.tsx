@@ -55,6 +55,15 @@ vi.mock('../api/bookingsWrite', () => ({
  * Completed panel it composes in. Stubbing that too would leave nothing
  * asserting that the transitions survived the move off `BookingActions`.
  */
+/**
+ * The incoming-reschedule queue mounted above the list (#399 item 2). Stubbed
+ * to null here rather than given a ToastProvider: this suite is about the
+ * bookings list, the section renders nothing when its queue is empty anyway,
+ * and its own states are covered in RescheduleRequestsSection.test.tsx.
+ */
+vi.mock('../components/RescheduleRequestsSection', () => ({
+  RescheduleRequestsSection: () => null,
+}));
 vi.mock('../components/BookingDetailModal', () => ({
   BookingDetailModal: (props: {
     entry: { _id: string; kinfolkId?: string | undefined };

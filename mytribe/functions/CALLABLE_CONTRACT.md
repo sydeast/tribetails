@@ -1466,6 +1466,60 @@ the handler.
   `failed-precondition`.
 - kinfolk portal only.
 
+- req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
+  (`proposedStartTimeMs` is an integer epoch-ms in the future and at most a year out)
+- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null }`
+- #399 item 2, and the same kind of thing as the cancellation ask above: a
+  PROPOSAL, not a move. Stamps `rescheduleRequestedAt` /
+  `rescheduleRequestedByUid` / `rescheduleRequestReason` /
+  `rescheduleRequestedStartTime` / `rescheduleRequestedEndTime` /
+  `rescheduleRequestStatus: 'pending'` on the kinCares doc and writes neither
+  `startTime` nor `status`. Only `admin/resolveBookingRescheduleRequest` moves
+  a visit.
+- `proposedEndTimeMs` is OPTIONAL and NOT nullable. Omitted means "keep the
+  visit's current duration", derived server-side; the contract generator
+  refuses `.nullable().optional()` on a request because Kotlin's one nullable
+  type cannot tell an absent key from a present null.
+- A second proposal while one is pending is `already-exists`, not a silent
+  overwrite: the office may already be acting on the time it was shown. A fresh
+  proposal after a decline IS allowed, and clears the previous answer.
+- Only `requested`/`confirmed` visits qualify; anything else is
+  `failed-precondition`.
+- `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
+  flag's first appearance, and again when a declined request goes back to
+  pending.
+- kinfolk portal only.
+- req `{ kinfolkId: string, batchId: string, visitId: string, decision: 'accept' | 'decline', note?: string }`
+- res `{ ok: true, visitId: string, decision: 'accept' | 'decline', startTimeMs: number | null, sessionUpdated: boolean }`
+- GATE: `wrapAdminCallable` (admin claim, or the AUNTIE_OPERATOR_UIDS fallback).
+- ACCEPTING MOVES BOTH RECORDS. The kinCares doc under
+  `families/{kinfolkId}/bookings/{batchId}` is what the portal reads; the flat
+  `kin_care_sessions` row is what the admin schedule reads, and
+  `rescheduleBooking` only ever wrote the second, so a visit moved through that
+  callable alone still reads at its old time in the portal. The mirror id is
+  the visit's own `sessionId` when it carries one, else `vis_{visitId}`, and it
+  is written ONLY when the doc exists (a still-pending request has none), which
+  is `batchUpdateBookings`'s rule. `sessionUpdated` reports which happened.
+- Timestamps on the kinCares doc, ISO strings on the flat row. That is not an
+  inconsistency to tidy: the two collections genuinely store different shapes.
+- `guardCompanyHolidayConflict` runs on the NEW window before any write, the
+  same guard `rescheduleBooking` applies to its own.
+- A decline REQUIRES a note; `invalid-argument` without one. Declining writes
+  the answer and moves nothing.
+- `failed-precondition` when no request is pending on the visit.
+- req `{ limit?: number }` (integer 1..100, default 50)
+- res `{ requests: RescheduleRequestDto[] }`
+- GATE: `wrapAdminCallable`.
+- A collection-group query over `kinCares` on
+  `rescheduleRequestStatus == 'pending'`, ordered by `rescheduleRequestedAt`
+  ascending so the household that has waited longest is answered first. NEEDS
+  THE COMPOSITE INDEX declared in `mytribe/firestore.indexes.json`; the release
+  deploys `firestore:indexes` before functions.
+- Exists as a callable because the React admin's `useCollection` wraps a single
+  `collection(db, path)` and has no collection-group variant (see the note in
+  `auntieos-admin/src/api/bookings.ts` reserving an "incoming requests"
+  surface). `auntieos-admin/src/components/RescheduleRequestsSection.tsx` is
+  that surface.
 ### createMultiDateBookingRequest
 - req: see `src/admin/createMultiDateBookingRequest.ts`'s `export const Args`.
   Mirrors `requestBooking`'s multi-visit shape field for field (`kinfolkId`

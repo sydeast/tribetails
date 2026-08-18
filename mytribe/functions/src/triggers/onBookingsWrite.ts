@@ -18,6 +18,10 @@ type BookingDoc = {
   /** Set by requestBookingCancellation; first appearance fires kincare.cancel.requested. */
   cancelRequestedAt?: unknown;
   cancelRequestReason?: string | null;
+  /** Set by requestBookingReschedule; first appearance fires kincare.reschedule.requested. */
+  rescheduleRequestedAt?: unknown;
+  rescheduleRequestReason?: string | null;
+  rescheduleRequestStatus?: string | null;
   notes?: string;
   endTime?: { toMillis?: () => number } | null;
   batchId?: string;
@@ -181,6 +185,19 @@ export const onBookingsWrite = onDocumentWritten(
       });
     }
 
+    // #399 item 2: a kinfolk proposed a new time. Same shape as the
+    // cancellation ask above and for the same reason -- the visit has NOT
+    // moved, someone in the office has to rule on it. Fires on the flag's
+    // first appearance AND on a re-request after a decline, which is why the
+    // condition also admits a status that has gone back to `pending`.
+    const rescheduleAskIsNew =
+      !before?.rescheduleRequestedAt ||
+      (before?.rescheduleRequestStatus !== 'pending' && after.rescheduleRequestStatus === 'pending');
+    if (after.rescheduleRequestedAt && after.rescheduleRequestStatus === 'pending' && rescheduleAskIsNew) {
+      await dispatch('kincare.reschedule.requested', {
+        reason: after.rescheduleRequestReason ?? null,
+      });
+    }
     if (isCreate && afterStatus === 'requested') {
       await dispatch('kincare.requested');
       return;

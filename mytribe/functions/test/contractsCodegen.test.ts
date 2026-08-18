@@ -316,9 +316,12 @@ describe('the committed Contracts module', () => {
 describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
   const artifacts = generateArtifacts(BOOKING_CONTRACT_REGISTRY, BOOKING_ARTIFACT_PATHS);
 
-  it('covers all 9 booking callables, both directions where a schema exists', () => {
+  // 9 at the ADR-0003 follow-up, 12 since #399 item 2 added the kinfolk
+  // reschedule ask (requestBookingReschedule) and the office's two ends of it
+  // (resolveBookingRescheduleRequest, listRescheduleRequests).
+  it('covers all 12 booking callables, both directions where a schema exists', () => {
     const model = readModel(BOOKING_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(9);
+    expect(model.callables).toHaveLength(12);
     // getMyBookings is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

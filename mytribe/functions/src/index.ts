@@ -141,6 +141,10 @@ export { getMyKinTales } from './portal/getMyKinTales';
 export { getMyBookings } from './portal/getMyBookings';
 export { requestBooking } from './portal/requestBooking';
 export { requestBookingCancellation } from './portal/requestBookingCancellation';
+// #399 item 2. Sits beside the cancellation ask because it is the same kind of
+// thing: a proposal recorded on the visit, ruled on by the office. The visit
+// itself is still only ever moved by an admin callable.
+export { requestBookingReschedule } from './portal/requestBookingReschedule';
 export { getServiceCatalog } from './portal/getServiceCatalog';
 export { getVetClinics } from './portal/getVetClinics';
 export { getBreeds } from './portal/getBreeds';
@@ -302,6 +306,11 @@ export { createTrainingDocument } from './admin/createTrainingDocument';
 export { updateTrainingDocument } from './admin/updateTrainingDocument';
 export { deleteTrainingDocument } from './admin/deleteTrainingDocument';
 export { rescheduleBooking } from './admin/rescheduleBooking';
+// The office's end of the kinfolk reschedule ask (#399 item 2): the queue, and
+// the accept/decline that either moves the visit or explains why not. Sits here
+// because accepting writes the same kin_care_sessions row rescheduleBooking
+// does, plus the kinCares doc the portal reads, which that callable never did.
+export { listRescheduleRequests, resolveBookingRescheduleRequest } from './admin/rescheduleRequests';
 // A3: the four operator status transitions on a flat kin_care_sessions row.
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.

@@ -200,6 +200,11 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     sourceBookingId: null,
     sessionId: null,
     cancelRequested: false,
+    rescheduleRequestStatus: null,
+    rescheduleRequestedStartTimeMs: null,
+    rescheduleRequestedEndTimeMs: null,
+    rescheduleRequestReason: null,
+    rescheduleResponseNote: null,
     ...overrides,
   };
 }

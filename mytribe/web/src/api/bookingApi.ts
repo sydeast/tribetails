@@ -18,6 +18,8 @@ import type {
   AddBookingNoteArgs,
   AddBookingNoteResult,
   RequestBookingArgs,
+  RequestBookingRescheduleArgs,
+  RequestBookingRescheduleResult,
   RequestBookingCancellationArgs,
   RequestBookingCancellationResult,
   RequestBookingResult,
@@ -127,6 +129,38 @@ export function requestBookingCancellation(
   );
 }
 
+// ── requestBookingReschedule (functions/src/portal/requestBookingReschedule.ts) ──
+// Same shape of thing as the cancellation ask above, and for the same reason:
+// a household PROPOSES a time, it does not move the visit. The visit keeps its
+// current slot and status until the office accepts, and the answer comes back
+// on the visit's own `rescheduleRequestStatus`.
+/**
+ * Asks the business to move one visit to a new time.
+ *
+ * `proposedEndTimeMs` is omitted by the screen, so the visit keeps its current
+ * length: a household picking a new hour for a 30-minute drop-in means the same
+ * drop-in at a different hour. The server derives the end from the visit's own
+ * duration.
+ */
+export function requestBookingReschedule(
+  kinfolkId: string,
+  batchId: string,
+  visitId: string,
+  proposedStartTimeMs: number,
+  reason?: string,
+): Promise<RequestBookingRescheduleResult> {
+  const payload: RequestBookingRescheduleArgs = {
+    kinfolkId,
+    batchId,
+    visitId,
+    proposedStartTimeMs,
+    ...(reason && reason.trim() ? { reason: reason.trim() } : {}),
+  };
+  return call<RequestBookingRescheduleArgs, RequestBookingRescheduleResult>(
+    'requestBookingReschedule',
+    payload,
+  );
+}
 // ── addBookingNote (functions/src/portal/addBookingNote.ts) ─────────────────
 // `kinfolkId` is typed optional server-side but the handler throws
 // invalid-argument without it (it's the authorization anchor, resolved

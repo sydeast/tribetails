@@ -305,7 +305,9 @@ describe('Account billing management', () => {
     await findByTestId('billing-manage');
     await userEvent.click(getByRole('button', { name: 'Add a card' }));
     await waitFor(() => expect(accountApi.createBillingSetupSession).toHaveBeenCalled());
-    const [successUrl, cancelUrl, kinfolkId] = vi.mocked(accountApi.createBillingSetupSession).mock.calls[0];
+    const call = vi.mocked(accountApi.createBillingSetupSession).mock.calls[0];
+    if (!call) throw new Error('createBillingSetupSession was not called');
+    const [successUrl, cancelUrl, kinfolkId] = call;
     expect(successUrl).toContain('?billing=saved');
     expect(cancelUrl).not.toContain('billing=saved');
     expect(kinfolkId).toBe('kin-fam-1');
