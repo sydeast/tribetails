@@ -129,7 +129,9 @@ npm run visual:verify              # all surfaces
 node baseline.mjs verify web       # one surface, if you need it
 ```
 
-Exit code 0 means clean, 1 means at least one screen regressed, 2 means no goldens exist at all. The per-pixel colour tolerance is `PIXEL_THRESHOLD` (default 0.1) on every surface.
+Exit code 0 means clean, 1 means at least one screen regressed with no approval covering it, 2 means no goldens exist at all, 3 means `web/visual/approvals.json` is malformed. The per-pixel colour tolerance is `PIXEL_THRESHOLD` (default 0.1) on every surface.
+
+`VISUAL_BASELINE_DIR` moves the golden root, the directory holding one subdirectory of PNGs per surface. It defaults to `visual/baselines`, which is what every local run wants. CI sets it, and the CI section below says why.
 
 **The regression threshold is per surface**, and the numbers live in `SURFACE_REGRESSION_PCT` in `baseline.mjs` with the measurement behind each:
 
@@ -142,28 +144,61 @@ That last row is not theoretical caution. A genuine layout change on `invoice-de
 
 `REGRESSION_PCT` still overrides every surface, and `REGRESSION_PCT_<SURFACE>` (e.g. `REGRESSION_PCT_REACT`) overrides one and beats it. Prefer the per-surface variable: loosening the shared one to give `desktop` room hands `react` the same room, which is the coupling the table exists to remove. Raise either only with a reason, never to make a red run go green.
 
-Read the results in `visual/report/regression.md` and the per-screen overlays in `visual/report/regress/`. `missing-capture` means a golden has no matching current capture (you did not run the capture step for that surface). `dim-mismatch` means the viewport changed. `unbaselined` means a new screen exists with no golden yet, and it does **not** fail the run.
+Read the results in `visual/report/regression.md` and the per-screen overlays in `visual/report/regress/`. `missing-capture` means a golden has no matching current capture (you did not run the capture step for that surface). `dim-mismatch` means the viewport changed. `unbaselined` means a new screen exists with no golden yet, and it does **not** fail the run. `approved` means the change is over the threshold and a live entry in `web/visual/approvals.json` declares it intended, so it does not fail the run either; the report names who approved it and why.
 
 Verify only ever compares what is on disk. It does not capture. Run the capture step for a surface first, or you are diffing stale PNGs against the goldens and learning nothing.
 
 ## CI runs the react gate, and it does not use the goldens
 
-`.github/workflows/ci.yml`'s `React admin visual regression` job runs on every pull request that touches `auntieos-admin/src/**`, `auntieos-admin/e2e/**`, the manifest, `baseline.mjs`, `vite.config.ts` or the root lockfile. Before it existed the gate ran only when somebody remembered, which is how the goldens rotted for weeks and how a real layout change went unreported for five days.
+`.github/workflows/ci.yml`'s `React admin visual regression` job runs on every pull request that touches `auntieos-admin/src/**`, `auntieos-admin/e2e/**`, the manifest, `baseline.mjs`, `approvals.json`, `vite.config.ts` or the root lockfile. Before it existed the gate ran only when somebody remembered, which is how the goldens rotted for weeks and how a real layout change went unreported for five days.
+
+It was **switched off between 2026-08-18 and #405** by operator ruling, because it was blocking intended UI changes and could not be satisfied. See "Declare a change intended" below for the mechanism that fixed that; the paragraphs here describe what the job does, which is otherwise unchanged.
 
 **It photographs the base branch and the pull request on one runner and diffs those two**, rather than verifying against the committed goldens. The reason is the machine-specific paragraph above: the goldens were recorded on macOS and a Linux runner would be red on all 19 screens for font rasterization alone. A gate that is red on arrival teaches people to ignore it. Two captures on one box minutes apart cancel that noise, and what is left is caused by the pull request.
 
 Consequences worth knowing before you read a run:
 
-- **CI cannot bless a golden.** The base capture is copied over the checkout's `visual/baselines/react/` inside the runner's throwaway tree. Nothing is committed. Promoting a golden is still a deliberate local `update` plus a commit.
+- **CI cannot bless a golden.** The base capture is stood up in `$RUNNER_TEMP/base-goldens/react` and `baseline.mjs` is pointed at it with `VISUAL_BASELINE_DIR`. Nothing under either checkout's `visual/baselines/` is read, written or committed. Promoting a golden is still a deliberate local `update` plus a commit. Until #405 the job got there by `rm -rf`-ing the pull request's own `visual/baselines/react`, which is why a branch could commit a new golden and watch the next run delete it and fail with the identical number.
 - **CI cannot tell you the committed goldens are stale.** Only a local capture-then-verify on the recording machine can. Do that before a release, not only when a screen looks wrong.
-- **A screen the PR adds is `unbaselined`**, reported and not fatal: the base cannot photograph a screen it does not have. A screen the PR removes is `missing-capture` and fails, which is the point.
-- **A PR that bumps `@playwright/test`** shoots the two sides with two different Chromium builds, so expect every screen red at once. That signature (uniform text shimmer across the whole surface, not a moved block) means re-record, not regress.
+- **A screen the PR adds is `unbaselined`**, reported and not fatal: the base cannot photograph a screen it does not have. A screen the PR removes is `missing-capture` and fails unless an approval names it, which is the point: deleting a screen should have to be said out loud, and an approvals entry is how you say it.
+- **A PR that bumps `@playwright/test`** shoots the two sides with two different Chromium builds, so expect every screen red at once. That signature (uniform text shimmer across the whole surface, not a moved block) means re-record, not regress. Do not approve nineteen screens to clear it.
 
-A failing run puts the verdict table on the run summary page and uploads `visual/report/` as the `react-visual-regression` artifact, 7 day retention, matching the e2e job. `regression.md` links each regressed row to its own diff overlay inside that artifact, so the answer to "what changed" is a picture and not a percentage.
+Every run puts the verdict table on the run summary page and uploads `visual/report/` as the `react-visual-regression` artifact, 7 day retention, matching the e2e job. `regression.md` links each changed row, approved or not, to its own diff overlay inside that artifact, so the answer to "what changed" is a picture and not a percentage, including on the green runs, where the picture is the evidence behind an approval.
 
-## Approve a legitimate change
+## Declare a change intended
 
-Only after you have looked at the overlays and can name the UI change that caused every regression.
+This is the CI half of approval, and it is a different thing from promoting a golden below. CI never looks at the goldens, so a new golden cannot clear a CI failure. What clears it is `web/visual/approvals.json`.
+
+An entry names one screen, the branch it belongs to, who approved it, when, and why:
+
+```json
+{
+  "react": [
+    {
+      "screen": "settings",
+      "branch": "ui/settings-two-tabs",
+      "reason": "Payments and Notifications move out of the nav rail and become tabs inside Settings, so the tab strip gains two entries and the panel below shifts down.",
+      "approvedBy": "sydeast",
+      "date": "2026-08-18"
+    }
+  ]
+}
+```
+
+The screen is then reported `approved` instead of `REGRESSION`, with the percentage, the name and the reason on the run summary, and the run goes green.
+
+Rules worth knowing before you write one:
+
+- **Only entries whose `branch` matches the branch being verified are live.** CI passes the pull request's head ref (a PR checkout is detached, so the script cannot read a branch name itself); locally the script reads your current branch, so `npm run visual:react:verify` on the branch that wrote the entry honours it with no ceremony. An entry that has merged to main is inert history: it explains why that screen moved once, and it approves nothing on anybody else's branch. That is the whole reason `branch` is required: an unscoped approval would bless its screen forever, for everyone, silently.
+- **Look at the picture first.** Download the `react-visual-regression` artifact and open the overlay for each screen you are about to approve. An approval you wrote without opening the diff is a rubber stamp, and this file is designed to make that visible rather than easy.
+- **One screen per entry, no globs.** `"screen": "*"` fails the run. A blanket approval is the request this file exists to refuse.
+- **A malformed declaration stops the run** (exit 3): a missing or too-short `reason`, an unknown field name, a date that is not `YYYY-MM-DD`, a surface that is not a surface, or a screen name with no golden and no capture. All of those would otherwise be silently inert, which is the worst failure available here. The entry is sitting in the diff, the run is still red, and nothing says why.
+- **A live entry whose screen did not move** is reported as a stale approval and does not fail the run. Drop it.
+- **Prune merged entries opportunistically.** They cost nothing but noise. The one residual hole in the branch scoping is somebody reusing a merged branch name verbatim; deleting merged entries closes it.
+
+## Promote a golden (a local approve)
+
+Only after you have looked at the overlays and can name the UI change that caused every regression. This updates the committed goldens, which is a LOCAL record; it has no effect on CI.
 
 ```bash
 cd web/visual
@@ -216,5 +251,6 @@ A verify run against the committed captures reported **24 ok, 36 regressions, 0 
 3. Non-zero: open `visual/report/regression.md`, then the overlays for each red row.
 4. Every diff explained by a UI change you made: `npm run visual:approve`, commit goldens separately.
 5. Any diff you cannot explain: do not approve. Fix the regression or escalate.
+6. If `React admin visual regression` is red on the pull request, that is a separate question from the goldens: open the uploaded overlay, and if the change is the point of the PR, add an entry to `web/visual/approvals.json` for your branch. See "Declare a change intended".
 </content>
 </invoke>
