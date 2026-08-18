@@ -3,6 +3,7 @@ import {
   mediaKindOf,
   mediaKindHasPreview,
   mediaPreviewUrl,
+  mediaViewerUrl,
   mediaCaption,
   mediaMetaLine,
   mediaDurationLabel,
@@ -75,6 +76,23 @@ describe('mediaPreviewUrl', () => {
 
   it('is undefined when neither is set: never a fabricated URL', () => {
     expect(mediaPreviewUrl({ thumbnailUrl: '', storageUrl: '' })).toBeUndefined();
+  });
+});
+
+describe('mediaViewerUrl (the tile prefers the thumbnail; the viewer wants the original)', () => {
+  it('prefers storageUrl over thumbnailUrl, the reverse of mediaPreviewUrl', () => {
+    expect(mediaViewerUrl({ thumbnailUrl: 'https://thumb', storageUrl: 'https://full' })).toBe(
+      'https://full',
+    );
+  });
+
+  it('falls back to thumbnailUrl when storageUrl is blank', () => {
+    expect(mediaViewerUrl({ thumbnailUrl: 'https://thumb', storageUrl: '' })).toBe('https://thumb');
+    expect(mediaViewerUrl({ thumbnailUrl: 'https://thumb', storageUrl: '   ' })).toBe('https://thumb');
+  });
+
+  it('is undefined when neither is set: never a fabricated URL', () => {
+    expect(mediaViewerUrl({ thumbnailUrl: '', storageUrl: '' })).toBeUndefined();
   });
 });
 

@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -67,5 +68,61 @@ class MediaThumbnailUiTest {
 
         composeRule.onNodeWithText("Profile").assertIsDisplayed()
         composeRule.onAllNodesWithContentDescription("Set as profile photo").assertCountEquals(0)
+    }
+
+    // `description` deliberately DIFFERENT from `originalFileName`: MediaThumbnail's
+    // outer caption is `description.ifBlank { originalFileName }` (line ~373), so a
+    // blank description would make the caption equal the filename too, and the
+    // filename would already appear twice BEFORE any click (the in-tile label plus
+    // the caption) — breaking the "1 node pre-click, 2 post-click" assertions below
+    // before they ever exercise the fix.
+    private fun docOrAudio(fileType: MediaType, name: String, description: String) = MediaFile(
+        id = "f1",
+        entityId = "kf1",
+        entityType = MediaEntityType.KINFOLK.name,
+        fileType = fileType,
+        originalFileName = name,
+        description = description,
+    )
+
+    /**
+     * #388's Android-side gap: `MediaGalleryScreen.kt`'s DOCUMENT branch had no
+     * `clickable` at all (unlike its IMAGE/VIDEO siblings, and despite
+     * `FullscreenMediaViewer` already having a DOCUMENT/AUDIO branch ready to
+     * receive it). Before the fix, tapping the in-tile filename did nothing and
+     * this test would have failed on the second assertion (still one node, not
+     * two). `FullscreenMediaViewer` renders its own copy of `originalFileName`
+     * alongside the tile's, so the count going 1 -> 2 is the fullscreen viewer
+     * actually opening, not just "did not crash".
+     */
+    @Test
+    fun `document thumbnail opens the fullscreen viewer on tap`() {
+        val file = docOrAudio(MediaType.DOCUMENT, name = "vet-notes.pdf", description = "Vet visit notes")
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(mediaFile = file, onDelete = {})
+            }
+        }
+
+        composeRule.onAllNodesWithText("vet-notes.pdf").assertCountEquals(1)
+        composeRule.onNodeWithText("vet-notes.pdf").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("vet-notes.pdf").assertCountEquals(2)
+    }
+
+    /** Same Android gap as the DOCUMENT case above, on the AUDIO branch. */
+    @Test
+    fun `audio thumbnail opens the fullscreen viewer on tap`() {
+        val file = docOrAudio(MediaType.AUDIO, name = "voicemail.m4a", description = "Voicemail from the vet")
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(mediaFile = file, onDelete = {})
+            }
+        }
+
+        composeRule.onAllNodesWithText("voicemail.m4a").assertCountEquals(1)
+        composeRule.onNodeWithText("voicemail.m4a").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("voicemail.m4a").assertCountEquals(2)
     }
 }

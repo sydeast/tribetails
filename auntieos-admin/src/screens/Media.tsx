@@ -20,6 +20,7 @@ import { useCollection } from '../lib/firestore';
 import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
+import { MediaViewerDialog } from '../components/MediaViewerDialog';
 import './Media.css';
 
 /**
@@ -29,10 +30,14 @@ import './Media.css';
  *
  *   IN SCOPE   the entity-scoped `media_files` listener (`api/media.ts`'s
  *              `mediaTargetQuery`), a fileType filter row (mirrors the wasm's
- *              own `MediaTypeFilters`), and a read-only grid tile reusing
- *              `Gallery.tsx`'s Avatar-based thumbnail / glyph / duration /
- *              profile-badge treatment verbatim (same pure helpers, from
- *              `lib/mediaFormat.ts`).
+ *              own `MediaTypeFilters`), a grid tile reusing `Gallery.tsx`'s
+ *              Avatar-based thumbnail / glyph / duration / profile-badge
+ *              treatment verbatim (same pure helpers, from
+ *              `lib/mediaFormat.ts`), and tapping (or Enter/Space-activating)
+ *              a tile opens the fullscreen viewer
+ *              (`components/MediaViewerDialog.tsx`), porting
+ *              `MediaGalleryScreen.kt`'s `FullscreenMediaViewer` (`:441`) —
+ *              closes #388.
  *
  *   OUT OF SCOPE, flagged rather than silently dropped:
  *     - Upload (`MediaGalleryScreen.kt`'s Upload button + `pickAndUploadMedia`).
@@ -40,20 +45,17 @@ import './Media.css';
  *     - Delete and "set profile photo" (the wasm's per-tile hover actions and
  *       `AuntieDialog` confirmation). This grid has no destructive or mutating
  *       control anywhere.
- *     - The full-size media viewer (`MediaViewerDialog`, opened by tapping a
- *       tile in the wasm). No `onSelect`/detail prop exists on this screen: a
- *       tile has no click handler at all, same as `Gallery.tsx`'s read-only
- *       cells (see DEAD-CONTROL below).
  *     - Caption editing. The caption shown is READ-ONLY (`description` falling
  *       back to `originalFileName`, via `mediaCaption`).
  *     - A household filter row. `Gallery.tsx`'s grid offers one because it
  *       spans every household; this screen is already scoped to exactly one
  *       kin/household, so a second household axis would be meaningless here.
  *
- * DEAD-CONTROL: grid tiles are non-interactive by design, mirroring
- * `Gallery.tsx`'s `GalleryTile` exactly (no `onClick`, no lightbox, no hover
- * action). The type-filter chips ARE interactive: they are a client-side VIEW
- * filter over already-streamed rows, not a write path, the same distinction
+ * Tiles ARE interactive now (#388 fixed the DEAD-CONTROL this comment used to
+ * describe): a real `<button>` per cell, mirroring `Gallery.tsx`'s
+ * `GalleryTile` exactly, opening the same shared `MediaViewerDialog`. The
+ * type-filter chips were always interactive: a client-side VIEW filter over
+ * already-streamed rows, not a write path, the same distinction
  * `Gallery.tsx`'s own filter chips make.
  */
 export interface MediaProps {
@@ -81,6 +83,9 @@ export function Media({ targetType, targetId }: MediaProps) {
   // the render below never reads `mediaState` unless `hasTarget` is true.
   const mediaState = useCollection<MediaFile>(spec);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  // The fullscreen viewer a tile opens (#388). See Gallery.tsx's identical
+  // state for why this holds the row itself, not just an id.
+  const [viewerMedia, setViewerMedia] = useState<MediaFile | null>(null);
 
   /**
    * The mock's top-bar count chip. Rendered ONLY from a resolved read: while the
@@ -120,10 +125,17 @@ export function Media({ targetType, targetId }: MediaProps) {
           empty={<p className="media__hint">No media on file for this {label.toLowerCase()} yet.</p>}
         >
           {(rows) => (
-            <MediaGrid rows={rows} typeFilter={typeFilter} onTypeFilterChange={setTypeFilter} />
+            <MediaGrid
+              rows={rows}
+              typeFilter={typeFilter}
+              onTypeFilterChange={setTypeFilter}
+              onOpen={setViewerMedia}
+            />
           )}
         </AsyncRegion>
       )}
+
+      {viewerMedia && <MediaViewerDialog media={viewerMedia} onClose={() => setViewerMedia(null)} />}
     </div>
   );
 }
@@ -147,9 +159,10 @@ interface MediaGridProps {
   rows: MediaFile[];
   typeFilter: string | null;
   onTypeFilterChange: (next: string | null) => void;
+  onOpen: (media: MediaFile) => void;
 }
 
-function MediaGrid({ rows, typeFilter, onTypeFilterChange }: MediaGridProps) {
+function MediaGrid({ rows, typeFilter, onTypeFilterChange, onOpen }: MediaGridProps) {
   const safeRows = useMemo(() => rows.map(withMediaDefaults), [rows]);
   const types = useMemo(() => galleryFileTypes(safeRows), [safeRows]);
   const visible = useMemo(
@@ -212,7 +225,7 @@ function MediaGrid({ rows, typeFilter, onTypeFilterChange }: MediaGridProps) {
       ) : (
         <ul className="media__grid">
           {visible.map((m) => (
-            <MediaTile key={m._id} media={m} />
+            <MediaTile key={m._id} media={m} onOpen={onOpen} />
           ))}
         </ul>
       )}
@@ -254,15 +267,19 @@ const TILE_SIZE = 132;
 
 interface MediaTileProps {
   media: MediaFile;
+  /** Opens the fullscreen viewer for this tile's media (#388). */
+  onOpen: (media: MediaFile) => void;
 }
 
 /**
- * One grid cell. Read-only: no click handler at all (see the file header,
- * DEAD-CONTROL). No household line: unlike `Gallery.tsx`'s tile, every row here
- * already belongs to the one scoped entity, so repeating its name on every tile
- * would be noise, not information.
+ * One grid cell. A genuine control (#388, the DEAD-CONTROL this comment used
+ * to describe): a real `<button>`, opening the shared `MediaViewerDialog` on
+ * click or Enter/Space, same as `Gallery.tsx`'s tile. No household line:
+ * unlike `Gallery.tsx`'s tile, every row here already belongs to the one
+ * scoped entity, so repeating its name on every tile would be noise, not
+ * information.
  */
-function MediaTile({ media }: MediaTileProps) {
+function MediaTile({ media, onOpen }: MediaTileProps) {
   // `?? ''`: MediaFile's document fields are optional because the interface is a
   // cast over raw Firestore data, not a validation of it (see api/gallery.ts).
   // Every row reaching a tile has already been through `withMediaDefaults`, so
@@ -278,7 +295,7 @@ function MediaTile({ media }: MediaTileProps) {
 
   return (
     <li className="media__cell">
-      <div className="media__tile">
+      <button type="button" className="media__tile" onClick={() => onOpen(media)} aria-label={`Open ${accessibleLabel}`}>
         <div className="media__tile-media">
           <Avatar
             label={accessibleLabel}
@@ -327,7 +344,7 @@ function MediaTile({ media }: MediaTileProps) {
           {caption !== '' && <span className="media__tile-caption">{caption}</span>}
           {meta !== '' && <span className="media__tile-meta">{meta}</span>}
         </div>
-      </div>
+      </button>
     </li>
   );
 }

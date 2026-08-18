@@ -244,9 +244,14 @@ internal fun MediaThumbnail(
                 }
             }
             MediaType.DOCUMENT -> {
+                // #388 Android gap: this branch had no `clickable`, so a document
+                // tile never opened `FullscreenMediaViewer` even though that
+                // viewer already has a DOCUMENT/AUDIO branch ready (:485-505).
+                // IMAGE/VIDEO above always had it; this just closes the gap.
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clickable { showFullscreen = true }
                         .padding(8.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -268,9 +273,11 @@ internal fun MediaThumbnail(
                 }
             }
             MediaType.AUDIO -> {
+                // #388 Android gap: same missing `clickable` as DOCUMENT above.
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clickable { showFullscreen = true }
                         .padding(8.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
