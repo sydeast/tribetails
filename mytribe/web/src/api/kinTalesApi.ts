@@ -334,3 +334,55 @@ export function taleMetaLabel(tale: KinTaleDto, now: number = Date.now()): strin
   }
   return parts.join(' · ');
 }
+// ── getMyKinPhotos (functions/src/portal/getMyKinPhotos.ts) ─────────────────
+//
+// The whole household's photo archive, for the Gallery screen. Distinct from
+// getMyKinTaleMedia above, which resolves the media of ONE tale the caller
+// already has the id of.
+//
+// Hand-typed rather than generated: the contract registry publishes the invoice
+// and booking surfaces to three clients, and its header is explicit that adding
+// a line there is a decision to publish. The rest of this file's KinTale
+// callables are hand-typed for the same reason.
+export interface KinPhotoDto {
+  /** The media record's id. Stable, and unique within a page. */
+  id: string;
+  url: string;
+  /** MIME type, e.g. 'image/jpeg'. Null when the record never carried one. */
+  contentType: string | null;
+  /** The KinTale this photo came from, so a tile can link back to the story. */
+  taleId: string;
+  taleTitle: string;
+  takenAtMs: number | null;
+}
+export interface KinPortraitDto {
+  kinId: string;
+  kinName: string;
+  url: string;
+}
+export interface GetMyKinPhotosResult {
+  photos: KinPhotoDto[];
+  /** Current Kin portraits. Populated on the first page only. */
+  portraits: KinPortraitDto[];
+  hasMore: boolean;
+  /** Cursor for the next page, or null at the end of the archive. */
+  nextBefore: number | null;
+}
+export interface GetMyKinPhotosRequest {
+  kinfolkId?: string;
+  /** KinTales read per page. Photos returned is whatever those tales carry. */
+  limit?: number;
+  /** `nextBefore` from the previous page. */
+  before?: number;
+}
+export function getMyKinPhotos(
+  kinfolkId?: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<GetMyKinPhotosResult> {
+  const payload: GetMyKinPhotosRequest = {
+    ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+    ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+    ...(opts.before !== undefined ? { before: opts.before } : {}),
+  };
+  return call<GetMyKinPhotosRequest, GetMyKinPhotosResult>('getMyKinPhotos', payload);
+}

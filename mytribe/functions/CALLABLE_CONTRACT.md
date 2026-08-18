@@ -1908,6 +1908,42 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   three-state archive facet); a notification should not be the harder thing to
   undo.
 
+- req `{ kinfolkId?: string, limit?: number, before?: number }`
+  (`limit` is an integer 1..50, default 12, counted in KinTALES not photos;
+  `before` is the previous page's `nextBefore`)
+- res `{ photos: PhotoDto[], portraits: PortraitDto[], hasMore: boolean, nextBefore: number | null }`
+  where `PhotoDto = { id, url, contentType: string | null, taleId, taleTitle, takenAtMs: number | null }`
+  and `PortraitDto = { kinId, kinName, url }`
+- GATE: `resolveKinfolkAccess`, then the `kinfolkId ==` predicate on the query.
+  This reads the FLAT `kin_care_reports` collection, so unlike a subcollection
+  read the path itself scopes nothing; those two together are the whole tenant
+  boundary and both are asserted in `test/getMyKinPhotos.test.ts`.
+- #399 item 1. Nothing could answer "all of this household's photos" before:
+  `getMyKinTaleMedia` resolves the media of ONE tale whose id the caller
+  already has.
+- TWO SOURCES, and they are different kinds of thing. `photos` is the archive,
+  `kin_care_reports.mediaFileIds` resolved through `media_files.storageUrl`
+  (the same mapping `mediaDocToThumb` does for the feed's thumbnails).
+  `portraits` is the ONE current photo per Kin on
+  `families/{kinfolkId}/kin/{kinId}.photoUrl`, overwritten in place by
+  `confirmKinPhotoUpload` with no history kept.
+- NO PER-KIN FILTER, deliberately. `media_files` carries no reliable per-Kin
+  key: `kinId` appears only on legacy and sandbox documents, `taggedKinIds` is
+  written by one admin surface only, and `entityType` casing is inconsistent in
+  production. A filter this callable could not honour is worse than no filter.
+- PAGINATION IS BY TALE. A tale can carry twenty photos or none, so a
+  photo-count page would either split a visit across pages or need a second
+  cursor inside one. `nextBefore` is the last tale's `sentAtMs`, the same
+  opaque cursor `getMyKinTales` uses.
+- `portraits` is populated on the FIRST page only (no `before`), and is empty
+  after that: they have no timestamp to sort into the archive by, and repeating
+  them under every scroll shows the same faces over and over.
+- `sentAt > ''` keeps DRAFTs out, same as `getMyKinTales`: a photo on a tale the
+  Auntie has not sent is not the household's to see. A media record that is
+  missing or carries no `storageUrl` is simply absent, never a placeholder
+  tile, and a file attached to two tales appears once, credited to the more
+  recent.
+- kinfolk portal only. `mytribe/web/src/screens/Gallery.tsx` is the surface.
 ## Card on file (kinfolk, primary only)
 The four callables behind the portal's Billing Details "Manage" button
 (`src/portal/billing.ts`, issue #399 item 3). Card state has no generated

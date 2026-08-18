@@ -288,6 +288,13 @@ const tribeHubRoute = createRoute({
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/TribeHub'), 'TribeHub'),
 });
+// #399 item 1: the destination the Tribe hub's "All photos" never had.
+const galleryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/gallery',
+  beforeLoad: requireActiveTribe,
+  component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
+});
 
 const tribeEditRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -332,6 +339,7 @@ const routeTree = rootRoute.addChildren([
   invoicesRoute,
   invoiceDetailRoute,
   tribeHubRoute,
+  galleryRoute,
   tribeEditRoute,
   accountRoute,
   notificationSettingsRoute,

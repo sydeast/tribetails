@@ -181,6 +181,10 @@ export { setActiveTribe } from './portal/setActiveTribe';
 export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhotoUpload';
 export { addSecondaryContact } from './portal/addSecondaryContact';
 export { getMyKinTaleMedia } from './portal/getMyKinTaleMedia';
+// #399 item 1: the whole household's photo archive, for the Tribe hub gallery.
+// getMyKinTaleMedia resolves ONE tale the caller already has the id of; this
+// answers "all of it", which nothing could before.
+export { getMyKinPhotos } from './portal/getMyKinPhotos';
 export { registerFcmToken, unregisterFcmToken } from './portal/registerFcmToken';
 export { addKinTaleComment, getKinTaleReaction, toggleKinTaleLove } from './portal/kinTaleEngagement';
 export { getKinTaleComments } from './portal/getKinTaleComments';
