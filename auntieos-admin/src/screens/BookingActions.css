@@ -107,6 +107,14 @@
   gap: var(--space-2);
   align-items: center;
 }
+/* The confirm step has to look like a different state from the one before it,
+   not like the same panel with different words in it. The question carries the
+   panel's heading weight; the body under it stays secondary. */
+.booking-actions__confirmTitle {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
 .booking-actions__confirm {
   margin: 0 0 var(--space-3);
   color: var(--color-text-primary);

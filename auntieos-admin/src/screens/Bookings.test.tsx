@@ -328,7 +328,7 @@ describe('Bookings screen', () => {
     await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(approveBooking).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Approve booking' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, approve it' }));
     expect(approveBooking).toHaveBeenCalledWith('ses-42');
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
