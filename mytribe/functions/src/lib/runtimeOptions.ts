@@ -1,6 +1,17 @@
 /**
  * Shared runtime sizing for the MyTribe Functions fleet.
  *
+ * READ THIS FIRST: THE DEFAULT IS `cpu: 1` AGAIN AS OF 2026-08-18. Everything
+ * in this file was written while the fleet default was `cpu: 0.25`, and it is
+ * kept below because the history explains the shape. `FULL_CPU` and
+ * `FULL_CPU_SERIAL` now ask for a CPU the fleet already gives them, so what
+ * they still buy is only their `maxInstances`. They are left at their 27 and 12
+ * call sites rather than swept out in the perf change, so the flip is one token
+ * and reviewable as one token; retiring them is its own PR. `SERIAL` is the one
+ * constant that changed meaning, and it now pins 0.25 explicitly rather than
+ * inheriting it. See docs/adr/0004-functions-runtime-shape.md decision 2 and
+ * the PR for issue #395.
+ *
  * WHY THIS EXISTS, AND WHY THAT REASON DID NOT SURVIVE
  * ----------------------------------------------------
  * Every one of the 226 v2 functions in this codebase took the firebase-functions
@@ -23,10 +34,12 @@
  * described below is what it cost.
  *
  * docs/adr/0004-functions-runtime-shape.md has the measurements and recommends
- * returning the fleet default to cpu 1, which would retire FULL_CPU and leave
- * the two constants below as what they always really were: maxInstances policy.
- * Until that lands, the exceptions here are load-bearing and the reasons they
- * give are still correct. Only the reason for the DEFAULT they escape is not.
+ * returning the fleet default to cpu 1, which retires FULL_CPU and leaves the
+ * constants below as what they always really were: maxInstances policy. That
+ * landed on 2026-08-18 (issue #395), so the exceptions here are no longer
+ * load-bearing for CPU. The reasons they give are still correct about which
+ * paths are latency-critical, which is why the call sites and their comments
+ * stay.
  *
  * THE MEMORY NUMBER IS LOAD-BEARING, AND IT IS THE SAME FACT AS THE PARAGRAPH
  * BELOW. Because the runtime loads the entire module graph on every cold start,
@@ -81,10 +94,17 @@
  *               concurrent request pays a cold start.
  *   cpu 1    -> concurrency 80. One warm instance absorbs a burst.
  *
- * Loading this codebase's module graph costs ~0.7s of CPU, because the Functions
+ * The fleet sits in the second regime as of 2026-08-18. It sat in the first
+ * one for seventeen days, and issue #395 is the bill: five callables on the
+ * 2026-08-17 walk, none of them carrying an override, took 7.9 to 10.3 seconds
+ * on their first call and 703 ms on their second.
+ *
+ * Loading this codebase's module graph costs ~0.8s of CPU, because the Functions
  * runtime loads all of `index.js` whatever the target is. At 0.25 vCPU that is
- * roughly 2.8s of wall clock on a cold start. That is tolerable on a nightly
- * cron and not tolerable on a login, which is what the split below encodes.
+ * roughly 3.2s of wall clock on a cold start, and 1.45s of import on a cold
+ * page cache is roughly 5.8s. That was tolerable on a nightly cron and not
+ * tolerable on a login, which is what the split below encodes and what the
+ * default now gets right without one.
  *
  * It was ~1.44s until the lazy-import change above. Re-measured on one machine
  * across the same change so the halving is a comparison and not two anecdotes:
@@ -99,6 +119,9 @@
 /**
  * A full vCPU, so Cloud Run keeps 80-way concurrency, plus a 10-instance cap
  * (= 800 concurrent requests, which nothing in this product approaches).
+ *
+ * The `cpu` half is now the fleet default and this constant restates it. What
+ * it still changes is `maxInstances`, from the global 20 down to 10.
  *
  * Use for: latency-critical user-facing paths, genuinely CPU-bound work, and
  * webhooks a third party retries into. The comment at each call site says which.
@@ -115,7 +138,18 @@ export const FULL_CPU = { cpu: 1, maxInstances: 10 } as const;
 export const FULL_CPU_SERIAL = { cpu: 1, maxInstances: 2 } as const;
 
 /**
- * The global 0.25 vCPU with the same 2-instance cap. For crons that only sweep
- * or delete: no fan-out, no user waiting, no reason to buy a full CPU.
+ * A QUARTER vCPU with the same 2-instance cap. For crons that only sweep or
+ * delete: no fan-out, no user waiting, no reason to buy a full CPU.
+ *
+ * The 0.25 is written out here as of 2026-08-18. It used to be inherited from
+ * the fleet default, and when that default went back to 1 this constant would
+ * otherwise have quietly quadrupled the CPU of its four call sites
+ * (`cleanupExpiredShareLinks`, `rotateOldFcmTokens`, `errorDailyDigest`,
+ * `expireStaleInvites`). Those four spend nearly all of their time waiting on
+ * Firestore rather than computing, which is the one case where a quarter vCPU
+ * is genuinely cheaper rather than merely slower, so the pin keeps their
+ * behaviour exactly as it was and keeps the flip's blast radius on the paths a
+ * person is actually waiting for. Concurrency stays 1 here, which is what
+ * "serial" wanted anyway.
  */
-export const SERIAL = { maxInstances: 2 } as const;
+export const SERIAL = { cpu: 0.25, maxInstances: 2 } as const;

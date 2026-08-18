@@ -1,9 +1,17 @@
 # ADR-0004: The fleet default returns to cpu 1; the quota it was cut for was never binding
 
 Date: 2026-08-04
-Status: Proposed. Decision 1 (correct the written record) is implemented in this
-change. Decisions 2 through 5 are sequenced behind the lazy-import work on
-`perf/lazy-deps` and are follow-ups, not this PR.
+Status: Accepted in part, 2026-08-18. Decision 1 (correct the written record)
+was implemented in the change that proposed this ADR. Decisions 2 and 3 landed
+together on `perf/callable-cold-start` for issue #395: the fleet default is
+`cpu: 1`, and the remeasurement decision 3 asked for is in that PR (the module
+graph is 1,873 modules, 13.4 MiB of JavaScript, 0.80-1.02 s of CPU warm and
+about 193 MiB resident, which is within measurement noise of the
+`perf/lazy-deps` column below). One deliberate departure: `SERIAL` now pins
+`cpu: 0.25` explicitly rather than becoming pure `maxInstances` policy, so the
+four nightly sweep crons that use it keep the shape they have today. Decision 4
+(prune `minInstances`) and decision 5 (memory) are still open and are the
+operator's call.
 
 ## Context
 

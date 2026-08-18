@@ -10,11 +10,17 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 // emitted `lib/index.js` and against the generated endpoint manifest rather
 // than assumed; see the PR body for the proof.
 //
-// cpu 0.25: THE REASON THIS WAS SET IS NOT TRUE. It was chosen on 2026-08-01
-//   because 240 Cloud Run services x 1 vCPU appeared to sit above the 200 vCPU
-//   `CpuAllocPerProjectRegion` ceiling for us-central1, and that appeared to be
-//   what broke five consecutive full deploys. Both halves were wrong, and
-//   docs/RUNBOOK.md has said so since 2026-08-03:
+// cpu 1: the fleet default, restored 2026-08-18 under ADR-0004 decision 2
+//   (docs/adr/0004-functions-runtime-shape.md). That ADR sequenced the flip
+//   behind the lazy-import work and behind a remeasurement of the module graph;
+//   the lazy-import work landed on 2026-08-04 and the remeasurement is in the
+//   PR for issue #395, which is this change.
+//
+//   IT WAS 0.25 FROM 2026-08-01, FOR A REASON THAT WAS NOT TRUE. The setting
+//   was chosen because 240 Cloud Run services at 1 vCPU appeared to sit above
+//   the 200 vCPU `CpuAllocPerProjectRegion` ceiling for us-central1, and that
+//   appeared to be what broke five consecutive full deploys. Both halves were
+//   wrong, and docs/RUNBOOK.md has said so since 2026-08-03:
 //
 //     - The deploys were refused by a RATE limit, not a capacity one:
 //       'Per project mutation requests per minute per region' on
@@ -25,15 +31,58 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //       counts. Read off the console 2026-08-03: 16,000 of 400,000 milli vCPU
 //       in use. Four percent.
 //
-//   The setting is left in place here because changing it is a real decision
-//   with real trade-offs, not a revert. See docs/adr/0004-functions-runtime-shape.md,
-//   which recommends returning the default to cpu 1 after the lazy-import work
-//   lands, and gives the measurements. What matters at this line is that nobody
-//   reads the old justification and treats the shape as settled.
+//   WHAT 0.25 COST, AND WHY IT IS WORTH A COMMENT THIS LONG. Below a full vCPU
+//   Cloud Run refuses concurrency above 1, and firebase-tools enforces that for
+//   us (`resolveCpuAndConcurrency`: `concurrency = cpu >= 1 ? 80 : 1`). So the
+//   choice was never a dial, it was two regimes: at 0.25 every concurrent
+//   request started its own container, and every one of those containers loaded
+//   the whole of this file before it could serve anything.
 //
-//   Functions that need more carry an explicit override at their own
-//   definition; see lib/runtimeOptions.ts, including why below 1 vCPU Cloud Run
-//   pins concurrency to 1.
+//   Issue #395 is what that looked like from a browser. The 2026-08-17 walk
+//   captured markInvoicePaid at 10,324 ms, recordPayment at 9,047 ms,
+//   listTemplateBindings at 8,936 ms, getInvoiceLedger at 8,740 ms, and
+//   transitionBookingStatus at 7,942 ms followed by 703 ms for the same
+//   callable seconds later. Not one of those five carried a cpu override, so
+//   all five ran at the 0.25 set on this line, and the 7,942/703 pair is a cold
+//   start rather than a slow query.
+//
+//   Quartering the CPU does not quarter the cost of an import. It quadruples
+//   the wall clock and bills the same vCPU-seconds, because a fixed amount of
+//   CPU work costs a fixed number of CPU-seconds however thinly it is sliced.
+//   0.25 vCPU is cheaper only for the part of a request that waits on
+//   Firestore; on the part that computes it converts CPU into latency at no
+//   saving. Measured for #395 on the built lib/, node v24.14.0, three runs:
+//
+//     require('lib/index.js')   1,873 modules, 13.4 MiB of JavaScript parsed,
+//                               0.80-1.02 s of CPU warm (1.45 s on the first
+//                               run of a session), 191-196 MiB RSS
+//
+//   At 0.25 vCPU a 1.45 s import is roughly 5.8 s of wall clock before the
+//   handler is entered. Add node's own bootstrap and the container start and it
+//   accounts for the 7.2 s between that 7,942 ms call and the 703 ms one. At
+//   cpu 1 the same import is ~1.45 s, and 80-way concurrency means a warm
+//   instance absorbs the rest of a burst instead of cold-starting per request.
+//
+//   WHAT cpu 1 COSTS: well under a dollar a month, and ADR-0004 does the
+//   arithmetic. The twelve `minInstances: 1` functions are ~98% of the compute
+//   bill and they already run at cpu 1, so this flip only touches
+//   request-driven time on the ~185 functions with no override, at 1,850 to
+//   7,000 requests a day. It does not raise the standing minimum, so it does
+//   not put `--force` on the operator's next deploy.
+//
+//   WHAT cpu 1 TRADES AWAY: concurrency 1 was an accidental guarantee that no
+//   two requests ever shared process state. At concurrency 80 a module-scope
+//   mutable holding per-request or per-tenant data stops being a style question
+//   and becomes a cross-tenant data leak. Audited for ADR-0004 and re-checked
+//   for #395: every module-scope `let` in `src/` is an idempotent lazy client
+//   singleton (lib/twilio.ts, lib/stripe.ts, lib/aiCopy.ts, lib/firestoreAdmin.ts,
+//   lib/sentry.ts, public/addGuestKinTaleComment.ts) and every module-scope
+//   collection is a frozen constant. Keep it that way.
+//
+//   Functions that need a different shape carry an explicit override at their
+//   own definition; see lib/runtimeOptions.ts. `SERIAL` now pins 0.25 back for
+//   the four nightly sweep crons, which wait on Firestore rather than compute
+//   and have nobody watching them.
 // memory 256MiB: RAISED to 512MiB on 2026-08-04 because the fleet outgrew
 //   256MiB, then RETURNED to 256MiB later the same day once the reason was
 //   removed rather than accommodated. Both halves of that are below, in order,
@@ -102,10 +151,14 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   Load heavy dependencies inside the handler that uses them, and prefer the
 //   one-API package over a bundle. lib/runtimeOptions.ts has the same warning
 //   next to the same graph.
-// maxInstances 20: nothing capped instances before, so a runaway trigger loop
-//   or a traffic spike could scale to Cloud Run's default of 100 and bill
-//   unbounded. 20 instances at 0.25 vCPU bounds one runaway function to 5 vCPU.
-setGlobalOptions({ cpu: 0.25, memory: '256MiB', maxInstances: 20 });
+// maxInstances 20: the runaway-billing cap. Nothing capped instances before, so
+//   a runaway trigger loop or a traffic spike could scale to Cloud Run's default
+//   of 100 and bill unbounded. At cpu 1 that ceiling bounds one runaway function
+//   to 20 vCPU rather than the 5 it bounded at 0.25, and the same twenty
+//   instances now serve up to 1,600 concurrent requests rather than 20. The
+//   crossover is four concurrent requests per function, and getInvoiceLedger has
+//   already been observed at eleven; see ADR-0004.
+setGlobalOptions({ cpu: 1, memory: '256MiB', maxInstances: 20 });
 
 // Sentry is lazy-initialised by each handler at first invocation. Eager
 // init at module-load logged a spurious "SENTRY_DSN unset" on cold-start
