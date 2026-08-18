@@ -199,4 +199,40 @@ describe('getMyHomeHandler', () => {
 
     expect(res.payMethods).toEqual([{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }]);
   });
+
+  /**
+   * #379. The third rung of the display-name ladder opens `kinfolk/{id}`, the
+   * only place this handler touches the AuntieOS canonical household record.
+   * That document carries `internalNotes` (staff-only, the field the admin UI
+   * labels "Anything that doesn't belong on the dossier yet"), and the handler
+   * must take firstName and lastName off it and nothing else.
+   *
+   * Firestore rules no longer let a household read this document at all, so
+   * this callable is now one of the only routes by which anything from it can
+   * reach a portal screen. That makes the projection load-bearing, not tidy.
+   *
+   * Mutation-checked: spread the snapshot into the response and this goes red.
+   */
+  it('#379: the kinfolk name fallback takes first/last only, never internalNotes', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'families/3': null,
+        'dossiers/3': null,
+        'kinfolk/3': {
+          firstName: 'Dana',
+          lastName: 'Mercer',
+          internalNotes: 'Owner disputes every invoice. Do not discount again.',
+          referralSource: 'Vet referral, do not mention',
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyHomeHandler } = await import('../src/portal/getMyHome');
+    const res = await getMyHomeHandler({ data: {}, auth: { uid: 'u1' } } as any);
+
+    expect(res.displayName).toBe('Dana Mercer');
+    expect(res).not.toHaveProperty('internalNotes');
+    expect(JSON.stringify(res)).not.toMatch(/disputes every invoice|referralSource|Vet referral/);
+  });
 });
