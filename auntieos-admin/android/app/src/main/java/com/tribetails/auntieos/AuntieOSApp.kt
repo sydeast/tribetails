@@ -77,9 +77,12 @@ class AuntieOSApp : Application() {
         // crash inside SentryAndroid.init() leaves a recoverable stacktrace.
         installDefensiveCrashHandler(applicationContext)
 
-        // Skip Sentry under Robolectric - unit-test runs were polluting the
-        // production project (AUNTIEOS-ADMIN-4 retrofit 404: 476 events / 67
-        // fake "users", all tagged device.family=robolectric).
+        // Are we running inside the JVM unit-test suite? Two pieces of startup
+        // below are skipped when we are: Sentry, because unit-test runs were
+        // polluting the production project (AUNTIEOS-ADMIN-4 retrofit 404: 476
+        // events / 67 fake "users", all tagged device.family=robolectric), and
+        // the voice registration further down, because the background work it
+        // starts outlives the test that created this Application (#425).
         val isRobolectric =
             Build.FINGERPRINT?.contains("robolectric", ignoreCase = true) == true
         val sentryDsn = BuildConfig.SENTRY_DSN
@@ -126,10 +129,28 @@ class AuntieOSApp : Application() {
         // repository rather than a Retrofit binding. `repository` is read at call
         // time; a later `rebuildRepository` swaps only the n8n base URL, which
         // callables do not use, so the captured instance stays correct.
-        try {
-            VoiceTokenManager.initialize(this, repository, appScope)
-        } catch (e: Exception) {
-            AuntieLog.e("Failed to initialize VoiceTokenManager", e)
+        //
+        // SKIPPED UNDER ROBOLECTRIC, for the same class of reason as the Sentry
+        // skip above, except that this one was corrupting the test suite rather
+        // than a dashboard. `initialize` launches `mintAndRegister` on [appScope]
+        // (Dispatchers.Default) and nothing ever cancels that scope, while
+        // `VoiceTokenManager` is a process-wide `object`. Robolectric builds a
+        // fresh AuntieOSApp for EVERY test method and the whole unit-test suite
+        // runs in one JVM, so each Robolectric test left another background
+        // coroutine alive that would go on to write `Working` and then
+        // `Failed(...)` into the shared manager at an arbitrary later moment,
+        // inside whatever unrelated test happened to be running by then. That is
+        // what made AuntieFirebaseMessagingServiceTest fail order-dependently:
+        // its `@Before` reset was correct and simply cannot defend against a
+        // writer that arrives after it has run. See issue #425.
+        if (isRobolectric) {
+            AuntieLog.d("Skipping VoiceTokenManager.initialize under Robolectric")
+        } else {
+            try {
+                VoiceTokenManager.initialize(this, repository, appScope)
+            } catch (e: Exception) {
+                AuntieLog.e("Failed to initialize VoiceTokenManager", e)
+            }
         }
     }
 
