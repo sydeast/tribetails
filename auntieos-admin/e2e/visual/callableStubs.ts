@@ -614,6 +614,68 @@ const HANDLERS: Readonly<Record<string, CallableHandler>> = {
     ],
   }),
 
+  /**
+   * The catalog-key list the Assignments picker is built from. Template
+   * Assignments started calling this on first paint when the free-text key box
+   * became a picker (issues #382/#383), so without a stub here the panel is the
+   * red `listCatalogKeys failed` message rather than a picker.
+   *
+   * Four rows, chosen to show every state the picker can be in: two catalog keys
+   * with no binding, one direct-send key, and the `invoice.issued` key that
+   * `listTemplateBindings` above binds. That last one is `legacy`, because it is
+   * not in the real notification catalog, which is exactly what the screen must
+   * show without offering it as something new to bind.
+   */
+  listCatalogKeys: () => {
+    const rows = [
+      {
+        key: 'invite.primary',
+        label: 'Portal invite to a primary kinfolk',
+        category: null,
+        audience: null,
+        source: 'direct-send',
+        defaultTemplateId: 'invite.primary',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'invite.primary',
+      },
+      {
+        key: 'invoice.issued',
+        label: 'Not in the catalog, nothing dispatches it',
+        category: null,
+        audience: null,
+        source: 'legacy',
+        defaultTemplateId: 'invoice.issued',
+        hasDefaultTemplate: false,
+        bound: true,
+        resolvedTemplateId: 'vis-tpl-invoice-issued',
+      },
+      {
+        key: 'invoice.new',
+        label: 'New invoice',
+        category: 'invoice',
+        audience: 'kinfolk',
+        source: 'catalog',
+        defaultTemplateId: 'invoice.new',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'invoice.new',
+      },
+      {
+        key: 'kincare.booking.confirm',
+        label: 'KinCare booking confirmed',
+        category: 'visit',
+        audience: 'both',
+        source: 'catalog',
+        defaultTemplateId: 'kincare.booking.confirm',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'kincare.booking.confirm',
+      },
+    ];
+    return { keys: rows.map((r) => r.key), rows };
+  },
+
   // ── form schemas ────────────────────────────────────────────────────────
   /**
    * Sorted newest-first by the screen itself, so the order here is not what
