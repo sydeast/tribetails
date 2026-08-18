@@ -8,6 +8,4 @@ The invoice still reads paid in AuntieOS. That is on purpose, and nothing has go
 
 If the status says needs_response, there is a deadline. Submit evidence in Stripe before it runs out, or the dispute closes as lost.
 
-Open it in Stripe: []
-
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

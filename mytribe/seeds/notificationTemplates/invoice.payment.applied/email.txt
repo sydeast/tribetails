@@ -4,8 +4,6 @@ Hi there, your payment for invoice {{invoiceNumber}} just came through. Thank yo
 
 I appreciate you, and I appreciate the trust.
 
-See your invoice here: []
-
 With thanks, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

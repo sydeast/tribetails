@@ -4,6 +4,4 @@ Good news: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime
 
 Give the visit details a look so you're set before you head out.
 
-Open it here: []
-
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

@@ -1,1 +1,1 @@
-It's Auntie. The payment for invoice {{invoiceNumber}} didn't go through. Update your payment details here, or message me: []
+It's Auntie. The payment for invoice {{invoiceNumber}} didn't go through. Message me and we'll sort it out.

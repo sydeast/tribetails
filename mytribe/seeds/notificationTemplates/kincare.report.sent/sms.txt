@@ -1,1 +1,1 @@
-It's Auntie. {{kinName}}'s KinTale from today is ready to read. Here you go: []
+It's Auntie. {{kinName}}'s KinTale from today is ready to read.

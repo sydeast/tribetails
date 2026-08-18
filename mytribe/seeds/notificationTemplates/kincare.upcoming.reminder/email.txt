@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, just a heads up that I'll be seeing {{kinName}} soon. Your {
 
 Everything's on track on my end. See you (and the Kin) then.
 
-See the booking here: []
-
 See you soon, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.
