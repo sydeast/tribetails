@@ -58,6 +58,12 @@ jobs:
               - 'auntieos-admin/tsconfig.json'
               - 'auntieos-admin/vite.config.ts'
               - 'auntieos-admin/vitest.config.ts'
+              # The unit suite covers `web/visual/baseline.mjs` as of #405: its
+              # spec is `web/visual/baseline.test.mjs` and `vitest.config.ts`
+              # includes it. Without this line a change to the visual gate's
+              # verify logic runs none of the tests written for it, which is
+              # how that script reached 2026-08 with no runner at all.
+              - 'auntieos-admin/web/visual/**'
               - 'packages/**'
               - 'package.json'
               - 'package-lock.json'
@@ -103,6 +109,10 @@ jobs:
               - 'auntieos-admin/e2e/**'
               - 'auntieos-admin/web/visual/manifest.json'
               - 'auntieos-admin/web/visual/baseline.mjs'
+              # A commit that only declares a change intended has to re-run the
+              # gate, or the approval it just wrote never gets read and the
+              # check stays red with no way to clear it.
+              - 'auntieos-admin/web/visual/approvals.json'
               - 'auntieos-admin/e2e.firebase.json'
               - 'auntieos-admin/package.json'
               - 'auntieos-admin/vite.config.ts'
@@ -295,8 +305,11 @@ jobs:
   #     something: four consecutive runs, one under TZ=Asia/Tokyo, produced
   #     byte-identical PNGs for all 19 screens.
   #   - It cannot bless anything. Nothing under `visual/baselines/` is
-  #     committed by this job; the base capture is copied over the checkout's
-  #     copy in the runner's throwaway tree and discarded with it.
+  #     committed by this job, and since #405 nothing under it is even written:
+  #     the base capture is stood up in `$RUNNER_TEMP` and `baseline.mjs` is
+  #     pointed at it with `VISUAL_BASELINE_DIR`. It used to `rm -rf` the
+  #     checkout's own goldens instead, which is why a branch could not commit
+  #     a golden this job would ever look at.
   #
   # A SEPARATE JOB rather than more steps on `React admin e2e`. That job is one
   # checkout and one emulator run; this is two of each, so folding it in would
@@ -305,32 +318,44 @@ jobs:
   # Same trade `MyTribe Firestore rules` makes against `MyTribe functions`, for
   # the same two reasons.
   #
-  # PULL REQUESTS ONLY, and deliberately not `workflow_dispatch`. The comparison
-  # needs a base commit to photograph, and a dispatch has none. Verifying the
-  # committed goldens is a LOCAL run (`npm run visual:react` then
-  # `npm run visual:react:verify` from auntieos-admin/), on the machine that
-  # recorded them.
-  # TURNED OFF ON 2026-08-18 BY OPERATOR RULING: "turn off visual regression
-  # its probably blocking the ui changes i've been trying to implement".
+  # PULL REQUESTS ONLY, and deliberately neither `push` nor `workflow_dispatch`.
+  # The comparison needs a base commit to photograph and neither event has one:
+  # `github.event.pull_request.base.sha` is empty there, an empty `ref:` checks
+  # out the default branch, and the job would spend ten minutes diffing main
+  # against itself. Verifying the COMMITTED goldens is a LOCAL run
+  # (`npm run visual:react` then `npm run visual:react:verify` from
+  # auntieos-admin/), on the machine that recorded them.
   #
-  # It was. This job photographs the pull request and its base, then fails on
-  # ANY pixel difference at threshold 0%, and the step below named "Stand the
-  # base's capture up as the golden" deletes whatever goldens the branch
-  # committed. There is no way for a change to declare itself intended, so
-  # every deliberate UI change was permanently red until it merged, and the
-  # only way to ship one was to merge past a failing check. A gate that cannot
-  # be satisfied does not stop regressions; it teaches everyone to ignore red.
+  # TURNED OFF ON 2026-08-18 BY OPERATOR RULING ("turn off visual regression its
+  # probably blocking the ui changes i've been trying to implement"), AND BACK
+  # ON BY #405 with the approval path that was missing.
   #
-  # What it detected is still worth having, so nothing here is deleted. Making
-  # it usable again means giving it an approval path: honour the goldens the
-  # branch committed, or gate the failure behind the absence of a label the
-  # author applies after reading the diff. Until then it runs on demand only,
-  # and the same comparison is available locally with `npm run visual:react`
-  # then `npm run visual:react:verify` from auntieos-admin/.
+  # The ruling was right about the job as it stood. It fails on any pixel
+  # difference at threshold 0%, the step that stands the base capture up used to
+  # delete whatever goldens the branch committed, and nothing anywhere let a
+  # change say "this diff is the point of the pull request". So every deliberate
+  # UI change was permanently red until it merged, and the only way to ship one
+  # was to merge past a failing check. Demonstrated on #374: an intended two-tab
+  # move reported `REGRESSION: react/settings (0.612% changed, threshold 0%)`,
+  # and re-capturing and committing the new golden changed nothing, because the
+  # next run deleted it and failed with the identical number.
+  #
+  # WHAT MAKES IT SATISFIABLE NOW is `auntieos-admin/web/visual/approvals.json`.
+  # An entry there names one screen, the branch it belongs to, who approved it,
+  # when, and why; `baseline.mjs` reports that screen as `approved` instead of
+  # `REGRESSION` and the run goes green. Only entries whose `branch` matches
+  # this pull request's head ref are live, so an approval that has merged to
+  # main is history and cannot bless that screen on anybody else's branch. An
+  # UNDECLARED change still fails exactly as it did before.
+  #
+  # A committed file rather than a label, because a label is all-or-nothing and
+  # lives outside the diff. This one names WHICH screens moved and carries the
+  # reason into `git blame`, next to the change that caused it, in the same
+  # committed-JSON-with-prose idiom as `web/visual/manifest.json`.
   admin-visual:
     name: React admin visual regression
     needs: changes
-    if: needs.changes.outputs.adminVisual == 'true' && github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.adminVisual == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       # Two checkouts in two directories rather than one tree checked out
@@ -402,26 +427,44 @@ jobs:
       - name: Photograph the pull request
         run: npm run visual:react
         working-directory: pr/auntieos-admin
-      # `rm -rf` first, not a copy over the top: the golden set has to be
-      # exactly what the base renders. Leaving the committed macOS goldens in
-      # place for any screen the base capture did not produce would put a
-      # cross-platform diff back into a comparison built to avoid one.
+      # A directory OUTSIDE either checkout, not the checkout's own
+      # `visual/baselines/react`. The golden set still has to be exactly what
+      # the base renders. Leaving the committed macOS goldens in place for a
+      # screen the base capture did not produce would put a cross-platform diff
+      # back into a comparison built to avoid one. But that used to be achieved
+      # by `rm -rf`-ing the pull request's goldens, which meant a branch could
+      # not commit a golden this job would honour and left the tree dirty for
+      # every step after. `VISUAL_BASELINE_DIR` on the verify step below points
+      # `baseline.mjs` here instead, and nothing in either checkout is touched.
       - name: Stand the base's capture up as the golden
         run: |
-          rm -rf pr/auntieos-admin/visual/baselines/react
-          mkdir -p pr/auntieos-admin/visual/baselines/react
-          cp base/auntieos-admin/visual/react/*.png pr/auntieos-admin/visual/baselines/react/
+          mkdir -p "$RUNNER_TEMP/base-goldens/react"
+          cp base/auntieos-admin/visual/react/*.png "$RUNNER_TEMP/base-goldens/react/"
       # The react threshold is 0 (see web/visual/baseline.mjs): on this surface
       # a nonzero diff is a real change, and both sides came off one runner, so
-      # there is nothing left for a percentage band to absorb.
+      # there is nothing left for a percentage band to absorb. It stays 0 now
+      # that approval exists, because the threshold no longer has to double as
+      # the escape hatch for an intended change, and a band only re-opens the
+      # miss it already caused, a genuine `invoice-detail` layout change that
+      # scored 0.226%, reported `ok` under the old shared 0.5%, and sat
+      # unnoticed for five days.
+      #
+      # VISUAL_APPROVAL_SCOPE is the pull request's head ref rather than the
+      # checkout's branch, because a PR checkout is detached and `git rev-parse
+      # --abbrev-ref HEAD` reports the literal string "HEAD" there. It decides
+      # which `web/visual/approvals.json` entries are live, and nothing else.
       #
       # A screen this PR ADDS is `unbaselined`, reported and not fatal, because
       # the base cannot photograph a screen it does not have. A screen this PR
-      # REMOVES is `missing-capture` and IS fatal, which is correct: deleting a
-      # screen should have to be said out loud.
+      # REMOVES is `missing-capture` and IS fatal unless an approval names it,
+      # which is correct: deleting a screen should have to be said out loud, and
+      # an approvals entry is saying it out loud.
       - name: Verify the pull request against the base
         run: npm run visual:react:verify
         working-directory: pr/auntieos-admin
+        env:
+          VISUAL_BASELINE_DIR: ${{ runner.temp }}/base-goldens
+          VISUAL_APPROVAL_SCOPE: ${{ github.event.pull_request.head.ref }}
       # The verdict table on the run's own summary page, pass or fail, so the
       # first thing a human sees is which screens moved and by how much rather
       # than a job name and a red cross.
@@ -434,15 +477,19 @@ jobs:
             echo "No visual report was written: the run failed before the comparison." >> "$GITHUB_STEP_SUMMARY"
           fi
       # The diff PNGs. A percentage says a screen moved; only the picture says
-      # what moved, and `regression.md` links each REGRESSION row to its own
-      # overlay inside this artifact. Uploaded on failure only, and with the
-      # same retention as the e2e job's artifacts.
+      # what moved, and `regression.md` links each REGRESSION row AND each
+      # approved row to its own overlay inside this artifact.
+      #
+      # `always()`, not `failure()`: an approved change makes the job GREEN, and
+      # the whole point of approval being reviewable is that somebody can open
+      # the picture the author says they looked at. On a run where nothing moved
+      # this uploads one small markdown file. Same retention as the e2e job.
       #
       # Playwright's own traces and failure screenshots from BOTH captures ride
       # along, because the other way this job goes red is a capture that never
       # reached the comparison, and then `visual/report/` is empty.
       - name: Upload the visual diff report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: react-visual-regression
