@@ -7,6 +7,7 @@ import {
   inviteStatusTone,
   listHouseholdInvites,
   listHouseholdMembers,
+  listRecoveryCandidates,
   memberLabel,
   memberStatusTone,
   permissionsFollowRole,
@@ -15,10 +16,12 @@ import {
   type InviteStatus,
   type MemberRole,
   type PermissionKey,
+  type RecoveryCandidate,
 } from '../api/members';
 import {
   INVITE_TTL_DAYS,
   describePortalInviteOutcome,
+  executePrimaryRecovery,
   inviteKinfolkToPortal,
   mintInvite,
   removeMember,
@@ -141,6 +144,16 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [removeTarget, setRemoveTarget] = useState<HouseholdMember | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  // Primary recovery. The choice list is loaded when the dialog opens, never on
+  // first paint: it costs an Auth lookup per member and nobody recovers a
+  // household by accident.
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryCandidates, setRecoveryCandidates] = useState<Async<RecoveryCandidate[]>>({
+    status: 'loading',
+  });
+  const [recoveryChoice, setRecoveryChoice] = useState('');
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
 
   // Invite form. One field: the address. The role is not a choice (an admin
   // invites the primary), and a primary has no starting permission set to pick.
@@ -301,6 +314,61 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   }
 
   const emailReady = email.trim() !== '' && email.includes('@');
+
+  // The primary this recovery would take the household away from. A suspended
+  // one does not count: there is nothing left to suspend, and `oldUid` is what
+  // the server suspends.
+  const sittingPrimary =
+    members.status === 'ready'
+      ? (members.data.find((m) => m.role === 'PRIMARY' && m.status !== 'SUSPENDED') ?? null)
+      : null;
+
+  function loadRecoveryCandidates(oldUid: string) {
+    setRecoveryCandidates({ status: 'loading' });
+    listRecoveryCandidates(kinfolkId, oldUid)
+      .then((data) => setRecoveryCandidates({ status: 'ready', data }))
+      .catch((err: unknown) => {
+        setRecoveryCandidates({
+          status: 'error',
+          message: `listRecoveryCandidates failed: ${errText(err, 'Load failed')}`,
+          retry: () => loadRecoveryCandidates(oldUid),
+        });
+      });
+  }
+
+  function openRecovery() {
+    if (sittingPrimary === null) return;
+    setRecoveryChoice('');
+    setRecoveryError(null);
+    setRecoveryOpen(true);
+    loadRecoveryCandidates(sittingPrimary.uid);
+  }
+
+  async function confirmRecovery() {
+    if (sittingPrimary === null || recovering || recoveryChoice === '') return;
+    setRecovering(true);
+    setRecoveryError(null);
+    try {
+      const { inviteId } = await executePrimaryRecovery({
+        familyId: kinfolkId,
+        newEmail: recoveryChoice,
+        oldUid: sittingPrimary.uid,
+      });
+      showToast(
+        `Claim link sent to ${recoveryChoice}. ${memberLabel(sittingPrimary)} is suspended (${inviteHandle(inviteId)}).`,
+      );
+      setRecoveryOpen(false);
+      loadMembers();
+      loadInvites();
+    } catch (err: unknown) {
+      // The server's own message, verbatim. It names the eligible addresses and
+      // the way out when there are none, and a generic "recovery failed" would
+      // leave an operator with a locked-out household and no next move.
+      setRecoveryError(errText(err, 'The claim link was not sent, and nothing was changed.'));
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   return (
     <div className="screen">
@@ -470,6 +538,29 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
       <div className="d2">
         <DenPanel
+          title="Hand the primary role to another member"
+          subtitle="For a household whose primary has lost their account. The member you pick is mailed a claim link that makes them the primary, and the current primary is suspended in the same step. The link can only go to a member of this household whose email address is verified."
+        >
+          {sittingPrimary === null ? (
+            <EmptyHint>
+              There is no active primary to recover. Send this household a portal invite instead,
+              and whoever accepts becomes the primary.
+            </EmptyHint>
+          ) : (
+            <>
+              <p className="hmembers__inherent">
+                {memberLabel(sittingPrimary)} holds this household today. Recovery suspends them
+                and mails the claim link to the member you choose; the recovering member has to
+                open it before anything changes on their side.
+              </p>
+              <GhostButton label="Start primary recovery" onClick={openRecovery} />
+            </>
+          )}
+        </DenPanel>
+      </div>
+
+      <div className="d2">
+        <DenPanel
           title="Invite a primary by email"
           subtitle={`The same primary claim link as the button above, sent to an address you type, for a household whose record carries the wrong email or none. It expires in ${INVITE_TTL_DAYS} days. Unlike the button above this does not check for an existing primary first, so read the roster before sending.`}
         >
@@ -575,6 +666,85 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
           </AsyncRegion>
         </DenPanel>
       </div>
+
+      {recoveryOpen && sittingPrimary !== null && (
+        <Dialog
+          title="Who should the household go to?"
+          onClose={() => {
+            if (!recovering) setRecoveryOpen(false);
+          }}
+          footer={
+            <>
+              <GhostButton
+                label="Cancel"
+                onClick={() => setRecoveryOpen(false)}
+                disabled={recovering}
+              />
+              <PrimaryButton
+                label={recovering ? 'Sending…' : 'Send the claim link'}
+                onClick={() => void confirmRecovery()}
+                disabled={recovering || recoveryChoice === ''}
+                busy={recovering}
+              />
+            </>
+          }
+        >
+          <p>
+            {memberLabel(sittingPrimary)} will be suspended and signed out. The member you pick is
+            mailed a claim link that expires in {INVITE_TTL_DAYS} days, and holds every entitlement
+            on this household once they open it, billing included.
+          </p>
+          <AsyncRegion
+            state={recoveryCandidates}
+            what="eligible members"
+            isEmpty={(rows) => rows.length === 0}
+            empty={
+              // Not an input, and not a "try a different address" prompt. When
+              // nobody qualifies there is no address that would work, so the
+              // only honest thing to show is the step that makes one exist.
+              <EmptyHint>
+                Nobody else on this household has a verified email address, so there is no one the
+                claim link can safely go to. Invite the right person to this household, have them
+                verify their email, then start recovery again.
+              </EmptyHint>
+            }
+          >
+            {(rows) => (
+              <fieldset className="hmembers__fieldset" disabled={recovering}>
+                <legend className="hmembers__legend">Send the claim link to</legend>
+                <div role="radiogroup" aria-label="Send the claim link to">
+                  {rows.map((candidate) => (
+                    <label key={candidate.uid} className="hmembers__choice">
+                      <input
+                        type="radio"
+                        name="recoveryCandidate"
+                        value={candidate.email}
+                        checked={recoveryChoice === candidate.email}
+                        onChange={() => {
+                          setRecoveryChoice(candidate.email);
+                          setRecoveryError(null);
+                        }}
+                      />
+                      <span className="hmembers__choice-text">
+                        <span className="hmembers__choice-email">{candidate.email}</span>
+                        <span className="hmembers__choice-meta">
+                          {candidate.secondaryLabel !== null ? `${candidate.secondaryLabel} · ` : ''}
+                          {candidate.role === 'PRIMARY' ? 'Primary' : 'Secondary'} · verified
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+          </AsyncRegion>
+          {recoveryError !== null && (
+            <Banner tone="error" title="Nothing was sent, and nothing changed">
+              {recoveryError}
+            </Banner>
+          )}
+        </Dialog>
+      )}
 
       {removeTarget !== null && (
         <Dialog

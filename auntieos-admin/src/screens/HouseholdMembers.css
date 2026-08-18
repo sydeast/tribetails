@@ -308,3 +308,39 @@
   gap: var(--space-2);
   margin-top: var(--space-1);
 }
+
+/*
+ * The recovery choice list. A radio per eligible member, not a text input:
+ * the set of addresses a claim link may go to is closed and server-owned
+ * (issue #378), and a box the operator types into is how the wrong inbox got
+ * the household in the first place.
+ */
+
+.hmembers__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+  cursor: pointer;
+}
+
+.hmembers__choice:last-child {
+  border-bottom: none;
+}
+
+.hmembers__choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.hmembers__choice-email {
+  overflow-wrap: anywhere;
+}
+
+.hmembers__choice-meta {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

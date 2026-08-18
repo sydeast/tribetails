@@ -217,6 +217,60 @@ export async function listHouseholdMembers(kinfolkId: string): Promise<Household
     }));
 }
 
+/** A household member the recovery claim link may legally be sent to. */
+export interface RecoveryCandidate {
+  uid: string;
+  /** The address on the Auth account, lowercased by the server. */
+  email: string;
+  secondaryLabel: string | null;
+  role: MemberRole;
+  status: MemberStatus;
+}
+
+/**
+ * The addresses `executePrimaryRecovery` will accept for this household.
+ *
+ * WHY THE SERVER OWNS THE LIST. Eligibility turns on `emailVerified` on the
+ * Firebase Auth account, which the client cannot see for anybody but the signed
+ * in operator, and it is deliberately NOT the same question as the `email`
+ * field on the member doc (that one is whatever was typed at invite time). So
+ * this cannot be derived from `listHouseholdMembers`, and must not be: the
+ * recovery dialog offers exactly what the gate accepts, or it is a picker that
+ * fails on submit.
+ *
+ * `oldUid` is the primary being recovered away from. The server leaves them out
+ * of the answer, because the one place a recovery link cannot go is back to the
+ * account that has just lost the household.
+ *
+ * Nothing catches: a failed read propagates so the dialog can say so.
+ */
+export async function listRecoveryCandidates(
+  familyId: string,
+  oldUid?: string,
+): Promise<RecoveryCandidate[]> {
+  const id = familyId.trim();
+  if (id === '') throw new Error('listRecoveryCandidates requires a household id');
+
+  const res = await call<{ familyId: string; oldUid?: string }, { candidates?: unknown }>(
+    'listRecoveryCandidates',
+    oldUid === undefined || oldUid.trim() === ''
+      ? { familyId: id }
+      : { familyId: id, oldUid: oldUid.trim() },
+  );
+  const rows = Array.isArray(res?.candidates) ? res.candidates : [];
+  return rows
+    .map((row) => (row ?? {}) as Record<string, unknown>)
+    .filter((row) => typeof row['uid'] === 'string' && row['uid'] !== '')
+    .filter((row) => typeof row['email'] === 'string' && row['email'] !== '')
+    .map((row) => ({
+      uid: row['uid'] as string,
+      email: row['email'] as string,
+      secondaryLabel: str(row['secondaryLabel']),
+      role: asRole(row['role']),
+      status: asMemberStatus(row['status']),
+    }));
+}
+
 /**
  * One invite row from either read. Shared, not copied: `listInvites` and
  * `listAllInvites` return the identical projection (the callable literally
