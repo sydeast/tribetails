@@ -231,16 +231,41 @@ service cloud.firestore {
     match /google_oauth_states/{nonce}          { allow read, write: if false; }
 
  // ── AuntieOS flat collections ─────────────────────────────────────────────
- // Kinfolk profile - kinfolk reads/writes their own doc (self-service updates).
+ // Kinfolk profile - the AuntieOS canonical household record. A kinfolk writes a
+ // short allowlist of their own contact fields; a kinfolk does NOT read the doc.
     function onlyAllowedKinfolkFields() {
       let allowed = ['emergencyContactName', 'emergencyContactPhone', 'emergencyContactRelation',
                      'preferredContactMethod', 'bestTimeToContact', 'secondaryPhone', 'secondaryEmail'];
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
     }
 
+ // READ IS STAFF-ONLY, and the asymmetry with WRITE below is deliberate.
+ // `kinfolk/{id}` carries `internalNotes`, the field the admin UI labels
+ // "Anything that doesn't belong on the dossier yet" and renders to staff as an
+ // Auntie note callout. Firestore rules cannot mask a field: a read returns the
+ // whole document or nothing, so the only way to keep staff notes off a
+ // household's screen is to withhold the document. Until this rule was written,
+ // the `isKinfolk()` branch here handed every note written about a household to
+ // that household.
+ //
+ // NOTHING IS LOST BY THE DENIAL, because no portal surface reads this
+ // collection directly. The web portal touches Firestore in exactly two places
+ // (`kin_care_sessions/{id}/breadcrumbs` and `conversations/{id}/messages`), and
+ // the KMP portal's entire Firestore facade is `FirestoreClient.listDocuments`
+ // plus `breadcrumbsStream`, neither of which is ever called for `kinfolk`.
+ // What the portal needs out of the record arrives through callables running on
+ // the Admin SDK, which does not evaluate rules, and each of those projects
+ // rather than forwarding the document: `getMyHome` takes firstName + lastName
+ // for its display-name fallback, `sendKinfolkMessage` takes the same two for
+ // the message header, and `getMyAccess` calls `.select()` so it fetches ids and
+ // no fields at all. Same shape #377 put on `the_411`.
+ //
+ // WRITE keeps its kinfolk branch. `onlyAllowedKinfolkFields()` diffs the
+ // incoming payload against `resource.data`, which the rules engine evaluates
+ // server-side whether or not the caller could have read the document, so
+ // self-service contact updates still work with read denied.
     match /kinfolk/{kinfolkId} {
       allow read: if isAuntie()
-                  || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId)
                   || (isTestAdmin() && kinfolkId == testScope());
       allow write: if isAuntie()
                    || (isKinfolk() && kinfolkId == request.auth.token.kinfolkId
