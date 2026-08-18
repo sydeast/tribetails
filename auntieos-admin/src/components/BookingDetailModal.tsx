@@ -149,7 +149,7 @@ export function BookingDetailModal({
   return (
     <Dialog title="Visit detail" onClose={onClose} variant="sheet">
       <div className="bdm">
-        <DenPanel title="Booking" subtitle="What was asked for, and when.">
+        <DenPanel title="Booking" subtitle="What was asked for, and when." headingLevel={3}>
           <dl className="bdm__facts">
             <Fact label="Kinfolk">
               {onOpenKinfolk && kinfolkId !== '' ? (
@@ -194,7 +194,7 @@ export function BookingDetailModal({
           enabled={isEnvelopeVisit}
         />
 
-        <DenPanel title="KinTale" subtitle="The recap this visit sent home.">
+        <DenPanel title="KinTale" subtitle="The recap this visit sent home." headingLevel={3}>
           {reportIds.length === 0 ? (
             <EmptyHint>
               No KinTale for this visit yet. One appears here once a recap has been sent.
@@ -232,7 +232,7 @@ export function BookingDetailModal({
             />
           </>
         ) : (
-          <DenPanel title="Notes" subtitle="Kinfolk-facing and internal threads.">
+          <DenPanel title="Notes" subtitle="Kinfolk-facing and internal threads." headingLevel={3}>
             <EmptyHint>{NO_ENVELOPE_NOTES}</EmptyHint>
           </DenPanel>
         )}
@@ -391,7 +391,7 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled }: AssignedA
   const displayed = assignedName ?? (assignedUid !== null ? 'Assigned' : 'Unassigned');
 
   return (
-    <DenPanel title="Staffing" subtitle="Who is running this visit.">
+    <DenPanel title="Staffing" subtitle="Who is running this visit." headingLevel={3}>
       <dl className="bdm__facts">
         <Fact label="Assigned Auntie">{enabled ? displayed : 'Unavailable'}</Fact>
       </dl>
@@ -479,7 +479,7 @@ function ReschedulePanel({ entry, durationMinutes, onDone }: ReschedulePanelProp
 
   if (!canReschedule) {
     return (
-      <DenPanel title="Reschedule" subtitle="Move this visit to a new date and time.">
+      <DenPanel title="Reschedule" subtitle="Move this visit to a new date and time." headingLevel={3}>
         <EmptyHint>
           This visit is {stateWord(status)}, so it is no longer on the books to move.
         </EmptyHint>
@@ -513,6 +513,7 @@ function ReschedulePanel({ entry, durationMinutes, onDone }: ReschedulePanelProp
     <DenPanel
       title="Reschedule"
       subtitle={`Moving this visit keeps its length: ${durationLabel(durationMinutes)}.`}
+      headingLevel={3}
     >
       <div className="bdm__row">
         <label className="bdm__field">
@@ -614,6 +615,7 @@ function NotesPanel({ kinfolkId, batchId, visitId, internal, locked }: NotesPane
           ? 'Staff only. The household never sees these.'
           : 'The household sees these on the booking.'
       }
+      headingLevel={3}
     >
       {state.status === 'loading' && <EmptyHint>Loading the notes…</EmptyHint>}
       {state.status === 'error' && (

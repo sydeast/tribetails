@@ -156,7 +156,7 @@ describe('Schedule screen', () => {
       // the panel title for the selected day should read "Today", and the
       // session should appear in that day's agenda, not be silently absent
       // because it landed under tomorrow's UTC-sliced key instead.
-      expect(screen.getByText('Today', { selector: '.den-panel-title' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
       expect(screen.getByText('The Whitfields')).toBeInTheDocument();
     });
   });

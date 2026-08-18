@@ -395,6 +395,62 @@ describe('DenPanel', () => {
     expect(onClick).toHaveBeenCalledOnce();
     expect(screen.getByText('content')).toBeInTheDocument();
   });
+
+  // AO-404: the title used to be a `span`, invisible to heading navigation.
+  // Every screen built from DenPanel gave a screen reader one h1 and nothing
+  // else to jump to underneath it.
+  it('renders the title as a heading, level 2 by default', () => {
+    render(
+      <DenPanel title="Today's Pack">
+        <p>content</p>
+      </DenPanel>,
+    );
+    const heading = screen.getByRole('heading', { level: 2, name: "Today's Pack" });
+    expect(heading).toHaveClass('den-panel-title');
+  });
+
+  it('takes an explicit heading level for a panel composed inside another heading', () => {
+    // BookingDetailModal composes DenPanel inside a Dialog whose own title is
+    // already an h2, so its panels pass headingLevel=3 to keep the outline
+    // nesting correctly instead of jumping back up a level mid-document.
+    render(
+      <DenPanel title="Staffing" headingLevel={3}>
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByRole('heading', { level: 3, name: 'Staffing' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument();
+  });
+
+  it('excludes the subtitle from the heading\'s accessible name', () => {
+    render(
+      <DenPanel title="Today's Pack" subtitle="3 visits">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByRole('heading', { name: "Today's Pack" })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /3 visits/ })).not.toBeInTheDocument();
+    expect(screen.getByText('3 visits')).toBeInTheDocument();
+  });
+
+  it('does not emit an empty heading when there is no title', () => {
+    render(
+      <DenPanel title="">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+  });
+
+  it('still exposes the title as a heading when the panel is collapsible', () => {
+    render(
+      <DenPanel title="Today's Pack" collapsible>
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByRole('heading', { level: 2, name: "Today's Pack" })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Today's Pack/ })).toBeInTheDocument();
+  });
 });
 
 describe('ServicePill', () => {
