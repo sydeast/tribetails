@@ -64,16 +64,22 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   instance absorbs the rest of a burst instead of cold-starting per request.
 //
 //   WHAT cpu 1 COSTS: well under a dollar a month, and ADR-0004 does the
-//   arithmetic. The twelve `minInstances: 1` functions are ~98% of the compute
-//   bill and they already run at cpu 1, so this flip only touches
-//   request-driven time on the ~185 functions with no override, at 1,850 to
-//   7,000 requests a day. It does not raise the standing minimum, so it does
-//   not put `--force` on the operator's next deploy.
+//   arithmetic. The 13 `minInstances: 1` functions are ~98% of the compute bill
+//   and they already run at cpu 1 (ADR-0004 counted twelve; `twilioVoice` has
+//   joined them since), so this flip only touches request-driven time on the 192
+//   functions with no override, at 1,850 to 7,000 requests a day. It does not
+//   raise the standing minimum, so it does not put `--force` on the operator's
+//   next deploy.
 //
 //   WHAT cpu 1 COSTS AT THE CPU QUOTA, since this project has a history with it
 //   and the answer is "nothing at rest". `CpuAllocPerProjectRegion` meters
-//   RUNNING INSTANCES. A deployed service with no instance up draws zero, so
-//   raising the default does not move the meter at deploy time. Counted from
+//   RUNNING INSTANCES. A deployed service with no instance up holds no standing
+//   draw, so raising the default costs nothing at rest. A deploy is not quite
+//   free: each new revision starts one container to pass its startup probe, so
+//   there is a brief transient of one instance per function being deployed. It
+//   is bounded by the batch size that the 60/min mutation rate limit already
+//   forces, which is tens of vCPU for seconds rather than the 232 below.
+//   Counted from
 //   source on 2026-08-18: 235 endpoints are exported from this file, of which
 //   192 inherit the option below, 27 carry FULL_CPU (cpu 1, maxInstances 10),
 //   12 carry FULL_CPU_SERIAL (cpu 1, maxInstances 2) and 4 carry SERIAL
