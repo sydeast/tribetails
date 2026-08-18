@@ -793,6 +793,77 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    // -- Card on file (portal/billing.ts, #399 item 3) --
+    /** The card the household has on file, if any. */
+    suspend fun getMyPaymentMethod(kinfolkId: String? = null): PaymentMethodState {
+        val raw = fns.call("getMyPaymentMethod", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+        })
+        return paymentMethodStateFrom(raw)
+    }
+    /**
+     * Opens a Stripe Checkout Session in setup mode. Nothing is charged; the
+     * card is attached to the household's Stripe customer. Open the returned
+     * URL with `openExternalUrl`, then call [syncMyPaymentMethod] when the
+     * kinfolk comes back to the app.
+     */
+    suspend fun createBillingSetupSession(
+        successUrl: String,
+        cancelUrl: String,
+        kinfolkId: String? = null,
+    ): BillingSetupSession {
+        val raw = fns.call("createBillingSetupSession", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("successUrl", successUrl)
+            put("cancelUrl", cancelUrl)
+        })
+        return BillingSetupSession(
+            checkoutUrl = raw["checkoutUrl"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            sessionId = raw["sessionId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+    }
+    /**
+     * Re-reads the card from Stripe and stores it.
+     *
+     * The android client has no return trip from the external browser, so this
+     * is what "Refresh" on the billing card calls. Safe to call at any time.
+     */
+    suspend fun syncMyPaymentMethod(kinfolkId: String? = null): PaymentMethodState {
+        val raw = fns.call("syncMyPaymentMethod", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+        })
+        return paymentMethodStateFrom(raw)
+    }
+    /** Takes the card off file. Removes an instrument, never a payment already made. */
+    suspend fun removeMyPaymentMethod(kinfolkId: String? = null): Boolean {
+        val raw = fns.call("removeMyPaymentMethod", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+        })
+        return raw["alreadyEmpty"]?.jsonPrimitive?.booleanOrNull ?: false
+    }
+    /**
+     * Shared decoder for the three card-state responses.
+     *
+     * A card is only built when all four display fields arrived. Fail-soft on
+     * a partial payload, because "Visa •••• null" on a billing screen reads as
+     * a broken account rather than as a missing field.
+     */
+    private fun paymentMethodStateFrom(raw: JsonObject): PaymentMethodState {
+        val cardObj = raw["card"] as? JsonObject
+        val brand = cardObj?.get("brand")?.jsonPrimitive?.contentOrNull
+        val last4 = cardObj?.get("last4")?.jsonPrimitive?.contentOrNull
+        val expMonth = cardObj?.get("expMonth")?.jsonPrimitive?.intOrNull
+        val expYear = cardObj?.get("expYear")?.jsonPrimitive?.intOrNull
+        return PaymentMethodState(
+            hasPaymentMethod = raw["hasPaymentMethod"]?.jsonPrimitive?.booleanOrNull ?: false,
+            card = if (brand != null && last4 != null && expMonth != null && expYear != null) {
+                SavedCard(brand = brand, last4 = last4, expMonth = expMonth, expYear = expYear)
+            } else {
+                null
+            },
+            updatedAtMs = raw["updatedAtMs"]?.jsonPrimitive?.longOrNull,
+        )
+    }
     // -- Kin write paths --
     suspend fun addKin(kinfolkId: String? = null, kin: KinPayload): String {
         val raw = fns.call("addKin", buildJsonObject {

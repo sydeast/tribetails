@@ -1854,7 +1854,55 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   three-state archive facet); a notification should not be the harder thing to
   undo.
 
-## Operator preferences
+## Card on file (kinfolk, primary only)
+The four callables behind the portal's Billing Details "Manage" button
+(`src/portal/billing.ts`, issue #399 item 3). Card state has no generated
+contract: the registry in `scripts/contracts/registry.ts` publishes the invoice
+and booking surfaces, and its header is explicit that adding a line is a
+decision to publish. This surface reaches one client tree beyond the React
+portal (the portal Android app, which hand-decodes JSON), so it is documented
+here and hand-mirrored, like the rest of the account callables.
+GATE, all four: the resolved `kinfolkId` must be in the CALLER's own
+`clients/{uid}.kinfolkIds`, then `requireKinfolkPrimary`. Deliberately NOT
+`resolveKinfolkAccess`: that resolver grants staff a cross-tenant resolution by
+design, and every write here lands on `clients/{uid}` — the caller's own doc — so
+an operator who stepped into a household would attach a card to their own
+account under the household's name. `getMyAccount` already reports that state as
+`impersonated: true`; this is its server-side half.
+- req `{ kinfolkId?: string }`
+- res `{ hasPaymentMethod: boolean, card: { brand, last4, expMonth, expYear } | null, updatedAtMs: number | null }`
+- Reads the mirror on `clients/{uid}`; touches Stripe not at all.
+- `card` is null both when there is no card AND when one exists whose display
+  fields are incomplete. `hasPaymentMethod` is the separate flag that tells the
+  two apart, so no client renders "Visa •••• undefined".
+- req `{ kinfolkId?: string, successUrl: string /* url */, cancelUrl: string /* url */ }`
+- res `{ checkoutUrl: string, sessionId: string }`
+- Stripe Checkout in `mode: 'setup'`: collects a card, charges nothing. NOT the
+  Stripe Billing Portal, which needs a portal configuration created in the
+  Stripe dashboard that nothing in this repo can create or verify.
+- Creates the `stripeCustomerId` on `clients/{uid}` lazily, on first use.
+- Session metadata carries `purpose: 'save-card'`, `uid`, `familyId`,
+  `kinfolkId`. `stripeWebhook` reads `purpose` in a branch that sits AHEAD of
+  its metadata gate, because a setup session has no `invoiceId`.
+- req `{ kinfolkId?: string }`
+- res `{ hasPaymentMethod, card, updatedAtMs, changed: boolean }`
+- Lists the customer's cards at Stripe, newest first, and mirrors the head onto
+  `clients/{uid}`. Clears the mirror when Stripe holds none.
+- THE PRIMARY COMPLETION PATH, not the webhook: the React portal calls it when
+  the browser returns to `?billing=saved`, and the Android app calls it from
+  "Refresh card" (that client leaves for an external browser and gets no return
+  trip). The webhook branch is the backstop for a closed tab.
+- Idempotent. A household with no `stripeCustomerId` gets its stored state back
+  and Stripe is never called.
+- req `{ kinfolkId?: string }`
+- res `{ ok: true, alreadyEmpty: boolean }`
+- `paymentMethods.detach` then clears the mirror. Removes an INSTRUMENT: no
+  invoice, charge, or ledger row is touched, and unpaid invoices stay exactly
+  as they were.
+- Stripe's `resource_missing` is tolerated (already detached elsewhere) and the
+  mirror is still cleared; any other Stripe fault throws `unavailable` and the
+  mirror is left alone, so the screen never shows a card that is gone or hides
+  one that is not.
 
 ### saveDashboardLayout
 - req `{ tokens: string[] /* each `^[a-zA-Z]+:(compact|wide)$`, max 30 */ }`

@@ -161,6 +161,16 @@ export { saveHomeAccess } from './portal/saveHomeAccess';
 export { getMyNotificationPrefs, saveMyNotificationPrefs } from './portal/notificationPrefs';
 export { getMyAccount, saveMyAccount } from './portal/account';
 export { payInvoice } from './portal/payInvoice';
+// Card management for the portal's Billing Details card (#399 item 3). Sits
+// beside payInvoice because it owns the other half of the household's Stripe
+// relationship: payInvoice charges a card, these four put one on file, read it
+// back, and take it off again.
+export {
+  getMyPaymentMethod,
+  createBillingSetupSession,
+  syncMyPaymentMethod,
+  removeMyPaymentMethod,
+} from './portal/billing';
 export { redeemCredit } from './portal/redeemCredit';
 export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
