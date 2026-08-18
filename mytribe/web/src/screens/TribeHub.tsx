@@ -113,7 +113,7 @@ export function TribeHub() {
 
           <section className="glass card d3">
             <div className="sectlabel">
-              KinTales <span className="inert" title="Coming soon">All tales</span>
+              KinTales <Link to="/kintales">All tales</Link>
             </div>
             {tales.isLoading ? (
               <p className="sub">Loading recent KinTales…</p>

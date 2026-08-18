@@ -102,7 +102,9 @@ textarea.inp { resize: vertical; min-height: 64px; font-family: var(--sans); }
    base.css + kindetail.css's .facts pattern, matching Home.tsx's
    established "Your tribe" / "Recent KinTales" card treatment.
    ============================================================ */
-/* inert "coming soon" link inside a .sectlabel (KinTales screen not built yet) */
+/* Inert "coming soon" label inside a .sectlabel. "All tales" is a real link now
+   (see base.css .sectlabel a); the only remaining user is TribeHub's "All photos",
+   which has no portal media route behind it yet. See issue #399. */
 .sectlabel .inert { margin-left: auto; color: var(--navy-muted); opacity: .6; cursor: default; font-weight: 500; letter-spacing: .04em; }
 
 .gallery-row { display: flex; gap: 10px; flex-wrap: wrap; }

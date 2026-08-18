@@ -319,9 +319,9 @@ export function Account() {
               <h3 className="title">{businessName}</h3>
               <p className="sub">Your care team can see your profile name and contact details to reach you about visits.</p>
               <div style={{ marginTop: 14 }}>
-                <span className="btn ghost block navlink-inert" title="Coming soon">
+                <Link className="btn ghost block" to="/messages">
                   {'\u{1F4AC}'} Message your Auntie
-                </span>
+                </Link>
               </div>
             </section>
           </div>
