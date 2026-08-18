@@ -47,33 +47,75 @@ describe('assignTemplate', () => {
     expect(write?.data.triggerKey).toBeUndefined(); // AO-30
   });
 
+  it('HAPPY: a direct-send key (sendFromTemplate literal) is bindable too', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await assignTemplateHandler(req({ catalogKey: 'invite.primary', templateId: 't1' }));
+    expect(res.catalogKey).toBe('invite.primary');
+    expect(ctx.writes.some((w) => w.path === 'notificationTemplateBindings/invite.primary')).toBe(true);
+  });
+
   it('HAPPY: triggerKey can be overridden', async () => {
     const ctx = buildDbMock({
       docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await assignTemplateHandler(
-      req({ catalogKey: 'cat.k', templateId: 't1', triggerKey: 'custom.trigger' }),
+      req({ catalogKey: 'invoice.new', templateId: 't1', triggerKey: 'custom.trigger' }),
     );
-    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/cat.k');
+    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/invoice.new');
     expect(write?.data.triggerKey).toBe('custom.trigger');
   });
 
   it('AO-30: an omitted triggerKey is NOT written, so a re-assign never clobbers a custom trigger', async () => {
     const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await assignTemplateHandler(req({ catalogKey: 'cat.k', templateId: 't1', active: false }));
-    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/cat.k');
+    await assignTemplateHandler(req({ catalogKey: 'invoice.new', templateId: 't1', active: false }));
+    const write = ctx.writes.find((w) => w.path === 'notificationTemplateBindings/invoice.new');
     expect(write).toBeDefined();
     expect('triggerKey' in write!.data).toBe(false);
+  });
+
+  // ── #382: a mistyped catalog key used to return 200 and do nothing forever ──
+
+  it('SAD: an unknown catalog key is rejected as invalid-argument, naming the key', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      assignTemplateHandler(req({ catalogKey: 'kincare.bookng.confirm', templateId: 't1' })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining('kincare.bookng.confirm'),
+    });
+    // And nothing was written, which is the whole point.
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('SAD: the key is checked BEFORE the template, so a typo is not masked by a valid template', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      assignTemplateHandler(req({ catalogKey: 'not.a.real.key', templateId: 'missing' })),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('SAD: a retired alias key is rejected and points at the key that replaced it', async () => {
+    const ctx = buildDbMock({ docs: { 'emailTemplates/t1': { subject: 's', body: 'b' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      assignTemplateHandler(req({ catalogKey: 'kincare.report.sent', templateId: 't1' })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: expect.stringContaining('kintale.published'),
+    });
   });
 
   it('SAD: template not found throws not-found', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
-      assignTemplateHandler(req({ catalogKey: 'cat.k', templateId: 'missing' })),
-    ).rejects.toThrow();
+      assignTemplateHandler(req({ catalogKey: 'invoice.new', templateId: 'missing' })),
+    ).rejects.toMatchObject({ code: 'not-found' });
   });
 
   it('SAD: invalid audience rejected', async () => {
@@ -83,7 +125,7 @@ describe('assignTemplate', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       assignTemplateHandler(
-        req({ catalogKey: 'cat.k', templateId: 't1', audience: 'nobody' as any }),
+        req({ catalogKey: 'invoice.new', templateId: 't1', audience: 'nobody' as any }),
       ),
     ).rejects.toThrow();
   });
@@ -93,7 +135,7 @@ describe('assignTemplate', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       assignTemplateHandler({
-        data: { catalogKey: 'cat.k', templateId: 't1' },
+        data: { catalogKey: 'invoice.new', templateId: 't1' },
       } as CallableRequest<unknown>),
     ).rejects.toThrow();
   });

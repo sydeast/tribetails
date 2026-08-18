@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   listTemplateBindings,
+  listCatalogKeys,
   assignTemplate,
   unassignTemplate,
+  bindableKeys,
   BINDING_AUDIENCES,
   type TemplateBinding,
+  type CatalogKeyRow,
 } from '../api/templateBindings';
 import { listTemplates, type TemplateSummary } from '../api/templates';
 import { type Async } from '../lib/async';
@@ -19,18 +22,31 @@ interface TemplateAssignmentsProps {
   onClose: () => void;
 }
 
+/** The option text for one catalog key: the key, what it is, and its state. */
+function keyOptionLabel(row: CatalogKeyRow): string {
+  const tail = row.bound ? 'bound' : 'no binding, uses the catalog default';
+  return `${row.key} · ${row.label} (${tail})`;
+}
+
 /**
  * Template ASSIGNMENT manager (AO-56), ported from `TemplateAssignmentScreen.kt`:
  * the surface Templates.tsx's own doc comment named as "a wholly separate
  * screen ... not this bank list at all". Binds a notification catalog key to an
  * email template so dispatch knows which template to send.
  *
- * Reads `listTemplateBindings` (the current bindings) + `listTemplates` (the
+ * Reads `listTemplateBindings` (the current bindings), `listTemplates` (the
  * bank, for the picker and for showing each binding's template TITLE, not just
- * its id). Writes via `assignTemplate` (upsert a binding) and `unassignTemplate`
- * (remove one). Unassign is the half AO-56 was missing: without it a bound
- * template can never be deleted, because `deleteTemplate` refuses while a
- * binding still points at it.
+ * its id), and `listCatalogKeys` (every key that can be bound). Writes via
+ * `assignTemplate` (upsert a binding) and `unassignTemplate` (remove one).
+ * Unassign is the half AO-56 was missing: without it a bound template can never
+ * be deleted, because `deleteTemplate` refuses while a binding still points at it.
+ *
+ * The catalog key is picked, never typed (issues #382/#383). It was a free-text
+ * box because `listCatalogKeys` returned only the keys already bound, so there
+ * was no list to pick from; a misspelling wrote a binding that dispatch would
+ * never read and reported success. The picker is the visible half of that fix;
+ * the callable now refuses an unreal key outright, and this screen repeats its
+ * words when it does.
  *
  * Fail-loud throughout: every write names its callable on rejection, buttons
  * disable while a call is in flight, and Unassign is confirm-gated (it changes
@@ -39,9 +55,10 @@ interface TemplateAssignmentsProps {
 export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   const [bindings, setBindings] = useState<Async<TemplateBinding[]>>({ status: 'loading' });
   const [templates, setTemplates] = useState<Async<TemplateSummary[]>>({ status: 'loading' });
+  const [catalog, setCatalog] = useState<Async<CatalogKeyRow[]>>({ status: 'loading' });
 
   // The assign/change form. `editingKey` null = assigning a brand-new key
-  // (catalogKey editable); non-null = changing an existing binding (locked).
+  // (catalogKey pickable); non-null = changing an existing binding (locked).
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [catalogKey, setCatalogKey] = useState('');
   const [templateId, setTemplateId] = useState('');
@@ -92,8 +109,28 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     };
   }, []);
 
+  const loadCatalog = useCallback(() => {
+    let live = true;
+    setCatalog({ status: 'loading' });
+    listCatalogKeys()
+      .then((data) => live && setCatalog({ status: 'ready', data }))
+      .catch(
+        (err: unknown) =>
+          live &&
+          setCatalog({
+            status: 'error',
+            message: `listCatalogKeys failed: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: loadCatalog,
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
+
   useEffect(() => loadBindings(), [loadBindings]);
   useEffect(() => loadTemplates(), [loadTemplates]);
+  useEffect(() => loadCatalog(), [loadCatalog]);
 
   // templateId -> title, so a binding renders "Booking confirmed", not "tmpl_x".
   const titleById = useMemo(() => {
@@ -105,6 +142,12 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
   }, [templates]);
 
   const templateOptions = templates.status === 'ready' ? templates.data : [];
+  const catalogRows = catalog.status === 'ready' ? catalog.data : [];
+  // Only real keys are offered for a NEW binding. A legacy key still appears
+  // when you open the binding that already uses it, so nothing goes invisible.
+  const keyOptions = useMemo(() => bindableKeys(catalogRows), [catalogRows]);
+  const editingRow = catalogRows.find((r) => r.key === editingKey) ?? null;
+  const unboundCount = keyOptions.filter((r) => !r.bound).length;
 
   function resetForm() {
     setEditingKey(null);
@@ -124,7 +167,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     setAudience(binding.audience ?? '');
   }
 
-  const canAssign = catalogKey.trim() !== '' && templateId !== '' && !saving;
+  const canAssign = catalogKey !== '' && templateId !== '' && !saving;
 
   async function handleAssign() {
     if (!canAssign) return;
@@ -133,17 +176,29 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
     setNotice(null);
     try {
       await assignTemplate({
-        catalogKey: catalogKey.trim(),
+        catalogKey,
         templateId,
         ...(audience !== '' && { audience }),
       });
       setSaving(false);
-      setNotice(`Assigned ${titleById.get(templateId) ?? templateId} to ${catalogKey.trim()}.`);
+      setNotice(`Assigned ${titleById.get(templateId) ?? templateId} to ${catalogKey}.`);
       resetForm();
       loadBindings();
+      // The catalog rows carry bound/resolves-to state, which this write changed.
+      loadCatalog();
     } catch (err) {
       setSaving(false);
-      setActionError(`assignTemplate failed: ${err instanceof Error ? err.message : 'Assign failed'}`);
+      // assignTemplate rejects an unreal catalog key with invalid-argument and a
+      // sentence that names it. Show that sentence rather than burying it behind
+      // a generic failure line: it is the one message that tells the operator
+      // what to do next.
+      const code = (err as { code?: string } | null)?.code;
+      const message = err instanceof Error ? err.message : 'Assign failed';
+      setActionError(
+        code === 'functions/invalid-argument'
+          ? `assignTemplate refused this catalog key: ${message}`
+          : `assignTemplate failed: ${message}`,
+      );
     }
   }
 
@@ -160,6 +215,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
       // If the form was editing the key just removed, drop back to a blank assign.
       if (editingKey === key) resetForm();
       loadBindings();
+      loadCatalog();
     } catch (err) {
       setUnassigning(false);
       setActionError(`unassignTemplate failed: ${err instanceof Error ? err.message : 'Unassign failed'}`);
@@ -192,7 +248,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
         subtitle={
           editingKey
             ? 'Pick the template this catalog key should dispatch.'
-            : 'Enter a catalog key and pick the template dispatch should send for it.'
+            : 'Pick the catalog key, then the template dispatch should send for it.'
         }
       >
         {templates.status === 'error' && (
@@ -200,17 +256,35 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
             Template list unavailable, so the picker is empty: {templates.message}
           </p>
         )}
+        {catalog.status === 'error' && (
+          <p className="tassign__templates-error" role="alert">
+            Catalog keys unavailable, so there is nothing to pick from: {catalog.message}
+          </p>
+        )}
         <div className="tassign__form">
           <label className="tassign__field">
             <span className="tassign__label">Catalog key</span>
-            <input
-              type="text"
+            <select
               className="tassign__input"
               value={catalogKey}
               onChange={(e) => setCatalogKey(e.target.value)}
               disabled={editingKey !== null || saving}
-              placeholder="e.g. booking.confirmed"
-            />
+            >
+              <option value="">Choose a catalog key…</option>
+              {/* The key being edited may predate the catalog. Keep it visible
+                  rather than showing a blank picker over a real binding. */}
+              {editingKey !== null && editingRow === null && (
+                <option value={editingKey}>{editingKey} (not in the catalog)</option>
+              )}
+              {editingRow !== null && editingRow.source === 'legacy' && (
+                <option value={editingRow.key}>{editingRow.key} (not in the catalog)</option>
+              )}
+              {keyOptions.map((row) => (
+                <option key={row.key} value={row.key}>
+                  {keyOptionLabel(row)}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="tassign__field">
@@ -262,6 +336,12 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
             />
           </div>
         </div>
+        {catalog.status === 'ready' && (
+          <p className="tassign__hint">
+            {keyOptions.length} catalog keys, {unboundCount} with no binding yet. An unbound key
+            still sends: dispatch falls back to the template named after the key.
+          </p>
+        )}
       </DenPanel>
 
       <DenPanel title="Current bindings" subtitle="Every catalog key that dispatch currently maps to a template.">

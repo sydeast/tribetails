@@ -6,8 +6,12 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { explainUnbindableKey } from '../notifications/catalogKeys';
 
 // Exported so the callable-contract drift guard can freeze this request shape.
+// `catalogKey` stays a plain bounded string here on purpose: the real check is a
+// catalog lookup in the handler (below), which zod cannot express without
+// changing the frozen shape, and which has to name the offending key.
 export const Args = z.object({
   catalogKey: z.string().min(1).max(120),
   templateId: z.string().min(1).max(120),
@@ -23,6 +27,18 @@ export async function assignTemplateHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
+
+  // #382: the catalog key used to be validated against nothing, so a typo like
+  // `kincare.bookng.confirm` returned 200, showed up under Current bindings, and
+  // did nothing forever. Nothing reads a binding at a key the dispatcher never
+  // asks for. Refuse the write and name the key, the way the sibling
+  // notificationOverrides callable refuses an unknown notification key.
+  //
+  // Deliberately NOT excused for a key that already has a binding doc: the only
+  // sensible move on a dead binding is unassignTemplate, which stays unvalidated
+  // so anything already written can always be cleaned up.
+  const keyProblem = explainUnbindableKey(args.catalogKey);
+  if (keyProblem) throw new HttpsError('invalid-argument', keyProblem);
 
   // Verify target template exists, fail loud if admin assigns a non-existent id.
   const tpl = await db().doc(`emailTemplates/${args.templateId}`).get();
