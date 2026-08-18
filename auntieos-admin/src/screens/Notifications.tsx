@@ -554,7 +554,7 @@ function NotificationFilters({ categories, filter, onFilter }: NotificationFilte
     <div className="notif-filters" role="tablist" aria-label="Filter notifications">
       {values.map((value, index) => (
         <button
-          key={value ?? ' all'}
+          key={value ?? '\0all'}
           type="button"
           role="tab"
           aria-selected={filter === value}
