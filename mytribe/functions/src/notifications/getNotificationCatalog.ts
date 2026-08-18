@@ -88,7 +88,10 @@ const CATEGORY_DESCRIPTORS: Record<string, CategoryDescriptor> = {
   messages: {
     id: 'messages',
     title: 'Messages',
-    description: 'New messages in your conversation with Tribe Tails.',
+    // #386: this bucket now also carries `broadcast.message`, the announcement
+    // the office sends to a group of households at once, so the sentence names
+    // both kinds of message rather than only the 1:1 thread.
+    description: 'Messages and announcements from Tribe Tails.',
   },
 };
 

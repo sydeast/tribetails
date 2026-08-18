@@ -103,6 +103,26 @@ describe('NOTIFICATION_CATALOG integrity', () => {
     expect(def!.templates.sms).toBe('kintale.note.added');
   });
 
+  it('#386: broadcast.message is a real row the operator and the household can both govern', () => {
+    // The key is the one `admin/broadcastMessage.ts` stamps on the notification
+    // doc it writes; a key with no row cannot be gated or silenced by anyone,
+    // which is the defect this row closes.
+    const def = NOTIFICATION_CATALOG['broadcast.message'];
+    expect(def, 'broadcast.message missing from catalog').toBeDefined();
+    expect(def!.audience).toBe('kinfolk');
+    expect(def!.category).toBe('messages');
+    // Visible on the household's own notification settings...
+    expect(def!.kinfolkFacing).toBe(true);
+    // ...and switchable off by the operator on the gate, on any channel.
+    expect(def!.alwaysEnabled).toBe(false);
+    expect(def!.required).toEqual({});
+    // Transactional, NOT marketing-class: `marketingCategory` is an opt-IN gate
+    // resolveChannels puts beyond the operator's reach, and real campaigns have
+    // their own path (scheduleMarketingBlast). Broadcast keeps the opt-OUT model
+    // it already ships: message_suppressions + the unsubscribe footer.
+    expect(def!.marketingCategory).toBeUndefined();
+  });
+
   it('always-enabled notifications cannot be kinfolkFacing', () => {
     // alwaysEnabled means user can't silence — hiding from UI is the right pair
     for (const def of Object.values(NOTIFICATION_CATALOG)) {
@@ -142,6 +162,10 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'assignment.assigned': { staff: true },
     'assignment.changed': { staff: true },
     'message.received': { business: true },
+    // #386: the office's broadcast out to a whole audience segment, the other
+    // direction of message.received. Kinfolk-only; the operator wrote it, so
+    // they do not need a copy of it back.
+    'broadcast.message': { kinfolk: true },
     'kintale.published': { kinfolk: true },
     'kintale.comment.added': { kinfolk: true, staff: true },
     'kintale.note.added': { kinfolk: true },
