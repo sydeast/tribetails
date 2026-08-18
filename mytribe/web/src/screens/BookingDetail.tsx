@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyBookings } from '../api/portal';
-import { addBookingNote, requestBookingCancellation } from '../api/bookingApi';
+import { addBookingNote, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
@@ -51,6 +51,10 @@ export function BookingDetail() {
   const [noteSaved, setNoteSaved] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [proposingReschedule, setProposingReschedule] = useState(false);
+  const [proposedAt, setProposedAt] = useState('');
+  const [rescheduleReason, setRescheduleReason] = useState('');
+  const [rescheduleProblem, setRescheduleProblem] = useState<string | null>(null);
 
   const found = findBookingById(bookings.data, visitId);
 
@@ -77,6 +81,25 @@ export function BookingDetail() {
     },
   });
 
+  const reschedule = useMutation({
+    mutationFn: (proposedStartTimeMs: number) => {
+      if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
+      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
+      setProposingReschedule(false);
+      setProposedAt('');
+      setRescheduleReason('');
+      setRescheduleProblem(null);
+    },
+    onError: (err: unknown) => {
+      // The server writes these messages for a household to read
+      // (invalid-argument on a past time, already-exists on a second ask), so
+      // they are shown as they arrive rather than flattened to "try again".
+      setRescheduleProblem(err instanceof Error ? err.message : 'Could not send the request. Try again.');
+    },
+  });
   if (bookings.isError) {
     return (
       <LaunchError
@@ -122,7 +145,31 @@ export function BookingDetail() {
   const timelineIndex = bookingTimelineIndex(found.status);
   const canAct = found.batchId !== null;
   const canRequestCancel = canAct && !found.cancelRequested && (found.status === 'requested' || found.status === 'confirmed');
+  // Same window as a cancellation ask, and for the same reason: a visit that is
+  // under way or finished is not moved by asking. A pending ask is handled
+  // above this flag, by the branch that renders the waiting state instead.
+  const canRequestReschedule =
+    canAct &&
+    found.rescheduleRequestStatus !== 'pending' &&
+    (found.status === 'requested' || found.status === 'confirmed');
+  const proposedLabel =
+    found.rescheduleRequestedStartTimeMs !== null
+      ? weekdayTime(found.rescheduleRequestedStartTimeMs)
+      : '';
   const auntieLabel = found.auntieDisplayName ? `Auntie ${found.auntieDisplayName}` : 'your Auntie';
+  const submitReschedule = () => {
+    const ms = parseLocalDateTime(proposedAt);
+    if (ms === null) {
+      setRescheduleProblem('Pick a date and time first.');
+      return;
+    }
+    if (ms <= Date.now()) {
+      setRescheduleProblem('Pick a time in the future.');
+      return;
+    }
+    setRescheduleProblem(null);
+    reschedule.mutate(ms);
+  };
 
   const submitNote = () => {
     const body = noteBody.trim();
@@ -285,9 +332,79 @@ export function BookingDetail() {
                   {'\u{1F4AC}'} Message {auntieLabel}
                 </Link>
 
-                <span className="btn ghost block navlink-inert" title="Coming soon">
-                  {'\u{1F4C5}'} Reschedule visit
-                </span>
+                {found.rescheduleRequestStatus === 'pending' ? (
+                  <div className="cancel-pending" data-testid="reschedule-pending">
+                    <span className="dot" />
+                    New time requested{proposedLabel ? ` for ${proposedLabel}` : ''}. We&rsquo;ll confirm shortly.
+                  </div>
+                ) : (
+                  <>
+                    {found.rescheduleRequestStatus === 'accepted' && (
+                      <div className="note" role="status" data-testid="reschedule-accepted">
+                        <span className="dot" />
+                        Your new time was accepted. This visit now shows the time you asked for.
+                        {found.rescheduleResponseNote ? ` ${found.rescheduleResponseNote}` : ''}
+                      </div>
+                    )}
+                    {found.rescheduleRequestStatus === 'declined' && (
+                      <div className="note err" role="status" data-testid="reschedule-declined">
+                        <span className="dot" />
+                        {`Tribe Tails could not take ${proposedLabel || 'that time'}. ${found.rescheduleResponseNote ?? ''}`.trim()}
+                      </div>
+                    )}
+                    {canRequestReschedule &&
+                      (proposingReschedule ? (
+                        <div className="cancel-confirm" data-testid="reschedule-form">
+                          <p className="sub">
+                            This proposes a new time to Tribe Tails. The visit stays where it is until they accept.
+                          </p>
+                          <label className="sub" htmlFor="new-visit-time" style={{ margin: 0 }}>
+                            New date and time
+                          </label>
+                          <input
+                            className="input"
+                            id="new-visit-time"
+                            type="datetime-local"
+                            value={proposedAt}
+                            onChange={(e) => setProposedAt(e.target.value)}
+                            disabled={reschedule.isPending}
+                          />
+                          <textarea
+                            className="note-ta"
+                            placeholder="Why the change? (optional)"
+                            value={rescheduleReason}
+                            onChange={(e) => setRescheduleReason(e.target.value)}
+                            disabled={reschedule.isPending}
+                          />
+                          {rescheduleProblem && <div className="note-err">{`\u26A0 ${rescheduleProblem}`}</div>}
+                          <button
+                            className="btn purple block"
+                            type="button"
+                            onClick={() => submitReschedule()}
+                            disabled={reschedule.isPending || proposedAt.trim().length === 0}
+                          >
+                            {reschedule.isPending ? 'Sending…' : 'Send this time to Tribe Tails'}
+                          </button>
+                          <button
+                            className="btn ghost block"
+                            type="button"
+                            onClick={() => setProposingReschedule(false)}
+                            disabled={reschedule.isPending}
+                          >
+                            Never mind
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          className="btn ghost block"
+                          type="button"
+                          onClick={() => setProposingReschedule(true)}
+                        >
+                          {'\u{1F4C5}'} Reschedule visit
+                        </button>
+                      ))}
+                  </>
+                )}
 
                 {found.cancelRequested ? (
                   <div className="cancel-pending">
@@ -351,4 +468,18 @@ export function BookingDetail() {
       </div>
     </>
   );
+}
+/**
+ * Epoch millis from an `<input type="datetime-local">` value, or null when the
+ * field is blank or unparseable.
+ *
+ * `new Date('2026-09-01T15:00')` is read as LOCAL time by every browser that
+ * ships this input, which is what the household typed. Appending a Z, or
+ * routing through Date.UTC, would silently move the proposal by the viewer's
+ * offset.
+ */
+function parseLocalDateTime(value: string): number | null {
+  if (!value.trim()) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }

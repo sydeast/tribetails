@@ -198,6 +198,31 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'A kinfolk asked to cancel a KinCare visit.',
   },
   {
+    // #399 item 2: the office hears when a kinfolk proposes a new time for a
+    // visit. NOT a status change and NOT a move; requestBookingReschedule
+    // stamps rescheduleRequestedAt on the kinCares doc and onBookingsWrite
+    // fires this. The visit only moves when an operator accepts, through
+    // admin/resolveBookingRescheduleRequest, and the household hears about
+    // THAT through the existing kincare.changed key.
+    key: 'kincare.reschedule.requested',
+    label: 'Kinfolk proposed a new visit time',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'visit',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'kincare.reschedule.requested',
+      sms: 'kincare.reschedule.requested',
+      push: 'kincare.reschedule.requested',
+    },
+    description: 'A kinfolk asked to move a KinCare visit to a different time.',
+  },
+  {
     // Vendor-parity (2026-07-02): the office hears when an Auntie writes a visit
     // note. Mirrors kincare.note.kinfolk but for staff-authored notes; emitted by
     // the same onBookingNoteCreate trigger.

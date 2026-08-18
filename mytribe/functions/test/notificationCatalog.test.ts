@@ -159,6 +159,9 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     // Vendor-parity additions (2026-07-02)
     'kincare.note.auntie': { business: true },
     'kincare.cancel.requested': { business: true },
+    // #399 item 2: the kinfolk reschedule ask. Business-only, same as the
+    // cancellation ask it mirrors: the household already knows what it asked for.
+    'kincare.reschedule.requested': { business: true },
     'assignment.assigned': { staff: true },
     'assignment.changed': { staff: true },
     'message.received': { business: true },

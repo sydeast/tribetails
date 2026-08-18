@@ -10,6 +10,7 @@ import type {
   GetMyBookingsResult,
   GetMyBookingsResultLiveVisit,
   RequestBookingCancellationResult,
+  RequestBookingRescheduleResult,
 } from '../contracts/bookingContracts.generated';
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +18,15 @@ const mocks = vi.hoisted(() => ({
   addBookingNote: vi.fn<(kinfolkId: string, batchId: string, visitId: string, body: string) => Promise<AddBookingNoteResult>>(),
   requestBookingCancellation: vi.fn<
     (kinfolkId: string, batchId: string, visitId: string, reason?: string) => Promise<RequestBookingCancellationResult>
+  >(),
+  requestBookingReschedule: vi.fn<
+    (
+      kinfolkId: string,
+      batchId: string,
+      visitId: string,
+      proposedStartTimeMs: number,
+      reason?: string,
+    ) => Promise<RequestBookingRescheduleResult>
   >(),
 }));
 
@@ -28,6 +38,13 @@ vi.mock('../api/bookingApi', () => ({
     mocks.addBookingNote(kinfolkId, batchId, visitId, body),
   requestBookingCancellation: (kinfolkId: string, batchId: string, visitId: string, reason?: string) =>
     mocks.requestBookingCancellation(kinfolkId, batchId, visitId, reason),
+  requestBookingReschedule: (
+    kinfolkId: string,
+    batchId: string,
+    visitId: string,
+    proposedStartTimeMs: number,
+    reason?: string,
+  ) => mocks.requestBookingReschedule(kinfolkId, batchId, visitId, proposedStartTimeMs, reason),
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
@@ -59,6 +76,11 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     sourceBookingId: null,
     sessionId: null,
     cancelRequested: false,
+    rescheduleRequestStatus: null,
+    rescheduleRequestedStartTimeMs: null,
+    rescheduleRequestedEndTimeMs: null,
+    rescheduleRequestReason: null,
+    rescheduleResponseNote: null,
     ...overrides,
   };
 }
@@ -80,6 +102,7 @@ beforeEach(() => {
   mocks.getMyBookings.mockReset();
   mocks.addBookingNote.mockReset();
   mocks.requestBookingCancellation.mockReset();
+  mocks.requestBookingReschedule.mockReset();
 });
 
 describe('BookingDetail: lookup', () => {
@@ -296,5 +319,120 @@ describe('BookingDetail: status timeline', () => {
     expect(await screen.findByText('CANCELLED')).toBeInTheDocument();
     expect(screen.queryByText('Status timeline')).not.toBeInTheDocument();
     expect(screen.queryByText('En route')).not.toBeInTheDocument();
+  });
+});
+/**
+ * "Reschedule visit" (#399 item 2).
+ *
+ * It was a `<span class="btn ghost block navlink-inert" title="Coming soon">`:
+ * a control that looked like a button, could not be focused or pressed, and had
+ * no callable behind it. A client could ask for a cancellation but never
+ * propose a new time. These assert the control is real, that it PROPOSES rather
+ * than moves, and that every state of the answer is rendered.
+ */
+describe('BookingDetail: reschedule request', () => {
+  /** A local datetime-local value a few days out, in the form the input emits. */
+  function futureInputValue(daysAhead = 3): { value: string; ms: number } {
+    const d = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
+    d.setSeconds(0, 0);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return { value, ms: new Date(value).getTime() };
+  }
+  it('offers a real button, not the inert span it replaced', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    const button = await screen.findByRole('button', { name: /reschedule visit/i });
+    expect(button).toBeEnabled();
+  });
+  it('sends the chosen time and the reason, and never touches the visit itself', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockResolvedValue({
+      ok: true,
+      visitId: 'v1',
+      proposedStartTimeMs: 0,
+      proposedEndTimeMs: null,
+    });
+    renderScreen();
+    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    const { value, ms } = futureInputValue();
+    await userEvent.type(within(form).getByLabelText(/new date and time/i), value);
+    await userEvent.type(within(form).getByPlaceholderText(/why the change/i), 'Flight moved');
+    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    await waitFor(() =>
+      expect(mocks.requestBookingReschedule).toHaveBeenCalledWith('fam1', 'b1', 'v1', ms, 'Flight moved'),
+    );
+  });
+  it('refuses a past time in the browser, before the callable is reached', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    renderScreen();
+    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await userEvent.type(within(form).getByLabelText(/new date and time/i), '2020-01-01T09:00');
+    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    expect(await screen.findByText(/pick a time in the future/i)).toBeInTheDocument();
+    expect(mocks.requestBookingReschedule).not.toHaveBeenCalled();
+  });
+  it("shows the server's own words when the request is refused", async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockRejectedValue(
+      new Error('Only a requested or confirmed visit can ask for a new time.'),
+    );
+    renderScreen();
+    await userEvent.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await userEvent.type(within(form).getByLabelText(/new date and time/i), futureInputValue().value);
+    await userEvent.click(within(form).getByRole('button', { name: /send this time to tribe tails/i }));
+    expect(
+      await screen.findByText(/only a requested or confirmed visit can ask for a new time/i),
+    ).toBeInTheDocument();
+  });
+  it('renders the waiting state and hides the control while a request is pending', async () => {
+    const pending = booking({
+      rescheduleRequestStatus: 'pending',
+      rescheduleRequestedStartTimeMs: new Date(2026, 8, 1, 15, 0).getTime(),
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [pending] }));
+    renderScreen();
+    const banner = await screen.findByTestId('reschedule-pending');
+    expect(banner.textContent).toMatch(/new time requested/i);
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+  it('renders the accepted answer', async () => {
+    const accepted = booking({
+      rescheduleRequestStatus: 'accepted',
+      rescheduleRequestedStartTimeMs: new Date(2026, 8, 1, 15, 0).getTime(),
+      rescheduleResponseNote: 'See you then.',
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [accepted] }));
+    renderScreen();
+    const banner = await screen.findByTestId('reschedule-accepted');
+    expect(banner.textContent).toMatch(/accepted/i);
+    expect(banner.textContent).toMatch(/see you then/i);
+  });
+  it('renders a declined answer with the reason, and lets the household try again', async () => {
+    const declined = booking({
+      rescheduleRequestStatus: 'declined',
+      rescheduleRequestedStartTimeMs: new Date(2026, 8, 1, 15, 0).getTime(),
+      rescheduleResponseNote: 'That morning is fully booked.',
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [declined] }));
+    renderScreen();
+    const banner = await screen.findByTestId('reschedule-declined');
+    expect(banner.textContent).toMatch(/that morning is fully booked/i);
+    expect(screen.getByRole('button', { name: /reschedule visit/i })).toBeEnabled();
+  });
+  it('offers no reschedule control on a visit with no booking envelope', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ batchId: null })] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Drop-in Visit' });
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+  it('offers no reschedule control on a completed visit', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [booking({ status: 'completed' })] }));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Drop-in Visit' });
+    expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
   });
 });

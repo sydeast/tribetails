@@ -14,6 +14,7 @@ import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { handleStripeDisputeEvent, isDisputeEvent } from './stripeDispute';
+import { handleSetupSessionCompleted, isSetupSessionEvent } from './stripeSetupSession';
 
 /**
  * Refund events, ignored BY POLICY rather than by omission. See the branch
@@ -79,6 +80,22 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       extra: { type: event.type, eventId: event.id },
     });
     res.status(202).json({ ok: true, ignored: true, reason: 'no-refunds-policy' });
+    return;
+  }
+
+  if (isSetupSessionEvent(event)) {
+    // The household saved a card (issue #399, item 3). A setup-mode Checkout
+    // Session carries no `invoiceId`, so behind the metadata gate below it
+    // would 202 as `stripe.metadata.missing` and the card would never reach
+    // `clients/{uid}`.
+    //
+    // This is the BACKSTOP, not the primary path: the portal calls
+    // `syncMyPaymentMethod` the moment the browser returns from Checkout, so
+    // the card is normally already stored by the time this event arrives and
+    // the sync is a no-op. It exists for the household that closes the tab on
+    // Stripe's confirmation page instead of coming back.
+    const code = await handleSetupSessionCompleted(event);
+    res.status(code).json({ ok: true, setup: true });
     return;
   }
 

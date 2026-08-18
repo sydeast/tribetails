@@ -199,3 +199,84 @@ export async function uploadAvatarToCloudinary(signed: SignedAvatarUpload, file:
   const body = (await res.json().catch(() => null)) as { secure_url?: string } | null;
   return body?.secure_url ?? null;
 }
+// ── Card management (functions/src/portal/billing.ts) ────────────────────────
+/**
+ * These four are hand-typed rather than generated. The contract registry
+ * (`mytribe/functions/scripts/contracts/registry.ts`) publishes the invoice and
+ * booking surfaces to three clients; billing card state reaches exactly one
+ * client tree beyond this file (the portal Android app, which hand-decodes JSON
+ * anyway), and its header is explicit that adding a line there is a decision to
+ * publish, not a formality. The rest of this file's account callables are
+ * hand-typed for the same reason.
+ */
+export interface CardDto {
+  /** Stripe's brand string, lowercase: 'visa', 'mastercard', 'amex'. */
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+export interface PaymentMethodDto {
+  hasPaymentMethod: boolean;
+  /**
+   * Null when there is no card, AND when a card exists that the server could
+   * not describe. Render the generic "on file" copy in the second case rather
+   * than a half-empty card.
+   */
+  card: CardDto | null;
+  updatedAtMs: number | null;
+}
+export interface SyncPaymentMethodResult extends PaymentMethodDto {
+  /** True when the sync changed which card is on file. */
+  changed: boolean;
+}
+export interface BillingSetupSessionResult {
+  /** Stripe-hosted Checkout URL. Redirect to it, do not fetch it. */
+  checkoutUrl: string;
+  sessionId: string;
+}
+export function getMyPaymentMethod(kinfolkId?: string): Promise<PaymentMethodDto> {
+  return call<{ kinfolkId?: string }, PaymentMethodDto>(
+    'getMyPaymentMethod',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
+}
+/**
+ * Opens a Stripe Checkout Session in setup mode: the household enters a card,
+ * Stripe charges nothing, and the card is attached to their customer record.
+ * REAL CARD FLOW: redirect the browser to `checkoutUrl` (window.location.href).
+ */
+export function createBillingSetupSession(
+  successUrl: string,
+  cancelUrl: string,
+  kinfolkId?: string,
+): Promise<BillingSetupSessionResult> {
+  return call<{ successUrl: string; cancelUrl: string; kinfolkId?: string }, BillingSetupSessionResult>(
+    'createBillingSetupSession',
+    { successUrl, cancelUrl, ...(kinfolkId !== undefined ? { kinfolkId } : {}) },
+  );
+}
+/**
+ * Asks the server to re-read the card from Stripe. Called when the browser
+ * comes back from Checkout, so the screen shows the new card without waiting
+ * for a webhook.
+ */
+export function syncMyPaymentMethod(kinfolkId?: string): Promise<SyncPaymentMethodResult> {
+  return call<{ kinfolkId?: string }, SyncPaymentMethodResult>(
+    'syncMyPaymentMethod',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
+}
+/** Takes the card off file. Removes an instrument, never a payment already made. */
+export function removeMyPaymentMethod(kinfolkId?: string): Promise<{ ok: true; alreadyEmpty: boolean }> {
+  return call<{ kinfolkId?: string }, { ok: true; alreadyEmpty: boolean }>(
+    'removeMyPaymentMethod',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
+}
+/** "Visa •••• 4242 · exp 04/2030", the one place this string is composed. */
+export function formatCard(card: CardDto): string {
+  const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
+  const month = String(card.expMonth).padStart(2, '0');
+  return `${brand} •••• ${card.last4} · exp ${month}/${card.expYear}`;
+}

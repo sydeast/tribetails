@@ -23,6 +23,47 @@ package com.tribetails.auntieos.data.contracts
  */
 private fun contractRawMap(value: Any?): Map<String, Any?>? = value as? Map<String, Any?>
 
+// ---------- Types shared by more than one callable ----------
+
+/** `RescheduleRequestDto`, shared across callables. */
+data class RescheduleRequestDto(
+    val kinfolkId: String,
+    val batchId: String,
+    val visitId: String,
+    val title: String?,
+    val serviceType: String?,
+    val kinNames: List<String>,
+    val status: String?,
+    val currentStartTimeMs: Long?,
+    val currentEndTimeMs: Long?,
+    val proposedStartTimeMs: Long?,
+    val proposedEndTimeMs: Long?,
+    val reason: String?,
+    val requestedAtMs: Long?,
+)
+
+/**
+ * Fail-soft decode of `RescheduleRequestDto` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeRescheduleRequestDto(raw: Map<String, Any?>?): RescheduleRequestDto =
+    RescheduleRequestDto(
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        batchId = (raw?.get("batchId") as? String).orEmpty(),
+        visitId = (raw?.get("visitId") as? String).orEmpty(),
+        title = raw?.get("title") as? String,
+        serviceType = raw?.get("serviceType") as? String,
+        kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
+        status = raw?.get("status") as? String,
+        currentStartTimeMs = (raw?.get("currentStartTimeMs") as? Number)?.toLong(),
+        currentEndTimeMs = (raw?.get("currentEndTimeMs") as? Number)?.toLong(),
+        proposedStartTimeMs = (raw?.get("proposedStartTimeMs") as? Number)?.toLong(),
+        proposedEndTimeMs = (raw?.get("proposedEndTimeMs") as? Number)?.toLong(),
+        reason = raw?.get("reason") as? String,
+        requestedAtMs = (raw?.get("requestedAtMs") as? Number)?.toLong(),
+    )
+
 // ---------- addBookingNote ----------
 
 /**
@@ -310,6 +351,12 @@ data class GetMyBookingsResultLiveVisit(
     val sourceBookingId: String?,
     val sessionId: String?,
     val cancelRequested: Boolean,
+    /** One of `pending`, `accepted`, `declined`, or null when the payload omits it. */
+    val rescheduleRequestStatus: String?,
+    val rescheduleRequestedStartTimeMs: Long?,
+    val rescheduleRequestedEndTimeMs: Long?,
+    val rescheduleRequestReason: String?,
+    val rescheduleResponseNote: String?,
 )
 
 /**
@@ -339,6 +386,11 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         sourceBookingId = raw?.get("sourceBookingId") as? String,
         sessionId = raw?.get("sessionId") as? String,
         cancelRequested = raw?.get("cancelRequested") as? Boolean ?: false,
+        rescheduleRequestStatus = raw?.get("rescheduleRequestStatus") as? String,
+        rescheduleRequestedStartTimeMs = (raw?.get("rescheduleRequestedStartTimeMs") as? Number)?.toLong(),
+        rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),
+        rescheduleRequestReason = raw?.get("rescheduleRequestReason") as? String,
+        rescheduleResponseNote = raw?.get("rescheduleResponseNote") as? String,
     )
 
 /** Nested in the `getMyBookings` contract. */
@@ -612,6 +664,55 @@ internal fun decodeRequestBookingCancellationResult(raw: Map<String, Any?>?): Re
         alreadyPending = raw?.get("alreadyPending") as? Boolean ?: false,
     )
 
+// ---------- requestBookingReschedule ----------
+
+/** Request payload for the `requestBookingReschedule` callable. */
+data class RequestBookingRescheduleArgs(
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+    val batchId: String,
+    val visitId: String,
+    val proposedStartTimeMs: Long,
+    /** Optional: omitted from the payload when null. */
+    val proposedEndTimeMs: Long? = null,
+    /** Optional: omitted from the payload when null. */
+    val reason: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+        put("batchId", batchId)
+        put("visitId", visitId)
+        put("proposedStartTimeMs", proposedStartTimeMs)
+        if (proposedEndTimeMs != null) put("proposedEndTimeMs", proposedEndTimeMs)
+        if (reason != null) put("reason", reason)
+    }
+}
+
+/** Response from the `requestBookingReschedule` callable. */
+data class RequestBookingRescheduleResult(
+    val ok: Boolean,
+    val visitId: String,
+    val proposedStartTimeMs: Long,
+    val proposedEndTimeMs: Long?,
+)
+
+/**
+ * Fail-soft decode of `RequestBookingRescheduleResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeRequestBookingRescheduleResult(raw: Map<String, Any?>?): RequestBookingRescheduleResult =
+    RequestBookingRescheduleResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        visitId = (raw?.get("visitId") as? String).orEmpty(),
+        proposedStartTimeMs = (raw?.get("proposedStartTimeMs") as? Number)?.toLong() ?: 0L,
+        proposedEndTimeMs = (raw?.get("proposedEndTimeMs") as? Number)?.toLong(),
+    )
+
 // ---------- rescheduleBooking ----------
 
 /** Request payload for the `rescheduleBooking` callable. */
@@ -646,4 +747,84 @@ internal fun decodeRescheduleBookingResult(raw: Map<String, Any?>?): RescheduleB
     RescheduleBookingResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+    )
+
+// ---------- resolveBookingRescheduleRequest ----------
+
+/** Request payload for the `resolveBookingRescheduleRequest` callable. */
+data class ResolveBookingRescheduleRequestArgs(
+    val kinfolkId: String,
+    val batchId: String,
+    val visitId: String,
+    /** One of `accept`, `decline`. */
+    val decision: String,
+    /** Optional: omitted from the payload when null. */
+    val note: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("kinfolkId", kinfolkId)
+        put("batchId", batchId)
+        put("visitId", visitId)
+        put("decision", decision)
+        if (note != null) put("note", note)
+    }
+}
+
+/** Response from the `resolveBookingRescheduleRequest` callable. */
+data class ResolveBookingRescheduleRequestResult(
+    val ok: Boolean,
+    val visitId: String,
+    /** One of `accept`, `decline`. `""` when the payload omits it. */
+    val decision: String,
+    val startTimeMs: Long?,
+    val sessionUpdated: Boolean,
+)
+
+/**
+ * Fail-soft decode of `ResolveBookingRescheduleRequestResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeResolveBookingRescheduleRequestResult(raw: Map<String, Any?>?): ResolveBookingRescheduleRequestResult =
+    ResolveBookingRescheduleRequestResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        visitId = (raw?.get("visitId") as? String).orEmpty(),
+        decision = (raw?.get("decision") as? String).orEmpty(),
+        startTimeMs = (raw?.get("startTimeMs") as? Number)?.toLong(),
+        sessionUpdated = raw?.get("sessionUpdated") as? Boolean ?: false,
+    )
+
+// ---------- listRescheduleRequests ----------
+
+/** Request payload for the `listRescheduleRequests` callable. */
+data class ListRescheduleRequestsArgs(
+    /** Optional: omitted from the payload when null. */
+    val limit: Long? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (limit != null) put("limit", limit)
+    }
+}
+
+/** Response from the `listRescheduleRequests` callable. */
+data class ListRescheduleRequestsResult(
+    val requests: List<RescheduleRequestDto>,
+)
+
+/**
+ * Fail-soft decode of `ListRescheduleRequestsResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListRescheduleRequestsResult(raw: Map<String, Any?>?): ListRescheduleRequestsResult =
+    ListRescheduleRequestsResult(
+        requests = (raw?.get("requests") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeRescheduleRequestDto(nested) } },
     )

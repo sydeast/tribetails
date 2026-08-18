@@ -1,0 +1,58 @@
+/*
+ * The Gallery screen (#399 item 1). Assembled from the portal's existing
+ * design-system primitives -- .wrap, .glass.card, .sectlabel, .gallery-row,
+ * .gallery-thumb all come from base.css and tribe.css -- because there is no
+ * gallery mockup in ui-ideas to port. What is here is only the archive grid,
+ * which those files have no equivalent of: the hub's .gallery-row is a
+ * fixed-size avatar strip, not a wall of photos.
+ */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.gallery-tile {
+  position: relative;
+  display: block;
+  aspect-ratio: 1 / 1;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(116, 83, 138, .1);
+  border: 1px solid var(--glass-border);
+  text-decoration: none;
+}
+.gallery-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gallery-tile__video {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 28px;
+}
+.gallery-tile__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16px 10px 8px;
+  font-size: 11.5px;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(to top, rgba(17, 19, 31, .78), rgba(17, 19, 31, 0));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-tile.g1 { background: rgba(223, 132, 49, .12); }
+.gallery-tile.g2 { background: rgba(10, 133, 149, .12); }
+.gallery-tile.g3 { background: rgba(116, 83, 138, .12); }
+.gallery-tile.g4 { background: rgba(213, 83, 90, .12); }
+@media (max-width: 520px) {
+  .gallery-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+}

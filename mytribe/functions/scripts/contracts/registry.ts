@@ -58,6 +58,17 @@ import {
   Args as RequestBookingCancellationArgs,
   Result as RequestBookingCancellationResult,
 } from '../../src/portal/requestBookingCancellation';
+import {
+  Args as RequestBookingRescheduleArgs,
+  Result as RequestBookingRescheduleResult,
+} from '../../src/portal/requestBookingReschedule';
+import {
+  Args as ResolveBookingRescheduleRequestArgs,
+  Result as ResolveBookingRescheduleRequestResult,
+  ListArgs as ListRescheduleRequestsArgs,
+  ListResult as ListRescheduleRequestsResult,
+  RescheduleRequestDto as RescheduleRequestDtoSchema,
+} from '../../src/admin/rescheduleRequests';
 
 /** One callable's request and response authority. */
 export interface CallableContract {
@@ -142,7 +153,12 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
  * `export const Args`.
  */
 export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
-  shared: [],
+  shared: [
+    // Named once: the queue response and, later, any per-visit lookup of the
+    // same row would otherwise generate two identical DTOs under different
+    // names on three clients.
+    { name: 'RescheduleRequestDto', schema: RescheduleRequestDtoSchema, direction: 'response' },
+  ],
   callables: [
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
     { name: 'addInternalBookingNote', args: AddInternalBookingNoteArgs, result: AddInternalBookingNoteResult },
@@ -161,6 +177,17 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
       args: RequestBookingCancellationArgs,
       result: RequestBookingCancellationResult,
     },
+    {
+      name: 'requestBookingReschedule',
+      args: RequestBookingRescheduleArgs,
+      result: RequestBookingRescheduleResult,
+    },
     { name: 'rescheduleBooking', args: RescheduleBookingArgs, result: RescheduleBookingResult },
+    {
+      name: 'resolveBookingRescheduleRequest',
+      args: ResolveBookingRescheduleRequestArgs,
+      result: ResolveBookingRescheduleRequestResult,
+    },
+    { name: 'listRescheduleRequests', args: ListRescheduleRequestsArgs, result: ListRescheduleRequestsResult },
   ],
 };

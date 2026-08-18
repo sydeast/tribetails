@@ -4,10 +4,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyHome, getMyKin } from '../api/portal';
 import {
   addSecondaryContact,
+  createBillingSetupSession,
+  formatCard,
   getFormSchema,
   getMyAccount,
+  getMyPaymentMethod,
+  removeMyPaymentMethod,
   saveMyAccount,
   signKinfolkAvatar,
+  syncMyPaymentMethod,
   validateAvatarFile,
 } from '../api/accountApi';
 import { useSignOut } from '../lib/auth';
@@ -19,6 +24,27 @@ import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
 
 type Status = { text: string; tone: 'ok' | 'err' };
+
+/** True for a Firebase callable rejection the server raised as permission-denied. */
+function isPermissionDenied(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 'functions/permission-denied' || code === 'permission-denied';
+}
+
+/**
+ * A billing failure a household can act on.
+ *
+ * The raw callable message is kept when the server wrote one for a person
+ * (`failed-precondition`, `permission-denied`, `unavailable` all carry a
+ * sentence from `portal/billing.ts`); anything else is machinery, and naming
+ * the action is more use than repeating it.
+ */
+function billingErrorText(err: unknown, action: string): string {
+  if (isPermissionDenied(err)) return 'Only the primary kinfolk on this tribe can manage billing.';
+  const message = err instanceof Error ? err.message : '';
+  if (message && !/^internal$/i.test(message)) return message;
+  return `We could not ${action} just now. Try again in a moment.`;
+}
 
 /**
  * Account Settings, ported from ui-ideas/mytribe-account-2026-05-31.html.
@@ -79,6 +105,9 @@ export function Account() {
   const [status, setStatus] = useState<Status | null>(null);
   const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [managingBilling, setManagingBilling] = useState(false);
+  const [confirmingCardRemoval, setConfirmingCardRemoval] = useState(false);
+  const [billingStatus, setBillingStatus] = useState<Status | null>(null);
 
   // Seed the editable fields once from the loaded account, same as the
   // Compose screen's LaunchedEffect(Unit) — never re-clobbers in-progress
@@ -127,6 +156,73 @@ export function Account() {
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' }),
   });
 
+  // ── Card management ────────────────────────────────────────────────────────
+  //
+  // `getMyPaymentMethod` rather than the `hasPaymentMethod` boolean already on
+  // the account DTO: that boolean can say a card exists but never which one,
+  // and "Payment method on file" with nothing else on the row is exactly the
+  // state a household writes in to ask about.
+  const paymentMethod = useQuery({
+    queryKey: ['myPaymentMethod', kinfolkId],
+    queryFn: () => getMyPaymentMethod(kinfolkId),
+    enabled: account.isSuccess && account.data?.impersonated !== true,
+    retry: false,
+  });
+
+  const startCardSetup = useMutation({
+    mutationFn: async () => {
+      const returnTo = `${window.location.origin}${window.location.pathname}`;
+      return createBillingSetupSession(`${returnTo}?billing=saved`, returnTo, kinfolkId);
+    },
+    onSuccess: (res) => {
+      setBillingStatus(null);
+      // A full navigation, not a popup: Stripe's hosted page is the whole
+      // point of the redirect, and `?billing=saved` on the way back is what
+      // triggers the sync below.
+      window.location.href = res.checkoutUrl;
+    },
+    onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'add a card'), tone: 'err' }),
+  });
+
+  const removeCard = useMutation({
+    mutationFn: () => removeMyPaymentMethod(kinfolkId),
+    onSuccess: async (res) => {
+      setConfirmingCardRemoval(false);
+      setBillingStatus({ text: res.alreadyEmpty ? 'There was no card on file.' : 'Card removed.', tone: 'ok' });
+      await queryClient.invalidateQueries({ queryKey: ['myPaymentMethod', kinfolkId] });
+      await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
+    },
+    onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'remove the card'), tone: 'err' }),
+  });
+
+  // Coming back from Stripe. The webhook stores the card too, but it can arrive
+  // after this screen has already rendered, so the browser asks for the answer
+  // itself rather than showing a stale "no payment method" to a household that
+  // just entered one.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') !== 'saved') return;
+    params.delete('billing');
+    const rest = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    setManagingBilling(true);
+    void (async () => {
+      try {
+        const synced = await syncMyPaymentMethod(kinfolkId);
+        queryClient.setQueryData(['myPaymentMethod', kinfolkId], synced);
+        await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
+        setBillingStatus(
+          synced.hasPaymentMethod
+            ? { text: synced.changed ? 'Card saved.' : 'Card is already on file.', tone: 'ok' }
+            : { text: 'Stripe did not report a card. Try adding it again.', tone: 'err' },
+        );
+      } catch (err) {
+        setBillingStatus({ text: billingErrorText(err, 'confirm the card'), tone: 'err' });
+      }
+    })();
+  }, [kinfolkId, queryClient]);
+
   const { signOut, signingOut } = useSignOut();
 
   if (account.isError) {
@@ -153,6 +249,20 @@ export function Account() {
   const roster = (kin.data?.kin ?? []).filter((k) => k.status === 'active').slice(0, 4);
   const businessName = home.data?.businessName || 'Tribe Tails Pet Care';
   const nameValid = displayName.trim().length > 0;
+
+  // The card query is the authority once it has answered; the account DTO's
+  // boolean covers the moment before that, and the operator view where the card
+  // query never runs at all.
+  const cardOnFile = paymentMethod.data?.hasPaymentMethod ?? data.hasPaymentMethod;
+  const card = paymentMethod.data?.card ?? null;
+  const cardSubtitle = card
+    ? formatCard(card)
+    : cardOnFile
+      ? 'Charges run through your care team'
+      : 'Settle up directly with your Auntie for now';
+  const billingReadError = isPermissionDenied(paymentMethod.error)
+    ? 'Only the primary kinfolk on this tribe can manage billing.'
+    : 'We could not read your billing details just now.';
 
   return (
     <>
@@ -278,13 +388,111 @@ export function Account() {
               <div className="billrow">
                 <div className="ico">{'\u{1F4B3}'}</div>
                 <div className="bt">
-                  <b>{data.hasPaymentMethod ? 'Payment method on file' : 'No payment method on file'}</b>
-                  <small>{data.hasPaymentMethod ? 'Charges run through your care team' : 'Settle up directly with your Auntie for now'}</small>
+                  <b>{cardOnFile ? 'Payment method on file' : 'No payment method on file'}</b>
+                  <small>{cardSubtitle}</small>
                 </div>
-                <span className="btn ghost sm navlink-inert" title="Coming soon">
-                  Manage
-                </span>
+                {readOnly ? (
+                  <span className="btn ghost sm navlink-inert" title="Operator view is read-only">
+                    Manage
+                  </span>
+                ) : (
+                  <button
+                    className="btn ghost sm"
+                    type="button"
+                    onClick={() => setManagingBilling((open) => !open)}
+                    aria-expanded={managingBilling}
+                    aria-controls="billing-manage"
+                  >
+                    {managingBilling ? 'Close' : 'Manage'}
+                  </button>
+                )}
               </div>
+
+              {managingBilling && !readOnly && (
+                <div className="billing-manage" id="billing-manage" data-testid="billing-manage">
+                  {paymentMethod.isLoading ? (
+                    <p className="sub">Checking what is on file…</p>
+                  ) : paymentMethod.isError ? (
+                    <div className="note err" role="alert">
+                      <span className="dot" />
+                      {billingReadError}
+                      <button
+                        className="btn ghost sm"
+                        type="button"
+                        style={{ marginLeft: 10 }}
+                        onClick={() => void paymentMethod.refetch()}
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="sub" style={{ marginTop: 0 }}>
+                        {cardOnFile
+                          ? 'Cards are held by Stripe. Tribe Tails never sees the full number.'
+                          : 'Adding a card sends you to Stripe. Nothing is charged when you save it.'}
+                      </p>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        <button
+                          className="btn grad sm"
+                          type="button"
+                          onClick={() => startCardSetup.mutate()}
+                          disabled={startCardSetup.isPending || removeCard.isPending}
+                        >
+                          {startCardSetup.isPending
+                            ? 'Opening Stripe…'
+                            : cardOnFile
+                              ? 'Replace card'
+                              : 'Add a card'}
+                        </button>
+                        {cardOnFile &&
+                          (confirmingCardRemoval ? (
+                            <>
+                              <button
+                                className="btn purple sm"
+                                type="button"
+                                onClick={() => removeCard.mutate()}
+                                disabled={removeCard.isPending}
+                              >
+                                {removeCard.isPending ? 'Removing…' : 'Yes, take it off'}
+                              </button>
+                              <button
+                                className="btn ghost sm"
+                                type="button"
+                                onClick={() => setConfirmingCardRemoval(false)}
+                                disabled={removeCard.isPending}
+                              >
+                                Never mind
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn ghost sm"
+                              type="button"
+                              onClick={() => setConfirmingCardRemoval(true)}
+                              disabled={startCardSetup.isPending}
+                            >
+                              Remove card
+                            </button>
+                          ))}
+                      </div>
+                      {confirmingCardRemoval && (
+                        <p className="sub">
+                          Removing the card leaves any unpaid invoices exactly as they are. You will settle them
+                          another way until a new card is added.
+                        </p>
+                      )}
+                      {billingStatus && (
+                        <span className={`note${billingStatus.tone === 'err' ? ' err' : ''}`} role="status">
+                          <span className="dot" />
+                          {billingStatus.text}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               <p className="sub" style={{ marginTop: 12 }}>
                 No payment method on file means visits cannot be charged automatically.
               </p>
