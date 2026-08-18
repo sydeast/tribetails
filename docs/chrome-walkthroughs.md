@@ -124,11 +124,20 @@ month of work.
 
 ## Practical notes
 
-The walk export lands in `~/Downloads`, which this app cannot read: macOS
-returns `EPERM` on open even though it can list the folder. Either drag the file
-into the repo, or grant Downloads access under System Settings, Privacy and
-Security, Files and Folders. Neither prompt above has this problem, since
-nothing leaves the browser.
+The walk export lands in `~/Downloads`, which the agent cannot read. Stat works,
+`open()` returns `EPERM`, and disabling the sandbox changes nothing, so it is
+macOS TCC rather than anything Claude controls.
+
+A Downloads grant on the Claude app does not fix it, which was tested. The
+process doing the reading is a nested bundle,
+`~/Library/Application Support/Claude/claude-code/<version>/claude.app`, with
+its own identity, and the version in that path means a grant lapses on the next
+update. Drag the export into `.walks/` instead; that is where
+`scripts/walk-to-issues` writes anyway, and it is gitignored, which a
+37MB rrweb export needs to be. For the durable version, add that exact bundle
+path under Full Disk Access and expect to redo it after updates.
+
+Neither prompt above has this problem, since nothing leaves the browser.
 
 Screenshots taken in Chrome go through the conversation, not to disk, so a long
 session gets expensive. Ask for element-scoped shots and full-page ones only
