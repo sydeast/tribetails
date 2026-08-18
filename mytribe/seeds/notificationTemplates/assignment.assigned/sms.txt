@@ -1,1 +1,1 @@
-Tribe Tails: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}} was assigned to you. Details: []
+Tribe Tails: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}} was assigned to you.

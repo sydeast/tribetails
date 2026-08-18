@@ -162,16 +162,28 @@ export function serviceDurationMinutes(name: string): number | null {
 }
 
 /**
- * Orders service names by parsed duration, shortest first. Names with no
- * parseable duration sort LAST, keeping their input order.
+ * Orders service names by duration, shortest first. Names with no resolvable
+ * duration sort LAST, keeping their input order.
  *
- * Ports the archive's `sortServiceTypesByDuration`. Deterministic on every
- * input: `Array.prototype.sort` is stable (ES2019+) and equal durations
- * therefore keep the caller's order, matching Kotlin's `sortedBy`. Never
- * mutates the input.
+ * TWO SOURCES, same precedence as `serviceOptionsFromRates`:
+ * `durations[type]` (an operator-stated `business_settings.serviceDurations`
+ * value) wins whenever it parses to a usable number; the length parsed out of
+ * the type's own NAME ("30Minute", "2Hrs") is the fallback. `durations`
+ * defaults to `{}`, so a caller with only a list of names (no settings doc
+ * loaded yet) gets exactly the old name-parse-only behavior.
+ *
+ * Mirrors Android's two-arg `sortServiceTypesByDuration(types, durations)`
+ * (`ServiceTypeSort.kt`), added alongside the operator-stated duration
+ * attribute (#373). Deterministic on every input: `Array.prototype.sort` is
+ * stable (ES2019+) and equal durations therefore keep the caller's order,
+ * matching Kotlin's `sortedBy`. Never mutates the input.
  */
-export function sortServiceTypesByDuration(types: readonly string[]): string[] {
-  return [...types].sort((a, b) => durationRank(serviceDurationMinutes(a)) - durationRank(serviceDurationMinutes(b)));
+export function sortServiceTypesByDuration(
+  types: readonly string[],
+  durations: Record<string, string> = {},
+): string[] {
+  const rankOf = (type: string) => durationRank(storedDurationMinutes(durations[type]) ?? serviceDurationMinutes(type));
+  return [...types].sort((a, b) => rankOf(a) - rankOf(b));
 }
 
 /** Sort key for a possibly-absent duration: "no stated duration" ranks after every stated one. */

@@ -13,9 +13,9 @@ import { str } from './coerce';
  *  - `firestore.rules:616`, `match /training_documents/{id}`
  *    (`allow read: if isAuntie(); allow write: if false;`): a flat top-level
  *    collection the admin reads directly (same shape as
- *    KINTALES_QUERY/INVOICES_QUERY), but every WRITE goes only through the
+ *    KINTALES_QUERY/INVOICES_QUERY). WRITEs go through the
  *    createTrainingDocument / updateTrainingDocument / deleteTrainingDocument
- *    admin callables (out of scope for this list-only port).
+ *    admin callables, which the TribalIntel screen's create/update/delete UI invokes.
  *  - `MyTribe/functions/src/admin/createTrainingDocument.ts`: the real
  *    writer. Stamps `createdAt: FieldValue.serverTimestamp()` (a REAL
  *    Firestore Timestamp, unlike `kin_care_reports.createdAt`, which is a

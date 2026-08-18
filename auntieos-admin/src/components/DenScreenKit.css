@@ -343,6 +343,10 @@
 }
 
 .den-panel-title {
+  /* Now a real heading element (h2/h3/h4), which ships a UA-stylesheet margin
+     a span never had. Zeroed so the fix is invisible: same box, same spacing,
+     only the semantics changed. */
+  margin: 0;
   font-family: var(--type-headline-sm-family);
   font-size: var(--type-headline-sm-size);
   font-weight: var(--type-headline-sm-weight);

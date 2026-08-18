@@ -15,18 +15,18 @@ import { call } from '../lib/fns';
  * recipient's `fcm_tokens` (broadcastMessage.ts:250-278), counted per RECIPIENT
  * rather than per device, so a Kinfolk with three phones counts once.
  *
- * `inapp` is the one backend channel still without a compose UI. It is not
- * merely undesigned: it requires a subject (broadcastMessage.ts:76) and writes
- * a notification doc consumed by the MyTribe portal feed, so it needs the
- * notification-gate work rather than a fourth toggle.
+ * `inapp` is a backend channel that ships with full compose UI support
+ * (CommunicateCompose.tsx). It requires a subject (broadcastMessage.ts:76) and
+ * writes a notification doc consumed by the MyTribe portal feed.
  *
  * ── PAYLOAD, confirmed field-for-field against the backend's zod `Args`
  * (broadcastMessage.ts lines 56-79) ─────────────────────────────────────────
- *   segmentId?: string   -- a saved `audience_segments/{id}` (NOT ported here;
- *                           `listAudienceSegments`/`saveAudienceSegment` are a
- *                           separate, un-built admin surface, see the module
- *                           doc below).
- *   criteria?: Criteria  -- inline audience filter, THE path this screen uses.
+ *   segmentId?: string   -- a saved `audience_segments/{id}`. The segment
+ *                           picker is implemented; `listAudienceSegments`,
+ *                           `saveAudienceSegment`, and `deleteAudienceSegment`
+ *                           ship in `api/audienceSegments.ts`. The screen can
+ *                           send either a saved segment or inline criteria.
+ *   criteria?: Criteria  -- inline audience filter, one path this screen uses.
  *   channels: Channel[]  -- non-empty, de-duped.
  *   subject?: string     -- REQUIRED when 'email' (or 'inapp') is selected
  *                           (the backend's superRefine at lines 73-78); this
@@ -34,16 +34,16 @@ import { call } from '../lib/fns';
  *                           ever calling `sendBroadcast`.
  *   body: string         -- required, 1-5000 chars.
  * One of segmentId/criteria is required (superRefine line 64-67); this module
- * always sends `criteria`, never `segmentId`.
+ * can send either, resolved by `lib/audienceSegmentEdit.ts#broadcastAudienceArgs`.
  *
- * ── WHY INLINE CRITERIA, NOT A SEGMENT PICKER ───────────────────────────────
+ * ── INLINE CRITERIA AND SAVED SEGMENTS ──────────────────────────────────────
  * `audienceCriteria.ts`'s `CriteriaSchema` (lines 24-46) is a small, closed
  * shape: `all` (every active kinfolk) | `status` (kinfolk whose `status` is in
  * a chosen list) | `tags` (kinfolk carrying chosen tags, `any` or `all` match).
- * Building the SAME criteria inline needs no new dependency (no
- * `listAudienceSegments` port, no saved-segment CRUD); reusing a SAVED segment
- * would. This module ports the criteria shape verbatim so a later segment
- * picker can reuse these exact types without a rewrite.
+ * The compose screen offers both paths for building an audience: inline
+ * criteria (no saved-segment dependency) or a saved segment from the catalog
+ * (`api/audienceSegments.ts`). This module ports the criteria shape so either
+ * path can reuse these exact types without a rewrite.
  *
  * ── NO PRE-SEND RECIPIENT COUNT: A DELIBERATE, RESEARCHED DEFERRAL ─────────
  * The confirm step below shows an audience DESCRIPTION (`describeAudience`,
@@ -160,6 +160,42 @@ export interface SendBroadcastResult {
   broadcastId: string;
   recipientCount: number;
   perChannel: Partial<Record<BroadcastChannel, BroadcastChannelCounts>>;
+  /**
+   * How far the broadcast actually got, per HOUSEHOLD (#386). `recipientCount`
+   * is who the segment MATCHED; this is who heard it, now that every recipient
+   * passes through their notification preferences before anything is attempted.
+   * Optional, and read through `reachOf`, for the same reason `perChannel` is
+   * `Partial`: it is a callable response, and a deployment that predates the
+   * field must not make this screen render a fabricated number.
+   */
+  reach?: BroadcastReach;
+}
+
+/** Recipient-level outcome of a broadcast. Mirrors the backend's `BroadcastReach`. */
+export interface BroadcastReach {
+  /** Households the segment resolved to. */
+  targeted: number;
+  /** Households that received the broadcast on at least one channel. */
+  reached: number;
+  /** Households whose notification preferences left every channel off. */
+  suppressedByPrefs: number;
+}
+
+/**
+ * Defensive read of the recipient-level reach. Returns null when the response
+ * carries no usable `reach`, so a caller renders "we don't know" rather than a
+ * confident zero.
+ */
+export function reachOf(result: SendBroadcastResult | null | undefined): BroadcastReach | null {
+  const r = result?.reach;
+  if (
+    typeof r?.targeted !== 'number' ||
+    typeof r?.reached !== 'number' ||
+    typeof r?.suppressedByPrefs !== 'number'
+  ) {
+    return null;
+  }
+  return { targeted: r.targeted, reached: r.reached, suppressedByPrefs: r.suppressedByPrefs };
 }
 
 /** Defensive read of one channel's counts from a (possibly wider) perChannel map. Never fabricates a nonzero count. */

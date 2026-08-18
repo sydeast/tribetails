@@ -239,6 +239,19 @@ describe('myNotificationsFormat', () => {
       expect(rows[0]![1].map((e) => e.key)).toEqual(['mystery']);
     });
 
+    /**
+     * #386: the office's broadcast to a whole audience segment is the only
+     * `messages` row the kinfolk stream carries. Before the section existed it
+     * fell into the trailing "Other" catch-all, a poor home for a gate row the
+     * operator is meant to find and switch off. Kept in lockstep with the
+     * Kotlin taxonomy in NotificationMatrix.kt.
+     */
+    it('files the broadcast row under Messages on the kinfolk stream', () => {
+      const broadcast = entry({ key: 'broadcast.message', category: 'messages' });
+      const rows = sectionedNotifications([broadcast], STREAM_KINFOLK);
+      expect(rows.map(([section]) => section.title)).toEqual(['Messages']);
+      expect(rows[0]![1].map((e) => e.key)).toEqual(['broadcast.message']);
+    });
     it('uses the staff-specific section set for the staff stream', () => {
       const kintale = entry({ key: 'kintale-comment', category: 'kintale' });
       const rows = sectionedNotifications([kintale], STREAM_STAFF);

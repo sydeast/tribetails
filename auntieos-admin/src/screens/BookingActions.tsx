@@ -429,7 +429,7 @@ export function BookingStatusActions({ entry, onDone }: BookingStatusActionsProp
   }
 
   return (
-    <DenPanel title="Actions" subtitle="What this booking can move to from here.">
+    <DenPanel title="Actions" subtitle="What this booking can move to from here." headingLevel={3}>
       {actions.length === 0 ? (
         <EmptyHint>
           {state === 'unknown'

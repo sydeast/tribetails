@@ -1,1 +1,1 @@
-Tribe Tails: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled. Check your schedule: []
+Tribe Tails: your {{serviceType}} for {{kinName}} on {{bookingDate}} changed or was canceled.

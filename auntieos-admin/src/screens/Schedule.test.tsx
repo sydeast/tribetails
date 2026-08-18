@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
@@ -8,6 +8,13 @@ import { localDateIso, weekDays } from '../lib/scheduleFormat';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// The legend's duration order (#392) reads `business_settings` once via
+// `getBusinessSettings`, the same one-shot doc read `NewBookingDialog.test.tsx`
+// mocks the same way. Defaults to no configured durations at all, so a test
+// that doesn't care about ordering doesn't need its own mock.
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
 
 // Schedule navigates on the detail sheet's kinfolk / KinTale links. No suite in
 // this tree mounts a RouterProvider (Home.tsx has the same dependency and no
@@ -112,6 +119,7 @@ beforeEach(() => {
   useCollection.mockReset();
   navigate.mockReset();
   mockCollections({});
+  getBusinessSettings.mockReset().mockResolvedValue({ serviceDurations: {} });
 });
 
 /**
@@ -156,7 +164,7 @@ describe('Schedule screen', () => {
       // the panel title for the selected day should read "Today", and the
       // session should appear in that day's agenda, not be silently absent
       // because it landed under tomorrow's UTC-sliced key instead.
-      expect(screen.getByText('Today', { selector: '.den-panel-title' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Today', level: 2 })).toBeInTheDocument();
       expect(screen.getByText('The Whitfields')).toBeInTheDocument();
     });
   });
@@ -407,20 +415,141 @@ describe('Schedule screen', () => {
     });
   });
 
-  it('the legend lists each distinct service type actually present, plus a Busy swatch', () => {
+  /**
+   * #392, part 1 + 2: the legend is SCOPED to the current view (`daysInView`,
+   * not the whole bounded 300-session stream and not the operator's whole
+   * configured `business_settings.serviceRates`) and ORDERED by duration
+   * (`sortServiceTypesByDuration`, the same two-source rule #373 gave the
+   * Android legend). All of the tests below render on the real clock: the
+   * legend's duration order is loaded from an AWAITED `getBusinessSettings()`
+   * call, and fake timers don't mix reliably with userEvent/await in this
+   * suite (see `withFixedToday`'s own doc comment above), so these use the
+   * suite's `todaySession()` convention instead of a fixed system clock.
+   */
+  it('the legend lists each distinct service type actually present, plus a Busy swatch', async () => {
     mockCollections({
       sessions: {
         status: 'ready',
         data: [
-          sessionEntry({ _id: 'a', serviceType: 'Dog Walk' }),
-          sessionEntry({ _id: 'b', serviceType: 'Drop-in', startTime: '2026-07-17T14:00:00.000Z', endTime: '2026-07-17T15:00:00.000Z' }),
+          todaySession({ _id: 'a', serviceType: 'Dog Walk' }),
+          todaySession({ _id: 'b', serviceType: 'Drop-in' }),
         ],
       },
     });
     render(<Schedule />);
-    expect(screen.getAllByText('Dog Walk').length).toBeGreaterThan(0);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    expect(await screen.findAllByText('Dog Walk')).not.toHaveLength(0);
     expect(screen.getAllByText('Drop-in').length).toBeGreaterThan(0);
     expect(screen.getByText('Busy')).toBeInTheDocument();
+  });
+
+  it('scopes the legend to the current view: a type present only weeks away from the visible week is excluded', async () => {
+    const todayIsoReal = localDateIso(new Date());
+    // Three weeks out is outside the Monday-first week strip no matter which
+    // weekday the suite happens to run on.
+    const farAway = new Date();
+    farAway.setDate(farAway.getDate() + 21);
+    const farAwayIso = localDateIso(farAway);
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          todaySession({ _id: 'in-view', serviceType: 'Dog Walk' }),
+          sessionEntry({
+            _id: 'out-of-view',
+            serviceType: 'Overnight Stay',
+            startTime: `${farAwayIso}T14:00:00.000Z`,
+            endTime: `${farAwayIso}T15:00:00.000Z`,
+          }),
+        ],
+      },
+    });
+    render(<Schedule />);
+    await screen.findAllByText('Dog Walk');
+    expect(screen.queryByText('Overnight Stay')).toBeNull();
+    // Sanity: the session really is in the stream, just outside the default
+    // week view, so this proves scoping and not a fixture typo.
+    expect(todayIsoReal).not.toBe(farAwayIso);
+  });
+
+  it('an empty view shows no legend rows at all, not a stale full list', () => {
+    mockCollections({ sessions: { status: 'ready', data: [] } });
+    render(<Schedule />);
+    expect(screen.queryByLabelText('Service type legend')).toBeNull();
+    expect(screen.queryByText('Busy')).toBeNull();
+  });
+
+  it('an empty view honestly shows no legend even when the stream itself is non-empty (every session is out of view)', async () => {
+    const farAway = new Date();
+    farAway.setDate(farAway.getDate() + 21);
+    const farAwayIso = localDateIso(farAway);
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          sessionEntry({
+            _id: 'out-of-view',
+            serviceType: 'Overnight Stay',
+            startTime: `${farAwayIso}T14:00:00.000Z`,
+            endTime: `${farAwayIso}T15:00:00.000Z`,
+          }),
+        ],
+      },
+    });
+    render(<Schedule />);
+    // AsyncRegion itself doesn't treat this as empty (the stream has a row),
+    // so the agenda panel renders; it's the LEGEND specifically that must be
+    // scoped away, never a stale row for a type entirely outside the view.
+    expect(await screen.findByText('No Kin Care sessions on this day.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Service type legend')).toBeNull();
+    expect(screen.queryByText('Overnight Stay')).toBeNull();
+  });
+
+  it('orders the legend by configured duration: two of five configured types render, in duration order', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceDurations: { 'Half-Day 6Hrs': '360', '30Minute': '30', Consultation: '20', '90Minute': '90', '2Hrs': '120' },
+    });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          // Only 2 of the 5 configured types are on screen. "Half-Day 6Hrs"
+          // is the LONGER of the two but appears FIRST in the stream/DOM
+          // order below, so passing requires the duration sort, not luck.
+          todaySession({ _id: 'a', serviceType: 'Half-Day 6Hrs' }),
+          todaySession({ _id: 'b', serviceType: '30Minute' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await screen.findAllByText('30Minute');
+    const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+    expect(items).toEqual(['30Minute', 'Half-Day 6Hrs', 'Busy']);
+    // The three configured-but-absent types never render.
+    expect(screen.queryByText('Consultation')).toBeNull();
+    expect(screen.queryByText('90Minute')).toBeNull();
+    expect(screen.queryByText('2Hrs')).toBeNull();
+  });
+
+  it('a type on screen but missing from business_settings still gets a legend row', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceDurations: { '30Minute': '30' } });
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          todaySession({ _id: 'a', serviceType: '30Minute' }),
+          todaySession({ _id: 'b', serviceType: 'Off-Book Visit' }),
+        ],
+      },
+    });
+    const { container } = render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    await screen.findAllByText('Off-Book Visit');
+    // Unconfigured and un-parseable, so it has no resolvable duration and
+    // sorts last -- but it is never dropped.
+    const items = Array.from(container.querySelectorAll('.schedule__legend-item')).map((el) => el.textContent);
+    expect(items).toEqual(['30Minute', 'Off-Book Visit', 'Busy']);
   });
 
   it('the "in view" stat counts only sessions within the visible week, honestly reflecting a listener error as unknown (not zero)', () => {

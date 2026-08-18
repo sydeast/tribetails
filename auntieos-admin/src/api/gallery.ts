@@ -3,8 +3,11 @@ import { type CollectionSpec } from '../lib/firestore';
 /**
  * Gallery API layer, ported from the wasm `GalleryScreen.kt` / `GalleryFilters.kt`
  * (#13 global Gallery: every piece of business media across all KinTales/entities
- * in one place). Backs the LIST/GRID only: upload, the tag-kin lightbox overlay,
- * and caption editing are separate, not-yet-built surfaces (see Gallery.tsx).
+ * in one place). Backs the LIST/GRID plus the fullscreen viewer a tile opens
+ * (`components/MediaViewerDialog.tsx`, #388): upload and caption editing remain
+ * separate, not-yet-built surfaces (see Gallery.tsx), and the "Tag kin" hand-off
+ * Android's viewer offers is a whole not-yet-built feature on web, not part of
+ * this screen's scope (see MediaViewerDialog.tsx's header).
  *
  * ONE live Firestore collection backs this screen:
  *
@@ -23,8 +26,9 @@ import { type CollectionSpec } from '../lib/firestore';
  * convention. Dropped: entityId/entityType (which KinTale/session it belongs to,
  * not shown in the grid), fileName/mimeType/fileSizeBytes/width/height/
  * cloudinaryPublicId (storage bookkeeping, not rendered), tags/taggedKinIds (the
- * free-text tag list and the kin-tagging feature: tagging is the not-yet-built
- * lightbox overlay, out of scope for a LIST/GRID port).
+ * free-text tag list and the kin-tagging feature: kin-tagging itself is the
+ * not-yet-built surface, not the viewer that would offer it, out of scope for a
+ * LIST/GRID port).
  */
 
 /**

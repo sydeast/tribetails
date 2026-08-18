@@ -305,6 +305,15 @@ interface DenPanelProps {
   trailing?: ReactNode;
   children: ReactNode;
   className?: string;
+  /**
+   * Heading level for the panel title. A Den screen's own `DenScreenHeading`
+   * owns the page `h1`, so a panel sitting directly on the screen is one level
+   * under that: `2` is the sane default. A panel composed inside something that
+   * already carries its own `h2` (the sheet/modal `Dialog` renders
+   * `dialog__title` as an `h2`, e.g. `BookingDetailModal`) passes `3` so the
+   * outline still nests correctly instead of jumping back up a level mid-document.
+   */
+  headingLevel?: 2 | 3 | 4;
 }
 
 /**
@@ -320,6 +329,7 @@ export function DenPanel({
   trailing,
   children,
   className,
+  headingLevel = 2,
 }: DenPanelProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const contentId = useId();
@@ -330,9 +340,16 @@ export function DenPanel({
   // guard for every card in the app that rises.
   const classes = ['den-panel', hoverLift ? 'lift' : null, className].filter(Boolean).join(' ');
 
+  // An empty title must not become an empty heading: that reads to a screen
+  // reader as a landmark with nothing to announce, worse than the span it
+  // replaces. A real title gets the real heading element; a blank one falls
+  // back to the plain span the whole app used to render, silent either way.
+  const hasTitle = title.trim() !== '';
+  const TitleTag = hasTitle ? (`h${headingLevel}` as 'h2' | 'h3' | 'h4') : 'span';
+
   const heading = (
     <span className="den-panel-heading">
-      <span className="den-panel-title">{title}</span>
+      <TitleTag className="den-panel-title">{title}</TitleTag>
       {subtitle !== undefined && <span className="den-panel-subtitle">{subtitle}</span>}
     </span>
   );

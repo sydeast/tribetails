@@ -149,6 +149,68 @@ describe('Gallery screen, media stream', () => {
   });
 });
 
+describe('Gallery screen, media viewer (#388: tapping a photo did nothing)', () => {
+  it('is a real, named button: reachable by Tab, not a plain <li> with no click handler', () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button', { name: /open rufus at the park/i });
+    expect(tileButton.tagName).toBe('BUTTON');
+  });
+
+  it('opens the viewer, with the right item, when a tile is clicked', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'Rufus at the park', storageUrl: 'https://cdn/a-full.jpg' }),
+        media({ _id: 'b', description: 'Biscuit napping', storageUrl: 'https://cdn/b-full.jpg' }),
+      ],
+    };
+    render(<Gallery />);
+
+    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button'));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAccessibleName('Biscuit napping');
+    // The viewer image, not the grid's two thumbnails: the right item opened.
+    expect(within(dialog).getByAltText('Biscuit napping')).toHaveAttribute('src', 'https://cdn/b-full.jpg');
+  });
+
+  it('opens the viewer when a tile is keyboard-activated with Enter', async () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    tileButton.focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Rufus at the park');
+  });
+
+  it('opens the viewer when a tile is keyboard-activated with Space', async () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    tileButton.focus();
+    await userEvent.keyboard(' ');
+
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Rufus at the park');
+  });
+
+  it('Escape closes the viewer and returns focus to the tile that opened it', async () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    await userEvent.click(tileButton);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(tileButton).toHaveFocus();
+  });
+});
+
 describe('Gallery screen, async states', () => {
   it('shows the loading state, never a false empty, while the stream is in flight', () => {
     mediaAsync = { status: 'loading' };

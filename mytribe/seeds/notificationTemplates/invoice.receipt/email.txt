@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, thank you! This is your receipt for invoice {{invoiceNumber}
 
 Keep it for your records. I appreciate you.
 
-View your receipt here: []
-
 With thanks, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

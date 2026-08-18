@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, just confirming I've taken the {{serviceType}} for {{kinName
 
 Whenever you're ready to set something new up, I'm right here. Give a shout.
 
-See your bookings here: []
-
 With care, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.

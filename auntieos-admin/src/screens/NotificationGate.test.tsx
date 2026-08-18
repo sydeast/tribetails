@@ -135,6 +135,49 @@ describe('NotificationGate screen', () => {
     expect(screen.queryByText('Booking confirmed')).not.toBeInTheDocument();
   });
 
+  /**
+   * #386: broadcasts used to be stamped with a key that was in no catalog, so
+   * this screen never offered the operator a row for them and there was nothing
+   * to switch off. The row itself is server-side (MyTribe/functions/src/
+   * notifications/catalog.ts) and reaches this screen through
+   * `getNotificationMatrix`; what is asserted here is that a row shaped like
+   * that one is GOVERNABLE from the Kinfolk tab: it renders, and its channel
+   * toggles persist under its own key.
+   */
+  it('governs the broadcast row from the Kinfolk tab', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [
+          entry({
+            key: 'broadcast.message',
+            label: 'Announcements from the office',
+            category: 'messages',
+            audience: 'kinfolk',
+            audiences: new Set([STREAM_KINFOLK]),
+            kinfolkFacing: true,
+            description: 'One-off announcements the office sends to a group of households.',
+          }),
+        ],
+      }),
+    );
+    render(<NotificationGate />);
+
+    await userEvent.click(await screen.findByRole('tab', { name: /Kinfolk/ }));
+    expect(await screen.findByText('Announcements from the office')).toBeInTheDocument();
+
+    const sms = screen.getByRole('switch', { name: /via SMS for Kinfolk/i });
+    await userEvent.click(sms);
+    await waitFor(() => expect(saveBusinessNotificationOverride).toHaveBeenCalledTimes(1));
+    expect(saveBusinessNotificationOverride).toHaveBeenCalledWith(
+      'broadcast.message',
+      expect.objectContaining({
+        streams: expect.objectContaining({
+          kinfolk: expect.objectContaining({ channels: expect.objectContaining({ sms: false }) }),
+        }),
+      }),
+    );
+  });
+
   it('surfaces a load failure fail-loud', async () => {
     getNotificationMatrix.mockRejectedValue(new Error('permission-denied'));
     render(<NotificationGate />);

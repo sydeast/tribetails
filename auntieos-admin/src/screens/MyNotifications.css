@@ -12,6 +12,26 @@
   margin: 0;
 }
 
+/* Page-level select-all bar (#390): its own bordered strip and Primary "All on"
+   set it apart from the per-section Ghost pairs inside each panel below. */
+.mynotif__page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+}
+
+.mynotif__page-actions-label {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+  margin-right: auto;
+}
+
 .mynotif__sections {
   display: flex;
   flex-direction: column;

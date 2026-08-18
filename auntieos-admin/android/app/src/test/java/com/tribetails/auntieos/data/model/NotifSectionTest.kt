@@ -33,8 +33,9 @@ class NotifSectionTest {
         )
         assertEquals(
             listOf(
-                "Visit updates", "Upcoming care", "KinTales", "Billing and payments",
-                "Home and pets", "Account and security", "Newsletters and community",
+                "Visit updates", "Upcoming care", "KinTales", "Messages",
+                "Billing and payments", "Home and pets", "Account and security",
+                "Newsletters and community",
             ),
             notifSectionsFor(STREAM_KINFOLK).map { it.title },
         )
@@ -89,6 +90,21 @@ class NotifSectionTest {
         assertEquals(listOf("KinTales and comments"), grouped.map { it.first })
     }
 
+    /**
+     * #386: the office's broadcast to a whole audience segment is the household's
+     * only `messages` row. Before the section existed it fell into the trailing
+     * "Other" catch-all, which is a poor home for a gate row the operator is
+     * meant to find and switch off.
+     */
+    @Test
+    fun broadcastLandsUnderMessagesOnTheKinfolkStream() {
+        val grouped = sectionedNotifEntries(
+            listOf(entry("broadcast.message", "messages")),
+            STREAM_KINFOLK,
+        )
+        assertEquals(listOf("Messages"), grouped.map { it.first })
+        assertEquals(listOf("broadcast.message"), grouped.single().second.map { it.key })
+    }
     @Test
     fun unknownStreamPutsEverythingUnderOther() {
         val grouped = sectionedNotifEntries(listOf(entry("visit.report", "visit")), "nope")

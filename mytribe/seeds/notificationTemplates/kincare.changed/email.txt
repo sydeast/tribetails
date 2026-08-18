@@ -4,8 +4,6 @@ Hi {{kinfolkName}}, the {{serviceType}} for {{kinName}} on {{bookingDate}} has b
 
 Give the new details a quick look to make sure they still work for you. If not, just let me know.
 
-See what changed here: []
-
 With care, Auntie
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.
