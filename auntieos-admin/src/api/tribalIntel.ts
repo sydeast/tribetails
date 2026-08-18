@@ -34,7 +34,7 @@ export interface TribalIntelAttachment {
  *    (`allow read: if isAuntie(); allow write: if false;`): an admin gets an
  *    unfiltered collection read (same shape as KINTALES_QUERY/
  *    INVOICES_QUERY), but every write is server-bound through the three
- *    admin callables below (out of scope for this list-only port).
+ *    admin callables described below (create, update, delete ship in the UI).
  *  - `MyTribe/functions/src/admin/createTrainingDocument.ts`: the real
  *    creation path. Stamps `createdAt: FieldValue.serverTimestamp()` (a REAL
  *    Firestore Timestamp: unlike `kin_care_reports.createdAt`, which is a

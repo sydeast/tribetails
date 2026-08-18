@@ -4,10 +4,10 @@ import { db } from '../lib/firebase';
 /**
  * The signed-in operator's personal profile, stored at `users/{uid}` (rules:
  * `allow read, write: if isAuntie()`). Ports the wasm's `UserProfile`
- * (FirestoreClient.kt), but only the fields this READ-ONLY Account overview
- * renders. The wasm Account screen is an editor (profile + security + a link to
- * notification settings); create/edit/save is deferred, so `onOpenNotifications`
- * is this screen's only outbound hook.
+ * (FirestoreClient.kt). This Account overview reads the profile and opens an
+ * edit dialog (`components/EditProfileDialog.tsx`) on the "Edit profile"
+ * button, which writes back to the same `users/{uid}` doc. `onOpenNotifications`
+ * opens the notification preferences screen.
  *
  * A subset of the doc, not a blind mirror: theme/personalization/nav/widget keys
  * live on the real doc but belong to per-operator UI prefs, not this account

@@ -147,8 +147,8 @@
   color: var(--tt-brand-cream);
 }
 
-/* A destination whose screen is not built yet. Still not interactive, and it
-   says so with the cursor rather than only with opacity. */
+/* Defensive fallback for a pending nav entry (currently never rendered; every
+   entry is wired and live). Inert, low opacity, and default cursor. */
 .shell__link--pending {
   color: var(--color-text-dim);
   opacity: 0.6;
