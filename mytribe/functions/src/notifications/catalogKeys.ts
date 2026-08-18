@@ -122,6 +122,16 @@ export function isLiveCatalogKey(key: string): boolean {
 }
 
 /**
+ * The human label for [key], or null when nothing on the platform sends it.
+ * Lets an error name the notification an admin would break, not just its id.
+ */
+export function catalogKeyLabel(key: string): string | null {
+  const def = NOTIFICATION_CATALOG[key];
+  if (def) return def.label;
+  return DIRECT_SEND_KEYS.find((d) => d.key === key)?.label ?? null;
+}
+
+/**
  * The reason [key] cannot be bound, in words an admin can act on, or null when
  * the key is fine. Retired keys get told which key replaced them rather than a
  * flat "unknown", because the caller is not wrong so much as out of date.

@@ -362,6 +362,30 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
+  it('shows the #381 name-matched refusal verbatim, including what to do next', async () => {
+    // The server refuses because routing is by name, not because anything is
+    // bound. Its sentence is the only thing telling the operator to retire the
+    // catalog row, so it has to arrive intact rather than be summarised away.
+    deleteTemplate.mockRejectedValue(
+      new Error(
+        'failed-precondition: emailTemplates/account.welcome.business is what the notification ' +
+          '"account.welcome.business" (Business welcome) sends, matched by name. Retire the catalog row first.',
+      ),
+    );
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'account.welcome.business' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    expect(await screen.findByText(/matched by name/)).toBeInTheDocument();
+    expect(screen.getByText(/Retire the catalog row first/)).toBeInTheDocument();
+  });
+
   it('disables Back and Delete, and marks Delete busy, while a delete is in flight', async () => {
     let resolveDelete: (value: { templateId: string }) => void = () => {};
     deleteTemplate.mockReturnValue(

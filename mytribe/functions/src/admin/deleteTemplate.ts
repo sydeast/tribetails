@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { catalogKeyLabel, isLiveCatalogKey } from '../notifications/catalogKeys';
 
 const Args = z.object({
   templateId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_.-]+$/, {
@@ -24,6 +25,38 @@ export async function deleteTemplateHandler(
   const snap = await ref.get();
   if (!snap.exists) {
     throw new HttpsError('not-found', `Template not found: ${args.templateId}`);
+  }
+
+  // #381: refuse to delete the template a catalog key resolves to BY NAME.
+  //
+  // This is the guard that was missing, and its absence has already cost a live
+  // template. At 78 minutes into the 2026-08-17 admin walk the recorder captured
+  // `deleteTemplate {"templateId":"account.welcome.business"}` returning 200.
+  // That is catalog row 32. Routing is by name: resolveTemplateId looks for
+  // `notificationTemplateBindings/{key}`, finds nothing, and reads
+  // `emailTemplates/{key}`. So deleting a template whose id IS a catalog key
+  // leaves that notification throwing `email template missing` at
+  // lib/sendFromTemplate.ts on its next send, with nothing said at delete time.
+  //
+  // The binding check below could never catch this. It only fires when a doc in
+  // `notificationTemplateBindings` points at the template, and that collection
+  // holds overrides, which for most installs is empty.
+  //
+  // The refusal stands even when an active override currently points the key at
+  // some other template. Removing or pausing that override (unassignTemplate is
+  // one tap away) brings this document straight back into use, so "not used at
+  // this instant" is not the same as "safe to delete".
+  if (isLiveCatalogKey(args.templateId)) {
+    const label = catalogKeyLabel(args.templateId);
+    throw new HttpsError(
+      'failed-precondition',
+      `emailTemplates/${args.templateId} is what the notification ` +
+        `"${args.templateId}"${label ? ` (${label})` : ''} sends, matched by name. ` +
+        `Deleting it leaves that notification throwing "email template missing" on its ` +
+        `next send. Retire the catalog row first if the notification is no longer wanted, ` +
+        `or point the key at another template. This holds even while an override points ` +
+        `the key elsewhere, because removing the override brings this template back.`,
+    );
   }
 
   // Refuse to delete a template that a notification catalog key still points

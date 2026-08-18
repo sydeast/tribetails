@@ -94,9 +94,12 @@ function TrashGlyph() {
  * closes the editor (same as the edit dialog), matching `BookingActions.tsx`;
  * only the confirm dialog's own "Back" button returns to the edit view. The
  * backend (`deleteTemplate.ts`) refuses the delete with `failed-precondition`
- * if a notification catalog key is still bound to this template, so a
- * rejection here can be a real, expected outcome, not just a network error;
- * either way it surfaces fail-loud in the confirm dialog rather than closing
+ * in two cases, so a rejection here is often a real, expected outcome rather
+ * than a network error: when a binding still points at this template, and
+ * (since #381) when the template id IS a catalog key, because routing is by
+ * name and deleting it would leave that notification throwing at send time.
+ * The server's sentence says which case it is and what to do about it, and it
+ * surfaces fail-loud in the confirm dialog rather than the dialog closing
  * silently.
  */
 export function TemplateEditor({ template, categories, onClose, onSaved, onDeleted }: TemplateEditorProps) {
