@@ -35,13 +35,12 @@ const CONFIG = {
 };
 
 /**
- * DenPanel renders its title as a `span.den-panel-title`, not a heading, so
- * these read the DOM directly rather than by role. That is an accessibility gap
- * in DenScreenKit worth its own change; it is not this test's subject, and
- * asserting through a role that does not exist would just make the test lie.
+ * Every panel on this screen is a level-2 heading (it's a top-level screen,
+ * not composed inside a `Dialog`), so querying by role and level is the real
+ * proof a screen reader can navigate these, not just a DOM read.
  */
 function panelTitles(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('.den-panel-title'));
+  return screen.getAllByRole('heading', { level: 2 });
 }
 function panelTitled(title: string): HTMLElement {
   const match = panelTitles().find((el) => el.textContent?.trim() === title);
