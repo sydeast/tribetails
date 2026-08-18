@@ -94,6 +94,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   businessAddress: '',
   timeZone: 'America/New_York',
   serviceRates: {},
+  serviceDurations: {},
   businessHours: {},
   venmoHandle: '',
   paypalHandle: '',
@@ -479,7 +480,7 @@ describe('Settings — real editors wire through the shared persist', () => {
     await userEvent.type(within(panel).getByPlaceholderText('e.g. Drop-in visit'), 'Walk');
     await userEvent.click(within(panel).getByRole('button', { name: /^add$/i }));
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
-    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' } });
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {} });
   });
 });
 

@@ -66,4 +66,57 @@ class ServiceTypeSortTest {
     @Test fun emptyServiceRatesYieldNoOptions() {
         assertEquals(emptyList<ServiceOption>(), serviceOptionsFromRates(emptyMap()))
     }
+    // ── serviceDurations, the stated length ─────────────────────────────────
+    //
+    // Mark 15 of the 2026-08-17 admin walk gave KinCare a real duration
+    // attribute instead of a number hidden in the name. The map is sparse and
+    // nothing backfills it, so every case below is really about the fallback
+    // still working for the types that predate it. Mirrors the web suite.
+    @Test fun aStoredDurationBeatsTheOneInTheName() {
+        val options = serviceOptionsFromRates(
+            mapOf("30Minute" to "25"),
+            mapOf("30Minute" to "45"),
+        )
+        assertEquals(45, options.single().durationMinutes)
+    }
+    @Test fun aTypeWithNoStoredDurationStillReadsItsName() {
+        val options = serviceOptionsFromRates(mapOf("30Minute" to "25"), emptyMap())
+        assertEquals(30, options.single().durationMinutes)
+    }
+    @Test fun aStoredDurationGivesALengthToANameThatStatesNone() {
+        val options = serviceOptionsFromRates(
+            mapOf("Consultation" to "0"),
+            mapOf("Consultation" to "20"),
+        )
+        assertEquals(20, options.single().durationMinutes)
+    }
+    @Test fun junkAndZeroFallThroughToTheNameRatherThanReadingAsInstant() {
+        assertEquals(null, storedDurationMinutes("abc"))
+        assertEquals(null, storedDurationMinutes("0"))
+        assertEquals(null, storedDurationMinutes("-5"))
+        assertEquals(null, storedDurationMinutes(""))
+        assertEquals(null, storedDurationMinutes(null))
+        assertEquals(45, storedDurationMinutes(" 45 "))
+        // The whole point of null-on-junk: the name still answers.
+        assertEquals(30, serviceOptionsFromRates(mapOf("30Minute" to "25"), mapOf("30Minute" to "oops"))
+            .single().durationMinutes)
+    }
+    @Test fun storedDurationsReorderTheOptions() {
+        // "Overnight" states nothing in its name and would sort last; stated at
+        // 720 minutes it sorts after the short visits and before the unstated.
+        val options = serviceOptionsFromRates(
+            linkedMapOf("Overnight" to "80", "30Minute" to "25", "Consultation" to ""),
+            mapOf("Overnight" to "720"),
+        )
+        assertEquals(listOf("30Minute", "Overnight", "Consultation"), options.map { it.name })
+    }
+    @Test fun theLegendSortTakesStoredDurationsToo() {
+        assertEquals(
+            listOf("30Minute", "Overnight", "Consultation"),
+            sortServiceTypesByDuration(
+                listOf("Overnight", "30Minute", "Consultation"),
+                mapOf("Overnight" to "720"),
+            ),
+        )
+    }
 }

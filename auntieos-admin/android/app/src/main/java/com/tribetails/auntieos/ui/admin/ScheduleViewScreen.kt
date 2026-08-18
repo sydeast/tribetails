@@ -357,7 +357,10 @@ fun ScheduleViewScreen(
             // B7 (A8): colour key for the schedule. Reads the auntie's REAL service
             // types (BusinessSettings.serviceRates), ordered by duration (B9), painted
             // with the same serviceTone the agenda rows use so the key always matches.
-            val legendTypes = sortServiceTypesByDuration(state.businessSettings.serviceRates.keys.toList())
+            val legendTypes = sortServiceTypesByDuration(
+                state.businessSettings.serviceRates.keys.toList(),
+                state.businessSettings.serviceDurations,
+            )
             if (legendTypes.isNotEmpty()) {
                 item {
                     DenPanel(title = "Service key") {
@@ -683,6 +686,7 @@ fun ScheduleViewScreen(
                 kinLoading      = state.newRequestKinLoading,
                 kinError        = state.newRequestKinError,
                 serviceRates    = state.businessSettings.serviceRates,
+                serviceDurations = state.businessSettings.serviceDurations,
                 availability    = availability,
                 inFlight        = state.newRequestInFlight,
                 error           = state.newRequestError,
