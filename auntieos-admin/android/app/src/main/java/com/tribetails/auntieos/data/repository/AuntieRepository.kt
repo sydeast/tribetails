@@ -2797,9 +2797,41 @@ class AuntieRepository(
         NotificationMatrix(
             catalog = catalog,
             overrides = overrides,
+            // #396: who receives it, what fires it, which template renders it,
+            // and the mail this gate does NOT govern. Every field defaults to
+            // empty, so a build talking to functions that predate the
+            // projection still parses and simply shows nothing.
+            ungated = ungatedSendsFromRaw(raw["ungated"]),
+            businessAdminCount = (raw["businessAdminCount"] as? Number)?.toInt(),
+            businessAdminRosterPath = raw["businessAdminRosterPath"] as? String ?: "",
             updatedAtMs = (raw["updatedAtMs"] as? Number)?.toLong(),
         )
     }.onFailure { AuntieLog.e("Failed to load notification overrides", it) }
+    /**
+     * #396: the last few real sends of one catalog key, or of every key when
+     * [key] is null.
+     *
+     * The first reader `notificationDispatch` has ever had on this client. It
+     * reports what the pipeline recorded and nothing more: "sent" means a
+     * provider accepted the message, not that it arrived, because no webhook in
+     * the platform writes a receipt back to a notification's channel subdoc.
+     */
+    suspend fun listNotificationDeliveries(
+        key: String? = null,
+        limit: Int = 10,
+    ): Result<NotificationDeliveryEvidence> = runCatching {
+        authGate.ensureAuthenticated()
+        val args = buildMap<String, Any> {
+            key?.takeIf { it.isNotBlank() }?.let { put("key", it) }
+            put("limit", limit)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listNotificationDeliveries")
+            .call(args)
+            .await().data as? Map<String, Any?>
+            ?: error("listNotificationDeliveries: non-map payload")
+        notificationDeliveryEvidenceFromMap(raw)
+    }.onFailure { AuntieLog.e("Failed to load notification deliveries", it) }
 
     suspend fun saveBusinessNotificationOverride(key: String, override: NotificationOverride): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()

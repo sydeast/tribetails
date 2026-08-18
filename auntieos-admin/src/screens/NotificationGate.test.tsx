@@ -23,6 +23,10 @@ vi.mock('../api/notificationOverridesWrite', () => ({
   saveBusinessNotificationOverride,
   deleteBusinessNotificationOverride: vi.fn(),
 }));
+const { listNotificationDeliveries } = vi.hoisted(() => ({
+  listNotificationDeliveries: vi.fn(),
+}));
+vi.mock('../api/notificationDeliveries', () => ({ listNotificationDeliveries }));
 
 import { NotificationGate } from './NotificationGate';
 
@@ -39,18 +43,38 @@ function entry(over: Partial<NotificationCatalogEntry> = {}): NotificationCatalo
     alwaysEnabledStreams: new Set(),
     kinfolkFacing: false,
     deliveryMode: 'trigger',
+    whoReceives: [],
+    recipientResolver: '',
+    emitters: [],
+    neverFires: false,
+    templates: {},
+    mergeFields: [],
+    external: false,
     description: '',
     ...over,
   };
 }
 
 function matrix(over: Partial<NotificationMatrix> = {}): NotificationMatrix {
-  return { catalog: [], overrides: {}, updatedAtMs: null, ...over };
+  return {
+    catalog: [],
+    overrides: {},
+    ungated: [],
+    businessAdminCount: null,
+    businessAdminRosterPath: 'businessSettings/admins.uids',
+    updatedAtMs: null,
+    ...over,
+  };
 }
 
 beforeEach(() => {
   getNotificationMatrix.mockReset();
   saveBusinessNotificationOverride.mockReset().mockResolvedValue(undefined);
+  listNotificationDeliveries.mockReset().mockResolvedValue({
+    deliveries: [],
+    sentMeaning: 'Sent means the provider accepted the message.',
+    receiptAvailable: false,
+  });
 });
 
 describe('NotificationGate screen', () => {
@@ -196,5 +220,227 @@ describe('NotificationGate screen', () => {
     expect(await screen.findByText(/nope/i)).toBeInTheDocument();
     // initial load + reload-on-failure
     await waitFor(() => expect(getNotificationMatrix).toHaveBeenCalledTimes(2));
+  });
+});
+/**
+ * #396. The gate could always turn a notification off. It could never say what
+ * it was turning off. These cases cover the half that answers the operator's
+ * actual question: "I am blind to what could be sent out to users."
+ */
+describe('NotificationGate: who / what fires it / whether it arrived (#396)', () => {
+  const documented = entry({
+    key: 'invoice.new',
+    label: 'New invoice',
+    whoReceives: [
+      "The household's own portal account.",
+      'Every business admin on the roster, one copy each.',
+    ],
+    emitters: [
+      {
+        trigger: 'An admin creates an invoice.',
+        source: 'src/admin/createInvoice.ts',
+        dataKeys: ['kinfolkId', 'invoiceId'],
+      },
+    ],
+    templates: { email: 'invoice.new', sms: 'invoice.new', push: 'invoice.new' },
+    mergeFields: ['amount', 'dueDate'],
+  });
+  async function open(label = /Who gets this, and what fires it/i) {
+    render(<NotificationGate />);
+    await userEvent.click(await screen.findByRole('button', { name: label }));
+  }
+  it('keeps the answer folded until asked, so the matrix stays a matrix', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    render(<NotificationGate />);
+    const toggle = await screen.findByRole('button', { name: /Who gets this, and what fires it/i });
+    // aria-expanded is the state carrier. jsdom would call folded content
+    // "visible", so asserting on the text alone would prove nothing.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(/An admin creates an invoice/)).not.toBeInTheDocument();
+  });
+  it('names every audience a notification reaches, in plain words', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText(/The household's own portal account/)).toBeInTheDocument();
+    expect(screen.getByText(/Every business admin on the roster/)).toBeInTheDocument();
+  });
+  it('counts the business-admin roster, so "every admin" is a number', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({ catalog: [documented], businessAdminCount: 4 }),
+    );
+    await open();
+    expect(await screen.findByText(/That is 4 people today/)).toBeInTheDocument();
+  });
+  it('names what fires it and where that code lives', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText(/An admin creates an invoice/)).toBeInTheDocument();
+    expect(screen.getByText('src/admin/createInvoice.ts')).toBeInTheDocument();
+  });
+  it('names the template document behind each channel', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText('emailTemplates/invoice.new')).toBeInTheDocument();
+    expect(screen.getByText('smsTemplates/invoice.new')).toBeInTheDocument();
+  });
+  it('says when the email has been retargeted, and names the catalog default', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [
+          entry({
+            ...documented,
+            templates: { email: 'invoice.new.v2', sms: 'invoice.new', push: 'invoice.new' },
+            emailTemplateRetargetedFrom: 'invoice.new',
+          }),
+        ],
+      }),
+    );
+    await open();
+    expect(await screen.findByText('emailTemplates/invoice.new.v2')).toBeInTheDocument();
+    expect(screen.getByText(/the catalog default is invoice\.new/)).toBeInTheDocument();
+  });
+  it('lists the merge fields, emitter data keys included, as the leak surface', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText('amount')).toBeInTheDocument();
+    // This one existed only in source before now: it is what the emitter puts
+    // in the bag, and it is the half that matters for a leak.
+    expect(screen.getByText('invoiceId')).toBeInTheDocument();
+  });
+  it('says a row nothing fires controls nothing', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({ catalog: [entry({ key: 'quote.accepted', neverFires: true, emitters: [] })] }),
+    );
+    render(<NotificationGate />);
+    expect(await screen.findByText('Never fires')).toBeInTheDocument();
+  });
+  it('never captions a critical row "Always on", because nothing enforces it', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({ catalog: [entry({ key: 'auth.password.reset', alwaysEnabled: true })] }),
+    );
+    render(<NotificationGate />);
+    await screen.findByText('Meant to stay on');
+    expect(screen.queryByText('Always on')).not.toBeInTheDocument();
+  });
+  it('warns loudly once a critical row is actually switched off', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [entry({ key: 'auth.password.reset', alwaysEnabled: true })],
+        overrides: {
+          'auth.password.reset': {
+            enabled: false,
+            channels: {},
+            lockedEnabled: false,
+            locked: {},
+            streams: {},
+          },
+        },
+      }),
+    );
+    render(<NotificationGate />);
+    expect(await screen.findByText('Off, and meant to stay on')).toBeInTheDocument();
+  });
+  it('reports "sent" as handed over, never as delivered', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    listNotificationDeliveries.mockResolvedValue({
+      deliveries: [
+        {
+          dispatchId: 'd1',
+          key: 'invoice.new',
+          recipientUid: 'kin1',
+          status: 'dispatched',
+          mode: 'trigger',
+          channels: ['email'],
+          createdAtMs: Date.UTC(2026, 7, 1, 12, 0),
+          attempts: [
+            {
+              channel: 'email',
+              status: 'sent',
+              providerMessageId: 'smtp-1',
+              skipReason: null,
+              errorMessage: null,
+              attempts: 1,
+              sentAtMs: null,
+              failedAtMs: null,
+              skippedAtMs: null,
+            },
+          ],
+        },
+      ],
+      sentMeaning: 'Sent means the provider accepted the message.',
+      receiptAvailable: false,
+    });
+    await open();
+    expect(await screen.findByText(/Handed to the provider/)).toBeInTheDocument();
+    expect(screen.queryByText(/Delivered/)).not.toBeInTheDocument();
+    expect(screen.getByText('smtp-1')).toBeInTheDocument();
+  });
+  it('shows a failure with its provider error rather than hiding it', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    listNotificationDeliveries.mockResolvedValue({
+      deliveries: [
+        {
+          dispatchId: 'd1',
+          key: 'invoice.new',
+          recipientUid: 'kin1',
+          status: 'dispatched',
+          mode: 'trigger',
+          channels: ['sms'],
+          createdAtMs: 1,
+          attempts: [
+            {
+              channel: 'sms',
+              status: 'failed',
+              providerMessageId: null,
+              skipReason: null,
+              errorMessage: 'Twilio 21610: unsubscribed recipient',
+              attempts: 3,
+              sentAtMs: null,
+              failedAtMs: 2,
+              skippedAtMs: null,
+            },
+          ],
+        },
+      ],
+      sentMeaning: 'x',
+      receiptAvailable: false,
+    });
+    await open();
+    expect(await screen.findByText(/Twilio 21610: unsubscribed recipient/)).toBeInTheDocument();
+    expect(screen.getByText(/Tried 3 times/)).toBeInTheDocument();
+  });
+  it('says an empty delivery log is not evidence of failure', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText(/not evidence it failed/i)).toBeInTheDocument();
+  });
+  it('surfaces a delivery-log read failure instead of rendering an empty log', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    listNotificationDeliveries.mockRejectedValue(new Error('permission-denied'));
+    await open();
+    expect(await screen.findByText(/Couldn’t read the delivery log/)).toBeInTheDocument();
+  });
+  it('lists the mail this gate does NOT govern', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [documented],
+        ungated: [
+          {
+            templateId: 'invite.primary',
+            trigger: 'A household is invited to the portal.',
+            source: 'src/admin/inviteKinfolkToPortal.ts',
+          },
+        ],
+      }),
+    );
+    render(<NotificationGate />);
+    expect(await screen.findByText(/ALSO SENT, BUT NOT GATED HERE/)).toBeInTheDocument();
+    expect(screen.getByText('emailTemplates/invite.primary')).toBeInTheDocument();
+  });
+  it('says nothing about ungated mail when there is none to warn about', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented], ungated: [] }));
+    render(<NotificationGate />);
+    await screen.findByText('New invoice');
+    expect(screen.queryByText(/ALSO SENT, BUT NOT GATED HERE/)).not.toBeInTheDocument();
   });
 });

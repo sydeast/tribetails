@@ -32,6 +32,8 @@ import {
   toggledStreamChannelLock,
   toggledStreamEnabledLock,
 } from '../lib/notificationGateEdit';
+import { rowBadges } from '../lib/notificationProvenance';
+import { BadgeRow, GateRowDetail, UngatedSendsPanel } from './NotificationGateDetail';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
@@ -248,6 +250,7 @@ function NotificationGateBody({
           ))
         )}
       </div>
+      <UngatedSendsPanel sends={matrix.ungated} />
     </>
   );
 }
@@ -261,6 +264,7 @@ interface GateRowProps {
 }
 
 function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowProps) {
+  const [open, setOpen] = useState(false);
   const title = displayTitle(entry);
   const enabled = streamEffectiveEnabled(matrix, entry.key, stream);
   const enabledLockOn = streamEffectiveLockedEnabled(matrix, entry.key, stream);
@@ -268,16 +272,32 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
     streamEffectiveChannelLocked(matrix, entry.key, stream, c),
   );
   const caption = sharedCopyCaption(entry, stream);
-  const alwaysOn = alwaysEnabledFor(entry, stream);
-  const showReason = enabledLockOn || anyChannelLockOn || alwaysOn;
+  // The "Always on" caption used to sit here and was not true: nothing enforces
+  // `alwaysEnabled` at send time (ruling #7, warn-but-allow-off). `rowBadges`
+  // replaces it with a risk marker that escalates to a warning once the row is
+  // actually switched off. See lib/notificationProvenance.ts for the full why.
+  const badges = rowBadges(entry, stream, enabled);
+  // Unchanged on purpose: the lock-reason editor belongs to LOCKED rows and to
+  // the always-on ones, not to every row that grew a badge. A "Never fires" or
+  // "Marketing" badge must not sprout a "why it stays on" field with nothing
+  // locked behind it.
+  const showReason = enabledLockOn || anyChannelLockOn || alwaysEnabledFor(entry, stream);
 
   return (
     <div className="notifgate__row">
       <div className="notifgate__row-line">
         <div className="notifgate__row-main">
           <span className="notifgate__row-title">{title}</span>
-          {alwaysOn && <span className="notifgate__row-caption">Always on</span>}
+          <BadgeRow badges={badges} />
           {caption && <span className="notifgate__row-caption">{caption}</span>}
+          <button
+            type="button"
+            className="notifgate__detail-toggle"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? 'Hide details' : 'Who gets this, and what fires it'}
+          </button>
         </div>
 
         <GateCell
@@ -329,6 +349,7 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
           onSave={(text) => onPersist(entry, setLockReason(currentOverride(matrix, entry), text))}
         />
       )}
+      {open && <GateRowDetail entry={entry} matrix={matrix} />}
     </div>
   );
 }

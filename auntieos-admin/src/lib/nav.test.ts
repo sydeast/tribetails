@@ -87,6 +87,33 @@ describe('rail composition', () => {
     expect(NAV.find((e) => e.dest === 'householdMembers')?.contextual).toBe(true);
     expect(NAV.find((e) => e.dest === 'invites')?.contextual).toBeUndefined();
   });
+  /**
+   * #396. The notification gate is the one screen that lists every notification
+   * the platform can send, who it reaches and what fires it, and it was marked
+   * `contextual`, so it appeared nowhere in the rail and was reachable only by
+   * opening Settings and already knowing to look for it. The operator's report
+   * was "I am blind to what could be sent out to users". This flag is a large
+   * part of why. It stays pinned.
+   */
+  it('pins the notification gate in the rail', () => {
+    expect(NAV.find((e) => e.dest === 'notificationGate')?.contextual).toBeUndefined();
+    const slugs = railEntries().map((e) => e.slug);
+    expect(slugs).toContain('notification-gate');
+  });
+  it('files the notification gate under More, beside the other what-we-emit screens', () => {
+    const more = railGroup('more');
+    const gate = more.findIndex((e) => e.dest === 'notificationGate');
+    expect(gate).toBeGreaterThanOrEqual(0);
+    expect(more[gate]?.title).toBe('Notification gate');
+    // Templates is the other half of the same question (what the body says),
+    // so the two must not end up at opposite ends of the group.
+    const templates = more.findIndex((e) => e.dest === 'templates');
+    expect(templates).toBeGreaterThanOrEqual(0);
+    expect(Math.abs(gate - templates)).toBeLessThanOrEqual(4);
+  });
+  it('still resolves the gate by its old URL, so existing links keep working', () => {
+    expect(parseHash('#/notification-gate').dest).toBe('notificationGate');
+  });
 
   it('every destination has a unique slug', () => {
     const slugs = NAV.map((e) => e.slug);

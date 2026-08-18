@@ -12,6 +12,16 @@ import {
   NOTIFICATION_KEY_ALIASES,
 } from '../notifications/catalog';
 import { resolveOverrideForKey } from '../notifications/prefs';
+import { TEMPLATE_FIELDS } from '../notifications/enrichTemplateData';
+import {
+  NEVER_FIRES,
+  NOTIFICATION_EMITTERS,
+  UNGATED_SENDS,
+  whoReceives,
+  type EmitterDescriptor,
+  type UngatedSend,
+} from '../notifications/provenance';
+import { readBusinessAdmins } from '../lib/businessAdmins';
 import type { BusinessNotificationOverride } from '../notifications/types';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -33,7 +43,17 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * Catalog `alwaysEnabled=true` keys CAN be disabled via override (see issue #7,
  * 2026-06-08: operator can now disable even catalog-required and always-on
  * notifications, with a warning in the UI but no server-side hard enforcement).
- * Admin UIs may still render warnings for operator discretion.
+ * #396 built the warning half of that, which had never shipped: the gate now
+ * renders the flag as a risk marker that escalates once a row is actually off,
+ * rather than as the "Always on" caption that implied a lock nobody enforces.
+ *
+ * PROVENANCE (#396). The catalog projection below carries the three facts that
+ * used to exist only in source: who a notification reaches (`whoReceives`),
+ * what fires it (`emitters`), and which template renders it per channel
+ * (`templates`) with the merge fields that template can print (`mergeFields`).
+ * They are projected as finished ENGLISH here rather than as enums, so the web
+ * and Android clients render the same sentence instead of each maintaining
+ * their own enum-to-prose map and drifting apart. See notifications/provenance.ts.
  */
 
 const Channel = z.enum(['email', 'sms', 'push']);
@@ -100,7 +120,46 @@ interface GetResult {
     deliveryMode: string;
     description: string;
     marketingCategory?: string;
+    // ── #396 provenance: who / what fires it / which template ──────────────
+    /** The recipient rule(s) as finished sentences. One per resolver in play. */
+    whoReceives: string[];
+    /** Raw resolver names, kept for anything that needs to branch on them. */
+    recipientResolver: string;
+    secondaryResolver?: string;
+    /** Every call site that dispatches this key, in business terms. */
+    emitters: EmitterDescriptor[];
+    /** True when NOTHING dispatches this key, so its toggles control nothing. */
+    neverFires: boolean;
+    /**
+     * channel -> the `${channel}Templates/{id}` document that ACTUALLY renders
+     * it. For email this is the effective id after `notificationTemplateBindings`
+     * is applied, not the catalog default: this same screen can retarget an
+     * email, and naming the catalog document on a retargeted row would be the
+     * screen confidently reporting the wrong body.
+     */
+    templates: Record<string, string>;
+    /** Set only when an active binding has moved email off the catalog default. */
+    emailTemplateRetargetedFrom?: string;
+    /** Merge fields `enrichTemplateData` hydrates for this key's templates. */
+    mergeFields: string[];
+    /** True when an outside system delivers it and this gate controls nothing. */
+    external: boolean;
   }>;
+  /**
+   * Email the platform sends that this gate does NOT govern: invites, account
+   * recovery, the error digest. Every toggle above is irrelevant to these, and
+   * leaving them off the screen is how the gate reads as a complete inventory
+   * of outbound mail when it is not one.
+   */
+  ungated: UngatedSend[];
+  /**
+   * How many people a `businessAdmins` row actually reaches right now, and from
+   * where. Null when the roster cannot be resolved at all — which is a real
+   * state (the document has been missing in prod before) and is reported as
+   * unknown rather than as zero.
+   */
+  businessAdminCount: number | null;
+  businessAdminRosterPath: string;
   updatedAtMs: number | null;
 }
 
@@ -112,23 +171,91 @@ export async function getBusinessNotificationOverridesHandler(
     | { byKey?: Record<string, BusinessNotificationOverride>; updatedAtMs?: number }
     | undefined;
 
-  const catalog = Object.values(NOTIFICATION_CATALOG).map((def) => ({
-    key: def.key,
-    label: def.label,
-    category: def.category,
-    audience: def.audience,
-    audiences: { ...def.audiences },
-    allowedChannels: [...def.allowedChannels],
-    required: Object.fromEntries(
-      Object.entries(def.required).map(([k, v]) => [k, v === true]),
-    ),
-    alwaysEnabled: def.alwaysEnabled,
-    ...(def.alwaysEnabledStreams ? { alwaysEnabledStreams: { ...def.alwaysEnabledStreams } } : {}),
-    kinfolkFacing: def.kinfolkFacing,
-    deliveryMode: def.deliveryMode,
-    description: def.description,
-    ...(def.marketingCategory ? { marketingCategory: def.marketingCategory } : {}),
-  }));
+  // Email retargeting is a live capability of this very screen: an operator can
+  // point a catalog key's email at a different `emailTemplates/{id}` by writing
+  // `notificationTemplateBindings/{templateId}`, and `sendFromTemplate` honors
+  // it at send time. So the catalog default is NOT the answer to "which template
+  // writes this" on a retargeted row. Read the bindings once here and project
+  // the EFFECTIVE id, matching `resolveTemplateId` (lib/sendFromTemplate.ts):
+  // an active binding with a templateId wins; an inactive one falls back to the
+  // default, because disabling a binding means "revert", not "send nothing".
+  //
+  // Email only. `smsChannel` and `pushChannel` read `def.templates.*` directly
+  // and consult no bindings, which is why the issue says retargeting those needs
+  // a deploy.
+  const bindings = new Map<string, string>();
+  try {
+    const bindingSnap = await db().collection('notificationTemplateBindings').get();
+    for (const doc of bindingSnap.docs) {
+      const b = doc.data() as { templateId?: string; active?: boolean };
+      if (b.active !== false && typeof b.templateId === 'string' && b.templateId !== '') {
+        bindings.set(doc.id, b.templateId);
+      }
+    }
+  } catch {
+    // Same rule as the roster read below: a settings GET must not fail the whole
+    // 44-row matrix. With no bindings read, every row shows its catalog default,
+    // which is what an un-retargeted row would show anyway.
+  }
+  const catalog = Object.values(NOTIFICATION_CATALOG).map((def) => {
+    // The binding is keyed by the TEMPLATE id the sender asks for, not by the
+    // catalog key. They coincide for every row today; reading it the way
+    // `sendFromTemplate` does means they may stop coinciding without this
+    // silently reporting the wrong document.
+    const catalogEmailId = def.templates.email;
+    const boundEmailId = catalogEmailId ? bindings.get(catalogEmailId) : undefined;
+    const retargeted = boundEmailId !== undefined && boundEmailId !== catalogEmailId;
+    return {
+      key: def.key,
+      label: def.label,
+      category: def.category,
+      audience: def.audience,
+      audiences: { ...def.audiences },
+      allowedChannels: [...def.allowedChannels],
+      required: Object.fromEntries(
+        Object.entries(def.required).map(([k, v]) => [k, v === true]),
+      ),
+      alwaysEnabled: def.alwaysEnabled,
+      ...(def.alwaysEnabledStreams ? { alwaysEnabledStreams: { ...def.alwaysEnabledStreams } } : {}),
+      kinfolkFacing: def.kinfolkFacing,
+      deliveryMode: def.deliveryMode,
+      description: def.description,
+      ...(def.marketingCategory ? { marketingCategory: def.marketingCategory } : {}),
+      whoReceives: whoReceives(def),
+      recipientResolver: def.recipientResolver,
+      ...(def.secondaryResolver ? { secondaryResolver: def.secondaryResolver } : {}),
+      // Spread into fresh objects: this is a wire projection, and handing the
+      // frozen catalog's own arrays to the serializer is how a caller ends up
+      // able to mutate the catalog in-process.
+      emitters: (NOTIFICATION_EMITTERS[def.key] ?? []).map((e) => ({
+        trigger: e.trigger,
+        source: e.source,
+        dataKeys: [...e.dataKeys],
+        ...(e.dataNote ? { dataNote: e.dataNote } : {}),
+      })),
+      neverFires: NEVER_FIRES.includes(def.key),
+      templates: {
+        ...def.templates,
+        ...(retargeted && boundEmailId ? { email: boundEmailId } : {}),
+      } as Record<string, string>,
+      ...(retargeted && catalogEmailId ? { emailTemplateRetargetedFrom: catalogEmailId } : {}),
+      mergeFields: [...(TEMPLATE_FIELDS[def.key] ?? [])],
+      external: def.external === true,
+    };
+  });
+
+  // The plain roster read, NOT `resolveBusinessAdminUids`. That resolver throws
+  // when nothing is configured and self-heals from AUNTIE_OPERATOR_UIDS by
+  // WRITING the roster back — both correct on the dispatch path, both wrong
+  // here. This is a settings GET: it must not fail the whole 44-row matrix over
+  // an empty roster, and reading a screen must not quietly edit who receives
+  // business mail. An unresolvable roster is reported as unknown, never as zero.
+  let businessAdminCount: number | null;
+  try {
+    businessAdminCount = (await readBusinessAdmins()).uids.length;
+  } catch {
+    businessAdminCount = null;
+  }
 
   // Key aliases: a row the operator saved under a since-retired key still
   // governs dispatch, so the matrix must show it on the canonical row rather
@@ -149,6 +276,9 @@ export async function getBusinessNotificationOverridesHandler(
   return {
     overrides,
     catalog,
+    ungated: UNGATED_SENDS.map((u) => ({ ...u })),
+    businessAdminCount,
+    businessAdminRosterPath: 'businessSettings/admins.uids',
     updatedAtMs: data?.updatedAtMs ?? null,
   };
 }
