@@ -208,10 +208,14 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 13: 12 after the 2026-07-31 calendar-tab merge (two calendar features,
-    // one tab), plus Integrations, which reports on every outside service
-    // rather than editing anything, so it sits last.
-    expect(tabs).toHaveLength(13);
+    // 11. Was 13: the 2026-07-31 calendar-tab merge took two calendar features
+    // down to one tab, then mark 16 of the 2026-08-17 walk folded Weather area
+    // and Booking behavior into Business profile ("it does not need to be its
+    // own page with so little fields"). Integrations still sits last, because
+    // it reports on outside services rather than editing anything.
+    expect(tabs).toHaveLength(11);
+    expect(screen.queryByRole('tab', { name: /weather area/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /booking behavior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
@@ -359,11 +363,14 @@ describe('Settings — Business profile editor', () => {
     expect(saveBtn).toBeEnabled();
 
     await userEvent.click(saveBtn);
+    // `weatherLocation` rides along because this panel saves every field it
+    // renders, and it renders that one since mark 16 moved it here.
     expect(saveBusinessSettings).toHaveBeenCalledWith({
       businessName: 'New Name',
       businessEmail: '',
       businessPhone: '',
       businessAddress: '',
+      weatherLocation: '',
     });
     expect(await within(panel).findByText('Saved')).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
@@ -417,7 +424,7 @@ describe('Settings — Booking behavior (instant-save toggles)', () => {
     saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
     await screen.findByLabelText('Business name');
-    const panel = await openSection('Booking behavior');
+    const panel = await openSection('Business profile');
     const sw = within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i });
     expect(sw).toHaveAttribute('aria-checked', 'false');
     await userEvent.click(sw);
@@ -433,7 +440,7 @@ describe('Settings — Booking behavior (instant-save toggles)', () => {
     saveBusinessSettings.mockRejectedValue(new Error('offline'));
     render(<Settings />);
     await screen.findByLabelText('Business name');
-    const panel = await openSection('Booking behavior');
+    const panel = await openSection('Business profile');
     await userEvent.click(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i }));
     expect(await within(panel).findByText(/offline/i)).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i })).toHaveAttribute(
@@ -443,6 +450,34 @@ describe('Settings — Booking behavior (instant-save toggles)', () => {
   });
 });
 
+/**
+ * Mark 16 of the 2026-08-17 walk: "move this and weather area to related
+ * setting pages. it does not need to be its own page with so little fields".
+ * The operator named Business profile. These pin that both arrived, and that
+ * the two save models did not get merged on the way.
+ */
+describe('Settings — Business profile absorbed the two thin sections', () => {
+  it('carries the weather field, labelled so it is not read as a second address', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ weatherLocation: 'Austin, TX' }));
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    expect(await within(panel).findByLabelText('Weather area')).toHaveValue('Austin, TX');
+    expect(within(panel).getByLabelText('Address')).toBeInTheDocument();
+    expect(within(panel).getByText(/not a street address/i)).toBeInTheDocument();
+  });
+  it('carries the booking toggles as their OWN panel, away from the staged Save', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    await within(panel).findByLabelText('Business name');
+    expect(within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i })).toBeInTheDocument();
+    expect(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i })).toBeInTheDocument();
+    // One Save button, and it belongs to the text fields. The toggles write on
+    // every flip, so a Save button beside them would be a lie about what is
+    // already stored.
+    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(1);
+  });
+});
 describe('Settings — real editors wire through the shared persist', () => {
   it('Business hours: a per-day toggle saves the merged businessHours patch', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);

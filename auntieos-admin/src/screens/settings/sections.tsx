@@ -58,15 +58,25 @@ export interface TextFieldSpec {
   hint?: string;
 }
 
+/**
+ * `weatherLocation` joins this list rather than keeping the nav entry it had.
+ * Mark 16 of the 2026-08-17 walk: one text box does not need its own settings
+ * page, and the operator put it here. Its label and hint carry the whole of
+ * what the retired "Weather area" panel's subtitle used to say, because the
+ * distinction that copy was drawing (a coverage AREA, not the street address
+ * two fields above) matters more now that both live in one panel.
+ */
 export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
   { key: 'businessName', label: 'Business name' },
   { key: 'businessEmail', label: 'Email', type: 'email' },
   { key: 'businessPhone', label: 'Phone', type: 'tel' },
   { key: 'businessAddress', label: 'Address' },
-];
-
-export const WEATHER_AREA_FIELDS: readonly TextFieldSpec[] = [
-  { key: 'weatherLocation', label: 'City, metro, or ZIP', placeholder: 'Austin, TX' },
+  {
+    key: 'weatherLocation',
+    label: 'Weather area',
+    placeholder: 'Austin, TX',
+    hint: 'The area the Home weather widgets cover. A city, metro, or ZIP, not a street address.',
+  },
 ];
 
 // PR30: each hint is the processor's fee schedule (PAYMENT_METHOD_FEE_SCHEDULE
