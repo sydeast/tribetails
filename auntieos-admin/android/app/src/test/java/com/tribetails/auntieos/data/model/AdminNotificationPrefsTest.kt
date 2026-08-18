@@ -181,4 +181,50 @@ class AdminNotificationPrefsTest {
             .withByKeyChannel("invoice.new", "sms", true)
         assertEquals(mapOf("push" to true, "sms" to true), p.byKey["invoice.new"])
     }
+
+    // ── applyBulkToggle: the #390 Android parity fix ─────────────────────────
+
+    @Test
+    fun applyBulkToggleOnFlipsOnlyOfferedAndUnforcedChannels() {
+        val next = AdminNotificationPrefs().applyBulkToggle(matrix, listOf(invoice, ops), STREAM_BUSINESS, true)
+        // invoice: email is catalog-required, sms is operator-locked; only push is editable.
+        assertEquals(mapOf("push" to true), next.byKey["invoice.new"])
+        // ops: push is not OFFERED (flat gate turned it off); only email is editable.
+        assertEquals(mapOf("email" to true), next.byKey["ops.alert"])
+    }
+
+    @Test
+    fun applyBulkToggleOffDoesNotFakeAForcedChannelOff() {
+        val start = AdminNotificationPrefs(byKey = mapOf("invoice.new" to mapOf("push" to true)))
+        val next = start.applyBulkToggle(matrix, listOf(invoice), STREAM_BUSINESS, false)
+        // push (editable) flips off; email/sms (forced) are never written, not faked off.
+        assertEquals(mapOf("push" to false), next.byKey["invoice.new"])
+        assertFalse(next.byKey.getValue("invoice.new").containsKey("email"))
+        assertFalse(next.byKey.getValue("invoice.new").containsKey("sms"))
+    }
+
+    @Test
+    fun applyBulkTogglePreservesUnrelatedKeysAndCategoryPrefs() {
+        val start = AdminNotificationPrefs(
+            byKey = mapOf("kintale.new" to mapOf("email" to true)),
+            byCategory = mapOf("ops" to mapOf("push" to true)),
+        )
+        val next = start.applyBulkToggle(matrix, listOf(invoice), STREAM_BUSINESS, true)
+        assertEquals(mapOf("email" to true), next.byKey["kintale.new"]) // untouched key
+        assertEquals(mapOf("push" to true), next.byCategory["ops"]) // untouched, byKey-only writer
+    }
+
+    @Test
+    fun applyBulkToggleChainsAcrossStreamsForThePageLevelControl() {
+        // Mirrors AdminNotificationPrefsScreen.persistBulk (#390): one applyBulkToggle
+        // call per hat, threaded through the accumulating prefs, so the page-level "All
+        // on" ends up covering both "As the owner" and "As the Auntie" in one object.
+        val staffOpen = matrix.copy(overrides = matrix.overrides - "visit.note")
+        var next = AdminNotificationPrefs()
+        next = next.applyBulkToggle(staffOpen, listOf(invoice, ops), STREAM_BUSINESS, true)
+        next = next.applyBulkToggle(staffOpen, listOf(visitNote), STREAM_STAFF, true)
+        assertEquals(mapOf("push" to true), next.byKey["invoice.new"])
+        assertEquals(mapOf("email" to true), next.byKey["ops.alert"])
+        assertEquals(mapOf("email" to true, "push" to true), next.byKey["visit.note"])
+    }
 }
