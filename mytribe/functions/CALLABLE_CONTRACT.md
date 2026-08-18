@@ -896,6 +896,57 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   invites the secondary from MyTribe. An admin-wide surface has no household to
   mint into, and must never grow a button that pretends otherwise.
 
+### listRecoveryCandidates (net-new 2026-08-18, issue #378)
+- req `{ familyId: string, oldUid?: string }`
+- res `{ candidates: Array<{ uid, email, secondaryLabel: string | null, role, status }> }`
+- GATE: `wrapAdminCallable`. Recovery is an operator action end to end; there is
+  no kinfolk path.
+- **The list `executePrimaryRecovery` will accept, and the same code answers
+  both.** `src/lib/recoveryCandidates.ts` is imported by the gate and by this
+  read, so a dialog built on this cannot offer a choice the execute call then
+  refuses.
+- Eligible means: a member doc on `families/{familyId}/members` that is not
+  SUSPENDED, whose Firebase Auth account exists and has `emailVerified === true`,
+  and whose uid is not `oldUid`. `email` is the AUTH account's address,
+  lowercased — never the member doc's `email` field, which is whatever was typed
+  at invite time and proves nothing.
+- A member with no Auth account is skipped rather than fatal: one stale roster
+  row must not make a household unrecoverable.
+- An empty array is a real answer, not an error. It means nobody on the
+  household can safely be handed it yet.
+- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
+  the same one `listInvites` writes for its household-scoped read. Counts only,
+  no addresses. This answers more than the roster does (which addresses Auth
+  considers verified), so it is audited rather than treated as free.
+- Mirrors: `auntieos-admin/src/api/members.ts#listRecoveryCandidates` +
+  the recovery dialog in `src/screens/HouseholdMembers.tsx`. No Android mirror
+  yet; Android has no recovery surface to mirror it into.
+
+### executePrimaryRecovery (pre-existing; destination gated 2026-08-18, issue #378)
+- req `{ familyId: string, newEmail: string, oldUid?: string, recoveryRequestId?: string }`
+- res `{ inviteId: string }`
+- GATE: `wrapAdminCallable`.
+- **`newEmail` is a closed set, not a typed address.** It must match a
+  `listRecoveryCandidates` entry for the same `familyId`/`oldUid`. Anything else
+  is `failed-precondition`, with a message naming the eligible addresses (or,
+  when there are none, the step that creates one). This is the only send in the
+  system that GRANTS an account rather than describing one — the mail carries a
+  claim URL into a pre-stamped `EMAIL_SENT` invite holding `FULL_PERMISSIONS` —
+  so a typo or a stolen session used to be enough to hand over a household,
+  billing included. There is deliberately no flag or override that restores the
+  old behaviour.
+- **A refused call writes nothing.** The old PRIMARY's suspension now happens
+  after the gate, not before it, so a rejection suspends nobody, mints no invite
+  and sends no mail.
+- Audit: `AUTH_RECOVERY_TRIGGERED` at `severity: 'critical'` either way.
+  `status: 'SUCCESS'` when the link went out, `status: 'FAILURE'` with
+  `payload.reason: 'not_a_verified_household_member'` when it was blocked, so a
+  refused attempt is as visible in review as a completed one.
+- The mail and the invite doc both carry the resolved Auth address, so they
+  cannot disagree about which inbox holds the household.
+- Mirrors: `auntieos-admin/src/api/membersWrite.ts#executePrimaryRecovery` +
+  `src/screens/HouseholdMembers.tsx`.
+
 ### acceptInvite (pre-existing, verification added 2026-08-01)
 - req `{ inviteId: string }`
 - res `{ familyId: string }`

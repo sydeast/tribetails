@@ -206,6 +206,11 @@ export { setTribePin } from './admin/setTribePin';
 export { approveTribePinChange } from './admin/approveTribePinChange';
 export { setBrandTokens } from './admin/setBrandTokens';
 export { executePrimaryRecovery } from './admin/executePrimaryRecovery';
+// The addresses `executePrimaryRecovery` will accept for a household, so the
+// recovery dialog can offer them as a choice instead of a free-text box.
+// Eligibility turns on the Auth account's `emailVerified`, which no client can
+// read for anybody but itself, so it has to be a callable.
+export { listRecoveryCandidates } from './admin/listRecoveryCandidates';
 export { postInvoiceEvent } from './admin/postInvoiceEvent';
 export { createInvoice } from './admin/createInvoice';
 export { createQuote } from './admin/createQuote';

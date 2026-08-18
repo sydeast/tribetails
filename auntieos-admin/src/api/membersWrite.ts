@@ -205,3 +205,51 @@ export function describePortalInviteOutcome(
     message: `No invite sent: ${who} has no email address on file. Add one on the household profile, then try again.`,
   };
 }
+
+export interface ExecutePrimaryRecoveryInput {
+  familyId: string;
+  /** Must be one of `listRecoveryCandidates`' addresses. The server re-checks. */
+  newEmail: string;
+  /** The sitting primary. They are suspended when the recovery goes through. */
+  oldUid: string;
+  recoveryRequestId?: string;
+}
+
+/**
+ * Hands a household's primary role to another member, by mailing them a claim
+ * link and suspending the sitting primary.
+ *
+ * THE HEAVIEST WRITE ON THIS SCREEN. The mail this sends does not describe an
+ * account, it grants one: whoever opens the link becomes the primary, holding
+ * every entitlement including billing, and the previous primary is locked out
+ * in the same call.
+ *
+ * `newEmail` is therefore not a free-text field. The server accepts it only
+ * when it belongs to a verified Auth account already on the household, and
+ * answers `failed-precondition` with a message naming the eligible addresses
+ * otherwise (issue #378). Callers must pick from `listRecoveryCandidates` and
+ * must show the server's message verbatim: "recovery failed" tells an operator
+ * with a locked-out family nothing they can act on.
+ *
+ * A refused call changes nothing. No suspension, no invite, no mail.
+ */
+export async function executePrimaryRecovery(
+  input: ExecutePrimaryRecoveryInput,
+): Promise<{ inviteId: string }> {
+  const familyId = input.familyId.trim();
+  const newEmail = input.newEmail.trim();
+  const oldUid = input.oldUid.trim();
+  if (familyId === '') throw new Error('executePrimaryRecovery requires a household id');
+  if (oldUid === '') throw new Error('executePrimaryRecovery requires the current primary uid');
+  if (newEmail === '') throw new Error('Pick which member should receive the claim link.');
+
+  return call<
+    { familyId: string; newEmail: string; oldUid: string; recoveryRequestId?: string },
+    { inviteId: string }
+  >('executePrimaryRecovery', {
+    familyId,
+    newEmail,
+    oldUid,
+    ...(input.recoveryRequestId === undefined ? {} : { recoveryRequestId: input.recoveryRequestId }),
+  });
+}

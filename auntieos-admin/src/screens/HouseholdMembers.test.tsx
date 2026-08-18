@@ -26,12 +26,15 @@ const api = vi.hoisted(() => ({
   setMemberPermissions: vi.fn(),
   removeMember: vi.fn(),
   inviteKinfolkToPortal: vi.fn(),
+  listRecoveryCandidates: vi.fn(),
+  executePrimaryRecovery: vi.fn(),
 }));
 
 vi.mock('../api/members', async (orig) => ({
   ...(await orig<typeof import('../api/members')>()),
   listHouseholdMembers: api.listHouseholdMembers,
   listHouseholdInvites: api.listHouseholdInvites,
+  listRecoveryCandidates: api.listRecoveryCandidates,
 }));
 vi.mock('../api/membersWrite', async (orig) => ({
   ...(await orig<typeof import('../api/membersWrite')>()),
@@ -40,11 +43,12 @@ vi.mock('../api/membersWrite', async (orig) => ({
   setMemberPermissions: api.setMemberPermissions,
   removeMember: api.removeMember,
   inviteKinfolkToPortal: api.inviteKinfolkToPortal,
+  executePrimaryRecovery: api.executePrimaryRecovery,
 }));
 
 import { ToastProvider } from '../components/Toast';
 import { HouseholdMembers, inviteMetaLine } from './HouseholdMembers';
-import type { HouseholdInvite, HouseholdMember } from '../api/members';
+import type { HouseholdInvite, HouseholdMember, RecoveryCandidate } from '../api/members';
 
 function render(ui: ReactElement) {
   return rtlRender(<ToastProvider>{ui}</ToastProvider>);
@@ -92,6 +96,17 @@ function invite(over: Partial<HouseholdInvite> = {}): HouseholdInvite {
     expiresAt: '2026-06-09T00:00:00.000Z',
     revokedAt: null,
     acceptedUid: null,
+    ...over,
+  };
+}
+
+function candidate(over: Partial<RecoveryCandidate> = {}): RecoveryCandidate {
+  return {
+    uid: 'u1',
+    email: 'marcus@example.com',
+    secondaryLabel: 'Spouse',
+    role: 'SECONDARY',
+    status: 'ACTIVE',
     ...over,
   };
 }
@@ -469,6 +484,112 @@ describe('HouseholdMembers UNAUTHORIZED and unreadable', () => {
     mount({ members: [], invites: [] });
     expect(await screen.findByText(/Nobody has claimed this household yet/)).toBeInTheDocument();
     expect(await screen.findByText(/No invite has ever been sent/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Primary recovery (issue #378). The claim link this sends grants the
+ * household, so the destination is a closed set the server owns, never a box
+ * the operator types into, and a refusal has to arrive as the server's own
+ * words rather than as "something went wrong".
+ */
+describe('HouseholdMembers PRIMARY RECOVERY', () => {
+  const roster = [
+    member({ uid: 'p1', role: 'PRIMARY', status: 'ACTIVE', invitedEmail: 'lost@example.com' }),
+    member({ uid: 'u1', role: 'SECONDARY', status: 'ACTIVE', invitedEmail: 'marcus@example.com' }),
+  ];
+
+  async function openDialog(candidates: RecoveryCandidate[] = [candidate()]) {
+    const user = userEvent.setup();
+    api.listRecoveryCandidates.mockResolvedValue(candidates);
+    mount({ members: roster });
+    await user.click(await screen.findByRole('button', { name: 'Start primary recovery' }));
+    return { user, dialog: await screen.findByRole('dialog') };
+  }
+
+  it('offers the eligible verified addresses as a choice, and no free-text field', async () => {
+    const { dialog } = await openDialog([
+      candidate(),
+      candidate({ uid: 'u2', email: 'nina@example.com', secondaryLabel: 'Sister' }),
+    ]);
+
+    const choices = await within(dialog).findAllByRole('radio');
+    expect(choices.map((c) => (c as HTMLInputElement).value)).toEqual([
+      'marcus@example.com',
+      'nina@example.com',
+    ]);
+    // The defect was an operator-typed address. There is no textbox to type one
+    // into, and this assertion is the whole point of the dialog.
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(api.listRecoveryCandidates).toHaveBeenCalledWith('fam1', 'p1');
+  });
+
+  it('sends the claim link to the picked address and reloads the roster', async () => {
+    api.executePrimaryRecovery.mockResolvedValue({ inviteId: 'rq_1234abcd' });
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('radio', { name: /marcus@example\.com/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Send the claim link' }));
+
+    await waitFor(() =>
+      expect(api.executePrimaryRecovery).toHaveBeenCalledWith({
+        familyId: 'fam1',
+        newEmail: 'marcus@example.com',
+        oldUid: 'p1',
+      }),
+    );
+    await waitFor(() => expect(api.listHouseholdMembers).toHaveBeenCalledTimes(2));
+  });
+
+  it('will not send until an address is picked', async () => {
+    const { dialog } = await openDialog();
+    await within(dialog).findAllByRole('radio');
+    expect(within(dialog).getByRole('button', { name: 'Send the claim link' })).toBeDisabled();
+    expect(api.executePrimaryRecovery).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's refusal in full, instead of a generic failure", async () => {
+    const refusal =
+      'Recovery cannot send a claim link to typo@example.com. It must go to a household ' +
+      'member with a verified email address. Eligible addresses: marcus@example.com.';
+    api.executePrimaryRecovery.mockRejectedValue(new Error(refusal));
+    const { user, dialog } = await openDialog();
+
+    await user.click(within(dialog).getByRole('radio', { name: /marcus@example\.com/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Send the claim link' }));
+
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    // Open, and the roster untouched: a refused recovery suspended nobody, so
+    // the screen must not reload as though something moved.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(api.listHouseholdMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('says what to do instead when nobody on the household is verified', async () => {
+    const { dialog } = await openDialog([]);
+    expect(
+      await within(dialog).findByText(/no one the claim link can safely go to/i),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryAllByRole('radio')).toHaveLength(0);
+    expect(within(dialog).getByRole('button', { name: 'Send the claim link' })).toBeDisabled();
+  });
+
+  it('names the failing read rather than showing an empty choice list', async () => {
+    api.listRecoveryCandidates.mockRejectedValue(new Error('permission-denied: Admin claim required.'));
+    const user = userEvent.setup();
+    mount({ members: roster });
+    await user.click(await screen.findByRole('button', { name: 'Start primary recovery' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/listRecoveryCandidates failed/)).toBeInTheDocument();
+    expect(within(dialog).queryAllByRole('radio')).toHaveLength(0);
+  });
+
+  it('offers no recovery at all on a household with no active primary', async () => {
+    mount({ members: [member()] });
+    expect(await screen.findByText('marcus@example.com')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start primary recovery' })).toBeNull();
+    expect(screen.getByText(/no active primary to recover/i)).toBeInTheDocument();
   });
 });
 
