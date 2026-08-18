@@ -1,0 +1,70 @@
+/**
+ * MediaViewerDialog. The panel chrome (backdrop, focus trap, Escape, title
+ * bar) is all `Dialog.css`; this file is only the body: the image/glyph stage
+ * and the two caption lines beneath it.
+ */
+
+.media-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.media-viewer__stage {
+  position: relative;
+  width: 100%;
+  /* Tall enough to read as a real viewer, capped so a portrait photo in a
+     `dialog--wide` (56rem) panel never forces the page to scroll past the
+     fold. `object-fit: contain` below does the letterboxing. */
+  height: min(60vh, 32rem);
+  display: grid;
+  place-items: center;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-card-lg);
+  overflow: hidden;
+}
+
+.media-viewer__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The whole frame, letterboxed if needed: the viewer never crops, unlike the
+     grid tile's Avatar (object-fit: cover), matching Android's
+     FullscreenMediaViewer ContentScale.Fit exactly. */
+  object-fit: contain;
+}
+
+.media-viewer__fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--color-text-dim);
+}
+
+.media-viewer__play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--tt-brand-cream);
+  pointer-events: none;
+}
+.media-viewer__play svg {
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-pill);
+  padding: var(--space-3);
+}
+
+.media-viewer__hint {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.media-viewer__meta {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}

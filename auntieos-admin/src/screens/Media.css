@@ -101,10 +101,26 @@
   display: block;
 }
 
+/* A real `<button>` now (#388), so this resets every default the browser
+   would otherwise impose (border, background, padding, centered text, a
+   system font) back to the plain block the tile always visually was. Matches
+   Gallery.tsx's identical reset. */
 .media__tile {
   display: flex;
   flex-direction: column;
   width: 132px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.media__tile:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-card-lg);
 }
 
 .media__tile-media {
@@ -113,11 +129,16 @@
   height: 132px;
 }
 
-/* The tile is read-only (no lightbox in scope), so its Avatar gets a plain
-   hairline frame rather than an interactive hover-lift: there is nothing here
-   for a hover state to promise. Matches Gallery.tsx's tile treatment. */
+/* A hairline frame at rest; the interactive states below are the tile's own
+   hover-lift, now that it opens the fullscreen viewer (#388) instead of doing
+   nothing. Matches Gallery.tsx's tile treatment. */
 .media__tile-avatar {
   border: var(--border-hairline) solid var(--color-border);
+  transition: var(--lift-transition);
+}
+.media__tile:hover .media__tile-avatar,
+.media__tile:focus-visible .media__tile-avatar {
+  border-color: var(--color-primary);
 }
 
 .media__tile-play {
