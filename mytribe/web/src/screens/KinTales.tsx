@@ -335,9 +335,13 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
 
         <div className="actions">
           <TaleShare taleId={tale.id} kinfolkId={kinfolkId} />
-          <span className="btn ghost navlink-inert" title="Coming soon">
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => focusCommentBox(tale.id)}
+          >
             {'\u{1F4AC}'} Reply to Auntie {tale.authorDisplayName}
-          </span>
+          </button>
           <TaleReaction taleId={tale.id} kinfolkId={kinfolkId} />
         </div>
 
@@ -470,6 +474,23 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
   );
 }
 
+/**
+ * "Reply to Auntie" and the comment box are two different components, and the
+ * box is the thing that actually posts. Rather than lift its state up so a
+ * sibling button can drive it, the button moves focus to it by id: one reader
+ * can see the whole mechanism, and the composer keeps owning its own draft.
+ *
+ * Per tale, because a KinTale list renders several composers at once.
+ */
+function commentBoxId(taleId: string): string {
+  return `kintale-comment-${taleId}`;
+}
+function focusCommentBox(taleId: string): void {
+  const box = document.getElementById(commentBoxId(taleId));
+  if (!box) return;
+  box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  box.focus();
+}
 function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) {
   const { taleId, kinfolkId } = props;
   const authState = useAuth();
@@ -602,6 +623,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
         <div className="cav">{myInitial}</div>
         <div className="field">
           <textarea
+            id={commentBoxId(taleId)}
             value={topInput}
             onChange={(e) => setTopInput(e.target.value)}
             placeholder="Say something nice..."

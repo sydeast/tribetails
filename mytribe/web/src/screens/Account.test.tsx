@@ -22,8 +22,10 @@ vi.mock('../components/PortalNav', () => ({
   PortalNav: () => null,
 }));
 
+// `to` is carried into href, because a test that cannot see a link's
+// destination cannot tell a working link from the inert span it replaced.
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
+  Link: ({ children, to }: { children?: ReactNode; to?: string }) => <a href={to}>{children}</a>,
   useNavigate: () => vi.fn(),
 }));
 
@@ -200,5 +202,20 @@ describe('Account avatar upload', () => {
 
     await findByText("Photo uploads aren't available right now. Try again later.");
     expect(FakeXHR.instances).toHaveLength(0);
+  });
+});
+/**
+ * Issue #401's sibling: "Message your Auntie" on Account was a
+ * `<span class="btn ghost block navlink-inert" title="Coming soon">`, styled
+ * as a button and doing nothing, while `/messages` was a live route this same
+ * app already linked from Home.tsx:222. A tooltip is not a label; it never
+ * appears on touch.
+ */
+describe('Account: Message your Auntie', () => {
+  it('is a real link to /messages, not a coming-soon span', async () => {
+    const { getByRole, queryByTitle } = await renderAccount();
+    expect(getByRole('link', { name: /message your auntie/i })).toHaveAttribute('href', '/messages');
+    // It is not still a span wearing a tooltip.
+    expect(queryByTitle('Coming soon')?.textContent ?? '').not.toMatch(/message your auntie/i);
   });
 });
