@@ -160,6 +160,42 @@ export interface SendBroadcastResult {
   broadcastId: string;
   recipientCount: number;
   perChannel: Partial<Record<BroadcastChannel, BroadcastChannelCounts>>;
+  /**
+   * How far the broadcast actually got, per HOUSEHOLD (#386). `recipientCount`
+   * is who the segment MATCHED; this is who heard it, now that every recipient
+   * passes through their notification preferences before anything is attempted.
+   * Optional, and read through `reachOf`, for the same reason `perChannel` is
+   * `Partial`: it is a callable response, and a deployment that predates the
+   * field must not make this screen render a fabricated number.
+   */
+  reach?: BroadcastReach;
+}
+
+/** Recipient-level outcome of a broadcast. Mirrors the backend's `BroadcastReach`. */
+export interface BroadcastReach {
+  /** Households the segment resolved to. */
+  targeted: number;
+  /** Households that received the broadcast on at least one channel. */
+  reached: number;
+  /** Households whose notification preferences left every channel off. */
+  suppressedByPrefs: number;
+}
+
+/**
+ * Defensive read of the recipient-level reach. Returns null when the response
+ * carries no usable `reach`, so a caller renders "we don't know" rather than a
+ * confident zero.
+ */
+export function reachOf(result: SendBroadcastResult | null | undefined): BroadcastReach | null {
+  const r = result?.reach;
+  if (
+    typeof r?.targeted !== 'number' ||
+    typeof r?.reached !== 'number' ||
+    typeof r?.suppressedByPrefs !== 'number'
+  ) {
+    return null;
+  }
+  return { targeted: r.targeted, reached: r.reached, suppressedByPrefs: r.suppressedByPrefs };
 }
 
 /** Defensive read of one channel's counts from a (possibly wider) perChannel map. Never fabricates a nonzero count. */

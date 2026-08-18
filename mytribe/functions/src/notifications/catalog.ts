@@ -542,6 +542,42 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'message.received', sms: 'message.received', push: 'message.received' },
     description: 'A kinfolk sent your business a message.',
   },
+  {
+    // The other direction of `message.received`: the office writes one message
+    // and sends it to a whole audience segment (admin/broadcastMessage.ts,
+    // Communicate step 6).
+    //
+    // WHY THIS ROW EXISTS (#386). broadcastMessage does its own fan-out (it
+    // never calls `enqueueNotification`, because there is no template for
+    // ad-hoc operator-authored copy), but it stamps this key on the
+    // `notifications/{id}` inbox doc it writes, and it now resolves each
+    // recipient's channels through `resolveChannels` like every other send. A
+    // key with no catalog row cannot be gated by the operator and cannot be
+    // silenced by a household, which is exactly the bug. The templates below
+    // are therefore never looked up; they exist because every row carries a
+    // full set (see normalizeAllChannels).
+    //
+    // NOT marketing-class ON PURPOSE. A broadcast is the operational channel
+    // (closures, weather, schedule changes), and `marketingCategory` is an
+    // opt-IN gate that `resolveChannels` puts beyond the operator's reach.
+    // Real campaigns have their own path: scheduleMarketingBlast over
+    // newsletter.announcement / survey.event / marketing.optin. Broadcast keeps
+    // the opt-OUT compliance it already ships: `message_suppressions` on email
+    // and SMS, plus the shared unsubscribe footer on every broadcast email.
+    key: 'broadcast.message',
+    label: 'Announcements from the office',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'messages',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: {},
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: { email: 'broadcast.message', sms: 'broadcast.message', push: 'broadcast.message' },
+    description: 'One-off announcements the office sends to a group of households.',
+  },
 
   // ─────────────────────────────────────────────────────────
   // HOME (pets / profile / home access)

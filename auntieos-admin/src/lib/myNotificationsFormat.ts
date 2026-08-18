@@ -238,6 +238,12 @@ export function notifSections(stream: NotifStream): NotifSection[] {
         { title: 'Visit updates', categories: ['visit'] },
         { title: 'Upcoming care', categories: ['schedule'] },
         { title: 'KinTales', categories: ['kintale'] },
+        // #386: the household's copy of the `messages` bucket. Its only row is
+        // `broadcast.message`, the announcement the office sends to a whole
+        // audience segment; without this section that row falls into the
+        // trailing "Other" catch-all, which is where a gate row goes to be
+        // overlooked.
+        { title: 'Messages', categories: ['messages'] },
         { title: 'Billing and payments', categories: ['invoice'] },
         { title: 'Home and pets', categories: ['home'] },
         { title: 'Account and security', categories: ['account', 'security'] },

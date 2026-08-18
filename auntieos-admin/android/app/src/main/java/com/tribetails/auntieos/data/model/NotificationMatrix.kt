@@ -212,6 +212,10 @@ private val KINFOLK_NOTIF_SECTIONS = listOf(
     NotifSection("Visit updates", listOf("visit")),
     NotifSection("Upcoming care", listOf("schedule")),
     NotifSection("KinTales", listOf("kintale")),
+    // #386: mirrors the web taxonomy in lib/myNotificationsFormat.ts. Its only
+    // row is `broadcast.message`, the office's announcement to a whole audience
+    // segment, which otherwise lands in the trailing "Other" catch-all.
+    NotifSection("Messages", listOf("messages")),
     NotifSection("Billing and payments", listOf("invoice")),
     NotifSection("Home and pets", listOf("home")),
     NotifSection("Account and security", listOf("account", "security")),

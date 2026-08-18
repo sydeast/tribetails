@@ -70,6 +70,11 @@ function resultOf(over: Partial<SendBroadcastResult> = {}): SendBroadcastResult 
     broadcastId: 'b1',
     recipientCount: 3,
     perChannel: { email: { sent: 3, skipped: 0, failed: 0 } },
+    // #386: the callable now reports recipient-level reach alongside the
+    // per-channel tallies, because "matched by the segment" and "actually heard
+    // it" stopped being the same number once broadcasts started honoring
+    // notification preferences.
+    reach: { targeted: 3, reached: 3, suppressedByPrefs: 0 },
     ...over,
   };
 }
@@ -150,10 +155,51 @@ describe('CommunicateCompose screen', () => {
       body: 'Hello kinfolk',
     });
 
-    release(resultOf({ recipientCount: 5 }));
-    await waitFor(() => expect(screen.getByText('Reached 5 kinfolk.')).toBeInTheDocument());
+    release(resultOf({ recipientCount: 5, reach: { targeted: 5, reached: 5, suppressedByPrefs: 0 } }));
+    await waitFor(() => expect(screen.getByText('Reached 5 of 5 kinfolk.')).toBeInTheDocument());
     expect(screen.getByText('3 sent · 0 skipped · 0 failed')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  /**
+   * #386: the headline used to read "Reached N kinfolk" off `recipientCount`,
+   * which is who the SEGMENT matched. Now that a broadcast honors each
+   * household's notification preferences, the two numbers differ, and the
+   * operator has to be told which households heard nothing.
+   */
+  it('reports how many households the broadcast actually reached, and how many have it switched off', async () => {
+    sendBroadcast.mockResolvedValue(
+      resultOf({
+        recipientCount: 9,
+        perChannel: { email: { sent: 4, skipped: 5, failed: 0 } },
+        reach: { targeted: 9, reached: 4, suppressedByPrefs: 5 },
+      }),
+    );
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+
+    expect(
+      await screen.findByText('Reached 4 of 9 kinfolk. 5 households have broadcasts switched off.'),
+    ).toBeInTheDocument();
+  });
+
+  it('claims no reach at all when the response carries none', async () => {
+    // A backend older than the `reach` field: the property is ABSENT, not
+    // undefined. Saying "Reached 3" here would be the confident-wrong-number bug
+    // this screen's own docs warn about.
+    const legacy = resultOf();
+    delete legacy.reach;
+    sendBroadcast.mockResolvedValue(legacy);
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+
+    expect(await screen.findByText('Sent to 3 kinfolk.')).toBeInTheDocument();
   });
 
   it('fails loud, naming the callable, and leaves the form intact for a retry (no data loss)', async () => {
@@ -199,7 +245,7 @@ describe('CommunicateCompose screen', () => {
     await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
     await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
     await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
-    await screen.findByText(/Reached 3 kinfolk/);
+    await screen.findByText(/Reached 3 of 3 kinfolk/);
 
     await userEvent.click(screen.getByRole('button', { name: /send another/i }));
     expect(screen.getByLabelText(/message/i)).toHaveValue('');
