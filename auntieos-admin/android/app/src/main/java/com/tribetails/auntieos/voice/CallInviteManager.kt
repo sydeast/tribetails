@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.voice
 
 import android.content.Context
-import android.media.AudioManager
 import android.util.Log
 import com.twilio.voice.Call
 import com.twilio.voice.CallException
@@ -56,8 +55,7 @@ object CallInviteManager {
     private fun ensureRouter(context: Context): AudioRouter {
         val existing = router
         if (existing != null) return existing
-        val am = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val fresh = AudioRouter(am)
+        val fresh = AudioRouter.create(context)
         router = fresh
         return fresh
     }
@@ -102,10 +100,24 @@ object CallInviteManager {
         activeCall?.disconnect()
         activeCall = null
         _voiceCallState.value = VoiceCallState.Ended
-        // Router instance is intentionally retained until the service stops
-        // and re-creates audio manager state; clearing it here would race with
-        // observers reading currentRoute on the way down.
+        endAudioSession()
         Log.d(TAG, "Call hung up")
+    }
+
+    /**
+     * Hands the audio hardware back at the end of a call, whoever ended it.
+     *
+     * On API 26-30 a Bluetooth call holds an open SCO link and a changed audio
+     * mode, and neither goes away by itself: leaving them behind wedges the next
+     * call, and any media playback, on a headset the user did not choose.
+     *
+     * The router INSTANCE is still retained on purpose - clearing it would race
+     * with observers reading currentRoute on the way down - but its session is
+     * released so nothing outlives the call.
+     */
+    private fun endAudioSession() {
+        router?.release()
+        _isSpeakerOn.value = false
     }
 
     fun setMuted(muted: Boolean) {
@@ -157,12 +169,16 @@ object CallInviteManager {
         override fun onDisconnected(call: Call, callException: CallException?) {
             activeCall = null
             _voiceCallState.value = VoiceCallState.Ended
+            // The far end can hang up too; that path has to unwedge the audio
+            // just as hangUp() does.
+            endAudioSession()
             Log.d(TAG, "Call disconnected: ${callException?.message}")
         }
 
         override fun onConnectFailure(call: Call, callException: CallException) {
             activeCall = null
             _voiceCallState.value = VoiceCallState.Ended
+            endAudioSession()
             Log.e(TAG, "Call connect failure: ${callException.message}")
         }
 
