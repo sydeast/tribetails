@@ -100,6 +100,34 @@ describe('requestSignedUpload', () => {
     expect(result.signature).toBe('abc123signature');
   });
 
+  /**
+   * Mark 3 of the 2026-08-17 walk: "cannot upload media", and the walk's own
+   * capture of the reply, 401 {"error":"invalid_bearer_token"}. The signer is
+   * one of only two endpoints verified with `checkRevoked`, so it refuses a
+   * cached token the rest of the app is still using happily.
+   */
+  it('refreshes the token and retries once when the signer refuses the cached one', async () => {
+    const getIdToken = vi.fn(async (force?: boolean) => (force === true ? 'fresh-token' : 'id-token-abc'));
+    mockAuth.currentUser = { uid: 'admin-uid-1', getIdToken };
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'invalid_bearer_token' }))
+      .mockResolvedValueOnce(jsonResponse(200, signedUpload()));
+    const result = await requestSignedUpload('KINFOLK', 'kf1');
+    expect(result.signature).toBe('abc123signature');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [, retry] = vi.mocked(fetch).mock.calls[1] as [string, RequestInit];
+    expect((retry.headers as Record<string, string>).Authorization).toBe('Bearer fresh-token');
+  });
+  it('tells the operator what to do when a FRESH token is refused too', async () => {
+    mockAuth.currentUser = {
+      uid: 'admin-uid-1',
+      getIdToken: vi.fn(async () => 'any-token'),
+    };
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, { error: 'invalid_bearer_token' }));
+    // Not "HTTP 401: invalid_bearer_token", which is what sent this to the
+    // walk as "cannot upload media" with no idea why.
+    await expect(requestSignedUpload('KINFOLK', 'kf1')).rejects.toThrow(/sign out and back in/i);
+  });
   it('fails loud on a non-200, naming the status and server message', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(403, { error: 'permission-denied' }));
     await expect(requestSignedUpload('KINFOLK', 'kf1')).rejects.toThrow(/403.*permission-denied/i);
