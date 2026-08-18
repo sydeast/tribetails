@@ -54,6 +54,15 @@ export function longDateLabel(raw: string | null): string | null {
   return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 }
 
+/**
+ * "Aug 18, 2026" from epoch millis, or null when there is no moment to name.
+ * Separate from `longDateLabel` because the decision timestamp is a real
+ * Firestore time rather than one of this collection's free-text date strings.
+ */
+export function longDateLabelFromMs(ms: number | null): string | null {
+  if (ms === null || !Number.isFinite(ms)) return null;
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
 /** The `.cal` tile (month + zero-padded day). Falls back to an em-dash tile when unparseable. */
 export function calTileFor(raw: string | null): { month: string; day: string } {
   const ms = parseDateMs(raw);
@@ -133,6 +142,31 @@ export function creditTargetLabel(target: InvoiceDto['creditTarget']): string {
  */
 export function partPaidStatusInfo(): InvoiceStatusInfo {
   return { label: 'Part paid', chipLabel: 'PART PAID', cssClass: 'partpaid', invClass: 'due' };
+}
+/**
+ * The chip and label for a quote the household TURNED DOWN.
+ *
+ * Another display refinement rather than a ninth status, and for the same
+ * reason as the part-paid one above: `denyQuote` deliberately leaves the doc in
+ * `quote` status (see `functions/src/portal/quoteDecision.ts`), because
+ * `cancelled` means the office withdrew the offer and would also drop the row
+ * off this screen entirely. So the state is still `quote` and the only thing
+ * that changes is what it is called. "QUOTE" on a quote nobody can answer any
+ * more would leave the household waiting for a decision they already made.
+ */
+export function declinedQuoteStatusInfo(): InvoiceStatusInfo {
+  return { label: 'Declined', chipLabel: 'DECLINED', cssClass: 'cancelled', invClass: '' };
+}
+/**
+ * The status info for one invoice, decision included: the single place the two
+ * screens agree on what a quote with an answer on it is called.
+ */
+export function invoiceRowStatusInfo(
+  invoice: Pick<InvoiceDto, 'status' | 'creditRedeemedAtMs' | 'partiallyPaid' | 'quoteDecision'>,
+): InvoiceStatusInfo {
+  if (invoice.status === 'quote' && invoice.quoteDecision === 'denied') return declinedQuoteStatusInfo();
+  if (invoice.partiallyPaid) return partPaidStatusInfo();
+  return invoiceStatusInfo(invoice.status, invoice.creditRedeemedAtMs);
 }
 /**
  * "$20.00 of $40.00 paid" for a part-paid invoice, or null when it is not one.

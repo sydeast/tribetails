@@ -4,8 +4,10 @@ import {
   creditTargetLabel,
   formatCentsUsd,
   formatUsd,
+  invoiceRowStatusInfo,
   invoiceStatusInfo,
   longDateLabel,
+  longDateLabelFromMs,
   parseDateMs,
   partPaidStatusInfo,
   partPaidSummary,
@@ -140,5 +142,28 @@ describe('part-paid rendering (the portal must not call it paid or unpaid)', () 
     expect(partPaidSummary({ partiallyPaid: false, paidCents: 0, total: 40 })).toBeNull();
     // Not even when a stale paidCents is present without the flag.
     expect(partPaidSummary({ partiallyPaid: false, paidCents: 2000, total: 40 })).toBeNull();
+  });
+});
+
+describe('a quote the household answered (issue #385)', () => {
+  const quote = { status: 'quote', creditRedeemedAtMs: null, partiallyPaid: false } as const;
+  it('reads DECLINED once they have turned it down, not QUOTE', () => {
+    // "QUOTE" on a quote nobody can answer any more leaves the household
+    // waiting for a decision they already made.
+    expect(invoiceRowStatusInfo({ ...quote, quoteDecision: 'denied' }).chipLabel).toBe('DECLINED');
+    expect(invoiceRowStatusInfo({ ...quote, quoteDecision: null }).chipLabel).toBe('QUOTE');
+  });
+  it('leaves every other invoice exactly as it was', () => {
+    expect(invoiceRowStatusInfo({ status: 'open', creditRedeemedAtMs: null, partiallyPaid: false, quoteDecision: null }))
+      .toEqual(invoiceStatusInfo('open', null));
+    expect(invoiceRowStatusInfo({ status: 'open', creditRedeemedAtMs: null, partiallyPaid: true, quoteDecision: null }))
+      .toEqual(partPaidStatusInfo());
+    // An ACCEPTED quote is an open invoice by then, and reads like one.
+    expect(invoiceRowStatusInfo({ status: 'open', creditRedeemedAtMs: null, partiallyPaid: false, quoteDecision: 'accepted' }).chipLabel)
+      .toBe('PENDING');
+  });
+  it('names the day a decision was made, and says nothing when there is none', () => {
+    expect(longDateLabelFromMs(Date.UTC(2026, 7, 18, 18, 0))).toContain('2026');
+    expect(longDateLabelFromMs(null)).toBeNull();
   });
 });

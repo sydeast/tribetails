@@ -4,6 +4,7 @@ package com.kinfolk.portal.screens.invoices
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -12,6 +13,7 @@ import com.kinfolk.portal.portal.InvoiceLineItem
 import com.kinfolk.portal.portal.InvoiceStatus
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
+import com.kinfolk.portal.portal.QuoteDecision
 import com.kinfolk.portal.screens.setThemedContent
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -150,5 +152,101 @@ class InvoiceDetailScreenTest {
         }
         waitForIdle()
         onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
+    // ---- Answering a quote (issue #385) ----
+    //
+    // Before this, a quote decoded as `Open` on this client: the household saw a
+    // proposal presented as a pending bill, with a Pay button and no way to say
+    // yes or no to it.
+    private fun quote(
+        decision: QuoteDecision? = null,
+        decidedAtMs: Long? = null,
+    ) = openInvoice().copy(
+        status = InvoiceStatus.Quote,
+        quoteDecision = decision,
+        quoteDecidedAtMs = decidedAtMs,
+    )
+    @Test
+    fun quote_offersBothAnswersAndNoPayButton() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                quote(),
+                payMethods = listOf(PayMethod("stripe", "Pay with Credit Card", PayMethodKind.Checkout, null)),
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Accept quote").assertIsDisplayed()
+        onNodeWithText("Decline").assertIsDisplayed()
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
+    @Test
+    fun quote_acceptAndDeclineReportWhichAnswerWasGiven() = runComposeUiTest {
+        val answers = mutableListOf<Boolean>()
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", quote(), onQuoteDecision = { answers.add(it) }, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Accept quote").performClick()
+        waitForIdle()
+        assertEquals(listOf(true), answers)
+    }
+    @Test
+    fun quote_declineReportsFalse() = runComposeUiTest {
+        val answers = mutableListOf<Boolean>()
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", quote(), onQuoteDecision = { answers.add(it) }, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Decline").performClick()
+        waitForIdle()
+        assertEquals(listOf(false), answers)
+    }
+    @Test
+    fun quote_bothButtonsGoDeadWhileAnAnswerIsInFlight() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", quote(), decidingQuote = true, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Working…").assertIsNotEnabled()
+        onNodeWithText("Decline").assertIsNotEnabled()
+    }
+    @Test
+    fun quote_showsTheServersRefusalRatherThanSwallowingIt() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                quote(),
+                quoteError = "This quote was only good through 2026-08-01.",
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("This quote was only good through 2026-08-01.").assertIsDisplayed()
+    }
+    @Test
+    fun quote_alreadyDeclined_saysSoAndOffersNoButtons() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", quote(QuoteDecision.Denied, 1_755_000_000_000L), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("You declined this quote", substring = true).assertIsDisplayed()
+        onNodeWithText("Accept quote").assertDoesNotExist()
+        onNodeWithText("Decline").assertDoesNotExist()
+    }
+    @Test
+    fun quote_accepted_isAnOpenInvoiceThatSaysWhoAcceptedIt() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice().copy(quoteDecision = QuoteDecision.Accepted, quoteDecidedAtMs = 1_755_000_000_000L),
+                payMethods = listOf(PayMethod("stripe", "Pay with Credit Card", PayMethodKind.Checkout, null)),
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("You accepted this quote", substring = true).assertIsDisplayed()
+        onNodeWithText("Pay with Credit Card").assertIsDisplayed()
     }
 }

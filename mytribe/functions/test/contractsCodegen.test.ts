@@ -283,7 +283,10 @@ describe('the committed Contracts module', () => {
 
   it('covers every callable in the registry, both directions where a schema exists', () => {
     const model = readModel(INVOICE_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(22);
+    // 24 since issue #385: acceptQuote and denyQuote joined the invoice
+    // family (a quote is an invoice in QUOTE status, so its two decision
+    // callables belong to this registry rather than a fourth one).
+    expect(model.callables).toHaveLength(24);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

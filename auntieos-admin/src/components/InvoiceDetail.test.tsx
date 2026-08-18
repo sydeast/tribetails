@@ -1982,3 +1982,45 @@ describe('InvoiceDetail dispute deadline and reason', () => {
     expect(deadlineLine()).toBeNull();
   });
 });
+/**
+ * The household's answer to a quote (issue #385). Until `acceptQuote` /
+ * `denyQuote` existed there was no answer to show: the two catalog keys had no
+ * emitter, and a quote sat in this panel until somebody asked in person.
+ */
+describe('InvoiceDetail quote decision', () => {
+  it('says a declined quote was declined, beside its unchanged QUOTE chip', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'quote', quoteDecision: 'denied', quoteDecidedAt: fakeTs('2026-08-18T15:00:00Z') })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Quote declined')).toBeInTheDocument();
+    expect(screen.getByText(/declined this quote on/)).toBeInTheDocument();
+    expect(screen.getByText('QUOTE')).toBeInTheDocument();
+  });
+  it('says an accepted quote was accepted, on what is now an open invoice', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'open', quoteDecision: 'accepted', quoteDecidedAt: fakeTs('2026-08-18T15:00:00Z') })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Quote accepted')).toBeInTheDocument();
+    expect(screen.getByText(/accepted this quote on/)).toBeInTheDocument();
+  });
+  it('reads a quote nobody has answered as exactly that: no banner at all', () => {
+    render(<InvoiceDetail invoice={entry({ status: 'quote' })} onClose={vi.fn()} />);
+    expect(screen.queryByText('Quote declined')).toBeNull();
+    expect(screen.queryByText('Quote accepted')).toBeNull();
+  });
+  it('ignores a decision value the server would never write', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'quote', quoteDecision: 'maybe' as unknown as 'denied' })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('Quote declined')).toBeNull();
+  });
+});

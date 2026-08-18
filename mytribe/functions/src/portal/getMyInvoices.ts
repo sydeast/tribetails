@@ -8,6 +8,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
 import { validateResponse } from '../lib/callableResponse';
+import { quoteDecisionOf } from '../lib/quoteDecision';
 import {
   CentsSchema,
   DollarsSchema,
@@ -131,6 +132,24 @@ export const InvoiceDtoSchema = z
     paymentsHistory: z.string().nullable(),
     address: z.string().nullable(),
     viewed: z.boolean(),
+    /**
+     * What the household said when they were shown this quote, or null when
+     * they have not answered yet (and on every invoice that was never a quote).
+     *
+     * `.nullable()` rather than `.optional()`, same call as `editScope` above
+     * and for the same reason: the absent case is a present null every client
+     * already has a branch for, while an absent KEY would be a third state
+     * nobody wrote one for.
+     *
+     * AN ACCEPTED QUOTE NO LONGER READS AS A QUOTE. `acceptQuote` re-stamps the
+     * doc, so `status` comes back 'open' and this field is what still says the
+     * household is the reason. A DECLINED quote keeps `status: 'quote'` on
+     * purpose (`portal/quoteDecision.ts` says why at length), so this field is
+     * the only thing that distinguishes it from one still waiting for an answer.
+     */
+    quoteDecision: z.enum(['accepted', 'denied']).nullable(),
+    /** Epoch millis of the decision above, or null when there has not been one. */
+    quoteDecidedAtMs: z.number().nullable(),
     // Credit-specific (only meaningful when status is 'credit' or 'redeemed';
     // 'redeemed' is what the stamp writes once `creditRedeemedAt` is set).
     // Account balance is the only redemption target: credits are NOT refundable.
@@ -303,6 +322,8 @@ export async function getMyInvoicesHandler(
       paymentsHistory: stringOrNull(data['paymentsHistory']),
       address: stringOrNull(data['address']),
       viewed: boolFrom(data['viewed']),
+      quoteDecision: quoteDecisionOf(data['quoteDecision']),
+      quoteDecidedAtMs: tsMillis(data['quoteDecidedAt']),
       creditAmountCents: isCredit ? Math.round(Math.abs(amountDue !== 0 ? amountDue : total) * 100) : null,
       creditTarget: isCredit && data['creditTarget'] === 'accountBalance' ? 'accountBalance' : null,
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,

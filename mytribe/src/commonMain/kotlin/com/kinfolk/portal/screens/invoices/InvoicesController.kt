@@ -45,6 +45,18 @@ class InvoicesController internal constructor(
         private set
     var redeeming by mutableStateOf<String?>(null)
         private set
+    /** Invoice id whose quote answer is in flight (null = none), and the answer. */
+    var decidingQuote by mutableStateOf<String?>(null)
+        private set
+    /** The server's refusal, shown on the quote panel itself rather than as a banner. */
+    var quoteError by mutableStateOf<String?>(null)
+        private set
+    /** Which quote the refusal above belongs to, so it cannot bleed onto another one. */
+    var quoteErrorInvoiceId by mutableStateOf<String?>(null)
+        private set
+    /** The refusal for [invoiceId], or null when the last one was about a different quote. */
+    fun quoteErrorFor(invoiceId: String): String? =
+        if (quoteErrorInvoiceId == invoiceId) quoteError else null
     var statusBanner by mutableStateOf<String?>(null)
         private set
     // 16.2: invoiceId currently being rendered to PDF (null = none in flight).
@@ -132,6 +144,41 @@ class InvoicesController internal constructor(
         }
     }
 
+    /**
+     * THE HOUSEHOLD'S ANSWER TO A QUOTE (issue #385).
+     *
+     * One entry point for both answers, so two taps cannot be in flight at
+     * once, and always followed by a reload: accepting re-stamps the doc as an
+     * open bill server-side, and the screens read this controller's copy.
+     *
+     * The failure is kept as [quoteError] rather than folded into [error]: the
+     * refusals here are sentences about THIS quote ("already declined", "only
+     * good through the 12th") and belong beside the buttons that caused them.
+     */
+    fun startQuoteDecision(invoice: Invoice, accept: Boolean) {
+        if (decidingQuote != null) return
+        decidingQuote = invoice.id
+        quoteError = null
+        quoteErrorInvoiceId = null
+        statusBanner = null
+        scope.launch {
+            try {
+                if (accept) {
+                    portalApi.acceptQuote(invoiceId = invoice.id, kinfolkId = kinfolkId)
+                    statusBanner = "Quote accepted. It is an invoice now."
+                } else {
+                    portalApi.denyQuote(invoiceId = invoice.id, kinfolkId = kinfolkId)
+                    statusBanner = "Quote declined. Your Auntie has been told."
+                }
+                reload()
+            } catch (t: Throwable) {
+                quoteError = t.message ?: "Could not send your answer"
+                quoteErrorInvoiceId = invoice.id
+            } finally {
+                decidingQuote = null
+            }
+        }
+    }
     fun startRedeem(invoice: Invoice, target: CreditTarget) {
         if (redeeming != null) return
         redeeming = invoice.id

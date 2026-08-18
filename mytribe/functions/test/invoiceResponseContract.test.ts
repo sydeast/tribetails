@@ -97,6 +97,8 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     paymentsHistory: null,
     address: '1 Main St',
     viewed: false,
+    quoteDecision: null,
+    quoteDecidedAtMs: null,
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,

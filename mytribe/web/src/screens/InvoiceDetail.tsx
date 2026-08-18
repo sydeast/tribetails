@@ -1,15 +1,22 @@
 import { Link, useParams } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMyInvoicePdf, getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
+import {
+  acceptQuote,
+  denyQuote,
+  getMyInvoicePdf,
+  getMyInvoices,
+  payInvoice,
+  redeemCredit,
+} from '../api/invoicesApi';
 import { getBusinessContact, getMyHome } from '../api/portal';
 import type { PayMethod } from '../api/types';
 import {
   creditTargetLabel,
   formatCentsUsd,
   formatUsd,
-  invoiceStatusInfo,
+  invoiceRowStatusInfo,
   longDateLabel,
-  partPaidStatusInfo,
+  longDateLabelFromMs,
   partPaidSummary,
 } from '../lib/invoiceFormat';
 import { useSignOut } from '../lib/auth';
@@ -71,6 +78,24 @@ export function InvoiceDetail() {
     },
   });
 
+  /**
+   * THE HOUSEHOLD'S ANSWER TO A QUOTE (issue #385). One mutation for both
+   * answers rather than two, so the panel can never show two spinners at once
+   * and a second tap while the first is in flight is impossible.
+   *
+   * Both invalidate the invoices cache on success: accepting re-stamps the doc
+   * as an open bill, and this screen reads the row out of that cache, so
+   * without the refetch the household would press Accept and watch nothing
+   * change.
+   */
+  const decideQuote = useMutation({
+    mutationFn: (decision: 'accept' | 'decline') =>
+      decision === 'accept' ? acceptQuote(invoiceId, kinfolkId) : denyQuote(invoiceId, kinfolkId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
+    },
+  });
+
   // These three used to fail silently — a rejected mutation just stopped the
   // spinner with nothing telling the kinfolk why (same class of bug KinTales'
   // comment-post had before it was fixed). Surface each distinctly.
@@ -119,7 +144,7 @@ export function InvoiceDetail() {
   // A part-paid invoice is neither paid nor untouched, and this is the screen a
   // paying household reads. It keeps the open bucket and the Pay button; only
   // what it SAYS about itself changes. See lib/invoiceFormat.ts.
-  const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  const status = invoiceRowStatusInfo(inv);
   const partPaid = partPaidSummary(inv);
   // The whole credit family: the stamp writes `redeemed` once the credit is
   // spent, and a redeemed credit still carries every credit field this screen
@@ -141,6 +166,12 @@ export function InvoiceDetail() {
   // stamped states — would have offered a Pay button on a quote (not yet a
   // bill) and on a draft (never sent).
   const payable = inv.status === 'open' && inv.amountDue > 0;
+  // A quote still waiting for an answer. `quoteDecision` is what separates it
+  // from one already answered: a DECLINED quote keeps `status: 'quote'` on the
+  // server (see functions/src/portal/quoteDecision.ts), and an ACCEPTED one is
+  // an open invoice by the time it gets back here.
+  const isQuote = inv.status === 'quote';
+  const awaitingDecision = isQuote && inv.quoteDecision === null;
   // Deploy skew: an old server, or a failed `getMyHome` fetch, means
   // `payMethods` never arrives — fall back to Stripe alone rather than
   // leaving `payable` true with no way to act on it.
@@ -332,6 +363,67 @@ export function InvoiceDetail() {
           </div>
 
           <div className="stack">
+            {/* THE QUOTE PANEL (issue #385). A quote is a proposal, so this is
+                the one screen where the household is asked a question rather
+                than shown a figure. It sits at the top of the side stack, above
+                the credit panel, because an unanswered quote is the only thing
+                on this page waiting on them. */}
+            {awaitingDecision && (
+              <section className="glass card d3">
+                <div className="sectlabel">This is a quote</div>
+                <p className="note">
+                  Nothing has been billed yet. Accept it and it becomes an invoice you can pay.
+                  Decline it and your Auntie will know you have passed on it.
+                  {inv.dueDate ? ` This quote is good through ${longDateLabel(inv.dueDate)}.` : ''}
+                </p>
+                <div className="doc-actions">
+                  <button
+                    type="button"
+                    className="btn grad"
+                    onClick={() => decideQuote.mutate('accept')}
+                    disabled={decideQuote.isPending}
+                  >
+                    {decideQuote.isPending && decideQuote.variables === 'accept' ? 'Working…' : 'Accept quote'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => decideQuote.mutate('decline')}
+                    disabled={decideQuote.isPending}
+                  >
+                    {decideQuote.isPending && decideQuote.variables === 'decline' ? 'Working…' : 'Decline'}
+                  </button>
+                </div>
+                {decideQuote.isError && (
+                  /* The SERVER'S sentence, not a generic one: it is the side
+                     that knows whether this quote expired, was already answered
+                     in another tab, or belongs to somebody else. */
+                  <p className="doc-err">
+                    {mutationErrorMessage(decideQuote.error, "Couldn't send your answer. Try again.")}
+                  </p>
+                )}
+              </section>
+            )}
+            {isQuote && inv.quoteDecision === 'denied' && (
+              <section className="glass card d3">
+                <div className="sectlabel">Quote declined</div>
+                <p className="note">
+                  {'✓'} You declined this quote
+                  {longDateLabelFromMs(inv.quoteDecidedAtMs) ? ` on ${longDateLabelFromMs(inv.quoteDecidedAtMs)}` : ''}.
+                  Nothing has been billed. Ask your Auntie if you would like a fresh one.
+                </p>
+              </section>
+            )}
+            {inv.quoteDecision === 'accepted' && (
+              <section className="glass card d3">
+                <div className="sectlabel">Quote accepted</div>
+                <p className="note" style={{ color: 'var(--teal)' }}>
+                  {'✓'} You accepted this quote
+                  {longDateLabelFromMs(inv.quoteDecidedAtMs) ? ` on ${longDateLabelFromMs(inv.quoteDecidedAtMs)}` : ''}.
+                  It is an invoice now, and the amount above is what is due.
+                </p>
+              </section>
+            )}
             {isCredit && !redeemed && (
               <section className="glass card credit-grad d3">
                 <div className="ckick">Available Credit</div>

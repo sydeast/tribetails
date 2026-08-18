@@ -44,6 +44,8 @@ import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.invoiceIsoDatePrefixOrNull
+import com.tribetails.auntieos.domain.QuoteDecision
+import com.tribetails.auntieos.domain.invoiceQuoteDecision
 import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
@@ -638,7 +640,15 @@ private fun InvoiceRow(
         "Overdue" to AuntieStatusTone.Error
     } else {
         when (state) {
-            InvoiceState.QUOTE -> "Quote" to AuntieStatusTone.Purple
+            // A quote the household turned down keeps QUOTE status (issue #385:
+            // `cancelled` would mean the office withdrew it), so the label is
+            // what tells a dead quote from one still out for an answer.
+            InvoiceState.QUOTE ->
+                if (invoiceQuoteDecision(invoice) == QuoteDecision.DENIED) {
+                    "Quote declined" to AuntieStatusTone.Muted
+                } else {
+                    "Quote" to AuntieStatusTone.Purple
+                }
             InvoiceState.DRAFT -> "Draft" to AuntieStatusTone.Muted
             InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
             InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal

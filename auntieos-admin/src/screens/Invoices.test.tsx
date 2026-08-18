@@ -1098,3 +1098,33 @@ describe('Invoices row, dispute marker', () => {
     expect(screen.queryByText('DISPUTED')).toBeNull();
   });
 });
+/**
+ * A quote the household turned down (issue #385). It keeps `status: 'quote'`
+ * server-side, so without a marker it is indistinguishable in the Quote filter
+ * from one still waiting for an answer.
+ */
+describe('Invoices row, declined-quote marker', () => {
+  it('marks a declined quote while leaving its QUOTE chip alone', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'q1', invoiceNumber: 'DEAD', status: 'quote', quoteDecision: 'denied' }),
+        entry({ _id: 'q2', invoiceNumber: 'LIVE', status: 'quote' }),
+      ]),
+    );
+    render(<Invoices />);
+    const dead = screen.getByText('#DEAD').closest('.invoices__row') as HTMLElement;
+    const live = screen.getByText('#LIVE').closest('.invoices__row') as HTMLElement;
+    expect(within(dead).getByText('DECLINED')).toBeInTheDocument();
+    // The doc really is still a quote; the marker sits beside the state chip.
+    expect(within(dead).getByText('QUOTE')).toBeInTheDocument();
+    expect(within(live).queryByText('DECLINED')).toBeNull();
+  });
+  it('does not mark an accepted quote, which is an ordinary open invoice by then', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'open', quoteDecision: 'accepted' })]),
+    );
+    render(<Invoices />);
+    expect(screen.queryByText('DECLINED')).toBeNull();
+    expect(screen.getByText('OPEN')).toBeInTheDocument();
+  });
+});

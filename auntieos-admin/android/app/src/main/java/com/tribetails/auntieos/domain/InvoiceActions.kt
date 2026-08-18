@@ -77,6 +77,21 @@ fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.t
     else -> null
 }
 
+/** The two answers a household can give a quote (issue #385). */
+enum class QuoteDecision { ACCEPTED, DENIED }
+/**
+ * The household's answer to a quote, or null when there is none.
+ *
+ * Verified rather than trusted, exactly like [invoiceStateOrNull] above: a
+ * value outside the two the server writes is evidence something else wrote the
+ * field, and it reads as "no answer" instead of being normalized into one.
+ */
+fun invoiceQuoteDecision(invoice: Invoice): QuoteDecision? =
+    when (invoice.quoteDecision?.trim()?.lowercase()) {
+        "accepted" -> QuoteDecision.ACCEPTED
+        "denied" -> QuoteDecision.DENIED
+        else -> null
+    }
 /**
  * The stored edit-scope stamp: how much of this invoice the server will let
  * an edit change. Mirrors the server's `InvoiceEditScope`

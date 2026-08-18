@@ -5,6 +5,7 @@ import {
   invoiceDisputeReasonGloss,
   invoiceDisputeTimeLeft,
   invoiceLineItems,
+  invoiceQuoteDecision,
   invoiceStamp,
   isArchivedInvoice,
   type InvoiceDispute,
@@ -256,6 +257,17 @@ function InvoiceDisputeBanner({ dispute, nowMs }: { dispute: InvoiceDispute; now
  *
  * Negative is refused for the same reason: a negative fee is not a fee.
  */
+/**
+ * " on May 21, 2026", or an empty string when the doc carries no decision time.
+ * A sentence that reads correctly either way, rather than a fabricated date.
+ */
+function quoteDecidedLabel(invoice: InvoiceEntry): string {
+  // `.toDate()`, the accessor every other timestamp on this screen reads
+  // through (`bookingFormat.ts`, `kinTaleList.ts`), rather than `.toMillis()`.
+  const at = invoice.quoteDecidedAt?.toDate?.();
+  if (!(at instanceof Date) || Number.isNaN(at.getTime())) return '';
+  return ` on ${at.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}`;
+}
 export function parseOptionalMoney(raw: string): number | null {
   const trimmed = raw.trim();
   if (trimmed === '') return 0;
@@ -543,6 +555,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const storedLines = invoiceLineItems(invoice);
   const archived = isArchivedInvoice(invoice);
   const dispute = invoiceDispute(invoice);
+  // The household's answer to a quote (issue #385). Read through the accessor
+  // rather than off the cast, same rule as the stamp and the dispute.
+  const quoteDecision = invoiceQuoteDecision(invoice);
   // The clock, read once per render and passed down rather than reached for
   // inside the banner. The countdown does NOT tick: a self-updating clock on a
   // panel measured in days would re-render the whole detail view every second to
@@ -968,6 +983,31 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         {/* FIRST OF THE BANNERS, above the disagreement one, because money that
             has left the balance outranks two figures that disagree on screen. */}
         {dispute !== null && <InvoiceDisputeBanner dispute={dispute} nowMs={nowMs} />}
+        {/* WHAT THE HOUSEHOLD SAID ABOUT THIS QUOTE. Before issue #385 they had
+            no way to say anything: `quote.accepted` and `quote.denied` were two
+            switches on the notification gate with nothing behind them, and a
+            quote sat in this panel until an operator asked in person.
+            The declined case is the one that needs saying out loud. A declined
+            quote keeps `status: 'quote'` (cancelling it would be the operator
+            withdrawing it, which is a different fact and not what happened), so
+            without this banner the panel reads as a quote still out for an
+            answer that has already come back. */}
+        {quoteDecision !== null && (
+          <Banner
+            tone={quoteDecision === 'accepted' ? 'success' : 'info'}
+            title={quoteDecision === 'accepted' ? 'Quote accepted' : 'Quote declined'}
+          >
+            {quoteDecision === 'accepted' ? (
+              <p>
+                {`The household accepted this quote${quoteDecidedLabel(invoice)}, so it is an invoice now and the balance above is owed.`}
+              </p>
+            ) : (
+              <p>
+                {`The household declined this quote${quoteDecidedLabel(invoice)}. Nothing is owed and nothing has been cancelled: revising it means issuing a new quote, which is what tells them there is something new to look at.`}
+              </p>
+            )}
+          </Banner>
+        )}
 
         {/* THE LINES-VERSUS-TOTAL DISAGREEMENT BANNER.
             It names BOTH figures and reconciles NEITHER. It does not pick a
