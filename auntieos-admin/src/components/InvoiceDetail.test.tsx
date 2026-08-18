@@ -410,6 +410,32 @@ describe('InvoiceDetail', () => {
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
 
+  /**
+   * Mark 10 of the 2026-08-17 walk: "why green box when there was a failure".
+   * `markInvoicePaid` had settled the invoice, `recordPayment` had answered 400,
+   * and the sentence saying so was appended to a banner still rendering green
+   * under the title "Done". The words were right and the colour was not, and
+   * the colour is what gets read first.
+   */
+  it('turns the banner to a warning when the ledger row did not save', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    recordPayment.mockRejectedValue(new Error('recordPayment validation failed'));
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    expect(await screen.findByText(/payment ledger row did not save/i)).toBeInTheDocument();
+    const banner = screen.getByText(/payment ledger row did not save/i).closest('[data-tone]');
+    expect(banner).toHaveAttribute('data-tone', 'warning');
+    expect(screen.queryByText(/^Done$/)).toBeNull();
+  });
+  it('stays green when everything landed, so the warning tone keeps meaning something', async () => {
+    markInvoicePaid.mockResolvedValue(settledResult());
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const banner = (await screen.findByText(/paid in full/i)).closest('[data-tone]');
+    expect(banner).toHaveAttribute('data-tone', 'success');
+  });
   it('records a PARTIAL amount and reports the balance still owed rather than claiming paid', async () => {
     // The defect this whole change exists to fix: the panel used to report
     // "Invoice marked paid." for a payment that covered half the invoice.

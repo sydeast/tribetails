@@ -121,6 +121,8 @@ fun NewBookingWizard(
     kinLoading: Boolean,
     kinError: String?,
     serviceRates: Map<String, String>,
+    /** Stated lengths, sparse; a type absent here falls back to the parse of its name. */
+    serviceDurations: Map<String, String> = emptyMap(),
     availability: BookingAvailability,
     inFlight: Boolean,
     error: String?,
@@ -142,7 +144,8 @@ fun NewBookingWizard(
     val closedDayName: (LocalDate) -> String? = { availability.closedDayName(it) }
     val blocker = stepBlocker(state, step, nowMs, closedDayName)
     val visits = remember(state) { buildVisits(state) }
-    val serviceOptions = remember(serviceRates) { serviceOptionsFromRates(serviceRates) }
+    val serviceOptions =
+        remember(serviceRates, serviceDurations) { serviceOptionsFromRates(serviceRates, serviceDurations) }
 
     fun goTo(target: BookingWizardStep) {
         step = target

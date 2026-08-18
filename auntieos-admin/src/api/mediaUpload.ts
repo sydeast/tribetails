@@ -1,5 +1,6 @@
 import { addDoc, collection } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
 
 /**
  * Media UPLOAD, the write-side counterpart to `api/gallery.ts` (list/read
@@ -96,23 +97,33 @@ export async function requestSignedUpload(
   entityType: UploadEntityType,
   entityId: string,
 ): Promise<CloudinarySignedUpload> {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Not signed in. Sign in as an admin, then try the upload again.');
-
-  const token = await user.getIdToken();
   const folder = `tribetails/${entityType.toLowerCase()}/${entityId}`;
 
-  const resp = await fetch(SIGN_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ folder, entityType, entityId }),
-  });
+  // Token handling, including the refresh-and-retry when the signer rejects a
+  // stale one, lives in adminApiFetch; see its header for the 401 this closes.
+  let resp: Response;
+  try {
+    resp = await adminApiFetch(SIGN_ENDPOINT, 'uploading media', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, entityType, entityId }),
+    });
+  } catch (err) {
+    if (err instanceof NotSignedInError) {
+      throw new Error('Not signed in. Sign in as an admin, then try the upload again.');
+    }
+    throw err;
+  }
 
   if (!resp.ok) {
     const message = await readErrorMessage(resp);
+    // A 401 that survived the retry is an account problem, not a hiccup, and
+    // "Upload signing failed (HTTP 401): invalid_bearer_token" tells the
+    // operator nothing they can act on.
+    if (resp.status === 401) {
+      throw new Error(
+        'Upload signing refused this sign-in, even after refreshing it. Sign out and back in; if it keeps refusing, the account may have been revoked.',
+      );
+    }
     throw new Error(`Upload signing failed (HTTP ${resp.status}): ${message}`);
   }
 

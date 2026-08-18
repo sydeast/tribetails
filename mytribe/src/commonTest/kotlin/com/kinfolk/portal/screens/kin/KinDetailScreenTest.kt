@@ -20,7 +20,6 @@ class KinDetailScreenTest {
         ageYears = 4.0,
         photoUrl = null,
         status = status,
-        aiBlurb = null,
         feedingInstructions = "Two cups, morning and night",
         walkingInstructions = null,
         medications = null,

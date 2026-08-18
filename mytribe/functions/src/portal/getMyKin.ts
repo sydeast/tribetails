@@ -19,8 +19,25 @@ interface KinDto {
   ageYears: number | null;
   photoUrl: string | null;
   status: 'active' | 'noLongerWithUs';
-  /** AI-summarized blurb from AuntieOS `the_411/{kinId}` (rawSummary or personality). */
-  aiBlurb: string | null;
+  /**
+   * `aiBlurb` IS GONE, AND MUST NOT COME BACK. It carried
+   * `the_411/{legacyKinId}.rawSummary`, falling back to `.personality`, straight
+   * to the signed-in household, and the portal rendered it under "ABOUT / The
+   * basics" on the Kin detail screen (`KinDetailScreen.kt:206`).
+   *
+   * The_411 and dossiers are ADMIN-ONLY. Kinfolk never see them. That is a
+   * standing operator ruling, and `firestore.rules:873` already gates the
+   * collection to `isAuntie()` — this callable reached around it, because the
+   * Admin SDK does not evaluate rules. Only households whose kin carried a
+   * `legacyKinId` were affected, which is why nobody noticed.
+   *
+   * A suite was pinning it in place: `test/getMyKin.test.ts` asserted
+   * `aiBlurb === 'Mr Biggles is pure joy.'`, so the leak was green.
+   *
+   * If a kin-facing "about" blurb is wanted, it is a different field with
+   * content the operator writes for the household, not a summary of internal
+   * notes rewritten by a model.
+   */
   feedingInstructions: string | null;
   walkingInstructions: string | null;
   medications: string | null;
@@ -36,16 +53,15 @@ interface GetMyKinResult {
 /**
  * Returns the kin (pets) for the signed-in kinfolk.
  *
- * Reads from two sources, merged:
- *  1. `families/{kinfolkId}/kin/{kinId}`, MyTribe structured fields (name, breed, photo, status, instructions)
- *  2. `the_411/{kinId}`, AuntieOS AI summary (rawSummary, personality, dietaryDetails, etc.)
+ * ONE SOURCE: `families/{kinfolkId}/kin/{kinId}`, the MyTribe structured fields
+ * (name, breed, photo, status, instructions).
  *
- * The `the_411` collection is keyed by integer-string `kinId`. Production data
- * has no link from kinId to kinfolkId today, we look up `the_411` only for
- * structured kin docs that carry a `legacyKinId` field referencing them.
- *
- * If structured kin docs don't exist yet, returns empty list (NOT the_411 contents,
- * because those are unauth-bounded by kinfolkId until AuntieOS adds the link).
+ * It used to be two. The second was `the_411/{legacyKinId}`, the AuntieOS AI
+ * summary, merged in as `aiBlurb`. That collection is admin-only by operator
+ * ruling and by `firestore.rules:873`; this callable runs on the Admin SDK,
+ * which does not evaluate rules, so the gate never applied to it. See the
+ * KinDto note above. Nothing in this file reads `the_411` any more, and nothing
+ * in it should.
  */
 export async function getMyKinHandler(
   req: CallableRequest<GetMyKinRequest>,
@@ -80,15 +96,6 @@ export async function getMyKinHandler(
   const kin: KinDto[] = await Promise.all(
     visibleDocs.map(async (d) => {
       const data = d.data() as Record<string, unknown>;
-      const legacyKinId = stringOrNull(data['legacyKinId']);
-      let aiBlurb: string | null = null;
-      if (legacyKinId) {
-        const summarySnap = await firestore.collection('the_411').doc(legacyKinId).get();
-        const summary = summarySnap.data() as Record<string, unknown> | undefined;
-        aiBlurb =
-          stringOrNull(summary?.['rawSummary']) ??
-          stringOrNull(summary?.['personality']);
-      }
       return {
         id: d.id,
         name: stringOrNull(data['name']),
@@ -97,7 +104,6 @@ export async function getMyKinHandler(
         ageYears: numericOrNull(data['ageYears']),
         photoUrl: stringOrNull(data['photoUrl']),
         status: (stringOrNull(data['status']) === 'noLongerWithUs' ? 'noLongerWithUs' : 'active') as 'active' | 'noLongerWithUs',
-        aiBlurb,
         feedingInstructions: stringOrNull(data['feedingInstructions']),
         walkingInstructions: stringOrNull(data['walkingInstructions']),
         medications: stringOrNull(data['medications']),

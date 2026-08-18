@@ -173,7 +173,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     getBusinessSettings()
       .then((s) => {
         if (!live) return;
-        setServiceOptions(serviceOptionsFromRates(s.serviceRates));
+        setServiceOptions(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
         setBusinessHours(s.businessHours);
         setBusinessTimeZone((s.timeZone ?? '').trim());
         setClosureEntries((s.companyHolidays ?? []).map(parseClosureEntry));
