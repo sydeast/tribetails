@@ -2,18 +2,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { TemplateBinding } from '../api/templateBindings';
+import type { CatalogKeyRow, TemplateBinding } from '../api/templateBindings';
 import type { TemplateSummary } from '../api/templates';
 
-const { listTemplateBindings, assignTemplate, unassignTemplate, listTemplates } = vi.hoisted(() => ({
-  listTemplateBindings: vi.fn(),
-  assignTemplate: vi.fn(),
-  unassignTemplate: vi.fn(),
-  listTemplates: vi.fn(),
-}));
+const { listTemplateBindings, listCatalogKeys, assignTemplate, unassignTemplate, listTemplates } =
+  vi.hoisted(() => ({
+    listTemplateBindings: vi.fn(),
+    listCatalogKeys: vi.fn(),
+    assignTemplate: vi.fn(),
+    unassignTemplate: vi.fn(),
+    listTemplates: vi.fn(),
+  }));
 vi.mock('../api/templateBindings', async (orig) => ({
   ...(await orig<typeof import('../api/templateBindings')>()),
   listTemplateBindings,
+  listCatalogKeys,
   assignTemplate,
   unassignTemplate,
 }));
@@ -30,13 +33,39 @@ function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
 function template(over: Partial<TemplateSummary> = {}): TemplateSummary {
   return { templateId: 'tmpl_ok', subject: 's', body: 'b', html: null, title: 'Booking confirmed', description: null, tags: [], category: null, usageInstructions: '', sectionDefinitions: [], ...over };
 }
+function catalogRow(over: Partial<CatalogKeyRow> = {}): CatalogKeyRow {
+  return {
+    key: 'kincare.booking.confirm',
+    label: 'KinCare booking confirmed',
+    category: 'visit',
+    audience: 'both',
+    source: 'catalog',
+    defaultTemplateId: 'kincare.booking.confirm',
+    hasDefaultTemplate: true,
+    bound: false,
+    resolvedTemplateId: 'kincare.booking.confirm',
+    ...over,
+  };
+}
+
+/** What the fixed listCatalogKeys hands back: the catalog, plus a legacy stray. */
+function catalogFixture(): CatalogKeyRow[] {
+  return [
+    catalogRow(),
+    catalogRow({ key: 'kincare.booking.cancel', label: 'KinCare booking canceled', defaultTemplateId: 'kincare.booking.cancel', resolvedTemplateId: 'kincare.booking.cancel' }),
+    catalogRow({ key: 'invite.primary', label: 'Portal invite to a primary kinfolk', category: null, audience: null, source: 'direct-send', defaultTemplateId: 'invite.primary', resolvedTemplateId: 'invite.primary' }),
+    catalogRow({ key: 'booking.confirmed', label: 'Not in the catalog, nothing dispatches it', category: null, audience: null, source: 'legacy', defaultTemplateId: 'booking.confirmed', hasDefaultTemplate: false, bound: true, resolvedTemplateId: 'tmpl_ok' }),
+  ];
+}
 
 beforeEach(() => {
   listTemplateBindings.mockReset();
+  listCatalogKeys.mockReset();
   assignTemplate.mockReset();
   unassignTemplate.mockReset();
   listTemplates.mockReset();
   listTemplateBindings.mockResolvedValue([binding()]);
+  listCatalogKeys.mockResolvedValue(catalogFixture());
   listTemplates.mockResolvedValue([template(), template({ templateId: 'tmpl_reminder', title: 'Reminder' })]);
 });
 
@@ -48,35 +77,85 @@ describe('TemplateAssignments', () => {
     expect(within(row).getByText('Booking confirmed')).toBeInTheDocument();
   });
 
-  it('assigns a template to a new catalog key, then reloads the bindings', async () => {
-    assignTemplate.mockResolvedValue({ catalogKey: 'booking.canceled', templateId: 'tmpl_reminder', active: true });
+  // ── #383: the key box was free text because there was no list to pick from ──
+
+  it('offers the real catalog keys as a picker, not a text box', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const picker = await screen.findByLabelText(/catalog key/i);
+    expect(picker.tagName).toBe('SELECT');
+    const options = within(picker as HTMLSelectElement).getAllByRole('option');
+    const values = options.map((o) => (o as HTMLOptionElement).value);
+    expect(values).toContain('kincare.booking.confirm');
+    expect(values).toContain('invite.primary');
+  });
+
+  it('labels each key with what it is and whether it is bound', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const picker = await screen.findByLabelText(/catalog key/i);
+    expect(
+      within(picker as HTMLSelectElement).getByRole('option', {
+        name: /kincare\.booking\.confirm · KinCare booking confirmed \(no binding/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('never offers a legacy key as something new to bind', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const picker = await screen.findByLabelText(/catalog key/i);
+    const values = within(picker as HTMLSelectElement)
+      .getAllByRole('option')
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).not.toContain('booking.confirmed');
+  });
+
+  it('still shows a legacy key when you open the binding that uses it', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    const row = (await screen.findByText('booking.confirmed')).closest('li')!;
+    await userEvent.click(within(row).getByRole('button', { name: /^change$/i }));
+
+    const picker = await screen.findByLabelText(/catalog key/i);
+    expect((picker as HTMLSelectElement).value).toBe('booking.confirmed');
+    expect(picker).toBeDisabled();
+    expect(
+      within(picker as HTMLSelectElement).getByRole('option', { name: /not in the catalog/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('says how many keys have no binding yet', async () => {
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    expect(await screen.findByText(/3 catalog keys, 3 with no binding yet/i)).toBeInTheDocument();
+  });
+
+  it('assigns a template to a picked catalog key, then reloads bindings and the catalog', async () => {
+    assignTemplate.mockResolvedValue({ catalogKey: 'kincare.booking.cancel', templateId: 'tmpl_reminder', active: true });
     render(<TemplateAssignments onClose={vi.fn()} />);
     await screen.findByText('booking.confirmed');
 
-    await userEvent.type(screen.getByLabelText(/catalog key/i), 'booking.canceled');
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.cancel');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_reminder');
     await userEvent.click(screen.getByRole('button', { name: /^assign$/i }));
 
     await waitFor(() =>
-      expect(assignTemplate).toHaveBeenCalledWith({ catalogKey: 'booking.canceled', templateId: 'tmpl_reminder', audience: undefined }),
+      expect(assignTemplate).toHaveBeenCalledWith({ catalogKey: 'kincare.booking.cancel', templateId: 'tmpl_reminder', audience: undefined }),
     );
-    // reload: initial load + reload after assign
+    // reload: initial load + reload after assign, for both reads
     await waitFor(() => expect(listTemplateBindings).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/assigned reminder to booking\.canceled/i)).toBeInTheDocument();
+    await waitFor(() => expect(listCatalogKeys).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/assigned reminder to kincare\.booking\.cancel/i)).toBeInTheDocument();
   });
 
   it('does not send audience when left at (none), but sends it when chosen', async () => {
-    assignTemplate.mockResolvedValue({ catalogKey: 'x.y', templateId: 'tmpl_ok', active: true });
+    assignTemplate.mockResolvedValue({ catalogKey: 'invite.primary', templateId: 'tmpl_ok', active: true });
     render(<TemplateAssignments onClose={vi.fn()} />);
     await screen.findByText('booking.confirmed');
 
-    await userEvent.type(screen.getByLabelText(/catalog key/i), 'x.y');
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'invite.primary');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
     await userEvent.selectOptions(screen.getByLabelText(/audience/i), 'admin');
     await userEvent.click(screen.getByRole('button', { name: /^assign$/i }));
 
     await waitFor(() =>
-      expect(assignTemplate).toHaveBeenCalledWith({ catalogKey: 'x.y', templateId: 'tmpl_ok', audience: 'admin' }),
+      expect(assignTemplate).toHaveBeenCalledWith({ catalogKey: 'invite.primary', templateId: 'tmpl_ok', audience: 'admin' }),
     );
   });
 
@@ -100,16 +179,42 @@ describe('TemplateAssignments', () => {
     render(<TemplateAssignments onClose={vi.fn()} />);
     await screen.findByText('booking.confirmed');
 
-    await userEvent.type(screen.getByLabelText(/catalog key/i), 'ghost.key');
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.confirm');
     await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
     await userEvent.click(screen.getByRole('button', { name: /^assign$/i }));
 
     expect(await screen.findByText(/assignTemplate failed:.*not found/i)).toBeInTheDocument();
   });
 
+  // ── #382: the server now refuses an unreal key; the screen repeats its words ──
+
+  it('repeats the server sentence verbatim when the key is refused', async () => {
+    const refusal = Object.assign(
+      new Error("Unknown catalog key 'kincare.bookng.confirm'. It is not in the notification catalog."),
+      { code: 'functions/invalid-argument' },
+    );
+    assignTemplate.mockRejectedValue(refusal);
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    await screen.findByText('booking.confirmed');
+
+    await userEvent.selectOptions(screen.getByLabelText(/catalog key/i), 'kincare.booking.confirm');
+    await userEvent.selectOptions(screen.getByLabelText(/^template$/i), 'tmpl_ok');
+    await userEvent.click(screen.getByRole('button', { name: /^assign$/i }));
+
+    expect(
+      await screen.findByText(/refused this catalog key:.*Unknown catalog key 'kincare\.bookng\.confirm'/i),
+    ).toBeInTheDocument();
+  });
+
   it('surfaces a bindings load failure fail-loud rather than an empty state', async () => {
     listTemplateBindings.mockRejectedValue(new Error('permission-denied'));
     render(<TemplateAssignments onClose={vi.fn()} />);
     expect(await screen.findByText(/listTemplateBindings failed:.*permission-denied/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a catalog-keys load failure instead of an empty picker', async () => {
+    listCatalogKeys.mockRejectedValue(new Error('permission-denied'));
+    render(<TemplateAssignments onClose={vi.fn()} />);
+    expect(await screen.findByText(/listCatalogKeys failed:.*permission-denied/i)).toBeInTheDocument();
   });
 });

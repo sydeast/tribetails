@@ -137,10 +137,15 @@ class TemplateRepository(
     }.onFailure { AuntieLog.e("TemplateRepository.unassignTemplate failed", it) }
 
     /**
-     * Stage 2 tail: the distinct set of template catalog keys currently in use, via
-     * the read-only listCatalogKeys callable. Optional case-insensitive substring
-     * filter. These are the keys the dispatcher knows about; comparing them against
+     * Every catalog key an admin can bind, via the read-only listCatalogKeys
+     * callable. Optional case-insensitive substring filter. Comparing these against
      * the bound catalog keys yields the "unbound" set surfaced in Template Assignment.
+     *
+     * Until issue #383 was fixed the callable returned the keys already BOUND, a read
+     * of the same collection this diff subtracts, so the unbound set was always empty
+     * and the panel below had never once rendered. The callable now returns the
+     * notification catalog plus the direct-send keys, and it still carries `keys`
+     * alongside its richer `rows`, which is why this decode is unchanged.
      */
     suspend fun listCatalogKeys(filter: String? = null): Result<List<String>> = runCatching {
         val payload = buildMap<String, Any> {
