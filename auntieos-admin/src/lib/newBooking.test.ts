@@ -164,6 +164,52 @@ describe('sortServiceTypesByDuration', () => {
   });
 });
 
+/**
+ * The stored-duration overload (#373's two-source rule, ported from Android's
+ * `sortServiceTypesByDuration(types, durations)` in `ServiceTypeSort.kt`).
+ * Same fixtures as `ServiceTypeSortTest.kt`'s `theLegendSortTakesStoredDurationsToo`
+ * and friends, so both platforms order a legend identically.
+ */
+describe('sortServiceTypesByDuration with stored durations', () => {
+  it('prefers a stored duration over the one in the name', () => {
+    expect(sortServiceTypesByDuration(['Overnight', '30Minute', 'Consultation'], { Overnight: '720' })).toEqual([
+      '30Minute',
+      'Overnight',
+      'Consultation',
+    ]);
+  });
+  it('a stored duration gives a length to a name that states none', () => {
+    expect(sortServiceTypesByDuration(['Consultation', '2Hrs'], { Consultation: '20' })).toEqual([
+      'Consultation',
+      '2Hrs',
+    ]);
+  });
+  it('falls through to the name parse when the stored value is junk, zero, or negative', () => {
+    expect(
+      sortServiceTypesByDuration(['30Minute', '2Hrs'], { '30Minute': 'oops', '2Hrs': '0' }),
+    ).toEqual(['30Minute', '2Hrs']);
+  });
+  it('a type with no stored duration at all still reads its name', () => {
+    expect(sortServiceTypesByDuration(['2Hrs', '30Minute'], { Overnight: '720' })).toEqual([
+      '30Minute',
+      '2Hrs',
+    ]);
+  });
+  it('a type present in the list but absent from the durations map sorts by name only, never dropped', () => {
+    // Mirrors the calendar-legend edge case: a type on screen that was never
+    // configured in Settings still gets ranked (and shown), just without a
+    // stored length to prefer.
+    expect(sortServiceTypesByDuration(['Off-Book Visit', '30Minute'], { '30Minute': '25' })).toEqual([
+      '30Minute',
+      'Off-Book Visit',
+    ]);
+  });
+  it('with no durations map at all, behaves exactly like the one-arg form', () => {
+    const input = ['2Hrs', '30Minute', 'Consultation'];
+    expect(sortServiceTypesByDuration(input)).toEqual(sortServiceTypesByDuration(input, {}));
+  });
+});
+
 describe('serviceOptionsFromRates', () => {
   it('turns the serviceRates map into duration-ordered options, rate verbatim', () => {
     expect(

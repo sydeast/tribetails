@@ -306,14 +306,22 @@ export function busyWindowLabel(startHHmm: string | undefined, endHHmm: string |
 
 /**
  * Every distinct, non-blank `serviceType` actually present across the given
- * sessions, alphabetically. The wasm legend instead sorts by each type's
- * configured duration (`sortServiceTypesByDuration` over
- * `BusinessSettings.serviceRates`); that config doc is a single-document read
- * this port does not yet have a shared hook for (only the bounded
- * `useCollection` listener exists in `lib/firestore.ts` today), so duration
- * ordering is deferred rather than bolted on ad hoc. Alphabetical ordering of
- * the types that actually appear is an honest, if less rich, substitute:
- * flagged in the port report, not silently dropped.
+ * `rows`, alphabetically. This is deliberately a raw extraction, not the
+ * final legend order or the final legend membership:
+ *
+ *  - MEMBERSHIP: `Schedule.tsx` calls this with sessions already narrowed to
+ *    the days on screen (`daysInView`), never the full bounded 300-session
+ *    stream, so a type that only occurs outside the visible range never
+ *    appears. A type present in view but never configured in
+ *    `business_settings.serviceRates` still comes out of here (and stays in
+ *    the legend) — a legend row answers "what's on screen", not "what did
+ *    the operator configure".
+ *  - ORDER: the caller re-orders this alphabetical list by each type's
+ *    duration (`sortServiceTypesByDuration` in `lib/newBooking.ts`, over
+ *    `BusinessSettings.serviceRates`/`serviceDurations`, the same two-source
+ *    rule #373 gave the Android legend). Kept as a separate step rather than
+ *    sorting by duration in here, because THIS function has no settings doc
+ *    to sort by — it only ever sees the session rows.
  */
 export function distinctServiceTypes<T extends { serviceType?: string | undefined }>(rows: T[]): string[] {
   const set = new Set<string>();
