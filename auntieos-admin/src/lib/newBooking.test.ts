@@ -8,6 +8,7 @@ import {
   serviceDurationMinutes,
   sortServiceTypesByDuration,
   serviceOptionsFromRates,
+  storedDurationMinutes,
   serviceChipLabel,
 } from './newBooking';
 
@@ -191,6 +192,61 @@ describe('serviceOptionsFromRates', () => {
   });
 });
 
+/**
+ * Mark 15 of the 2026-08-17 admin walk gave KinCare a real duration attribute.
+ * `business_settings.serviceDurations` is sparse and nothing backfills it, so
+ * most of what matters here is the fallback still working for every type that
+ * predates it. Mirrored in Android's ServiceTypeSortTest.
+ */
+describe('storedDurationMinutes', () => {
+  it('reads a stated number of minutes', () => {
+    expect(storedDurationMinutes('45')).toBe(45);
+    expect(storedDurationMinutes(' 720 ')).toBe(720);
+  });
+  it('returns null on anything unusable, so the name parse gets its turn', () => {
+    // Null and not 0: a mistyped duration must not declare a visit instant.
+    expect(storedDurationMinutes('abc')).toBeNull();
+    expect(storedDurationMinutes('0')).toBeNull();
+    expect(storedDurationMinutes('-5')).toBeNull();
+    expect(storedDurationMinutes('')).toBeNull();
+    expect(storedDurationMinutes(undefined)).toBeNull();
+    expect(storedDurationMinutes(45)).toBeNull();
+  });
+});
+describe('serviceOptionsFromRates with stored durations', () => {
+  it('prefers the stored duration over the one in the name', () => {
+    const [option] = serviceOptionsFromRates({ '30Minute': '25' }, { '30Minute': '45' });
+    expect(option?.durationMinutes).toBe(45);
+  });
+  it('falls back to the name when the type has no stored duration', () => {
+    const [option] = serviceOptionsFromRates({ '30Minute': '25' }, {});
+    expect(option?.durationMinutes).toBe(30);
+  });
+  it('gives a length to a name that states none', () => {
+    const [option] = serviceOptionsFromRates({ Consultation: '0' }, { Consultation: '20' });
+    expect(option?.durationMinutes).toBe(20);
+  });
+  it('falls through to the name when the stored value is junk', () => {
+    const [option] = serviceOptionsFromRates({ '30Minute': '25' }, { '30Minute': 'oops' });
+    expect(option?.durationMinutes).toBe(30);
+  });
+  it('reorders the options: a stated length moves a name that states nothing', () => {
+    // Overnight states no length in its name, so it used to sort last with
+    // everything else that states none. Stated at 45 minutes it sorts FIRST,
+    // ahead of 2Hrs, which the name parse alone could never produce.
+    const options = serviceOptionsFromRates(
+      { Overnight: '80', '2Hrs': '60', Consultation: '' },
+      { Overnight: '45' },
+    );
+    expect(options.map((o) => o.name)).toEqual(['Overnight', '2Hrs', 'Consultation']);
+  });
+  it('is unchanged when no durations map is passed at all', () => {
+    expect(serviceOptionsFromRates({ '2Hrs': '60', '30Minute': '25' }).map((o) => o.name)).toEqual([
+      '30Minute',
+      '2Hrs',
+    ]);
+  });
+});
 describe('serviceChipLabel', () => {
   it('reads "{name} · ${rate}"', () => {
     expect(serviceChipLabel({ name: '30Minute', rate: '25', durationMinutes: 30 })).toBe('30Minute · $25');

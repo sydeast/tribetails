@@ -154,7 +154,6 @@ export interface KinDto {
   ageYears: number | null;
   photoUrl: string | null;
   status: KinStatus;
-  aiBlurb: string | null;
   feedingInstructions: string | null;
   walkingInstructions: string | null;
   medications: string | null;

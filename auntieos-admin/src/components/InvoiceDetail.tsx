@@ -428,6 +428,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Whether the notice above is wholly good news.
+   *
+   * An action can land AND leave something undone: `markInvoicePaid` settles
+   * the bill, then the payment-ledger row is written best-effort, and a failure
+   * there is appended to the outcome sentence rather than thrown. Mark 10 of
+   * the 2026-08-17 walk is what that looked like when the whole sentence
+   * rendered green: "why green box when there was a failure". A banner may not
+   * be the last thing to know the action was partly refused.
+   */
+  const [noticeIncomplete, setNoticeIncomplete] = useState(false);
   const [paidMethod, setPaidMethod] = useState('');
   const [paidReference, setPaidReference] = useState('');
   // Free text, not a number input, so a half-typed "2" is never read as $2.
@@ -594,6 +605,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
   function startAction(key: PendingAction) {
     setActionError(null);
+    setNoticeIncomplete(false);
     setNotice(null);
     setPaidMethod('');
     setPaidReference('');
@@ -620,6 +632,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
   function startEditing() {
     setActionError(null);
+    setNoticeIncomplete(false);
     setNotice(null);
     setEditError(null);
     setEditing({
@@ -683,6 +696,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       await updateInvoice(invoice._id, patch);
       setBusy(false);
       setEditing(null);
+      setNoticeIncomplete(false);
       setNotice('Invoice updated.');
       // A line-item edit recomputes the balance server-side, so the "Still owed"
       // figure in the payments panel is now describing the invoice as it was.
@@ -704,9 +718,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     try {
       if (archivePrompt.direction === 'restore') {
         await unarchiveInvoice(invoice._id);
+        setNoticeIncomplete(false);
         setNotice('Invoice restored to the working list.');
       } else {
         await archiveInvoice(invoice._id, force);
+        setNoticeIncomplete(false);
         setNotice(
           force
             ? 'Invoice archived, and the balance written off the outstanding total.'
@@ -741,6 +757,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setActionError(null);
     try {
       let outcome = meta.successMessage;
+      // Set wherever an outcome sentence gets a clause saying part of this did
+      // not happen. It drives the banner's tone below, so the colour and the
+      // words can never disagree.
+      let incomplete = false;
 
       if (meta.key === 'reminder') await sendInvoiceReminder(invoice._id);
       else if (meta.key === 'reviewSend') await reviewAndSendDraftInvoice(invoice._id);
@@ -839,6 +859,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // what is missing and where, rather than told nothing or told a lie.
         let ledgerNote = '';
         if (thisPaymentCents === null || thisPaymentCents <= 0) {
+          incomplete = true;
           ledgerNote =
             " No row was added to the payment ledger, because this payment's own amount could not be stated exactly: it was left blank and the invoice's recorded payments could not be read. The invoice itself is correct; add the ledger row from the Payments screen.";
         } else {
@@ -868,6 +889,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             // the same money against the same bill a second time. The Apply
             // amount for this flow IS what markInvoicePaid collected.
             if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
+              incomplete = true;
               ledgerNote +=
                 ' The confirmation email did not go out (the household may have no portal account). The payment itself is recorded.';
             }
@@ -875,6 +897,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} was left over and has been added to the household's account credit, which goes onto their next invoice automatically.`;
             }
           } catch (caught) {
+            incomplete = true;
             ledgerNote = ` The payment ledger row did not save (${
               caught instanceof Error ? caught.message : 'recordPayment failed'
             }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
@@ -897,6 +920,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       } else await generateReceipt(invoice._id);
 
       setBusy(false);
+      setNoticeIncomplete(incomplete);
       setNotice(outcome);
       setPending(null);
     } catch (caught) {
@@ -977,7 +1001,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         )}
 
         {notice && (
-          <Banner tone="success" title="Done">
+          /* Tone follows the sentence. An action that settled the invoice but
+             could not write the ledger row is not a green "Done", and the walk
+             that produced mark 10 read the green before it read the words. */
+          <Banner
+            tone={noticeIncomplete ? 'warning' : 'success'}
+            title={noticeIncomplete ? 'Done, but not all of it' : 'Done'}
+          >
             {notice}
           </Banner>
         )}

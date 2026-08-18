@@ -166,6 +166,11 @@ data class BusinessSettings(
     var businessAddress: String = "",
     var timeZone: String = "America/New_York",
     var serviceRates: Map<String, String> = emptyMap(),
+    // name -> minutes as a string. SPARSE: only the types whose length the
+    // operator stated outright in Settings. Everything else falls back to the
+    // duration parsed out of the name (see ServiceTypeSort.kt), which is where
+    // every type's length came from before this field existed.
+    var serviceDurations: Map<String, String> = emptyMap(),
     var businessHours: Map<String, String> = emptyMap(), // day -> "HH:MM-HH:MM" or ""
     // --- GPS / tracking ---
     var enableGPSTrackingForAllVisits: Boolean = true, // Master GPS tracking switch

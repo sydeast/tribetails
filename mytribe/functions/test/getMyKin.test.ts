@@ -43,7 +43,7 @@ describe('getMyKinHandler', () => {
     await expect(getMyKinHandler({ data: {}, auth: undefined } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
-  it('returns active kin without legacyKinId blurb', async () => {
+  it('returns active kin', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['3'] } },
       queryDocs: {
@@ -57,10 +57,19 @@ describe('getMyKinHandler', () => {
     const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
     expect(res.kin).toHaveLength(1);
     expect(res.kin[0].name).toBe('Buddy');
-    expect(res.kin[0].aiBlurb).toBeNull();
   });
 
-  it('merges the_411 blurb when legacyKinId set', async () => {
+  /**
+   * THIS TEST USED TO ASSERT THE LEAK. It read
+   * `expect(res.kin[0].aiBlurb).toBe('Mr Biggles is pure joy.')` and passed,
+   * which is how `the_411` content reached households under a green suite.
+   * The_411 is admin-only by operator ruling; the portal Android app rendered
+   * that string to the signed-in kinfolk under "ABOUT / The basics".
+   *
+   * It now asserts the opposite: the collection is not read, and nothing
+   * derived from it appears in the response.
+   */
+  it('never reads the_411, even for a kin carrying a legacyKinId', async () => {
     const ctx = buildDbMock({
       docs: {
         'clients/u1': { kinfolkIds: ['3'] },
@@ -75,7 +84,9 @@ describe('getMyKinHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyKinHandler } = await import('../src/portal/getMyKin');
     const res = await getMyKinHandler({ data: {}, auth: { uid: 'u1' } } as any);
-    expect(res.kin[0].aiBlurb).toBe('Mr Biggles is pure joy.');
+    expect(res.kin[0].name).toBe('Mr Biggles');
+    expect(JSON.stringify(res)).not.toContain('Mr Biggles is pure joy.');
+    expect(res.kin[0]).not.toHaveProperty('aiBlurb');
   });
 
   // P0-9. The old fixture here seeded `status: 'random'` and asserted 'active',

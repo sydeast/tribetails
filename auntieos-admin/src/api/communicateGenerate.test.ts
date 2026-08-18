@@ -47,6 +47,32 @@ const generateArgs: GenerateDraftArgs = {
 };
 
 describe('generateDraft', () => {
+  /**
+   * Mark 12 of the 2026-08-17 walk was filed as "generator down". The walk's
+   * capture says otherwise: 401 {"error":"invalid_bearer_token"}, with
+   * `recap_recent_comms` returning 200 on the same page seconds earlier. The
+   * generator is one of two endpoints verified with `checkRevoked`, so it is
+   * the only place a cached-but-superseded token shows up.
+   */
+  it('refreshes the token and retries once when the generator refuses the cached one', async () => {
+    const getIdToken = vi.fn(async (force?: boolean) => (force === true ? 'fresh.tok' : 'stale.tok'));
+    authState.currentUser = { getIdToken };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'invalid_bearer_token' }))
+      .mockResolvedValueOnce(jsonResponse(200, { generated_copy: 'copy', communication_type: 'email' }));
+    const result = await generateDraft(generateArgs);
+    expect(result.generated_copy).toBe('copy');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, retry] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect((retry.headers as Record<string, string>).Authorization).toBe('Bearer fresh.tok');
+  });
+  it('says the sign-in was refused, not "invalid_bearer_token", when a fresh token fails too', async () => {
+    authState.currentUser = fakeUser('any.tok');
+    fetchMock.mockResolvedValue(jsonResponse(401, { error: 'invalid_bearer_token' }));
+    await expect(generateDraft(generateArgs)).rejects.toThrow(/sign out and back in/i);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('forwards a resolved kinfolk_id, so the server reads the household directly instead of matching a name', async () => {
     authState.currentUser = fakeUser('abc.def');
     fetchMock.mockResolvedValue(

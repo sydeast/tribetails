@@ -1,5 +1,5 @@
-import { auth } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
 
 /**
  * Communicate PERSONALIZE (1:1 AI-drafted note) write surface: the flow
@@ -114,23 +114,6 @@ export interface GenerateDraftResult {
 export class GenerateDraftError extends Error {}
 export class SendMessageError extends Error {}
 
-/**
- * Current admin's Firebase ID token, or a named fail-loud error if nobody is
- * signed in. Mirrors `N8nClient.generate`'s
- * `AuthClient().idToken(forceRefresh = false) ?: throw ...`. Takes the
- * caller's own error constructor + a short action phrase so the two callers
- * below (`generateDraft` / `sendPersonalizedMessage`) each throw THEIR OWN
- * named error type with an accurate message, rather than sharing one that
- * would say "before generating a draft" even when the caller was sending.
- */
-async function requireIdToken<E extends Error>(ErrorCtor: new (message: string) => E, action: string): Promise<string> {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new ErrorCtor(`Sign-in required before ${action}.`);
-  }
-  return user.getIdToken();
-}
-
 /** Parses a fetch Response body as JSON, or `null` on a non-JSON/empty body (never throws). */
 async function parseJsonBody(response: Response): Promise<Record<string, unknown> | null> {
   const text = await response.text();
@@ -161,19 +144,17 @@ function stringField(body: Record<string, unknown> | null, key: string): string 
  * "X"`, `generate_rate_limit_exceeded`) rather than a generic message.
  */
 export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDraftResult> {
-  const idToken = await requireIdToken(GenerateDraftError, 'generating a draft');
-
   let response: Response;
   try {
-    response = await fetch(GENERATE_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
+    // Token handling, including the refresh-and-retry when the generator
+    // rejects a stale one, lives in adminApiFetch; see its header for the 401
+    // this closes. Marks 3 and 12 of the 2026-08-17 walk are the same defect.
+    response = await adminApiFetch(GENERATE_ENDPOINT, 'generating a draft', {
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(args),
     });
   } catch (err) {
+    if (err instanceof NotSignedInError) throw new GenerateDraftError(err.message);
     throw new GenerateDraftError(
       `generate request failed: ${err instanceof Error ? err.message : 'network error'}`,
     );
@@ -181,6 +162,14 @@ export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDr
 
   const body = await parseJsonBody(response);
   const errorField = stringField(body, 'error');
+  if (response.status === 401) {
+    // Survived the retry, so the account is the problem. "invalid_bearer_token"
+    // was reported as "generator down", which sent the operator looking at the
+    // wrong thing entirely.
+    throw new GenerateDraftError(
+      'The generator refused this sign-in, even after refreshing it. Sign out and back in; if it keeps refusing, the account may have been revoked.',
+    );
+  }
   if (!response.ok || errorField !== null) {
     throw new GenerateDraftError(errorField ?? `generate failed (${response.status})`);
   }

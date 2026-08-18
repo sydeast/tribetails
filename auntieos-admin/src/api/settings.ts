@@ -176,6 +176,24 @@ export interface BusinessSettings {
   businessAddress: string;
   timeZone: string;
   serviceRates: Record<string, string>;
+  /**
+   * Minutes each KinCare type runs, keyed by the SAME name `serviceRates` is
+   * keyed by, as a string ("30", "360") because every map on this doc stores
+   * strings and a half-typed field is not a number.
+   *
+   * Added because the duration used to live INSIDE the name and was read back
+   * out with a regex (`serviceDurationMinutes`), so "Half-Day 6Hrs" sorted
+   * correctly and "Consultation" had no length at all. Mark 15 of the
+   * 2026-08-17 walk: "we create a third attribute to the kincare: duration. so
+   * kincare will have a name/title, duration, and price".
+   *
+   * SPARSE AND OPTIONAL BY DESIGN. Nothing backfills it, no existing document
+   * has it, and every reader still falls back to parsing the name, so a type
+   * saved before this field existed keeps the length it always had. An entry
+   * here is the operator stating the length outright, which is the one thing
+   * the parse can never do.
+   */
+  serviceDurations: Record<string, string>;
   businessHours: Record<string, string>;
   venmoHandle: string;
   paypalHandle: string;
@@ -286,6 +304,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   businessAddress: '',
   timeZone: 'America/New_York',
   serviceRates: {},
+  serviceDurations: {},
   businessHours: {},
   venmoHandle: '',
   paypalHandle: '',
@@ -450,6 +469,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     businessAddress: pickString(r.businessAddress, d.businessAddress),
     timeZone: pickString(r.timeZone, d.timeZone),
     serviceRates: pickMap(r.serviceRates, d.serviceRates),
+    serviceDurations: pickMap(r.serviceDurations, d.serviceDurations),
     businessHours: pickMap(r.businessHours, d.businessHours),
     venmoHandle: pickString(r.venmoHandle, d.venmoHandle),
     paypalHandle: pickString(r.paypalHandle, d.paypalHandle),
