@@ -91,7 +91,7 @@
   outline-offset: -2px;
   border-radius: var(--radius-card);
 }
-/* Unwired (no editor route yet): a plain, non-interactive row. */
+/* Defensive fallback when no handler is wired (e.g., in a test context). */
 .schemas__row-main--static {
   cursor: default;
 }

@@ -79,24 +79,23 @@ function rangeLabel(range: DateRangeKey): string {
 
 interface KinTalesProps {
   /**
-   * Placeholder: the single-report detail/editor (`KinTaleReportScreen.kt`:
-   * compose, comment thread, share link, "view as kinfolk") is a separate,
-   * not-yet-built screen; this port is LIST/FEED ONLY. The router mounts this
-   * screen propless, so `onSelect` is undefined in production. See `KinTaleRow`:
-   * when unwired the row renders a STATIC <div>, not a <button>. A handler-less
-   * <button> still carries the implicit ARIA button role and is a focusable dead
-   * control, so the row only becomes a real <button> once a detail route wires
-   * the handler.
+   * Opens the single-report detail view (`KinTaleDetail.tsx`: compose, comment
+   * thread, share link, "view as kinfolk"). This screen exists and is wired by
+   * `routes/KinTalesView.tsx`. The handler is optional here so the component
+   * stays reusable in contexts where selection is not yet hooked up. See
+   * `KinTaleRow`: when unwired the row renders a STATIC <div>, not a <button>.
+   * A handler-less <button> still carries the implicit ARIA button role and is
+   * a focusable dead control, so the row only becomes a real <button> once a
+   * detail route wires the handler.
    */
   onSelect?: (kinTaleId: string) => void;
   /**
-   * Placeholder: the compose/create surface (`KinTaleCompose.tsx`) is a
-   * separate, not-yet-ROUTED screen (it exists, it is just not yet mounted by
-   * a real route the way `onSelect`'s detail view isn't either). Called with
-   * no arguments to start a brand-new KinTale; the compose screen then asks
-   * which Kin Care session it belongs to. Same "omit -> static, never a
-   * live no-op" rule as `onSelect` and `FormSchemas.tsx`'s own `onNew`: see
-   * the trailing button below.
+   * Opens the compose/create surface (`KinTaleCompose.tsx`). This screen exists
+   * and is wired by `routes/KinTalesView.tsx`. Called with no arguments to start
+   * a brand-new KinTale; the compose screen then asks which Kin Care session it
+   * belongs to. The handler is optional here so the component stays reusable when
+   * composition is not yet hooked up. Same "omit -> static, never a live no-op"
+   * rule as `onSelect`: see the trailing button below.
    */
   onNew?: () => void;
 }
