@@ -529,7 +529,6 @@ class PortalApi(private val fns: FunctionsClient) {
                 ageYears = o["ageYears"]?.jsonPrimitive?.doubleOrNull,
                 photoUrl = o["photoUrl"]?.jsonPrimitive?.contentOrNull,
                 status = if (o["status"]?.jsonPrimitive?.contentOrNull == "noLongerWithUs") KinStatus.NoLongerWithUs else KinStatus.Active,
-                aiBlurb = o["aiBlurb"]?.jsonPrimitive?.contentOrNull,
                 feedingInstructions = o["feedingInstructions"]?.jsonPrimitive?.contentOrNull,
                 walkingInstructions = o["walkingInstructions"]?.jsonPrimitive?.contentOrNull,
                 medications = o["medications"]?.jsonPrimitive?.contentOrNull,

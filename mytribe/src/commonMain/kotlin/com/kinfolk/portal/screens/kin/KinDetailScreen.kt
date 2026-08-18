@@ -203,9 +203,6 @@ private fun AboutCard(kin: Kin) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("ABOUT")
             Text("The basics", style = type.heritageSection)
-            kin.aiBlurb?.takeIf { it.isNotBlank() }?.let { blurb ->
-                Text(blurb, style = type.sansBody.copy(color = KinfolkBrand.NavySoft))
-            }
             FactList(
                 listOfNotNull(
                     kin.species?.takeIf { it.isNotBlank() }?.let { "SPECIES" to it },

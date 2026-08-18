@@ -10,7 +10,8 @@ data class Kin(
     val ageYears: Double?,
     val photoUrl: String?,
     val status: KinStatus,
-    val aiBlurb: String?,
+    // `aiBlurb` REMOVED 2026-08-18. It carried `the_411.rawSummary`, which is
+    // admin-only by operator ruling, to the household. See getMyKin.ts.
     val feedingInstructions: String?,
     val walkingInstructions: String?,
     val medications: String?,
