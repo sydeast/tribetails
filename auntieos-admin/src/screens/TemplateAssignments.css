@@ -87,6 +87,13 @@
   color: var(--color-text-primary);
 }
 
+/* A key whose resolved template document is missing. It sends nothing today and
+   throws on its next attempt, so it reads as a warning, not as row metadata. */
+.tassign__row-broken {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-warning);
+}
+
 .tassign__row-meta {
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
