@@ -105,6 +105,10 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
  * things the operator could not see on a notification. Adding a card-only token
  * here does not affect the TEMPLATE_FIELDS/seed drift guard, which cross-checks
  * TEMPLATE_FIELDS against the on-disk seeds and never reads this set.
+ *
+ * That `notes` is enrichable does NOT make it publishable. It is asked for only
+ * by staff- and business-stream card details now; see STAFF_ONLY_DETAIL_FIELDS
+ * in `buildNotificationDetail.ts` and issue #380.
  */
 const ENRICHABLE: ReadonlySet<string> = new Set([
   'kinfolkName',
@@ -546,6 +550,11 @@ export async function enrichTemplateData(
 
   // Card-only token (see ENRICHABLE). Session first, then the envelope that
   // actually owns the field, so a `{batchId, visitId}` dispatch still finds it.
+  //
+  // Every source below is admin-writable, which is why `buildNotificationDetail`
+  // stops asking for this token on a kinfolk-stream copy and refuses to write it
+  // even when the emitter supplied it (#380). Nothing here decides that: this
+  // resolves the value, the caller decides who may see it.
   if (want.has('notes')) {
     let v = str(data.notes);
     if (!v) v = str((await loadBooking())?.notes);
