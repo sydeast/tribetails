@@ -10,7 +10,10 @@ import {
   isTribalIntelTitleFallback,
   reconcileState,
   reconcileStateInfo,
-  relatedToLabel,
+  tribalIntelTarget,
+  tribalIntelTargetKindLabel,
+  tribalIntelTargetLabel,
+  tribalIntelTargetName,
   tribalIntelTimeOf,
   tribalIntelTitle,
   tribalIntelWhen,
@@ -74,14 +77,149 @@ describe('tribalIntelTitle / isTribalIntelTitleFallback', () => {
   });
 });
 
-describe('relatedToLabel', () => {
-  it('passes a real kinfolkRef through', () => {
-    expect(relatedToLabel('The Whitfields')).toBe('The Whitfields');
+describe('tribalIntelTarget (issue #393: three targets, said out loud)', () => {
+  it('reads a HOUSEHOLD entry as the household it names', () => {
+    expect(tribalIntelTarget({ targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1' })).toEqual({
+      kind: 'household',
+      id: 'kf1',
+    });
   });
 
-  it('is null for blank/whitespace-only, never "Related to: " with nothing after it', () => {
-    expect(relatedToLabel('')).toBeNull();
-    expect(relatedToLabel('   ')).toBeNull();
+  it('reads a KINFOLK entry as one human client, not the whole house', () => {
+    expect(tribalIntelTarget({ targetType: 'KINFOLK', targetKinfolkId: 'kf1' })).toEqual({
+      kind: 'kinfolk',
+      id: 'kf1',
+    });
+  });
+
+  it('reads a KIN entry as the one animal it names', () => {
+    expect(tribalIntelTarget({ targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k9' })).toEqual({
+      kind: 'kin',
+      id: 'k9',
+    });
+  });
+
+  it('is case- and whitespace-insensitive about the stored text', () => {
+    expect(tribalIntelTarget({ targetType: ' kinfolk ', targetKinfolkId: 'kf1' }).kind).toBe('kinfolk');
+    expect(tribalIntelTarget({ targetType: 'kin', targetKinfolkId: 'kf1', targetKinId: 'k9' }).kind).toBe(
+      'kin',
+    );
+  });
+
+  it('defaults a legacy entry with no target type to the household it is filed under', () => {
+    // The NDJSON migration rows carry `kinfolkRef` and nothing else. Household
+    // is the widest honest reading of a document that names nobody narrower.
+    expect(tribalIntelTarget({ kinfolkRef: 'demo-family-002' })).toEqual({
+      kind: 'household',
+      id: 'demo-family-002',
+    });
+  });
+
+  it('defaults an unrecognized target type to household rather than guessing', () => {
+    expect(tribalIntelTarget({ targetType: 'FAMILY', targetKinfolkId: 'kf1' }).kind).toBe('household');
+  });
+
+  it('falls back to household for a KIN entry that names no kin', () => {
+    expect(tribalIntelTarget({ targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: '  ' })).toEqual({
+      kind: 'household',
+      id: 'kf1',
+    });
+  });
+
+  it('falls back to household for a KINFOLK entry that names nobody', () => {
+    expect(tribalIntelTarget({ targetType: 'KINFOLK' })).toEqual({ kind: 'household', id: '' });
+  });
+
+  it('prefers targetKinfolkId over the legacy kinfolkRef when both are present', () => {
+    expect(
+      tribalIntelTarget({ targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1', kinfolkRef: 'stale' }).id,
+    ).toBe('kf1');
+  });
+});
+
+describe('tribalIntelTargetKindLabel', () => {
+  it("names each target with the operator's own word", () => {
+    expect(tribalIntelTargetKindLabel('household')).toBe('Household');
+    expect(tribalIntelTargetKindLabel('kinfolk')).toBe('Kinfolk');
+    expect(tribalIntelTargetKindLabel('kin')).toBe('Kin');
+  });
+});
+
+const ROSTER_KINFOLK = [
+  { _id: 'kf1', firstName: 'Jane', lastName: 'Halbrook' },
+  { _id: 'kf2', firstName: 'Sam', lastName: '' },
+];
+const ROSTER_KIN = [
+  { _id: 'k9', kinfolkId: 'kf1', name: 'Rufus' },
+  { _id: 'k10', kinfolkId: 'kf1', name: '' },
+];
+
+describe('tribalIntelTargetName', () => {
+  it('names a household by the surname it shares', () => {
+    expect(tribalIntelTargetName({ kind: 'household', id: 'kf1' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe(
+      'the Halbrooks',
+    );
+  });
+
+  it('names a kinfolk by their own name', () => {
+    expect(tribalIntelTargetName({ kind: 'kinfolk', id: 'kf1' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe(
+      'Jane Halbrook',
+    );
+  });
+
+  it('names a kin by their own name', () => {
+    expect(tribalIntelTargetName({ kind: 'kin', id: 'k9' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe('Rufus');
+  });
+
+  it('uses the person name for a household with no surname on file', () => {
+    expect(tribalIntelTargetName({ kind: 'household', id: 'kf2' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe('Sam');
+  });
+
+  it('shows the raw id when the roster holds no match, never a blank', () => {
+    expect(tribalIntelTargetName({ kind: 'household', id: 'gone' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe('gone');
+    expect(tribalIntelTargetName({ kind: 'kin', id: 'gone' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe('gone');
+  });
+
+  it('shows the raw id for a kin whose name is blank', () => {
+    expect(tribalIntelTargetName({ kind: 'kin', id: 'k10' }, ROSTER_KINFOLK, ROSTER_KIN)).toBe('k10');
+  });
+
+  it('is null when the entry names nothing at all', () => {
+    expect(tribalIntelTargetName({ kind: 'household', id: '' }, ROSTER_KINFOLK, ROSTER_KIN)).toBeNull();
+  });
+});
+
+describe('tribalIntelTargetLabel', () => {
+  it('labels all three targets with the kind and the resolved name', () => {
+    expect(
+      tribalIntelTargetLabel({ targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1' }, ROSTER_KINFOLK, ROSTER_KIN),
+    ).toBe('Household: the Halbrooks');
+    expect(
+      tribalIntelTargetLabel({ targetType: 'KINFOLK', targetKinfolkId: 'kf1' }, ROSTER_KINFOLK, ROSTER_KIN),
+    ).toBe('Kinfolk: Jane Halbrook');
+    expect(
+      tribalIntelTargetLabel(
+        { targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k9' },
+        ROSTER_KINFOLK,
+        ROSTER_KIN,
+      ),
+    ).toBe('Kin: Rufus');
+  });
+
+  it('never calls a single-kinfolk entry a household', () => {
+    // The reported defect: a row reading "Related to: demo-family-002" under
+    // household wording, on an entry that is about one kinfolk.
+    const label = tribalIntelTargetLabel(
+      { targetType: 'KINFOLK', targetKinfolkId: 'kf1' },
+      ROSTER_KINFOLK,
+      ROSTER_KIN,
+    );
+    expect(label).not.toContain('Household');
+    expect(label).toBe('Kinfolk: Jane Halbrook');
+  });
+
+  it('is null for an entry that names nobody, so the row shows no target line', () => {
+    expect(tribalIntelTargetLabel({}, ROSTER_KINFOLK, ROSTER_KIN)).toBeNull();
   });
 });
 
@@ -201,13 +339,16 @@ describe('dropEmptyTribalIntel', () => {
     ]);
     expect(kept).toEqual([{ title: 'Gate code', content: '' }]);
   });
+
   it('treats whitespace-only text as empty, matching the archive junk-row filter', () => {
     expect(dropEmptyTribalIntel([{ title: '   ', content: '\n' }])).toEqual([]);
   });
+
   it('keeps a row that has only attachments (the server allows saving one)', () => {
     const attachmentOnly = { title: '', content: '', attachments: [{ fileName: 'gate.jpg' }] };
     expect(dropEmptyTribalIntel([attachmentOnly])).toEqual([attachmentOnly]);
   });
+
   it('tolerates a legacy doc missing every field rather than throwing on it', () => {
     expect(dropEmptyTribalIntel([{}])).toEqual([]);
   });
@@ -219,11 +360,13 @@ describe('honesty copy', () => {
     // No completed claim: the dossier and 411 have not changed yet.
     expect(TRIBAL_INTEL_QUEUED_MESSAGE).not.toMatch(/\b(is|are|now|already|has been|have been)\s+(updated|folded|merged)\b/i);
   });
+
   it('the delete caveat states that already-folded dossier and 411 text is NOT unmerged', () => {
     expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/does not unmerge/i);
     expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/dossier/i);
     expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/411/);
   });
+
   it('neither string uses an em dash or en dash (Den copy rule)', () => {
     expect(TRIBAL_INTEL_QUEUED_MESSAGE).not.toMatch(/[—–]/);
     expect(TRIBAL_INTEL_DELETE_CAVEAT).not.toMatch(/[—–]/);

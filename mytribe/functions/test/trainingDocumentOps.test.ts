@@ -58,6 +58,45 @@ describe('createTrainingDocument', () => {
     expect(res.docId).toBe(add?.id);
   });
 
+  it('HAPPY: HOUSEHOLD target stores the household anchor and no kin id', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createTrainingDocumentHandler(req({
+      title: 'Holiday plans', content: 'The whole house is away over Thanksgiving.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    expect(res.ok).toBe(true);
+    const add = ctx.adds.find((a) => a.collection === 'training_documents');
+    // The third target is stored as itself, never folded back into KINFOLK: a
+    // reader has to be able to tell "about everyone under this roof" from
+    // "about this one person" without guessing (issue #393).
+    expect(add?.data.targetType).toBe('HOUSEHOLD');
+    expect(add?.data.targetKinfolkId).toBe('kf1');
+    expect(add?.data.targetKinId).toBe('');
+    expect(add?.data.kinfolkRef).toBe('kf1');
+  });
+
+  it('HAPPY: HOUSEHOLD target drops a stale kin id rather than storing it', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createTrainingDocumentHandler(req({
+      content: 'Everyone in the house is moving in March.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1', targetKinId: 'k9',
+    }));
+    const add = ctx.adds.find((a) => a.collection === 'training_documents');
+    // A pet id left on a household note is how the nightly pipeline would
+    // narrow a whole-house note down to one animal.
+    expect(add?.data.targetKinId).toBe('');
+  });
+
+  it('SAD: an unknown target type is rejected (invalid-argument)', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'FAMILY', targetKinfolkId: 'kf1',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
   it('HAPPY: KIN target stores targetKinId + attachments', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -132,6 +171,44 @@ describe('updateTrainingDocument', () => {
     const write = ctx.writes.find((w) => w.path === 'training_documents/d1');
     expect(write?.data.reconcileStatus).toBe('pending');
     expect(write?.merge).toBe(true);
+  });
+
+  it('HAPPY: re-targets an entry from KINFOLK to HOUSEHOLD on edit', async () => {
+    const ctx = buildDbMock({ docs: { 'training_documents/d1': { targetType: 'KINFOLK' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'd1', content: 'Actually this is about the whole house.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/d1');
+    expect(write?.data.targetType).toBe('HOUSEHOLD');
+    expect(write?.data.targetKinId).toBe('');
+  });
+
+  it('HAPPY: re-targets an entry from HOUSEHOLD to KIN on edit', async () => {
+    const ctx = buildDbMock({ docs: { 'training_documents/d1': { targetType: 'HOUSEHOLD' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'd1', content: 'This one is about Rex after all.',
+      targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k9',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/d1');
+    expect(write?.data.targetType).toBe('KIN');
+    expect(write?.data.targetKinId).toBe('k9');
+  });
+
+  it('HAPPY: a legacy entry carrying no target type gains an explicit one on save', async () => {
+    // The migrated NDJSON rows carry `kinfolkRef` and nothing else. Saving one
+    // is the upgrade path: no backfill script, and nothing touches prod.
+    const ctx = buildDbMock({ docs: { 'training_documents/legacy1': { kinfolkRef: 'kf1' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateTrainingDocumentHandler(req({
+      docId: 'legacy1', title: 'Imported', content: 'Still true.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    const write = ctx.writes.find((w) => w.path === 'training_documents/legacy1');
+    expect(write?.data.targetType).toBe('HOUSEHOLD');
+    expect(write?.data.kinfolkRef).toBe('kf1');
   });
 
   it('SAD: missing doc rejected (not-found)', async () => {

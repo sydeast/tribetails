@@ -11,13 +11,37 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
  * Phase 12 / spec 23: server-bound creation of a `training_documents` (Tribal
- * Intel) note. Auntie types free notes + attaches Cloudinary files and targets a
- * Kinfolk (household) or a single Kin (pet). The saved doc is queued with
- * `reconcileStatus: 'pending'` so the nightly Python reconcile pipeline folds it
- * into the targeted client's Dossier.rawSummary / pet Kin411.rawSummary plus the
- * AI blurbs. Replaces the old client-side write so the audit entry is bound to
- * the mutation and admin claim is enforced server-side (matches the
- * createKinCareSession precedent).
+ * Intel) note. Auntie types free notes + attaches Cloudinary files and names who
+ * the note is about. The saved doc is queued with `reconcileStatus: 'pending'`
+ * so the nightly Python reconcile pipeline folds it into the targeted client's
+ * Dossier.rawSummary / pet Kin411.rawSummary plus the AI blurbs. Replaces the
+ * old client-side write so the audit entry is bound to the mutation and admin
+ * claim is enforced server-side (matches the createKinCareSession precedent).
+ *
+ * ── THE THREE TARGETS (issue #393) ────────────────────────────────────────
+ * `targetType` used to be a two-value enum, KINFOLK | KIN, and both clients
+ * labelled the KINFOLK chip "Whole household". That made one word do two jobs:
+ * a note about one human client read as a note about everyone under that roof.
+ * Per the operator ruling there are three targets, and the words mean what this
+ * codebase already means by them everywhere else:
+ *
+ *   HOUSEHOLD  the whole family: every kinfolk and every kin under it.
+ *              `families/{kinfolkId}`.
+ *   KINFOLK    one human client. `kinfolk/{kinfolkId}`.
+ *   KIN        one animal. `kin/{kinId}`, scoped to its household.
+ *
+ * `targetKinfolkId` is the anchor id for all three, because
+ * `families/{kinfolkId}` is provisioned under the SAME id as its
+ * `kinfolk/{kinfolkId}` record (see triggers/familyProvision.ts): the household
+ * and its anchor kinfolk share one id, so a second `targetHouseholdId` field
+ * would store the same string twice and give it two places to disagree.
+ * `targetKinId` narrows to one animal and stays blank for the other two.
+ *
+ * READING AN OLD DOC: a `training_documents` row written before this change may
+ * carry no `targetType` at all (the NDJSON migration import). The clients read
+ * a blank one as HOUSEHOLD, the widest, non-fabricating answer, and the one the
+ * nightly pipeline already acts on. Nothing is backfilled; an old doc gains an
+ * explicit `targetType` the first time an operator saves it.
  *
  * NOTE on attachments: the reconcile LLM cannot read image bytes; attachments are
  * cited as provenance (URLs) only and never claimed to have been analyzed.
@@ -36,7 +60,7 @@ export const TrainingDocumentArgs = z
     content: z.string().max(20000).default(''),
     notes: z.string().max(4000).default(''),
     communicationType: z.string().max(120).default('note'),
-    targetType: z.enum(['KINFOLK', 'KIN']),
+    targetType: z.enum(['HOUSEHOLD', 'KINFOLK', 'KIN']),
     targetKinfolkId: z.string().min(1).max(120),
     targetKinId: z.string().max(120).optional(),
     attachments: z.array(AttachmentSchema).max(25).default([]),
@@ -82,7 +106,9 @@ export async function createTrainingDocumentHandler(
     targetType: args.targetType,
     targetKinfolkId: args.targetKinfolkId,
     targetKinId: args.targetType === 'KIN' ? (args.targetKinId ?? '') : '',
-    // kinfolkRef preserved for back-compat with the read-only screen/model.
+    // kinfolkRef preserved for back-compat: the nightly Python reconcile
+    // pipeline falls back to it (reconcile_comms.py) and pre-spec-23 rows carry
+    // it as their only target field.
     kinfolkRef: args.targetKinfolkId,
     attachments: args.attachments,
     reconcileStatus: 'pending',

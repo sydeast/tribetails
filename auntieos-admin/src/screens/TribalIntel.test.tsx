@@ -150,16 +150,63 @@ describe('TribalIntel screen', () => {
     expect(screen.queryByText('PENDING')).toBeNull();
   });
 
-  it('shows a "Related to" line only when kinfolkRef is set', () => {
-    mockTribalIntel({ status: 'ready', data: [entry({ kinfolkRef: 'The Whitfields' })] });
+  // ── who the row says it is about (issue #393) ───────────────────────────
+
+  it('names a kinfolk-targeted row after the kinfolk, never after the household', () => {
+    // The reported defect: this row read "Related to: demo-family-002" with
+    // household wording, on an entry that is about one kinfolk.
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: 'KINFOLK', targetKinfolkId: 'kf1' })],
+    });
     render(<TribalIntel />);
-    expect(screen.getByText('Related to: The Whitfields')).toBeInTheDocument();
+    expect(screen.getByText('Kinfolk: Marla Whitfield')).toBeInTheDocument();
+    expect(screen.queryByText(/^Household:/)).toBeNull();
   });
 
-  it('omits the "Related to" line entirely when kinfolkRef is blank', () => {
-    mockTribalIntel({ status: 'ready', data: [entry({ kinfolkRef: '' })] });
+  it('names a household-targeted row after the household', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1' })],
+    });
     render(<TribalIntel />);
-    expect(screen.queryByText(/related to/i)).toBeNull();
+    expect(screen.getByText('Household: the Whitfields')).toBeInTheDocument();
+  });
+
+  it('names a kin-targeted row after the animal', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'kin1' })],
+    });
+    render(<TribalIntel />);
+    expect(screen.getByText('Kin: Biscuit')).toBeInTheDocument();
+  });
+
+  it('reads a legacy row with no target type as the household it is filed under', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: '', targetKinfolkId: '', kinfolkRef: 'kf1' })],
+    });
+    render(<TribalIntel />);
+    expect(screen.getByText('Household: the Whitfields')).toBeInTheDocument();
+  });
+
+  it('shows the raw id when the roster holds no match, rather than a blank', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: 'HOUSEHOLD', targetKinfolkId: 'demo-family-002', kinfolkRef: '' })],
+    });
+    render(<TribalIntel />);
+    expect(screen.getByText('Household: demo-family-002')).toBeInTheDocument();
+  });
+
+  it('omits the target line entirely when the row names nobody', () => {
+    mockTribalIntel({
+      status: 'ready',
+      data: [entry({ targetType: '', targetKinfolkId: '', kinfolkRef: '' })],
+    });
+    render(<TribalIntel />);
+    expect(screen.queryByText(/^(Household|Kinfolk|Kin):/)).toBeNull();
   });
 
   it('shows an attachment pip only when the doc has attachments', () => {
