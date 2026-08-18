@@ -70,6 +70,33 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 //   7,000 requests a day. It does not raise the standing minimum, so it does
 //   not put `--force` on the operator's next deploy.
 //
+//   WHAT cpu 1 COSTS AT THE CPU QUOTA, since this project has a history with it
+//   and the answer is "nothing at rest". `CpuAllocPerProjectRegion` meters
+//   RUNNING INSTANCES. A deployed service with no instance up draws zero, so
+//   raising the default does not move the meter at deploy time. Counted from
+//   source on 2026-08-18: 235 endpoints are exported from this file, of which
+//   192 inherit the option below, 27 carry FULL_CPU (cpu 1, maxInstances 10),
+//   12 carry FULL_CPU_SERIAL (cpu 1, maxInstances 2) and 4 carry SERIAL
+//   (cpu 0.25, maxInstances 2). All 13 functions holding `minInstances: 1`
+//   already carried cpu 1, so the standing draw is 13 vCPU before this change
+//   and 13 vCPU after it.
+//
+//   Two hypotheticals bound the transient. One live instance of every function
+//   at once goes from 88 vCPU to 232, and every function saturating its
+//   maxInstances goes from 1,256 to 4,136. The second was never a bound at
+//   either setting, which is ADR-0004's point that maxInstances caps one
+//   runaway function rather than the fleet. The first is the number to watch if
+//   the regional limit is ever back at 200; it was raised to 400 on 2026-08-03
+//   and the console read 16 vCPU in use, so confirm the live limit before a
+//   deploy rather than trusting this comment.
+//
+//   Concurrency pushes the other way and is measured, not assumed. Per function,
+//   N concurrent requests draw min(N, 20) x 0.25 at concurrency 1 and
+//   ceil(N/80) x 1 at concurrency 80. The crossover is four. ADR-0004 caught
+//   getInvoiceLedger at eleven concurrent instances in a 10-second bucket, which
+//   is 2.75 vCPU under the old shape and 1 vCPU under this one, so the busiest
+//   function in the logs draws LESS after this change, not more.
+//
 //   WHAT cpu 1 TRADES AWAY: concurrency 1 was an accidental guarantee that no
 //   two requests ever shared process state. At concurrency 80 a module-scope
 //   mutable holding per-request or per-tenant data stops being a style question
