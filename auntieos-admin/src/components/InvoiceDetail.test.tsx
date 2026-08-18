@@ -775,6 +775,21 @@ describe('InvoiceDetail archive and restore', () => {
     await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
     await waitFor(() => expect(unarchiveInvoice).toHaveBeenCalledWith('inv1'));
   });
+
+  // #406: this Archived notice used to have no close button at all — the
+  // literal walk complaint, captured with this overlay open.
+  it('the Archived notice can be dismissed without touching the archive state', async () => {
+    render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
+    expect(screen.getByText(/has not been deleted or cancelled/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(screen.queryByText(/has not been deleted or cancelled/i)).toBeNull();
+    // Restore is still offered: dismissing the notice is not the same as
+    // restoring the invoice, and the archived state itself did not change.
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+    expect(unarchiveInvoice).not.toHaveBeenCalled();
+  });
 });
 /**
  * A1: the two panels this overlay went without. Before this change
@@ -1689,6 +1704,22 @@ describe('InvoiceDetail dispute panel', () => {
     expect(panel).toHaveTextContent(/was disputed/i);
     expect(panel).toHaveTextContent(/resolved in your favor/i);
     expect(panel).not.toHaveTextContent(/respond|deadline|evidence/i);
+  });
+  // #406: the walk complaint. "Dispute won" is history the operator already
+  // knows once read; it had no way to get it out of the way.
+  it('the WON dispute notice has a close button and can be dismissed', async () => {
+    render(
+      <InvoiceDetail
+        invoice={paidDisputed({ disputeStatus: 'won', disputeId: 'dp_1', disputeAmountCents: 4000, disputeFundsState: 'reinstated' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const panel = disputePanel();
+    const closeButton = within(panel).getByRole('button', { name: 'Dismiss' });
+
+    await userEvent.click(closeButton);
+
+    expect(document.querySelector('.invoice-detail__dispute')).toBeNull();
   });
   it('still says the money is out on a won dispute Stripe has not reinstated yet', () => {
     render(
