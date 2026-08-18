@@ -29,7 +29,7 @@ import { validateResponse } from '../lib/callableResponse';
  *     overwritten in place on every upload (`confirmKinPhotoUpload`), with no
  *     history kept anywhere.
  *
- * `media_files` carries no reliable per-Kin key — `kinId` appears only on
+ * `media_files` carries no reliable per-Kin key: `kinId` appears only on
  * legacy and sandbox documents, `taggedKinIds` is written by one admin surface
  * only, and `entityType` casing is inconsistent in production. So this does
  * NOT offer a per-Kin filter it could not honour; it returns the household's

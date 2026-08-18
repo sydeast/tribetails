@@ -4,7 +4,7 @@ import { callableRequest } from './_helpers/callableRequest';
 
 /**
  * #399 item 2: a kinfolk PROPOSES a new time. The load-bearing assertion in
- * this file is the one that says the visit did not move — before this callable
+ * this file is the one that says the visit did not move. Before this callable
  * existed the portal's "Reschedule visit" control was an inert span, and the
  * only thing that could have made it work was handing the household
  * `admin/rescheduleBooking`, which writes the schedule directly.

@@ -17,7 +17,7 @@ import { validateResponse } from '../lib/callableResponse';
  * Modelled field for field on `requestBookingCancellation`, and for the same
  * reason: this is an ASK, not a change. The visit keeps its time and its
  * status until the office rules on it. `admin/rescheduleBooking` is the only
- * thing that moves a visit, it is admin-gated, and it stays that way — a
+ * thing that moves a visit, it is admin-gated, and it stays that way. A
  * household that could move its own visit could move it on top of another
  * household's, past the closure guard, and around the busy check the office
  * relies on.

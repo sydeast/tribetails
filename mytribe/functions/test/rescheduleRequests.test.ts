@@ -10,7 +10,7 @@ import { callableRequest } from './_helpers/callableRequest';
  * admin schedule reads, because `admin/rescheduleBooking` only ever wrote the
  * second and a visit moved through it alone still reads at its old time in the
  * portal. Second: the mirror is written only when it exists, and its id is
- * `vis_{visitId}` unless the visit carries its own — the same rule
+ * `vis_{visitId}` unless the visit carries its own, the same rule
  * batchUpdateBookings follows.
  *
  * Authorisation is `wrapAdminCallable`, which these tests do not exercise

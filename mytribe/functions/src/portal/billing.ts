@@ -76,7 +76,7 @@ type PaymentMethodDto = z.infer<typeof PaymentMethodResult>;
  *
  * This deliberately does NOT go through `resolveKinfolkAccess`. That resolver
  * grants staff a cross-tenant read of any household by design, and every card
- * write in this module lands on `clients/{uid}` — the CALLER's own document.
+ * write in this module lands on `clients/{uid}`, the CALLER's own document.
  * An operator who stepped into a household through the tribe picker would
  * therefore attach a card to their own account while the screen was captioned
  * with the household's name, and `getMyAccount` would start reporting a
