@@ -24,7 +24,7 @@ import {
   localDateIso,
   unstampedStateInfo,
 } from '../lib/invoiceFormat';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -238,8 +238,9 @@ export interface InvoicesProps {
   /**
    * Opens this invoice's detail on mount. Set by the router from
    * `/invoices?invoiceId=<id>`, which is where the Notifications feed's "Open"
-   * lands for an invoice notification. An id that is not in the streamed page
-   * simply opens nothing, the same as selecting a row that scrolled out.
+   * lands for an invoice notification. Resolved by a BY-ID read, so the date
+   * window, the household facet and the archive facet cannot hide it; an id
+   * with no readable document behind it says so in a banner.
    */
   initialInvoiceId?: string;
   /**
@@ -308,6 +309,22 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     [households],
   );
 
+  // THE DEEP LINK IS READ BY ID, not looked for among the rows this page holds.
+  // `/invoices?invoiceId=<id>` is where the Notifications feed's "Open" lands,
+  // and it used to resolve by find-in-loaded-page: one page of one date window,
+  // seven days by default. The walk's invoice was 46 days old, so Open put the
+  // operator on the list under a red "not in the last 7 days" banner: the
+  // list, not the record, which is issue #389's invoice half. The by-id read
+  // does not care what the toolbar is currently showing, so no filter of this
+  // screen's can hide the record a link names.
+  //
+  // Only ever the id the link carried: `selectedId` also holds ids picked from
+  // rows, and letting the fetched document answer for one of those would leak
+  // the deep-linked invoice into a later selection.
+  const deepLinkId =
+    initialInvoiceId !== undefined && selectedId === initialInvoiceId ? initialInvoiceId : null;
+  const deepLinked = useDocById<InvoiceEntry>('invoices', deepLinkId);
+
   // NORMALIZED, the same as the list rows. `rowViewsFor` normalizes what the
   // LIST reads, and this find used to hand the detail sheet the raw document,
   // so the two halves of one screen disagreed about the same invoice.
@@ -319,21 +336,29 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // contract and the server defaults them to '', but zod will not take a null
   // where a string may go. InvoiceEntry is a cast over Firestore data, not a
   // guarantee; normalizeInvoice is what turns the declaration back into truth.
+  // The by-id document goes through it too: it is the same collection, so it
+  // arrives with the same absent fields.
   const selectedRow =
     selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
-  const selected = selectedRow === undefined ? undefined : normalizeInvoice(selectedRow);
+  const deepLinkedRow =
+    deepLinkId !== null && deepLinked.status === 'ready' && deepLinked.data !== null
+      ? deepLinked.data
+      : undefined;
+  const selectedRaw = selectedRow ?? deepLinkedRow;
+  const selected = selectedRaw === undefined ? undefined : normalizeInvoice(selectedRaw);
 
-  // THE DEEP LINK CAN NOW MISS. `/invoices?invoiceId=<id>` is where the
-  // Notifications feed's "Open" lands, and it resolves against the rows this
-  // screen has loaded. That used to be the 200 newest and is now one page of one
-  // date window, so an invoice dated outside it opens NOTHING. Silently opening
-  // nothing after a click is the dead-control failure in another costume, so the
-  // screen says which of its own filters is in the way.
-  const deepLinkMissed =
-    initialInvoiceId !== undefined &&
-    selectedId === initialInvoiceId &&
-    rows.status === 'ready' &&
-    selected === undefined;
+  // What the link RESOLVED TO, as one of three states the banner below renders.
+  // 'opening' covers the read still being in flight: an unresolved id is not a
+  // missing invoice, and flashing "no longer available" for a moment before the
+  // sheet opens would be a lie the operator has time to read.
+  const deepLinkState: 'none' | 'opening' | 'missing' | 'error' =
+    deepLinkId === null || selected !== undefined
+      ? 'none'
+      : deepLinked.status === 'loading'
+        ? 'opening'
+        : deepLinked.status === 'error'
+          ? 'error'
+          : 'missing';
 
   // Read every row's stamp exactly once (memoized), then project the stat strip
   // AND the list off the SAME views, rather than re-walking the page per stat.
@@ -521,9 +546,28 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           }
         />
 
-        {deepLinkMissed && (
+        {/* The three honest answers a deep link can get, never a silent nothing.
+            'opening' is a status line rather than an alert: nothing has gone
+            wrong yet, the read is simply still in flight. */}
+        {deepLinkState === 'opening' && (
+          <p className="invoices__deep-link-miss" role="status">
+            Opening the invoice this link points at…
+          </p>
+        )}
+        {deepLinkState === 'missing' && (
           <p className="invoices__deep-link-miss" role="alert">
-            {`The invoice this link points at is not in ${windowLabel}. Try All (archive), clear the household filter, or Load more.`}
+            The invoice this link points at is no longer available. It may have been deleted, or it
+            may belong to a household this account cannot see.
+          </p>
+        )}
+        {deepLinkState === 'error' && deepLinked.status === 'error' && (
+          <p className="invoices__deep-link-miss" role="alert">
+            Couldn&rsquo;t open the invoice this link points at. {deepLinked.message}
+            {deepLinked.retry && (
+              <button type="button" className="async-retry" onClick={deepLinked.retry}>
+                Retry
+              </button>
+            )}
           </p>
         )}
 

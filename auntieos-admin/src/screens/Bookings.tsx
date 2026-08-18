@@ -8,7 +8,7 @@ import {
   initialsFor,
   type BookingState,
 } from '../lib/bookingFormat';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
@@ -162,16 +162,29 @@ function sectionSize(rows: readonly BookingEntry[], key: BookingSectionKey): num
 
 interface BookingsProps {
   /**
-   * Row-select hook. The router mounts this screen propless (no detail ROUTE
-   * exists), so by default this screen wires its OWN handler: selecting a row
-   * opens `BookingDetailModal`, the full detail sheet, fed from the SAME live
-   * BOOKINGS_QUERY stream this list already reads (no second fetch, see the
+   * Row-select hook. The router mounts this screen with no selection handler
+   * (no detail ROUTE exists), so by default this screen wires its OWN: selecting
+   * a row opens `BookingDetailModal`, the full detail sheet, fed from the SAME
+   * live BOOKINGS_QUERY stream this list already reads (no second fetch, see the
    * `detailEntry` lookup below). Passing `onSelectBooking` explicitly overrides
    * that default, letting a future detail ROUTE (or a test) own selection
    * instead; when overridden, this screen's own overlay never renders (see the
    * `!onSelectBooking` guard it renders under).
    */
   onSelectBooking?: (bookingId: string) => void;
+  /**
+   * Opens this booking's detail sheet on mount. Set by the router from
+   * `/bookings?bookingId=<flat session id>`, where a booking notification's
+   * "Open" lands (`lib/notificationActions.ts` derives the flat id from the
+   * envelope visit id the notification carries).
+   *
+   * Resolved BY ID, not by searching the streamed page: BOOKINGS_QUERY is the
+   * 200 newest sessions, so an older visit would otherwise open nothing and
+   * leave the operator on the list, issue #389's complaint exactly. An id with
+   * no session behind it (a visit still awaiting approval has none yet) gets the
+   * "Booking unavailable" dialog rather than silence.
+   */
+  initialBookingId?: string;
 }
 
 /** One row's derived display facts, computed once per render pass. */
@@ -214,7 +227,7 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * and api/bookingsWrite.ts for exactly why those two callables don't apply to
  * this list's rows.
  */
-export function Bookings({ onSelectBooking }: BookingsProps) {
+export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -223,8 +236,9 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   // the live bookings off the first screen.
   const [historyOpen, setHistoryOpen] = useState(false);
   // The overlay's own selection state, used only when no external
-  // onSelectBooking is supplied (see BookingsProps's doc above).
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
+  // deep link so `/bookings?bookingId=<id>` opens the sheet on arrival.
+  const [detailId, setDetailId] = useState<string | null>(initialBookingId ?? null);
   const handleSelectBooking = onSelectBooking ?? setDetailId;
 
   // The "New booking request" create surface (AO-25). It writes the envelope
@@ -355,13 +369,37 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
   const scheduledCount = asyncScalar(rows, (data) => sectionSize(data, 'scheduled'));
   const historyCount = asyncScalar(rows, (data) => sectionSize(data, 'history'));
 
-  // The row the detail sheet shows, resolved from the SAME live stream `rows`
-  // already holds (never a second fetch): once a write round-trips through
-  // Firestore, this listener's next snapshot updates `detailEntry` too. `null`
-  // (stream not ready, or the id no longer resolves to a row) gets its own
-  // honest "unavailable" dialog below rather than a blank sheet.
-  const detailEntry =
-    detailId !== null && rows.status === 'ready' ? (rows.data.find((r) => r._id === detailId) ?? null) : null;
+  // A DEEP-LINKED id is read BY ID as well, because the stream below is the 200
+  // newest sessions and a notification can name an older one. Only ever the id
+  // the link carried: `detailId` also holds ids picked from rows, and letting
+  // the fetched document answer for one of those would leak it into a later
+  // selection.
+  const deepLinkId =
+    initialBookingId !== undefined && detailId === initialBookingId ? initialBookingId : null;
+  const deepLinked = useDocById<BookingEntry>('kin_care_sessions', deepLinkId);
+
+  // The row the detail sheet shows. Preferred from the SAME live stream `rows`
+  // already holds (never a second fetch for a row already on screen): once a
+  // write round-trips through Firestore, this listener's next snapshot updates
+  // `detailEntry` too. The by-id read is the fallback, and it is live for the
+  // same reason. `null` once both have answered means the booking really is not
+  // there, and gets its own honest "unavailable" dialog below, never a blank
+  // sheet.
+  const streamedEntry =
+    detailId !== null && rows.status === 'ready'
+      ? (rows.data.find((r) => r._id === detailId) ?? null)
+      : null;
+  const deepLinkedEntry =
+    deepLinkId !== null && deepLinked.status === 'ready' ? deepLinked.data : null;
+  const detailEntry = streamedEntry ?? deepLinkedEntry;
+
+  // Still resolving. Without this the "unavailable" dialog flashes over every
+  // deep link for as long as the reads take, which reads as a dead link even
+  // when the booking is about to open.
+  const detailPending =
+    detailId !== null &&
+    detailEntry === null &&
+    (rows.status === 'loading' || (deepLinkId !== null && deepLinked.status === 'loading'));
 
   return (
     <div className="screen">
@@ -501,14 +539,47 @@ export function Bookings({ onSelectBooking }: BookingsProps) {
           rather than opening a sheet with nothing in it. */}
       {!onSelectBooking &&
         detailId !== null &&
-        (detailEntry === null ? (
+        (detailPending ? (
+          <Dialog title="Opening booking" onClose={() => setDetailId(null)}>
+            <p className="bookings__hint">Looking this booking up…</p>
+          </Dialog>
+        ) : detailEntry === null && deepLinkId !== null && deepLinked.status === 'error' ? (
+          // A READ THAT FAILED IS NOT A BOOKING THAT IS GONE. Both leave
+          // `detailEntry` null, and collapsing them would tell the operator a
+          // network blip meant the visit had been cancelled, which is the
+          // error-as-empty conflation lib/async.ts exists to refuse. The
+          // failure gets its own dialog, its own message, and the retry the
+          // hook hands back.
+          <Dialog
+            title="Couldn't open this booking"
+            onClose={() => setDetailId(null)}
+            footer={<GhostButton label="Done" onClick={() => setDetailId(null)} />}
+          >
+            <p className="bookings__hint" role="alert">
+              This booking couldn&rsquo;t be read. {deepLinked.message}
+              {deepLinked.retry && (
+                <button type="button" className="async-retry" onClick={deepLinked.retry}>
+                  Retry
+                </button>
+              )}
+            </p>
+          </Dialog>
+        ) : detailEntry === null ? (
           <Dialog
             title="Booking unavailable"
             onClose={() => setDetailId(null)}
             footer={<GhostButton label="Done" onClick={() => setDetailId(null)} />}
           >
+            {/* THE THIRD READING MATTERS as much as the other two, and it is the
+                one a notification produces: a visit that is still REQUESTED has
+                no session document at all, because approval is what creates one
+                (approveBookingSeriesCore.ts). Saying only "cancelled or removed"
+                would send the operator looking for a booking that is sitting in
+                the incoming-requests queue waiting for them. */}
             <p className="bookings__hint">
-              This booking is no longer available. It may have been cancelled or removed.
+              This booking isn&rsquo;t available to open. A visit gets its own record only once
+              the request is approved, so a request still waiting on you has none yet. Otherwise
+              it may have been cancelled or removed.
             </p>
           </Dialog>
         ) : (

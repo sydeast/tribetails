@@ -177,3 +177,30 @@ export function applyTestScope(spec: CollectionSpec): CollectionSpec {
   const scope: Filter = [field, '==', tribe];
   return { ...spec, filters: [...existing, scope] };
 }
+/**
+ * The same sandbox scope, asked of ONE already-read document instead of a query.
+ *
+ * `applyTestScope` above pushes the constraint into the query, which is how a
+ * LIST cannot leak a record from outside the operator's sandbox. A by-id read
+ * (`useDocById`) has no query to constrain, so the question has to be asked of
+ * the document that came back. Rules deny most cross-tribe reads before they get
+ * this far; this is the belt for the collections whose rule is broader than the
+ * scope, so a deep link cannot become the one path around it.
+ *
+ * True for every document when no test admin is signed in, and for any
+ * collection with no scope field to check. This narrows, it never grants.
+ */
+export function isVisibleInTestScope(
+  path: string,
+  docId: string,
+  data: Record<string, unknown>,
+): boolean {
+  const tribe = currentTestTribeId;
+  if (!tribe) return true;
+  if (SCOPED_BY_DOC_ID.has(path)) return docId === tribe;
+  const field = SCOPED_BY_KINFOLK.has(path)
+    ? SCOPE_FIELD
+    : (SCOPED_BY_ALT_FIELD.get(path) ?? null);
+  if (!field) return true;
+  return data[field] === tribe;
+}

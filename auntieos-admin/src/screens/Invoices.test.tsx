@@ -14,8 +14,11 @@ import { type PagedCollection } from '../lib/usePagedCollection';
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({
+  useCollection: vi.fn(),
+  useDocById: vi.fn(),
+}));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 
 // InvoiceDetail / InvoiceCreate (now wired in, see the header comment on
 // Invoices.tsx) both reach these callables. Mocked here so nothing under this
@@ -124,6 +127,10 @@ beforeEach(() => {
   reload.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([]));
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
+  // No deep-linked invoice unless a test says otherwise. `ready + null` is the
+  // hook's settled "nothing to resolve" answer (see lib/firestore.ts), NOT a
+  // miss: the screen only reads it when an id was actually passed.
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   createInvoice.mockReset();
   createQuote.mockReset();
   sendInvoiceReminder.mockReset();
@@ -351,19 +358,56 @@ describe('Invoices screen', () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'inv1' })]));
     render(<Invoices initialInvoiceId="inv1" />);
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(screen.queryByText(/not in the last 7 days/)).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('says so when a deep link lands outside the window, instead of opening nothing', () => {
-    // The feed's "Open" resolves against the LOADED rows. That used to be the
-    // 200 newest and is now one page of one window, so this can miss. A click
-    // that produces nothing at all is the dead-control failure in disguise.
+  // ISSUE #389, the invoice half. The walk's notification pointed at an invoice
+  // 46 days old; the screen resolved deep links by find-in-loaded-page and the
+  // window defaults to 7 days, so Open produced the LIST plus a red banner
+  // rather than the record. The record is read BY ID now, so no filter of this
+  // screen's can hide it.
+  it('opens an invoice dated OUTSIDE the default window, which the loaded page never holds', async () => {
+    // The page holds a different invoice entirely: what the toolbar is showing
+    // has nothing to do with what the link resolves to.
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'inv-from-2019', invoiceNumber: '0007', date: '2019-04-02' }),
+    });
     render(<Invoices initialInvoiceId="inv-from-2019" />);
+    const detail = await screen.findByRole('dialog');
+    expect(within(detail).getByText(/0007/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    // And it asked for the right document, in the right collection.
+    expect(useDocById).toHaveBeenCalledWith('invoices', 'inv-from-2019');
+  });
+
+  it('says the invoice is gone when the by-id read finds nothing, instead of opening nothing', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+    useDocById.mockReturnValue({ status: 'ready', data: null });
+    render(<Invoices initialInvoiceId="inv-deleted" />);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'The invoice this link points at is not in the last 7 days. Try All (archive), clear the household filter, or Load more.',
+      'The invoice this link points at is no longer available.',
     );
+  });
+
+  it('does not flash the miss banner while the by-id read is still in flight', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+    useDocById.mockReturnValue({ status: 'loading' });
+    render(<Invoices initialInvoiceId="inv-slow" />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent('Opening the invoice this link points at');
+  });
+
+  it('surfaces a failed by-id read as an error with a retry, not as a missing invoice', async () => {
+    const retry = vi.fn();
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+    useDocById.mockReturnValue({ status: 'error', message: 'network down', retry });
+    render(<Invoices initialInvoiceId="inv-unreadable" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('network down');
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(retry).toHaveBeenCalled();
   });
 
   it('drops that notice once the operator closes the link, rather than nagging', async () => {

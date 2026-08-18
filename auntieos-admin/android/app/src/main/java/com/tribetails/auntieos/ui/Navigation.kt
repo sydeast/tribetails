@@ -182,6 +182,24 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
             if (reportId.isNullOrBlank()) "kintale/$sessionId" else "kintale/$sessionId?reportId=$reportId"
     }
 
+    /**
+     * ONE KINTALE, addressed by report id ALONE. [KinTaleReport] above is keyed
+     * by session because that is how the app reaches a report from a visit: you
+     * are looking at the visit and you open its recap. A notification arrives
+     * from the other direction. It names the REPORT and knows nothing about
+     * the session, and nothing on Android could take that id, which is why a
+     * kintale notification's Open used to drop it and open the logs list.
+     *
+     * This route reads the report first (its `sessionId` is a field on the
+     * document), then renders the same screen with both ids. That read is the
+     * whole reason it is a separate route rather than a nullable argument on the
+     * one above: the screen needs the session before it can compose, and a route
+     * is where an id gets resolved into one.
+     */
+    object KinTaleByReport : Screen("kintale_report/{reportId}", "KinTale", Lucide.Pencil) {
+        fun createRoute(reportId: String) = "kintale_report/$reportId"
+    }
+
     object LiveTracking : Screen("live_tracking/{sessionId}/{kinfolkId}/{kinfolkName}", "Live Tracking", Lucide.LayoutDashboard) {
         fun createRoute(sessionId: String, kinfolkId: String, kinfolkName: String) =
             "live_tracking/$sessionId/$kinfolkId/${java.net.URLEncoder.encode(kinfolkName, "UTF-8")}"
@@ -194,23 +212,71 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
 
 val bottomNavScreens = listOf(Screen.Home, Screen.Directory, Screen.Gallery, Screen.Communicate, Screen.AuntieTime, Screen.Inbox, Screen.Calendar, Screen.Dashboard)
 
+/** The prefix that turns an envelope VISIT id into the flat SESSION doc id.
+ *  See [sessionIdForVisit]. */
+private const val VISIT_SESSION_PREFIX = "vis_"
+
+/**
+ * The flat `kin_care_sessions` doc id for an envelope visit id.
+ *
+ * Mirrors `sessionIdForVisit` in the React admin's `src/api/bookings.ts`, and
+ * for the same reason: a booking notification's `targetId` is an ENVELOPE visit
+ * id (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`) while every
+ * admin booking surface reads the FLAT collection. The bridge is deterministic
+ * because three server paths mint the session doc at exactly `vis_{visitId}`:
+ * `approveBookingSeriesCore.ts:95`, `manageBookingSeries.ts:100` and
+ * `batchUpdateBookings.ts:184`.
+ *
+ * An id that already carries the prefix comes back unchanged, so this is safe
+ * to apply to a targetId whose emitter threaded the flat session id instead
+ * (the dispatcher's `resolveTargetRef` accepts `data.bookingId` as well as
+ * `data.visitId`, and those are not always the same space).
+ */
+internal fun sessionIdForVisit(visitId: String): String {
+    val id = visitId.trim()
+    if (id.isEmpty()) return ""
+    return if (id.startsWith(VISIT_SESSION_PREFIX)) id else "$VISIT_SESSION_PREFIX$id"
+}
+
+/** The envelope visit id a flat session doc id was minted from, or the id
+ *  unchanged when it carries no prefix (a manually-created or legacy session has
+ *  no envelope counterpart, so there is no visit id to recover). */
+internal fun visitIdForSession(sessionId: String): String {
+    val id = sessionId.trim()
+    return if (id.startsWith(VISIT_SESSION_PREFIX)) id.removePrefix(VISIT_SESSION_PREFIX) else id
+}
+
 /**
  * Step 4: resolve a notification's targetType/targetId to a nav route for the
  * "open linked item" quick action. Returns null for an unknown type or blank id so
  * the caller can no-op rather than navigating somewhere wrong.
- *   - booking  -> KinCareDetail (the visit / kin_care_session detail screen)
+ *   - booking  -> KinCareDetail, on the DERIVED flat session id
  *   - invoice  -> InvoiceDetail
  *   - kinfolk  -> KinfolkProfile
- *   - kintale  -> the KinTales list (no per-report detail route exists on Android)
+ *   - kintale  -> KinTaleByReport, which resolves the report's session and opens it
  * Pure; unit-tested.
+ *
+ * TWO OF THESE FOUR USED TO LAND WRONG, both fixed here (issue #389):
+ *
+ * BOOKING passed the BARE visit id into KinCareDetail, which matches it against
+ * `kin_care_sessions` ids, and those carry the `vis_` prefix, so it never
+ * matched and the screen showed "Kin Care not found" for a visit that exists.
+ * The same defect the React admin had from the opposite side, where the id was
+ * dropped rather than mis-shaped. [sessionIdForVisit] is the bridge.
+ *
+ * KINTALE dropped the id and opened the logs LIST, which is the exact complaint
+ * the operator raised: an Open button that opens the feature rather than the
+ * record. Android has no route that takes a report id on its own (its report
+ * screen is keyed by session), so [Screen.KinTaleByReport] resolves the report
+ * first and hands the screen both ids, or says the report is unavailable.
  */
 internal fun notificationTargetRoute(targetType: String, targetId: String): String? {
     val id = targetId.trim()
     return when (targetType.trim().lowercase()) {
-        "booking" -> if (id.isNotBlank()) Screen.KinCareDetail.createRoute(id) else null
+        "booking" -> if (id.isNotBlank()) Screen.KinCareDetail.createRoute(sessionIdForVisit(id)) else null
         "invoice" -> if (id.isNotBlank()) Screen.InvoiceDetail.createRoute(id) else null
         "kinfolk" -> if (id.isNotBlank()) Screen.KinfolkProfile.createRoute(id) else null
-        "kintale" -> if (id.isNotBlank()) Screen.AdminKinTaleLogs.route else null
+        "kintale" -> if (id.isNotBlank()) Screen.KinTaleByReport.createRoute(id) else null
         else -> null
     }
 }
@@ -973,6 +1039,20 @@ private fun AuthenticatedNavHost(
                 com.tribetails.auntieos.ui.kintales.KinTaleReportScreen(
                     sessionId = sessionId,
                     existingReportId = reportId,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            // The report-id-only entrance, where a kintale notification's Open
+            // lands. No AdminGate, matching the session-keyed route directly
+            // above it: this is the same screen reached by a different key, and
+            // gating one but not the other would be a difference nobody chose.
+            composable(
+                route = Screen.KinTaleByReport.route,
+                arguments = listOf(navArgument("reportId") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val reportId = backStackEntry.arguments?.getString("reportId") ?: return@composable
+                com.tribetails.auntieos.ui.kintales.KinTaleByReportScreen(
+                    reportId = reportId,
                     onBack = { navController.popBackStack() }
                 )
             }
