@@ -308,8 +308,20 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
     [households],
   );
 
-  const selected =
+  // NORMALIZED, the same as the list rows. `rowViewsFor` normalizes what the
+  // LIST reads, and this find used to hand the detail sheet the raw document,
+  // so the two halves of one screen disagreed about the same invoice.
+  //
+  // It reached the server. Mark 10 of the 2026-08-17 walk opened
+  // test-kinfolk-001-invoice-open, whose `client` and `invoiceNumber` are both
+  // absent, took a payment, and sent `{"client":null,"invoiceNumber":null}` to
+  // `recordPayment`, which answered 400: those fields are optional on the
+  // contract and the server defaults them to '', but zod will not take a null
+  // where a string may go. InvoiceEntry is a cast over Firestore data, not a
+  // guarantee; normalizeInvoice is what turns the declaration back into truth.
+  const selectedRow =
     selectedId && rows.status === 'ready' ? rows.data.find((r) => r._id === selectedId) : undefined;
+  const selected = selectedRow === undefined ? undefined : normalizeInvoice(selectedRow);
 
   // THE DEEP LINK CAN NOW MISS. `/invoices?invoiceId=<id>` is where the
   // Notifications feed's "Open" lands, and it resolves against the rows this
