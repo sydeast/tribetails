@@ -385,8 +385,11 @@ class AndroidScreenshotTest {
     fun trainingDocuments() {
         val repo = mockk<AuntieRepository>(relaxed = true)
         coEvery { repo.getTrainingDocuments() } returns Result.success(AndroidDemoFixtures.trainingDocs)
-        // Tribal Intel screen now loads the kinfolk directory for the target picker.
+        // The screen loads BOTH rosters: the kinfolk one for the target picker and
+        // the household/kinfolk names, the kin one so a pet-targeted row can name
+        // the pet instead of printing its id.
         coEvery { repo.getKinfolk() } returns Result.success(AndroidDemoFixtures.kinfolk)
+        coEvery { repo.getAllKin() } returns Result.success(AndroidDemoFixtures.allKin)
         val vm = AdminDataViewModel(repository = repo, invoiceRepository = mockk(relaxed = true))
         vm.loadTrainingDocuments()
         compose.setContent {

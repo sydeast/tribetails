@@ -14,6 +14,12 @@ import { AttachmentSchema } from './createTrainingDocument';
  * Phase 12 / spec 23: server-bound edit of a `training_documents` (Tribal Intel)
  * note. Re-queues the doc (`reconcileStatus: 'pending'`) so the next reconcile
  * pass re-folds the updated note into the targeted Dossier / Kin411.
+ *
+ * `targetType` accepts the same three targets as the create callable,
+ * HOUSEHOLD | KINFOLK | KIN (issue #393); see createTrainingDocument.ts for
+ * what each one names and which id carries it. Because this handler always
+ * writes an explicit `targetType`, a legacy row that carried none picks one up
+ * the first time an operator saves it, without a backfill.
  */
 export const UpdateTrainingDocumentArgs = z
   .object({
@@ -22,7 +28,7 @@ export const UpdateTrainingDocumentArgs = z
     content: z.string().max(20000).default(''),
     notes: z.string().max(4000).default(''),
     communicationType: z.string().max(120).default('note'),
-    targetType: z.enum(['KINFOLK', 'KIN']),
+    targetType: z.enum(['HOUSEHOLD', 'KINFOLK', 'KIN']),
     targetKinfolkId: z.string().min(1).max(120),
     targetKinId: z.string().max(120).optional(),
     attachments: z.array(AttachmentSchema).max(25).default([]),

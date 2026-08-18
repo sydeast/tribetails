@@ -3,10 +3,12 @@ import {
   TRIBAL_INTEL_ATTACHMENTS_MAX,
   TRIBAL_INTEL_CONTENT_MAX,
   TRIBAL_INTEL_NOTES_MAX,
+  TRIBAL_INTEL_TARGET_TYPES,
   TRIBAL_INTEL_TITLE_MAX,
   blankTribalIntelDraft,
   canSaveTribalIntelDraft,
   tribalIntelCallableArgs,
+  tribalIntelTargetTypeLabel,
   validateTribalIntelDraft,
   type TribalIntelDraft,
 } from './tribalIntelDraftSchema';
@@ -128,7 +130,7 @@ describe('tribalIntelDraftSchema', () => {
       content: 'Mrs. Whitfield mentioned Biscuit limps after long walks.',
       notes: 'seen at pickup',
       communicationType: 'note',
-      targetType: 'KINFOLK',
+      targetType: 'HOUSEHOLD',
       targetKinfolkId: 'kf1',
       attachments: [],
     });
@@ -141,7 +143,76 @@ describe('tribalIntelDraftSchema', () => {
   });
 
   it('never leaks a stale pet id onto a household-targeted save', () => {
+    const args = tribalIntelCallableArgs(draft({ targetType: 'HOUSEHOLD', targetKinId: 'kin9' }));
+    expect('targetKinId' in args).toBe(false);
+  });
+
+  it('never leaks a stale pet id onto a kinfolk-targeted save', () => {
     const args = tribalIntelCallableArgs(draft({ targetType: 'KINFOLK', targetKinId: 'kin9' }));
     expect('targetKinId' in args).toBe(false);
+  });
+});
+
+// ── the three targets (issue #393) ────────────────────────────────────────
+
+describe('Tribal Intel targets', () => {
+  it('offers exactly household, kinfolk and kin, widest first', () => {
+    expect([...TRIBAL_INTEL_TARGET_TYPES]).toEqual(['HOUSEHOLD', 'KINFOLK', 'KIN']);
+  });
+
+  it('labels each target with the operator\'s own word', () => {
+    expect(tribalIntelTargetTypeLabel('HOUSEHOLD')).toBe('Household');
+    expect(tribalIntelTargetTypeLabel('KINFOLK')).toBe('Kinfolk');
+    expect(tribalIntelTargetTypeLabel('KIN')).toBe('Kin');
+  });
+
+  it('starts a new entry on the household, the widest target', () => {
+    // It used to start on KINFOLK under a chip reading "Whole household", so
+    // every untouched entry claimed to be about one person.
+    expect(blankTribalIntelDraft().targetType).toBe('HOUSEHOLD');
+  });
+
+  it('accepts a saveable draft for each of the three targets', () => {
+    expect(canSaveTribalIntelDraft(draft({ targetType: 'HOUSEHOLD' }))).toBe(true);
+    expect(canSaveTribalIntelDraft(draft({ targetType: 'KINFOLK' }))).toBe(true);
+    expect(canSaveTribalIntelDraft(draft({ targetType: 'KIN', targetKinId: 'kin9' }))).toBe(true);
+  });
+
+  it('builds a household payload that names the household and no animal', () => {
+    const args = tribalIntelCallableArgs(draft({ targetType: 'HOUSEHOLD' }));
+    expect(args.targetType).toBe('HOUSEHOLD');
+    expect(args.targetKinfolkId).toBe('kf1');
+    expect('targetKinId' in args).toBe(false);
+  });
+
+  it('builds a kinfolk payload that names one human client and no animal', () => {
+    const args = tribalIntelCallableArgs(draft({ targetType: 'KINFOLK' }));
+    expect(args.targetType).toBe('KINFOLK');
+    expect(args.targetKinfolkId).toBe('kf1');
+    expect('targetKinId' in args).toBe(false);
+  });
+
+  it('builds a kin payload that names the animal and the household it lives in', () => {
+    const args = tribalIntelCallableArgs(draft({ targetType: 'KIN', targetKinId: 'kin9' }));
+    expect(args.targetType).toBe('KIN');
+    expect(args.targetKinfolkId).toBe('kf1');
+    expect(args.targetKinId).toBe('kin9');
+  });
+
+  it('still demands a pet id from a kin-targeted draft, and only from that one', () => {
+    expect(validateTribalIntelDraft(draft({ targetType: 'KIN', targetKinId: '' })).targetKinId).toBe(
+      'Pick which pet this intel is about.',
+    );
+    expect(validateTribalIntelDraft(draft({ targetType: 'HOUSEHOLD', targetKinId: '' }))).toEqual({});
+    expect(validateTribalIntelDraft(draft({ targetType: 'KINFOLK', targetKinId: '' }))).toEqual({});
+  });
+
+  it('demands a household anchor for every target, kin included', () => {
+    for (const targetType of TRIBAL_INTEL_TARGET_TYPES) {
+      const errors = validateTribalIntelDraft(
+        draft({ targetType, targetKinfolkId: '', targetKinId: 'kin9' }),
+      );
+      expect(errors.targetKinfolkId).toBe('Pick the household this intel belongs to.');
+    }
   });
 });

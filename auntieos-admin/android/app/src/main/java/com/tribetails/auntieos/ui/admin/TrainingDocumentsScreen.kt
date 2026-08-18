@@ -118,9 +118,15 @@ fun TrainingDocumentsScreen(
     // Local Comm. Type chip selection (always on). Single-select, in-memory only.
     var commTypeFilter by remember { mutableStateOf<String?>(null) }
 
+    // Both rosters, so a row can name the household, the kinfolk, or the kin it
+    // points at instead of printing a raw document id.
+    val kinfolkDirectory by viewModel.kinfolkDirectory.collectAsState()
+    val kinDirectory by viewModel.kinDirectory.collectAsState()
+
     LaunchedEffect(Unit) {
         viewModel.loadTrainingDocuments()
         viewModel.loadKinfolkDirectory()
+        viewModel.loadKinDirectory()
     }
 
     AuntieScreenScaffold(
@@ -279,6 +285,8 @@ fun TrainingDocumentsScreen(
                                     docs.forEachIndexed { i, doc ->
                                         DocRow(
                                             doc = doc,
+                                            kinfolk = kinfolkDirectory,
+                                            kin = kinDirectory,
                                             showDivider = i < docs.lastIndex,
                                             canManage = flags.trainingDocsCreate,
                                             onEdit = {
@@ -343,6 +351,8 @@ private fun SummaryRow(docs: List<TrainingDocument>) {
 @Composable
 private fun DocRow(
     doc: TrainingDocument,
+    kinfolk: List<com.tribetails.auntieos.data.model.Kinfolk>,
+    kin: List<com.tribetails.auntieos.data.model.Kin>,
     showDivider: Boolean,
     canManage: Boolean,
     onEdit: () -> Unit,
@@ -351,6 +361,11 @@ private fun DocRow(
     var expanded by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val c = AuntieTheme.colors
+    // Who the entry is about, said out loud: the kind of target AND the name of
+    // the one it points at. This row used to print "Related to: <raw id>" while
+    // the form's only wide chip said "Whole household" whatever the real target
+    // was, which is the defect issue #393 reports.
+    val targetLabel = tribalIntelTargetLabel(doc, kinfolk, kin)
 
     Column {
         AuntieEntityRow(
@@ -371,7 +386,7 @@ private fun DocRow(
             },
         )
 
-        if (doc.content.isNotBlank() || doc.notes.isNotBlank() || doc.kinfolkRef.isNotBlank()) {
+        if (doc.content.isNotBlank() || doc.notes.isNotBlank() || targetLabel != null) {
             Column(
                 modifier = Modifier.padding(
                     start = AuntieTheme.dims.space3,
@@ -407,9 +422,9 @@ private fun DocRow(
                         color = c.textDim,
                     )
                 }
-                if (doc.kinfolkRef.isNotBlank()) {
+                if (targetLabel != null) {
                     Text(
-                        text = "Related to: ${doc.kinfolkRef}",
+                        text = targetLabel,
                         style = AuntieTheme.typography.bodySmall,
                         color = c.primary.copy(alpha = 0.85f),
                     )
@@ -492,7 +507,14 @@ private fun AddDocumentForm(
     var title by remember(editingDoc) { mutableStateOf(editingDoc?.title ?: "") }
     var content by remember(editingDoc) { mutableStateOf(editingDoc?.content ?: "") }
     var notes by remember(editingDoc) { mutableStateOf(editingDoc?.notes ?: "") }
-    var targetType by remember(editingDoc) { mutableStateOf(editingDoc?.targetType?.ifBlank { "KINFOLK" } ?: "KINFOLK") }
+    // The SAME classifier the list row renders with, on purpose. Two readings of
+    // one stored target is how an entry comes to read "Household" in the list and
+    // open as "Kinfolk" in the editor.
+    var targetType by remember(editingDoc) {
+        mutableStateOf(
+            editingDoc?.let { tribalIntelTarget(it).kind.name } ?: TRIBAL_INTEL_DEFAULT_TARGET_TYPE,
+        )
+    }
     var selectedKinfolkId by remember(editingDoc) {
         mutableStateOf(editingDoc?.let { it.targetKinfolkId.ifBlank { it.kinfolkRef } } ?: "")
     }
@@ -558,22 +580,31 @@ private fun AddDocumentForm(
         Text(text = "TARGET", style = AuntieTheme.typography.mono, color = AuntieTheme.colors.primary)
         Spacer(Modifier.height(AuntieTheme.dims.space2))
         Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
-            AuntieChip(
-                selected = targetType == "KINFOLK",
-                onClick = { targetType = "KINFOLK"; selectedKinId = "" },
-                label = "Whole household",
-            )
-            AuntieChip(
-                selected = targetType == "KIN",
-                onClick = { targetType = "KIN" },
-                label = "Single pet",
-            )
+            TRIBAL_INTEL_TARGET_TYPES.forEach { t ->
+                AuntieChip(
+                    selected = targetType == t,
+                    // Any target but KIN names no animal, so a pet id left over
+                    // from a previous choice must go. The server coerces it away
+                    // too, but a draft that still carries it would show the
+                    // operator a pet they are not targeting.
+                    onClick = { targetType = t; if (t != "KIN") selectedKinId = "" },
+                    label = targetTypeLabel(t),
+                )
+            }
         }
+
+        Spacer(Modifier.height(AuntieTheme.dims.space2))
+
+        Text(
+            text = TRIBAL_INTEL_TARGET_HINT,
+            style = AuntieTheme.typography.bodySmall,
+            color = AuntieTheme.colors.textDim,
+        )
 
         Spacer(Modifier.height(AuntieTheme.dims.space3))
 
         AuntieDropdownField(
-            label = "Kinfolk (household)",
+            label = if (targetType == "KINFOLK") "Kinfolk" else "Household",
             value = kinfolkDirectory.firstOrNull { it.id == selectedKinfolkId },
             options = kinfolkDirectory,
             onSelect = { kf ->
@@ -581,8 +612,11 @@ private fun AddDocumentForm(
                 selectedKinId = ""
                 viewModel.loadKinForSelectedKinfolk(kf.id)
             },
-            displayText = { "${it.firstName} ${it.lastName}".trim().ifBlank { it.id } },
-            placeholder = "Select a kinfolk...",
+            displayText = {
+                if (targetType == "KINFOLK") kinfolkDisplayName(it)
+                else householdLabel(it.lastName).ifBlank { kinfolkDisplayName(it) }
+            },
+            placeholder = if (targetType == "KINFOLK") "Select a kinfolk..." else "Select a household...",
             modifier = Modifier.fillMaxWidth(),
         )
 

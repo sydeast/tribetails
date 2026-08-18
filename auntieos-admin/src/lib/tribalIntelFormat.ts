@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
 import { str } from './coerce';
+import { householdLabel, kinfolkDisplayName, type Kin, type Kinfolk } from '../api/directory';
 
 /**
  * Pure Tribal Intel ("The Den · Tribal Intel", nav slug `tribal-intel`) list
@@ -82,12 +83,134 @@ export function isTribalIntelTitleFallback(title: string): boolean {
   return title.trim() === '';
 }
 
-// ── related-to / attachment pips ─────────────────────────────────────────
+// ── who the entry is about (issue #393) ──────────────────────────────────
 
-/** The free-text `kinfolkRef` household label, or `null` when blank (never renders "Related to: " with nothing after it). */
-export function relatedToLabel(kinfolkRef: string): string | null {
-  const t = kinfolkRef.trim();
-  return t === '' ? null : t;
+/**
+ * The three things a Tribal Intel entry can be about, in this codebase's own
+ * nouns:
+ *
+ *   household  the whole family, `families/{kinfolkId}`: every kinfolk and
+ *              every kin under one roof.
+ *   kinfolk    one human client, `kinfolk/{kinfolkId}`.
+ *   kin        one animal, `kin/{kinId}`.
+ *
+ * The screen used to know only two, and called the wider one "Whole
+ * household" while storing it as KINFOLK, so a note about one person read as a
+ * note about everyone. The operator ruling on #393 is these three, named
+ * separately.
+ */
+export type TribalIntelTargetKind = 'household' | 'kinfolk' | 'kin';
+
+/** A resolved target: what kind of thing, and the id of the one it names. */
+export interface TribalIntelTarget {
+  kind: TribalIntelTargetKind;
+  /** `''` when the entry carries no usable id, which reads as "unnamed". */
+  id: string;
+}
+
+/** The subset `tribalIntelTarget` reads. Optional throughout, same cast-not-validation rule as `TribalIntelEntry`. */
+export interface TargetInput {
+  targetType?: string | undefined;
+  targetKinfolkId?: string | undefined;
+  targetKinId?: string | undefined;
+  kinfolkRef?: string | undefined;
+}
+
+/**
+ * Classifies one entry's stored target, by POSITIVE match on the stored text
+ * (the `reconcileState` convention: never "not one of the others, so it must
+ * be Y").
+ *
+ * THE READ-TIME DEFAULT IS `household`, and it is a deliberate choice about
+ * documents this change did not write:
+ *
+ *  - A row from the NDJSON migration import carries `kinfolkRef` and no
+ *    `targetType` at all. The only thing it names is the household anchor, so
+ *    `household` is the widest honest reading; calling it `kinfolk` would
+ *    claim the note is about one person when the document never said so.
+ *    It is also what the nightly reconcile pipeline already does with such a
+ *    row (`reconcile_comms.py#derive_kin_ids` falls through to every kin in
+ *    the household).
+ *  - A `KIN` row whose `targetKinId` is blank names no animal, so it cannot
+ *    render as one. Same fall-through.
+ *
+ * A stored `KINFOLK` reads as one human client, which is the fix the issue
+ * asks for: "target is missing kinfolk or incorrectly states Whole household
+ * when its for the kinfolk". Nothing is backfilled; a legacy row gains an
+ * explicit `targetType` the first time an operator saves it.
+ */
+export function tribalIntelTarget(entry: TargetInput): TribalIntelTarget {
+  // Pre-spec-23 rows carry only `kinfolkRef`, so it is the anchor of last resort.
+  const named = str(entry.targetKinfolkId).trim();
+  const anchor = named === '' ? str(entry.kinfolkRef).trim() : named;
+  const stored = str(entry.targetType).trim().toUpperCase();
+  const kinId = str(entry.targetKinId).trim();
+
+  if (stored === 'KIN' && kinId !== '') return { kind: 'kin', id: kinId };
+  if (stored === 'KINFOLK' && anchor !== '') return { kind: 'kinfolk', id: anchor };
+  return { kind: 'household', id: anchor };
+}
+
+/**
+ * The word each target goes by on screen. Byte-identical to Android's
+ * `TrainingDocumentsScreen.kt#targetKindLabel`, so an operator reading the
+ * same entry on both clients reads the same word.
+ */
+export function tribalIntelTargetKindLabel(kind: TribalIntelTargetKind): string {
+  switch (kind) {
+    case 'household':
+      return 'Household';
+    case 'kinfolk':
+      return 'Kinfolk';
+    case 'kin':
+      return 'Kin';
+  }
+}
+
+/**
+ * Resolves a target to the name of the thing it points at: the household
+ * label ("the Halbrooks"), the kinfolk's own name, or the kin's name.
+ *
+ * Falls back to the raw id when the roster holds no match, which is honest
+ * rather than blank: a note pointing at a household that has since been
+ * deleted still shows WHICH id it pointed at, and the operator can act on
+ * that. Returns `null` only when the entry names nothing at all, so the row
+ * renders no target line instead of a label with an empty tail.
+ */
+export function tribalIntelTargetName(
+  target: TribalIntelTarget,
+  kinfolk: readonly Kinfolk[],
+  kin: readonly Kin[],
+): string | null {
+  if (target.id === '') return null;
+
+  if (target.kind === 'kin') {
+    const match = kin.find((k) => k._id === target.id);
+    if (match === undefined) return target.id;
+    const name = str(match.name).trim();
+    return name === '' ? target.id : name;
+  }
+
+  const match = kinfolk.find((kf) => kf._id === target.id);
+  if (match === undefined) return target.id;
+  if (target.kind === 'kinfolk') return kinfolkDisplayName(match);
+  // A household is named after the surname it shares. A kinfolk with no last
+  // name on file has no household label to build, so the person's own display
+  // name carries it rather than an empty string.
+  const label = householdLabel(str(match.lastName));
+  return label === '' ? kinfolkDisplayName(match) : label;
+}
+
+/** "Household: the Halbrooks" / "Kinfolk: Jane Halbrook" / "Kin: Rufus", or `null` when the entry names nobody. */
+export function tribalIntelTargetLabel(
+  entry: TargetInput,
+  kinfolk: readonly Kinfolk[],
+  kin: readonly Kin[],
+): string | null {
+  const target = tribalIntelTarget(entry);
+  const name = tribalIntelTargetName(target, kinfolk, kin);
+  if (name === null) return null;
+  return `${tribalIntelTargetKindLabel(target.kind)}: ${name}`;
 }
 
 /** "3 attachments" / "1 attachment", or `null` for zero: never a misleading "0 attachments" pip (the KinTales media-pip convention). */

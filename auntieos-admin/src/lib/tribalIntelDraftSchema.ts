@@ -34,8 +34,34 @@ export const TRIBAL_INTEL_NOTES_MAX = 4000;
 /** Server: `attachments: z.array(AttachmentSchema).max(25)`. */
 export const TRIBAL_INTEL_ATTACHMENTS_MAX = 25;
 
-/** The two targeting modes the server enum accepts, verbatim. */
-export type TribalIntelTargetType = 'KINFOLK' | 'KIN';
+/**
+ * The three targeting modes the server enum accepts, verbatim.
+ *
+ * HOUSEHOLD is the whole family under one roof, KINFOLK is one human client,
+ * KIN is one animal (issue #393). The enum used to hold two values, and the
+ * form labelled KINFOLK "Whole household", so an entry about one person was
+ * stored and displayed as an entry about everyone.
+ */
+export type TribalIntelTargetType = 'HOUSEHOLD' | 'KINFOLK' | 'KIN';
+
+/** Every target, in the order the form offers them. Widest first. */
+export const TRIBAL_INTEL_TARGET_TYPES: readonly TribalIntelTargetType[] = ['HOUSEHOLD', 'KINFOLK', 'KIN'];
+
+/**
+ * The chip copy for each target. Byte-identical to Android's
+ * `TrainingDocumentsScreen.kt#targetChipLabel`, so the same entry is described
+ * with the same word on both clients.
+ */
+export function tribalIntelTargetTypeLabel(targetType: TribalIntelTargetType): string {
+  switch (targetType) {
+    case 'HOUSEHOLD':
+      return 'Household';
+    case 'KINFOLK':
+      return 'Kinfolk';
+    case 'KIN':
+      return 'Kin';
+  }
+}
 
 /**
  * One Cloudinary attachment, mirroring the backend `AttachmentSchema`.
@@ -82,14 +108,23 @@ export interface TribalIntelDraft {
   attachments: TribalIntelAttachmentDraft[];
 }
 
-/** A fresh, empty draft. Household-targeted by default, same as the archive. */
+/**
+ * A fresh, empty draft, targeted at the whole HOUSEHOLD.
+ *
+ * That is the same default the form has always had; only its name has been
+ * corrected. It used to read `'KINFOLK'` under a chip that said "Whole
+ * household", so the default silently claimed every new entry was about one
+ * person. Household is also the safe default to leave untouched: it is the
+ * widest target, so an operator who never opens the picker gets an entry
+ * filed against everyone rather than against a person they did not name.
+ */
 export function blankTribalIntelDraft(): TribalIntelDraft {
   return {
     title: '',
     content: '',
     notes: '',
     communicationType: 'note',
-    targetType: 'KINFOLK',
+    targetType: 'HOUSEHOLD',
     targetKinfolkId: '',
     targetKinId: '',
     attachments: [],
@@ -104,7 +139,10 @@ export const tribalIntelDraftSchema = z
       .max(TRIBAL_INTEL_CONTENT_MAX, `Keep the intel under ${TRIBAL_INTEL_CONTENT_MAX} characters.`),
     notes: z.string().max(TRIBAL_INTEL_NOTES_MAX, `Keep the notes under ${TRIBAL_INTEL_NOTES_MAX} characters.`),
     communicationType: z.string(),
-    targetType: z.enum(['KINFOLK', 'KIN']),
+    targetType: z.enum(['HOUSEHOLD', 'KINFOLK', 'KIN']),
+    // Required for all three targets: `families/{kinfolkId}` is provisioned
+    // under the same id as `kinfolk/{kinfolkId}`, so this one field anchors a
+    // household note, a kinfolk note, and the household a kin belongs to.
     targetKinfolkId: z.string().min(1, 'Pick the household this intel belongs to.'),
     targetKinId: z.string(),
     attachments: z

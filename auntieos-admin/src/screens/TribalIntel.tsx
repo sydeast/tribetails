@@ -13,7 +13,7 @@ import {
   isTribalIntelTitleFallback,
   reconcileState,
   reconcileStateInfo,
-  relatedToLabel,
+  tribalIntelTargetLabel,
   tribalIntelTitle,
   tribalIntelWhen,
 } from '../lib/tribalIntelFormat';
@@ -244,6 +244,8 @@ export function TribalIntel() {
                       <TribalIntelRow
                         key={doc._id}
                         doc={doc}
+                        kinfolk={kinfolk}
+                        kin={kin}
                         onEdit={() => {
                           setQueued(null);
                           setDeleteFailure(null);
@@ -302,11 +304,15 @@ export function TribalIntel() {
 
 interface TribalIntelRowProps {
   doc: TribalIntelEntry;
+  /** The kinfolk roster, for naming a household or a kinfolk target. */
+  kinfolk: Kinfolk[];
+  /** The pet roster, for naming a kin target. */
+  kin: Kin[];
   onEdit: () => void;
   onDelete: () => void;
 }
 
-function TribalIntelRow({ doc, onEdit, onDelete }: TribalIntelRowProps) {
+function TribalIntelRow({ doc, kinfolk, kin, onEdit, onDelete }: TribalIntelRowProps) {
   // Defensive reads: useCollection casts raw doc.data() with no normalization,
   // so a legacy training_documents doc missing a field must not throw and blank
   // the screen. Default every field this row touches.
@@ -317,7 +323,11 @@ function TribalIntelRow({ doc, onEdit, onDelete }: TribalIntelRowProps) {
   const title = tribalIntelTitle(doc.title ?? '');
   const blankTitle = isTribalIntelTitleFallback(doc.title ?? '');
   const when = tribalIntelWhen(doc.uploadedAt ?? '');
-  const related = relatedToLabel(doc.kinfolkRef ?? '');
+  // Who the entry is about, said out loud: the kind of target AND the name of
+  // the one it points at. The old row printed "Related to: <raw id>" with the
+  // word "household" wired into the form's chip regardless of the real target,
+  // which is the defect issue #393 reports.
+  const target = tribalIntelTargetLabel(doc, kinfolk, kin);
   const attachmentLabel = attachmentCountLabel(attachments.length);
   const reconcileNotes = doc.reconcileNotes ?? '';
   const state = reconcileState(doc.reconcileStatus ?? '');
@@ -348,7 +358,7 @@ function TribalIntelRow({ doc, onEdit, onDelete }: TribalIntelRowProps) {
       {notes.trim() !== '' && <p className="tribal-intel__row-notes">Notes: {notes}</p>}
 
       <span className="tribal-intel__row-meta">
-        {related !== null && <span className="tribal-intel__row-related">Related to: {related}</span>}
+        {target !== null && <span className="tribal-intel__row-related">{target}</span>}
         {attachmentLabel !== null && <span className="tribal-intel__row-pip">{attachmentLabel}</span>}
         {showReconcileChip && (
           <span className={`tribal-intel__chip tribal-intel__chip--${info.cssClass}`}>{info.chipLabel}</span>

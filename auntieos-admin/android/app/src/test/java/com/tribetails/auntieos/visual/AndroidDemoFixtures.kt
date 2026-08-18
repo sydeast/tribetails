@@ -376,19 +376,24 @@ object AndroidDemoFixtures {
                 "soft treat or pill paste and offer it from a relaxed, seated position. Watch the swallow, then " +
                 "follow with water and a second treat so the dog associates the routine with something positive. " +
                 "If the dog spits the pill, wait two minutes and try again rather than forcing it.",
-            kinfolkRef = "Wanda Thorne", uploadedAt = "2026-05-10",
+            // One row per target (issue #393), so the recorded golden shows all
+            // three words rather than the same "Whole household" on every row.
+            targetType = "KINFOLK", targetKinfolkId = "demo-kf-1",
+            kinfolkRef = "demo-kf-1", uploadedAt = "2026-05-10",
             notes = "Confirm dosage with the vet office before each visit."),
         TrainingDocument(id = "demo-td-2", title = "Severe Weather Policy",
             communicationType = "Policy",
             content = "When a heat advisory or thunderstorm warning is in effect, walks are shortened to potty " +
                 "breaks only and indoor enrichment replaces the remaining time. Notify the kinfolk through the " +
                 "app and log the adjustment. Never leave an animal outdoors unattended during active severe weather.",
+            targetType = "HOUSEHOLD", targetKinfolkId = "demo-kf-2", kinfolkRef = "demo-kf-2",
             uploadedAt = "2026-05-08"),
         TrainingDocument(id = "demo-td-3", title = "New Auntie Onboarding",
             communicationType = "Training",
             content = "Shadow two full routes before taking solo visits. Review each household's 411 and dossier " +
                 "the night before, confirm gate codes and vet contacts, and practice the arrival and departure GPS " +
                 "flow so the kinfolk always receives an accurate timeline of the visit.",
+            targetType = "KIN", targetKinfolkId = "demo-kf-1", targetKinId = "k1", kinfolkRef = "demo-kf-1",
             uploadedAt = "2026-05-05"),
     )
 
