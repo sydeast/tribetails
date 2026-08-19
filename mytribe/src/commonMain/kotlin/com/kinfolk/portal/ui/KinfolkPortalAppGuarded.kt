@@ -49,7 +49,12 @@ fun KinfolkPortalAppGuarded() {
     }
     val repo = remember { AuthRepository(platformAuthBackend()) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { repo.refresh() }
+    // #502: observe(), not refresh(). refresh() answered once and then the
+    // portal stopped listening, so a session revoked mid-visit stayed invisible
+    // until something else happened to ask again. The first emission is the
+    // same answer refresh() resolved, and this LaunchedEffect keeps collecting
+    // for as long as the app is composed, which is what owns and cancels it.
+    LaunchedEffect(Unit) { repo.observe() }
     // Push registration: fires only once auth resolves to SignedIn, so the
     // web Notification permission prompt can never appear on first paint.
     val pushCoordinator = remember(portalApi) { PushRegistrationCoordinator(portalApi) }
