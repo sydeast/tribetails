@@ -413,6 +413,12 @@ export { rescheduleBooking } from './admin/rescheduleBooking';
 // because accepting writes the same kin_care_sessions row rescheduleBooking
 // does, plus the kinCares doc the portal reads, which that callable never did.
 export { listRescheduleRequests, resolveBookingRescheduleRequest } from './admin/rescheduleRequests';
+// The office's end of the kinfolk cancellation ask (#438), the other half of
+// the same queue. The ask has been written to the visit since July with no
+// admin surface reading it; these two are that surface. Accepting cancels the
+// kinCares doc AND the flat kin_care_sessions row, for the same reason the
+// reschedule pair above writes both.
+export { listCancelRequests, resolveBookingCancellationRequest } from './admin/cancelRequests';
 // A3: the four operator status transitions on a flat kin_care_sessions row.
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.

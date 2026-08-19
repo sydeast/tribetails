@@ -30,6 +30,8 @@ class BookingDetailsScreenTest {
         notes: String? = null,
         status: String = "confirmed",
         cancelRequested: Boolean = false,
+        cancelRequestStatus: String? = null,
+        cancelResponseNote: String? = null,
     ) {
         fake.stub("getMyBookings", buildJsonObject {
             put("liveVisit", JsonNull)
@@ -44,6 +46,8 @@ class BookingDetailsScreenTest {
                     put("auntieDisplayName", "Auntie Avery")
                     put("kinNames", buildJsonArray { add("Buddy") })
                     put("cancelRequested", cancelRequested)
+                    cancelRequestStatus?.let { put("cancelRequestStatus", it) }
+                    cancelResponseNote?.let { put("cancelResponseNote", it) }
                     notes?.let { put("notes", it) }
                 })
             })
@@ -256,7 +260,7 @@ class BookingDetailsScreenTest {
         }
         waitForIdle()
 
-        onNodeWithText("Cancellation requested. We'll confirm soon.").assertIsDisplayed()
+        onNodeWithText("Cancellation requested. Tribe Tails has it in their queue and will answer soon.").assertIsDisplayed()
         onNodeWithText("Request cancellation").assertDoesNotExist()
     }
 
@@ -289,8 +293,69 @@ class BookingDetailsScreenTest {
         onNodeWithText("Send request").performClick()
         waitForIdle()
 
-        onNodeWithText("Cancellation requested. We'll confirm soon.").assertIsDisplayed()
+        onNodeWithText("Cancellation requested. Tribe Tails has it in their queue and will answer soon.").assertIsDisplayed()
         onNodeWithText("Request cancellation").assertDoesNotExist()
+    }
+
+    @Test
+    fun cancelDeclined_showsTheOfficesReasonAndLetsThemAskAgain() = runComposeUiTest {
+        // #438: before the admin queue existed, a cancellation ask had exactly
+        // two states here and neither of them was an answer, because nothing in
+        // the office ever read the flag.
+        val fake = FakeFunctionsClient()
+        stubBooking(
+            fake,
+            "b1",
+            fixedNow + tenHoursMs,
+            cancelRequested = false,
+            cancelRequestStatus = "declined",
+            cancelResponseNote = "Inside the 48-hour window.",
+        )
+
+        setThemedContent {
+            KinCareDetailScreen(
+                kinCareId = "b1",
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onBack = {},
+                nowMs = { fixedNow },
+            )
+        }
+        waitForIdle()
+
+        onNodeWithText(
+            "Tribe Tails is keeping this visit on the books. Inside the 48-hour window.",
+        ).assertIsDisplayed()
+        onNodeWithText("Ask again").assertIsDisplayed()
+    }
+
+    @Test
+    fun cancelAccepted_saysTheVisitIsCancelledAndOffersNoAction() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubBooking(
+            fake,
+            "b1",
+            fixedNow + tenHoursMs,
+            status = "cancelled",
+            cancelRequested = false,
+            cancelRequestStatus = "accepted",
+            cancelResponseNote = "No charge for this one.",
+        )
+
+        setThemedContent {
+            KinCareDetailScreen(
+                kinCareId = "b1",
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onBack = {},
+                nowMs = { fixedNow },
+            )
+        }
+        waitForIdle()
+
+        onNodeWithText("This visit is cancelled. No charge for this one.").assertIsDisplayed()
+        onNodeWithText("Request cancellation").assertDoesNotExist()
+        onNodeWithText("Ask again").assertDoesNotExist()
     }
 
     @Test

@@ -32,6 +32,23 @@ export interface RescheduleRequestDto {
   requestedAtMs: number | null;
 }
 
+/**
+ * `CancelRequestDto`, shared across callables.
+ */
+export interface CancelRequestDto {
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  title: string | null;
+  serviceType: string | null;
+  kinNames: string[];
+  status: string | null;
+  startTimeMs: number | null;
+  endTimeMs: number | null;
+  reason: string | null;
+  requestedAtMs: number | null;
+}
+
 // ---------- addBookingNote ----------
 
 /**
@@ -185,6 +202,9 @@ export interface GetMyBookingsResultLiveVisit {
   sourceBookingId: string | null;
   sessionId: string | null;
   cancelRequested: boolean;
+  cancelRequestStatus: 'pending' | 'accepted' | 'declined' | null;
+  cancelRequestReason: string | null;
+  cancelResponseNote: string | null;
   rescheduleRequestStatus: 'pending' | 'accepted' | 'declined' | null;
   rescheduleRequestedStartTimeMs: number | null;
   rescheduleRequestedEndTimeMs: number | null;
@@ -401,4 +421,45 @@ export interface ListRescheduleRequestsArgs {
  */
 export interface ListRescheduleRequestsResult {
   requests: RescheduleRequestDto[];
+}
+
+// ---------- resolveBookingCancellationRequest ----------
+
+/**
+ * Request payload for the `resolveBookingCancellationRequest` callable.
+ */
+export interface ResolveBookingCancellationRequestArgs {
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  decision: 'accept' | 'decline';
+  note?: string;
+}
+
+/**
+ * Response from the `resolveBookingCancellationRequest` callable.
+ */
+export interface ResolveBookingCancellationRequestResult {
+  ok: true;
+  visitId: string;
+  decision: 'accept' | 'decline';
+  status: string | null;
+  sessionUpdated: boolean;
+  rescheduleRequestClosed: boolean;
+}
+
+// ---------- listCancelRequests ----------
+
+/**
+ * Request payload for the `listCancelRequests` callable.
+ */
+export interface ListCancelRequestsArgs {
+  limit?: number;
+}
+
+/**
+ * Response from the `listCancelRequests` callable.
+ */
+export interface ListCancelRequestsResult {
+  requests: CancelRequestDto[];
 }

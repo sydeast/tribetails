@@ -59,13 +59,13 @@ vi.mock('../api/bookingsWrite', () => ({
  * asserting that the transitions survived the move off `BookingActions`.
  */
 /**
- * The incoming-reschedule queue mounted above the list (#399 item 2). Stubbed
- * to null here rather than given a ToastProvider: this suite is about the
- * bookings list, the section renders nothing when its queue is empty anyway,
- * and its own states are covered in RescheduleRequestsSection.test.tsx.
+ * The incoming-request queue mounted above the list (#399 item 2 and #438).
+ * Stubbed to null here rather than given a ToastProvider: this suite is about
+ * the bookings list, the section renders nothing when both its queues are empty
+ * anyway, and its own states are covered in VisitRequestsSection.test.tsx.
  */
-vi.mock('../components/RescheduleRequestsSection', () => ({
-  RescheduleRequestsSection: () => null,
+vi.mock('../components/VisitRequestsSection', () => ({
+  VisitRequestsSection: () => null,
 }));
 vi.mock('../components/BookingDetailModal', () => ({
   BookingDetailModal: (props: {

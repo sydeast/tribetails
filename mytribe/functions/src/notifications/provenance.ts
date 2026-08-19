@@ -171,6 +171,23 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       ],
     },
   ],
+  'kincare.cancel.declined': [
+    {
+      trigger:
+        'An operator declines a cancellation ask, so the visit stays on the schedule (#438). The ACCEPT half has no key of its own: accepting sets the visit to cancelled and kincare.booking.cancel already reaches the household.',
+      source: 'src/triggers/onBookingsWrite.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'visitId',
+        'serviceName',
+        'startTimeMs',
+        'reason',
+        'note',
+      ],
+    },
+  ],
   'kincare.auntie.on_my_way': [
     {
       trigger: 'An Auntie taps "On my way" on a visit.',

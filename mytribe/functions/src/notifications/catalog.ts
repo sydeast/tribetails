@@ -211,6 +211,31 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'A kinfolk asked to cancel a KinCare visit.',
   },
   {
+    // #438: the office ruled on that ask and the visit is STAYING. The accept
+    // half needs no key of its own -- accepting sets the visit to cancelled and
+    // `kincare.booking.cancel` above already reaches the household -- but a
+    // decline changes no status, so this is the only way the answer the portal
+    // promised ever arrives. Fired by onBookingsWrite when
+    // `cancelRequestStatus` goes pending -> declined.
+    key: 'kincare.cancel.declined',
+    label: 'Your cancellation request was declined',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'visit',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: {
+      email: 'kincare.cancel.declined',
+      sms: 'kincare.cancel.declined',
+      push: 'kincare.cancel.declined',
+    },
+    description: 'Tribe Tails is keeping a visit the household asked to cancel.',
+  },
+  {
     // #399 item 2: the office hears when a kinfolk proposes a new time for a
     // visit. NOT a status change and NOT a move; requestBookingReschedule
     // stamps rescheduleRequestedAt on the kinCares doc and onBookingsWrite

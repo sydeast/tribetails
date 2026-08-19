@@ -200,6 +200,57 @@ describe('getMyBookingsHandler', () => {
     expect(res.upcoming.map((b: any) => b.id)).toEqual(['b-up']);
   });
 
+  it('#438: reports the cancellation ask as pending / accepted / declined', async () => {
+    const future = Date.now() + 86400_000;
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      collectionGroupDocs: {
+        kinCares: [
+          visit('env-a', 'b-pending', {
+            status: 'confirmed',
+            startTime: Timestamp.fromMillis(future),
+            cancelRequestedAt: Timestamp.fromMillis(Date.now()),
+            cancelRequestStatus: 'pending',
+            cancelRequestReason: 'We are away',
+          }),
+          visit('env-a', 'b-declined', {
+            status: 'confirmed',
+            startTime: Timestamp.fromMillis(future),
+            cancelRequestedAt: Timestamp.fromMillis(Date.now()),
+            cancelRequestStatus: 'declined',
+            cancelResponseNote: 'Inside the 48-hour window.',
+          }),
+          // The July backlog: the stamp and no status field at all.
+          visit('env-a', 'b-legacy', {
+            status: 'confirmed',
+            startTime: Timestamp.fromMillis(future),
+            cancelRequestedAt: Timestamp.fromMillis(Date.now()),
+          }),
+          visit('env-a', 'b-never', { status: 'confirmed', startTime: Timestamp.fromMillis(future) }),
+        ],
+      },
+      queryDocs: { kin_care_sessions: [] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res: any = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const by = Object.fromEntries(res.upcoming.map((b: any) => [b.id, b]));
+
+    expect(by['b-pending']).toMatchObject({
+      cancelRequested: true,
+      cancelRequestStatus: 'pending',
+      cancelRequestReason: 'We are away',
+    });
+    // Declined is NOT pending: the banner has to clear so they can ask again.
+    expect(by['b-declined']).toMatchObject({
+      cancelRequested: false,
+      cancelRequestStatus: 'declined',
+      cancelResponseNote: 'Inside the 48-hour window.',
+    });
+    expect(by['b-legacy']).toMatchObject({ cancelRequested: true, cancelRequestStatus: 'pending' });
+    expect(by['b-never']).toMatchObject({ cancelRequested: false, cancelRequestStatus: null });
+  });
+
   it('ignores completed/cancelled ad-hoc sessions — they are not upcoming', async () => {
     const now = Date.now();
     const ctx = buildDbMock({

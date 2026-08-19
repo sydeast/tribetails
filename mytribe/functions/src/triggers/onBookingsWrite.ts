@@ -15,9 +15,12 @@ type BookingDoc = {
   auntieDisplayName?: string;
   /** Staff uid the visit is assigned to; drives assignment.* notifications. */
   assignedAuntieUid?: string;
-  /** Set by requestBookingCancellation; first appearance fires kincare.cancel.requested. */
+  /** Set by requestBookingCancellation; a NEW pending ask fires kincare.cancel.requested. */
   cancelRequestedAt?: unknown;
   cancelRequestReason?: string | null;
+  /** #438: `pending` / `accepted` / `declined`, ruled on by admin/cancelRequests. */
+  cancelRequestStatus?: string | null;
+  cancelResponseNote?: string | null;
   /** Set by requestBookingReschedule; first appearance fires kincare.reschedule.requested. */
   rescheduleRequestedAt?: unknown;
   rescheduleRequestReason?: string | null;
@@ -38,6 +41,58 @@ const CHANGE_WATCH_FIELDS: Array<keyof BookingDoc> = [
   'auntieDisplayName',
   'notes',
 ];
+
+/**
+ * The cancellation ask's state on one revision of the doc, or null when it has
+ * never carried one. A bare `cancelRequestedAt` with no status is a request
+ * written before #438 and is still waiting, so it reads as `pending`.
+ */
+function cancelStatusOf(doc: BookingDoc | undefined): 'pending' | 'accepted' | 'declined' | null {
+  if (!doc) return null;
+  const status = doc.cancelRequestStatus;
+  if (status === 'pending' || status === 'accepted' || status === 'declined') return status;
+  return doc.cancelRequestedAt ? 'pending' : null;
+}
+
+/**
+ * Pure decision table for the cancellation ask and the answer to it. Returns
+ * the dispatches a bookings write implies:
+ *   - anything -> pending    -> kincare.cancel.requested to the office
+ *   - pending -> declined    -> kincare.cancel.declined to the household
+ *
+ * Vendor-parity (2026-07-02) fired the first of those on the FIRST appearance
+ * of `cancelRequestedAt`. #438 widened it to a transition into pending, for the
+ * reason the reschedule ask below reads the same way: a household whose ask was
+ * declined may ask again, and that second ask is as new as the first. The old
+ * test would have gone quiet on it, because the stamp was already there.
+ *
+ * The ACCEPT half has no key here on purpose. Accepting sets the visit to
+ * cancelled, and `kincare.booking.cancel` already reaches the household; a key
+ * of its own would send them the same news twice. A DECLINE changes no status
+ * at all, so without the second row the answer the portal promised them never
+ * arrives.
+ *
+ * Exported for unit tests; the trigger below is a thin shell around it.
+ */
+export function cancellationDispatches(
+  before: BookingDoc | undefined,
+  after: BookingDoc,
+): Array<{ key: 'kincare.cancel.requested' | 'kincare.cancel.declined'; extra: Record<string, unknown> }> {
+  const wasPending = cancelStatusOf(before) === 'pending';
+  const now = cancelStatusOf(after);
+  if (now === 'pending' && !wasPending) {
+    return [{ key: 'kincare.cancel.requested', extra: { reason: after.cancelRequestReason ?? null } }];
+  }
+  if (wasPending && now === 'declined') {
+    return [
+      {
+        key: 'kincare.cancel.declined',
+        extra: { note: after.cancelResponseNote ?? null, reason: after.cancelRequestReason ?? null },
+      },
+    ];
+  }
+  return [];
+}
 
 function fieldChanged(
   before: BookingDoc | undefined,
@@ -177,12 +232,10 @@ export const onBookingsWrite = onDocumentWritten(
       await dispatch(d.key, { ...d.extra, assignedAuntieUid: d.auntieUid });
     }
 
-    // Vendor-parity (2026-07-02): first appearance of cancelRequestedAt = the
-    // kinfolk asked to cancel this visit; tell the office. Not a status change.
-    if (!before?.cancelRequestedAt && after.cancelRequestedAt) {
-      await dispatch('kincare.cancel.requested', {
-        reason: after.cancelRequestReason ?? null,
-      });
+    // The cancellation ask and the answer to it, decided by the pure table
+    // above so both transitions are testable without an event fixture.
+    for (const d of cancellationDispatches(before, after)) {
+      await dispatch(d.key, d.extra);
     }
 
     // #399 item 2: a kinfolk proposed a new time. Same shape as the

@@ -37,6 +37,9 @@ describe('requestBookingCancellationHandler', () => {
     expect(write?.data?.cancelRequestedAt).toBe('__SERVER_TS__');
     expect(write?.data?.cancelRequestedByUid).toBe('u1');
     expect(write?.data?.cancelRequestReason).toBe('trip moved');
+    // #438: the status the admin queue rules on. Without it the ask is
+    // invisible to every admin surface, which is the defect that issue names.
+    expect(write?.data?.cancelRequestStatus).toBe('pending');
   });
 
   it('is a no-op when a request is already pending', async () => {
@@ -51,6 +54,44 @@ describe('requestBookingCancellationHandler', () => {
     const res = await requestBookingCancellationHandler(CALLER);
     expect(res.alreadyPending).toBe(true);
     expect(ctx.writes.find((w) => w.path === VISIT)).toBeFalsy();
+  });
+
+  it('is a no-op for a request written before the status field existed', async () => {
+    // The July backlog: the stamp and nothing else. Still waiting on the
+    // office, so a second ask must not overwrite it.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: { status: 'confirmed', cancelRequestedAt: '__SERVER_TS__' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
+    const res = await requestBookingCancellationHandler(CALLER);
+    expect(res.alreadyPending).toBe(true);
+    expect(ctx.writes.find((w) => w.path === VISIT)).toBeFalsy();
+  });
+
+  it('lets a household ask again after the office declined, and clears the old answer', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['f1'] },
+        [VISIT]: {
+          status: 'confirmed',
+          cancelRequestedAt: '__OLD_TS__',
+          cancelRequestStatus: 'declined',
+          cancelResponseNote: 'Inside the 48-hour window.',
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingCancellationHandler } = await import('../src/portal/requestBookingCancellation');
+    const res = await requestBookingCancellationHandler(CALLER);
+    expect(res.alreadyPending).toBe(false);
+    const write = ctx.writes.find((w) => w.path === VISIT);
+    expect(write?.data?.cancelRequestStatus).toBe('pending');
+    expect(write?.data?.cancelResponseNote).toBeNull();
+    expect(write?.data?.cancelResolvedAt).toBeNull();
   });
 
   it('rejects completed/cancelled visits', async () => {

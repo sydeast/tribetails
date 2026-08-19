@@ -39,8 +39,10 @@ import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.portal.Booking
+import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.RescheduleRequestStatus
+import com.kinfolk.portal.portal.canRequestCancellation
 import com.kinfolk.portal.portal.canRequestReschedule
 import com.kinfolk.portal.portal.isAwaitingVisit
 import com.kinfolk.portal.screens.schedule.util.RESCHEDULE_REASON_MAX
@@ -349,11 +351,15 @@ private fun KinCareDetailBody(
             )
         }
 
-        // Cancellation ask — only while the visit is still ahead (requested or
-        // confirmed). Once an ask is pending, the action never comes back.
-        if (kinCare.isAwaitingVisit()) {
+        // Cancellation ask. Shown while the visit is still ahead, and ALSO
+        // whenever the office has already answered one, so an accepted or
+        // declined ask stays readable after the window to make a new one has
+        // closed. Same rule the reschedule card above follows.
+        if (kinCare.isAwaitingVisit() || kinCare.cancelRequestStatus != null) {
             CancelRequestSection(
+                kinCare = kinCare,
                 pending = cancelPending,
+                canAsk = kinCare.canRequestCancellation(),
                 sending = cancelSending,
                 error = cancelError,
                 onSend = onSendCancelRequest,
@@ -567,41 +573,71 @@ private fun UpcomingDayPicker(
 
 /**
  * "Need to cancel?" card. Tap reveals an inline confirm with an optional
- * short reason; the ask does not change the visit status. When [pending],
- * renders a quiet caption instead of any action.
+ * short reason; the ask does not change the visit status.
+ *
+ * The same four states the reschedule card above carries (#438): an ask
+ * waiting on the office, an accepted one, a declined one with the office's
+ * note, and the form for making one. Before #438 there were only two, because
+ * nothing in the office ever answered: the ask was written to the visit and no
+ * admin screen read it, so "we'll confirm soon" was a promise nobody could
+ * keep. A declined ask reopens the form, because the household may have new
+ * information and should not be stuck behind a caption.
  */
 @Composable
 private fun CancelRequestSection(
+    kinCare: Booking,
     pending: Boolean,
+    canAsk: Boolean,
     sending: Boolean,
     error: String?,
     onSend: (reason: String?) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
+    val status = kinCare.cancelRequestStatus
+    val responseNote = kinCare.cancelResponseNote?.takeIf { it.isNotBlank() }
     GlassCard(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(KinfolkSpacing.l),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             Text("Need to cancel?", style = type.heritageSection)
-            if (pending) {
-                Text(
-                    "Cancellation requested. We'll confirm soon.",
+            when {
+                pending -> Text(
+                    "Cancellation requested. Tribe Tails has it in their queue and will answer soon.",
                     style = type.sansMeta,
                     color = KinfolkBrand.NavyMuted,
                 )
-            } else {
+                status == CancelRequestStatus.Accepted -> Text(
+                    listOfNotNull("This visit is cancelled.", responseNote).joinToString(" "),
+                    style = type.sansMeta,
+                    color = KinfolkBrand.KinTeal,
+                )
+                status == CancelRequestStatus.Declined -> Text(
+                    listOfNotNull(
+                        "Tribe Tails is keeping this visit on the books.",
+                        responseNote,
+                    ).joinToString(" "),
+                    style = type.sansMeta,
+                    color = KinfolkBrand.SnuggleCoral,
+                )
+            }
+
+            if (canAsk && !pending) {
                 var showConfirm by remember { mutableStateOf(false) }
                 var reason by remember { mutableStateOf("") }
                 if (!showConfirm) {
                     KinGhostButton(
-                        label = "Request cancellation",
+                        label = if (status == CancelRequestStatus.Declined) {
+                            "Ask again"
+                        } else {
+                            "Request cancellation"
+                        },
                         onClick = { showConfirm = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
                     Text(
-                        "We'll let your Auntie know. The visit stays on the books until she confirms.",
+                        "This goes to Tribe Tails' requests queue. The visit stays on the books until they accept it.",
                         style = type.sansMeta,
                     )
                     KinField(

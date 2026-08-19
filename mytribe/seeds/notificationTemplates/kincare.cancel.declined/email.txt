@@ -1,0 +1,9 @@
+Subject: Your visit is staying on the books
+
+Hi {{kinfolkName}}, we couldn't cancel the {{serviceType}} for {{kinName}} on {{bookingDate}}.
+
+{{note}}
+
+The visit is still going ahead as planned. Reply or message us if that doesn't work for you.
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.

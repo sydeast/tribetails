@@ -80,6 +80,13 @@ import {
   ListResult as ListRescheduleRequestsResult,
   RescheduleRequestDto as RescheduleRequestDtoSchema,
 } from '../../src/admin/rescheduleRequests';
+import {
+  Args as ResolveBookingCancellationRequestArgs,
+  Result as ResolveBookingCancellationRequestResult,
+  ListArgs as ListCancelRequestsArgs,
+  ListResult as ListCancelRequestsResult,
+  CancelRequestDto as CancelRequestDtoSchema,
+} from '../../src/admin/cancelRequests';
 
 /** One callable's request and response authority. */
 export interface CallableContract {
@@ -172,6 +179,10 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
     // same row would otherwise generate two identical DTOs under different
     // names on three clients.
     { name: 'RescheduleRequestDto', schema: RescheduleRequestDtoSchema, direction: 'response' },
+    // #438's half of the same queue. Named for the same reason as its
+    // reschedule twin above: the admin surface renders both request types in
+    // one list, so both rows need one name per client, not two.
+    { name: 'CancelRequestDto', schema: CancelRequestDtoSchema, direction: 'response' },
   ],
   callables: [
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },
@@ -203,5 +214,11 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
       result: ResolveBookingRescheduleRequestResult,
     },
     { name: 'listRescheduleRequests', args: ListRescheduleRequestsArgs, result: ListRescheduleRequestsResult },
+    {
+      name: 'resolveBookingCancellationRequest',
+      args: ResolveBookingCancellationRequestArgs,
+      result: ResolveBookingCancellationRequestResult,
+    },
+    { name: 'listCancelRequests', args: ListCancelRequestsArgs, result: ListCancelRequestsResult },
   ],
 };

@@ -69,6 +69,10 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.booking.confirm': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.cancel.requested': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  // `note` is emitter-supplied, like the dispute fields above: it is the
+  // operator's own words, carried on the dispatch, with no entity to hydrate
+  // it from. The four below are the ones this enricher fills.
+  'kincare.cancel.declined': ['bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.changed': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.note.auntie': ['kinName'],
   'kincare.note.kinfolk': ['kinName'],
