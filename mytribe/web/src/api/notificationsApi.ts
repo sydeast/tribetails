@@ -27,8 +27,16 @@ export interface NotificationKeyDto {
    * Locked means the household does not decide it, NOT that it is on: a channel
    * locked by `lockedEnabled` that the operator never set resolves off for sms
    * and push. Ships with the lock so this client does not re-derive it.
+   *
+   * OPTIONAL, and it has to stay optional. This app deploys on its own
+   * schedule and the functions fleet deploys in an operator-run batch, so
+   * there is a window where a browser running this code is talking to a
+   * callable that has never heard of the field. Absent reads as ON below,
+   * which is the pre-#491 behaviour, so the skew window degrades to the old
+   * rendering instead of throwing on `undefined[ch]` and taking the whole
+   * settings screen down. The Compose portal makes the same allowance.
    */
-  lockedChannelValues: Partial<Record<Channel, boolean>>;
+  lockedChannelValues?: Partial<Record<Channel, boolean>>;
   marketingCategory: MarketingCategory | null;
   lockReason: string | null;
 }
@@ -138,7 +146,9 @@ export function categoryToggleableChannels(cat: CategoryDto): Channel[] {
 export function channelChecked(cat: CategoryDto, ch: Channel, byCategory: Partial<Record<Channel, boolean>> | undefined): boolean {
   if (!categoryToggleableChannels(cat).includes(ch)) {
     const lockedHere = cat.keys.filter((k) => k.lockedChannels.includes(ch));
-    return lockedHere.length > 0 && lockedHere.every((k) => k.lockedChannelValues[ch] === true);
+    // `!== false` rather than `=== true`: a server that has not shipped the
+    // values yet leaves them absent, and absent means on.
+    return lockedHere.length > 0 && lockedHere.every((k) => k.lockedChannelValues?.[ch] !== false);
   }
   const saved = byCategory?.[ch];
   return saved !== undefined ? saved : ch === 'email';
@@ -225,7 +235,7 @@ export function keyChannelChecked(
   byKeyForKey: Partial<Record<Channel, boolean>> | undefined,
   byCategoryForCat: Partial<Record<Channel, boolean>> | undefined,
 ): boolean {
-  if (keyLockedChannels(key).includes(ch)) return key.lockedChannelValues[ch] === true;
+  if (keyLockedChannels(key).includes(ch)) return key.lockedChannelValues?.[ch] !== false;
   const own = byKeyForKey?.[ch];
   if (own !== undefined) return own;
   const fromCategory = byCategoryForCat?.[ch];

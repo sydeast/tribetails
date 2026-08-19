@@ -196,6 +196,22 @@ describe('keyChannelChecked', () => {
     });
     expect(keyChannelChecked(k, 'sms', { sms: false }, { sms: false })).toBe(true);
   });
+  /**
+   * The deploy skew window. This app ships on its own schedule; the callable
+   * ships in the operator's batched functions release. A browser running this
+   * code against a callable that predates `lockedChannelValues` must render the
+   * old way, not throw on `undefined[ch]` and take the settings screen down.
+   */
+  it('renders a locked channel as on when the server has not shipped the values yet', () => {
+    const stale = { ...key({ allowedChannels: ['sms'], lockedChannels: ['sms'] }) } as Record<
+      string,
+      unknown
+    >;
+    delete stale.lockedChannelValues;
+    const k = stale as unknown as NotificationKeyDto;
+    expect(keyChannelChecked(k, 'sms', { sms: false }, undefined)).toBe(true);
+    expect(channelChecked(cat('visit', [k]), 'sms', { sms: false })).toBe(true);
+  });
   // #491: the case every client got wrong. Locked says the household does not
   // decide it; what was decided here is off, and the row has to say so.
   it('reads OFF for a locked channel the dispatcher resolves off, whatever the household saved', () => {
