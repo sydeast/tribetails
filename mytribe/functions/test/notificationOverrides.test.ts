@@ -208,11 +208,20 @@ describe('getBusinessNotificationOverridesHandler: provenance projection (#396)'
     expect(entry.emitters[0].dataKeys).toContain('kinfolkId');
   });
 
-  it('flags the rows that no code fires, so their toggles read as decoration', async () => {
+  it('projects `neverFires`, and today no row is dead', async () => {
+    // `quote.accepted` was the standing example here: a row whose toggles were
+    // decoration, because nothing sent it. #430 gave it and `quote.denied` a
+    // real emitter in portal/quoteDecision.ts, so the badge must be off them
+    // both. An operator told "Never fires" about a live row would leave it
+    // switched on believing that changed nothing.
     const res = await fetch();
-    expect(row(res, 'quote.accepted').neverFires).toBe(true);
-    expect(row(res, 'quote.accepted').emitters).toEqual([]);
-    expect(row(res, 'invoice.new').neverFires).toBe(false);
+    expect(res.catalog.every((c) => c.neverFires === false)).toBe(true);
+    expect(row(res, 'quote.accepted').emitters.map((e) => e.source)).toEqual([
+      'src/portal/quoteDecision.ts',
+    ]);
+    expect(row(res, 'quote.denied').emitters.map((e) => e.source)).toEqual([
+      'src/portal/quoteDecision.ts',
+    ]);
   });
 
   it('projects `external`, and today no row is external', async () => {
