@@ -197,7 +197,7 @@ class FeatureFlagsTest {
             "auntieos.invoices.reviewAndSendDraft", // postInvoiceEvent (DRAFT -> sent)
             "auntieos.bookings.bulkSelect",         // batchUpdateBookings
             "auntieos.inbox.bulkMarkRead",          // bulkMarkNotificationsRead (Notifications)
-            "auntieos.templateAssignment.unboundCatalogHint", // listCatalogKeys diff
+            "auntieos.templateAssignment.unboundCatalogHint",
             // Live preview built for real (DynamicFormFields), no longer gated.
             "auntieos.formschemas.livePreview",
             // Stage 2 Step 4: notifications quick actions built for real (read/unread

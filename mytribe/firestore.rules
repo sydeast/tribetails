@@ -10,21 +10,10 @@ service cloud.firestore {
  // THIS FILE IS THE SOURCE OF TRUTH. Owner ruling 2026-07-15.
  // Deploy rules ONLY from this tree:  firebase deploy --only firestore
  //
- // AuntieOS/web/firestore.rules is a byte-identical MIRROR, kept only so the
- // AuntieOS emulator and visual harness run against real rules. Never edit it
- // directly; copy this file over it. AuntieOS/web/firebase.json also declares
- // this rules file on the SAME project, so a `firebase deploy --only firestore`
- // from that tree deploys whatever the mirror happens to contain.
- //
- // That is not hypothetical. The mirror drifted 2026-06-22 → 2026-07-13 and
- // would have reverted the scoped kinfolk read below, breaking the live portal
- // Messages screen. Resynced 2026-07-15.
- //
- // The header this replaces was wrong three ways, which is why the drift went
- // unnoticed: it was copied into BOTH files so each claimed to be the sole
- // source, and it named sotu-hosting/ as the deploy point when that config is
- // hosting-only and has no firestore block at all.
- // ═══════════════════════════════════════════════════════════════════════════
+ // AuntieOS/web/firestore.rules is a symlink to this file, so the mirror
+ // follows automatically. The symlink ensures the AuntieOS emulator and the
+ // rules-mirror test (web/functions/test/rules-mirror.test.js) verify rules
+ // stay in sync, and the AuntieOS admin runs against the current rules.
 
  // ── AuntieOS helpers ─────────────────────────────────────────────────────
  // isAuntie: existing admin claim - backward-compatible with setAdminClaim.
