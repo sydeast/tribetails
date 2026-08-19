@@ -116,3 +116,33 @@
   justify-content: flex-end;
   gap: var(--space-2);
 }
+
+/* The row's tail: the price field an unpriced visit needs, and the route to the
+   visit itself. A priced visit shows only the route, because its money is not
+   this screen's to change (#408). */
+.visit-picker__row-tail {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2) var(--space-2);
+  flex-wrap: wrap;
+}
+.visit-picker__visit-link {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-accent);
+}
+.visit-picker__exclude,
+.visit-picker__excluded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface-2);
+}
+.visit-picker__actions--start {
+  justify-content: flex-start;
+}

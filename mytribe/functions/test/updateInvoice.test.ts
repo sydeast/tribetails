@@ -677,3 +677,89 @@ describe('updateInvoice and the household answer to a quote (issue #448)', () =>
     expect(w.data.editScope).toBe('none');
   });
 });
+
+/**
+ * #408: an invoice's terms are a value, and editing them re-decides the due
+ * date from the same rule creation used. The two callables share
+ * `lib/invoiceCreateFields.ts` precisely so an edit cannot land a due date the
+ * create path would have refused.
+ */
+describe('updateInvoice structured terms', () => {
+  it('writes the rule in words and the date it works out to', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { termsCode: 'net_14' } }));
+    expect(invoiceWrite(ctx)?.data).toMatchObject({
+      terms: 'Due 14 days after the invoice date',
+      termsCode: 'net_14',
+      dueDate: '2026-06-15',
+    });
+  });
+  it('counts service-relative terms from the visits the invoice already links', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { ...OPEN_INVOICE, date: '2026-06-20', sessionIds: ['s1', 's2'] },
+        'kin_care_sessions/s1': { startTime: '2026-06-02T14:00:00.000Z' },
+        'kin_care_sessions/s2': { startTime: '2026-06-09T14:00:00.000Z' },
+      },
+      queryDocs: { 'invoices/inv1/payments': [] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { termsCode: 'net_7_after_last_visit' } }),
+    );
+    expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-06-16');
+  });
+  it('re-decides the due date from a date set in the SAME patch', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { date: '2026-07-01', termsCode: 'net_30' } }),
+    );
+    expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-07-31');
+  });
+  it('REFUSES a due date sent alongside terms that work out to a different day', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      updateInvoiceHandler(
+        req({ invoiceId: 'inv1', patch: { termsCode: 'net_14', dueDate: '2026-08-01' } }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('keeps the existing due date when the terms become custom and no date is sent', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01', dueDate: '2026-07-04' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { termsCode: 'custom' } }));
+    expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-07-04');
+  });
+  it('leaves free-text terms exactly as they were sent when no code comes with them', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Pay when you can' } }));
+    expect(invoiceWrite(ctx)?.data.terms).toBe('Pay when you can');
+    expect(invoiceWrite(ctx)?.data).not.toHaveProperty('termsCode');
+  });
+});
+/** #408: editing an invoice must not cut its lines loose from their visits. */
+describe('updateInvoice bound line items', () => {
+  it('keeps the binding on a line the patch carries', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({
+        invoiceId: 'inv1',
+        patch: {
+          lineItems: [
+            { description: 'Dog walking, 2026-06-02', qty: 1, unitCents: 2500, sessionId: 's1' },
+            { description: 'Key cutting', qty: 1, unitCents: 1000 },
+          ],
+        },
+      }),
+    );
+    const written = invoiceWrite(ctx)?.data.lineItems as Array<Record<string, unknown>>;
+    expect(written[0]!.sessionId).toBe('s1');
+    expect(written[1]!.sessionId).toBeUndefined();
+  });
+});

@@ -41,6 +41,15 @@ export interface InvoiceLineItemInput {
   unitCents: number;
   /** Optional per-line reduction, an integer count of cents. */
   discountCents?: number;
+  /**
+   * The visit this line bills for, when it was drawn from one (#408).
+   *
+   * NO ARITHMETIC HERE READS IT. It rides along because the line it belongs to
+   * travels through these functions on its way to being stored, and a line that
+   * lost its binding somewhere in the middle would silently stop being a bound
+   * line. What the binding MEANS is documented on `createInvoice`'s schema.
+   */
+  sessionId?: string;
 }
 
 export interface InvoiceTotals {

@@ -287,7 +287,9 @@ describe('the committed Contracts module', () => {
     // family (a quote is an invoice in QUOTE status, so its two decision
     // callables belong to this registry rather than a fourth one). 25 since
     // issue #448, which added the office's answer to a decline: resendQuote.
-    expect(model.callables).toHaveLength(25);
+    // 26 since issue #408, which added the other thing an operator can do with
+    // un-invoiced work: setSessionDoNotInvoice.
+    expect(model.callables).toHaveLength(26);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

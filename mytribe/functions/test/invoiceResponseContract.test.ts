@@ -164,6 +164,7 @@ function uninvoicedResult(over: Record<string, unknown> = {}): Record<string, un
     ],
     unpriceable: [],
     unplaceable: [],
+    excluded: [],
     rateCardLoaded: true,
     scanned: 1,
     truncated: false,
@@ -508,6 +509,34 @@ const CASES: Array<{
         'a billable visit no date window can reach, reported rather than dropped',
         uninvoicedResult({ unplaceable: [{ sessionId: 'vis_lost', kinfolkId: 'fam1' }] }),
       ],
+      [
+        'work the operator has decided never to bill, out of the queue but still named',
+        uninvoicedResult({
+          excluded: [
+            {
+              sessionId: 'vis_comped',
+              kinfolkId: 'fam1',
+              serviceType: 'Dog walking',
+              startTime: '2026-07-02T14:00:00.000Z',
+              reason: 'Comped after the late arrival',
+            },
+          ],
+        }),
+      ],
+      [
+        'an excluded visit nobody gave a reason for, as an empty string',
+        uninvoicedResult({
+          excluded: [
+            {
+              sessionId: 'vis_comped',
+              kinfolkId: 'fam1',
+              serviceType: 'Dog walking',
+              startTime: '2026-07-02T14:00:00.000Z',
+              reason: '',
+            },
+          ],
+        }),
+      ],
     ],
     refuses: [
       // Absent would let a client read it as 0 and bill a household nothing
@@ -521,6 +550,16 @@ const CASES: Array<{
         }),
       ],
       ['an `ok` field, which this pure read does not ship', uninvoicedResult({ ok: true })],
+      // A null reason would make every client branch on absence before it can
+      // print the note. It is text, or it is empty text.
+      [
+        'a NULL reason on an excluded visit instead of an empty string',
+        uninvoicedResult({
+          excluded: [
+            { sessionId: 'v1', kinfolkId: 'fam1', serviceType: 'Dog walking', startTime: '2026-07-02T14:00:00.000Z', reason: null },
+          ],
+        }),
+      ],
       [
         'a Timestamp-shaped startTime, which this collection never stores',
         uninvoicedResult({

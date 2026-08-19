@@ -15,6 +15,8 @@ import {
   quoteAcceptanceOf,
 } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
+import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
@@ -54,6 +56,14 @@ const LineItem = z.object({
   qty: z.number().positive().max(999),
   unitCents: z.number().int().min(0).max(10_000_000),
   discountCents: z.number().int().min(0).optional(),
+  /**
+   * The visit this line bills for, when it was drawn from one (#408). Accepted
+   * here and not only at creation, because `lineItems` is replaced WHOLESALE by
+   * this patch: without it, editing any line on an invoice built from visits
+   * would quietly cut every line loose from the work it bills for, and the
+   * household's copy would lose the dates with it.
+   */
+  sessionId: z.string().max(200).optional(),
 });
 
 // Exported so the callable-contract drift guard can freeze this request shape.
@@ -71,6 +81,13 @@ export const Args = z.object({
         .regex(/^\d{4}-\d{2}-\d{2}$/)
         .optional(),
       terms: z.string().max(2000).optional(),
+      /**
+       * Structured payment terms (#408). Sent INSTEAD of `terms` + `dueDate`:
+       * the server writes the rule in words and works the due date out from the
+       * visits this invoice already links, exactly as creation does. Sending it
+       * alongside a `dueDate` that disagrees is refused rather than absorbed.
+       */
+      termsCode: InvoiceTermsCodeArg.optional(),
       // W2-1 (ADR-0002): the descriptive fields Android's whole-model
       // merge-set can change that this patch previously could not express.
       // All metadata: none is read by the money computation below.
@@ -227,6 +244,37 @@ export async function updateInvoiceHandler(
   if (patch.date !== undefined) update['date'] = patch.date;
   if (patch.dueDate !== undefined) update['dueDate'] = patch.dueDate;
   if (patch.terms !== undefined) update['terms'] = patch.terms;
+  // STRUCTURED TERMS DECIDE THE DUE DATE, here as at creation. Resolved from
+  // the visits the invoice ALREADY links (`sessionIds` on the doc, which this
+  // patch cannot change: linkInvoiceSessions owns that link) and from the date
+  // this same patch is setting, so correcting the date and the terms in one
+  // edit lands one consistent due date rather than two half-applied ones.
+  if (patch.termsCode !== undefined) {
+    const sessionIds = Array.isArray(data.sessionIds)
+      ? (data.sessionIds as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [];
+    const serviceDates = await serviceDaysForSessions(db(), sessionIds);
+    const outcome = resolveStructuredTerms({
+      termsCode: patch.termsCode,
+      date: patch.date ?? (typeof data.date === 'string' ? data.date : ''),
+      // Custom terms keep whatever due date the invoice already carries when
+      // the patch does not name one: the operator changing the terms TO custom
+      // is not thereby wiping the date. Every other code resolves its own date,
+      // so only a date sent alongside is checked against it.
+      dueDate:
+        patch.termsCode === 'custom'
+          ? (patch.dueDate ?? (typeof data.dueDate === 'string' ? data.dueDate : ''))
+          : (patch.dueDate ?? ''),
+      serviceDates,
+      now: new Date().toISOString().slice(0, 10),
+    });
+    if (!outcome.ok) {
+      throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
+    }
+    update['terms'] = outcome.fields.terms;
+    update['termsCode'] = outcome.fields.termsCode;
+    update['dueDate'] = outcome.fields.dueDate;
+  }
   if (patch.kinfolkName !== undefined) update['kinfolkName'] = patch.kinfolkName;
   if (patch.client !== undefined) update['client'] = patch.client;
   if (patch.address !== undefined) update['address'] = patch.address;

@@ -116,6 +116,7 @@ export interface CreateInvoiceArgsLineItem {
   qty: number;
   unitCents: number;
   discountCents?: number;
+  sessionId?: string;
 }
 
 /**
@@ -125,7 +126,7 @@ export interface CreateInvoiceArgs {
   familyId: string;
   /** Optional in the request; the server defaults it to ''. */
   kinfolkName?: string;
-  invoiceNumber: string;
+  invoiceNumber?: string;
   /** Optional in the request; the server defaults it to ''. */
   client?: string;
   /** Optional in the request; the server defaults it to ''. */
@@ -136,6 +137,7 @@ export interface CreateInvoiceArgs {
   terms?: string;
   /** Optional in the request; the server defaults it to ''. */
   dueDate?: string;
+  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
   /** Optional in the request; the server defaults it to ''. */
   discount?: string;
   total: number;
@@ -166,6 +168,7 @@ export interface CreateQuoteArgsLineItem {
   qty: number;
   unitCents: number;
   discountCents?: number;
+  sessionId?: string;
 }
 
 /**
@@ -175,7 +178,7 @@ export interface CreateQuoteArgs {
   familyId: string;
   /** Optional in the request; the server defaults it to ''. */
   kinfolkName?: string;
-  invoiceNumber: string;
+  invoiceNumber?: string;
   /** Optional in the request; the server defaults it to ''. */
   client?: string;
   /** Optional in the request; the server defaults it to ''. */
@@ -186,6 +189,7 @@ export interface CreateQuoteArgs {
   terms?: string;
   /** Optional in the request; the server defaults it to ''. */
   dueDate?: string;
+  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
   /** Optional in the request; the server defaults it to ''. */
   discount?: string;
   total: number;
@@ -451,8 +455,9 @@ export interface ListPaymentsResult {
  * a payload that satisfies the type can still be refused.
  */
 export interface ListUninvoicedSessionsArgs {
-  from: string;
-  to: string;
+  kinfolkId?: string;
+  from?: string;
+  to?: string;
 }
 
 /**
@@ -484,15 +489,49 @@ export interface ListUninvoicedSessionsResultUnplaceable {
 }
 
 /**
+ * Nested in the `listUninvoicedSessions` contract.
+ */
+export interface ListUninvoicedSessionsResultExcluded {
+  sessionId: string;
+  kinfolkId: string;
+  serviceType: string;
+  startTime: string;
+  reason: string;
+}
+
+/**
  * Response from the `listUninvoicedSessions` callable.
  */
 export interface ListUninvoicedSessionsResult {
   sessions: ListUninvoicedSessionsResultSession[];
   unpriceable: ListUninvoicedSessionsResultUnpriceable[];
   unplaceable: ListUninvoicedSessionsResultUnplaceable[];
+  excluded: ListUninvoicedSessionsResultExcluded[];
   rateCardLoaded: boolean;
   scanned: number;
   truncated: boolean;
+}
+
+// ---------- setSessionDoNotInvoice ----------
+
+/**
+ * Request payload for the `setSessionDoNotInvoice` callable.
+ */
+export interface SetSessionDoNotInvoiceArgs {
+  sessionIds: string[];
+  doNotInvoice: boolean;
+  /** Optional in the request; the server defaults it to ''. */
+  reason?: string;
+}
+
+/**
+ * Response from the `setSessionDoNotInvoice` callable.
+ */
+export interface SetSessionDoNotInvoiceResult {
+  ok: true;
+  doNotInvoice: boolean;
+  changed: string[];
+  unchanged: string[];
 }
 
 // ---------- markInvoicePaid ----------
@@ -811,6 +850,7 @@ export interface UpdateInvoiceArgsPatchLineItem {
   qty: number;
   unitCents: number;
   discountCents?: number;
+  sessionId?: string;
 }
 
 /**
@@ -823,6 +863,7 @@ export interface UpdateInvoiceArgsPatch {
   date?: string;
   dueDate?: string;
   terms?: string;
+  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
   kinfolkName?: string;
   client?: string;
   address?: string;

@@ -103,6 +103,14 @@ export const AUDIT_EVENTS = {
   // the link decides which visits an invoice bills for, so moving it after a
   // household has seen a figure is investigable state.
   BILLING_INVOICE_SESSIONS_LINKED: 'BILLING_INVOICE_SESSIONS_LINKED',
+  // #408: completed work was taken out of the un-invoiced queue without being
+  // billed, or put back into it (setSessionDoNotInvoice). Two keys rather than
+  // one flag inside a payload, for the same reason the dispute keys are split:
+  // "what have we decided never to bill for" has to be answerable by querying
+  // `event`, and a decision not to charge a household for real work is exactly
+  // what somebody asks about six months later.
+  BILLING_SESSION_DO_NOT_INVOICE_SET: 'BILLING_SESSION_DO_NOT_INVOICE_SET',
+  BILLING_SESSION_DO_NOT_INVOICE_CLEARED: 'BILLING_SESSION_DO_NOT_INVOICE_CLEARED',
   // W2-1 (ADR-0002): a row was created in the ROOT payments collection
   // (recordPayment callable): the display ledger the payment screens read,
   // distinct from BILLING_INVOICE_PAID which covers the invoice-settling

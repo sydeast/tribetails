@@ -270,7 +270,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // the detail as it always did. Cleared alongside `selectedId` on close, so
   // reopening the same invoice from the row never re-arms a stale action.
   const [armedAction, setArmedAction] = useState<InvoiceAction | null>(null);
-  // Seeded only on mount: reopening the composer from the "New quote" button
+  // Seeded only on mount: reopening the composer from the "New invoice" button
   // later must start blank, not silently re-seed the household from a stale URL.
   const [creating, setCreating] = useState<CreatingState | null>(
     composeQuoteForKinfolkId ? { mode: 'quote', seedKinfolkId: composeQuoteForKinfolkId } : null,
@@ -473,7 +473,11 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         subtitle="Every invoice in the window you choose, by invoice date, newest first."
         trailing={
           <div className="invoices__new-actions">
-            <PrimaryButton label="New quote" onClick={() => setCreating({ mode: 'quote' })} />
+            {/* ONE ENTRY POINT, not two (#408). A quote is an invoice in QUOTE
+                status, which is what the status filters above have always said,
+                so the composer asks which kind this is rather than the screen
+                asking the operator to decide before they have picked anybody.
+                `createQuote` still does the writing when they say quote. */}
             <PrimaryButton label="New invoice" onClick={() => setCreating({ mode: 'invoice' })} />
           </div>
         }

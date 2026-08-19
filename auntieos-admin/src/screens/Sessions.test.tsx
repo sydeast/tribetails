@@ -13,6 +13,15 @@ import { type PagedCollection } from '../lib/usePagedCollection';
  */
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
+/**
+ * The by-id read behind the deep link (#408). Mocked rather than stubbed out,
+ * because the point of the link is what happens when the LIST does not hold the
+ * visit: an invoice line routes here for work old enough to have been billed.
+ * `api/sessions.ts` takes only a type from this module, so replacing it whole
+ * costs nothing else.
+ */
+const { useDocById } = vi.hoisted(() => ({ useDocById: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useDocById }));
 
 import { Sessions } from './Sessions';
 
@@ -95,6 +104,7 @@ afterAll(() => {
 const user = userEvent.setup();
 
 beforeEach(() => {
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   loadMore.mockReset();
   reload.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([]));
@@ -585,5 +595,36 @@ describe('Sessions screen: a failed FIRST page is not a failed LATER page', () =
     await user.click(within(screen.getByRole('alert')).getByRole('button', { name: /retry/i }));
     expect(loadMore).toHaveBeenCalledOnce();
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #408: an invoice line drawn from a visit routes to `/sessions?sessionId=<id>`,
+ * because a bound line's money is corrected on the visit and the invoice
+ * follows. The link has to open work that is by definition old enough to have
+ * been billed, which is exactly the work this screen's window does not hold.
+ */
+describe('Sessions screen: the deep link into one visit', () => {
+  it('opens the named visit straight from the list when the window holds it', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'vis_1', serviceType: 'Dog Walk' })]));
+    render(<Sessions initialSessionId="vis_1" />);
+    expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
+    // No second read was needed: the row was already on screen.
+    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', null);
+  });
+  it('READS a visit the window does not hold, rather than reporting it unavailable', () => {
+    usePagedCollection.mockReturnValue(paged([]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'vis_old', serviceType: 'Overnight', startTime: at(-90, 20) }),
+    });
+    render(<Sessions initialSessionId="vis_old" />);
+    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_old');
+    expect(screen.getByText(/Overnight/)).toBeInTheDocument();
+  });
+  it('issues no read at all when nobody deep-linked', () => {
+    usePagedCollection.mockReturnValue(paged([entry({})]));
+    render(<Sessions />);
+    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', null);
   });
 });

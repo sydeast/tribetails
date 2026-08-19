@@ -62,10 +62,44 @@ describe('createInvoice zod validation', () => {
     expect(res.invoiceId).toBeTruthy();
   });
 
-  it('rejects blank invoiceNumber', async () => {
+  // #408 CHANGED THIS. A blank invoice number used to be a refusal, because the
+  // composer made the operator invent one. It now means "assign it", which is
+  // what the composer sends on every new invoice.
+  it('assigns a number when the caller sends a blank one, instead of refusing', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }))).rejects.toThrow();
+    const res = await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
+    expect(res.ok).toBe(true);
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    // The year comes from the invoice's own date, not from the clock.
+    expect(written?.data.invoiceNumber).toBe('INV-2026-0001');
+  });
+  it('assigns a number when the caller omits the field entirely', async () => {
+    const { invoiceNumber: _omitted, ...noNumber } = validPayload;
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(noNumber));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.invoiceNumber).toBe('INV-2026-0001');
+  });
+  it('continues the sequence from the stored counter rather than starting over', async () => {
+    const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { next: 42 } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...validPayload, invoiceNumber: '' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.invoiceNumber).toBe('INV-2026-0042');
+    // And the counter moved on, so the next invoice cannot be handed the same
+    // number.
+    expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.next).toBe(43);
+  });
+  it('keeps a number the caller did send, untouched', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...validPayload, invoiceNumber: 'INV-001' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.invoiceNumber).toBe('INV-001');
+    // Nothing was drawn from the sequence for an invoice that named itself.
+    expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')).toBeUndefined();
   });
 
   it('rejects negative total', async () => {
@@ -381,5 +415,102 @@ describe('createInvoice line items', () => {
     expect(write.data.lineItems).toEqual([]);
     expect(write.data.totalCents).toBe(0);
     expect(write.data.total).toBe(0);
+  });
+});
+
+/**
+ * Structured terms (#408). The rule the operator picked decides the due date,
+ * and the server resolves it from the visits it is actually linking, so the
+ * invoice cannot state a due date its own terms do not support.
+ */
+describe('createInvoice structured terms', () => {
+  const session = (startTime: string) => ({ kinfolkId: 'fam1', status: 'COMPLETED', startTime });
+  it('writes the rule in words and the date it works out to', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: [], termsCode: 'net_14', dueDate: '', terms: 'ignored' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.terms).toBe('Due 14 days after the invoice date');
+    expect(written?.data.termsCode).toBe('net_14');
+    // 14 days after the invoice's own date, 2026-06-01.
+    expect(written?.data.dueDate).toBe('2026-06-15');
+  });
+  it('counts service-relative terms from the LAST linked visit, read off the visits themselves', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'kin_care_sessions/s1': session('2026-06-02T14:00:00.000Z'),
+        'kin_care_sessions/s2': session('2026-06-09T14:00:00.000Z'),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, termsCode: 'net_7_after_last_visit', dueDate: '' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('2026-06-16');
+    expect(written?.data.terms).toBe('Due 7 days after the last visit');
+  });
+  it('REFUSES a due date that disagrees with the terms, naming both dates', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({ ...validPayload, sessionIds: [], termsCode: 'net_14', dueDate: '2026-07-01' }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('2026-06-15'),
+    });
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
+  });
+  it('REFUSES service-relative terms on an invoice with no visits, rather than inventing a date', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({ ...validPayload, sessionIds: [], termsCode: 'net_14_after_last_visit', dueDate: '' }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: expect.stringContaining('no visits on this invoice yet'),
+    });
+  });
+  it('lets custom terms keep the operator typed date', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: [], termsCode: 'custom', dueDate: '2026-07-04' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('2026-07-04');
+    expect(written?.data.terms).toBe('Due by the date shown on this invoice');
+  });
+  it('stores free-text terms verbatim when no code is sent, exactly as it always did', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(validPayload));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.terms).toBe('Net 30');
+    expect(written?.data.dueDate).toBe('2026-07-01');
+    expect(written?.data.termsCode).toBeUndefined();
+  });
+});
+/** #408: a line drawn from a visit stays bound to it. */
+describe('createInvoice bound line items', () => {
+  it('stores the session a line was drawn from', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({
+        ...validPayload,
+        total: 25,
+        amountDue: 25,
+        lineItems: [{ description: 'Dog walking, 2026-06-02', qty: 1, unitCents: 2500, sessionId: 's1' }],
+      }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect((written?.data.lineItems as any[])[0].sessionId).toBe('s1');
   });
 });

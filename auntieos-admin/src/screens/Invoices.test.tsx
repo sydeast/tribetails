@@ -326,9 +326,15 @@ describe('Invoices screen', () => {
     expect(await screen.findByRole('heading', { name: 'New invoice' })).toBeInTheDocument();
   });
 
-  it('New quote opens InvoiceCreate in quote mode', async () => {
+  // #408: there is no second button. A quote is an invoice in QUOTE status,
+  // which is what the status filters above have always said, so the kind is
+  // chosen inside the composer once a household is in front of the operator.
+  it('offers ONE composer, and the quote kind is chosen inside it', async () => {
     render(<Invoices />);
-    await userEvent.click(screen.getByRole('button', { name: /^new quote$/i }));
+    expect(screen.queryByRole('button', { name: /^new quote$/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+    await screen.findByRole('heading', { name: 'New invoice' });
+    await userEvent.selectOptions(screen.getByLabelText('What is this'), 'quote');
     expect(await screen.findByRole('heading', { name: 'New quote' })).toBeInTheDocument();
   });
 

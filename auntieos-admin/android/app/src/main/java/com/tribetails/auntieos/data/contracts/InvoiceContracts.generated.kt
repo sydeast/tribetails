@@ -230,6 +230,8 @@ data class CreateInvoiceArgsLineItem(
     val unitCents: Long,
     /** Optional: omitted from the payload when null. */
     val discountCents: Long? = null,
+    /** Optional: omitted from the payload when null. */
+    val sessionId: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -240,6 +242,7 @@ data class CreateInvoiceArgsLineItem(
         put("qty", qty)
         put("unitCents", unitCents)
         if (discountCents != null) put("discountCents", discountCents)
+        if (sessionId != null) put("sessionId", sessionId)
     }
 }
 
@@ -248,7 +251,8 @@ data class CreateInvoiceArgs(
     val familyId: String,
     /** The server defaults this to `""`. */
     val kinfolkName: String = "",
-    val invoiceNumber: String,
+    /** Optional: omitted from the payload when null. */
+    val invoiceNumber: String? = null,
     /** The server defaults this to `""`. */
     val client: String = "",
     /** The server defaults this to `""`. */
@@ -259,6 +263,11 @@ data class CreateInvoiceArgs(
     val terms: String = "",
     /** The server defaults this to `""`. */
     val dueDate: String = "",
+    /**
+     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * Optional: omitted from the payload when null.
+     */
+    val termsCode: String? = null,
     /** The server defaults this to `""`. */
     val discount: String = "",
     val total: Double,
@@ -279,12 +288,13 @@ data class CreateInvoiceArgs(
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("familyId", familyId)
         put("kinfolkName", kinfolkName)
-        put("invoiceNumber", invoiceNumber)
+        if (invoiceNumber != null) put("invoiceNumber", invoiceNumber)
         put("client", client)
         put("address", address)
         put("date", date)
         put("terms", terms)
         put("dueDate", dueDate)
+        if (termsCode != null) put("termsCode", termsCode)
         put("discount", discount)
         put("total", total)
         put("amountDue", amountDue)
@@ -321,6 +331,8 @@ data class CreateQuoteArgsLineItem(
     val unitCents: Long,
     /** Optional: omitted from the payload when null. */
     val discountCents: Long? = null,
+    /** Optional: omitted from the payload when null. */
+    val sessionId: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -331,6 +343,7 @@ data class CreateQuoteArgsLineItem(
         put("qty", qty)
         put("unitCents", unitCents)
         if (discountCents != null) put("discountCents", discountCents)
+        if (sessionId != null) put("sessionId", sessionId)
     }
 }
 
@@ -339,7 +352,8 @@ data class CreateQuoteArgs(
     val familyId: String,
     /** The server defaults this to `""`. */
     val kinfolkName: String = "",
-    val invoiceNumber: String,
+    /** Optional: omitted from the payload when null. */
+    val invoiceNumber: String? = null,
     /** The server defaults this to `""`. */
     val client: String = "",
     /** The server defaults this to `""`. */
@@ -350,6 +364,11 @@ data class CreateQuoteArgs(
     val terms: String = "",
     /** The server defaults this to `""`. */
     val dueDate: String = "",
+    /**
+     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * Optional: omitted from the payload when null.
+     */
+    val termsCode: String? = null,
     /** The server defaults this to `""`. */
     val discount: String = "",
     val total: Double,
@@ -372,12 +391,13 @@ data class CreateQuoteArgs(
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("familyId", familyId)
         put("kinfolkName", kinfolkName)
-        put("invoiceNumber", invoiceNumber)
+        if (invoiceNumber != null) put("invoiceNumber", invoiceNumber)
         put("client", client)
         put("address", address)
         put("date", date)
         put("terms", terms)
         put("dueDate", dueDate)
+        if (termsCode != null) put("termsCode", termsCode)
         put("discount", discount)
         put("total", total)
         put("amountDue", amountDue)
@@ -879,16 +899,21 @@ internal fun decodeListPaymentsResult(raw: Map<String, Any?>?): ListPaymentsResu
  * a payload that satisfies these types can still be refused.
  */
 data class ListUninvoicedSessionsArgs(
-    val from: String,
-    val to: String,
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val from: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val to: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
      * a pure map, no Firebase types, so a test can assert it without static init.
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
-        put("from", from)
-        put("to", to)
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+        if (from != null) put("from", from)
+        if (to != null) put("to", to)
     }
 }
 
@@ -951,11 +976,35 @@ internal fun decodeListUninvoicedSessionsResultUnplaceable(raw: Map<String, Any?
         kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
     )
 
+/** Nested in the `listUninvoicedSessions` contract. */
+data class ListUninvoicedSessionsResultExcluded(
+    val sessionId: String,
+    val kinfolkId: String,
+    val serviceType: String,
+    val startTime: String,
+    val reason: String,
+)
+
+/**
+ * Fail-soft decode of `ListUninvoicedSessionsResultExcluded` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListUninvoicedSessionsResultExcluded(raw: Map<String, Any?>?): ListUninvoicedSessionsResultExcluded =
+    ListUninvoicedSessionsResultExcluded(
+        sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        serviceType = (raw?.get("serviceType") as? String).orEmpty(),
+        startTime = (raw?.get("startTime") as? String).orEmpty(),
+        reason = (raw?.get("reason") as? String).orEmpty(),
+    )
+
 /** Response from the `listUninvoicedSessions` callable. */
 data class ListUninvoicedSessionsResult(
     val sessions: List<ListUninvoicedSessionsResultSession>,
     val unpriceable: List<ListUninvoicedSessionsResultUnpriceable>,
     val unplaceable: List<ListUninvoicedSessionsResultUnplaceable>,
+    val excluded: List<ListUninvoicedSessionsResultExcluded>,
     val rateCardLoaded: Boolean,
     val scanned: Long,
     val truncated: Boolean,
@@ -971,9 +1020,51 @@ internal fun decodeListUninvoicedSessionsResult(raw: Map<String, Any?>?): ListUn
         sessions = (raw?.get("sessions") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultSession(nested) } },
         unpriceable = (raw?.get("unpriceable") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultUnpriceable(nested) } },
         unplaceable = (raw?.get("unplaceable") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultUnplaceable(nested) } },
+        excluded = (raw?.get("excluded") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListUninvoicedSessionsResultExcluded(nested) } },
         rateCardLoaded = raw?.get("rateCardLoaded") as? Boolean ?: false,
         scanned = (raw?.get("scanned") as? Number)?.toLong() ?: 0L,
         truncated = raw?.get("truncated") as? Boolean ?: false,
+    )
+
+// ---------- setSessionDoNotInvoice ----------
+
+/** Request payload for the `setSessionDoNotInvoice` callable. */
+data class SetSessionDoNotInvoiceArgs(
+    val sessionIds: List<String>,
+    val doNotInvoice: Boolean,
+    /** The server defaults this to `""`. */
+    val reason: String = "",
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("sessionIds", sessionIds)
+        put("doNotInvoice", doNotInvoice)
+        put("reason", reason)
+    }
+}
+
+/** Response from the `setSessionDoNotInvoice` callable. */
+data class SetSessionDoNotInvoiceResult(
+    val ok: Boolean,
+    val doNotInvoice: Boolean,
+    val changed: List<String>,
+    val unchanged: List<String>,
+)
+
+/**
+ * Fail-soft decode of `SetSessionDoNotInvoiceResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeSetSessionDoNotInvoiceResult(raw: Map<String, Any?>?): SetSessionDoNotInvoiceResult =
+    SetSessionDoNotInvoiceResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        doNotInvoice = raw?.get("doNotInvoice") as? Boolean ?: false,
+        changed = (raw?.get("changed") as? List<*>).orEmpty().mapNotNull { it as? String },
+        unchanged = (raw?.get("unchanged") as? List<*>).orEmpty().mapNotNull { it as? String },
     )
 
 // ---------- markInvoicePaid ----------
@@ -1592,6 +1683,8 @@ data class UpdateInvoiceArgsPatchLineItem(
     val unitCents: Long,
     /** Optional: omitted from the payload when null. */
     val discountCents: Long? = null,
+    /** Optional: omitted from the payload when null. */
+    val sessionId: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1602,6 +1695,7 @@ data class UpdateInvoiceArgsPatchLineItem(
         put("qty", qty)
         put("unitCents", unitCents)
         if (discountCents != null) put("discountCents", discountCents)
+        if (sessionId != null) put("sessionId", sessionId)
     }
 }
 
@@ -1619,6 +1713,11 @@ data class UpdateInvoiceArgsPatch(
     val dueDate: String? = null,
     /** Optional: omitted from the payload when null. */
     val terms: String? = null,
+    /**
+     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * Optional: omitted from the payload when null.
+     */
+    val termsCode: String? = null,
     /** Optional: omitted from the payload when null. */
     val kinfolkName: String? = null,
     /** Optional: omitted from the payload when null. */
@@ -1641,6 +1740,7 @@ data class UpdateInvoiceArgsPatch(
         if (date != null) put("date", date)
         if (dueDate != null) put("dueDate", dueDate)
         if (terms != null) put("terms", terms)
+        if (termsCode != null) put("termsCode", termsCode)
         if (kinfolkName != null) put("kinfolkName", kinfolkName)
         if (client != null) put("client", client)
         if (address != null) put("address", address)

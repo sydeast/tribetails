@@ -20,6 +20,7 @@ import {
   type SessionState,
 } from '../lib/sessionFormat';
 import { usePagedCollection } from '../lib/usePagedCollection';
+import { useDocById } from '../lib/firestore';
 import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
@@ -59,6 +60,13 @@ const SORTS: readonly { key: SessionSort; label: string }[] = [
 ];
 
 interface SessionsProps {
+  /**
+   * Opens this visit's detail on mount. Set by the router from
+   * `/sessions?sessionId=<id>`, which is where an invoice line bound to a visit
+   * routes (#408): a bound line's money is corrected on the visit, so every
+   * surface that shows one offers the way there.
+   */
+  initialSessionId?: string;
   /**
    * Row-select override. The router mounts this screen propless, and by default
    * a selected row now opens the in-screen `SessionDetail` read-only view, fed
@@ -121,13 +129,13 @@ interface SessionsProps {
  * clock-in/out, GPS tracking, and KinTale compose (`KinCareDetailScreen`/
  * `KinTaleComposeScreen` in the wasm reference), which are a separate surface.
  */
-export function Sessions({ onSelect }: SessionsProps) {
+export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [sort, setSort] = useState<SessionSort>('soonest');
   const [mode, setMode] = useState<ViewMode>('window');
   // The detail view's own selection state, used only when no external onSelect
   // is supplied (see SessionsProps's doc above).
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(initialSessionId ?? null);
   const handleSelect = onSelect ?? setDetailId;
 
   // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
@@ -195,10 +203,23 @@ export function Sessions({ onSelect }: SessionsProps) {
   // already holds (never a second fetch): the Bookings.tsx `detailEntry`
   // pattern. `null` (stream not ready, or the id no longer resolves to a row)
   // gets its own honest "unavailable" state inside SessionDetail, never a blank.
-  const detailEntry =
+  const streamedEntry =
     detailId !== null && rows.status === 'ready'
       ? (rows.data.find((r) => r._id === detailId) ?? null)
       : null;
+  // THE DEEP-LINK HALF (issue #389's rule, applied to visits). A link into this
+  // screen names a visit; resolving it by searching the rows this list happens
+  // to have loaded answers a different question, and an invoice line routes here
+  // for work that is by definition old enough to have been billed. So a visit the
+  // window does not hold is read by id instead of being reported as unavailable.
+  // A blank id issues no read at all (see useDocById), so the ordinary list pays
+  // nothing for this.
+  const directEntry = useDocById<SessionEntry>(
+    'kin_care_sessions',
+    detailId !== null && streamedEntry === null ? detailId : null,
+  );
+  const detailEntry =
+    streamedEntry ?? (directEntry.status === 'ready' ? directEntry.data : null);
 
   // Only this screen's OWN selection takes over with its own detail view; an
   // external onSelect (see the prop's doc) means the caller owns the detail UI

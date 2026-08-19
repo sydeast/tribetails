@@ -37,6 +37,10 @@ import { Args as GetInvoiceLedgerArgs, Result as GetInvoiceLedgerResult } from '
 import { Args as LinkInvoiceSessionsArgs, Result as LinkInvoiceSessionsResult } from '../../src/admin/linkInvoiceSessions';
 import { Args as ListPaymentsArgs, Result as ListPaymentsResult } from '../../src/admin/listPayments';
 import { Args as ListUninvoicedSessionsArgs, Result as ListUninvoicedSessionsResult } from '../../src/admin/listUninvoicedSessions';
+// #408: the write half of the un-invoiced queue. Registered from birth, for the
+// same reason linkInvoiceSessions was: the clients that call it are generated
+// from this shape rather than transcribing it.
+import { Args as SetSessionDoNotInvoiceArgs, Result as SetSessionDoNotInvoiceResult } from '../../src/admin/setSessionDoNotInvoice';
 import { Args as MarkInvoicePaidArgs, Result as MarkInvoicePaidResult } from '../../src/admin/markInvoicePaid';
 import { Args as PostInvoiceEventArgs, Result as PostInvoiceEventResult } from '../../src/admin/postInvoiceEvent';
 import { Args as RecordPaymentArgs, Result as RecordPaymentResult } from '../../src/admin/recordPayment';
@@ -138,6 +142,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'linkInvoiceSessions', args: LinkInvoiceSessionsArgs, result: LinkInvoiceSessionsResult },
     { name: 'listPayments', args: ListPaymentsArgs, result: ListPaymentsResult },
     { name: 'listUninvoicedSessions', args: ListUninvoicedSessionsArgs, result: ListUninvoicedSessionsResult },
+    { name: 'setSessionDoNotInvoice', args: SetSessionDoNotInvoiceArgs, result: SetSessionDoNotInvoiceResult },
     { name: 'markInvoicePaid', args: MarkInvoicePaidArgs, result: MarkInvoicePaidResult },
     { name: 'payInvoice', args: PayInvoiceArgs, result: PayInvoiceResult },
     { name: 'postInvoiceEvent', args: PostInvoiceEventArgs, result: PostInvoiceEventResult },

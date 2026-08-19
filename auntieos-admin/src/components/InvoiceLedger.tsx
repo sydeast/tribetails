@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import {
@@ -385,7 +386,14 @@ function SessionsPanel({ ledger }: { ledger: GetInvoiceLedgerResult }) {
           <tbody>
             {sessions.map((s) => (
               <tr key={s.sessionId}>
-                <td>{sessionServiceLabel(s.serviceType)}</td>
+                <td>
+                  {/* The route to the work itself (#408). This invoice's money
+                      for this visit comes FROM the visit, so a figure that looks
+                      wrong is corrected there, not here. */}
+                  <Link to="/sessions" search={{ sessionId: s.sessionId }}>
+                    {sessionServiceLabel(s.serviceType)}
+                  </Link>
+                </td>
                 <td>{sessionDayLabel(s)}</td>
                 <td>
                   {s.durationMinutes === null ? (

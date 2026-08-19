@@ -11,6 +11,9 @@ import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
 import { InvoiceDayArg } from '../lib/invoiceDay';
+import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
+import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import { mintInvoiceNumber } from '../lib/invoiceNumber';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
@@ -54,13 +57,33 @@ const LineItem = z.object({
   qty: z.number().positive().max(999),
   unitCents: z.number().int().min(0).max(10_000_000),
   discountCents: z.number().int().min(0).optional(),
+  /**
+   * The visit this line bills for, when it was drawn from one (#408).
+   *
+   * A BINDING, NOT A LABEL. A bound line is not independently editable in the
+   * composer: the money on it comes from the visit, so correcting the money
+   * means correcting the visit and letting the invoice follow. Storing the id
+   * is what lets every surface offer the route back to that visit, and what
+   * lets the household's copy show the day the work was done.
+   *
+   * Optional, because a line typed by hand has no visit behind it, and every
+   * legacy caller sends none.
+   */
+  sessionId: z.string().max(200).optional(),
 });
 
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
   familyId: z.string().min(1),
   kinfolkName: z.string().default(''),
-  invoiceNumber: z.string().min(1),
+  /**
+   * OPTIONAL SINCE #408: omit it, or send a blank, and the server assigns the
+   * next number in the sequence (`lib/invoiceNumber.ts`). The composer no
+   * longer asks the operator to invent one. Still accepted, because the Android
+   * composer sends one and because an operator who needs a specific number must
+   * be able to say so.
+   */
+  invoiceNumber: z.string().max(60).optional(),
   client: z.string().default(''),
   address: z.string().default(''),
   // A DAY, not free text. The admin list range-queries and orders on `date`, and
@@ -70,6 +93,13 @@ export const Args = z.object({
   date: InvoiceDayArg,
   terms: z.string().default(''),
   dueDate: InvoiceDayArg,
+  /**
+   * Structured payment terms (#408). When present, the SERVER writes `terms` as
+   * the rule in words and works `dueDate` out from it, refusing a `dueDate`
+   * that disagrees. Absent, `terms` and `dueDate` are stored verbatim, exactly
+   * as they always were.
+   */
+  termsCode: InvoiceTermsCodeArg.optional(),
   discount: z.string().default(''),
   total: z.number().nonnegative(),
   amountDue: z.number().nonnegative(),
@@ -156,15 +186,43 @@ export async function createInvoiceHandler(
     };
   }
 
-  const ref = db().collection('invoices').doc();
+  const firestore = db();
+  // TERMS, AND THE DUE DATE THEY DECIDE (#408). Structured terms make the
+  // server the authority on when this invoice is due, resolved from the visits
+  // it is actually linking, not from anything the caller asserts. Without a
+  // `termsCode` both fields are stored verbatim, exactly as they always were.
+  let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
+  if (args.termsCode !== undefined) {
+    const serviceDates = await serviceDaysForSessions(firestore, args.sessionIds);
+    const outcome = resolveStructuredTerms({
+      termsCode: args.termsCode,
+      date: args.date,
+      dueDate: args.dueDate,
+      serviceDates,
+      // The UTC day. It decides nothing that is written here (the resolver only
+      // uses it to report a due date already in the past, which is the
+      // client's to say out loud), so a zone offset cannot move a stored date.
+      now: new Date().toISOString().slice(0, 10),
+    });
+    if (!outcome.ok) {
+      throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
+    }
+    termsFields = outcome.fields;
+  }
+  // THE NUMBER IS ASSIGNED WHEN NOBODY SAID (#408). A caller that sends one
+  // keeps it; the composer stopped asking, so most invoices arrive without.
+  const invoiceNumber =
+    (args.invoiceNumber ?? '').trim() === ''
+      ? await mintInvoiceNumber(firestore, args.date)
+      : args.invoiceNumber!.trim();
+  const ref = firestore.collection('invoices').doc();
   const doc = {
     kinfolkName: args.kinfolkName,
-    invoiceNumber: args.invoiceNumber,
+    invoiceNumber,
     client: args.client,
     address: args.address,
     date: args.date,
-    terms: args.terms,
-    dueDate: args.dueDate,
+    ...termsFields,
     discount: args.discount,
     total: args.total,
     amountDue: args.amountDue,
@@ -200,7 +258,7 @@ export async function createInvoiceHandler(
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
     payload: {
       invoiceId: ref.id,
-      invoiceNumber: args.invoiceNumber,
+      invoiceNumber,
       itemized: args.lineItems !== undefined,
       lineCount: args.lineItems?.length ?? 0,
     },
