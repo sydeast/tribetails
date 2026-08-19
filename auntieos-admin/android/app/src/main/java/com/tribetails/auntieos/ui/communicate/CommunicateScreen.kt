@@ -44,6 +44,7 @@ import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Sparkles
 import com.tribetails.auntieos.data.model.Dossier
+import com.tribetails.auntieos.data.model.HouseholdBank
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
@@ -1131,7 +1132,7 @@ private fun ContextPanel(state: CommunicateUiState, viewModel: CommunicateViewMo
     val dims = AuntieTheme.dims
     DenPanel(
         title = "Recipient context",
-        subtitle = "Dossier and kin Auntie reads before drafting",
+        subtitle = "Dossier, household bank and kin Auntie reads before drafting",
         modifier = Modifier.fillMaxWidth(),
     ) {
         // This panel is internal admin context, not customer-facing copy.
@@ -1148,6 +1149,7 @@ private fun ContextPanel(state: CommunicateUiState, viewModel: CommunicateViewMo
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
                 state.dossier?.let { DossierPanel(it) }
+                state.householdBank?.let { HouseholdBankPanel(it) }
 
                 if (state.kin.isNotEmpty()) {
                     AuntieFieldLabel(text = "The 411")
@@ -1190,6 +1192,56 @@ private fun DossierPanel(dossier: Dossier) {
                 verticalArrangement = Arrangement.spacedBy(dims.space3),
             ) {
                 ContextField("Summary", summaryLine(dossier.tldr, dossier.rawSummary, 280))
+            }
+        }
+    }
+}
+
+/**
+ * The household bank (issue #461), the peer of [DossierPanel] and built to the
+ * same recipe: same card, same collapsible header, same summary line, same
+ * [ContextField] that hides a blank or a "Not yet documented." placeholder.
+ *
+ * Read-only, exactly as the dossier and the 411 are here. The only thing that
+ * writes any of the three is the reconcile pipeline, reachable from this screen
+ * through the existing "Refresh intelligence" action, so there is no editor to
+ * add and no control that would do nothing.
+ */
+@Composable
+private fun HouseholdBankPanel(bank: HouseholdBank) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    var expanded by remember { mutableStateOf(true) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.surfaceGlass)
+            .padding(dims.space4),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("THE HOUSEHOLD BANK", style = AuntieTheme.typography.labelSmall, color = c.primary)
+            Icon(
+                if (expanded) Lucide.ChevronUp else Lucide.ChevronDown,
+                contentDescription = null, tint = c.textDim,
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier.padding(top = dims.space3),
+                verticalArrangement = Arrangement.spacedBy(dims.space3),
+            ) {
+                ContextField("Summary", summaryLine(bank.tldr, bank.rawSummary, 280))
+                ContextField("Access and entry", bank.accessAndEntry)
+                ContextField("The property", bank.propertyNotes)
+                ContextField("How the home runs", bank.householdRoutine)
+                ContextField("Standing instructions", bank.standingInstructions)
+                ContextField("Scheduling", bank.schedulingNotes)
             }
         }
     }

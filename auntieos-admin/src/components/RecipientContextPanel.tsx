@@ -5,10 +5,12 @@ import { KIN_QUERY, type Kin } from '../api/directory';
 import { getFeatureFlags } from '../api/featureFlags';
 import {
   getDossier,
+  getHouseholdBank,
   getKin411,
   recapRecentComms,
   commsQueries,
   type Dossier,
+  type HouseholdBank,
   type Kin411,
 } from '../api/recipientContext';
 import {
@@ -25,6 +27,8 @@ import { Banner } from './Banner';
 import './RecipientContextPanel.css';
 
 const DOSSIER_SUMMARY_MAX = 280;
+/** The bank describes a whole home, so it gets the dossier's allowance, not a pet's. */
+const BANK_SUMMARY_MAX = 280;
 const KIN_SUMMARY_MAX = 200;
 
 /** The flag key that gates the paid AI recap. Off by default, per the flag catalog. */
@@ -76,6 +80,10 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
   const [dossierError, setDossierError] = useState<string | null>(null);
   const [dossierLoading, setDossierLoading] = useState(false);
 
+  const [bank, setBank] = useState<HouseholdBank | null>(null);
+  const [bankError, setBankError] = useState<string | null>(null);
+  const [bankLoading, setBankLoading] = useState(false);
+
   const [recapFlagOn, setRecapFlagOn] = useState(false);
   const [recap, setRecap] = useState('');
   const [recapError, setRecapError] = useState<string | null>(null);
@@ -108,6 +116,36 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
       })
       .finally(() => {
         if (live) setDossierLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [id, hasRecipient]);
+
+  // The bank is read eagerly alongside the dossier rather than lazily like a kin
+  // card. There is exactly one per household, so it costs one read, and it is
+  // the record that answers "how does somebody get in the door", which is not a
+  // thing to make an admin click for.
+  useEffect(() => {
+    if (!hasRecipient) {
+      setBank(null);
+      setBankError(null);
+      return;
+    }
+    let live = true;
+    setBankLoading(true);
+    setBankError(null);
+    getHouseholdBank(id)
+      .then((b) => {
+        if (live) setBank(b);
+      })
+      .catch((err: unknown) => {
+        if (live) {
+          setBankError(err instanceof Error ? err.message : 'The household bank could not be read.');
+        }
+      })
+      .finally(() => {
+        if (live) setBankLoading(false);
       });
     return () => {
       live = false;
@@ -186,9 +224,14 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
 
   if (!hasRecipient) {
     return (
-      <DenPanel title="Recipient context" subtitle="The dossier and kin Auntie reads before drafting.">
+      <DenPanel
+        title="Recipient context"
+        subtitle="The dossier, the household bank and the kin Auntie reads before drafting."
+      >
         <p className="context__admin-note">Admin only, internal</p>
-        <EmptyHint>Pick a recipient to see the dossier and kin Auntie reads for them.</EmptyHint>
+        <EmptyHint>
+          Pick a recipient to see the dossier, the household bank and the kin Auntie reads for them.
+        </EmptyHint>
       </DenPanel>
     );
   }
@@ -201,16 +244,43 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
         ['Relationship with Auntie', dossier.relationshipWithAuntie],
       ] as [string, string][]).filter(([, v]) => contextFieldShown(v))
     : [];
+  const bankSummary = bank ? summaryLine(bank.tldr, bank.rawSummary, BANK_SUMMARY_MAX) : '';
+  const bankExtras: [string, string][] = bank
+    ? ([
+        ['Access and entry', bank.accessAndEntry],
+        ['The property', bank.propertyNotes],
+        ['How the home runs', bank.householdRoutine],
+        ['Standing instructions', bank.standingInstructions],
+        ['Scheduling', bank.schedulingNotes],
+      ] as [string, string][]).filter(([, v]) => contextFieldShown(v))
+    : [];
   const nothingOnFile =
-    !dossierLoading && dossierError === null && dossierSummary === '' && dossierExtras.length === 0 && kin.length === 0;
+    !dossierLoading &&
+    !bankLoading &&
+    dossierError === null &&
+    bankError === null &&
+    dossierSummary === '' &&
+    dossierExtras.length === 0 &&
+    bankSummary === '' &&
+    bankExtras.length === 0 &&
+    kin.length === 0;
 
   return (
-    <DenPanel title="Recipient context" subtitle="The dossier and kin Auntie reads before drafting.">
+    <DenPanel
+      title="Recipient context"
+      subtitle="The dossier, the household bank and the kin Auntie reads before drafting."
+    >
       <p className="context__admin-note">Admin only, internal</p>
 
       {dossierError !== null && (
         <Banner tone="error" title="Couldn't load the dossier">
           {dossierError}
+        </Banner>
+      )}
+
+      {bankError !== null && (
+        <Banner tone="error" title="Couldn't load the household bank">
+          {bankError}
         </Banner>
       )}
 
@@ -221,7 +291,7 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
       )}
 
       {nothingOnFile ? (
-        <EmptyHint>No saved dossier or kin on file yet for this recipient.</EmptyHint>
+        <EmptyHint>No saved dossier, household bank or kin on file yet for this recipient.</EmptyHint>
       ) : (
         <>
           {(dossierSummary !== '' || dossierExtras.length > 0) && (
@@ -234,6 +304,24 @@ export function RecipientContextPanel({ kinfolkId }: RecipientContextPanelProps)
                 </p>
               )}
               {dossierExtras.map(([label, value]) => (
+                <p key={label} className="context__field">
+                  <span className="context__field-label">{label}</span>
+                  <span className="context__field-value">{value}</span>
+                </p>
+              ))}
+            </section>
+          )}
+
+          {(bankSummary !== '' || bankExtras.length > 0) && (
+            <section className="context__section">
+              <h3 className="context__section-title">The household bank</h3>
+              {bankSummary !== '' && (
+                <p className="context__field">
+                  <span className="context__field-label">Summary</span>
+                  <span className="context__field-value">{bankSummary}</span>
+                </p>
+              )}
+              {bankExtras.map(([label, value]) => (
                 <p key={label} className="context__field">
                   <span className="context__field-label">{label}</span>
                   <span className="context__field-value">{value}</span>

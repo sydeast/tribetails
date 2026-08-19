@@ -8,14 +8,16 @@ import type { Kin } from '../api/directory';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-const { getDossier, getKin411, recapRecentComms } = vi.hoisted(() => ({
+const { getDossier, getHouseholdBank, getKin411, recapRecentComms } = vi.hoisted(() => ({
   getDossier: vi.fn(),
+  getHouseholdBank: vi.fn(),
   getKin411: vi.fn(),
   recapRecentComms: vi.fn(),
 }));
 vi.mock('../api/recipientContext', async (orig) => ({
   ...(await orig<typeof import('../api/recipientContext')>()),
   getDossier,
+  getHouseholdBank,
   getKin411,
   recapRecentComms,
 }));
@@ -41,6 +43,7 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   useCollection.mockReset();
   getDossier.mockReset();
+  getHouseholdBank.mockReset();
   getKin411.mockReset();
   recapRecentComms.mockReset();
   getFeatureFlags.mockReset();
@@ -53,6 +56,7 @@ function setup(opts: SetupOpts = {}) {
       : { status: 'ready', data: (opts.comms ?? []).filter((c) => c['_path'] === spec.path) },
   );
   getDossier.mockResolvedValue(null);
+  getHouseholdBank.mockResolvedValue(null);
   getKin411.mockResolvedValue(null);
   getFeatureFlags.mockResolvedValue({ 'auntieos.communicate.commsRecap': opts.flagOn ?? false });
   recapRecentComms.mockResolvedValue({ recap: '', lastAt: '', sourceCount: 0 });
@@ -63,13 +67,16 @@ describe('with no recipient chosen', () => {
   it('says what picking one would show, rather than rendering an empty shell', () => {
     setup();
     render(<RecipientContextPanel kinfolkId="" />);
-    expect(screen.getByText(/pick a recipient to see the dossier and kin/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/pick a recipient to see the dossier, the household bank and the kin/i),
+    ).toBeInTheDocument();
   });
 
-  it('asks for no dossier and no recap when there is nobody to ask about', () => {
+  it('asks for no dossier, no bank and no recap when there is nobody to ask about', () => {
     setup();
     render(<RecipientContextPanel kinfolkId="" />);
     expect(getDossier).not.toHaveBeenCalled();
+    expect(getHouseholdBank).not.toHaveBeenCalled();
     expect(recapRecentComms).not.toHaveBeenCalled();
   });
 });
@@ -102,10 +109,12 @@ describe('the dossier', () => {
     expect(screen.queryByText('Not yet documented.')).toBeNull();
   });
 
-  it('says plainly when there is no dossier and no kin on file', async () => {
+  it('says plainly when there is no dossier, no bank and no kin on file', async () => {
     setup({ kinRows: { status: 'ready', data: [] } });
     render(<RecipientContextPanel kinfolkId="kf1" />);
-    expect(await screen.findByText(/no saved dossier or kin on file yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no saved dossier, household bank or kin on file yet/i),
+    ).toBeInTheDocument();
   });
 
   it('surfaces a dossier read failure instead of showing an empty dossier', async () => {
@@ -113,6 +122,93 @@ describe('the dossier', () => {
     getDossier.mockImplementation(() => Promise.reject(new Error('permission-denied')));
     render(<RecipientContextPanel kinfolkId="kf1" />);
     expect(await screen.findByText(/permission-denied/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The household bank, the third destination (issue #461).
+ *
+ * These cases are the client half of the agreement with the nightly job: the
+ * pipeline's own suite proves a HOUSEHOLD-targeted note lands in
+ * `household_bank/{householdId}` and nowhere else, and these prove the screen
+ * reads that record, keeps it apart from the dossier and the 411, and does not
+ * silently swallow a failure to read it.
+ */
+describe('the household bank', () => {
+  const bank = {
+    tldr: '',
+    rawSummary: '',
+    accessAndEntry: '',
+    propertyNotes: '',
+    householdRoutine: '',
+    standingInstructions: '',
+    schedulingNotes: '',
+  };
+
+  it('reads the bank for the chosen household', async () => {
+    setup();
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    await waitFor(() => expect(getHouseholdBank).toHaveBeenCalledWith('kf1'));
+  });
+
+  it('shows the reconciler’s summary line under its own heading', async () => {
+    setup();
+    getHouseholdBank.mockResolvedValue({ ...bank, tldr: 'Side gate, code on the lockbox.' });
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText('The household bank')).toBeInTheDocument();
+    expect(screen.getByText('Side gate, code on the lockbox.')).toBeInTheDocument();
+  });
+
+  it('renders the household’s own fields, not the dossier’s and not a pet’s', async () => {
+    setup();
+    getHouseholdBank.mockResolvedValue({
+      ...bank,
+      accessAndEntry: 'Side gate 4321, front bell is dead.',
+      standingInstructions: 'Text on arrival, every time.',
+    });
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText('Side gate 4321, front bell is dead.')).toBeInTheDocument();
+    expect(screen.getByText('Text on arrival, every time.')).toBeInTheDocument();
+    expect(screen.getByText('Access and entry')).toBeInTheDocument();
+    expect(screen.getByText('Standing instructions')).toBeInTheDocument();
+  });
+
+  it('hides the "Not yet documented." placeholder rather than rendering it as context', async () => {
+    setup();
+    getHouseholdBank.mockResolvedValue({ ...bank, propertyNotes: 'Not yet documented.' });
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    await waitFor(() => expect(getHouseholdBank).toHaveBeenCalled());
+    expect(screen.queryByText('Not yet documented.')).toBeNull();
+  });
+
+  it('shows no bank section for a household nothing household-targeted exists for', async () => {
+    setup();
+    getHouseholdBank.mockResolvedValue(null);
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    await waitFor(() => expect(getHouseholdBank).toHaveBeenCalled());
+    expect(screen.queryByText('The household bank')).toBeNull();
+  });
+
+  it('surfaces a bank read failure instead of quietly showing no bank', async () => {
+    setup();
+    getHouseholdBank.mockImplementation(() => Promise.reject(new Error('permission-denied')));
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText(/couldn.t load the household bank/i)).toBeInTheDocument();
+  });
+
+  it('keeps standing when the bank fails but the dossier loads', async () => {
+    setup();
+    getDossier.mockResolvedValue({
+      tldr: 'Prefers a text the night before.',
+      rawSummary: '',
+      communicationStyle: '',
+      householdNotes: '',
+      relationshipWithAuntie: '',
+    });
+    getHouseholdBank.mockImplementation(() => Promise.reject(new Error('offline')));
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText('Prefers a text the night before.')).toBeInTheDocument();
+    expect(screen.getByText(/couldn.t load the household bank/i)).toBeInTheDocument();
   });
 });
 

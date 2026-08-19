@@ -235,6 +235,44 @@ data class Dossier(
     var needsMoreSamples: Boolean = false,
 )
 
+/**
+ * The household's own reconciled record (issue #461), the peer of [Dossier] (one
+ * human) and [Kin411] (one animal).
+ *
+ * Operator ruling 2026-08-18: "kinfolk data go to kinfolks dossiers, kin data
+ * goes into the kins 411s. and then household gets its own bank." The nightly
+ * pipeline writes it at `household_bank/{householdId}`, where the household id
+ * is the anchoring kinfolk id, and the five structured fields below are
+ * deliberately DISJOINT from the dossier's and the 411's: a fact about a person
+ * or a pet has its own home and must not land here wearing a field name that
+ * looks right.
+ *
+ * ADMIN-ONLY, the same standing ruling that governs the other two. Kinfolk never
+ * see it.
+ *
+ * Every property is `var` with a default, the Firestore `toObject` requirement
+ * the two peers already satisfy.
+ */
+@Keep
+data class HouseholdBank(
+    @DocumentId val id: String = "",
+    var householdId: String = "",
+    var accessAndEntry: String = "",
+    var propertyNotes: String = "",
+    var householdRoutine: String = "",
+    var standingInstructions: String = "",
+    var schedulingNotes: String = "",
+    var rawSummary: String = "",   // narrative prose - same annotation conventions as Dossier
+    var tldr: String = "",         // AI-generated 1-2 sentence summary; blank until reconcile writes it
+
+    // Reconciliation provenance - set every time the comms pipeline merges a new
+    // fact into [rawSummary] or any structured field above.
+    var lastUpdated: String = "",
+    var lastReconciledAt: String = "",
+    var lastReconcileSourceLogIds: List<String> = emptyList(),  // most recent first
+    var needsMoreSamples: Boolean = false,
+)
+
 @Keep
 data class Kin(
     @DocumentId val id: String = "",
