@@ -22,7 +22,12 @@ beforeEach(() => {
   mocks.logEventFn.mockReset();
 });
 
-import { buildNotificationDetail, CARD_DETAIL_FIELDS } from '../src/notifications/buildNotificationDetail';
+import {
+  buildNotificationDetail,
+  cardDetailFieldsFor,
+  CARD_DETAIL_FIELDS,
+  STAFF_ONLY_DETAIL_FIELDS,
+} from '../src/notifications/buildNotificationDetail';
 
 /** A booking-assignment fixture: envelope + session + family + pets. */
 function assignmentDb() {
@@ -53,6 +58,7 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
       'auntie1',
       { kinfolkId: 'fam1', batchId: 'batch1', visitId: 'v1' },
       'Dana Ruiz',
+      'staff',
     );
 
     expect(detail).toBeDefined();
@@ -86,6 +92,7 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
       'auntie1',
       { kinfolkId: 'fam1', batchId: 'batch1', visitId: 'v1' },
       'Dana Ruiz',
+      'staff',
     );
 
     expect(detail!.notes).toBe('Leave the porch light on.');
@@ -99,6 +106,7 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
       'auntie1',
       { kinfolkId: 'fam1', batchId: 'batch1', visitId: 'v1', kinName: 'Rex and Willow' },
       'Dana Ruiz',
+      'staff',
     );
 
     expect(detail!.kinName).toBe('Rex and Willow');
@@ -112,7 +120,13 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
   it('omits fields it cannot resolve rather than writing blanks', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock().db);
 
-    const detail = await buildNotificationDetail('assignment.assigned', 'auntie1', {}, 'Dana Ruiz');
+    const detail = await buildNotificationDetail(
+      'assignment.assigned',
+      'auntie1',
+      {},
+      'Dana Ruiz',
+      'staff',
+    );
 
     expect(detail).toEqual({ requestedBy: 'Dana Ruiz' });
     expect('bookingDate' in detail!).toBe(false);
@@ -123,7 +137,7 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
     mocks.dbFn.mockReturnValue(buildDbMock().db);
 
     // No actor either: a system-emitted notification with unresolvable entities.
-    const detail = await buildNotificationDetail('assignment.assigned', '', {}, null);
+    const detail = await buildNotificationDetail('assignment.assigned', '', {}, null, 'staff');
 
     expect(detail).toBeUndefined();
   });
@@ -143,6 +157,7 @@ describe('buildNotificationDetail answers the operator’s five questions', () =
       'auntie1',
       { kinfolkId: 'fam1' },
       'Dana Ruiz',
+      'staff',
     );
 
     expect(detail).toEqual({ requestedBy: 'Dana Ruiz' });
@@ -185,6 +200,7 @@ describe('buildNotificationDetail on invoice-class keys', () => {
       'cli1',
       { invoiceId: 'inv1', kinfolkId: 'fam1' },
       'Auntie Syd',
+      'kinfolk',
     );
 
     expect(detail).toMatchObject({
@@ -194,5 +210,104 @@ describe('buildNotificationDetail on invoice-class keys', () => {
       kinfolkName: 'The Rivera Home',
       requestedBy: 'Auntie Syd',
     });
+  });
+});
+/**
+ * Issue #380: staff-typed booking notes were reaching the household's card.
+ *
+ * The `notes` field on a booking or a KinCare session is admin-writable —
+ * `admin/createKinCareSession.ts`, `admin/createMultiDateBookingRequest.ts`, the
+ * `isAuntie()` update branch in `firestore.rules`, and
+ * `admin/transitionBookingStatus.ts`, which appends a cancellation reason to it
+ * verbatim. It was copied onto `notifications/{id}.detail` for every recipient,
+ * and `firestore.rules` lets a kinfolk read their own notification document
+ * field for field, so an operator remark such as "client disputes last invoice,
+ * do not discuss pricing" was one document read away from the household.
+ *
+ * The fix is audience-aware, not a blanket delete: operator ruling R5 asked for
+ * the notes ON THE ADMIN CARD, and staff and business copies still carry them.
+ */
+describe('buildNotificationDetail withholds staff-only fields from a household copy', () => {
+  /** A booking whose notes are an internal operator remark, not a message home. */
+  function disputedBookingDb() {
+    return buildDbMock({
+      docs: {
+        'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' },
+        'families/fam1/bookings/batch1': {
+          notes: 'Client disputes last invoice, do not discuss pricing.',
+        },
+        'families/fam1/bookings/batch1/kinCares/v1': {
+          serviceName: 'Drop-in visit',
+          kinNames: ['Rex'],
+        },
+      },
+    });
+  }
+  const changedVisit = { kinfolkId: 'fam1', batchId: 'batch1', visitId: 'v1' };
+  it('does not put the booking notes on the kinfolk copy of kincare.changed', async () => {
+    mocks.dbFn.mockReturnValue(disputedBookingDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.changed',
+      'cli1',
+      changedVisit,
+      'Auntie Syd',
+      'kinfolk',
+    );
+    expect(detail).toBeDefined();
+    expect('notes' in detail!).toBe(false);
+    // ABSENT, not blanked: the rest of the card is untouched by the redaction.
+    expect(detail!.kinfolkName).toBe('The Rivera Home');
+    expect(detail!.kinName).toBe('Rex');
+    expect(detail!.serviceType).toBe('Drop-in visit');
+    expect(detail!.requestedBy).toBe('Auntie Syd');
+  });
+  it('still puts the same booking notes on the business copy of the same event', async () => {
+    mocks.dbFn.mockReturnValue(disputedBookingDb().db);
+    const detail = await buildNotificationDetail(
+      'kincare.changed',
+      'admin1',
+      changedVisit,
+      'Auntie Syd',
+      'business',
+    );
+    expect(detail!.notes).toBe('Client disputes last invoice, do not discuss pricing.');
+  });
+  it('still puts them on a staff copy', async () => {
+    mocks.dbFn.mockReturnValue(disputedBookingDb().db);
+    const detail = await buildNotificationDetail(
+      'assignment.assigned',
+      'auntie1',
+      changedVisit,
+      'Auntie Syd',
+      'staff',
+    );
+    expect(detail!.notes).toBe('Client disputes last invoice, do not discuss pricing.');
+  });
+  /**
+   * The layer that actually closes the leak. Trimming `notes` out of the
+   * REQUESTED fields only stops the enricher fetching it; the enricher's context
+   * starts as a spread of the emitter's own merge bag, so a caller that passed
+   * `data.notes` would hand the value straight through. No emitter does that
+   * today, and `portal/requestBooking.ts` handles a `notes` argument, so the
+   * write guard is what keeps a future one from re-opening this.
+   */
+  it('withholds notes from a household copy even when the emitter supplied them', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { 'families/fam1': { displayName: 'The Rivera Home' } } }).db);
+    const detail = await buildNotificationDetail(
+      'kincare.changed',
+      'cli1',
+      { kinfolkId: 'fam1', notes: 'Do not discuss pricing.' },
+      'Auntie Syd',
+      'kinfolk',
+    );
+    expect('notes' in detail!).toBe(false);
+  });
+  it('names notes as staff-only and drops exactly that from the kinfolk field set', () => {
+    expect([...STAFF_ONLY_DETAIL_FIELDS]).toEqual(['notes']);
+    expect([...cardDetailFieldsFor('staff')]).toEqual([...CARD_DETAIL_FIELDS]);
+    expect([...cardDetailFieldsFor('business')]).toEqual([...CARD_DETAIL_FIELDS]);
+    expect([...cardDetailFieldsFor('kinfolk')]).toEqual(
+      CARD_DETAIL_FIELDS.filter((f) => f !== 'notes'),
+    );
   });
 });

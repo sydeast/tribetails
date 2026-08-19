@@ -86,6 +86,52 @@ class TribalIntelViewModelTest {
     }
 
     @Test
+    fun `createTrainingDocument HOUSEHOLD target reaches the callable as itself`() = runTest(testDispatcher) {
+        // The third target (issue #393) must survive the trip verbatim. Folding
+        // it back into KINFOLK on the way out is exactly the conflation the
+        // operator reported.
+        coEvery {
+            mockRepo.createTrainingDocument(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns Result.success("td-new")
+        coEvery { mockRepo.getTrainingDocuments() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.createTrainingDocument("", "The whole house is away", "", "HOUSEHOLD", "kf1", null, emptyList())
+        advanceUntilIdle()
+
+        coVerify {
+            mockRepo.createTrainingDocument("", "The whole house is away", "", "HOUSEHOLD", "kf1", null, emptyList())
+        }
+    }
+
+    @Test
+    fun `updateTrainingDocument re-targets an entry to HOUSEHOLD`() = runTest(testDispatcher) {
+        coEvery {
+            mockRepo.updateTrainingDocument(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns Result.success(Unit)
+        coEvery { mockRepo.getTrainingDocuments() } returns Result.success(listOf(TrainingDocument(id = "d1")))
+
+        val vm = buildViewModel()
+        vm.updateTrainingDocument("d1", "t", "c", "", "HOUSEHOLD", "kf1", null, emptyList())
+        advanceUntilIdle()
+
+        assertNull(vm.error.value)
+        coVerify { mockRepo.updateTrainingDocument("d1", "t", "c", "", "HOUSEHOLD", "kf1", null, emptyList()) }
+    }
+
+    @Test
+    fun `loadKinDirectory fills the roster the list rows name their kin from`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getAllKin() } returns Result.success(listOf(Kin(id = "k1", kinfolkId = "kf1", name = "Biscuit")))
+
+        val vm = buildViewModel()
+        vm.loadKinDirectory()
+        advanceUntilIdle()
+
+        assertEquals(1, vm.kinDirectory.value.size)
+        assertEquals("Biscuit", vm.kinDirectory.value.first().name)
+    }
+
+    @Test
     fun `createTrainingDocument failure surfaces fail-loud and no queued message`() = runTest(testDispatcher) {
         coEvery {
             mockRepo.createTrainingDocument(any(), any(), any(), any(), any(), any(), any(), any())

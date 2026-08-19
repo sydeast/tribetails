@@ -69,18 +69,66 @@ describe('TribalIntelForm', () => {
       content: 'Side gate code is now 4417.',
       notes: 'Heard at pickup',
       communicationType: 'note',
-      targetType: 'KINFOLK',
+      targetType: 'HOUSEHOLD',
       targetKinfolkId: 'kf1',
       attachments: [],
     });
     expect(props.onSaved).toHaveBeenCalled();
   });
 
+  it('offers all three targets, and starts on the household', () => {
+    renderForm();
+    for (const label of ['Household', 'Kinfolk', 'Kin']) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Household' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('sends KINFOLK when the intel is about one human client, not the whole house', async () => {
+    renderForm();
+    await user.type(screen.getByLabelText('Intel'), 'Mrs. Whitfield is recovering from surgery.');
+    await user.click(screen.getByRole('button', { name: 'Kinfolk' }));
+    // The picker relabels itself: the same roster, named for what it is picking.
+    await user.selectOptions(screen.getByLabelText('Kinfolk'), 'kf1');
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+
+    expect(createTrainingDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ targetType: 'KINFOLK', targetKinfolkId: 'kf1' }),
+    );
+    expect(createTrainingDocument.mock.calls[0]?.[0]).not.toHaveProperty('targetKinId');
+  });
+
+  it('sends HOUSEHOLD when the intel is about everyone under one roof', async () => {
+    renderForm();
+    await user.type(screen.getByLabelText('Intel'), 'The whole house is away over Thanksgiving.');
+    await user.click(screen.getByRole('button', { name: 'Household' }));
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+
+    expect(createTrainingDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1' }),
+    );
+  });
+
+  it('drops the chosen pet when the operator switches off the kin target', async () => {
+    renderForm();
+    await user.type(screen.getByLabelText('Intel'), 'Biscuit limps after long walks.');
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await user.click(screen.getByRole('button', { name: 'Kin' }));
+    await user.selectOptions(screen.getByLabelText('Pet'), 'kin1');
+    await user.click(screen.getByRole('button', { name: 'Kinfolk' }));
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+
+    // A pet id riding along on a kinfolk-targeted save would have the note
+    // filed against an animal the operator stopped naming.
+    expect(createTrainingDocument.mock.calls[0]?.[0]).not.toHaveProperty('targetKinId');
+  });
+
   it('sends targetKinId when the entry is about a single pet', async () => {
     renderForm();
     await user.type(screen.getByLabelText('Intel'), 'Biscuit limps after long walks.');
     await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await user.click(screen.getByRole('button', { name: 'Single pet' }));
+    await user.click(screen.getByRole('button', { name: 'Kin' }));
     await user.selectOptions(screen.getByLabelText('Pet'), 'kin1');
     await user.click(screen.getByRole('button', { name: 'Save intel' }));
 
@@ -92,7 +140,7 @@ describe('TribalIntelForm', () => {
   it('only offers pets belonging to the chosen household', async () => {
     renderForm();
     await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await user.click(screen.getByRole('button', { name: 'Single pet' }));
+    await user.click(screen.getByRole('button', { name: 'Kin' }));
     const pet = screen.getByLabelText('Pet') as HTMLSelectElement;
     const names = Array.from(pet.options).map((o) => o.textContent);
     expect(names).toContain('Biscuit');
@@ -113,7 +161,7 @@ describe('TribalIntelForm', () => {
     renderForm();
     await user.type(screen.getByLabelText('Intel'), 'Biscuit limps after long walks.');
     await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await user.click(screen.getByRole('button', { name: 'Single pet' }));
+    await user.click(screen.getByRole('button', { name: 'Kin' }));
     await user.click(screen.getByRole('button', { name: 'Save intel' }));
     expect(createTrainingDocument).not.toHaveBeenCalled();
     expect(screen.getByText('Pick which pet this intel is about.')).toBeInTheDocument();
@@ -147,7 +195,7 @@ describe('TribalIntelForm', () => {
     expect(screen.getByLabelText('Notes')).toHaveValue('Vet call pending');
     expect(screen.getByLabelText('Household')).toHaveValue('kf1');
     expect(screen.getByLabelText('Pet')).toHaveValue('kin1');
-    expect(screen.getByRole('button', { name: 'Single pet' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Kin' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('falls back to the legacy kinfolkRef when a pre-spec-23 row carries no targetKinfolkId', () => {
@@ -159,6 +207,34 @@ describe('TribalIntelForm', () => {
         kinfolkRef: 'kf2',
       },
     });
+    expect(screen.getByLabelText('Household')).toHaveValue('kf2');
+  });
+
+  it('opens a KINFOLK entry on the kinfolk chip, never on the household one', () => {
+    renderForm({
+      editing: {
+        _id: 'td-2',
+        content: 'Mrs. Whitfield is recovering from surgery.',
+        targetType: 'KINFOLK',
+        targetKinfolkId: 'kf1',
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Kinfolk' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Household' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByLabelText('Kinfolk')).toHaveValue('kf1');
+  });
+
+  it('opens a legacy entry with no target type on the household chip', () => {
+    // The list row reads such an entry as household-targeted; the editor has
+    // to agree, or the entry says one thing in the list and another when opened.
+    renderForm({
+      editing: {
+        _id: 'td-legacy',
+        content: 'Imported before the write tool existed.',
+        kinfolkRef: 'kf2',
+      },
+    });
+    expect(screen.getByRole('button', { name: 'Household' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByLabelText('Household')).toHaveValue('kf2');
   });
 

@@ -192,16 +192,6 @@ describe('Media screen, grid rendering', () => {
     expect(within(tileFor('Still photo')).queryByText(/^\d+:\d\d$/)).not.toBeInTheDocument();
   });
 
-  it('tiles have no click handler: dead by design, not a stubbed lightbox', async () => {
-    mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
-    render(<Media targetType="kin" targetId="kf1" />);
-    const tile = tileFor('Rufus');
-    await userEvent.click(tile);
-    // Nothing to assert beyond "did not throw / did not navigate": there is no
-    // dialog, no route change, no onSelect. The absence IS the behavior.
-    expect(tile).toBeInTheDocument();
-  });
-
   it('never renders a household name on a tile: the scope is already the one target', () => {
     mediaAsync = {
       status: 'ready',
@@ -209,6 +199,56 @@ describe('Media screen, grid rendering', () => {
     };
     render(<Media targetType="kin" targetId="kf1" />);
     expect(screen.queryByText('kf1')).not.toBeInTheDocument();
+  });
+});
+
+describe('Media screen, media viewer (#388: tapping a photo did nothing)', () => {
+  it('is a real, named button: reachable by Tab, not a plain <li> with no click handler', () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
+    render(<Media targetType="kin" targetId="kf1" />);
+    const tileButton = within(tileFor('Rufus')).getByRole('button', { name: /open rufus/i });
+    expect(tileButton.tagName).toBe('BUTTON');
+  });
+
+  it('opens the viewer, with the right item, when a tile is clicked', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'Rufus at the park', storageUrl: 'https://cdn/a-full.jpg' }),
+        media({ _id: 'b', description: 'Biscuit napping', storageUrl: 'https://cdn/b-full.jpg' }),
+      ],
+    };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button'));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAccessibleName('Biscuit napping');
+    expect(within(dialog).getByAltText('Biscuit napping')).toHaveAttribute('src', 'https://cdn/b-full.jpg');
+  });
+
+  it('opens the viewer when a tile is keyboard-activated with Enter', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    const tileButton = within(tileFor('Rufus')).getByRole('button');
+    tileButton.focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Rufus');
+  });
+
+  it('Escape closes the viewer and returns focus to the tile that opened it', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    const tileButton = within(tileFor('Rufus')).getByRole('button');
+    await userEvent.click(tileButton);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(tileButton).toHaveFocus();
   });
 });
 

@@ -5,7 +5,7 @@ import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Account } from './Account';
-import type { AccountDto } from '../api/accountApi';
+import type { AccountDto, PaymentMethodDto } from '../api/accountApi';
 import type { GetMyHomeResult, GetMyKinResult } from '../api/types';
 
 /**
@@ -44,6 +44,10 @@ vi.mock('../api/accountApi', async () => {
     getFormSchema: vi.fn().mockRejectedValue(new Error('not-found')),
     addSecondaryContact: vi.fn(),
     signKinfolkAvatar: () => signKinfolkAvatar(),
+    getMyPaymentMethod: vi.fn(),
+    createBillingSetupSession: vi.fn(),
+    syncMyPaymentMethod: vi.fn(),
+    removeMyPaymentMethod: vi.fn(),
   };
 });
 
@@ -121,6 +125,35 @@ async function renderAccount() {
     </QueryClientProvider>,
   );
   await waitFor(() => expect(result.getByText('Add your name to save.')).toBeTruthy());
+  return result;
+}
+/**
+ * Renders with the billing callables stubbed. Kept separate from
+ * `renderAccount` so the avatar suite above keeps its untouched fixtures, and
+ * so each billing test states the card state it is about.
+ */
+async function renderAccountWithBilling(overrides: {
+  account?: Partial<AccountDto>;
+  paymentMethod?: PaymentMethodDto | Error;
+} = {}) {
+  const accountApi = await import('../api/accountApi');
+  const portalApi = await import('../api/portal');
+  vi.mocked(accountApi.getMyAccount).mockResolvedValue({ ...ACCOUNT, ...overrides.account });
+  vi.mocked(portalApi.getMyHome).mockResolvedValue(HOME);
+  vi.mocked(portalApi.getMyKin).mockResolvedValue(KIN);
+  const pm = overrides.paymentMethod ?? { hasPaymentMethod: false, card: null, updatedAtMs: null };
+  if (pm instanceof Error) {
+    vi.mocked(accountApi.getMyPaymentMethod).mockRejectedValue(pm);
+  } else {
+    vi.mocked(accountApi.getMyPaymentMethod).mockResolvedValue(pm);
+  }
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(
+    <QueryClientProvider client={queryClient}>
+      <Account />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(result.getByText('Billing Details')).toBeTruthy());
   return result;
 }
 
@@ -217,5 +250,137 @@ describe('Account: Message your Auntie', () => {
     expect(getByRole('link', { name: /message your auntie/i })).toHaveAttribute('href', '/messages');
     // It is not still a span wearing a tooltip.
     expect(queryByTitle('Coming soon')?.textContent ?? '').not.toMatch(/message your auntie/i);
+  });
+});
+/**
+ * Billing Details card management (#399 item 3).
+ *
+ * The bug this replaces: "Manage" was a <span class="navlink-inert"> with a
+ * "Coming soon" title, so a household could never add or change a card. Each
+ * test below names the state it asserts by its state carrier (the panel's
+ * testid, the button label), not by `toBeVisible`, which passes on collapsed
+ * content in jsdom.
+ */
+describe('Account billing management', () => {
+  beforeEach(async () => {
+    window.history.replaceState({}, '', '/account');
+    // Call counts, not stubs: each test sets its own resolved values inside
+    // renderAccountWithBilling, which runs after this hook.
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.getMyPaymentMethod).mockClear();
+    vi.mocked(accountApi.createBillingSetupSession).mockClear();
+    vi.mocked(accountApi.syncMyPaymentMethod).mockClear();
+    vi.mocked(accountApi.removeMyPaymentMethod).mockClear();
+  });
+  it('opens the manage panel and offers to add a card when none is on file', async () => {
+    const { getByRole, queryByTestId, findByTestId } = await renderAccountWithBilling();
+    expect(queryByTestId('billing-manage')).toBeNull();
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    await findByTestId('billing-manage');
+    expect(getByRole('button', { name: 'Add a card' })).toBeTruthy();
+    expect(queryByTestId('billing-manage')?.textContent).toContain('Nothing is charged when you save it.');
+  });
+  it('shows the card on file and offers to replace or remove it', async () => {
+    const { getByRole, findByText } = await renderAccountWithBilling({
+      account: { hasPaymentMethod: true },
+      paymentMethod: {
+        hasPaymentMethod: true,
+        card: { brand: 'visa', last4: '4242', expMonth: 4, expYear: 2030 },
+        updatedAtMs: 1_700_000_000_000,
+      },
+    });
+    await findByText('Visa •••• 4242 · exp 04/2030');
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    expect(getByRole('button', { name: 'Replace card' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Remove card' })).toBeTruthy();
+  });
+  it('asks the server for a Checkout link that returns to this screen', async () => {
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.createBillingSetupSession).mockResolvedValue({
+      checkoutUrl: 'https://checkout.stripe.com/setup',
+      sessionId: 'cs_setup_1',
+    });
+    const { getByRole, findByTestId } = await renderAccountWithBilling();
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    await findByTestId('billing-manage');
+    await userEvent.click(getByRole('button', { name: 'Add a card' }));
+    await waitFor(() => expect(accountApi.createBillingSetupSession).toHaveBeenCalled());
+    const call = vi.mocked(accountApi.createBillingSetupSession).mock.calls[0];
+    if (!call) throw new Error('createBillingSetupSession was not called');
+    const [successUrl, cancelUrl, kinfolkId] = call;
+    expect(successUrl).toContain('?billing=saved');
+    expect(cancelUrl).not.toContain('billing=saved');
+    expect(kinfolkId).toBe('kin-fam-1');
+  });
+  it('reports a Checkout failure in words the household can act on', async () => {
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.createBillingSetupSession).mockRejectedValue(
+      Object.assign(new Error('permission-denied'), { code: 'functions/permission-denied' }),
+    );
+    const { getByRole, findByText, findByTestId } = await renderAccountWithBilling();
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    await findByTestId('billing-manage');
+    await userEvent.click(getByRole('button', { name: 'Add a card' }));
+    await findByText('Only the primary kinfolk on this tribe can manage billing.');
+  });
+  it('takes two clicks to remove a card, and says what removal does not do', async () => {
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.removeMyPaymentMethod).mockResolvedValue({ ok: true, alreadyEmpty: false });
+    const { getByRole, findByText } = await renderAccountWithBilling({
+      account: { hasPaymentMethod: true },
+      paymentMethod: {
+        hasPaymentMethod: true,
+        card: { brand: 'visa', last4: '4242', expMonth: 4, expYear: 2030 },
+        updatedAtMs: null,
+      },
+    });
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    await userEvent.click(getByRole('button', { name: 'Remove card' }));
+    expect(accountApi.removeMyPaymentMethod).not.toHaveBeenCalled();
+    await findByText(/leaves any unpaid invoices exactly as they are/);
+    await userEvent.click(getByRole('button', { name: 'Yes, take it off' }));
+    await waitFor(() => expect(accountApi.removeMyPaymentMethod).toHaveBeenCalledWith('kin-fam-1'));
+    await findByText('Card removed.');
+  });
+  it('names the permission wall rather than a generic failure when the read is denied', async () => {
+    const { getByRole, findByText } = await renderAccountWithBilling({
+      paymentMethod: Object.assign(new Error('permission-denied'), { code: 'functions/permission-denied' }),
+    });
+    await userEvent.click(getByRole('button', { name: 'Manage' }));
+    await findByText('Only the primary kinfolk on this tribe can manage billing.');
+  });
+  it('syncs the card when the browser comes back from Stripe', async () => {
+    window.history.replaceState({}, '', '/account?billing=saved');
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.syncMyPaymentMethod).mockResolvedValue({
+      hasPaymentMethod: true,
+      card: { brand: 'visa', last4: '4242', expMonth: 4, expYear: 2030 },
+      updatedAtMs: 1_700_000_000_000,
+      changed: true,
+    });
+    const { findByText } = await renderAccountWithBilling();
+    await waitFor(() => expect(accountApi.syncMyPaymentMethod).toHaveBeenCalledWith('kin-fam-1'));
+    await findByText('Card saved.');
+    // The marker is cleared so a refresh does not re-run the sync.
+    expect(window.location.search).toBe('');
+  });
+  it('says so when Stripe reports no card after the return trip', async () => {
+    window.history.replaceState({}, '', '/account?billing=saved');
+    const accountApi = await import('../api/accountApi');
+    vi.mocked(accountApi.syncMyPaymentMethod).mockResolvedValue({
+      hasPaymentMethod: false,
+      card: null,
+      updatedAtMs: null,
+      changed: false,
+    });
+    const { findByText } = await renderAccountWithBilling();
+    await findByText('Stripe did not report a card. Try adding it again.');
+  });
+  it('keeps Manage inert for an operator viewing another household', async () => {
+    const accountApi = await import('../api/accountApi');
+    const { getByText, queryByRole } = await renderAccountWithBilling({ account: { impersonated: true } });
+    expect(queryByRole('button', { name: 'Manage' })).toBeNull();
+    expect(getByText('Manage').className).toContain('navlink-inert');
+    expect(accountApi.getMyPaymentMethod).not.toHaveBeenCalled();
   });
 });

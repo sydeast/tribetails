@@ -34,8 +34,10 @@ import { InvoiceDayArg } from '../lib/invoiceDay';
  * the admin and kinfolk sides. The caller-supplied `status` arg is ignored on
  * purpose; this endpoint always mints a quote.
  *
- * Accept/deny are already handled elsewhere via the quote.accepted /
- * quote.denied catalog keys; this endpoint covers only quote creation/issuance.
+ * Quote acceptance/denial is not yet implemented (see issue #385). The
+ * `quote.accepted` and `quote.denied` notification catalog keys exist for
+ * sending notifications when acceptance/denial eventually happens. This
+ * endpoint covers only quote creation/issuance.
  *
  * The issued-quote notification reuses the existing `invoice.new` catalog key,
  * whose description is "New invoice/quote issued." (there is no separate

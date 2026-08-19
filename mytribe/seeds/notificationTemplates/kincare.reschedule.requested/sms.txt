@@ -1,0 +1,1 @@
+Tribe Tails: {{kinfolkName}} asked to move the {{serviceType}} for {{kinName}} from {{bookingDate}} at {{bookingTime}}. Nothing has moved yet.

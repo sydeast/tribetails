@@ -5,6 +5,7 @@ vi.mock('../lib/fns', () => ({ call }));
 
 import {
   describePortalInviteOutcome,
+  executePrimaryRecovery,
   inviteKinfolkToPortal,
   mintInvite,
   removeMember,
@@ -231,5 +232,51 @@ describe('describePortalInviteOutcome', () => {
   it('never leaves the sentence starting with a blank name', () => {
     const out = describePortalInviteOutcome({ kinfolkId: 'fam1', status: 'sent' }, '   ');
     expect(out.message).toContain('This household');
+  });
+});
+describe('executePrimaryRecovery', () => {
+  it('sends the household, the picked address and the primary it displaces', async () => {
+    call.mockResolvedValue({ inviteId: 'rq_1' });
+    await expect(
+      executePrimaryRecovery({ familyId: ' fam1 ', newEmail: ' marcus@example.com ', oldUid: ' p1 ' }),
+    ).resolves.toEqual({ inviteId: 'rq_1' });
+    expect(call).toHaveBeenCalledWith('executePrimaryRecovery', {
+      familyId: 'fam1',
+      newEmail: 'marcus@example.com',
+      oldUid: 'p1',
+    });
+  });
+  it('passes a recovery request id through when the operator is closing one', async () => {
+    call.mockResolvedValue({ inviteId: 'rq_1' });
+    await executePrimaryRecovery({
+      familyId: 'fam1',
+      newEmail: 'marcus@example.com',
+      oldUid: 'p1',
+      recoveryRequestId: 'rr-9',
+    });
+    expect(call).toHaveBeenCalledWith(
+      'executePrimaryRecovery',
+      expect.objectContaining({ recoveryRequestId: 'rr-9' }),
+    );
+  });
+  it('refuses to call with no address picked, rather than sending an empty one', async () => {
+    await expect(
+      executePrimaryRecovery({ familyId: 'fam1', newEmail: '  ', oldUid: 'p1' }),
+    ).rejects.toThrow(/Pick which member/);
+    expect(call).not.toHaveBeenCalled();
+  });
+  it('refuses to call without the primary it would suspend', async () => {
+    await expect(
+      executePrimaryRecovery({ familyId: 'fam1', newEmail: 'marcus@example.com', oldUid: '' }),
+    ).rejects.toThrow(/current primary uid/);
+    expect(call).not.toHaveBeenCalled();
+  });
+  // The server's refusal carries the eligible addresses and the way out. This
+  // layer catches nothing, so the screen can print it verbatim.
+  it('propagates the server refusal untouched', async () => {
+    call.mockRejectedValue(new Error('failed-precondition: Eligible addresses: nina@example.com.'));
+    await expect(
+      executePrimaryRecovery({ familyId: 'fam1', newEmail: 'typo@example.com', oldUid: 'p1' }),
+    ).rejects.toThrow('failed-precondition: Eligible addresses: nina@example.com.');
   });
 });

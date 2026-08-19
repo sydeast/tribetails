@@ -26,29 +26,35 @@ import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { PrimaryButton } from '../components/Buttons';
 import { MediaUploadDialog, type KinfolkOption } from '../components/MediaUploadDialog';
+import { MediaViewerDialog } from '../components/MediaViewerDialog';
 import './Gallery.css';
 
 /**
  * Admin Gallery ("The Den · Gallery"), ported from the wasm `GalleryScreen.kt` /
  * `GalleryFilters.kt` (#13 global Gallery). Originally LIST/GRID ONLY; Upload
- * has since been added (`api/mediaUpload.ts` + `MediaUploadDialog`), per the
- * port brief:
+ * has since been added (`api/mediaUpload.ts` + `MediaUploadDialog`), and
+ * tapping a tile now opens the fullscreen viewer (#388), per the port brief:
  *
  *   IN SCOPE   the bounded `media_files` stream, household/type/month filters
  *              (GalleryFilters.kt ported verbatim to lib/mediaFormat.ts), a
- *              read-only grid tile: thumbnail (with graceful broken-image
- *              fallback), caption, household, uploaded-date/uploader, and the
- *              profile-photo / video-duration badges the wasm cell already
- *              shows; AND an "Upload media" action (GalleryScreen.kt's
- *              upload button + household picker dialog + pickAndUploadMedia,
- *              now ported: sign -> Cloudinary -> `media_files` write, see
- *              `MediaUploadDialog`/`api/mediaUpload.ts`).
+ *              grid tile that is a genuine control (thumbnail with graceful
+ *              broken-image fallback, caption, household, uploaded-date/
+ *              uploader, and the profile-photo / video-duration badges the
+ *              wasm cell already shows); an "Upload media" action
+ *              (GalleryScreen.kt's upload button + household picker dialog +
+ *              pickAndUploadMedia, ported: sign -> Cloudinary -> `media_files`
+ *              write, see `MediaUploadDialog`/`api/mediaUpload.ts`); AND
+ *              tapping (or Enter/Space-activating) a tile opens the fullscreen
+ *              viewer (`components/MediaViewerDialog.tsx`), porting
+ *              `GalleryScreen.kt`'s `MediaViewerDialog` (`:305`).
  *
  *   OUT OF SCOPE, flagged rather than silently dropped:
- *     - The tag-kin lightbox overlay (TagKinOverlay, opened by tapping a tile):
- *       there is no `onSelect`/detail prop on this screen because no detail
- *       surface is planned in this port yet, unlike Directory/Invoices'
- *       placeholder onSelect props for routes that ARE coming.
+ *     - The "Tag kin" hand-off Android's `MediaViewerDialog` offers
+ *       (-> `TagKinDialog` -> `saveTags`). There is no kin-tagging feature on
+ *       web at all: no tag dialog, no `taggedKinIds` on this screen's
+ *       `MediaFile`, no `saveTags` callable. See `MediaViewerDialog.tsx`'s own
+ *       header for the full accounting; that is a separate feature, not part
+ *       of restoring the missing click target.
  *     - Caption editing. The caption shown is READ-ONLY (`description` falling
  *       back to `originalFileName`, via `lib/mediaFormat.ts#mediaCaption`); there
  *       is no write path from this screen.
@@ -67,6 +73,11 @@ export function Gallery() {
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
   const [filter, setFilter] = useState<GalleryFilter>(GALLERY_FILTER_DEFAULT);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // The fullscreen viewer a tile opens (#388). The MediaFile itself, not just
+  // an id: the tile already has the full row in hand, and re-finding it by id
+  // in `rows` would fail silently the instant a filter narrows it out of view
+  // while the viewer is still open.
+  const [viewerMedia, setViewerMedia] = useState<MediaFile | null>(null);
 
   const kinfolkLabel = useMemo(() => {
     if (kinfolkState.status !== 'ready') return new Map<string, string>();
@@ -121,6 +132,7 @@ export function Gallery() {
             filter={filter}
             onFilterChange={setFilter}
             kinfolkLabel={kinfolkLabel}
+            onOpen={setViewerMedia}
           />
         )}
       </AsyncRegion>
@@ -132,6 +144,8 @@ export function Gallery() {
           onUploaded={() => setUploadOpen(false)}
         />
       )}
+
+      {viewerMedia && <MediaViewerDialog media={viewerMedia} onClose={() => setViewerMedia(null)} />}
     </div>
   );
 }
@@ -141,6 +155,7 @@ interface GalleryGridProps {
   filter: GalleryFilter;
   onFilterChange: (updater: (f: GalleryFilter) => GalleryFilter) => void;
   kinfolkLabel: Map<string, string>;
+  onOpen: (media: MediaFile) => void;
 }
 
 /** Toggles a chip: selecting the already-active value clears it back to "All". Ports GalleryScreen.kt's `if (filter.X == id) null else id`. */
@@ -148,7 +163,7 @@ function toggleValue<T>(current: T | null, candidate: T): T | null {
   return current === candidate ? null : candidate;
 }
 
-function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGridProps) {
+function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel, onOpen }: GalleryGridProps) {
   const months = useMemo(() => galleryMonths(rows), [rows]);
   const types = useMemo(() => galleryFileTypes(rows), [rows]);
   const kinfolkIds = useMemo(() => galleryKinfolkIds(rows), [rows]);
@@ -217,7 +232,12 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel }: GalleryGrid
       ) : (
         <ul className="gallery__grid">
           {visible.map((m) => (
-            <GalleryTile key={m._id} media={m} householdName={str(m.kinfolkId) !== '' ? kinfolkLabel.get(str(m.kinfolkId)) ?? '' : ''} />
+            <GalleryTile
+              key={m._id}
+              media={m}
+              householdName={str(m.kinfolkId) !== '' ? kinfolkLabel.get(str(m.kinfolkId)) ?? '' : ''}
+              onOpen={onOpen}
+            />
           ))}
         </ul>
       )}
@@ -254,6 +274,8 @@ interface GalleryTileProps {
   media: MediaFile;
   /** Resolved household name, or '' when unresolved OR absent. The tile tells the two apart via `media.kinfolkId` (see householdText). */
   householdName: string;
+  /** Opens the fullscreen viewer for this tile's media (#388). */
+  onOpen: (media: MediaFile) => void;
 }
 
 /**
@@ -265,8 +287,13 @@ interface GalleryTileProps {
 const TILE_SIZE = 132;
 
 /**
- * One grid cell. Read-only: no click handler at all (see the file header: the
- * tag-kin lightbox this would have opened is out of scope, not stubbed).
+ * One grid cell. A genuine control (#388): a real `<button>`, so it is reachable
+ * by Tab and activates on Enter/Space for free, with an explicit `aria-label`
+ * naming what it opens rather than leaving screen readers to assemble one from
+ * the caption/household/meta text stacked inside it. Clicking or
+ * keyboard-activating it opens `MediaViewerDialog`, which owns Escape-to-close,
+ * backdrop-click, the focus trap, and returning focus to this button on close
+ * (all `Dialog`'s job; see that component).
  *
  * The thumbnail reuses `Avatar` rather than re-solving "show an image, fall
  * back gracefully on a missing or broken URL, never leave a blank hole" a
@@ -287,7 +314,7 @@ function householdText(kinfolkId: string, householdName: string): string {
   return householdName !== '' ? householdName : 'Household unavailable';
 }
 
-function GalleryTile({ media, householdName }: GalleryTileProps) {
+function GalleryTile({ media, householdName, onOpen }: GalleryTileProps) {
   const kind = mediaKindOf(str(media.fileType));
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
@@ -297,7 +324,7 @@ function GalleryTile({ media, householdName }: GalleryTileProps) {
 
   return (
     <li className="gallery__cell">
-      <div className="gallery__tile">
+      <button type="button" className="gallery__tile" onClick={() => onOpen(media)} aria-label={`Open ${accessibleLabel}`}>
         <div className="gallery__tile-media">
           <Avatar
             label={accessibleLabel}
@@ -328,7 +355,7 @@ function GalleryTile({ media, householdName }: GalleryTileProps) {
           </span>
           {meta !== '' && <span className="gallery__tile-meta">{meta}</span>}
         </div>
-      </div>
+      </button>
     </li>
   );
 }

@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import type { Kin, Kinfolk } from '../api/directory';
-import { kinfolkDisplayName } from '../api/directory';
+import { householdLabel, kinfolkDisplayName } from '../api/directory';
 import type { TribalIntelEntry } from '../api/tribalIntel';
 import {
   createTrainingDocument,
@@ -8,13 +8,16 @@ import {
   uploadTribalIntelAttachment,
 } from '../api/tribalIntelWrite';
 import {
+  TRIBAL_INTEL_TARGET_TYPES,
   blankTribalIntelDraft,
   tribalIntelCallableArgs,
+  tribalIntelTargetTypeLabel,
   validateTribalIntelDraft,
   type TribalIntelDraft,
   type TribalIntelDraftErrors,
   type TribalIntelTargetType,
 } from '../lib/tribalIntelDraftSchema';
+import { tribalIntelTarget } from '../lib/tribalIntelFormat';
 import { str } from '../lib/coerce';
 import { Banner } from './Banner';
 import { GhostButton, PrimaryButton } from './Buttons';
@@ -24,7 +27,7 @@ import './TribalIntelForm.css';
 interface TribalIntelFormProps {
   /** The entry being edited, or `null` to create a new one. */
   editing: TribalIntelEntry | null;
-  /** Every household on the roster, for the target picker. */
+  /** Every kinfolk on the roster. One doc per household, so it fills both the household and the kinfolk picker. */
   kinfolk: Kinfolk[];
   /** Every pet on the roster. Narrowed to the chosen household in here. */
   kin: Kin[];
@@ -40,8 +43,16 @@ interface TribalIntelFormProps {
  *
  * Ports the archive's `AddDocumentForm`
  * (`.../screens/trainingdocs/TrainingDocumentsScreen.kt`) and Android's live
- * equivalent, field for field: title, intel, notes, a KINFOLK/KIN target with
- * dependent household and pet pickers, and Cloudinary attachments.
+ * equivalent, field for field: title, intel, notes, a target, and Cloudinary
+ * attachments.
+ *
+ * THE TARGET IS ONE OF THREE, and the words are this codebase's own (issue
+ * #393): HOUSEHOLD is the whole family, KINFOLK is one human client, KIN is
+ * one animal. The panel used to offer two, with the wider one labelled "Whole
+ * household" and stored as KINFOLK, so an entry about one person went to the
+ * file as an entry about everyone under that roof. All three are backed by the
+ * same picker, since `families/{kinfolkId}` shares its id with
+ * `kinfolk/{kinfolkId}`; KIN adds a dependent pet picker on top.
  *
  * TWO HONESTY RULES THIS PANEL EXISTS TO KEEP:
  *  1. Saving does NOT update a dossier. It queues the entry
@@ -95,7 +106,11 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
   }
 
   function chooseTargetType(targetType: TribalIntelTargetType) {
-    patch(targetType === 'KINFOLK' ? { targetType, targetKinId: '' } : { targetType });
+    // Any target but KIN names no animal, so a pet id left over from a
+    // previous choice must go. The server coerces it away too, but a draft
+    // that still carries it would show the operator a pet they are not
+    // targeting.
+    patch(targetType === 'KIN' ? { targetType } : { targetType, targetKinId: '' });
   }
 
   async function attach(file: File) {
@@ -215,27 +230,23 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
       <p className="tribal-form__section">Target</p>
 
       <div className="tribal-form__chips">
-        <button
-          type="button"
-          className={chipClass(draft.targetType === 'KINFOLK')}
-          aria-pressed={draft.targetType === 'KINFOLK'}
-          onClick={() => chooseTargetType('KINFOLK')}
-        >
-          Whole household
-        </button>
-        <button
-          type="button"
-          className={chipClass(draft.targetType === 'KIN')}
-          aria-pressed={draft.targetType === 'KIN'}
-          onClick={() => chooseTargetType('KIN')}
-        >
-          Single pet
-        </button>
+        {TRIBAL_INTEL_TARGET_TYPES.map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={chipClass(draft.targetType === t)}
+            aria-pressed={draft.targetType === t}
+            onClick={() => chooseTargetType(t)}
+          >
+            {tribalIntelTargetTypeLabel(t)}
+          </button>
+        ))}
       </div>
+      <p className="tribal-form__hint">{TRIBAL_INTEL_TARGET_HINT}</p>
 
       <div className="tribal-form__field">
         <label className="tribal-form__label" htmlFor={kinfolkId}>
-          Household
+          {draft.targetType === 'KINFOLK' ? 'Kinfolk' : 'Household'}
         </label>
         <select
           id={kinfolkId}
@@ -244,10 +255,12 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
           onChange={(e) => chooseHousehold(e.target.value)}
           aria-invalid={errors.targetKinfolkId !== undefined}
         >
-          <option value="">Select a household...</option>
+          <option value="">
+            {draft.targetType === 'KINFOLK' ? 'Select a kinfolk...' : 'Select a household...'}
+          </option>
           {kinfolk.map((kf) => (
             <option key={kf._id} value={kf._id}>
-              {kinfolkDisplayName(kf)}
+              {draft.targetType === 'KINFOLK' ? kinfolkDisplayName(kf) : householdOptionLabel(kf)}
             </option>
           ))}
         </select>
@@ -280,7 +293,7 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
           </select>
           {draft.targetKinfolkId !== '' && petsForHousehold.length === 0 && (
             <p className="tribal-form__hint">
-              This household has no active pets on file. Target the whole household instead.
+              This household has no active pets on file. Target the household or one kinfolk instead.
             </p>
           )}
           {errors.targetKinId !== undefined && <p className="tribal-form__error">{errors.targetKinId}</p>}
@@ -341,8 +354,28 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
   );
 }
 
+/**
+ * What each target covers, in one line, beside the chips that pick it.
+ *
+ * The panel is where the three words are chosen, so it is where they have to
+ * be defined. Without it "Kinfolk" and "Kin" are one letter apart on screen
+ * and an operator files a note about a person against a dog.
+ */
+export const TRIBAL_INTEL_TARGET_HINT =
+  'Household is everyone under one roof. Kinfolk is one person. Kin is one animal.';
+
 function chipClass(active: boolean): string {
   return active ? 'tribal-form__chip tribal-form__chip--active' : 'tribal-form__chip';
+}
+
+/**
+ * A household reads by the surname it shares, "the Halbrooks". A kinfolk with
+ * no last name on file has no such label, so their own name carries the row
+ * rather than an empty option.
+ */
+function householdOptionLabel(kf: Kinfolk): string {
+  const label = householdLabel(str(kf.lastName));
+  return label === '' ? kinfolkDisplayName(kf) : label;
 }
 
 /**
@@ -351,11 +384,18 @@ function chipClass(active: boolean): string {
  * `targetKinfolkId` falls back to the legacy free-text `kinfolkRef` exactly as
  * the archive's `startEdit` does: pre-spec-23 rows (the NDJSON migration
  * import) carry `kinfolkRef` and no `targetKinfolkId`, and dropping that would
- * silently blank the household on every legacy row the operator opens.
+ * silently blank the household on every legacy row the operator opens. Such a
+ * row opens as HOUSEHOLD-targeted, per `tribalIntelTarget`, and saving it is
+ * what gives it an explicit target at rest.
  */
 function draftFrom(entry: TribalIntelEntry | null): TribalIntelDraft {
   if (entry === null) return blankTribalIntelDraft();
-  const targetType: TribalIntelTargetType = str(entry.targetType).trim().toUpperCase() === 'KIN' ? 'KIN' : 'KINFOLK';
+  // The SAME classifier the list row renders with, on purpose. Two readings of
+  // one stored target is how an entry comes to read "Household" in the list
+  // and open as "Kinfolk" in the editor.
+  const target = tribalIntelTarget(entry);
+  const targetType: TribalIntelTargetType =
+    target.kind === 'kin' ? 'KIN' : target.kind === 'kinfolk' ? 'KINFOLK' : 'HOUSEHOLD';
   return {
     title: str(entry.title),
     content: str(entry.content),

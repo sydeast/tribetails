@@ -896,6 +896,57 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   invites the secondary from MyTribe. An admin-wide surface has no household to
   mint into, and must never grow a button that pretends otherwise.
 
+### listRecoveryCandidates (net-new 2026-08-18, issue #378)
+- req `{ familyId: string, oldUid?: string }`
+- res `{ candidates: Array<{ uid, email, secondaryLabel: string | null, role, status }> }`
+- GATE: `wrapAdminCallable`. Recovery is an operator action end to end; there is
+  no kinfolk path.
+- **The list `executePrimaryRecovery` will accept, and the same code answers
+  both.** `src/lib/recoveryCandidates.ts` is imported by the gate and by this
+  read, so a dialog built on this cannot offer a choice the execute call then
+  refuses.
+- Eligible means: a member doc on `families/{familyId}/members` that is not
+  SUSPENDED, whose Firebase Auth account exists and has `emailVerified === true`,
+  and whose uid is not `oldUid`. `email` is the AUTH account's address,
+  lowercased — never the member doc's `email` field, which is whatever was typed
+  at invite time and proves nothing.
+- A member with no Auth account is skipped rather than fatal: one stale roster
+  row must not make a household unrecoverable.
+- An empty array is a real answer, not an error. It means nobody on the
+  household can safely be handed it yet.
+- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
+  the same one `listInvites` writes for its household-scoped read. Counts only,
+  no addresses. This answers more than the roster does (which addresses Auth
+  considers verified), so it is audited rather than treated as free.
+- Mirrors: `auntieos-admin/src/api/members.ts#listRecoveryCandidates` +
+  the recovery dialog in `src/screens/HouseholdMembers.tsx`. No Android mirror
+  yet; Android has no recovery surface to mirror it into.
+
+### executePrimaryRecovery (pre-existing; destination gated 2026-08-18, issue #378)
+- req `{ familyId: string, newEmail: string, oldUid?: string, recoveryRequestId?: string }`
+- res `{ inviteId: string }`
+- GATE: `wrapAdminCallable`.
+- **`newEmail` is a closed set, not a typed address.** It must match a
+  `listRecoveryCandidates` entry for the same `familyId`/`oldUid`. Anything else
+  is `failed-precondition`, with a message naming the eligible addresses (or,
+  when there are none, the step that creates one). This is the only send in the
+  system that GRANTS an account rather than describing one — the mail carries a
+  claim URL into a pre-stamped `EMAIL_SENT` invite holding `FULL_PERMISSIONS` —
+  so a typo or a stolen session used to be enough to hand over a household,
+  billing included. There is deliberately no flag or override that restores the
+  old behaviour.
+- **A refused call writes nothing.** The old PRIMARY's suspension now happens
+  after the gate, not before it, so a rejection suspends nobody, mints no invite
+  and sends no mail.
+- Audit: `AUTH_RECOVERY_TRIGGERED` at `severity: 'critical'` either way.
+  `status: 'SUCCESS'` when the link went out, `status: 'FAILURE'` with
+  `payload.reason: 'not_a_verified_household_member'` when it was blocked, so a
+  refused attempt is as visible in review as a completed one.
+- The mail and the invite doc both carry the resolved Auth address, so they
+  cannot disagree about which inbox holds the household.
+- Mirrors: `auntieos-admin/src/api/membersWrite.ts#executePrimaryRecovery` +
+  `src/screens/HouseholdMembers.tsx`.
+
 ### acceptInvite (pre-existing, verification added 2026-08-01)
 - req `{ inviteId: string }`
 - res `{ familyId: string }`
@@ -1466,6 +1517,60 @@ the handler.
   `failed-precondition`.
 - kinfolk portal only.
 
+- req `{ kinfolkId?: string, batchId: string, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs?: number, reason?: string }`
+  (`proposedStartTimeMs` is an integer epoch-ms in the future and at most a year out)
+- res `{ ok: true, visitId: string, proposedStartTimeMs: number, proposedEndTimeMs: number | null }`
+- #399 item 2, and the same kind of thing as the cancellation ask above: a
+  PROPOSAL, not a move. Stamps `rescheduleRequestedAt` /
+  `rescheduleRequestedByUid` / `rescheduleRequestReason` /
+  `rescheduleRequestedStartTime` / `rescheduleRequestedEndTime` /
+  `rescheduleRequestStatus: 'pending'` on the kinCares doc and writes neither
+  `startTime` nor `status`. Only `admin/resolveBookingRescheduleRequest` moves
+  a visit.
+- `proposedEndTimeMs` is OPTIONAL and NOT nullable. Omitted means "keep the
+  visit's current duration", derived server-side; the contract generator
+  refuses `.nullable().optional()` on a request because Kotlin's one nullable
+  type cannot tell an absent key from a present null.
+- A second proposal while one is pending is `already-exists`, not a silent
+  overwrite: the office may already be acting on the time it was shown. A fresh
+  proposal after a decline IS allowed, and clears the previous answer.
+- Only `requested`/`confirmed` visits qualify; anything else is
+  `failed-precondition`.
+- `onBookingsWrite` fires `kincare.reschedule.requested` to the business on the
+  flag's first appearance, and again when a declined request goes back to
+  pending.
+- kinfolk portal only.
+- req `{ kinfolkId: string, batchId: string, visitId: string, decision: 'accept' | 'decline', note?: string }`
+- res `{ ok: true, visitId: string, decision: 'accept' | 'decline', startTimeMs: number | null, sessionUpdated: boolean }`
+- GATE: `wrapAdminCallable` (admin claim, or the AUNTIE_OPERATOR_UIDS fallback).
+- ACCEPTING MOVES BOTH RECORDS. The kinCares doc under
+  `families/{kinfolkId}/bookings/{batchId}` is what the portal reads; the flat
+  `kin_care_sessions` row is what the admin schedule reads, and
+  `rescheduleBooking` only ever wrote the second, so a visit moved through that
+  callable alone still reads at its old time in the portal. The mirror id is
+  the visit's own `sessionId` when it carries one, else `vis_{visitId}`, and it
+  is written ONLY when the doc exists (a still-pending request has none), which
+  is `batchUpdateBookings`'s rule. `sessionUpdated` reports which happened.
+- Timestamps on the kinCares doc, ISO strings on the flat row. That is not an
+  inconsistency to tidy: the two collections genuinely store different shapes.
+- `guardCompanyHolidayConflict` runs on the NEW window before any write, the
+  same guard `rescheduleBooking` applies to its own.
+- A decline REQUIRES a note; `invalid-argument` without one. Declining writes
+  the answer and moves nothing.
+- `failed-precondition` when no request is pending on the visit.
+- req `{ limit?: number }` (integer 1..100, default 50)
+- res `{ requests: RescheduleRequestDto[] }`
+- GATE: `wrapAdminCallable`.
+- A collection-group query over `kinCares` on
+  `rescheduleRequestStatus == 'pending'`, ordered by `rescheduleRequestedAt`
+  ascending so the household that has waited longest is answered first. NEEDS
+  THE COMPOSITE INDEX declared in `mytribe/firestore.indexes.json`; the release
+  deploys `firestore:indexes` before functions.
+- Exists as a callable because the React admin's `useCollection` wraps a single
+  `collection(db, path)` and has no collection-group variant (see the note in
+  `auntieos-admin/src/api/bookings.ts` reserving an "incoming requests"
+  surface). `auntieos-admin/src/components/RescheduleRequestsSection.tsx` is
+  that surface.
 ### createMultiDateBookingRequest
 - req: see `src/admin/createMultiDateBookingRequest.ts`'s `export const Args`.
   Mirrors `requestBooking`'s multi-visit shape field for field (`kinfolkId`
@@ -1854,7 +1959,91 @@ read pair takes `notificationId`, the archive family takes `id` / `ids`.
   three-state archive facet); a notification should not be the harder thing to
   undo.
 
-## Operator preferences
+- req `{ kinfolkId?: string, limit?: number, before?: number }`
+  (`limit` is an integer 1..50, default 12, counted in KinTALES not photos;
+  `before` is the previous page's `nextBefore`)
+- res `{ photos: PhotoDto[], portraits: PortraitDto[], hasMore: boolean, nextBefore: number | null }`
+  where `PhotoDto = { id, url, contentType: string | null, taleId, taleTitle, takenAtMs: number | null }`
+  and `PortraitDto = { kinId, kinName, url }`
+- GATE: `resolveKinfolkAccess`, then the `kinfolkId ==` predicate on the query.
+  This reads the FLAT `kin_care_reports` collection, so unlike a subcollection
+  read the path itself scopes nothing; those two together are the whole tenant
+  boundary and both are asserted in `test/getMyKinPhotos.test.ts`.
+- #399 item 1. Nothing could answer "all of this household's photos" before:
+  `getMyKinTaleMedia` resolves the media of ONE tale whose id the caller
+  already has.
+- TWO SOURCES, and they are different kinds of thing. `photos` is the archive,
+  `kin_care_reports.mediaFileIds` resolved through `media_files.storageUrl`
+  (the same mapping `mediaDocToThumb` does for the feed's thumbnails).
+  `portraits` is the ONE current photo per Kin on
+  `families/{kinfolkId}/kin/{kinId}.photoUrl`, overwritten in place by
+  `confirmKinPhotoUpload` with no history kept.
+- NO PER-KIN FILTER, deliberately. `media_files` carries no reliable per-Kin
+  key: `kinId` appears only on legacy and sandbox documents, `taggedKinIds` is
+  written by one admin surface only, and `entityType` casing is inconsistent in
+  production. A filter this callable could not honour is worse than no filter.
+- PAGINATION IS BY TALE. A tale can carry twenty photos or none, so a
+  photo-count page would either split a visit across pages or need a second
+  cursor inside one. `nextBefore` is the last tale's `sentAtMs`, the same
+  opaque cursor `getMyKinTales` uses.
+- `portraits` is populated on the FIRST page only (no `before`), and is empty
+  after that: they have no timestamp to sort into the archive by, and repeating
+  them under every scroll shows the same faces over and over.
+- `sentAt > ''` keeps DRAFTs out, same as `getMyKinTales`: a photo on a tale the
+  Auntie has not sent is not the household's to see. A media record that is
+  missing or carries no `storageUrl` is simply absent, never a placeholder
+  tile, and a file attached to two tales appears once, credited to the more
+  recent.
+- kinfolk portal only. `mytribe/web/src/screens/Gallery.tsx` is the surface.
+## Card on file (kinfolk, primary only)
+The four callables behind the portal's Billing Details "Manage" button
+(`src/portal/billing.ts`, issue #399 item 3). Card state has no generated
+contract: the registry in `scripts/contracts/registry.ts` publishes the invoice
+and booking surfaces, and its header is explicit that adding a line is a
+decision to publish. This surface reaches one client tree beyond the React
+portal (the portal Android app, which hand-decodes JSON), so it is documented
+here and hand-mirrored, like the rest of the account callables.
+GATE, all four: the resolved `kinfolkId` must be in the CALLER's own
+`clients/{uid}.kinfolkIds`, then `requireKinfolkPrimary`. Deliberately NOT
+`resolveKinfolkAccess`: that resolver grants staff a cross-tenant resolution by
+design, and every write here lands on `clients/{uid}` — the caller's own doc — so
+an operator who stepped into a household would attach a card to their own
+account under the household's name. `getMyAccount` already reports that state as
+`impersonated: true`; this is its server-side half.
+- req `{ kinfolkId?: string }`
+- res `{ hasPaymentMethod: boolean, card: { brand, last4, expMonth, expYear } | null, updatedAtMs: number | null }`
+- Reads the mirror on `clients/{uid}`; touches Stripe not at all.
+- `card` is null both when there is no card AND when one exists whose display
+  fields are incomplete. `hasPaymentMethod` is the separate flag that tells the
+  two apart, so no client renders "Visa •••• undefined".
+- req `{ kinfolkId?: string, successUrl: string /* url */, cancelUrl: string /* url */ }`
+- res `{ checkoutUrl: string, sessionId: string }`
+- Stripe Checkout in `mode: 'setup'`: collects a card, charges nothing. NOT the
+  Stripe Billing Portal, which needs a portal configuration created in the
+  Stripe dashboard that nothing in this repo can create or verify.
+- Creates the `stripeCustomerId` on `clients/{uid}` lazily, on first use.
+- Session metadata carries `purpose: 'save-card'`, `uid`, `familyId`,
+  `kinfolkId`. `stripeWebhook` reads `purpose` in a branch that sits AHEAD of
+  its metadata gate, because a setup session has no `invoiceId`.
+- req `{ kinfolkId?: string }`
+- res `{ hasPaymentMethod, card, updatedAtMs, changed: boolean }`
+- Lists the customer's cards at Stripe, newest first, and mirrors the head onto
+  `clients/{uid}`. Clears the mirror when Stripe holds none.
+- THE PRIMARY COMPLETION PATH, not the webhook: the React portal calls it when
+  the browser returns to `?billing=saved`, and the Android app calls it from
+  "Refresh card" (that client leaves for an external browser and gets no return
+  trip). The webhook branch is the backstop for a closed tab.
+- Idempotent. A household with no `stripeCustomerId` gets its stored state back
+  and Stripe is never called.
+- req `{ kinfolkId?: string }`
+- res `{ ok: true, alreadyEmpty: boolean }`
+- `paymentMethods.detach` then clears the mirror. Removes an INSTRUMENT: no
+  invoice, charge, or ledger row is touched, and unpaid invoices stay exactly
+  as they were.
+- Stripe's `resource_missing` is tolerated (already detached elsewhere) and the
+  mirror is still cleared; any other Stripe fault throws `unavailable` and the
+  mirror is left alone, so the screen never shows a card that is gone or hides
+  one that is not.
 
 ### saveDashboardLayout
 - req `{ tokens: string[] /* each `^[a-zA-Z]+:(compact|wide)$`, max 30 */ }`

@@ -376,19 +376,24 @@ object AndroidDemoFixtures {
                 "soft treat or pill paste and offer it from a relaxed, seated position. Watch the swallow, then " +
                 "follow with water and a second treat so the dog associates the routine with something positive. " +
                 "If the dog spits the pill, wait two minutes and try again rather than forcing it.",
-            kinfolkRef = "Wanda Thorne", uploadedAt = "2026-05-10",
+            // One row per target (issue #393), so the recorded golden shows all
+            // three words rather than the same "Whole household" on every row.
+            targetType = "KINFOLK", targetKinfolkId = "demo-kf-1",
+            kinfolkRef = "demo-kf-1", uploadedAt = "2026-05-10",
             notes = "Confirm dosage with the vet office before each visit."),
         TrainingDocument(id = "demo-td-2", title = "Severe Weather Policy",
             communicationType = "Policy",
             content = "When a heat advisory or thunderstorm warning is in effect, walks are shortened to potty " +
                 "breaks only and indoor enrichment replaces the remaining time. Notify the kinfolk through the " +
                 "app and log the adjustment. Never leave an animal outdoors unattended during active severe weather.",
+            targetType = "HOUSEHOLD", targetKinfolkId = "demo-kf-2", kinfolkRef = "demo-kf-2",
             uploadedAt = "2026-05-08"),
         TrainingDocument(id = "demo-td-3", title = "New Auntie Onboarding",
             communicationType = "Training",
             content = "Shadow two full routes before taking solo visits. Review each household's 411 and dossier " +
                 "the night before, confirm gate codes and vet contacts, and practice the arrival and departure GPS " +
                 "flow so the kinfolk always receives an accurate timeline of the visit.",
+            targetType = "KIN", targetKinfolkId = "demo-kf-1", targetKinId = "k1", kinfolkRef = "demo-kf-1",
             uploadedAt = "2026-05-05"),
     )
 
@@ -473,6 +478,39 @@ object AndroidDemoFixtures {
             templateId = "onboarding.welcome", audience = "kinfolk", triggerKey = null, active = true),
         TemplateRepository.TemplateBinding(catalogKey = "billing.invoice.sent",
             templateId = "invoice.sent", audience = "auntie", triggerKey = "manual.override", active = false),
+    )
+
+    /**
+     * The routing table the Template Routing screen renders (#384). Four rows, one per
+     * state the screen has to tell apart, and each agreeing with [templateBindings]
+     * above so the picture cannot contradict itself:
+     *  - kincare.booking.confirm: an active override onto booking-confirm-v2.
+     *  - billing.invoice.sent: a PAUSED binding, so it resolves to its own name.
+     *  - kincare.tale.published: no binding at all, routed by name.
+     *  - account.welcome.business: routed by name with no template document, the
+     *    state issue #381's deletion left behind.
+     */
+    val catalogRoutingRows: List<TemplateRepository.CatalogKey> = listOf(
+        TemplateRepository.CatalogKey(
+            key = "account.welcome.business", label = "Business welcome", category = "account",
+            audience = "business", source = "catalog", defaultTemplateId = "account.welcome.business",
+            hasDefaultTemplate = false, bound = false, resolvedTemplateId = "account.welcome.business",
+        ),
+        TemplateRepository.CatalogKey(
+            key = "billing.invoice.sent", label = "Invoice sent", category = "invoice",
+            audience = "kinfolk", source = "catalog", defaultTemplateId = "billing.invoice.sent",
+            hasDefaultTemplate = true, bound = true, resolvedTemplateId = "billing.invoice.sent",
+        ),
+        TemplateRepository.CatalogKey(
+            key = "kincare.booking.confirm", label = "KinCare booking confirmed", category = "visit",
+            audience = "both", source = "catalog", defaultTemplateId = "kincare.booking.confirm",
+            hasDefaultTemplate = true, bound = true, resolvedTemplateId = "booking-confirm-v2",
+        ),
+        TemplateRepository.CatalogKey(
+            key = "kincare.tale.published", label = "KinTale published", category = "kintale",
+            audience = "kinfolk", source = "catalog", defaultTemplateId = "kincare.tale.published",
+            hasDefaultTemplate = true, bound = false, resolvedTemplateId = "kincare.tale.published",
+        ),
     )
 
     // === formschema-list ===

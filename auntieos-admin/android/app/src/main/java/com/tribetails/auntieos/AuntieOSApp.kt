@@ -19,12 +19,14 @@ import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.baseUrlFlow
 import com.tribetails.auntieos.util.saveBaseUrl
+import com.tribetails.auntieos.voice.VoiceRegistrationCoordinator
 import com.tribetails.auntieos.voice.VoiceTokenManager
 import io.sentry.android.core.SentryAndroid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class AuntieOSApp : Application() {
@@ -55,6 +57,13 @@ class AuntieOSApp : Application() {
      */
     val kinCareRepository: KinCareRepository by lazy { KinCareRepository() }
 
+    /**
+     * Drives Twilio Voice registration off the admin auth state instead of off
+     * process start (#433). Held here rather than created inline so its collector
+     * has an owner that can stop it.
+     */
+    val voiceRegistration: VoiceRegistrationCoordinator by lazy { VoiceRegistrationCoordinator() }
+
     val mediaUploadManager: MediaUploadManager by lazy { MediaUploadManager(applicationContext, repository) }
     val visitNotifier: VisitNotifier by lazy { VisitNotifier() }
     val breadcrumbDispatcher: BreadcrumbDispatcher by lazy {
@@ -77,9 +86,12 @@ class AuntieOSApp : Application() {
         // crash inside SentryAndroid.init() leaves a recoverable stacktrace.
         installDefensiveCrashHandler(applicationContext)
 
-        // Skip Sentry under Robolectric - unit-test runs were polluting the
-        // production project (AUNTIEOS-ADMIN-4 retrofit 404: 476 events / 67
-        // fake "users", all tagged device.family=robolectric).
+        // Are we running inside the JVM unit-test suite? Two pieces of startup
+        // below are skipped when we are: Sentry, because unit-test runs were
+        // polluting the production project (AUNTIEOS-ADMIN-4 retrofit 404: 476
+        // events / 67 fake "users", all tagged device.family=robolectric), and
+        // the voice registration further down, because the background work it
+        // starts outlives the test that created this Application (#425).
         val isRobolectric =
             Build.FINGERPRINT?.contains("robolectric", ignoreCase = true) == true
         val sentryDsn = BuildConfig.SENTRY_DSN
@@ -126,10 +138,44 @@ class AuntieOSApp : Application() {
         // repository rather than a Retrofit binding. `repository` is read at call
         // time; a later `rebuildRepository` swaps only the n8n base URL, which
         // callables do not use, so the captured instance stays correct.
-        try {
-            VoiceTokenManager.initialize(this, repository, appScope)
-        } catch (e: Exception) {
-            AuntieLog.e("Failed to initialize VoiceTokenManager", e)
+        //
+        // WHAT THIS NO LONGER DOES IS THE POINT. `initialize` used to end with a
+        // `mintAndRegister`, and running it from here meant minting a voice token
+        // before anybody could possibly be signed in. `mintVoiceAccessToken` is
+        // admin gated, so on a first launch after install and on every launch
+        // after a sign-out that mint was refused, and a refused mint scheduled no
+        // retry: the phone then did not ring for inbound business calls for the
+        // rest of the process, silently. `initialize` now only hands over the
+        // seams, and [voiceRegistration] starts the work when an admin actually
+        // appears, which also covers signing out and back in. See issue #433.
+        //
+        // SKIPPED UNDER ROBOLECTRIC, for the same class of reason as the Sentry
+        // skip above, except that this one was corrupting the test suite rather
+        // than a dashboard. Both halves below start work on [appScope]
+        // (Dispatchers.Default), which nothing ever cancels, while
+        // `VoiceTokenManager` is a process-wide `object`. Robolectric builds a
+        // fresh AuntieOSApp for EVERY test method and the whole unit-test suite
+        // runs in one JVM, so each Robolectric test left another background
+        // coroutine alive that would go on to write `Working` and then
+        // `Failed(...)` into the shared manager at an arbitrary later moment,
+        // inside whatever unrelated test happened to be running by then. That is
+        // what made AuntieFirebaseMessagingServiceTest fail order-dependently:
+        // its `@Before` reset was correct and simply cannot defend against a
+        // writer that arrives after it has run. See issue #425. The auth-state
+        // collector added for #433 is a longer-lived coroutine than the one that
+        // caused that, so it is skipped here too rather than merely reset.
+        if (isRobolectric) {
+            AuntieLog.d("Skipping voice registration under Robolectric")
+        } else {
+            try {
+                VoiceTokenManager.initialize(this, repository, appScope)
+                voiceRegistration.start(
+                    scope = appScope,
+                    sessionUids = repository.authStateFlow().map { it?.uid },
+                )
+            } catch (e: Exception) {
+                AuntieLog.e("Failed to initialize voice registration", e)
+            }
         }
     }
 

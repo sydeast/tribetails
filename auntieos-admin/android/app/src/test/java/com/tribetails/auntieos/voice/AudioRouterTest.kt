@@ -27,6 +27,12 @@ class AudioRouterTest {
         get() = ApplicationProvider.getApplicationContext<android.content.Context>()
             .getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
 
+    /**
+     * The API 31+ path never reaches the legacy seam, so these tests hand it a
+     * fake that would record any call it did make.
+     */
+    private fun router() = AudioRouter(audioManager, FakeLegacyAudioSystem())
+
     private fun speakerDevice(): AudioDeviceInfo =
         AudioDeviceInfoBuilder.newBuilder()
             .setType(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
@@ -38,7 +44,7 @@ class AudioRouterTest {
         // can find a match; Robolectric's no-op setCommunicationDevice returns
         // true by default - the success path.
         shadowOf(audioManager).setAvailableCommunicationDevices(listOf(speakerDevice()))
-        val router = AudioRouter(audioManager)
+        val router = router()
         val success = router.setRoute(AudioRoute.Speaker)
         assertTrue("setCommunicationDevice should succeed by default", success)
         assertEquals(AudioRoute.Speaker, router.currentRoute.value)
@@ -47,7 +53,7 @@ class AudioRouterTest {
 
     @Test
     fun `API 35 setCommunicationDevice failure surfaces error and does not change route`() {
-        val router = AudioRouter(audioManager)
+        val router = router()
         // Robolectric: clear the list of available devices so the helper can't find a match.
         shadowOf(audioManager).setAvailableCommunicationDevices(emptyList())
         val priorRoute = router.currentRoute.value
@@ -59,7 +65,7 @@ class AudioRouterTest {
 
     @Test
     fun `clearError resets audioRouteError to null`() {
-        val router = AudioRouter(audioManager)
+        val router = router()
         shadowOf(audioManager).setAvailableCommunicationDevices(emptyList())
         router.setRoute(AudioRoute.Speaker) // forces error
         assertNotNull(router.audioRouteError.value)

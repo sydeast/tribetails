@@ -10,10 +10,11 @@ describe('NOTIFICATION_CATALOG integrity', () => {
     expect(listNotificationKeys().length).toBeGreaterThanOrEqual(30);
   });
 
-  it('Run-4: invite-accepted + invite-expired are Business/account via businessAdmins', () => {
-    const accepted = NOTIFICATION_CATALOG['account.welcome.business']!;
-    expect(accepted.audience).toBe('business');
-    expect(accepted.recipientResolver).toBe('businessAdmins');
+  it('Run-4: invite-expired is Business/account via businessAdmins', () => {
+    // The invite-ACCEPTED half of this pair, `account.welcome.business`, was
+    // retired on 2026-08-18 at the operator's request (see
+    // RETIRED_NOTIFICATION_KEYS in the catalog). Only invite-expired is left.
+    expect(NOTIFICATION_CATALOG['account.welcome.business']).toBeUndefined();
 
     const expired = NOTIFICATION_CATALOG['invite.expired']!;
     expect(expired).toBeTruthy();
@@ -103,6 +104,26 @@ describe('NOTIFICATION_CATALOG integrity', () => {
     expect(def!.templates.sms).toBe('kintale.note.added');
   });
 
+  it('#386: broadcast.message is a real row the operator and the household can both govern', () => {
+    // The key is the one `admin/broadcastMessage.ts` stamps on the notification
+    // doc it writes; a key with no row cannot be gated or silenced by anyone,
+    // which is the defect this row closes.
+    const def = NOTIFICATION_CATALOG['broadcast.message'];
+    expect(def, 'broadcast.message missing from catalog').toBeDefined();
+    expect(def!.audience).toBe('kinfolk');
+    expect(def!.category).toBe('messages');
+    // Visible on the household's own notification settings...
+    expect(def!.kinfolkFacing).toBe(true);
+    // ...and switchable off by the operator on the gate, on any channel.
+    expect(def!.alwaysEnabled).toBe(false);
+    expect(def!.required).toEqual({});
+    // Transactional, NOT marketing-class: `marketingCategory` is an opt-IN gate
+    // resolveChannels puts beyond the operator's reach, and real campaigns have
+    // their own path (scheduleMarketingBlast). Broadcast keeps the opt-OUT model
+    // it already ships: message_suppressions + the unsubscribe footer.
+    expect(def!.marketingCategory).toBeUndefined();
+  });
+
   it('always-enabled notifications cannot be kinfolkFacing', () => {
     // alwaysEnabled means user can't silence — hiding from UI is the right pair
     for (const def of Object.values(NOTIFICATION_CATALOG)) {
@@ -139,9 +160,16 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     // Vendor-parity additions (2026-07-02)
     'kincare.note.auntie': { business: true },
     'kincare.cancel.requested': { business: true },
+    // #399 item 2: the kinfolk reschedule ask. Business-only, same as the
+    // cancellation ask it mirrors: the household already knows what it asked for.
+    'kincare.reschedule.requested': { business: true },
     'assignment.assigned': { staff: true },
     'assignment.changed': { staff: true },
     'message.received': { business: true },
+    // #386: the office's broadcast out to a whole audience segment, the other
+    // direction of message.received. Kinfolk-only; the operator wrote it, so
+    // they do not need a copy of it back.
+    'broadcast.message': { kinfolk: true },
     'kintale.published': { kinfolk: true },
     'kintale.comment.added': { kinfolk: true, staff: true },
     'kintale.note.added': { kinfolk: true },
@@ -163,7 +191,8 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'pets.updated': { kinfolk: true, staff: true },
     'profile.updated': { kinfolk: true, staff: true },
     'account.welcome.kinfolk': { kinfolk: true },
-    'account.welcome.business': { business: true },
+    // `account.welcome.business` was here. Retired 2026-08-18; this table is an
+    // exact match against the catalog, so its absence is the assertion.
     'invite.expired': { business: true },
     'auth.password.reset': { kinfolk: true },
     'auth.failedLogin.attempts': { kinfolk: true, business: true },

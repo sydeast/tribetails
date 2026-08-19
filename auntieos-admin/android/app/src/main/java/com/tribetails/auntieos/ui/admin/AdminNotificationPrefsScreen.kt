@@ -1,5 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +25,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
@@ -33,6 +39,7 @@ import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.STREAM_BUSINESS
 import com.tribetails.auntieos.data.model.STREAM_STAFF
 import com.tribetails.auntieos.data.model.adminReceives
+import com.tribetails.auntieos.data.model.applyBulkToggle
 import com.tribetails.auntieos.data.model.channelForcedForUser
 import com.tribetails.auntieos.data.model.channelForcedReason
 import com.tribetails.auntieos.data.model.channelOfferedToUser
@@ -47,6 +54,8 @@ import com.tribetails.auntieos.ui.components.AuntieToggle
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
+import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -122,6 +131,30 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
         }
     }
 
+    // Page-level select-all (#390 Android parity): builds the WHOLE next-prefs object
+    // with applyBulkToggle, once per hat (business + staff — "editable" is gate-scoped
+    // per stream, same reason the web fix chains it per stream), then commits with ONE
+    // optimistic saveMyAdminNotificationPrefs call. Deliberately NOT built as N calls to
+    // `persist`: this screen saves each row's toggle optimistically per click, so a naive
+    // bulk built that way would fire one callable round trip per channel (~24 for a full
+    // page). This is the one control that actually covers every editable channel on the
+    // page; the read-only web parity note in #390 is what this closes.
+    fun persistBulk(on: Boolean) {
+        val m = matrix ?: return
+        val prev = prefs ?: return
+        var next = prev
+        RECEIVE_SECTIONS.forEach { section ->
+            val rows = m.catalog.filter { it.adminReceives(m, section.stream) }
+            next = next.applyBulkToggle(m, rows, section.stream, on)
+        }
+        prefs = next
+        scope.launch {
+            repo.saveMyAdminNotificationPrefs(next)
+                .onSuccess { saveError = null }
+                .onFailure { saveError = it.message ?: "Save failed"; prefs = prev }
+        }
+    }
+
     AuntieScreenScaffold(title = "Your notifications", onBack = onBack, imePaddingEnabled = true) {
         Column(
             modifier = Modifier
@@ -165,6 +198,31 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
                                 "Admin Settings, under Per-notification settings.",
                         )
                     } else {
+                        // The page-level pair (#390): the only control that means every
+                        // editable channel on the page, across both hats. Its own bordered
+                        // bar and solid PrimaryButton keep it visually distinct from any
+                        // future per-section control (this screen has none today).
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(c.surface2)
+                                .border(BorderStroke(1.dp, SolidColor(c.border)), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                "Every notification below",
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                                modifier = Modifier.weight(1f),
+                            )
+                            PrimaryButton(label = "All on", onClick = { persistBulk(true) })
+                            GhostButton(label = "All off", onClick = { persistBulk(false) })
+                        }
+                        Spacer(Modifier.height(16.dp))
+
                         RECEIVE_SECTIONS.forEach { section ->
                             val rows = m.catalog.filter { it.adminReceives(m, section.stream) }
                             if (rows.isNotEmpty()) {

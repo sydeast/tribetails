@@ -22,7 +22,13 @@ const { listChecklistBank, saveChecklistBankItem } = vi.hoisted(() => ({
 }));
 vi.mock('../api/checklistBank', () => ({ listChecklistBank, saveChecklistBankItem }));
 
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
+
 import { KinTaleTemplates } from './KinTaleTemplates';
+
+/** The catalog the Service types checkboxes draw from: the real KinCare types (#373). */
+const KINCARE_TYPES = { 'Dog Walk': '25', 'Drop-in': '15' };
 
 /** A minimal, valid template doc (raw shape, as it arrives from useCollection). */
 function tpl(over: Partial<KinTaleTemplate> = {}): KinTaleTemplate {
@@ -62,6 +68,7 @@ beforeEach(() => {
     { id: 'home-secured', text: 'Home secured on departure', scope: 'PER_VISIT' },
   ]);
   saveChecklistBankItem.mockReset().mockResolvedValue({ id: 'meds', text: 'Meds', scope: 'PER_PET' });
+  getBusinessSettings.mockReset().mockResolvedValue({ serviceRates: KINCARE_TYPES, serviceDurations: {} });
   mockStream({ status: 'ready', data: [tpl()] });
 });
 
@@ -213,7 +220,7 @@ describe('KinTaleTemplates: the workflow modal', () => {
     expect(screen.getByLabelText('Template name')).toBeInTheDocument();
     expect(screen.getByLabelText('Description')).toBeInTheDocument();
     expect(screen.getByLabelText('Default message to kinfolk')).toBeInTheDocument();
-    expect(screen.getByLabelText('Service types')).toBeInTheDocument();
+    expect(await screen.findByRole('group', { name: 'Service types' })).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Make default template' })).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Active' })).toBeInTheDocument();
 
@@ -249,6 +256,8 @@ describe('KinTaleTemplates: the workflow modal', () => {
     await screen.findByRole('button', { name: /walk recap/i });
     await openNewTemplate();
     expect(screen.getByLabelText('Template name')).toHaveValue('New template');
+    // Mark 23 of the 2026-08-17 walk: no canned default message on a fresh draft.
+    expect(screen.getByLabelText('Default message to kinfolk')).toHaveValue('');
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -267,8 +276,9 @@ describe('KinTaleTemplates: load + picker', () => {
     render(<KinTaleTemplates />);
     await openEditor();
     expect(screen.getByDisplayValue('Walk recap')).toBeInTheDocument();
-    // Service types round-trip into the CSV field, on the same first step.
-    expect(screen.getByDisplayValue('Dog Walk')).toBeInTheDocument();
+    // Service types round-trip into the catalog checkboxes, on the same first step.
+    expect(await screen.findByRole('checkbox', { name: 'Dog Walk' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Drop-in' })).not.toBeChecked();
   });
 
   it('lists templates with a Default tag and switches when another is picked', async () => {
@@ -303,6 +313,9 @@ describe('KinTaleTemplates: create-from-default', () => {
     // The create-from-default path the always-visible editor used to pre-seed.
     await openNewTemplate();
     expect(screen.getByDisplayValue('Default KinTale')).toBeInTheDocument();
+    // Even this seed carries no canned message: the built-in default's own
+    // `defaultEmailMessage` is blank (mark 23 of the 2026-08-17 walk).
+    expect(screen.getByLabelText('Default message to kinfolk')).toHaveValue('');
   });
 
   it('New template starts a fresh, non-default draft', async () => {
@@ -311,6 +324,53 @@ describe('KinTaleTemplates: create-from-default', () => {
     await openNewTemplate();
     expect(screen.getByDisplayValue('New template')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Make default template' })).not.toBeChecked();
+  });
+});
+
+describe('KinTaleTemplates: Service types are a catalog, not a text box', () => {
+  it('offers exactly the configured KinCare types, none more and none missing', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    const group = await screen.findByRole('group', { name: 'Service types' });
+    expect(within(group).getAllByRole('checkbox')).toHaveLength(Object.keys(KINCARE_TYPES).length);
+    expect(within(group).getByRole('checkbox', { name: 'Dog Walk' })).toBeInTheDocument();
+    expect(within(group).getByRole('checkbox', { name: 'Drop-in' })).toBeInTheDocument();
+  });
+
+  it('a stored key the catalog no longer has is kept, checked, flagged, and survives an untouched save', async () => {
+    mockStream({ status: 'ready', data: [tpl({ serviceTypeKeys: ['Dog Walk', 'Retired Visit'] })] });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    const stale = await screen.findByRole('checkbox', { name: /Retired Visit/ });
+    expect(stale).toBeChecked();
+    expect(screen.getByText('not in your current KinCare types')).toBeInTheDocument();
+
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
+    expect(arg.serviceTypeKeys).toEqual(['Dog Walk', 'Retired Visit']);
+  });
+
+  it('unticking a stale key removes only that key', async () => {
+    mockStream({ status: 'ready', data: [tpl({ serviceTypeKeys: ['Dog Walk', 'Retired Visit'] })] });
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await user.click(await screen.findByRole('checkbox', { name: /Retired Visit/ }));
+
+    await saveTemplate();
+    await waitFor(() => expect(saveKinTaleTemplate).toHaveBeenCalledTimes(1));
+    const arg = saveKinTaleTemplate.mock.calls[0]![0] as KinTaleTemplate;
+    expect(arg.serviceTypeKeys).toEqual(['Dog Walk']);
+  });
+
+  it('a failed catalog load still shows the stored keys, editable, with no text box offered', async () => {
+    getBusinessSettings.mockReset().mockRejectedValue(new Error('permission-denied'));
+    render(<KinTaleTemplates />);
+    await openEditor();
+    expect(await screen.findByText(/couldn.t load your kincare types/i)).toBeInTheDocument();
+    expect(await screen.findByRole('checkbox', { name: /Dog Walk/ })).toBeChecked();
+    // No free-text fallback: the field never grows a text input, catalog error or not.
+    expect(screen.queryByPlaceholderText(/comma separated/i)).toBeNull();
   });
 });
 
@@ -347,6 +407,27 @@ describe('KinTaleTemplates: checklist condition editor (the I7 payload)', () => 
       value: '',
       attributeKey: 'serviceAddress',
     });
+  });
+
+  it('a SERVICE_TYPE condition value offers the real KinCare types as suggestions, not a hard constraint', async () => {
+    render(<KinTaleTemplates />);
+    await openEditor();
+    await goToStep('Per-Kin items');
+    await user.click(screen.getByRole('button', { name: /add condition/i }));
+    await user.selectOptions(screen.getByLabelText('When'), 'SERVICE_TYPE');
+
+    const value = await screen.findByLabelText('Value');
+    const listId = value.getAttribute('list');
+    expect(listId).toBeTruthy();
+    const datalist = document.getElementById(listId!);
+    expect(datalist?.tagName.toLowerCase()).toBe('datalist');
+    const optionValues = Array.from(datalist!.querySelectorAll('option')).map((o) => o.getAttribute('value'));
+    expect(optionValues).toEqual(['Dog Walk', 'Drop-in']);
+
+    // Still free text: CONTAINS needs a substring, and a legacy session may
+    // carry a retired service-type name, so typing something off-catalog works.
+    await user.type(value, 'evening walk');
+    expect(value).toHaveValue('evening walk');
   });
 
   it('adds a KINFOLK_TAG / CONTAINS condition: no attribute dropdown, value carries the tag', async () => {

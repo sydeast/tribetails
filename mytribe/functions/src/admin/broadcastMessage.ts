@@ -21,6 +21,9 @@ import {
 import { SEGMENTS_COLLECTION } from './audienceSegments';
 import { UNSUBSCRIBE_FOOTER, suppressionDocId } from './sendExternalMessage';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { getNotificationDef } from '../notifications/catalog';
+import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from '../notifications/prefs';
+import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/types';
 
 /**
  * Stage 2 step 6 (Communicate broadcast). Admin sends one admin-authored message
@@ -51,10 +54,37 @@ import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
  * Compliance: email/sms honor `message_suppressions` exactly like
  * sendExternalMessage; email bodies get the shared unsubscribe footer; no
  * plaintext recipient is stored (only aggregate counts).
+ *
+ * PREFERENCES (#386, 2026-08-18). A broadcast is a notification like any other,
+ * so every recipient is resolved through `resolveChannels` against the
+ * `broadcast.message` catalog row BEFORE any channel is attempted:
+ *
+ *   - the operator's business gate for the row (Settings -> Notification gate,
+ *     kinfolk stream) can disable the whole thing, disable a channel, or LOCK a
+ *     channel on for everyone;
+ *   - the household's own notification settings then choose within what the
+ *     gate still offers (email defaults on; SMS and push default off until the
+ *     household opts in, the platform-wide default, now applied here too);
+ *   - `message_suppressions` is checked ON TOP of that, not instead of it, so an
+ *     unsubscribe still wins even on a channel prefs left on.
+ *
+ * In-app rides on the same gate rather than on a channel of its own: prefs only
+ * model email/sms/push, so a recipient whose channels all resolve OFF gets no
+ * inbox card either, exactly as `enqueueNotification` skips the notification doc
+ * when `hasAnyChannel` is false. A fully-muted household hears nothing, which is
+ * what "muted" has to mean for the setting to be worth anything.
+ *
+ * Reach is reported, never assumed: the returned `reach` says how many
+ * households were targeted, how many actually received something, and how many
+ * were silenced by their preferences, and the same numbers land in the
+ * `broadcasts` doc and the audit entry.
  */
 
 export const BROADCASTS_COLLECTION = 'broadcasts';
 const KINFOLK_COLLECTION = 'kinfolk';
+
+/** The catalog row that governs broadcasts (see notifications/catalog.ts). */
+export const BROADCAST_NOTIFICATION_KEY = 'broadcast.message';
 
 export const ALL_BROADCAST_CHANNELS = ['inapp', 'email', 'sms', 'push'] as const;
 export type BroadcastChannel = (typeof ALL_BROADCAST_CHANNELS)[number];
@@ -96,6 +126,30 @@ export interface ChannelCounts {
 
 const emptyCounts = (): ChannelCounts => ({ sent: 0, skipped: 0, failed: 0 });
 
+/**
+ * How far the broadcast actually got, counted per HOUSEHOLD rather than per
+ * channel, so the operator learns the reach of what they just sent instead of
+ * assuming it hit everyone (#386).
+ *
+ * `targeted - reached` is every household that heard nothing, for any reason
+ * (no contact details, unsubscribed, provider failure, preferences);
+ * `suppressedByPrefs` names the subset that heard nothing because the gate or
+ * their own settings said not to.
+ */
+export interface BroadcastReach {
+  /** Households the segment resolved to. */
+  targeted: number;
+  /** Households that received the broadcast on at least one channel. */
+  reached: number;
+  /** Households whose channels all resolved OFF, so nothing was attempted. */
+  suppressedByPrefs: number;
+}
+
+/** True when preference resolution left the recipient with nothing on. */
+function allChannelsOff(c: ResolvedChannels): boolean {
+  return !c.email && !c.sms && !c.push;
+}
+
 /** Reads a kinfolk doc into the resolver's minimal shape. */
 function toKinfolkLike(id: string, data: Record<string, unknown>): KinfolkLike {
   return {
@@ -136,6 +190,7 @@ export async function broadcastMessageHandler(
   broadcastId: string;
   recipientCount: number;
   perChannel: Record<BroadcastChannel, ChannelCounts>;
+  reach: BroadcastReach;
 }> {
   initSentry();
   const uid = req.auth?.uid;
@@ -175,7 +230,41 @@ export async function broadcastMessageHandler(
   const subject = args.subject?.trim() ?? '';
   const body = args.body;
 
+  // The gate row is ONE document for the whole business (businessSettings/
+  // notifications), so it is read once here rather than once per recipient. A
+  // broadcast walks the entire audience.
+  const def = getNotificationDef(BROADCAST_NOTIFICATION_KEY);
+  const businessOverride = await loadBusinessOverride(BROADCAST_NOTIFICATION_KEY);
+  const stream = streamForRecipient(def, 'clients');
+  const reach: BroadcastReach = { targeted: recipients.length, reached: 0, suppressedByPrefs: 0 };
+
   for (const k of recipients) {
+    // Preference resolution, identical to the dispatcher's: the operator's gate
+    // for this row, then the household's own choice within it. A kinfolk with no
+    // linked MyTribe account has no prefs document to read, so they resolve to
+    // the catalog defaults, still gated by the operator's override.
+    const userPrefs: UserNotificationPrefs = k.uid ? await loadUserPrefs(k.uid, 'clients') : {};
+    const allowed = resolveChannels(def, userPrefs, businessOverride, stream);
+
+    if (allChannelsOff(allowed)) {
+      // Nothing is attempted for this household on ANY surface, in-app included
+      // (see the header docstring). Counted, logged, and reported back: a
+      // suppressed recipient is a fact about the broadcast's reach, not a silent
+      // no-op.
+      reach.suppressedByPrefs += 1;
+      for (const ch of channels) perChannel[ch].skipped += 1;
+      logEvent({
+        severity: 'info',
+        function: 'broadcastMessage',
+        event: 'recipient.suppressed',
+        uid,
+        extra: { kinfolkId: k.id, reason: 'no-channels-after-prefs' },
+      });
+      continue;
+    }
+
+    let reachedThisRecipient = false;
+
     // ---- in-app -------------------------------------------------------------
     if (channels.includes('inapp')) {
       const c = perChannel.inapp;
@@ -184,8 +273,13 @@ export async function broadcastMessageHandler(
       } else {
         try {
           await db().collection('notifications').doc().set({
-            key: 'broadcast.message',
-            category: 'broadcast',
+            key: BROADCAST_NOTIFICATION_KEY,
+            // The CATALOG row's category (#386). It used to say 'broadcast',
+            // a bucket in no catalog, so every catalog-driven surface filed
+            // broadcasts under a category it had never heard of. `title` and
+            // `description` below stay the operator's own words rather than the
+            // catalog label/description, because the copy is authored per send.
+            category: def.category,
             recipientUid: k.uid,
             actorUid: uid,
             data: { kinfolkId: k.id },
@@ -202,6 +296,7 @@ export async function broadcastMessageHandler(
             createdAt: FieldValue.serverTimestamp(),
           });
           c.sent += 1;
+          reachedThisRecipient = true;
         } catch (err) {
           c.failed += 1;
           logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'inapp.write.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
@@ -213,7 +308,9 @@ export async function broadcastMessageHandler(
     if (channels.includes('email')) {
       const c = perChannel.email;
       const email = (k.email ?? '').trim();
-      if (!email) {
+      if (!allowed.email) {
+        c.skipped += 1; // gate or household preference says no email.
+      } else if (!email) {
         c.skipped += 1;
       } else if (await isSuppressed(email.toLowerCase())) {
         c.skipped += 1;
@@ -226,6 +323,7 @@ export async function broadcastMessageHandler(
             data: {},
           });
           c.sent += 1;
+          reachedThisRecipient = true;
         } catch (err) {
           c.failed += 1;
           logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'email.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
@@ -237,7 +335,9 @@ export async function broadcastMessageHandler(
     if (channels.includes('sms')) {
       const c = perChannel.sms;
       const e164 = normalizeE164((k.phoneNumber ?? '').trim());
-      if (!e164) {
+      if (!allowed.sms) {
+        c.skipped += 1; // gate or household preference says no SMS.
+      } else if (!e164) {
         c.skipped += 1;
       } else if (await isSuppressed(e164)) {
         c.skipped += 1;
@@ -246,6 +346,7 @@ export async function broadcastMessageHandler(
           const twilio = await getTwilio();
           await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body });
           c.sent += 1;
+          reachedThisRecipient = true;
         } catch (err) {
           c.failed += 1;
           logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
@@ -256,7 +357,9 @@ export async function broadcastMessageHandler(
     // ---- push ---------------------------------------------------------------
     if (channels.includes('push')) {
       const c = perChannel.push;
-      if (!k.uid) {
+      if (!allowed.push) {
+        c.skipped += 1; // gate or household preference says no push.
+      } else if (!k.uid) {
         c.skipped += 1;
       } else {
         try {
@@ -270,13 +373,17 @@ export async function broadcastMessageHandler(
               .sendEachForMulticast({
                 tokens,
                 notification: { title: subject || 'Tribe Tails', body },
-                data: { notificationKey: 'broadcast.message' },
+                data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
               });
             // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
             // where one recipient == one send), not per-token. A kinfolk with
             // several devices counts once if any token took the push.
-            if (resp.successCount > 0) c.sent += 1;
-            else c.failed += 1;
+            if (resp.successCount > 0) {
+              c.sent += 1;
+              reachedThisRecipient = true;
+            } else {
+              c.failed += 1;
+            }
           }
         } catch (err) {
           c.failed += 1;
@@ -284,6 +391,8 @@ export async function broadcastMessageHandler(
         }
       }
     }
+
+    if (reachedThisRecipient) reach.reached += 1;
   }
 
   // If every attempted send across every channel failed (and nothing sent /
@@ -308,6 +417,7 @@ export async function broadcastMessageHandler(
       bodyLength: body.length,
       recipientCount: recipients.length,
       perChannel,
+      reach,
       totals: { sent: totalSent, skipped: totalSkipped, failed: totalFailed },
       actorUid: uid,
       sentAtMs: now,
@@ -321,8 +431,12 @@ export async function broadcastMessageHandler(
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetCollection: BROADCASTS_COLLECTION,
-    description: `Broadcast to ${recipients.length} kinfolk (${description}) via ${channels.join(', ')}: ${totalSent} sent, ${totalSkipped} skipped, ${totalFailed} failed`,
-    payload: { broadcastId: ref.id, channels, recipientCount: recipients.length, perChannel },
+    // Reach is in the audit sentence, not just the payload: "sent to 400
+    // households" and "reached 120 of them, 280 have it switched off" are
+    // different facts, and the operator should read the second one without
+    // opening a payload.
+    description: `Broadcast to ${recipients.length} kinfolk (${description}) via ${channels.join(', ')}: ${totalSent} sent, ${totalSkipped} skipped, ${totalFailed} failed; reached ${reach.reached} of ${reach.targeted} households, ${reach.suppressedByPrefs} silenced by notification preferences`,
+    payload: { broadcastId: ref.id, channels, recipientCount: recipients.length, perChannel, reach },
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });
   });
@@ -332,10 +446,10 @@ export async function broadcastMessageHandler(
     function: 'broadcastMessage',
     event: 'admin.broadcast.sent',
     uid,
-    extra: { broadcastId: ref.id, channels, recipientCount: recipients.length, totalSent, totalSkipped, totalFailed },
+    extra: { broadcastId: ref.id, channels, recipientCount: recipients.length, totalSent, totalSkipped, totalFailed, reach },
   });
 
-  return { ok: true, broadcastId: ref.id, recipientCount: recipients.length, perChannel };
+  return { ok: true, broadcastId: ref.id, recipientCount: recipients.length, perChannel, reach };
 }
 
 export const broadcastMessage = onCall(

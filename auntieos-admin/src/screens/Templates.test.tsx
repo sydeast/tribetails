@@ -28,7 +28,19 @@ const { saveTemplate, deleteTemplate, assignTemplatesToCategory } = vi.hoisted((
   deleteTemplate: vi.fn(),
   assignTemplatesToCategory: vi.fn(),
 }));
-vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate, assignTemplatesToCategory }));
+vi.mock('../api/templatesWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/templatesWrite')>(
+    '../api/templatesWrite',
+  );
+  return {
+    saveTemplate,
+    deleteTemplate,
+    assignTemplatesToCategory,
+    // Real, not stubbed: TemplateEditor uses it to tell the live-key warning
+    // apart from a binding refusal, and a stub would only agree with itself.
+    isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
+  };
+});
 
 import { Templates } from './Templates';
 
@@ -283,7 +295,9 @@ describe('Templates screen', () => {
     expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
 
-    expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed');
+    expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed', {
+      acknowledgeLiveKey: false,
+    });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(/no templates yet/i)).toBeInTheDocument();

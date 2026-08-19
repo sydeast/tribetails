@@ -30,9 +30,10 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * fetches this exact doc per notification, keeping reads at O(1) per
  * dispatch beats fan-out across N override docs.
  *
- * Catalog `alwaysEnabled=true` keys cannot be disabled via override. The
- * dispatcher enforces this at runtime, but we also surface the constraint
- * here so admin UIs can render locked toggles.
+ * Catalog `alwaysEnabled=true` keys CAN be disabled via override (see issue #7,
+ * 2026-06-08: operator can now disable even catalog-required and always-on
+ * notifications, with a warning in the UI but no server-side hard enforcement).
+ * Admin UIs may still render warnings for operator discretion.
  */
 
 const Channel = z.enum(['email', 'sms', 'push']);

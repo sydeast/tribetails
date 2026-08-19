@@ -7,8 +7,11 @@ import type { Timestamp } from 'firebase/firestore';
 import { type Async } from '../lib/async';
 import { type BookingEntry } from '../api/bookings';
 
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({
+  useCollection: vi.fn(),
+  useDocById: vi.fn(),
+}));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 
 // This screen navigates from the detail sheet's kinfolk / KinTale links. No
 // suite in this tree mounts a RouterProvider, so the hook is stubbed rather
@@ -55,6 +58,15 @@ vi.mock('../api/bookingsWrite', () => ({
  * Completed panel it composes in. Stubbing that too would leave nothing
  * asserting that the transitions survived the move off `BookingActions`.
  */
+/**
+ * The incoming-reschedule queue mounted above the list (#399 item 2). Stubbed
+ * to null here rather than given a ToastProvider: this suite is about the
+ * bookings list, the section renders nothing when its queue is empty anyway,
+ * and its own states are covered in RescheduleRequestsSection.test.tsx.
+ */
+vi.mock('../components/RescheduleRequestsSection', () => ({
+  RescheduleRequestsSection: () => null,
+}));
 vi.mock('../components/BookingDetailModal', () => ({
   BookingDetailModal: (props: {
     entry: { _id: string; kinfolkId?: string | undefined };
@@ -103,6 +115,10 @@ function entry(over: Partial<BookingEntry>): BookingEntry {
 
 beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<BookingEntry[]>);
+  // No deep-linked booking unless a test says otherwise. `ready + null` is the
+  // hook's settled "nothing to resolve" answer, not a miss: the screen reads it
+  // only when an id was actually passed.
+  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null } satisfies Async<BookingEntry | null>);
   navigate.mockReset();
   approveBooking.mockReset().mockResolvedValue(undefined);
   rejectBooking.mockReset().mockResolvedValue(undefined);
@@ -292,7 +308,10 @@ describe('Bookings screen', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [] });
     rerender(<Bookings />);
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
-    expect(screen.getByText(/no longer available/i)).toBeInTheDocument();
+    // The sentence now names all three readings of a miss, including the one a
+    // notification produces (a request approved into existence later); see the
+    // dialog in Bookings.tsx.
+    expect(screen.getByText(/cancelled or removed/i)).toBeInTheDocument();
   });
 
   it('the sheet carries this screen\'s status transitions: a pending booking still offers Approve and Reject', async () => {
@@ -705,5 +724,81 @@ describe('Bookings status sections', () => {
     render(<Bookings />);
     await pick('Waiting Wren');
     expect(screen.getByRole('group', { name: 'Bulk actions' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * ISSUE #389, the booking half's landing side. `lib/notificationActions.ts`
+ * derives the flat session id from the notification's envelope visit id; the
+ * router turns `?bookingId=<that id>` into this prop. The read is BY ID because
+ * BOOKINGS_QUERY is the 200 newest sessions and a notification can name an
+ * older one.
+ */
+describe('Bookings deep link', () => {
+  it('opens the sheet for a booking the streamed page does not contain', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'a-different-one' })] });
+    useDocById.mockReturnValue({ status: 'ready', data: entry({ _id: 'vis_old-visit' }) });
+    render(<Bookings initialBookingId="vis_old-visit" />);
+    expect(await screen.findByTestId('booking-detail-modal')).toHaveAttribute(
+      'data-entry-id',
+      'vis_old-visit',
+    );
+    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_old-visit');
+  });
+
+  it('prefers the streamed row over a second read when the booking is already on the page', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'vis_here' })] });
+    useDocById.mockReturnValue({ status: 'ready', data: null });
+    render(<Bookings initialBookingId="vis_here" />);
+    expect(await screen.findByTestId('booking-detail-modal')).toHaveAttribute(
+      'data-entry-id',
+      'vis_here',
+    );
+  });
+
+  it('says a still-requested visit has no record yet, rather than opening an empty sheet', async () => {
+    // A visit that has not been approved has no kin_care_sessions document at
+    // all, so its derived id resolves to nothing. That is the one case the
+    // derivation cannot bridge, and the operator is told which case it is.
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    useDocById.mockReturnValue({ status: 'ready', data: null });
+    render(<Bookings initialBookingId="vis_not-approved-yet" />);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/only once the request is approved/)).toBeInTheDocument();
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+  });
+
+  it('does not flash the unavailable dialog while the by-id read is still in flight', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    useDocById.mockReturnValue({ status: 'loading' });
+    render(<Bookings initialBookingId="vis_slow" />);
+    expect(screen.getByText('Looking this booking up…')).toBeInTheDocument();
+    expect(screen.queryByText(/only once the request is approved/)).toBeNull();
+  });
+
+  it('surfaces a failed by-id read as a readable error with a retry, not as a missing booking', async () => {
+    // A read that failed and a booking that is gone both leave the entry null.
+    // Telling the operator a network blip meant the visit was cancelled is the
+    // error-as-empty conflation lib/async.ts exists to refuse.
+    const retry = vi.fn();
+    useCollection.mockReturnValue({ status: 'ready', data: [] });
+    useDocById.mockReturnValue({ status: 'error', message: 'backend unreachable', retry });
+    render(<Bookings initialBookingId="vis_unreadable" />);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('backend unreachable');
+    expect(screen.queryByText(/only once the request is approved/)).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: /retry/i }));
+    expect(retry).toHaveBeenCalled();
+  });
+  it('does not let the deep-linked document answer for a row selected afterwards', async () => {
+    // The fetched booking belongs to the link, not to the screen: picking a
+    // different row must resolve through the stream, and a row that is not
+    // there must miss rather than reopening the linked one.
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'vis_linked' })] });
+    useDocById.mockReturnValue({ status: 'ready', data: entry({ _id: 'vis_linked' }) });
+    render(<Bookings initialBookingId="vis_linked" />);
+    await screen.findByTestId('booking-detail-modal');
+    await userEvent.click(screen.getByRole('button', { name: 'stub close' }));
+    expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
 });

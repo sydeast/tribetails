@@ -44,7 +44,7 @@ import org.robolectric.annotation.GraphicsMode
  * the exact condition that let $2.71 go missing in the first place.
  *
  * These pin the RENDERED STRINGS, because the rendered string is what was
- * missing. Nothing here is a golden: they assert facts, not pixels.
+ * missing. Nothing here is a picture comparison: they assert facts, not pixels.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -435,9 +435,9 @@ class InvoiceDetailLedgerColumnsTest {
     }
 
     /**
-     * LOOK AT IT. Writes the panel to `app/build/reports/roborazzi/`: the build
-     * directory, not the tracked `visual/android/` goldens: an inspection aid
-     * for this change, not a new baseline for CI to police.
+     * LOOK AT IT. Writes the panel to `app/build/reports/roborazzi/`, the build
+     * directory, and only under `-Proborazzi.record=true`. An inspection aid for
+     * a human, not a baseline: nothing compares it to anything.
      */
     @Test
     fun `capture the ledger columns for inspection`() {

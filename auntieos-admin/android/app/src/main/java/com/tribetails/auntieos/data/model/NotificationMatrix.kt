@@ -212,6 +212,10 @@ private val KINFOLK_NOTIF_SECTIONS = listOf(
     NotifSection("Visit updates", listOf("visit")),
     NotifSection("Upcoming care", listOf("schedule")),
     NotifSection("KinTales", listOf("kintale")),
+    // #386: mirrors the web taxonomy in lib/myNotificationsFormat.ts. Its only
+    // row is `broadcast.message`, the office's announcement to a whole audience
+    // segment, which otherwise lands in the trailing "Other" catch-all.
+    NotifSection("Messages", listOf("messages")),
     NotifSection("Billing and payments", listOf("invoice")),
     NotifSection("Home and pets", listOf("home")),
     NotifSection("Account and security", listOf("account", "security")),
@@ -476,6 +480,41 @@ fun NotificationMatrix.channelForcedForUser(
     entry.required[channel] == true ||
         streamEffectiveLockedEnabled(entry.key, stream) ||
         streamEffectiveChannelLocked(entry.key, stream, channel)
+
+/**
+ * Select-all (#390 Android parity): flips every EDITABLE channel of every row in
+ * [entries] to [on], within [stream]'s gate. "Editable" is exactly what a row's own
+ * toggle lets the operator change: a channel [matrix] currently OFFERS on this stream
+ * ([channelOfferedToUser]) that is NOT forced on ([channelForcedForUser]). Forced
+ * channels stay pinned on and read-only, same as `AdminReceiveRow`, so a bulk flip must
+ * skip them too rather than writing a `byKey` entry the gate would just override.
+ *
+ * A pure fold over [withByKeyChannel] (itself a merge, not a rebuild, so calling it
+ * repeatedly never drops an unrelated key or channel). The web fix for #390 chains one
+ * `applyBulkToggle` call per stream because "editable" is gate-scoped per stream;
+ * `AdminNotificationPrefsScreen`'s page-level bulk does the same here, then commits the
+ * whole result through ONE `saveMyAdminNotificationPrefs` call rather than the per-row
+ * optimistic save this screen normally uses (which would otherwise fire one callable
+ * round trip per channel — roughly two dozen for a full page).
+ */
+fun AdminNotificationPrefs.applyBulkToggle(
+    matrix: NotificationMatrix,
+    entries: List<NotificationCatalogEntry>,
+    stream: String,
+    on: Boolean,
+): AdminNotificationPrefs {
+    var next = this
+    entries.forEach { entry ->
+        NOTIF_CHANNELS.forEach { channel ->
+            if (matrix.channelOfferedToUser(entry, channel, stream) &&
+                !matrix.channelForcedForUser(entry, channel, stream)
+            ) {
+                next = next.withByKeyChannel(entry.key, channel, on)
+            }
+        }
+    }
+    return next
+}
 
 /**
  * Plain-language reason a forced channel can't be changed. The operator's own

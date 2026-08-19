@@ -3,7 +3,7 @@ import type { GetInvoiceLedgerResult } from '../../src/contracts/invoiceContract
 import { VISUAL_NOW } from './fixtures';
 
 /**
- * The callable answers the captured screens need, and nothing else.
+ * The callable answers these screens need, and nothing else.
  *
  * WHY THIS FILE EXISTS, and it is not a convenience. `src/lib/firebase.ts` pins
  * the Functions SDK at `127.0.0.1:5399` for every e2e run and nothing serves
@@ -14,40 +14,44 @@ import { VISUAL_NOW } from './fixtures';
  * (`CallableNotStubbedError`) and says what to do about it, in one sentence:
  * stub the callable in the spec with `page.route`.
  *
- * Nobody had. Nine of the nineteen captures were photographs of a red error
- * panel, and SEVEN OF THE APPROVED GOLDENS ALREADY WERE: Home, Inbox, Activity
- * Log, Template Bank, Template Assignments, Form Schemas and KinTale detail were
- * all recorded on 2026-08-01 with `…failed: internal` where their content should
- * be. The other two are newer. `invoice-detail`'s whole Payment History renders
- * as "Couldn't load this invoice's payments or visits", and KinTales' triage
- * section as "Couldn't load orphaned KinTales", because both panels landed after
- * that recording, so the drift read as design work and was one approve away from
- * being enshrined.
+ * Nobody had, and for a while nine of the nineteen screens then being driven
+ * rendered a red error panel instead of their content: Home, Inbox, Activity
+ * Log, Template Bank, Template Assignments, Form Schemas, KinTale detail, the
+ * invoice Payment History and the KinTales triage section all showed
+ * `…failed: internal` where the thing under test should have been.
  *
- * That approve is the failure this file exists to prevent. A regression in the
- * payments table cannot show up in a picture that has no payments table in it.
+ * That is the failure this file exists to prevent. An assertion about the
+ * payments table cannot mean anything on a screen that has no payments table
+ * in it.
+ *
+ * WHO CALLS IT NOW. It was written for the react screenshot-capture surface,
+ * which went with the visual golden system on 2026-08-18. `phone-layout.spec.ts`
+ * is the caller left: an ordinary member of the `operator` project, which drives
+ * these same screens at a phone viewport and measures their layout. The file
+ * kept its name and its rules, because the rules are about what a stub owes the
+ * client, not about screenshots.
  *
  * FOUR RULES HOLD EVERY FIXTURE BELOW, and each one is load-bearing:
  *
  *   1. DETERMINISTIC. Every value is a literal or is derived from `VISUAL_NOW`,
  *      the same instant the page's clock and the seed are pinned to. No
  *      `Date.now()`, no randomness, no ordering that depends on a map's
- *      iteration. A golden has to be byte-identical across runs.
+ *      iteration. A layout measurement has to mean the same thing every run.
  *   2. THE SHAPE IS THE SERVER'S. Every response matches the callable's own
  *      contract: `getInvoiceLedger` is typed against
  *      `contracts/invoiceContracts.generated.ts`, which is generated from the
  *      server zod schema, and the rest match the response types their `api/`
  *      module declares. A stub whose shape merely LOOKS plausible is worse than
- *      the error panel, because the client mis-renders it silently and the
- *      golden records the mis-render as correct.
+ *      the error panel, because the client mis-renders it silently and the test
+ *      passes on the mis-render.
  *   3. IT AGREES WITH THE DATABASE. Where a callable reports on something the
  *      seed also writes, the two say the same thing: the ledger's payments sum
  *      to the `paidCents` on `vis-invoice-001`, its one visit is the session
  *      that invoice claims, the chain verifier scans the four `activity_log`
  *      rows that exist, and the conversations are the two seeded households and
  *      are all read, because the nav rail's unread badge counts the
- *      `conversations` collection rather than this callable. A golden that
- *      contradicts itself on screen is a golden nobody can read.
+ *      `conversations` collection rather than this callable. A screen whose two
+ *      halves contradict each other proves nothing about either.
  *   4. AN UNSTUBBED CALLABLE STILL FAILS LOUD. `route.fallback()` hands anything
  *      not named here back to the catch-all, which continues to the unserved
  *      port, so a screen that grows a new callable gets the same red panel and
@@ -92,21 +96,22 @@ function msAt(days: number, hhmmss: string): number {
  *
  * The second payment carries no reference on purpose: a blank reference renders
  * as a styled "none" rather than an empty cell (`InvoiceLedger.tsx`), and that
- * branch is worth having in a golden.
+ * branch is worth exercising.
  *
  * `ledgerPayments` is EMPTY, deliberately. The root ledger is real money that
  * the balance arithmetic never reads, and a fixture that put a row there would
  * either duplicate a payment already shown above it or trip the "the ledger
- * shows money this balance does not" warning. Photographing an anomaly banner
- * as the ordinary appearance of the screen is the same mistake as
- * photographing an error panel.
+ * shows money this balance does not" warning. Making an anomaly banner the
+ * default state of the screen is the same mistake as leaving an error panel
+ * there.
  *
  * The one session is `e2e-sess-completed`, which is the single id
  * `vis-invoice-001.sessionIds` names, with the service, status and dates that
  * session doc carries. It has no recorded length, which the panel says as "not
  * recorded" rather than "0 min". `linkedBack` is true because the seed now
  * writes `invoiceId` back onto that session; without it the panel would raise a
- * broken-link warning, correctly, and the golden would record a fixture defect.
+ * broken-link warning, correctly, and a spec would be asserting against a
+ * fixture defect.
  */
 const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
   'vis-invoice-001': {
@@ -122,9 +127,9 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
         // Null is the honest value, not a placeholder. Both of these are
         // settlement rows with no root `payments` record behind them, which is
         // exactly what `markInvoicePaid` writes and what every row predating
-        // the field carries. Fabricating an id would photograph a tip-and-fee
-        // link this fixture does not have, and the golden would then assert a
-        // screen that cannot occur.
+        // the field carries. Fabricating an id would render a tip-and-fee link
+        // this fixture does not have, so a spec would be asserting a screen
+        // that cannot occur.
         sourcePaymentId: null,
       },
       {
@@ -145,7 +150,7 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
     // this list is household money NO invoice claims, and the React panel does
     // not render it at all. It exists so the staff Android screen can stop
     // reading the root `payments` collection directly, which is what kept the
-    // 100x units defect alive there. A fixture row would photograph nothing.
+    // 100x units defect alive there. A fixture row would prove nothing.
     unlinkedKinfolkPayments: [],
     sessions: [
       {
@@ -162,8 +167,8 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
     orphanSessionIds: [],
     truncated: false,
     // Zero, because every fixture amount above is a real reading. A non-zero
-    // count would photograph the could-not-be-read caveat as the ordinary
-    // appearance of the ledger, which is the same mistake as photographing an
+    // count would make the could-not-be-read caveat the ordinary
+    // appearance of the ledger, which is the same mistake as leaving an
     // error panel.
     unresolvedAmountCount: 0,
   },
@@ -211,7 +216,7 @@ const CONVERSATIONS = [
  *
  * THE HOUSEHOLDS ARE THE SEEDED ONES, and that is load-bearing rather than
  * decorative. Every card's heading is a `Link` to
- * `/household-members/$kinfolkId`, so a made-up `tribeId` would photograph a
+ * `/household-members/$kinfolkId`, so a made-up `tribeId` would render a
  * row whose only control leads nowhere. `householdName` is what the server's
  * `householdNameFor` returns for those two `kinfolk` docs: Wanda Thorne gives
  * "the Thornes" and Nora Halbrook gives "the Halbrooks", sibilant rule
@@ -228,7 +233,7 @@ const CONVERSATIONS = [
  *
  * ONE ROW PER SECTION AND PER CHIP. `SECTION_ORDER` is Pending, Expired,
  * Accepted, Revoked and the four filter chips carry counts, so a fixture of
- * outstanding rows alone would photograph three empty sections and three
+ * outstanding rows alone would render three empty sections and three
  * zeroes and prove nothing about any of them.
  *
  * NEWEST FIRST, already sorted the way `sortInvitesNewestFirst` sorts on the
@@ -276,7 +281,7 @@ const ADMIN_INVITES = [
     },
     // Minted and not yet emailed, so `sentToInviteeAt` is null and the card
     // falls back to `createdAt` for its "Sent" line. That fallback is a branch
-    // worth having in a golden.
+    // worth exercising.
     status: 'PENDING',
     effectiveStatus: 'PENDING',
     redeemable: true,
@@ -363,7 +368,7 @@ const ADMIN_INVITES = [
 ] as const;
 
 /**
- * Every callable a captured screen invokes, and the answer it gets.
+ * Every callable these screens invoke, and the answer it gets.
  *
  * A handler returns the callable's `data`, or `undefined` to decline, which
  * falls through to the unserved port and the app's own error panel.
@@ -614,6 +619,68 @@ const HANDLERS: Readonly<Record<string, CallableHandler>> = {
     ],
   }),
 
+  /**
+   * The catalog-key list the Assignments picker is built from. Template
+   * Assignments started calling this on first paint when the free-text key box
+   * became a picker (issues #382/#383), so without a stub here the panel is the
+   * red `listCatalogKeys failed` message rather than a picker.
+   *
+   * Four rows, chosen to show every state the picker can be in: two catalog keys
+   * with no binding, one direct-send key, and the `invoice.issued` key that
+   * `listTemplateBindings` above binds. That last one is `legacy`, because it is
+   * not in the real notification catalog, which is exactly what the screen must
+   * show without offering it as something new to bind.
+   */
+  listCatalogKeys: () => {
+    const rows = [
+      {
+        key: 'invite.primary',
+        label: 'Portal invite to a primary kinfolk',
+        category: null,
+        audience: null,
+        source: 'direct-send',
+        defaultTemplateId: 'invite.primary',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'invite.primary',
+      },
+      {
+        key: 'invoice.issued',
+        label: 'Not in the catalog, nothing dispatches it',
+        category: null,
+        audience: null,
+        source: 'legacy',
+        defaultTemplateId: 'invoice.issued',
+        hasDefaultTemplate: false,
+        bound: true,
+        resolvedTemplateId: 'vis-tpl-invoice-issued',
+      },
+      {
+        key: 'invoice.new',
+        label: 'New invoice',
+        category: 'invoice',
+        audience: 'kinfolk',
+        source: 'catalog',
+        defaultTemplateId: 'invoice.new',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'invoice.new',
+      },
+      {
+        key: 'kincare.booking.confirm',
+        label: 'KinCare booking confirmed',
+        category: 'visit',
+        audience: 'both',
+        source: 'catalog',
+        defaultTemplateId: 'kincare.booking.confirm',
+        hasDefaultTemplate: false,
+        bound: false,
+        resolvedTemplateId: 'kincare.booking.confirm',
+      },
+    ];
+    return { keys: rows.map((r) => r.key), rows };
+  },
+
   // ── form schemas ────────────────────────────────────────────────────────
   /**
    * Sorted newest-first by the screen itself, so the order here is not what
@@ -655,11 +722,10 @@ const HANDLERS: Readonly<Record<string, CallableHandler>> = {
    *
    * This one is invisible and is stubbed anyway. `RecipientContextPanel` reads
    * the flags on Communicate and CATCHES a failure, leaving the comms recap
-   * off, which is also the default. So the failing call changed no pixel and
-   * the Communicate golden is not wrong today. It was still a callable failing
-   * inside a golden capture, one catch block away from deciding what the screen
-   * looks like, and "it happens to fail into the same state" is not a property
-   * worth depending on.
+   * off, which is also the default. So the failing call changed nothing on
+   * screen. It was still a callable failing inside a run that reads the screen,
+   * one catch block away from deciding what it looks like, and "it happens to
+   * fail into the same state" is not a property worth depending on.
    */
   getFeatureFlags: () => ({ flags: {} }),
 };
@@ -694,7 +760,7 @@ function corsHeaders(requested?: string): Record<string, string> {
         ? requested
         : 'authorization, content-type, x-firebase-appcheck, x-firebase-client, x-firebase-gmpid',
     // Not cached. A preflight held over from one test into the next is one more
-    // thing that could differ between the first capture and the eighteenth.
+    // thing that could differ between the first spec and the last.
     'access-control-max-age': '0',
   };
 }
@@ -702,22 +768,21 @@ function corsHeaders(requested?: string): Record<string, string> {
 /**
  * Installs the stubs on `page`.
  *
- * REGISTERED AFTER the catch-all abort in the capture spec, and that order is
- * the whole trick. Playwright checks route handlers in REVERSE registration
+ * REGISTERED AFTER a spec's catch-all abort, where it has one, and that order
+ * is the whole trick. Playwright checks route handlers in REVERSE registration
  * order, so this one is consulted first for the callable port and the catch-all
- * still owns every other request, including the non-local abort that keeps a
- * golden from being decided by anything off this machine. Nothing here loosens
- * it: `127.0.0.1:5399` is loopback, so both rules hold at once.
+ * still owns every other request, including the non-local abort that keeps a run
+ * from depending on anything off this machine. Nothing here loosens it:
+ * `127.0.0.1:5399` is loopback, so both rules hold at once.
  *
  * `overrides` REPLACES a named handler for one spec, and is how a layout test
- * gets a screen state the goldens deliberately do not photograph. The fixtures
- * above are the APPROVED APPEARANCE of each screen and are chosen for that:
- * `getInvoiceLedger` sends no `ledgerPayments`, because a row there would trip
- * the "the ledger shows money this balance does not" banner and freeze an
- * anomaly as the ordinary picture. A phone-layout test needs the opposite, the
- * widest state the panel can reach, and it must be able to ask for it without
- * moving a single golden. Omitting it changes nothing, so `visual.capture.spec`
- * keeps the exact fixtures it had.
+ * asks for a state the shared fixtures deliberately avoid. The fixtures above
+ * are each screen's ORDINARY state and are chosen for that: `getInvoiceLedger`
+ * sends no `ledgerPayments`, because a row there would trip the "the ledger
+ * shows money this balance does not" banner and make an anomaly the default. A
+ * phone-layout test needs the opposite, the widest state the panel can reach,
+ * and it must be able to ask for it without changing what every other spec
+ * sees. Omitting `overrides` changes nothing.
  */
 export async function installCallableStubs(
   page: Page,

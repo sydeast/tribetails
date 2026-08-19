@@ -262,27 +262,11 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
       extra: { inviteId, key: 'account.welcome.kinfolk', err: (err as Error)?.message },
     });
   }
-  // Run-4: "Kinfolk Accepted MyTribe Invite" (Business bucket). The business-facing
-  // welcome/accept notification existed in the catalog but was never emitted; wire it
-  // here so the operator is told when an invited kinfolk completes setup.
-  // businessAdmins resolver -> no recipientUid needed.
-  try {
-    await enqueueNotification({
-      key: 'account.welcome.business',
-      data: {
-        kinfolkId: invite.tribeId,
-        invitedEmail: invite.invitedEmail,
-        role: invite.proposedRole,
-      },
-    });
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'acceptInvite',
-      event: 'notification.dispatch.failed',
-      extra: { inviteId, key: 'account.welcome.business', err: (err as Error)?.message },
-    });
-  }
+  // The kinfolk welcome above is the only notification this sends. A second
+  // enqueue used to fire `account.welcome.business` at the office here ("Run-4:
+  // Kinfolk Accepted MyTribe Invite"). The operator retired that notification on
+  // 2026-08-18, because they do not want it, so the catalog row is gone (see
+  // RETIRED_NOTIFICATION_KEYS in notifications/catalog.ts) and so is the emitter.
   return { familyId: invite.tribeId };
 }
 

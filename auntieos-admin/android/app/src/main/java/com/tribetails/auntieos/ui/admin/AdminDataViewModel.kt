@@ -779,6 +779,27 @@ class AdminDataViewModel(
         }
     }
 
+    /**
+     * Every pet on the roster, across households.
+     *
+     * `kinForSelectedKinfolk` above is the target picker's list and is loaded
+     * one household at a time, so it cannot name the pet on a Tribal Intel row
+     * for some OTHER household. A list that shows "Kin: <raw id>" on every row
+     * but the one being edited is why this whole-roster read exists.
+     */
+    private val _kinDirectory = MutableStateFlow<List<com.tribetails.auntieos.data.model.Kin>>(emptyList())
+    val kinDirectory: StateFlow<List<com.tribetails.auntieos.data.model.Kin>> = _kinDirectory.asStateFlow()
+
+    fun loadKinDirectory() {
+        viewModelScope.launch {
+            repository.getAllKin().onSuccess { list ->
+                _kinDirectory.value = list
+            }.onFailure { t ->
+                _error.value = t.message ?: "Failed to load kin directory"
+            }
+        }
+    }
+
     fun assignOrphanReport(reportId: String, kinfolkId: String, kinfolkName: String) {
         viewModelScope.launch {
             _isLoading.value = true

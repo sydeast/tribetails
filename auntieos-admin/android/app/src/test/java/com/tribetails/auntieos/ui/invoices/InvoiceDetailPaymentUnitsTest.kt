@@ -56,8 +56,9 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 // TALL viewport on purpose. The payments panel is the fifth item of a
 // LazyColumn, so at the shipping 1920dp height it never composes — which is
-// exactly why the tracked `visual/android/invoice-detail.png` golden could not
-// have caught this bug: it captures the root, and the row was below the fold.
+// exactly why the screenshot harness that once photographed this screen could
+// not have caught this bug: it captured the root, and the row was below the
+// fold.
 @Config(sdk = [35], qualifiers = "w1080dp-h4000dp-xhdpi")
 class InvoiceDetailPaymentUnitsTest {
 
@@ -247,9 +248,10 @@ class InvoiceDetailPaymentUnitsTest {
 
     /**
      * Step 6 of the task: LOOK AT IT. Writes the payments panel to
-     * `app/build/reports/roborazzi/` — the build directory, not the tracked
-     * `visual/android/` goldens, because this is an inspection aid for the
-     * change and not a new baseline for CI to police.
+     * `app/build/reports/roborazzi/`, the build directory, and only under
+     * `-Proborazzi.record=true`. This is an inspection aid for a human, not a
+     * baseline: nothing compares it to anything, and nothing tracked is
+     * written.
      */
     @Test
     fun `capture the payments panel for inspection`() {

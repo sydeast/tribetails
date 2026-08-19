@@ -66,6 +66,22 @@ export function mediaPreviewUrl(media: Pick<MediaFile, 'thumbnailUrl' | 'storage
   return storage !== '' ? storage : undefined;
 }
 
+/**
+ * The URL the fullscreen viewer should try first: the reverse preference from
+ * {@link mediaPreviewUrl}. A grid tile wants the small, fast `thumbnailUrl`;
+ * the viewer a tap on that tile opens wants the full-resolution original, so it
+ * tries `storageUrl` first and falls back to `thumbnailUrl` only when no
+ * original was ever recorded. Ports Android's `FullscreenMediaViewer`
+ * (`MediaGalleryScreen.kt`) and `GalleryScreen.kt`'s `MediaViewerDialog`, both
+ * of which read `media.storageUrl.ifBlank { media.thumbnailUrl }`.
+ */
+export function mediaViewerUrl(media: Pick<MediaFile, 'thumbnailUrl' | 'storageUrl'>): string | undefined {
+  const storage = str(media.storageUrl).trim();
+  if (storage !== '') return storage;
+  const thumb = str(media.thumbnailUrl).trim();
+  return thumb !== '' ? thumb : undefined;
+}
+
 /** Read-only display caption: `description`, falling back to `originalFileName`. Ports the wasm's `media.description.ifBlank { media.originalFileName }`. Caption EDITING is a separate, not-yet-built surface: this only reads what's stored. */
 export function mediaCaption(media: Pick<MediaFile, 'description' | 'originalFileName'>): string {
   const d = str(media.description).trim();

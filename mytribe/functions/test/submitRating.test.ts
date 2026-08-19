@@ -39,6 +39,11 @@ describe('submitRatingHandler', () => {
     const w = ctx.writes.find((w) => w.path === 'families/3/ratings/v1');
     expect(w).toBeDefined();
     expect(w!.data.score).toBe(5);
+    // ISSUE #389's emitter half: `onRatingCreate` reads `bookingId` to give the
+    // notification a BOOKING target. Without it every rating notification
+    // resolved to the household and its Open landed on the household profile
+    // rather than the visit that was rated.
+    expect(w!.data.bookingId).toBe('v1');
   });
 
   it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess and writes nothing (PR28b)', async () => {

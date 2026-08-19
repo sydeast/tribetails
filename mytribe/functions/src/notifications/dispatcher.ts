@@ -7,6 +7,7 @@ import { getNotificationDef } from './catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from './prefs';
 import { resolveRecipients } from './recipientResolver';
 import type {
+  AudienceStream,
   Channel,
   EnqueueArgs,
   NotificationDef,
@@ -160,12 +161,10 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
     ]);
     // Audience revamp 2026-07: each copy gates through its own stream view
     // (clients -> kinfolk; staff -> staff when the key serves staff, else business).
-    const channels = resolveChannels(
-      def,
-      userPrefs,
-      businessOverride,
-      streamForRecipient(def, recipient.collection),
-    );
+    // The same per-copy answer also decides what the card detail may say, so it
+    // is resolved once here and threaded down rather than re-derived (#380).
+    const stream = streamForRecipient(def, recipient.collection);
+    const channels = resolveChannels(def, userPrefs, businessOverride, stream);
 
     if (!hasAnyChannel(channels)) {
       logEvent({
@@ -178,7 +177,7 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
       continue;
     }
 
-    const id = await routeByDeliveryMode(def, args, recipient.uid, channels, actor);
+    const id = await routeByDeliveryMode(def, args, recipient.uid, channels, actor, stream);
     if (id) writtenIds.push(id);
   }
 
@@ -199,17 +198,23 @@ async function routeByDeliveryMode(
   recipientUid: string,
   channels: ResolvedChannels,
   actor: ResolvedActor,
+  stream: AudienceStream,
 ): Promise<string | null> {
   const { targetType, targetId } = resolveTargetRef(args);
   // R5: the entity detail the CARD renders, resolved server-side once, here.
   // Every value in it (household, pets, service, date, time, notes, amount) was
   // already being computed downstream for outbound templates and thrown away;
   // see buildNotificationDetail's docstring for the full accounting.
+  //
+  // `stream` is what keeps staff-only fields off a household's copy (#380). It
+  // is per-copy, not per-key: `kincare.changed` writes one copy to the operator
+  // and one to the kinfolk, and only the operator's may carry the booking notes.
   const detail = await buildNotificationDetail(
     def.key,
     recipientUid,
     args.data,
     actor.actorName,
+    stream,
   );
 
   /**

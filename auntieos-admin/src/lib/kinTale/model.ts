@@ -203,8 +203,13 @@ export const DEFAULT_KINTALE_TEMPLATE: KinTaleTemplate = {
   _id: DEFAULT_KINTALE_TEMPLATE_ID,
   name: 'Default KinTale',
   description: "Catch-all template for any service type that doesn't have its own.",
-  defaultEmailMessage:
-    "I had a wonderful time caring for your furry friends! Here's how they did today.",
+  // Deliberately blank. Mark 23 of the 2026-08-17 walk: a canned default here
+  // invited Auntie to send it unedited, when the message is meant to be the
+  // story of THIS visit. Blank on the shared constant so every path that reads
+  // it -- a fresh draft, decode of a doc that never had the field, the Android
+  // data-class default -- starts empty too. A template's own SAVED message is
+  // untouched either way: decode always reads the doc's stored field first.
+  defaultEmailMessage: '',
   serviceTypeKeys: [],
   isActive: true,
   isDefault: true,

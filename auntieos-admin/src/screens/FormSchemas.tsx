@@ -62,8 +62,8 @@ export function filterSchemas(rows: FormSchemaSummary[], query: string): FormSch
  * The middle part is `formSchemaUpdatedLabel`, NOT `row.updatedAt`. This line
  * used to interpolate the raw field, so the operator read
  * `2026-08-02T10:15:00.000Z` off the row, in UTC, milliseconds and all. It went
- * unnoticed because the screen's golden photographed a failed-callable error
- * panel until PR #251 put real rows in the picture.
+ * unnoticed because until PR #251 the only rendering anybody looked at was a
+ * failed-callable error panel, with no rows in it to be wrong.
  *
  * `formSchemaUpdatedLabel` never returns blank, so unlike the version and
  * `updatedBy` parts the timestamp part is never dropped: a schema with no
@@ -97,9 +97,9 @@ function TrashGlyph() {
 }
 
 interface FormSchemasProps {
-  /** Placeholder: the editor screen doesn't exist yet. Called with a schema id on row-select. */
+  /** Opens the editor screen (`FormSchemaEditor.tsx`) wired by `routes/FormSchemasView.tsx`. Called with a schema id on row-select. */
   onSelect?: (id: string) => void;
-  /** Placeholder: the editor's create-new route doesn't exist yet. */
+  /** Opens the editor screen (`FormSchemaEditor.tsx`) in create-new mode. Called with no arguments to start a new schema. */
   onNew?: () => void;
 }
 
@@ -114,8 +114,9 @@ interface FormSchemasProps {
  * reference's "listFormSchemas failed: $msg" / "deleteFormSchema failed: $msg"
  * wording, since AsyncRegion itself does not know which callable is loading.
  *
- * Only the list ships here. `onSelect` / `onNew` are placeholder props for the
- * not-yet-built editor screen, see the props doc below.
+ * This component renders the list. The editor screen (`FormSchemaEditor.tsx`)
+ * is mounted in a modal by the router (`routes/FormSchemasView.tsx`), which
+ * wires the `onSelect` and `onNew` handlers. See the props doc above.
  */
 export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });

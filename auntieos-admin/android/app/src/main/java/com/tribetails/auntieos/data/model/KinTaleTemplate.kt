@@ -20,7 +20,14 @@ data class KinTaleTemplate(
     @DocumentId val id: String = "",
     var name: String = "",                     // e.g. "Default Pet Care Report"
     var description: String = "",
-    var defaultEmailMessage: String = "I had a wonderful time caring for your furry friends! Here's how they did today.",
+    // Deliberately blank. Mark 23 of the 2026-08-17 walk: a canned default here
+    // invited Auntie to send it unedited, when the message is meant to be the
+    // story of THIS visit. Blank on the data-class default so a doc that never
+    // had the field (a missing-field Firestore decode) starts empty too,
+    // matching the TS `DEFAULT_KINTALE_TEMPLATE.defaultEmailMessage`. A
+    // template's own SAVED message is untouched: decode always reads the doc's
+    // stored field first.
+    var defaultEmailMessage: String = "",
     var serviceTypeKeys: List<String> = emptyList(),
     var isActive: Boolean = true,
     var isDefault: Boolean = false,            // exactly one default template per workspace

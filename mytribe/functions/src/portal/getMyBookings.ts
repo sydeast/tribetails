@@ -45,6 +45,20 @@ const BookingDtoSchema = z
     sessionId: z.string().nullable(),
     /** Vendor-parity (2026-07-02): a cancellation ask is pending on this visit. */
     cancelRequested: z.boolean(),
+    /**
+     * The kinfolk reschedule ask (#399 item 2), or null when this visit has
+     * never had one. `pending` while the office has not ruled; `accepted` once
+     * the visit has been moved to the proposed time; `declined` when it has
+     * not. The proposed window and the operator's note survive the decision on
+     * purpose, so the screen can say what was asked for and what came back
+     * rather than just "declined".
+     */
+    rescheduleRequestStatus: z.enum(['pending', 'accepted', 'declined']).nullable(),
+    rescheduleRequestedStartTimeMs: z.number().int().nullable(),
+    rescheduleRequestedEndTimeMs: z.number().int().nullable(),
+    rescheduleRequestReason: z.string().nullable(),
+    /** What the office said when it accepted or declined. */
+    rescheduleResponseNote: z.string().nullable(),
   })
   .strict();
 
@@ -134,6 +148,11 @@ export async function getMyBookingsHandler(
       sourceBookingId: stringOrNull(data['sourceBookingId']),
       sessionId: stringOrNull(data['sessionId']),
       cancelRequested: Boolean(data['cancelRequestedAt']),
+      rescheduleRequestStatus: rescheduleStatusOf(data['rescheduleRequestStatus']),
+      rescheduleRequestedStartTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
+      rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
+      rescheduleRequestReason: stringOrNull(data['rescheduleRequestReason']),
+      rescheduleResponseNote: stringOrNull(data['rescheduleResponseNote']),
     };
     if (batchId) {
       const bucket = byBatch.get(batchId) ?? [];
@@ -197,6 +216,14 @@ export async function getMyBookingsHandler(
       sourceBookingId: stringOrNull(s['sourceBookingId']),
       sessionId: d.id,
       cancelRequested: false,
+      // A session with no booking envelope has no kinCares doc to carry a
+      // request, and the portal cannot ask for one on it either (both request
+      // callables need a batchId). Null is the honest answer, not a default.
+      rescheduleRequestStatus: null,
+      rescheduleRequestedStartTimeMs: null,
+      rescheduleRequestedEndTimeMs: null,
+      rescheduleRequestReason: null,
+      rescheduleResponseNote: null,
     };
     if (status === 'active' || status === 'enRoute') {
       if (!liveVisit) liveVisit = dto;
@@ -266,6 +293,14 @@ function isoMillis(v: unknown): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/**
+ * The stored reschedule state, or null for anything this contract does not
+ * publish. An unrecognised string is null rather than passed through: the DTO
+ * is `.strict()` and three clients switch on these three values.
+ */
+function rescheduleStatusOf(v: unknown): 'pending' | 'accepted' | 'declined' | null {
+  return v === 'pending' || v === 'accepted' || v === 'declined' ? v : null;
+}
 /** Prefers the doc's own `batchId` field; falls back to the parent doc id. */
 function resolveBatchId(
   doc: { ref?: { parent?: { parent?: { id?: string } | null } } },

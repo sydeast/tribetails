@@ -24,8 +24,10 @@ const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
  * base.css/kindetail.css (.hero-greet, .glass.card, .sectlabel, .kinrow,
  * .tale, .footnote) using TribeHubScreen.kt as the structural spec, the same
  * way Home.tsx already renders "Your tribe" (.kinrow) and "Recent KinTales"
- * (.tale) cards. "All photos"/"All tales" have no dedicated gallery/archive
- * view spec, so they render inert (top-nav "KinTales" opens the full screen).
+ * (.tale) cards. Neither "All photos" nor "All tales" has a dedicated view in
+ * ui-ideas; both now go somewhere anyway. "All tales" opens the KinTales
+ * screen, and "All photos" opens Gallery.tsx (#399 item 1), which is built
+ * from the same shared primitives as this card for the same reason.
  */
 export function TribeHub() {
   const kinfolkId = getActiveKinfolkId();
@@ -99,7 +101,7 @@ export function TribeHub() {
           {gallery.length > 0 && (
             <section className="glass card d2">
               <div className="sectlabel">
-                Gallery <span className="inert" title="Coming soon">All photos</span>
+                Gallery <Link to="/gallery">All photos</Link>
               </div>
               <div className="gallery-row">
                 {gallery.map((k) => (

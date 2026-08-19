@@ -198,6 +198,31 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'A kinfolk asked to cancel a KinCare visit.',
   },
   {
+    // #399 item 2: the office hears when a kinfolk proposes a new time for a
+    // visit. NOT a status change and NOT a move; requestBookingReschedule
+    // stamps rescheduleRequestedAt on the kinCares doc and onBookingsWrite
+    // fires this. The visit only moves when an operator accepts, through
+    // admin/resolveBookingRescheduleRequest, and the household hears about
+    // THAT through the existing kincare.changed key.
+    key: 'kincare.reschedule.requested',
+    label: 'Kinfolk proposed a new visit time',
+    audience: 'business',
+    audiences: { business: true },
+    category: 'visit',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: false,
+    deliveryMode: 'trigger',
+    recipientResolver: 'businessAdmins',
+    templates: {
+      email: 'kincare.reschedule.requested',
+      sms: 'kincare.reschedule.requested',
+      push: 'kincare.reschedule.requested',
+    },
+    description: 'A kinfolk asked to move a KinCare visit to a different time.',
+  },
+  {
     // Vendor-parity (2026-07-02): the office hears when an Auntie writes a visit
     // note. Mirrors kincare.note.kinfolk but for staff-authored notes; emitted by
     // the same onBookingNoteCreate trigger.
@@ -542,6 +567,42 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'message.received', sms: 'message.received', push: 'message.received' },
     description: 'A kinfolk sent your business a message.',
   },
+  {
+    // The other direction of `message.received`: the office writes one message
+    // and sends it to a whole audience segment (admin/broadcastMessage.ts,
+    // Communicate step 6).
+    //
+    // WHY THIS ROW EXISTS (#386). broadcastMessage does its own fan-out (it
+    // never calls `enqueueNotification`, because there is no template for
+    // ad-hoc operator-authored copy), but it stamps this key on the
+    // `notifications/{id}` inbox doc it writes, and it now resolves each
+    // recipient's channels through `resolveChannels` like every other send. A
+    // key with no catalog row cannot be gated by the operator and cannot be
+    // silenced by a household, which is exactly the bug. The templates below
+    // are therefore never looked up; they exist because every row carries a
+    // full set (see normalizeAllChannels).
+    //
+    // NOT marketing-class ON PURPOSE. A broadcast is the operational channel
+    // (closures, weather, schedule changes), and `marketingCategory` is an
+    // opt-IN gate that `resolveChannels` puts beyond the operator's reach.
+    // Real campaigns have their own path: scheduleMarketingBlast over
+    // newsletter.announcement / survey.event / marketing.optin. Broadcast keeps
+    // the opt-OUT compliance it already ships: `message_suppressions` on email
+    // and SMS, plus the shared unsubscribe footer on every broadcast email.
+    key: 'broadcast.message',
+    label: 'Announcements from the office',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'messages',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: {},
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: { email: 'broadcast.message', sms: 'broadcast.message', push: 'broadcast.message' },
+    description: 'One-off announcements the office sends to a group of households.',
+  },
 
   // ─────────────────────────────────────────────────────────
   // HOME (pets / profile / home access)
@@ -601,21 +662,8 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'account.welcome.kinfolk' },
     description: 'Welcome email to kinfolk on account creation (invite redemption).',
   },
-  {
-    key: 'account.welcome.business',
-    label: 'Invited kinfolk finished account setup',
-    audience: 'business',
-    audiences: { business: true },
-    category: 'account',
-    allowedChannels: ['email'],
-    required: { email: true },
-    alwaysEnabled: false,
-    kinfolkFacing: false,
-    deliveryMode: 'trigger',
-    recipientResolver: 'businessAdmins',
-    templates: { email: 'account.welcome.business' },
-    description: 'Notify business when an invited kinfolk completes account setup.',
-  },
+  // `account.welcome.business` used to sit here, between the kinfolk welcome and
+  // the invite-expired row. It is retired: see RETIRED_NOTIFICATION_KEYS below.
   {
     // Run-4: "Kinfolk's MyTribe Invite Expired" (Business bucket). Emitted by the
     // expireStaleInvites cron when a pending invite passes its expiresAt.
@@ -884,6 +932,58 @@ export const NOTIFICATION_KEY_ALIASES: Readonly<Record<string, NotificationKeyAl
   Object.freeze({
     'kincare.report.sent': { canonical: 'kintale.published', legacyCategory: 'visit' },
   });
+
+/**
+ * A key that was withdrawn outright, with nothing taking its place.
+ *
+ * This is the OTHER way a catalog row ends, and it is not an alias. An alias
+ * says "that notification is still sent, under a different name"; a retirement
+ * says "that notification is not sent any more, by anyone". There is no
+ * canonical key to point at, so putting one of these in
+ * NOTIFICATION_KEY_ALIASES would be a lie with teeth: `canonicalNotificationKey`
+ * would redirect it, and every preference and business override stored under
+ * the retired key would silently start governing some unrelated notification.
+ *
+ * What an entry here buys is the one thing the alias list also buys, and the
+ * only one that still applies: an admin who reaches for the key they remember
+ * gets told it was retired on purpose, instead of "unknown key", which reads
+ * like a typo they should correct rather than a decision someone made.
+ */
+export interface RetiredNotificationKey {
+  /** ISO date the row came out of the catalog. */
+  retiredOn: string;
+  /** Why, in the words an admin should hear when they ask for the key. */
+  reason: string;
+}
+
+/**
+ * 2026-08-18: `account.welcome.business` told the office that an invited
+ * kinfolk had finished setting up their MyTribe account. It was emitted from
+ * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts`.
+ *
+ * The operator deleted its template during the 2026-08-17 admin walk and then
+ * ruled on it directly: "that was my doing I did not need that type of
+ * notification. I should be able to delete templates without being yelled at."
+ *
+ * So the row is gone rather than left to throw. Nothing enqueues the key, no
+ * seed recreates its template, and it is no longer a live catalog key, which
+ * means `deleteTemplate` has nothing left to warn about if a document under
+ * that name ever reappears.
+ */
+export const RETIRED_NOTIFICATION_KEYS: Readonly<Record<string, RetiredNotificationKey>> =
+  Object.freeze({
+    'account.welcome.business': {
+      retiredOn: '2026-08-18',
+      reason:
+        'The office no longer wants to be told when an invited kinfolk finishes ' +
+        'account setup. Retired at the operator’s request; nothing replaces it.',
+    },
+  });
+
+/** True when [key] was a catalog row that has since been withdrawn outright. */
+export function isRetiredNotificationKey(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(RETIRED_NOTIFICATION_KEYS, key);
+}
 
 /** The canonical key for [key]; returns [key] unchanged when it is not an alias. */
 export function canonicalNotificationKey(key: string): string {

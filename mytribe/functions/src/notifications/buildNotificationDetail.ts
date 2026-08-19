@@ -1,6 +1,6 @@
 import { logEvent } from '../lib/logger';
 import { enrichTemplateData } from './enrichTemplateData';
-import type { NotificationDetail } from './types';
+import type { AudienceStream, NotificationDetail } from './types';
 
 /**
  * Resolves the entity detail a notification CARD renders, and stamps it on the
@@ -56,6 +56,43 @@ export const CARD_DETAIL_FIELDS: readonly string[] = [
   'amount',
   'dueDate',
 ];
+/**
+ * Detail fields that belong to the STAFF side of the card and are never written
+ * onto a copy addressed to a household (issue #380).
+ *
+ * The booking/session `notes` FIELD is not kinfolk-facing. Any operator with
+ * the auntie hat can type into it (`admin/createKinCareSession.ts`,
+ * `admin/createMultiDateBookingRequest.ts`, the `isAuntie()` update branch in
+ * `firestore.rules`), and `admin/transitionBookingStatus.ts` appends a
+ * cancellation reason to it verbatim, so what it holds is internal remarks as
+ * often as it is anything a household should read. Once it was copied into
+ * `notifications/{id}.detail`, a kinfolk could read it straight off their own
+ * inbox document, which `firestore.rules` grants them by `recipientUid`.
+ *
+ * This does NOT undo operator ruling R5 ("wheres the notes"). R5 was about the
+ * ADMIN card, and staff- and business-stream copies still carry the field. What
+ * changes is that the household's copy of the same event no longer does.
+ *
+ * If a kinfolk-facing template ever genuinely needs a message written by staff,
+ * that is a separate, explicitly-labelled field on the booking, authored knowing
+ * the household will read it. It is not this one.
+ */
+export const STAFF_ONLY_DETAIL_FIELDS: readonly string[] = ['notes'];
+/**
+ * The detail fields to resolve for one copy, given the audience stream that copy
+ * is addressed to.
+ *
+ * Dropping a staff-only field from the REQUEST is the cheap half: the enricher
+ * skips the entity read it would have needed. The half that actually closes the
+ * leak is the projection guard in `buildNotificationDetail`, because the
+ * enricher's context starts as a spread of the emitter's own merge bag, so a
+ * caller that ever passed `data.notes` would put the value in the context
+ * without the enricher fetching anything.
+ */
+export function cardDetailFieldsFor(stream: AudienceStream): readonly string[] {
+  if (stream !== 'kinfolk') return CARD_DETAIL_FIELDS;
+  return CARD_DETAIL_FIELDS.filter((f) => !STAFF_ONLY_DETAIL_FIELDS.includes(f));
+}
 
 /** A resolved, non-blank string, or undefined. Blank is never a value here. */
 function present(v: unknown): string | undefined {
@@ -81,16 +118,27 @@ function present(v: unknown): string | undefined {
  *                      ONCE for the whole dispatch, and re-reading them per
  *                      recipient here would undo that. `null` for a
  *                      system-emitted notification with no human behind it.
+ * @param stream        the audience stream THIS COPY is addressed to, which is
+ *                      what decides whether staff-only fields are included.
+ *                      Deliberately required and deliberately per-copy: an
+ *                      `audience: 'both'` key such as `kincare.changed` fans one
+ *                      event out to the operator AND to the household, so the
+ *                      key's own audience cannot answer this question. The
+ *                      dispatcher already derives the stream per recipient for
+ *                      channel resolution (`streamForRecipient`); redaction
+ *                      rides the same answer so the two can never disagree.
  */
 export async function buildNotificationDetail(
   key: string,
   recipientUid: string,
   data: Record<string, unknown>,
   actorName: string | null,
+  stream: AudienceStream,
 ): Promise<NotificationDetail | undefined> {
+  const staffSide = stream !== 'kinfolk';
   let ctx: Record<string, unknown>;
   try {
-    ctx = await enrichTemplateData(key, recipientUid, data, CARD_DETAIL_FIELDS);
+    ctx = await enrichTemplateData(key, recipientUid, data, cardDetailFieldsFor(stream));
   } catch (err) {
     // enrichTemplateData documents itself as never-throwing, but it is a large
     // surface over live Firestore reads and this is the one caller that must
@@ -114,7 +162,9 @@ export async function buildNotificationDetail(
   assign('serviceType', present(ctx.serviceType));
   assign('bookingDate', present(ctx.bookingDate));
   assign('bookingTime', present(ctx.bookingTime));
-  assign('notes', present(ctx.notes));
+  // Staff-only, per issue #380. Guarded on the WRITE and not only on the
+  // request, because `ctx` begins life as the emitter's own merge bag.
+  if (staffSide) assign('notes', present(ctx.notes));
   assign('invoiceNumber', present(ctx.invoiceNumber));
   assign('amount', present(ctx.amount));
   assign('dueDate', present(ctx.dueDate));

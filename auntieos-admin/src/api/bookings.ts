@@ -98,6 +98,49 @@ export interface BookingEntry extends SessionEntry {
 }
 
 /**
+ * The prefix that turns an envelope VISIT id into the flat SESSION doc id.
+ *
+ * Not a convention someone hopes holds: three server paths mint the session doc
+ * at exactly `vis_{visitId}`, and nothing else ever creates one from a visit:
+ * `approveBookingSeriesCore.ts:95` (the only writer that creates the session),
+ * `manageBookingSeries.ts:100` and `batchUpdateBookings.ts:184` (both of which
+ * re-derive the same id to mirror a status onto it).
+ */
+const VISIT_SESSION_PREFIX = 'vis_';
+
+/**
+ * The flat `kin_care_sessions` doc id for an envelope visit id.
+ *
+ * This is what bridges the two id spaces a booking notification straddles: its
+ * `targetId` is the ENVELOPE visit id
+ * (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`), while every
+ * admin booking surface reads the flat collection. The bridge is deterministic,
+ * so a deep link needs no lookup table and no second query to cross it.
+ *
+ * An id that ALREADY carries the prefix is returned unchanged, so this is safe
+ * to apply to a targetId whose emitter threaded the flat session id instead
+ * (`resolveTargetRef` in the dispatcher accepts `data.bookingId` as well as
+ * `data.visitId`, and the two are not always the same space). That passthrough
+ * is what makes the pair below a genuine round trip rather than a one-way guess.
+ */
+export function sessionIdForVisit(visitId: string): string {
+  const id = visitId.trim();
+  if (id === '') return '';
+  return id.startsWith(VISIT_SESSION_PREFIX) ? id : `${VISIT_SESSION_PREFIX}${id}`;
+}
+
+/**
+ * The envelope visit id a flat session doc id was minted from, or the id
+ * unchanged when it carries no prefix. A manually-created or legacy session has
+ * no envelope counterpart at all, as `kinCareVisitId` above records, so there is
+ * no visit id to recover and inventing one would be worse than saying so.
+ */
+export function visitIdForSession(sessionId: string): string {
+  const id = sessionId.trim();
+  return id.startsWith(VISIT_SESSION_PREFIX) ? id.slice(VISIT_SESSION_PREFIX.length) : id;
+}
+
+/**
  * The bounded, server-ordered `kin_care_sessions` listener. Ordered by
  * `createdAt` descending, capped at 200, the same INVOICES_QUERY convention:
  * `createdAt` is a real server timestamp on every doc, where `startTime` is an

@@ -1,6 +1,10 @@
 package com.tribetails.auntieos.voice
 
 import com.google.firebase.functions.FirebaseFunctionsException
+import android.content.Context
+import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.AuthGate
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +42,15 @@ class VoiceTokenManagerTest {
 
     private lateinit var scope: CoroutineScope
 
+    /**
+     * Every retry backoff the manager asked for, in order, in milliseconds.
+     *
+     * The seam matters as much as the recording. Without it, the four attempts a
+     * transient mint failure now makes would sleep for their real forty-odd
+     * seconds inside a unit test, and a suite that slow stops being run.
+     */
+    private val backoffs = mutableListOf<Long>()
+
     /** Records what was handed to the Voice SDK, and how many times. */
     private class RecordingRegistrar(
         private val failure: Throwable? = null,
@@ -60,6 +73,7 @@ class VoiceTokenManagerTest {
     @Before
     fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        backoffs.clear()
         VoiceTokenManager.resetForTests()
     }
 
@@ -88,6 +102,7 @@ class VoiceTokenManagerTest {
         fcmTokenProvider = { fcmToken },
         now = now,
         scope = scope,
+        backoff = { backoffs += it },
     )
 
     @Test
@@ -501,5 +516,189 @@ class VoiceTokenManagerTest {
         val state = VoiceTokenManager.state.value
         assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
         assertTrue((state as VoiceTokenState.Failed).message.contains("never initialized"))
+    }
+
+    // ── #433: a failed mint is not the end of it ────────────────────────────
+    //
+    // What these pin: registration used to be attempted exactly once, from
+    // `Application.onCreate`, before anybody could be signed in. The mint was
+    // refused, the manager parked on a terminal state, and nothing ever asked
+    // again, because the re-mint timer is scheduled only by a mint that WORKED.
+    // The operator signed in a second later, the app looked completely normal,
+    // and the phone did not ring for inbound business calls for the rest of that
+    // process. So a failure has to do one of two things now: retry itself, or be
+    // recoverable by the sign-in that fixes it.
+    @Test
+    fun `a transient mint failure is retried with backoff and then succeeds`() = runBlocking {
+        // Two refusals of the kind that clear on their own (no network, callable
+        // briefly unavailable), then a server that answers.
+        var mints = 0
+        val registrar = RecordingRegistrar()
+        configure(
+            mint = {
+                mints++
+                if (mints < 3) Result.failure(RuntimeException("unavailable: mintVoiceAccessToken"))
+                else Result.success(token(value = "jwt-$mints"))
+            },
+            registrar = registrar,
+        )
+        VoiceTokenManager.mintAndRegister()
+        assertEquals(3, mints)
+        // Growing waits, so a server that is briefly down is not asked three
+        // times in the same second.
+        assertEquals(listOf(2_000L, 10_000L), backoffs)
+        assertEquals(listOf("jwt-3" to "fcm-abc"), registrar.registrations)
+        val state = VoiceTokenManager.state.value
+        assertTrue("expected Registered, got $state", state is VoiceTokenState.Registered)
+    }
+    @Test
+    fun `the retry budget is bounded at four attempts and the last failure is what stands`() =
+        runBlocking {
+            // The other half of "do not be terminal": do not spin either. A mint
+            // costs a Twilio call, and a loop with no bound would keep making it
+            // for the life of the process.
+            var mints = 0
+            configure(mint = {
+                mints++
+                Result.failure(RuntimeException("unavailable: mintVoiceAccessToken"))
+            })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(4, mints)
+            assertEquals(listOf(2_000L, 10_000L, 30_000L), backoffs)
+            // And the operator is left with the classified failure, never with a
+            // Working that no longer has anything working behind it.
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected Failed, got $state", state is VoiceTokenState.Failed)
+            assertTrue((state as VoiceTokenState.Failed).message.contains("unavailable"))
+        }
+    @Test
+    fun `a mint refused because nobody is signed in reads as NotAuthorized, not as a generic failure`() =
+        runBlocking {
+            // The exact throw from `AuthGate.ensureAuthenticated`, which is the
+            // first line of `mintVoiceAccessToken`. Before #433 this was
+            // classified as Failed, which is both the wrong sentence for the
+            // operator and the wrong recovery: Failed is the retryable bucket.
+            configure(mint = { Result.failure(IllegalStateException(AuthGate.SIGN_IN_REQUIRED)) })
+            VoiceTokenManager.mintAndRegister()
+            val state = VoiceTokenManager.state.value
+            assertTrue("expected NotAuthorized, got $state", state is VoiceTokenState.NotAuthorized)
+            assertEquals(
+                AuthGate.SIGN_IN_REQUIRED,
+                (state as VoiceTokenState.NotAuthorized).message,
+            )
+        }
+    @Test
+    fun `an auth failure spends no retries, because signing in is what fixes it`() = runBlocking {
+        var mints = 0
+        configure(mint = {
+            mints++
+            Result.failure(IllegalStateException(AuthGate.SIGN_IN_REQUIRED))
+        })
+        VoiceTokenManager.mintAndRegister()
+        // One attempt, no waiting. Asking the same signed-out question three more
+        // times over forty seconds gets the same answer three more times, and the
+        // event that changes it is the operator signing in.
+        assertEquals(1, mints)
+        assertTrue("expected no backoff, got $backoffs", backoffs.isEmpty())
+    }
+    @Test
+    fun `a missing Twilio secret spends no retries either, because it will still be missing`() =
+        runBlocking {
+            val refusal = mockk<FirebaseFunctionsException>()
+            every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
+            every { refusal.details } returns
+                mapOf("code" to "missing_secret", "secret" to "TWIML_APP_SID")
+            every { refusal.message } returns "the TWIML_APP_SID secret is not set."
+            var mints = 0
+            configure(mint = { mints++; Result.failure(refusal) })
+            VoiceTokenManager.mintAndRegister()
+            assertEquals(1, mints)
+            assertTrue(backoffs.isEmpty())
+            assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Misconfigured)
+        }
+    @Test
+    fun `signing in after a refused mint registers, with its own full retry budget`() = runBlocking {
+        // The reported defect end to end, at the manager level. The first mint is
+        // the one app startup used to make: refused, because nobody is signed in
+        // yet. Then the operator signs in, and the SECOND mint has to happen at
+        // all - which is the thing that never used to.
+        var signedIn = false
+        var mints = 0
+        val registrar = RecordingRegistrar()
+        configure(
+            mint = {
+                mints++
+                if (!signedIn) Result.failure(IllegalStateException(AuthGate.SIGN_IN_REQUIRED))
+                else Result.success(token(value = "jwt-$mints"))
+            },
+            registrar = registrar,
+        )
+        VoiceTokenManager.mintAndRegister()
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.NotAuthorized)
+        assertTrue(registrar.registrations.isEmpty())
+        signedIn = true
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(2, mints)
+        assertEquals(listOf("jwt-2" to "fcm-abc"), registrar.registrations)
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+    }
+    @Test
+    fun `signing out drops the cached token so the next admin does not inherit it`() = runBlocking {
+        // A token carries the identity it was minted for. Reusing the outgoing
+        // admin's token registers this phone as the wrong person, which is the
+        // same complaint - the call does not arrive - with a subtler cause.
+        var mints = 0
+        val registrar = RecordingRegistrar()
+        configure(
+            mint = {
+                mints++
+                Result.success(token(value = "jwt-$mints"))
+            },
+            registrar = registrar,
+        )
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(1, mints)
+        VoiceTokenManager.onSignedOut()
+        // Idle, not a failure: a signed-out app has not attempted a registration,
+        // and a red banner about a phone that cannot ring is noise on a login screen.
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(2, mints)
+        assertEquals(
+            listOf("jwt-1" to "fcm-abc", "jwt-2" to "fcm-abc"),
+            registrar.registrations,
+        )
+        assertTrue(VoiceTokenManager.state.value is VoiceTokenState.Registered)
+    }
+    @Test
+    fun `an admin sign-in before the manager is initialized is ignored, not crashed`() {
+        VoiceTokenManager.resetForTests()
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+    }
+
+    @Test
+    fun `initialize hands over the seams and mints nothing, because nobody is signed in yet`() {
+        // THE REGRESSION GUARD FOR #433. `initialize` used to end with
+        // `scope.launch { mintAndRegister() }`, and its only caller is
+        // `AuntieOSApp.onCreate`, the first code in the process, minutes before
+        // any admin signs in. That mint was refused by the callable's own auth
+        // gate, and a refused mint schedules no retry, so the phone stopped
+        // ringing for the whole session. Anything that puts a mint back here
+        // brings the defect back with it.
+        val context = mockk<Context>(relaxed = true)
+        every { context.applicationContext } returns context
+        val repository = mockk<AuntieRepository>()
+        var mints = 0
+        coEvery { repository.mintVoiceAccessToken() } coAnswers {
+            mints++
+            Result.success(token())
+        }
+        VoiceTokenManager.initialize(context, repository, scope)
+        assertEquals(0, mints)
+        assertEquals(VoiceTokenState.Idle, VoiceTokenManager.state.value)
+        // Configured, though: the sign-in that follows has everything it needs.
+        VoiceTokenManager.onAdminSignedIn()
+        assertEquals(1, mints)
     }
 }

@@ -112,12 +112,9 @@ export async function listTemplatesPage(args: ListTemplatesPageArgs): Promise<Te
  * of the managed `template_categories` collection and every distinct
  * `category` value already present on an `emailTemplates` doc
  * (`listCategoriesHandler`'s own doc comment calls this the "hybrid category
- * source", Decision 2026-06-03). Powers this screen's filter chips.
- *
- * This list screen does not WRITE to either collection: category
- * *assignment* is the wasm editor's drag-drop (`TemplateCategoryDrag.kt`,
- * `assignCategory`/`saveTemplate`), which is out of scope for a list-only
- * port (see Templates.tsx's doc comment).
+ * source", Decision 2026-06-03). Powers the list screen's filter chips and the
+ * template editor's category field (`TemplateEditor.tsx`), which saves changes
+ * via `templates/write.ts#saveTemplate`.
  */
 export async function listTemplateCategories(): Promise<string[]> {
   const res = await call<Record<string, never>, { categories: string[]; schemaVersion: number }>(

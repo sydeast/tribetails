@@ -197,6 +197,20 @@
       ]
     },
     {
+      "collectionGroup": "kinCares",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "rescheduleRequestStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rescheduleRequestedAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "sharedKinTales",
       "queryScope": "COLLECTION",
       "fields": [

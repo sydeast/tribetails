@@ -142,8 +142,9 @@ export function railCount(counts: RailCounts, slug: string): number | null {
 export function RailItem({ entry, count }: { entry: NavEntry; count: number | null }) {
   const link = liveLink(entry.slug);
   if (!link) {
-    // Not built yet: no link, no pill (there is no screen for a number to be
-    // about), and aria-disabled so it is not just visually greyed.
+    // Defensive fallback for a rail entry added ahead of its route (currently never
+    // exercised in production; see AppShell.railLinks.test.ts which asserts all
+    // entries are live). Renders an inert span, no pill, and aria-disabled.
     return (
       <span className="shell__link shell__link--pending" aria-disabled="true">
         <NavGlyph dest={entry.dest} />

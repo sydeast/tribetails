@@ -12,12 +12,17 @@ import { call } from '../lib/fns';
  *  - `listTemplateBindings` (MyTribe/functions/src/admin/listTemplates.ts):
  *    every `notificationTemplateBindings` doc → { catalogKey (=doc id),
  *    templateId, audience, triggerKey, active }.
- *  - `listCatalogKeys` (…/admin/listCatalogKeys.ts): the distinct set of
- *    catalog keys already bound (a read of the same collection's ids). Used to
- *    warn about a key already in use before assigning.
+ *  - `listCatalogKeys` (…/admin/listCatalogKeys.ts): every key an admin can bind,
+ *    as rows. It used to return the keys already bound, a read of the same
+ *    collection it was meant to describe, so with no bindings it returned
+ *    nothing and no client could offer a picker (issue #383). It now returns the
+ *    notification catalog plus the direct-send keys, each row saying what it is
+ *    and what it dispatches today.
  *  - `assignTemplate` (…/admin/assignTemplate.ts): upserts the binding with
  *    `{ merge: true }`, verifying the target template exists (throws
- *    `not-found` otherwise). Per AO-30 it writes `triggerKey` only when supplied.
+ *    `not-found` otherwise) and that the catalog key is real (throws
+ *    `invalid-argument` naming the key, issue #382). Per AO-30 it writes
+ *    `triggerKey` only when supplied.
  *  - `unassignTemplate` (…/admin/unassignTemplate.ts, added 2026-07-17 to close
  *    AO-56): deletes the binding doc; idempotent (removed:false if it was
  *    already gone). This is the missing half without which a bound template
@@ -42,9 +47,47 @@ export async function listTemplateBindings(): Promise<TemplateBinding[]> {
   return res.bindings ?? [];
 }
 
-export async function listCatalogKeys(): Promise<string[]> {
-  const res = await call<Record<string, never>, { keys: string[] }>('listCatalogKeys', {});
-  return res.keys ?? [];
+/**
+ * Where a catalog key comes from.
+ *  - `catalog`     a row in the notification catalog.
+ *  - `direct-send` a key sent straight through `sendFromTemplate`, outside the
+ *                  dispatcher (portal invites, recovery mail, the error digest).
+ *  - `legacy`      a key sitting in the bindings collection that is neither of
+ *                  the above. Nothing dispatches it, so it is shown but never
+ *                  offered as something new to bind.
+ */
+export type CatalogKeySource = 'catalog' | 'direct-send' | 'legacy';
+
+export interface CatalogKeyRow {
+  key: string;
+  /** Human name for the key, e.g. 'KinCare booking confirmed'. */
+  label: string;
+  /** Catalog category, or null for keys that live outside the catalog. */
+  category: string | null;
+  /** Catalog audience ('kinfolk' | 'business' | 'both'), or null outside it. */
+  audience: string | null;
+  source: CatalogKeySource;
+  /** What dispatch falls back to when this key has no binding. */
+  defaultTemplateId: string;
+  /** Whether that fallback template actually exists in the bank. */
+  hasDefaultTemplate: boolean;
+  /** Whether a binding doc exists for this key. */
+  bound: boolean;
+  /** What dispatch sends for this key right now. */
+  resolvedTemplateId: string;
+}
+
+export async function listCatalogKeys(): Promise<CatalogKeyRow[]> {
+  const res = await call<Record<string, never>, { keys: string[]; rows: CatalogKeyRow[] }>(
+    'listCatalogKeys',
+    {},
+  );
+  return res.rows ?? [];
+}
+
+/** The keys a NEW binding may be written under. Legacy keys are not among them. */
+export function bindableKeys(rows: CatalogKeyRow[]): CatalogKeyRow[] {
+  return rows.filter((r) => r.source !== 'legacy');
 }
 
 export const BINDING_AUDIENCES = ['kinfolk', 'auntie', 'admin', 'guest'] as const;

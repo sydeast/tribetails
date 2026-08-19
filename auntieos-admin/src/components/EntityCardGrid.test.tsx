@@ -13,8 +13,8 @@ import { EntityCardGrid } from './EntityCardGrid';
  * jsdom ships no layout engine, so none of these assertions can look at a
  * computed grid. They assert the STATE CARRIERS instead: the role and
  * accessible name a screen reader reads, and the custom property the stylesheet
- * consumes. That is deliberate, and it is also why the visual harness
- * (`npm run visual:react`) is the other half of the proof rather than an extra.
+ * consumes. That is deliberate, and it is also why a real browser
+ * (`npm run e2e`) is the other half of the proof rather than an extra.
  */
 describe('EntityCardGrid', () => {
   it('renders a list semantic so a screen reader announces the count', () => {

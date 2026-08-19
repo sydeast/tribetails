@@ -12,8 +12,7 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-# Least privilege for the whole file: no job here writes to the repo, and the
-# kotlin job's jvmTest even rewrites tracked golden PNGs in its checkout, so a
+# Least privilege for the whole file: no job here writes to the repo, and a
 # read-only token is what makes "this job must never push" enforced rather
 # than asked nicely. The changes job re-declares its own block because the
 # paths filter also needs pull-requests: read.
@@ -30,7 +29,6 @@ jobs:
     outputs:
       admin: ${{ steps.filter.outputs.admin }}
       adminE2e: ${{ steps.filter.outputs.adminE2e }}
-      adminVisual: ${{ steps.filter.outputs.adminVisual }}
       functions: ${{ steps.filter.outputs.functions }}
       android: ${{ steps.filter.outputs.android }}
       mytribe: ${{ steps.filter.outputs.mytribe }}
@@ -78,34 +76,6 @@ jobs:
               - 'auntieos-admin/src/**'
               - 'auntieos-admin/web/firestore.rules'
               - 'auntieos-admin/package.json'
-              - 'package.json'
-              - 'package-lock.json'
-              - '.github/workflows/ci.yml'
-            # Its own filter rather than a share of `adminE2e`, because this job
-            # boots the emulators and a browser TWICE (see `admin-visual`
-            # below), so it must not be paid for by every PR that edits a spec.
-            #
-            # Watches the same appearance-bearing sources `adminE2e` does, plus
-            # the three files that decide what gets photographed and how it is
-            # judged: the manifest names the screens, the capture spec and its
-            # helpers drive them, and baseline.mjs holds the thresholds.
-            #
-            # NOT watching `auntieos-admin/visual/**`. The goldens under there
-            # are the OPERATOR's record and are not what this job compares
-            # against: it photographs the base branch and the PR on one runner
-            # and diffs those, because the committed goldens were recorded on
-            # macOS and would be red on a Linux runner for font rasterization
-            # alone (docs/runbooks/visual-regression.md, "The goldens are
-            # machine-specific"). A commit that only re-records goldens
-            # therefore has nothing here to run.
-            adminVisual:
-              - 'auntieos-admin/src/**'
-              - 'auntieos-admin/e2e/**'
-              - 'auntieos-admin/web/visual/manifest.json'
-              - 'auntieos-admin/web/visual/baseline.mjs'
-              - 'auntieos-admin/e2e.firebase.json'
-              - 'auntieos-admin/package.json'
-              - 'auntieos-admin/vite.config.ts'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
@@ -271,185 +241,6 @@ jobs:
           # Traces and screenshots are written only for failures, which is
           # exactly when a red CI run is otherwise unreadable from the log.
           path: auntieos-admin/e2e/.artifacts/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # The react visual regression gate, which until now ran only when a human
-  # remembered to type it. That is not a hypothetical cost: the goldens went
-  # stale for weeks with nobody noticing, and a real layout change sat
-  # unreported for five days.
-  #
-  # IT PHOTOGRAPHS THE BASE BRANCH AND THE PULL REQUEST ON ONE RUNNER, and
-  # diffs those two. It does NOT verify against the committed goldens, and that
-  # is the whole design rather than a shortcut:
-  #
-  #   - The committed goldens were recorded on macOS 26.5 / arm64. Font
-  #     rasterization differs between operating systems, so a first verify on a
-  #     Linux runner is red on every screen for a reason that is not a UI
-  #     change. The runbook says exactly this under "The goldens are
-  #     machine-specific", and calls that case a re-record, not a review. A gate
-  #     that is red on arrival teaches people to ignore it.
-  #   - Both sides of the diff are shot by the same Chromium on the same box
-  #     minutes apart, so rendering noise cancels and what is left is caused by
-  #     the pull request. The capture is deterministic enough for that to mean
-  #     something: four consecutive runs, one under TZ=Asia/Tokyo, produced
-  #     byte-identical PNGs for all 19 screens.
-  #   - It cannot bless anything. Nothing under `visual/baselines/` is
-  #     committed by this job; the base capture is copied over the checkout's
-  #     copy in the runner's throwaway tree and discarded with it.
-  #
-  # A SEPARATE JOB rather than more steps on `React admin e2e`. That job is one
-  # checkout and one emulator run; this is two of each, so folding it in would
-  # roughly triple the cost of every PR that touches a spec, and a red visual
-  # diff would be reported under a job name that says nothing about pictures.
-  # Same trade `MyTribe Firestore rules` makes against `MyTribe functions`, for
-  # the same two reasons.
-  #
-  # PULL REQUESTS ONLY, and deliberately not `workflow_dispatch`. The comparison
-  # needs a base commit to photograph, and a dispatch has none. Verifying the
-  # committed goldens is a LOCAL run (`npm run visual:react` then
-  # `npm run visual:react:verify` from auntieos-admin/), on the machine that
-  # recorded them.
-  # TURNED OFF ON 2026-08-18 BY OPERATOR RULING: "turn off visual regression
-  # its probably blocking the ui changes i've been trying to implement".
-  #
-  # It was. This job photographs the pull request and its base, then fails on
-  # ANY pixel difference at threshold 0%, and the step below named "Stand the
-  # base's capture up as the golden" deletes whatever goldens the branch
-  # committed. There is no way for a change to declare itself intended, so
-  # every deliberate UI change was permanently red until it merged, and the
-  # only way to ship one was to merge past a failing check. A gate that cannot
-  # be satisfied does not stop regressions; it teaches everyone to ignore red.
-  #
-  # What it detected is still worth having, so nothing here is deleted. Making
-  # it usable again means giving it an approval path: honour the goldens the
-  # branch committed, or gate the failure behind the absence of a label the
-  # author applies after reading the diff. Until then it runs on demand only,
-  # and the same comparison is available locally with `npm run visual:react`
-  # then `npm run visual:react:verify` from auntieos-admin/.
-  admin-visual:
-    name: React admin visual regression
-    needs: changes
-    if: needs.changes.outputs.adminVisual == 'true' && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      # Two checkouts in two directories rather than one tree checked out
-      # twice: `npm ci` has to run against each side's OWN lockfile, and a
-      # second `git checkout` over the top would also destroy the base capture
-      # sitting in the tree.
-      - name: Check out the pull request
-        uses: actions/checkout@v7
-        with:
-          path: pr
-      - name: Check out the base commit this pull request merges into
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: base
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          # Root lockfile: auntieos-admin is an npm workspace member, so its
-          # deps resolve at the repo root. See the `admin` job above.
-          cache-dependency-path: pr/package-lock.json
-      # The Firestore emulator is a JAR. Without a JDK it fails at startup with
-      # a message about `java`, several steps away from anything that looks
-      # like a test. 21 to match the e2e job.
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 21
-      # Pinned, and pinned to the same version as the two other emulator jobs:
-      # firebase-tools ships emulator behaviour changes in minor releases, and
-      # an unpinned global install turns an upstream release into a red build on
-      # a PR that touched nothing.
-      - name: Install firebase-tools
-        run: npm install -g firebase-tools@15.18.0
-      - name: Install the base's dependencies
-        run: npm ci
-        working-directory: base
-      - name: Install the pull request's dependencies
-        run: npm ci
-        working-directory: pr
-      # Once per side. They land in the same shared cache and coexist, so this
-      # is a no-op on the second call whenever the two agree.
-      #
-      # WHEN THEY DISAGREE, i.e. on a PR that bumps @playwright/test, the two
-      # captures are shot by two different Chromium builds and the diff is
-      # renderer noise rather than a UI change. Expect that run to be red on
-      # every screen at once, which is the signature of a renderer change and
-      # not of a layout one; the uploaded diff PNGs show it as a uniform text
-      # shimmer. Read it as "re-record the goldens", the same as the
-      # machine-specific case above.
-      - name: Install Chromium for the base
-        run: npx playwright install --with-deps chromium
-        working-directory: base
-      - name: Install Chromium for the pull request
-        run: npx playwright install --with-deps chromium
-        working-directory: pr
-      # Base first, so a failure here is legible as "the base branch could not
-      # be photographed" rather than as a diff. Both runs boot their own
-      # emulators and their own vite server on the same ports, so they are
-      # sequential by necessity as well as by preference.
-      #
-      # No Firebase credentials in this job, deliberately: the emulators run
-      # offline against a throwaway project id, so nothing here can touch real
-      # data even if a spec is wrong.
-      - name: Photograph the base
-        run: npm run visual:react
-        working-directory: base/auntieos-admin
-      - name: Photograph the pull request
-        run: npm run visual:react
-        working-directory: pr/auntieos-admin
-      # `rm -rf` first, not a copy over the top: the golden set has to be
-      # exactly what the base renders. Leaving the committed macOS goldens in
-      # place for any screen the base capture did not produce would put a
-      # cross-platform diff back into a comparison built to avoid one.
-      - name: Stand the base's capture up as the golden
-        run: |
-          rm -rf pr/auntieos-admin/visual/baselines/react
-          mkdir -p pr/auntieos-admin/visual/baselines/react
-          cp base/auntieos-admin/visual/react/*.png pr/auntieos-admin/visual/baselines/react/
-      # The react threshold is 0 (see web/visual/baseline.mjs): on this surface
-      # a nonzero diff is a real change, and both sides came off one runner, so
-      # there is nothing left for a percentage band to absorb.
-      #
-      # A screen this PR ADDS is `unbaselined`, reported and not fatal, because
-      # the base cannot photograph a screen it does not have. A screen this PR
-      # REMOVES is `missing-capture` and IS fatal, which is correct: deleting a
-      # screen should have to be said out loud.
-      - name: Verify the pull request against the base
-        run: npm run visual:react:verify
-        working-directory: pr/auntieos-admin
-      # The verdict table on the run's own summary page, pass or fail, so the
-      # first thing a human sees is which screens moved and by how much rather
-      # than a job name and a red cross.
-      - name: Put the verdict on the run summary
-        if: always()
-        run: |
-          if [ -f pr/auntieos-admin/visual/report/regression.md ]; then
-            cat pr/auntieos-admin/visual/report/regression.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No visual report was written: the run failed before the comparison." >> "$GITHUB_STEP_SUMMARY"
-          fi
-      # The diff PNGs. A percentage says a screen moved; only the picture says
-      # what moved, and `regression.md` links each REGRESSION row to its own
-      # overlay inside this artifact. Uploaded on failure only, and with the
-      # same retention as the e2e job's artifacts.
-      #
-      # Playwright's own traces and failure screenshots from BOTH captures ride
-      # along, because the other way this job goes red is a capture that never
-      # reached the comparison, and then `visual/report/` is empty.
-      - name: Upload the visual diff report
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: react-visual-regression
-          path: |
-            pr/auntieos-admin/visual/report/
-            pr/auntieos-admin/e2e/.artifacts/
-            base/auntieos-admin/e2e/.artifacts/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -705,9 +496,6 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
-      # jvmTest still writes visual/desktop/ unconditionally, but those PNGs are
-      # harmless on a runner (the checkout is thrown away) but it is the reason
-      # this job must never commit or push anything.
       - run: ./gradlew :composeApp:jvmTest --no-daemon
 
   android:

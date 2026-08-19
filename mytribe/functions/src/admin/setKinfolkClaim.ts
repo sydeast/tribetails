@@ -5,7 +5,6 @@ import { auth, db } from '../lib/firestoreAdmin';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
@@ -73,21 +72,11 @@ export async function setKinfolkClaimHandler(
     extra: { kinfolkId: args.kinfolkId, actorUid: req.auth?.uid },
   });
 
-  try {
-    await enqueueNotification({
-      key: 'account.welcome.business',
-      recipientUid: args.uid,
-      data: { kinfolkId: args.kinfolkId, kinfolkUid: args.uid, actorUid: req.auth?.uid ?? null },
-    });
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'setKinfolkClaim',
-      event: 'notification.dispatch.failed',
-      extra: { kinfolkId: args.kinfolkId, key: 'account.welcome.business', err: (err as Error)?.message },
-    });
-  }
-
+  // No notification is sent from here. This used to enqueue
+  // `account.welcome.business`, which the operator retired on 2026-08-18: they
+  // do not want to be told when an invited kinfolk finishes account setup. The
+  // catalog row is gone (see RETIRED_NOTIFICATION_KEYS in notifications/catalog.ts),
+  // so an enqueue here would now throw `unknown key` rather than send anything.
   return { ok: true, uid: args.uid, kinfolkId: args.kinfolkId };
 }
 

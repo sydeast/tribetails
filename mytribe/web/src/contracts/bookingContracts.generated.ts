@@ -11,6 +11,27 @@
 // CI runs the verify command and fails on any difference, so a schema change
 // and its generated fallout land in one reviewable commit.
 
+// ---------- Types shared by more than one callable ----------
+
+/**
+ * `RescheduleRequestDto`, shared across callables.
+ */
+export interface RescheduleRequestDto {
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  title: string | null;
+  serviceType: string | null;
+  kinNames: string[];
+  status: string | null;
+  currentStartTimeMs: number | null;
+  currentEndTimeMs: number | null;
+  proposedStartTimeMs: number | null;
+  proposedEndTimeMs: number | null;
+  reason: string | null;
+  requestedAtMs: number | null;
+}
+
 // ---------- addBookingNote ----------
 
 /**
@@ -164,6 +185,11 @@ export interface GetMyBookingsResultLiveVisit {
   sourceBookingId: string | null;
   sessionId: string | null;
   cancelRequested: boolean;
+  rescheduleRequestStatus: 'pending' | 'accepted' | 'declined' | null;
+  rescheduleRequestedStartTimeMs: number | null;
+  rescheduleRequestedEndTimeMs: number | null;
+  rescheduleRequestReason: string | null;
+  rescheduleResponseNote: string | null;
 }
 
 /**
@@ -294,6 +320,30 @@ export interface RequestBookingCancellationResult {
   alreadyPending: boolean;
 }
 
+// ---------- requestBookingReschedule ----------
+
+/**
+ * Request payload for the `requestBookingReschedule` callable.
+ */
+export interface RequestBookingRescheduleArgs {
+  kinfolkId?: string;
+  batchId: string;
+  visitId: string;
+  proposedStartTimeMs: number;
+  proposedEndTimeMs?: number;
+  reason?: string;
+}
+
+/**
+ * Response from the `requestBookingReschedule` callable.
+ */
+export interface RequestBookingRescheduleResult {
+  ok: true;
+  visitId: string;
+  proposedStartTimeMs: number;
+  proposedEndTimeMs: number | null;
+}
+
 // ---------- rescheduleBooking ----------
 
 /**
@@ -311,4 +361,44 @@ export interface RescheduleBookingArgs {
 export interface RescheduleBookingResult {
   ok: true;
   sessionId: string;
+}
+
+// ---------- resolveBookingRescheduleRequest ----------
+
+/**
+ * Request payload for the `resolveBookingRescheduleRequest` callable.
+ */
+export interface ResolveBookingRescheduleRequestArgs {
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  decision: 'accept' | 'decline';
+  note?: string;
+}
+
+/**
+ * Response from the `resolveBookingRescheduleRequest` callable.
+ */
+export interface ResolveBookingRescheduleRequestResult {
+  ok: true;
+  visitId: string;
+  decision: 'accept' | 'decline';
+  startTimeMs: number | null;
+  sessionUpdated: boolean;
+}
+
+// ---------- listRescheduleRequests ----------
+
+/**
+ * Request payload for the `listRescheduleRequests` callable.
+ */
+export interface ListRescheduleRequestsArgs {
+  limit?: number;
+}
+
+/**
+ * Response from the `listRescheduleRequests` callable.
+ */
+export interface ListRescheduleRequestsResult {
+  requests: RescheduleRequestDto[];
 }

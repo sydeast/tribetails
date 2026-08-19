@@ -39,10 +39,12 @@ import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.Account
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.PaymentMethodState
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.launch
 
 @Composable
@@ -71,6 +73,16 @@ fun AccountSettingsScreen(
     var secondaryEmail by remember { mutableStateOf("") }
     var secondaryLabel by remember { mutableStateOf("") }
     var inviting by remember { mutableStateOf(false) }
+    // Card on file (#399 item 3). Separate from `loaded.hasPaymentMethod`,
+    // which is a bare boolean: this carries the brand/last4 the household needs
+    // to tell one card from another.
+    var paymentMethod by remember { mutableStateOf<PaymentMethodState?>(null) }
+    var loadingBilling by remember { mutableStateOf(false) }
+    var startingCardSetup by remember { mutableStateOf(false) }
+    var removingCard by remember { mutableStateOf(false) }
+    var confirmingCardRemoval by remember { mutableStateOf(false) }
+    var billingStatus by remember { mutableStateOf<String?>(null) }
+    var billingError by remember { mutableStateOf<String?>(null) }
 
     /** Optional admin-driven schema. When present, schema-rendered values replace
      *  the static editable fields; persistence stays typed via saveMyAccount. */
@@ -108,6 +120,18 @@ fun AccountSettingsScreen(
                 "backupPhone" to backupPhone,
             )
         } catch (_: Throwable) { /* admin has not set up schema yet, keep static fields */ }
+        // Card on file. Best-effort: a secondary kinfolk is refused by the
+        // callable (billing is primary-only), and that refusal is a fact about
+        // this screen's billing card, not a reason to fail the whole account
+        // load, so it lands in `billingError` and nowhere else.
+        loadingBilling = true
+        try {
+            paymentMethod = portalApi.getMyPaymentMethod(kinfolkId)
+        } catch (t: Throwable) {
+            billingError = t.message ?: "Could not read your billing details."
+        } finally {
+            loadingBilling = false
+        }
     }
 
     Column(
@@ -255,14 +279,145 @@ fun AccountSettingsScreen(
             contentPadding = PaddingValues(KinfolkSpacing.l),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                val cardOnFile = paymentMethod?.hasPaymentMethod ?: (loaded?.hasPaymentMethod == true)
                 Text(
-                    text = if (loaded?.hasPaymentMethod == true) "Payment method on file" else "No payment method on file",
+                    text = if (cardOnFile) "Payment method on file" else "No payment method on file",
                     style = type.sansBody,
                 )
                 Text(
-                    "Card payments are coming soon. Until then, settle up directly with your Auntie.",
+                    text = paymentMethod?.card?.display()
+                        ?: if (cardOnFile) {
+                            "Charges run through your care team."
+                        } else {
+                            "Settle up directly with your Auntie until a card is on file."
+                        },
                     style = type.sansMeta,
                 )
+                if (billingError != null) {
+                    Text(billingError!!, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
+                } else if (billingStatus != null) {
+                    Text(billingStatus!!, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
+                }
+                if (loadingBilling) {
+                    Text("Checking what is on file…", style = type.sansMeta)
+                }
+                // The android client leaves the app for Stripe's hosted page and
+                // gets no return trip back into it, so the card is confirmed by
+                // asking the server on the way back in, not by a redirect URL.
+                // "Refresh card" is that ask, and it is deliberately always
+                // present rather than only after a setup attempt: a card added on
+                // the web, or saved on a previous run of the app, lands here too.
+                KinButton(
+                    label = when {
+                        startingCardSetup -> "Opening Stripe…"
+                        cardOnFile -> "Replace card"
+                        else -> "Add a card"
+                    },
+                    onClick = {
+                        if (!startingCardSetup) {
+                            startingCardSetup = true
+                            billingError = null
+                            billingStatus = null
+                            scope.launch {
+                                try {
+                                    val session = portalApi.createBillingSetupSession(
+                                        successUrl = "https://kinfolk.tribetails.com/account?billing=saved",
+                                        cancelUrl = "https://kinfolk.tribetails.com/account",
+                                        kinfolkId = kinfolkId,
+                                    )
+                                    if (session.checkoutUrl.isNotBlank()) {
+                                        openExternalUrl(session.checkoutUrl)
+                                        billingStatus = "Finish at Stripe, then tap Refresh card."
+                                    } else {
+                                        billingError = "Stripe did not return a link. Try again in a moment."
+                                    }
+                                } catch (t: Throwable) {
+                                    billingError = t.message ?: "Could not open Stripe. Try again in a moment."
+                                } finally {
+                                    startingCardSetup = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !startingCardSetup && !removingCard && !loadingBilling,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                KinGhostButton(
+                    label = if (loadingBilling) "Refreshing…" else "Refresh card",
+                    onClick = {
+                        if (!loadingBilling) {
+                            loadingBilling = true
+                            billingError = null
+                            scope.launch {
+                                try {
+                                    val state = portalApi.syncMyPaymentMethod(kinfolkId)
+                                    paymentMethod = state
+                                    billingStatus = if (state.hasPaymentMethod) {
+                                        "Card on file."
+                                    } else {
+                                        "Stripe has no card for this tribe yet."
+                                    }
+                                } catch (t: Throwable) {
+                                    billingError = t.message ?: "Could not reach Stripe. Try again in a moment."
+                                } finally {
+                                    loadingBilling = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !startingCardSetup && !removingCard,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (cardOnFile) {
+                    if (confirmingCardRemoval) {
+                        Text(
+                            "Removing the card leaves any unpaid invoices exactly as they are. " +
+                                "You will settle them another way until a new card is added.",
+                            style = type.sansMeta,
+                        )
+                        KinButton(
+                            label = if (removingCard) "Removing…" else "Yes, take it off",
+                            onClick = {
+                                if (!removingCard) {
+                                    removingCard = true
+                                    billingError = null
+                                    scope.launch {
+                                        try {
+                                            val alreadyEmpty = portalApi.removeMyPaymentMethod(kinfolkId)
+                                            paymentMethod = PaymentMethodState(false, null, null)
+                                            loaded = loaded?.copy(hasPaymentMethod = false)
+                                            billingStatus = if (alreadyEmpty) {
+                                                "There was no card on file."
+                                            } else {
+                                                "Card removed."
+                                            }
+                                            confirmingCardRemoval = false
+                                        } catch (t: Throwable) {
+                                            billingError = t.message ?: "Could not remove the card. Try again in a moment."
+                                        } finally {
+                                            removingCard = false
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !removingCard,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        KinGhostButton(
+                            label = "Never mind",
+                            onClick = { confirmingCardRemoval = false },
+                            enabled = !removingCard,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        KinGhostButton(
+                            label = "Remove card",
+                            onClick = { confirmingCardRemoval = true },
+                            enabled = !startingCardSetup && !loadingBilling,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
         }
 

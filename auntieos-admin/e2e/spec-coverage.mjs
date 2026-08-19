@@ -10,14 +10,13 @@
  * default so the accident cannot happen by omission, and this check is what
  * says so out loud rather than leaving it to be re-derived from the regexes.
  *
- * HOW IT KNOWS. It asks Playwright, twice, rather than reimplementing
- * `testMatch`. `--list` collects without booting the emulators, the vite server
- * or globalSetup, so this is cheap enough to sit in front of every `npm run
- * e2e`. The second pass sets `VISUAL_CAPTURE=1`, which is the only way
- * `visual.capture.spec.ts` is ever collected: a spec has to be claimed in at
- * least one of the two modes, and within either mode by no more than one
- * project. That phrasing means the capture-only exclusion needs no second copy
- * of itself in here to be excused.
+ * HOW IT KNOWS. It asks Playwright rather than reimplementing `testMatch`.
+ * `--list` collects without booting the emulators, the vite server or
+ * globalSetup, so this is cheap enough to sit in front of every `npm run e2e`.
+ * A spec has to be claimed by at least one mode below, and within a mode by no
+ * more than one project. `MODES` is a list rather than a single run because it
+ * once held a second entry for the visual capture surface; the shape is kept so
+ * a future opt-in surface is one line rather than a rewrite.
  *
  * IT ALSO CATCHES AN EMPTY SPEC. A `.spec.ts` file that declares no tests lists
  * nothing, so it reads as uncollected and fails here. That is the same
@@ -78,10 +77,7 @@ function collectedBy(env) {
   return byFile;
 }
 
-const MODES = [
-  { label: 'npm run e2e', env: {} },
-  { label: 'npm run visual:react (VISUAL_CAPTURE=1)', env: { VISUAL_CAPTURE: '1' } },
-];
+const MODES = [{ label: 'npm run e2e', env: {} }];
 
 const onDisk = specFilesOnDisk().sort();
 const perMode = MODES.map((mode) => ({ ...mode, collected: collectedBy(mode.env) }));

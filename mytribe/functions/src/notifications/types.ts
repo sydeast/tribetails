@@ -193,7 +193,16 @@ export interface NotificationDetail {
   bookingDate?: string;
   /** Booking start time, pre-formatted in the business timezone ("2:30 PM"). */
   bookingTime?: string;
-  /** Free-text notes the requester attached to the booking. */
+  /**
+   * The booking/session `notes` field. STAFF AND BUSINESS COPIES ONLY (#380).
+   *
+   * It reads like requester free text and it is not: every operator with the
+   * auntie hat can write it, and a cancellation reason is appended to it
+   * verbatim, so it routinely holds internal remarks about a household. A copy
+   * addressed to that household never carries it, because a kinfolk can read
+   * their own `notifications/{id}` document field for field. `undefined` on a
+   * kinfolk copy therefore means "withheld", not "none was written".
+   */
   notes?: string;
   /** Invoice number, for invoice-class notifications. */
   invoiceNumber?: string;

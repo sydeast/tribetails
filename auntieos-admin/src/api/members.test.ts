@@ -13,6 +13,7 @@ import {
   listAllInvites,
   listHouseholdInvites,
   listHouseholdMembers,
+  listRecoveryCandidates,
   memberLabel,
   memberStatusTone,
 } from './members';
@@ -347,5 +348,50 @@ describe('display helpers', () => {
   it('truncates the invite id, because the full id is the claim token', () => {
     expect(inviteHandle('rq_8fk29aLONGTAIL')).toBe('rq_8fk29…');
     expect(inviteHandle('short')).toBe('short');
+  });
+});
+describe('listRecoveryCandidates', () => {
+  it('sends the household and the primary being recovered away from', async () => {
+    call.mockResolvedValue({ candidates: [] });
+    await listRecoveryCandidates('fam1', 'p1');
+    expect(call).toHaveBeenCalledWith('listRecoveryCandidates', {
+      familyId: 'fam1',
+      oldUid: 'p1',
+    });
+  });
+  it('omits oldUid entirely when there is no sitting primary to exclude', async () => {
+    call.mockResolvedValue({ candidates: [] });
+    await listRecoveryCandidates('fam1');
+    expect(call).toHaveBeenCalledWith('listRecoveryCandidates', { familyId: 'fam1' });
+  });
+  it('maps a candidate row', async () => {
+    call.mockResolvedValue({
+      candidates: [
+        { uid: 'u1', email: 'marcus@example.com', secondaryLabel: 'Spouse', role: 'SECONDARY', status: 'ACTIVE' },
+      ],
+    });
+    await expect(listRecoveryCandidates('fam1', 'p1')).resolves.toEqual([
+      {
+        uid: 'u1',
+        email: 'marcus@example.com',
+        secondaryLabel: 'Spouse',
+        role: 'SECONDARY',
+        status: 'ACTIVE',
+      },
+    ]);
+  });
+  it('drops a row carrying no address, which nothing could be sent to', async () => {
+    call.mockResolvedValue({
+      candidates: [{ uid: 'u1', email: '', role: 'SECONDARY', status: 'ACTIVE' }, { uid: '', email: 'x@y.z' }],
+    });
+    await expect(listRecoveryCandidates('fam1')).resolves.toEqual([]);
+  });
+  it('refuses a blank household id before it reaches the wire', async () => {
+    await expect(listRecoveryCandidates('  ')).rejects.toThrow(/household id/);
+    expect(call).not.toHaveBeenCalled();
+  });
+  it('answers an empty list for an unreadable shape rather than inventing rows', async () => {
+    call.mockResolvedValue({});
+    await expect(listRecoveryCandidates('fam1')).resolves.toEqual([]);
   });
 });

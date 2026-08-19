@@ -3,6 +3,7 @@ import {
   sendBroadcast,
   describeAudience,
   channelCountsOf,
+  reachOf,
   type BroadcastCriteria,
   type BroadcastChannel,
   type SendBroadcastResult,
@@ -569,8 +570,28 @@ interface BroadcastResultPanelProps {
 }
 
 /**
- * The post-send result: the REAL `recipientCount` and per-channel
- * sent/skipped/failed tallies the callable returned.
+ * The subtitle sentence: who the segment matched, and how many of them the
+ * broadcast actually reached.
+ *
+ * This used to read "Reached N kinfolk" off `recipientCount`, which is the
+ * number the SEGMENT matched, not the number that heard anything. Since
+ * #386 every recipient passes through their notification preferences first, so
+ * the two numbers genuinely differ. When the response carries no `reach` at all
+ * (a backend older than the field), the sentence stops claiming a reach rather
+ * than reporting a fabricated one.
+ */
+function reachSentence(result: SendBroadcastResult): string {
+  const reach = reachOf(result);
+  if (!reach) return `Sent to ${result.recipientCount} kinfolk.`;
+  const base = `Reached ${reach.reached} of ${reach.targeted} kinfolk.`;
+  if (reach.suppressedByPrefs === 0) return base;
+  const households = reach.suppressedByPrefs === 1 ? 'household has' : 'households have';
+  return `${base} ${reach.suppressedByPrefs} ${households} broadcasts switched off.`;
+}
+
+/**
+ * The post-send result: how far the broadcast actually got (`reachSentence`)
+ * and the per-channel sent/skipped/failed tallies the callable returned.
  *
  * One row per channel rather than the archive's single joined sentence
  * ("Reached N kinfolk. email: 4 sent, 1 skipped; sms: 3 sent"), because this
@@ -581,7 +602,7 @@ interface BroadcastResultPanelProps {
  */
 function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResultPanelProps) {
   return (
-    <DenPanel title="Broadcast sent" subtitle={`Reached ${result.recipientCount} kinfolk.`}>
+    <DenPanel title="Broadcast sent" subtitle={reachSentence(result)}>
       <ul className="compose__result-list">
         {channels.map((ch) => {
           const counts = channelCountsOf(result.perChannel, ch);
