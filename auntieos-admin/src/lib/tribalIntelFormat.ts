@@ -275,7 +275,7 @@ export function dropEmptyTribalIntel<T extends EmptyCheckInput>(docs: readonly T
  * Android's `AdminDataViewModel`, so all three clients make the same promise.
  */
 export const TRIBAL_INTEL_QUEUED_MESSAGE =
-  'Queued for reconcile. The dossier and 411 update on the next reconcile pass, not instantly.';
+  'Queued for reconcile. The dossier, the household bank and the 411 update on the next reconcile pass, not instantly.';
 
 /**
  * Shown in the delete confirm, before the operator can commit.
@@ -289,7 +289,8 @@ export const TRIBAL_INTEL_QUEUED_MESSAGE =
  */
 export const TRIBAL_INTEL_DELETE_CAVEAT =
   'This removes the source note. It does not unmerge any text the reconcile pipeline has already folded ' +
-  'into the dossier or the 411. Those summaries keep the earlier wording until they are regenerated.';
+  'into the dossier, the household bank or the 411. Those summaries keep the earlier wording until they ' +
+  'are regenerated.';
 
 // ── comm. type distinct list + filtering ─────────────────────────────────
 
