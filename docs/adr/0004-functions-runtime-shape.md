@@ -1,7 +1,7 @@
 # ADR-0004: The fleet default returns to cpu 1; the quota it was cut for was never binding
 
 Date: 2026-08-04
-Status: Accepted in part, 2026-08-18. Decision 1 (correct the written record)
+Status: Accepted in part, 2026-08-19. Decision 1 (correct the written record)
 was implemented in the change that proposed this ADR. Decisions 2 and 3 landed
 together on `perf/callable-cold-start` for issue #395: the fleet default is
 `cpu: 1`, and the remeasurement decision 3 asked for is in that PR (the module
@@ -9,9 +9,18 @@ graph is 1,873 modules, 13.4 MiB of JavaScript, 0.80-1.02 s of CPU warm and
 about 193 MiB resident, which is within measurement noise of the
 `perf/lazy-deps` column below). One deliberate departure: `SERIAL` now pins
 `cpu: 0.25` explicitly rather than becoming pure `maxInstances` policy, so the
-four nightly sweep crons that use it keep the shape they have today. Decision 4
-(prune `minInstances`) and decision 5 (memory) are still open and are the
-operator's call.
+four nightly sweep crons that use it keep the shape they have today.
+Decision 5 (memory) is answered as of issue #453
+(`mytribe/functions/scripts/runtimeOptions`; procedure in `docs/RUNBOOK.md`,
+"Checking source and deployed runtime options agree"): the live fleet, read
+2026-08-19, has zero `memory` drift against source — some deploy between
+2026-08-04 and now already carried out the "nothing to touch" this ADR
+anticipated. `cpu`, `minInstances` and `maxInstances` remain unconfirmed
+against the live fleet (the check needs an operator-run `gcloud functions
+list --v2 --format=json` dump for those three; only `memory` and `region`
+were checked, via the Firebase MCP tool, which is all it reports) — see that
+RUNBOOK section for the exact remaining step. Decision 4 (prune
+`minInstances`) is still open and is the operator's call.
 
 ## Context
 
@@ -294,10 +303,25 @@ release now needs because of it, unnecessary. Whether to give that headroom back
 or bank it is the operator's call and belongs with the remeasurement in
 decision 3, not here.
 
+**Update, 2026-08-19 (issue #453):** answered, not by a sizing decision but by
+building the repeatable check this section could only call for. Source is
+authoritative — the 256 MiB this ADR already argued for, not whatever happened
+to be running — and `mytribe/functions/scripts/runtimeOptions` diffs the two.
+Read live against the deployed fleet the day this landed: **zero functions
+disagree with source on `memory`.** The 53-function gap this ADR recorded on
+2026-08-04 is gone; a deploy sometime in the fifteen days since already did
+the "nothing to touch" outcome this decision anticipated. See
+`docs/RUNBOOK.md`, "Checking source and deployed runtime options agree", for
+the procedure and how to re-run it. `cpu`, `minInstances` and `maxInstances`
+are still unconfirmed against the live fleet — the Firebase MCP tool this was
+checked with reports only `memory` and `region`; getting the other three needs
+an operator-run `gcloud` dump, documented in the same RUNBOOK section.
+
 **Ahead of all of it:** 53 functions are still serving at 256 MiB against a
 290 MB import, and `getInvoiceLedger` is crash-looping right now. That is an
 incident, not a sizing question, and it should be finished before any of the
-above is argued about further.
+above is argued about further. (As of the 2026-08-19 update above, this
+incident is over: the fleet is back at 256 MiB across the board.)
 
 ## Consequences
 
@@ -333,6 +357,13 @@ above is argued about further.
   an answer. Every cpu and concurrency figure here is read from source, not from
   the running fleet. Given that memory was already 53 functions out of sync
   between source and deployment, source is not proof of what is deployed.
+  **Update, 2026-08-19 (issue #453):** `memory` and `region` are no longer in
+  this bucket — `mytribe/functions/scripts/runtimeOptions` checked both live
+  and found zero drift (decision 5, above). `cpu`, `minInstances` and
+  `maxInstances` remain here; confirming them needs an operator-run `gcloud
+  functions list --v2 --format=json` dump, which this tool also accepts (see
+  `docs/RUNBOOK.md`) — nothing changed about `gcloud`'s availability from an
+  agent session.
 - **The quota numbers are second-hand.** 400,000 milli vCPU limit, 16,000 in
   use, is quoted from `RUNBOOK.md:371-375`, recorded off the console on
   2026-08-03. Not re-read live, for the same tooling reason.
