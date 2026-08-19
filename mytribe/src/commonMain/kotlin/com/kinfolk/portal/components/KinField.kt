@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.theme.KinfolkTheme
 
@@ -43,6 +44,13 @@ fun KinField(
     enabled: Boolean = true,
     singleLine: Boolean = true,
     isError: Boolean = false,
+    /**
+     * Tag on the editable field itself. [label] is a sibling Text rather than
+     * part of the field's own semantics, so a test that wants to type into one
+     * of several fields on a screen has no way to name it otherwise. Null
+     * leaves the field untagged, which is every caller that does not need it.
+     */
+    fieldTestTag: String? = null,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -100,6 +108,7 @@ fun KinField(
             textStyle         = type.sansBody.copy(color = navyColor),
             interactionSource = source,
             modifier          = Modifier
+                .then(if (fieldTestTag != null) Modifier.testTag(fieldTestTag) else Modifier)
                 .fillMaxWidth()
                 .drawBehind {
                     val lw = lineWidthDp.dp.toPx()
