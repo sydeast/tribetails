@@ -102,21 +102,90 @@ EOF
 done
 
 echo
-echo "--- the e2e job, the known offender, also caps the step itself"
+echo "--- the e2e job, the known offender, also caps the steps that can stall"
 # A JOB timeout tears the run down and skips the `if: failure()` artifact
 # upload, so the traces that would explain the hang are never collected. A STEP
 # timeout fails like any other failing step and the upload still runs. #456 asks
-# for evidence, so the step cap is the load-bearing one.
-if awk '
+# for evidence, so the step caps are the load-bearing ones.
+#
+# `Install Chromium` is here because that is where #456 actually hung, three
+# times, for six hours, four hours and forty-five minutes: `--with-deps` runs
+# apt-get against the runner's Ubuntu mirror and neither had a deadline. The
+# first version of this test only checked the E2E step, which was never the one
+# that stalled.
+step_has_timeout() {
+  awk -v want="      - name: $2" '
     /^  admin-e2e:/ { in_job = 1 }
-    in_job && /^      - name: E2E$/ { in_step = 1; next }
+    in_job && $0 == want { in_step = 1; next }
     in_step && /^        timeout-minutes: [0-9]+$/ { found = 1 }
     in_step && /^      - / { in_step = 0 }
     END { exit(found ? 0 : 1) }
-  ' "$WORKFLOWS/ci.yml"; then
-  ok "ci.yml: the E2E step has its own timeout-minutes"
+  ' "$1"
+}
+
+for step in "Install Chromium" "E2E"; do
+  if step_has_timeout "$WORKFLOWS/ci.yml" "$step"; then
+    ok "ci.yml: the '$step' step has its own timeout-minutes"
+  else
+    bad "ci.yml: the '$step' step has no timeout-minutes, so a stall there parks until the job cap and loses the artifacts"
+  fi
+done
+
+echo
+echo "--- every browser install carries its own deadline and says what stalled"
+# A step `timeout-minutes` bounds the cost but prints only "The operation was
+# canceled", which is what made three parked runs indistinguishable from a hung
+# test. Wrapping the install in `timeout` gives exit 124, and the step turns
+# that into a message naming apt and the mirror. Comment lines and `echo` lines
+# are skipped: this file quotes the offending command in both.
+UNGUARDED=0
+while IFS= read -r line; do
+  stripped="${line#"${line%%[![:space:]]*}"}"
+  case "$stripped" in
+    '#'*|'echo '*) continue ;;
+  esac
+  case "$stripped" in
+    *'playwright install'*)
+      case "$stripped" in
+        *'timeout '*) ;;
+        *)
+          bad "ci.yml: a playwright install runs with no timeout wrapper: $stripped"
+          UNGUARDED=$((UNGUARDED+1))
+          ;;
+      esac
+      ;;
+  esac
+done < "$WORKFLOWS/ci.yml"
+if [ "$UNGUARDED" -eq 0 ]; then
+  ok "ci.yml: every playwright install is wrapped in timeout, so a stalled mirror fails with a named error"
+fi
+
+echo
+echo "--- the e2e step caps fire before the job cap, not after"
+# The step caps only produce evidence if one of them wins the race. If the sum
+# of the step caps plus the uncapped setup can reach the job cap, the job cap
+# fires first, the run is torn down, and the artifact upload never happens. The
+# uncapped parts of this job (checkout, setup-node, setup-java, npm ci,
+# firebase-tools, the upload and the post steps) have measured at about two
+# minutes at their combined worst, so that is the headroom demanded here.
+E2E_HEADROOM=2
+read -r JOB_CAP STEP_CAP_SUM <<EOF
+$(awk '
+  /^[^[:space:]#]/                       { in_job = 0 }
+  /^  [A-Za-z0-9_-]+:[[:space:]]*$/      { in_job = ($1 == "admin-e2e:") }
+  in_job && /^    timeout-minutes:[[:space:]]/   { job = $2 }
+  in_job && /^        timeout-minutes:[[:space:]]/ { steps += $2 }
+  END { printf "%s %s\n", (job == "" ? 0 : job), steps + 0 }
+' "$WORKFLOWS/ci.yml")
+EOF
+if [ "$JOB_CAP" -eq 0 ] || [ "$STEP_CAP_SUM" -eq 0 ]; then
+  bad "ci.yml: could not read admin-e2e's caps (job '$JOB_CAP', steps '$STEP_CAP_SUM'), so this proved nothing"
+elif [ "$JOB_CAP" -ge "$((STEP_CAP_SUM + E2E_HEADROOM))" ]; then
+  ok "ci.yml: admin-e2e is capped at ${JOB_CAP}m against ${STEP_CAP_SUM}m of step caps, so a step cap fires first"
 else
-  bad "ci.yml: the E2E step lost its timeout-minutes, so a hang there kills the job before the artifacts upload"
+  bad "ci.yml: admin-e2e is capped at ${JOB_CAP}m but its steps can take ${STEP_CAP_SUM}m plus about ${E2E_HEADROOM}m of setup"
+  bad "  The job cap would fire first, tear the run down, and skip the artifact upload."
+  bad "  Raise timeout-minutes on the job, and redo the arithmetic in the comment above it."
 fi
 
 echo

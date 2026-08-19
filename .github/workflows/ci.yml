@@ -250,12 +250,22 @@ jobs:
     name: React admin e2e
     needs: changes
     if: needs.changes.outputs.adminE2e == 'true' || github.event_name == 'workflow_dispatch'
-    # THE KNOWN OFFENDER (#456), so this ceiling is the tight one. Measured
-    # median 4.7 min, max 7.0, over 39 successful runs. 12 is about 2.5x the
-    # median and still nearly double the worst honest run, while a hang now
-    # costs at most twelve minutes instead of the 45 and 240 minute parks the
-    # issue records.
-    timeout-minutes: 12
+    # THE KNOWN OFFENDER (#456). This ceiling is the backstop, not the bound:
+    # the two steps that can stall carry their own caps below, and this number
+    # only has to be large enough that one of THOSE always fires first. If the
+    # job ceiling wins instead, the run is torn down and the `if: failure()`
+    # upload never happens, which is how three hangs were recorded with no
+    # evidence attached.
+    #
+    # The arithmetic, in the worst case each part has actually been measured at
+    # over the last 58 successful runs of this job: set-up-job 5s, checkout 8s,
+    # setup-node 10s, setup-java 1s, npm ci 15s and firebase-tools 48s, so
+    # about 1.5 minutes before the first capped step starts. Then Install
+    # Chromium at its 5 minute cap, E2E at its 7 minute cap, and roughly half a
+    # minute for the artifact upload and the post steps. 1.5 + 5 + 7 + 0.5 is
+    # 14, so 15 leaves a minute of slack. Change any step cap here and redo
+    # this sum; a stale one is worse than none.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -282,8 +292,88 @@ jobs:
       # a red build on a PR that touched nothing.
       - name: Install firebase-tools
         run: npm install -g firebase-tools@15.18.0
+      # THIS IS WHERE #456 HUNG. Not in a spec, not on a missing callable stub,
+      # not on a port nothing was serving. Three parked runs on 2026-08-18,
+      # 32092836420 for 6h00m, 32183117374 for 45m and 32184677098 for 4h23m,
+      # all stop on the same line and leave the same orphan behind:
+      #
+      #   Get:5 https://archive.ubuntu.com/ubuntu noble-security InRelease
+      #   ...silence...
+      #   Terminate orphan process: npm exec playwright install --with-deps chromium
+      #
+      # `--with-deps` shells out to `apt-get`. The runner points apt at
+      # azure.archive.ubuntu.com, that mirror answers `Ign:` on every index, apt
+      # falls back to archive.ubuntu.com mid-transaction, and there it can sit
+      # forever: nothing in the chain has a deadline, so a stalled mirror became
+      # a stalled job and then a stalled merge queue. The same fault shows up
+      # short of infinite too. Install Chromium has a median of 27s across the
+      # last 58 successful runs, and a tail of 116, 176, 234, 372 and 552s that
+      # is this stall recovering rather than parking.
+      #
+      # So the deadline lives here, and it is a `timeout` rather than only the
+      # step's `timeout-minutes` because the step cap prints "The operation was
+      # canceled" and nothing else, which is exactly what made three of these
+      # indistinguishable from a hung test. `timeout` exits 124, and 124 gets
+      # the message below, which names apt and the mirror.
+      #
+      # The fallback is what keeps a mirror fault from being a red build. On
+      # this runner image `--with-deps` installs NO libraries: every one
+      # chromium links against is already the newest version there, and the
+      # nine packages apt actually adds are CJK, Thai and Cyrillic fonts
+      # (fonts-ipafont-gothic, fonts-wqy-zenhei, xfonts-cyrillic and friends).
+      # Nothing in this suite renders those scripts. `typography.spec.ts` and
+      # `cascade.spec.ts` assert about Fraunces, Hanken Grotesk and Spline Sans
+      # Mono, which ship in the app bundle from @fontsource. So when apt stalls
+      # we drop to the browser-only install, which downloads from Playwright's
+      # own CDN and never touches a Ubuntu mirror, and say so in the log.
+      #
+      # Losing the deps for real is still a failure, just a legible one: if a
+      # future runner image stops carrying a library, Playwright refuses to
+      # launch with "Host system is missing dependencies to run browsers" and
+      # names the missing libraries, inside the capped E2E step below, with the
+      # artifact upload still running.
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        # The outer belt. The inner deadlines add up to at most 260s including
+        # both kill-afters, so this only ever fires if `timeout` itself was
+        # defeated.
+        timeout-minutes: 5
+        run: |
+          # GitHub runs a `run:` block as `bash -e`, which would abort the step
+          # the moment the first install exits non-zero and never reach the
+          # fallback. This step decides what to do with each exit code itself.
+          set +e
+          set -uo pipefail
+
+          # 150s: the slowest honest run of this step measured 176s, and
+          # everything past about 120s is already the stall recovering rather
+          # than a healthy download, so falling back is the faster answer for
+          # those too.
+          timeout --kill-after=10s 150 npx playwright install --with-deps chromium
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          # `timeout` reports 124 when it sent TERM and 137 when it had to
+          # follow up with KILL. Any other code is the install genuinely
+          # failing, which is a different bug and must not be retried into
+          # silence.
+          if [ "$status" -ne 124 ] && [ "$status" -ne 137 ]; then
+            echo "::error title=Chromium install failed::playwright install --with-deps chromium exited $status. This is not the #456 stall, which exits 124 or 137. Read the step log above for what apt or Playwright actually said."
+            exit "$status"
+          fi
+
+          echo "::warning title=Ubuntu mirror stalled::apt-get did not finish within 150s, which is the #456 stall. Retrying without --with-deps, which skips apt entirely."
+          # 90s: the browser download itself takes about 9s when the network is
+          # healthy, so this only has to survive a slow CDN, not a stalled one.
+          timeout --kill-after=10s 90 npx playwright install chromium
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "Chromium installed without --with-deps. The runner image already carries every library it needs; only the optional CJK, Thai and Cyrillic fonts were skipped."
+            exit 0
+          fi
+          echo "::error title=Chromium install timed out::Neither playwright install --with-deps chromium (150s, apt-get against the runner Ubuntu mirror) nor the browser-only fallback (90s, exit $status, Playwright CDN) finished. Both network paths are down, so this is infrastructure rather than a code change. See #456, then re-run the job."
+          exit 1
       # No Firebase credentials anywhere in this job, deliberately. The
       # emulators run entirely offline against a throwaway project id, so
       # nothing here can read or write real data even if a spec is wrong.
@@ -292,19 +382,16 @@ jobs:
       # not run, so the traces that would say what hung are never uploaded. When
       # this STEP times out it fails like any other failing step, the upload
       # below runs, and #456 gets evidence instead of another silent park.
-      # Measured median for this step is 3.3 min over 26 successful runs and the
-      # max is 3.5, so 7 is about 2x the worst honest run.
       #
-      # 7 rather than 8, and the reason is the arithmetic against the job
-      # ceiling. The step cap only helps if it fires BEFORE the 12 minute job
-      # cap; if the job cap wins, the run is torn down and the artifacts are
-      # lost anyway. So the sum that matters is the SLOWEST setup this job has
-      # been measured at, not the median one: checkout and setup-node about 10s,
-      # setup-java about 15s, npm ci 15s, firebase-tools 48s at its worst and
-      # Chromium 179s at its worst, which is roughly 4.5 minutes before the step
-      # even starts. 4.5 + 8 is 12.5, past the ceiling. 4.5 + 7 is 11.5, inside
-      # it with half a minute for the upload. Raise the job cap first if this
-      # step ever needs to go back up.
+      # This step is the tightly clustered one: over the last 58 successful runs
+      # the median is 198s and the maximum is 215s, a spread of 17 seconds. 7
+      # minutes is about 2x the worst of those, so a real regression in the
+      # suite still has room and a genuine hang inside Playwright is caught
+      # within a couple of minutes of it starting.
+      #
+      # The step cap only helps if it fires BEFORE the job ceiling; see the
+      # arithmetic on `timeout-minutes` at the top of this job, and redo it
+      # there if this number changes.
       - name: E2E
         timeout-minutes: 7
         run: npm run e2e
