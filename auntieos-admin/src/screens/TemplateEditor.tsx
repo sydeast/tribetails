@@ -1,5 +1,5 @@
 import { useCallback, useId, useState } from 'react';
-import { saveTemplate, deleteTemplate } from '../api/templatesWrite';
+import { saveTemplate, deleteTemplate, isLiveNotificationKeyWarning } from '../api/templatesWrite';
 import type { TemplateSummary } from '../api/templates';
 import {
   blankFormFields,
@@ -92,15 +92,27 @@ function TrashGlyph() {
  * for its own confirm/reschedule modes (two mounted focus-traps would fight
  * over Escape and Tab). Backdrop-click/Escape from the confirm dialog fully
  * closes the editor (same as the edit dialog), matching `BookingActions.tsx`;
- * only the confirm dialog's own "Back" button returns to the edit view. The
- * backend (`deleteTemplate.ts`) refuses the delete with `failed-precondition`
- * in two cases, so a rejection here is often a real, expected outcome rather
- * than a network error: when a binding still points at this template, and
- * (since #381) when the template id IS a catalog key, because routing is by
- * name and deleting it would leave that notification throwing at send time.
- * The server's sentence says which case it is and what to do about it, and it
- * surfaces fail-loud in the confirm dialog rather than the dialog closing
- * silently.
+ * only the confirm dialog's own "Back" button returns to the edit view.
+ *
+ * The backend (`deleteTemplate.ts`) rejects with `failed-precondition` in two
+ * cases, so a rejection here is often a real, expected outcome rather than a
+ * network error, and the two cases end differently:
+ *
+ *  - A BINDING still points a notification catalog key at this template. That
+ *    is a wall with a one-tap remedy on the other side of it (unassign), so it
+ *    surfaces as an error banner and the delete does not proceed.
+ *  - The template id IS a live notification key (#381). Routing is by name, so
+ *    deleting it leaves that notification throwing at send time. The operator is
+ *    allowed to want that (they retired `account.welcome.business` on purpose),
+ *    so this one is a WARNING, not a refusal. The server's sentence appears in
+ *    the confirm dialog with the button relabelled "Delete anyway", and pressing
+ *    it re-calls with `acknowledgeLiveKey: true`.
+ *
+ * The warning is never pre-fetched: the first, unacknowledged call is what asks
+ * the server, so the server stays the single authority on which keys are live
+ * and a stray API call still cannot delete a live template without being told
+ * first. `isLiveNotificationKeyWarning` reads the machine-readable `details` off
+ * the rejection rather than pattern-matching the sentence.
  */
 export function TemplateEditor({ template, categories, onClose, onSaved, onDeleted }: TemplateEditorProps) {
   const isCreate = template === null;
@@ -111,6 +123,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // The server's live-notification-key sentence, once it has said it. Non-null
+  // means the next press is the acknowledged retry.
+  const [liveKeyWarning, setLiveKeyWarning] = useState<string | null>(null);
   const categoryListId = useId();
 
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
@@ -169,6 +184,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   function openConfirmDelete() {
     if (isCreate || saving) return;
     setError(null);
+    setLiveKeyWarning(null);
     setView('confirm-delete');
   }
 
@@ -179,19 +195,29 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   function backToEdit() {
     if (deleting) return;
     setError(null);
+    setLiveKeyWarning(null);
     setView('edit');
   }
 
   async function handleDelete() {
     if (isCreate || deleting) return;
+    // Second press: the server has already named the notification this breaks
+    // and the operator pressed anyway, so the acknowledgement rides along.
+    const acknowledgeLiveKey = liveKeyWarning !== null;
     setDeleting(true);
     setError(null);
     try {
-      const { templateId } = await deleteTemplate(fields.templateId);
+      const { templateId } = await deleteTemplate(fields.templateId, { acknowledgeLiveKey });
       setDeleting(false);
       onDeleted?.(templateId);
     } catch (err) {
       setDeleting(false);
+      // A live-key rejection is a warning to read, not a failure to report. It
+      // keeps the confirm dialog open and turns the button into "Delete anyway".
+      if (isLiveNotificationKeyWarning(err)) {
+        setLiveKeyWarning(err instanceof Error ? err.message : 'This template is still in use.');
+        return;
+      }
       setError(`deleteTemplate failed: ${err instanceof Error ? err.message : 'Delete failed'}`);
     }
   }
@@ -205,7 +231,13 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           <>
             <GhostButton label="Back" onClick={backToEdit} disabled={deleting} />
             <PrimaryButton
-              label={deleting ? 'Deleting…' : 'Delete template'}
+              label={
+                deleting
+                  ? 'Deleting…'
+                  : liveKeyWarning
+                    ? 'Delete anyway'
+                    : 'Delete template'
+              }
               onClick={() => void handleDelete()}
               disabled={deleting}
               busy={deleting}
@@ -219,9 +251,20 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             {error}
           </Banner>
         ) : null}
+        {liveKeyWarning ? (
+          <Banner
+            tone="warning"
+            title="A notification still sends this"
+            className="template-editor__error"
+          >
+            {liveKeyWarning}
+          </Banner>
+        ) : null}
         <p className="template-editor__hint">
-          {fields.title || fields.templateId}. This cannot be undone. If a notification catalog
-          key is still assigned to this template, the delete is refused until it is unassigned.
+          {fields.title || fields.templateId}. This cannot be undone.
+          {liveKeyWarning
+            ? ' Press Delete anyway to go ahead, or Back to leave it alone.'
+            : ' If a notification catalog key is still assigned to this template, the delete is refused until it is unassigned.'}
         </p>
         <code className="template-editor__id-static">{fields.templateId}</code>
       </Dialog>

@@ -42,19 +42,54 @@ export async function saveTemplate(payload: SaveTemplatePayload): Promise<{ temp
 
 /**
  * deleteTemplate: permanently deletes `emailTemplates/{templateId}`. Matches
- * the backend's Zod contract, `{ templateId }` (the same field name
- * `saveTemplate` above uses, unlike `formSchemasWrite.ts`'s `getFormSchema`
- * vs. `formSchemas.ts`'s `deleteFormSchema`, which disagree on `schemaId` vs.
- * `id`). Throws (via `lib/fns.call`) on `not-found`, `failed-precondition`
- * (still bound to a notification catalog key), or an auth error; the caller
- * surfaces the message fail-loud rather than swallowing it, same as
+ * the backend's Zod contract, `{ templateId, acknowledgeLiveKey? }` (the same
+ * `templateId` field name `saveTemplate` above uses, unlike
+ * `formSchemasWrite.ts`'s `getFormSchema` vs. `formSchemas.ts`'s
+ * `deleteFormSchema`, which disagree on `schemaId` vs. `id`). Throws (via
+ * `lib/fns.call`) on `not-found`, `failed-precondition`, or an auth error; the
+ * caller surfaces the message fail-loud rather than swallowing it, same as
  * `saveTemplate` above.
+ *
+ * `acknowledgeLiveKey` is sent ONLY on a second attempt, after the server has
+ * refused once and said which notification the delete would break. It is not a
+ * flag a screen sets up front: the point of the round trip is that the operator
+ * has read the consequence before they confirm it.
  */
-export async function deleteTemplate(templateId: string): Promise<{ templateId: string }> {
-  const result = await call<{ templateId: string }, { templateId: string }>('deleteTemplate', {
+export interface DeleteTemplateOptions {
+  acknowledgeLiveKey?: boolean;
+}
+
+export async function deleteTemplate(
+  templateId: string,
+  options: DeleteTemplateOptions = {},
+): Promise<{ templateId: string }> {
+  const result = await call<
+    { templateId: string; acknowledgeLiveKey?: boolean },
+    { templateId: string }
+  >('deleteTemplate', {
     templateId,
+    ...(options.acknowledgeLiveKey === true ? { acknowledgeLiveKey: true } : {}),
   });
   return result;
+}
+
+/**
+ * True when [err] is the server's live-notification-key warning, the one refusal
+ * a second, acknowledged call can get past.
+ *
+ * Read off `HttpsError.details`, which the Functions SDK puts on the thrown
+ * `FirebaseError` and `lib/fns.call` rethrows untouched. Deliberately NOT a
+ * match against the message text: `deleteTemplate` throws `failed-precondition`
+ * for the binding case too, and that one has a different remedy (unassign) and
+ * cannot be acknowledged past, so telling them apart by prose would be one copy
+ * edit away from offering "Delete anyway" on a delete that can never succeed.
+ * Duck-typed rather than `instanceof FirebaseError` so a plain rejected object
+ * in a test exercises the same branch the SDK does.
+ */
+export function isLiveNotificationKeyWarning(err: unknown): boolean {
+  const details = (err as { details?: unknown } | null | undefined)?.details;
+  if (typeof details !== 'object' || details === null) return false;
+  return (details as { reason?: unknown }).reason === 'live-catalog-key';
 }
 
 export interface AssignTemplatesToCategoryArgs {

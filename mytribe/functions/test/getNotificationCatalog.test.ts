@@ -77,7 +77,10 @@ describe('getNotificationCatalogHandler', () => {
       'kincare.note.kinfolk', // staff
       'quote.denied', // business
       'schedule.upcoming.digest', // staff
-      'account.welcome.business', // business
+      // `account.welcome.business` was in this list. It is retired now, so
+      // asserting the kinfolk catalog omits it would assert nothing: no catalog
+      // read can return a key that has no row. notificationCatalog.test.ts pins
+      // its absence from the catalog itself.
       'invite.expired', // business
       'security.breach_attempt.kinfolk', // business
       'rating.submitted.bad', // business

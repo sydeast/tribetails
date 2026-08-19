@@ -291,7 +291,11 @@ describe('acceptInviteHandler', () => {
     expect(res.familyId).toBe('t1');
     const keys = enqueue.mock.calls.map((c) => (c[0] as { key: string }).key);
     expect(keys).toContain('account.welcome.kinfolk');
-    expect(keys).toContain('account.welcome.business'); // Run-4: "Kinfolk Accepted MyTribe Invite"
+    // The business-facing "Kinfolk Accepted MyTribe Invite" enqueue used to fire
+    // here too. The operator retired that notification on 2026-08-18, so this
+    // handler now sends exactly one thing, to the kinfolk.
+    expect(keys).not.toContain('account.welcome.business');
+    expect(keys).toEqual(['account.welcome.kinfolk']);
   });
 
   /**

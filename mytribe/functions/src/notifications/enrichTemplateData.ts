@@ -43,7 +43,6 @@ const DEFAULT_TIME_ZONE = 'America/New_York';
  * (link, score, count, incidentId, ip, ...).
  */
 export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
-  'account.welcome.business': [],
   'assignment.assigned': ['bookingDate', 'bookingTime', 'kinName', 'serviceType'],
   'assignment.changed': ['bookingDate', 'kinName', 'serviceType'],
   'account.welcome.kinfolk': ['kinfolkName'],
