@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { type ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -10,6 +11,29 @@ import {
   draftFromLineItem,
   type DraftLine,
 } from './InvoiceLineItems';
+
+/**
+ * The router's `Link`, rendered as the anchor it becomes. Same stub the rest of
+ * this suite uses (`Invites.test.tsx`, `HouseholdMembers.test.tsx`): these
+ * components are unit-rendered without a router, and the assertion worth making
+ * is WHERE the link points.
+ */
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    to,
+    search,
+    children,
+    ...rest
+  }: {
+    to: string;
+    search?: Record<string, string>;
+    children: ReactNode;
+  }) => (
+    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 function draft(over: Partial<DraftLine> = {}): DraftLine {
   return { description: 'Dog walk', qtyText: '3', unitText: '25.00', discountText: '', ...over };
@@ -212,5 +236,87 @@ describe('InvoiceLineItemsEditor', () => {
       />,
     );
     expect(screen.getByText(/no line items yet/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #408: a line drawn from a visit is BOUND to it. Editing the money means
+ * editing the visit, and the invoice follows, so the row offers the route to
+ * the visit rather than fields to type over its price with.
+ */
+describe('bound line items', () => {
+  it('carries the binding through a parse, so an edit cannot cut it loose', () => {
+    // `lineItems` is replaced wholesale by updateInvoice's patch. A parse that
+    // dropped this would unbind every line on any invoice the operator edited.
+    const res = parseDraftLines([draft({ sessionId: 'vis_1' })], '');
+    expect(res.lines![0]!.sessionId).toBe('vis_1');
+  });
+  it('keeps the binding when a stored line is opened for editing', () => {
+    const d = draftFromLineItem({ description: 'Dog walk', qty: 1, unitCents: 2500, sessionId: 'vis_1' });
+    expect(d.sessionId).toBe('vis_1');
+  });
+  it('leaves a hand-typed line unbound rather than inventing an empty binding', () => {
+    expect(draftFromLineItem({ description: 'Mileage', qty: 1, unitCents: 1000 })).not.toHaveProperty(
+      'sessionId',
+    );
+    expect(parseDraftLines([draft()], '').lines![0]).not.toHaveProperty('sessionId');
+  });
+  it('shows a bound row read-only, with the route to its visit', () => {
+    render(
+      <InvoiceLineItemsEditor
+        drafts={[draft({ sessionId: 'vis_1' })]}
+        onChange={vi.fn()}
+        invoiceDiscountText=""
+        onInvoiceDiscountChange={vi.fn()}
+      />,
+    );
+    // No fields to type over the visit's money with.
+    expect(screen.queryByLabelText('Line 1 unit price in dollars')).toBeNull();
+    expect(screen.queryByLabelText('Line 1 description')).toBeNull();
+    expect(screen.getByRole('link', { name: /open this visit/i })).toHaveAttribute(
+      'href',
+      '/sessions?sessionId=vis_1',
+    );
+    expect(screen.getByText(/its price is the visit's/i)).toBeInTheDocument();
+  });
+  it('still lets a bound line be taken OFF the invoice', async () => {
+    // Removing work from an invoice is a different decision from rewriting what
+    // that work cost, and only the second one belongs to the visit.
+    const onChange = vi.fn();
+    render(
+      <InvoiceLineItemsEditor
+        drafts={[draft({ sessionId: 'vis_1' })]}
+        onChange={onChange}
+        invoiceDiscountText=""
+        onInvoiceDiscountChange={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /remove line 1/i }));
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+  it('offers the same route from the read-only table', () => {
+    render(
+      <InvoiceLineItemsTable
+        lines={[
+          { description: 'Dog walk', qty: 1, unitCents: 2500, sessionId: 'vis_1' },
+          { description: 'Mileage', qty: 1, unitCents: 1000 },
+        ]}
+      />,
+    );
+    const links = screen.getAllByRole('link', { name: /open this visit/i });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', '/sessions?sessionId=vis_1');
+  });
+  it('takes a caller\'s own empty hint, so extra charges do not read as "nothing was billed"', () => {
+    render(
+      <InvoiceLineItemsEditor
+        drafts={[]}
+        onChange={vi.fn()}
+        invoiceDiscountText=""
+        onInvoiceDiscountChange={vi.fn()}
+        emptyHint="No extra charges."
+      />,
+    );
+    expect(screen.getByText('No extra charges.')).toBeInTheDocument();
   });
 });

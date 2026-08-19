@@ -62,10 +62,34 @@ describe('createQuote zod validation', () => {
     expect(res.invoiceId).toBeTruthy();
   });
 
-  it('rejects blank invoiceNumber', async () => {
+  // #408: a quote follows createInvoice exactly here. A blank number means
+  // "assign it", and it is drawn from the SAME sequence, so a quote and an
+  // invoice can never be handed the same number.
+  it('assigns a number when the caller sends a blank one, from the shared sequence', async () => {
+    const ctx = buildDbMock({ docs: { 'counters/invoiceNumber': { next: 7 } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createQuoteHandler(req({ ...validPayload, invoiceNumber: '' }));
+    expect(res.ok).toBe(true);
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.invoiceNumber).toBe('INV-2026-0007');
+    expect(ctx.writes.find((w) => w.path === 'counters/invoiceNumber')?.data.next).toBe(8);
+  });
+  it('keeps a number the caller did send', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(createQuoteHandler(req({ ...validPayload, invoiceNumber: '' }))).rejects.toThrow();
+    await createQuoteHandler(req(validPayload));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.invoiceNumber).toBe('QTE-001');
+  });
+  it('resolves structured terms the same way an invoice does', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(
+      req({ ...validPayload, sessionIds: [], termsCode: 'net_14', dueDate: '' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.terms).toBe('Due 14 days after the invoice date');
+    expect(written?.data.dueDate).toBe('2026-06-15');
   });
 
   it('rejects negative total', async () => {

@@ -285,3 +285,112 @@ describe('listUninvoicedSessions unplaceable sessions', () => {
     expect(res.unplaceable).toEqual([{ sessionId: 's-lost', kinfolkId: 'fam4' }]);
   });
 });
+
+/**
+ * #408: the composer asks one question, which household, and the work appears.
+ * The date range survives as a narrowing option, not as a precondition.
+ */
+describe('listUninvoicedSessions household scope', () => {
+  it('returns a household\'s work with no date range at all', async () => {
+    const ctx = seed([
+      session('s1', { status: 'COMPLETED', serviceType: 'dogWalking30', startTime: '2026-01-04T09:00:00Z' }),
+      session('s2', { status: 'COMPLETED', serviceType: 'dogWalking30', startTime: '2026-07-10T14:00:00Z' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }));
+    // Both, including the January visit that a 30-day window would have hidden
+    // while reporting, correctly and uselessly, that it found nothing.
+    expect(res.sessions.map((s) => s.sessionId).sort()).toEqual(['s1', 's2']);
+  });
+  it('returns only that household, filtered at the server', async () => {
+    const ctx = seed([
+      session('mine', { status: 'COMPLETED' }),
+      session('theirs', { status: 'COMPLETED', kinfolkId: 'fam2' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }));
+    expect(res.sessions.map((s) => s.sessionId)).toEqual(['mine']);
+  });
+  it('still narrows by a range when one is given', async () => {
+    const ctx = seed([
+      session('old', { status: 'COMPLETED', startTime: '2026-01-04T09:00:00Z' }),
+      session('new', { status: 'COMPLETED', startTime: '2026-07-10T14:00:00Z' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1', ...RANGE }));
+    expect(res.sessions.map((s) => s.sessionId)).toEqual(['new']);
+  });
+  it('refuses half a range, which is a caller that lost a field rather than a question anyone asks', async () => {
+    const ctx = seed([]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1', from: '2026-07-01' })),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+  it('scopes the unplaceable check to the household too', async () => {
+    const ctx = seed([
+      session('lost-mine', { status: 'COMPLETED', startTime: '' }),
+      session('lost-theirs', { status: 'COMPLETED', startTime: '', kinfolkId: 'fam2' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }));
+    expect(res.unplaceable).toEqual([{ sessionId: 'lost-mine', kinfolkId: 'fam1' }]);
+  });
+});
+/**
+ * #408: work the operator has decided never to bill leaves the queue, but is
+ * not hidden. A queue that only grows is one nobody can take a count from, and
+ * a decision nobody can see is one nobody can undo.
+ */
+describe('listUninvoicedSessions do-not-invoice', () => {
+  it('keeps an excluded visit out of the billable list and names it separately', async () => {
+    const ctx = seed([
+      session('bill-me', { status: 'COMPLETED', serviceType: 'dogWalking30' }),
+      session('never', {
+        status: 'COMPLETED',
+        serviceType: 'dogWalking30',
+        doNotInvoice: true,
+        doNotInvoiceReason: 'Comped after the late arrival',
+      }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }));
+    expect(res.sessions.map((s) => s.sessionId)).toEqual(['bill-me']);
+    expect(res.excluded).toEqual([
+      {
+        sessionId: 'never',
+        kinfolkId: 'fam1',
+        serviceType: 'dogWalking30',
+        startTime: '2026-07-10T14:00:00Z',
+        reason: 'Comped after the late arrival',
+      },
+    ]);
+  });
+  it('reports an excluded visit with no reason as an empty string, never null', async () => {
+    const ctx = seed([session('never', { status: 'COMPLETED', doNotInvoice: true })]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect((await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }))).excluded[0]!.reason).toBe('');
+  });
+  it('reads only an explicit true as excluded, never a stray truthy value', async () => {
+    // The field is cleared to `false` rather than deleted, and nothing
+    // validates this collection on write.
+    const ctx = seed([
+      session('cleared', { status: 'COMPLETED', doNotInvoice: false }),
+      session('junk', { status: 'COMPLETED', doNotInvoice: 'yes' }),
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }));
+    expect(res.sessions.map((s) => s.sessionId).sort()).toEqual(['cleared', 'junk']);
+    expect(res.excluded).toEqual([]);
+  });
+  it('does not raise an excluded visit as unplaceable either', async () => {
+    const ctx = seed([session('never', { status: 'COMPLETED', startTime: '', doNotInvoice: true })]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect((await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }))).unplaceable).toEqual([]);
+  });
+  it('says nothing about exclusions when there are none', async () => {
+    const ctx = seed([session('s1', { status: 'COMPLETED' })]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    expect((await listUninvoicedSessionsHandler(req({ kinfolkId: 'fam1' }))).excluded).toEqual([]);
+  });
+});

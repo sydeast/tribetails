@@ -15,6 +15,9 @@ import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { InvoiceDayArg } from '../lib/invoiceDay';
+import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
+import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import { mintInvoiceNumber } from '../lib/invoiceNumber';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -53,12 +56,15 @@ const LineItem = z.object({
   qty: z.number().positive().max(999),
   unitCents: z.number().int().min(0).max(10_000_000),
   discountCents: z.number().int().min(0).optional(),
+  /** The visit this line bills for, when it was drawn from one. See createInvoice.ts. */
+  sessionId: z.string().max(200).optional(),
 });
 
 export const Args = z.object({
   familyId: z.string().min(1),
   kinfolkName: z.string().default(''),
-  invoiceNumber: z.string().min(1),
+  /** Optional since #408: blank or omitted and the server assigns it. See createInvoice.ts. */
+  invoiceNumber: z.string().max(60).optional(),
   client: z.string().default(''),
   address: z.string().default(''),
   // A DAY, not free text, for the reason spelled out in lib/invoiceDay.ts: a
@@ -67,6 +73,8 @@ export const Args = z.object({
   date: InvoiceDayArg,
   terms: z.string().default(''),
   dueDate: InvoiceDayArg,
+  /** Structured payment terms (#408). The server owns the due date when present. */
+  termsCode: InvoiceTermsCodeArg.optional(),
   discount: z.string().default(''),
   total: z.number().nonnegative(),
   amountDue: z.number().nonnegative(),
@@ -140,15 +148,37 @@ export async function createQuoteHandler(
     };
   }
 
-  const ref = db().collection('invoices').doc();
+  const firestore = db();
+  // Terms and the number: the same two rules `createInvoice` applies, from the
+  // same module, so a quote and the invoice it becomes cannot date themselves
+  // differently or number themselves out of two sequences.
+  let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
+  if (args.termsCode !== undefined) {
+    const serviceDates = await serviceDaysForSessions(firestore, args.sessionIds);
+    const outcome = resolveStructuredTerms({
+      termsCode: args.termsCode,
+      date: args.date,
+      dueDate: args.dueDate,
+      serviceDates,
+      now: new Date().toISOString().slice(0, 10),
+    });
+    if (!outcome.ok) {
+      throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
+    }
+    termsFields = outcome.fields;
+  }
+  const invoiceNumber =
+    (args.invoiceNumber ?? '').trim() === ''
+      ? await mintInvoiceNumber(firestore, args.date)
+      : args.invoiceNumber!.trim();
+  const ref = firestore.collection('invoices').doc();
   const doc = {
     kinfolkName: args.kinfolkName,
-    invoiceNumber: args.invoiceNumber,
+    invoiceNumber,
     client: args.client,
     address: args.address,
     date: args.date,
-    terms: args.terms,
-    dueDate: args.dueDate,
+    ...termsFields,
     discount: args.discount,
     total: args.total,
     amountDue: args.amountDue,
@@ -185,7 +215,7 @@ export async function createQuoteHandler(
     severity: 'info', actorRole: 'AUNTIE', actorUid: req.auth!.uid, familyId: args.familyId,
     payload: {
       invoiceId: ref.id,
-      invoiceNumber: args.invoiceNumber,
+      invoiceNumber,
       sendToKinfolk: args.sendToKinfolk,
       itemized: args.lineItems !== undefined,
       lineCount: args.lineItems?.length ?? 0,

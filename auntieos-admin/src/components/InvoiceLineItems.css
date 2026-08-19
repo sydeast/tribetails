@@ -278,3 +278,40 @@
   font-family: var(--type-body-sm-family);
   font-size: var(--type-label-sm-size);
 }
+
+/* A line bound to a visit (#408): what was billed, plus the route to the work
+   behind it. No inputs, because its money is the visit's. */
+.invoice-lines-editor__row--bound {
+  background: var(--color-surface-2);
+}
+.invoice-lines-editor__bound {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: var(--space-2);
+}
+.invoice-lines-editor__bound-desc {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+.invoice-lines-editor__bound-meta,
+.invoice-lines-editor__bound-note {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2) var(--space-2);
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+.invoice-lines-editor__bound-meta {
+  padding: 0;
+}
+.invoice-lines-editor__visit-link,
+.invoice-lines__visit-link {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-accent);
+}
+.invoice-lines__visit-link {
+  display: block;
+}

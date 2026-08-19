@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Link } from '@tanstack/react-router';
 import type { InvoiceLineItem } from '../api/invoices';
 import { computeInvoiceTotals, lineAmountCents, validateInvoiceMoney } from '../lib/invoiceMath';
 import { formatCentsUsd } from '../lib/invoiceReconcile';
@@ -72,6 +73,13 @@ export function InvoiceLineItemsTable({ lines, invoiceDiscountCents = 0 }: Invoi
               ) : (
                 li.description
               )}
+              {/* The one affordance a bound line carries (#408): the way to the
+                  work it bills for, and therefore to the money behind it. */}
+              {li.sessionId && (
+                <Link className="invoice-lines__visit-link" {...visitLinkProps(li.sessionId)}>
+                  Open this visit
+                </Link>
+              )}
               {(li.discountCents ?? 0) > 0 && (
                 <span className="invoice-lines__line-discount">
                   includes {formatCentsUsd(li.discountCents ?? 0)} off
@@ -112,6 +120,16 @@ export interface DraftLine {
   qtyText: string;
   unitText: string;
   discountText: string;
+  /**
+   * The visit this line bills for, when it was drawn from one (#408).
+   *
+   * A BOUND ROW IS NOT EDITABLE HERE. Its money comes from the visit, so the
+   * way to change it is to change the visit and let the invoice follow; the row
+   * offers the route there instead of four inputs to type over it with. That
+   * ruling is why this field exists on a DRAFT type at all: the editor has to
+   * know which rows it may not open.
+   */
+  sessionId?: string;
 }
 
 /** An empty row, as the Add button produces it. */
@@ -119,14 +137,25 @@ export function blankDraftLine(): DraftLine {
   return { description: '', qtyText: '1', unitText: '', discountText: '' };
 }
 
-/** A stored line, opened for editing. */
+/** A stored line, opened for editing. Keeps its binding, or the edit would cut it. */
 export function draftFromLineItem(li: InvoiceLineItem): DraftLine {
   return {
     description: li.description,
     qtyText: qtyToInput(li.qty),
     unitText: centsToInputDollars(li.unitCents),
     discountText: (li.discountCents ?? 0) > 0 ? centsToInputDollars(li.discountCents ?? 0) : '',
+    ...(li.sessionId ? { sessionId: li.sessionId } : {}),
   };
+}
+/**
+ * The route to a bound line's visit, as the router takes it.
+ *
+ * A `<Link>` rather than a bare href everywhere it is used: this is an
+ * in-app move between two admin screens, and an anchor would reload the whole
+ * application to make it.
+ */
+export function visitLinkProps(sessionId: string): { to: '/sessions'; search: { sessionId: string } } {
+  return { to: '/sessions', search: { sessionId } };
 }
 
 export interface DraftParseResult {
@@ -212,7 +241,15 @@ export function parseDraftLines(drafts: readonly DraftLine[], invoiceDiscountTex
       discountCents = parsed;
     }
 
-    lines.push({ description: d.description.trim(), qty, unitCents, ...(discountCents > 0 ? { discountCents } : {}) });
+    lines.push({
+      description: d.description.trim(),
+      qty,
+      unitCents,
+      ...(discountCents > 0 ? { discountCents } : {}),
+      // Carried through the parse, or an edit would quietly unbind every line
+      // it touched: this list REPLACES the stored one wholesale.
+      ...(d.sessionId ? { sessionId: d.sessionId } : {}),
+    });
   }
 
   let invoiceDiscountCents = 0;
@@ -239,6 +276,14 @@ interface InvoiceLineItemsEditorProps {
   invoiceDiscountText: string;
   onInvoiceDiscountChange: (next: string) => void;
   disabled?: boolean;
+  /**
+   * What an empty list says. The default speaks for an invoice made ONLY of
+   * typed lines; the #408 composer, where these rows sit under a household's
+   * selected visits, needs to say that they are the EXTRA charges, or an
+   * operator reads "nothing was billed" over an invoice that bills for four
+   * visits.
+   */
+  emptyHint?: string;
 }
 
 /**
@@ -257,6 +302,7 @@ export function InvoiceLineItemsEditor({
   invoiceDiscountText,
   onInvoiceDiscountChange,
   disabled = false,
+  emptyHint = 'No line items yet. Add one to itemize this invoice, or leave it empty to bill nothing.',
 }: InvoiceLineItemsEditorProps) {
   const preview = useMemo(() => {
     const readable: InvoiceLineItem[] = [];
@@ -296,9 +342,7 @@ export function InvoiceLineItemsEditor({
   return (
     <div className="invoice-lines-editor">
       {drafts.length === 0 ? (
-        <p className="invoice-lines-editor__empty">
-          No line items yet. Add one to itemize this invoice, or leave it empty to bill nothing.
-        </p>
+        <p className="invoice-lines-editor__empty">{emptyHint}</p>
       ) : (
         <ul className="invoice-lines-editor__list">
           {drafts.map((d, index) => {
@@ -310,6 +354,52 @@ export function InvoiceLineItemsEditor({
                 ? formatCentsUsd(lineAmountCents({ description: d.description, qty, unitCents, discountCents: discountCents ?? 0 }))
                 : null;
 
+            // A LINE DRAWN FROM A VISIT IS BOUND TO IT (#408). Its money is
+            // the visit's, so this row shows what is billed and routes to the
+            // visit rather than offering four fields to type over it with.
+            // Removing it is still allowed: taking work OFF an invoice is a
+            // different decision from rewriting what that work cost.
+            if (d.sessionId) {
+              return (
+                <li className="invoice-lines-editor__row invoice-lines-editor__row--bound" key={index}>
+                  <div className="invoice-lines-editor__bound">
+                    <span className="invoice-lines-editor__bound-desc">{d.description}</span>
+                    <span className="invoice-lines-editor__bound-meta">
+                      {qty === null || unitCents === null
+                        ? 'from a visit'
+                        : `${qtyToInput(qty)} x ${formatCentsUsd(unitCents)}, from a visit`}
+                    </span>
+                  </div>
+                  <div className="invoice-lines-editor__row-foot">
+                    <span className="invoice-lines-editor__amount">
+                      {amount ?? (
+                        <span className="invoice-lines-editor__amount-pending">
+                          amount needs a qty and a unit price
+                        </span>
+                      )}
+                    </span>
+                    <div className="invoice-lines-editor__row-actions">
+                      <Link className="invoice-lines-editor__visit-link" {...visitLinkProps(d.sessionId)}>
+                        Open this visit
+                      </Link>
+                      <button
+                        type="button"
+                        className="invoice-lines-editor__icon invoice-lines-editor__icon--remove"
+                        onClick={() => remove(index)}
+                        disabled={disabled}
+                        aria-label={`Remove line ${String(index + 1)}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <p className="invoice-lines-editor__bound-note">
+                    This line comes from a visit, so its price is the visit's. Change it on the visit
+                    and this invoice follows.
+                  </p>
+                </li>
+              );
+            }
             return (
               <li className="invoice-lines-editor__row" key={index}>
                 <div className="invoice-lines-editor__fields">

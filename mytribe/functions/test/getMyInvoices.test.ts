@@ -317,6 +317,57 @@ describe('getMyInvoices prefers the stored line items', () => {
       { lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1', label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null },
     ]);
   });
+  // #408: a line drawn from a visit stays bound to it, and the household's copy
+  // says WHEN the work happened. The day is looked up on the visit rather than
+  // copied onto the invoice, so a corrected visit time corrects the bill too.
+  it('carries the bound visit and its day onto a stored line', async () => {
+    const res = await load(
+      {
+        invoiceStatus: 'open',
+        amountDue: 25,
+        total: 25,
+        lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500, sessionId: 'vis_1' }],
+      },
+      { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00' } },
+    );
+    expect(res.open[0].lineItems).toEqual([
+      {
+        lineId: 'stored:0',
+        source: 'stored',
+        sessionId: 'vis_1',
+        label: 'Dog walking',
+        dateIso: '2026-07-01T10:00:00',
+        amountCents: 2500,
+        qty: 1,
+        unitCents: 2500,
+      },
+    ]);
+  });
+  it('leaves a bound line undated when its visit can no longer be read, rather than inventing a day', async () => {
+    const res = await load({
+      invoiceStatus: 'open',
+      amountDue: 25,
+      total: 25,
+      lineItems: [{ description: 'Dog walking', qty: 1, unitCents: 2500, sessionId: 'vis_gone' }],
+    });
+    expect(res.open[0].lineItems?.[0]).toMatchObject({ sessionId: 'vis_gone', dateIso: null });
+  });
+  it('leaves a hand-typed line unbound and undated even beside bound ones', async () => {
+    const res = await load(
+      {
+        invoiceStatus: 'open',
+        amountDue: 50,
+        total: 50,
+        lineItems: [
+          { description: 'Dog walking', qty: 1, unitCents: 2500, sessionId: 'vis_1' },
+          { description: 'Key cutting', qty: 1, unitCents: 2500 },
+        ],
+      },
+      { 'kin_care_sessions/vis_1': { serviceType: '30Minute', startTime: '2026-07-01T10:00:00' } },
+    );
+    expect(res.open[0].lineItems?.[1]).toMatchObject({ sessionId: '', dateIso: null });
+    expect(res.open[0].lineItems?.[0]).toMatchObject({ sessionId: 'vis_1', dateIso: '2026-07-01T10:00:00' });
+  });
   it('gives every row a key that is unique within the invoice', async () => {
     // Keying on sessionId collapsed every stored row onto one empty key, which
     // is a rendering bug the server can prevent rather than hope about.
@@ -341,7 +392,7 @@ describe('storedLineItemsFrom', () => {
         null,
         'not an object',
       ]),
-    ).toEqual([{ description: 'Good', qty: 1, unitCents: 100, discountCents: 0 }]);
+    ).toEqual([{ description: 'Good', qty: 1, unitCents: 100, discountCents: 0, sessionId: '' }]);
   });
   it('reads a missing or non-array field as no lines', async () => {
     const { storedLineItemsFrom } = await import('../src/portal/getMyInvoices');

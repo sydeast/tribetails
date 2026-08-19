@@ -7,15 +7,39 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema } from '../lib/invoiceResponseSchema';
+import {
+  isSessionCompleted,
+  isSessionDoNotInvoice,
+  isSessionUnclaimed,
+  sessionDoNotInvoiceReason,
+} from '../lib/sessionInvoicing';
 
 /**
- * Completed visits in a date window that no invoice has claimed yet, priced
- * from the rate card where that is possible. The read half of "turn last
- * month's work into an invoice"; it writes nothing.
+ * Completed visits that no invoice has claimed yet, priced from the rate card
+ * where that is possible. The read half of "turn this household's work into an
+ * invoice"; it writes nothing.
+ *
+ * SCOPED BY HOUSEHOLD, AND THE DATE RANGE IS NOW OPTIONAL (#408). The composer
+ * asks one question, which household, and the work appears. It used to demand a
+ * date range as well, defaulting to the last 30 days, which meant the operator
+ * had to already know when the work happened in order to bill it: a visit from
+ * five weeks ago produced a correct, confident "no un-invoiced visits" and no
+ * hint that a wider window would find one. `kinfolkId` narrows the read at the
+ * server instead, so all of a household's outstanding work arrives at once, and
+ * the range survives as a NARROWING option for the case where the page cap is
+ * actually reached.
+ *
+ * THE HOUSEHOLD-SCOPED READ NEEDS NO NEW INDEX. `kin_care_sessions
+ * (kinfolkId ASC, startTime DESC)` is already declared in
+ * `mytribe/firestore.indexes.json`, and `portal/getMyVisits.ts` has been
+ * running exactly this equality-plus-order against it in production since long
+ * before this change.
  *
  * FOUR THINGS ABOUT `kin_care_sessions` MAKE THE OBVIOUS QUERY WRONG, and each
  * one is a silent failure rather than an error, so they are all handled here
- * and all covered by a test.
+ * and all covered by a test. The predicates themselves now live in
+ * `lib/sessionInvoicing.ts` so that `setSessionDoNotInvoice` cannot disagree
+ * with this list about which visits exist.
  *
  * 1. `invoiceId` IS OFTEN ABSENT, NOT EMPTY. `createKinCareSession` and
  *    `approveBookingSeriesCore` never write the field at all, and Firestore
@@ -32,9 +56,9 @@ import { CentsSchema } from '../lib/invoiceResponseSchema';
  *
  * 3. `startTime` IS AN ISO-8601 STRING, not a Timestamp. Firestore orders every
  *    timestamp after every string, so a range query against a `Timestamp` here
- *    returns nothing and does not error. The window is therefore a LEXICAL
- *    range on the string, which works precisely because the format is ISO. Same
- *    technique as `optimizeRoute`.
+ *    returns nothing and does not error. The optional window is therefore a
+ *    LEXICAL range on the string, which works precisely because the format is
+ *    ISO. Same technique as `optimizeRoute`.
  *
  * 4. A SESSION CARRIES NO PRICE. There is no rate, price or amount field on the
  *    model. The only route to money is joining `serviceType` against
@@ -45,8 +69,12 @@ import { CentsSchema } from '../lib/invoiceResponseSchema';
  * though `(status ASC, startTime DESC)` is a deployed index. A server equality
  * on `status` would inherit problem 2: it would drop every visit whose status
  * was written in the wrong case, and drop it INVISIBLY, which on this callable
- * means quietly not billing for real work. A lexical range on `startTime` alone
- * needs no composite index, so nothing is paid for the safer read.
+ * means quietly not billing for real work.
+ *
+ * WORK THE OPERATOR HAS DECIDED NEVER TO BILL comes back in its own list rather
+ * than vanishing (#408). `setSessionDoNotInvoice` is what puts a visit there;
+ * `excluded` is how the composer offers to put it back. Without both halves the
+ * queue only ever grows, and no count taken from it can be trusted.
  *
  * NOTHING IS EVER PRICED AT ZERO BY DEFAULT. A `serviceType` the rate card does
  * not hold, a rate that will not parse, and a rate of zero or less all resolve
@@ -56,16 +84,35 @@ import { CentsSchema } from '../lib/invoiceResponseSchema';
  * distinguishes "this service is not on the card" from "there is no card".
  */
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
 /** Exported so the callable-contract drift guard can freeze this request shape. */
 export const Args = z
   .object({
+    /**
+     * Only this household's visits. Optional, for the callers that predate the
+     * #408 composer; supplying it narrows the read at the SERVER, which is what
+     * lets the date range be dropped.
+     */
+    kinfolkId: z.string().min(1).max(200).optional(),
     /** Inclusive window start, `YYYY-MM-DD`. Compared lexically against the ISO `startTime`. */
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'from must be YYYY-MM-DD'),
+    from: z.string().regex(DAY, 'from must be YYYY-MM-DD').optional(),
     /** Inclusive window end, `YYYY-MM-DD`. */
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'to must be YYYY-MM-DD'),
+    to: z.string().regex(DAY, 'to must be YYYY-MM-DD').optional(),
   })
   .strict()
-  .refine((a) => a.from <= a.to, { message: 'from must not be after to', path: ['from'] });
+  // BOTH DATES OR NEITHER. A window with one end is not a narrower window, it
+  // is a different question ("everything since", "everything until"), and no
+  // caller asks it. Half a range is far more likely to be a caller that lost a
+  // field on the way than a deliberate open-ended read.
+  .refine((a) => (a.from === undefined) === (a.to === undefined), {
+    message: 'from and to must be given together, or both left out',
+    path: ['from'],
+  })
+  .refine((a) => a.from === undefined || a.to === undefined || a.from <= a.to, {
+    message: 'from must not be after to',
+    path: ['from'],
+  });
 
 export type ListUninvoicedSessionsArgs = z.infer<typeof Args>;
 
@@ -101,6 +148,18 @@ const UninvoicedSessionSchema = z
   })
   .strict();
 
+/** One visit the operator has taken out of the queue on purpose. */
+const ExcludedSessionSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    kinfolkId: z.string(),
+    serviceType: z.string(),
+    startTime: z.string(),
+    /** The operator's note, or '' when they gave none. Never null: it is text, or it is absent text. */
+    reason: z.string(),
+  })
+  .strict();
+
 /**
  * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS types
  * below.
@@ -117,13 +176,21 @@ export const Result = z
     unpriceable: z.array(z.object({ sessionId: z.string(), serviceType: z.string() }).strict()),
     /**
      * Billable sessions carrying an EMPTY `startTime`, which no date window can
-     * ever reach. The window above is a lexical range on the ISO string, so ''
-     * sorts before every real date and such a session is invisible to this
-     * callable, to `optimizeRoute` and to the calendar push. Reported rather
-     * than dropped: an unbillable visit that nobody can see is how real work
-     * goes unpaid, and the operator can only fix what is named.
+     * ever reach. The optional window is a lexical range on the ISO string, so
+     * '' sorts before every real date and such a session is invisible to a
+     * windowed read of this callable, to `optimizeRoute` and to the calendar
+     * push. Reported rather than dropped: an unbillable visit that nobody can
+     * see is how real work goes unpaid, and the operator can only fix what is
+     * named.
      */
     unplaceable: z.array(z.object({ sessionId: z.string(), kinfolkId: z.string() }).strict()),
+    /**
+     * Completed, unclaimed visits the operator has marked do-not-invoice. They
+     * are NOT in `sessions`: they are out of the queue by decision. Returned so
+     * that decision stays visible, and reversible, in the same place it was
+     * taken.
+     */
+    excluded: z.array(ExcludedSessionSchema),
     /** False when `business_settings.serviceRates` is missing, so a miss is not a real miss. */
     rateCardLoaded: z.boolean(),
     /** Rows read before filtering. An empty result over 400 scanned rows means something. */
@@ -133,6 +200,7 @@ export const Result = z
   .strict();
 
 export type UninvoicedSession = z.infer<typeof UninvoicedSessionSchema>;
+export type ExcludedSession = z.infer<typeof ExcludedSessionSchema>;
 export type ListUninvoicedSessionsResult = z.infer<typeof Result>;
 
 /** The day after `day` (`YYYY-MM-DD`), so an inclusive `to` becomes an exclusive bound. */
@@ -140,20 +208,6 @@ function nextDay(day: string): string {
   const d = new Date(`${day}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
-}
-
-/** True when this session is done. Case and padding are not guaranteed by any writer. */
-function isCompleted(status: unknown): boolean {
-  return typeof status === 'string' && status.trim().toUpperCase() === 'COMPLETED';
-}
-
-/**
- * True when nothing has claimed this session. Absent, empty and whitespace are
- * one state: unclaimed. See point 1 in the file comment.
- */
-function isUnclaimed(invoiceId: unknown): boolean {
-  if (invoiceId === undefined || invoiceId === null) return true;
-  return typeof invoiceId === 'string' && invoiceId.trim() === '';
 }
 
 /**
@@ -169,6 +223,11 @@ function rateToCents(rate: unknown): number | null {
   const dollars = typeof rate === 'number' ? rate : typeof rate === 'string' ? Number.parseFloat(rate) : NaN;
   if (!Number.isFinite(dollars) || dollars <= 0) return null;
   return Math.round(dollars * 100);
+}
+
+/** A string field read off a document nothing validates on write. */
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
 }
 
 export async function listUninvoicedSessionsHandler(
@@ -192,15 +251,17 @@ export async function listUninvoicedSessionsHandler(
 
   const firestore = db();
 
-  // Lexical range on the ISO string; `to` is inclusive, so the exclusive bound
-  // is the day after it. No status predicate here on purpose (see the header).
-  const snap = await firestore
-    .collection(SESSIONS_COLLECTION)
-    .where('startTime', '>=', args.from)
-    .where('startTime', '<', nextDay(args.to))
-    .orderBy('startTime', 'desc')
-    .limit(MAX_SESSIONS)
-    .get();
+  // Equality on the household first, then the optional lexical window on the
+  // ISO string, then the order. That is exactly the shape of the declared
+  // `(kinfolkId ASC, startTime DESC)` composite; with no household it is a
+  // single-field order, which every collection has automatically. No status
+  // predicate here on purpose (see the header).
+  let query = firestore.collection(SESSIONS_COLLECTION) as FirebaseFirestore.Query;
+  if (args.kinfolkId !== undefined) query = query.where('kinfolkId', '==', args.kinfolkId);
+  if (args.from !== undefined && args.to !== undefined) {
+    query = query.where('startTime', '>=', args.from).where('startTime', '<', nextDay(args.to));
+  }
+  const snap = await query.orderBy('startTime', 'desc').limit(MAX_SESSIONS).get();
 
   const settingsSnap = await firestore.doc(SETTINGS_DOC).get();
   const rawRates = (settingsSnap.data() ?? {})['serviceRates'];
@@ -208,53 +269,70 @@ export async function listUninvoicedSessionsHandler(
     typeof rawRates === 'object' && rawRates !== null && !Array.isArray(rawRates);
   const rates = rateCardLoaded ? (rawRates as Record<string, unknown>) : {};
 
-  // The window above cannot reach a session whose startTime is ''. One extra
-  // equality read finds exactly those. It needs no composite index (equality on
-  // a single field is served by the automatic index), and it is bounded by the
-  // same page size. A session MISSING the field entirely is still unreachable,
-  // because Firestore cannot query for absence; no writer produces that shape
+  // The ordered read above cannot reach a session whose startTime is '' while a
+  // window is set, and sorts it last when one is not. One extra equality read
+  // finds exactly those. Scoped to the same household when there is one, which
+  // the same composite serves (both clauses are equalities on its two fields).
+  // A session MISSING the field entirely is still unreachable, because
+  // Firestore cannot query for absence; no writer produces that shape
   // (`createKinCareSession` requires min(1) and `approveBookingSeriesCore` now
   // refuses an empty one), and prod carries none, so the gap is documented
   // rather than papered over with a full-collection scan.
-  const unplaceableSnap = await firestore
+  let unplaceableQuery = firestore
     .collection(SESSIONS_COLLECTION)
-    .where('startTime', '==', '')
-    .limit(MAX_SESSIONS)
-    .get();
+    .where('startTime', '==', '') as FirebaseFirestore.Query;
+  if (args.kinfolkId !== undefined) {
+    unplaceableQuery = unplaceableQuery.where('kinfolkId', '==', args.kinfolkId);
+  }
+  const unplaceableSnap = await unplaceableQuery.limit(MAX_SESSIONS).get();
 
   const sessions: UninvoicedSession[] = [];
   const unpriceable: Array<{ sessionId: string; serviceType: string }> = [];
   const unplaceable: Array<{ sessionId: string; kinfolkId: string }> = [];
+  const excluded: ExcludedSession[] = [];
 
   for (const d of unplaceableSnap.docs) {
     const data = d.data() as Record<string, unknown>;
-    // Same two filters the window uses, so this reports only sessions that
-    // WOULD be billable. An already-invoiced or unfinished visit with a broken
-    // startTime is a different problem and not this callable's to raise.
-    if (!isCompleted(data['status'])) continue;
-    if (!isUnclaimed(data['invoiceId'])) continue;
-    unplaceable.push({
-      sessionId: d.id,
-      kinfolkId: typeof data['kinfolkId'] === 'string' ? data['kinfolkId'] : '',
-    });
+    // Same filters the ordered read uses, so this reports only sessions that
+    // WOULD be billable. An already-invoiced, unfinished, or deliberately
+    // excluded visit with a broken startTime is a different problem and not
+    // this callable's to raise.
+    if (!isSessionCompleted(data['status'])) continue;
+    if (!isSessionUnclaimed(data['invoiceId'])) continue;
+    if (isSessionDoNotInvoice(data)) continue;
+    unplaceable.push({ sessionId: d.id, kinfolkId: str(data['kinfolkId']) });
   }
 
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
-    if (!isCompleted(data['status'])) continue;
-    if (!isUnclaimed(data['invoiceId'])) continue;
+    if (!isSessionCompleted(data['status'])) continue;
+    if (!isSessionUnclaimed(data['invoiceId'])) continue;
 
-    const serviceType = typeof data['serviceType'] === 'string' ? data['serviceType'] : '';
+    const serviceType = str(data['serviceType']);
+
+    // Out of the queue by decision, not by accident, so it is reported on its
+    // own channel rather than dropped or mixed in with billable work.
+    if (isSessionDoNotInvoice(data)) {
+      excluded.push({
+        sessionId: d.id,
+        kinfolkId: str(data['kinfolkId']),
+        serviceType,
+        startTime: str(data['startTime']),
+        reason: sessionDoNotInvoiceReason(data),
+      });
+      continue;
+    }
+
     const unitCents = rateCardLoaded ? rateToCents(rates[serviceType]) : null;
     if (unitCents === null) unpriceable.push({ sessionId: d.id, serviceType });
 
     sessions.push({
       sessionId: d.id,
-      kinfolkId: typeof data['kinfolkId'] === 'string' ? data['kinfolkId'] : '',
+      kinfolkId: str(data['kinfolkId']),
       serviceType,
       durationMinutes:
         typeof data['serviceDurationMinutes'] === 'number' ? data['serviceDurationMinutes'] : 0,
-      startTime: typeof data['startTime'] === 'string' ? data['startTime'] : '',
+      startTime: str(data['startTime']),
       unitCents,
     });
   }
@@ -265,10 +343,12 @@ export async function listUninvoicedSessionsHandler(
     event: 'admin.invoice.uninvoiced.listed',
     uid,
     extra: {
-      from: args.from,
-      to: args.to,
+      kinfolkId: args.kinfolkId ?? '',
+      from: args.from ?? '',
+      to: args.to ?? '',
       scanned: snap.docs.length,
       matched: sessions.length,
+      excluded: excluded.length,
       unpriceable: unpriceable.length,
       unplaceable: unplaceable.length,
       rateCardLoaded,
@@ -279,6 +359,7 @@ export async function listUninvoicedSessionsHandler(
     sessions,
     unpriceable,
     unplaceable,
+    excluded,
     rateCardLoaded,
     scanned: snap.docs.length,
     truncated: snap.docs.length >= MAX_SESSIONS,

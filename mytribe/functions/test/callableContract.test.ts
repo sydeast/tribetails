@@ -390,10 +390,15 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
       'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
       'lineItems[].description', 'lineItems[].discountCents',
+      // #408: the binding from a line to the visit it bills for. Optional, so
+      // every legacy payload still validates and this freeze stays a superset.
+      'lineItems[].sessionId',
       'lineItems[].qty', 'lineItems[].unitCents',
       // `sessionIds[]`, not `sessionIds`: the walker descends arrays, and a
       // string array's element is a leaf it still names.
-      'sessionIds[]', 'status', 'terms', 'total',
+      // `termsCode` (#408) is the structured half of `terms`, which stays for
+      // the callers that send free text.
+      'sessionIds[]', 'status', 'terms', 'termsCode', 'total',
     ],
   },
   // MOVED here from the flat table (issue #118), when `lineItems` arrived.
@@ -405,8 +410,9 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
       'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
       'lineItems[].description', 'lineItems[].discountCents',
+      'lineItems[].sessionId',
       'lineItems[].qty', 'lineItems[].unitCents',
-      'sendToKinfolk', 'sessionIds[]', 'status', 'terms', 'total',
+      'sendToKinfolk', 'sessionIds[]', 'status', 'terms', 'termsCode', 'total',
     ],
   },
   updateInvoice: {
@@ -423,8 +429,11 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'patch.date', 'patch.discount', 'patch.dueDate', 'patch.invoiceDiscountCents',
       'patch.invoiceNumber', 'patch.kinfolkName',
       'patch.lineItems[].description', 'patch.lineItems[].discountCents',
+      // #408: the line-to-visit binding, accepted here as well as at creation
+      // because this patch replaces `lineItems` wholesale.
+      'patch.lineItems[].sessionId',
       'patch.lineItems[].qty', 'patch.lineItems[].unitCents',
-      'patch.terms',
+      'patch.terms', 'patch.termsCode',
     ],
   },
   updateTrainingDocument: {
@@ -964,6 +973,13 @@ const FROZEN_RESPONSE_SHAPES: Record<
   listUninvoicedSessions: {
     load: () => import('../src/admin/listUninvoicedSessions'),
     signature: [
+      // #408: work the operator has decided never to bill, kept out of
+      // `sessions` and reported here so the decision stays reversible.
+      'excluded[].kinfolkId',
+      'excluded[].reason',
+      'excluded[].serviceType',
+      'excluded[].sessionId',
+      'excluded[].startTime',
       'rateCardLoaded',
       'scanned',
       'sessions[].durationMinutes',

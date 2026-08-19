@@ -344,6 +344,10 @@ export { unarchiveInvoice } from './admin/unarchiveInvoice';
 export { repairInvoicePayments } from './admin/repairInvoicePayments';
 // Task 5.1 (#18): the read half of turning completed visits into an invoice.
 export { listUninvoicedSessions } from './admin/listUninvoicedSessions';
+// #408: the other thing an operator can do with un-invoiced work, which is
+// decide never to bill it. Reversible, so the queue above stays a queue rather
+// than an accumulation nobody can trust a count from.
+export { setSessionDoNotInvoice } from './admin/setSessionDoNotInvoice';
 // A1: the read half of an invoice's money. `invoices/{id}/payments` is the
 // settlement authority and `firestore.rules` grants no client any access to it,
 // so this callable is the only way a detail screen can show what was paid.

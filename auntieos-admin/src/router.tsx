@@ -189,7 +189,11 @@ const bookingsRoute = createRoute({
 const sessionsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'sessions',
-  component: lazyRouteComponent(() => import('./screens/Sessions'), 'Sessions'),
+  // `sessionId` is where an invoice line bound to a visit routes (#408): a
+  // bound line's money is corrected on the visit itself, so the invoice, the
+  // composer and the ledger all offer the way here.
+  validateSearch: optionalIdSearch(['sessionId'] as const),
+  component: lazyRouteComponent(() => import('./routes/SessionsView'), 'SessionsView'),
 });
 
 const kinTalesRoute = createRoute({

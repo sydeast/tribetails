@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,6 +7,27 @@ import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 
+/**
+ * The router's `Link`, rendered as the anchor it becomes. The linked-visits
+ * panel routes to `/sessions?sessionId=` (#408), and this sheet is unit-
+ * rendered without a router. Same stub as `Invites.test.tsx`.
+ */
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    to,
+    search,
+    children,
+    ...rest
+  }: {
+    to: string;
+    search?: Record<string, string>;
+    children: ReactNode;
+  }) => (
+    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 const {
   sendInvoiceReminder,
   markInvoicePaid,

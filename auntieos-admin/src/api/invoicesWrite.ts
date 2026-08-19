@@ -26,6 +26,8 @@ import type {
   RunAutoApplyResult,
   SendInvoiceReminderArgs,
   SendInvoiceReminderResult,
+  SetSessionDoNotInvoiceArgs,
+  SetSessionDoNotInvoiceResult,
   UnarchiveInvoiceArgs,
   UnarchiveInvoiceResult,
   UpdateInvoiceArgs,
@@ -399,19 +401,28 @@ export async function unarchiveInvoice(invoiceId: string): Promise<void> {
 }
 
 /**
- * listUninvoicedSessions (admin): completed visits in a date window that no
- * invoice has claimed yet, priced from the rate card where that is possible.
- * Reads only; writes nothing.
+ * listUninvoicedSessions (admin): completed visits that no invoice has claimed
+ * yet, priced from the rate card where that is possible. Reads only; writes
+ * nothing.
  *
- * `from` and `to` are INCLUSIVE `YYYY-MM-DD` days, and the server also enforces
- * an ordering rule between them that the generated type cannot express (a zod
- * `.refine`), so a pair that typechecks can still be refused. It compares them
- * lexically against `kin_care_sessions.startTime`, which is an ISO STRING rather
- * than a Timestamp, and filters both the completed status and the
- * already-invoiced check IN MEMORY. That is not laziness on the server's part:
- * `status` casing is unenforced, and `invoiceId` is ABSENT rather than empty on
- * most sessions, so either predicate applied server-side would silently drop
- * real work instead of billing for it.
+ * PASS THE HOUSEHOLD AND LEAVE THE DATES OUT (#408). That is the composer's
+ * whole query: the operator picks a household and its outstanding work appears,
+ * however old it is. The optional `from`/`to` pair narrows the read afterwards,
+ * and exists for one situation, a `truncated` page. They are INCLUSIVE
+ * `YYYY-MM-DD` days and the server enforces two rules the generated type cannot
+ * express (both zod `.refine`s): send both or neither, and `from` must not be
+ * after `to`.
+ *
+ * The server compares them lexically against `kin_care_sessions.startTime`,
+ * which is an ISO STRING rather than a Timestamp, and filters the completed
+ * status, the already-invoiced check and the do-not-invoice flag IN MEMORY.
+ * That is not laziness on its part: `status` casing is unenforced, and
+ * `invoiceId` is ABSENT rather than empty on most sessions, so either predicate
+ * applied server-side would silently drop real work instead of billing for it.
+ *
+ * `excluded` is work the operator has decided never to bill
+ * (`setSessionDoNotInvoice`). It is deliberately NOT in `sessions`, and it is
+ * returned rather than hidden so the decision can be undone where it was taken.
  *
  * A session's `unitCents` is NULL WHEN IT COULD NOT BE PRICED, AND NULL IS NOT
  * ZERO. A service the rate card does not hold, a rate that will not parse, and a
@@ -425,11 +436,41 @@ export async function unarchiveInvoice(invoiceId: string): Promise<void> {
  * server's page cap was reached and the window may hold more.
  */
 export async function listUninvoicedSessions(
-  from: string,
-  to: string,
+  kinfolkId: string,
+  window?: { from: string; to: string },
 ): Promise<ListUninvoicedSessionsResult> {
   return call<ListUninvoicedSessionsArgs, ListUninvoicedSessionsResult>('listUninvoicedSessions', {
-    from,
-    to,
+    kinfolkId,
+    ...(window ? { from: window.from, to: window.to } : {}),
+  });
+}
+/**
+ * setSessionDoNotInvoice (admin): takes completed work out of the un-invoiced
+ * queue without billing for it, or puts it back.
+ *
+ * REVERSIBLE BY CONSTRUCTION: the same callable, with `doNotInvoice: false`,
+ * undoes it. Nothing is deleted, no money moves, and the visit keeps every
+ * field it had.
+ *
+ * IT REFUSES A VISIT AN INVOICE ALREADY BILLS FOR, naming that invoice
+ * (`session_already_invoiced`), because marking a billed visit do-not-invoice
+ * would say two contradictory things about the same work while the household
+ * holds the version that charges them. Unlink it first.
+ *
+ * THE WHOLE SELECTION IS CHECKED BEFORE ANY OF IT IS WRITTEN, so a batch either
+ * applies or does not; there is no half-applied selection to work out
+ * afterwards. `changed` and `unchanged` split the result, the second being
+ * visits somebody had already marked, which is a no-op worth counting honestly
+ * rather than an error.
+ */
+export async function setSessionDoNotInvoice(
+  sessionIds: readonly string[],
+  doNotInvoice: boolean,
+  reason = '',
+): Promise<SetSessionDoNotInvoiceResult> {
+  return call<SetSessionDoNotInvoiceArgs, SetSessionDoNotInvoiceResult>('setSessionDoNotInvoice', {
+    sessionIds: [...sessionIds],
+    doNotInvoice,
+    reason,
   });
 }

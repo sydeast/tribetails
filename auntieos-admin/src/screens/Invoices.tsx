@@ -270,7 +270,10 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // the detail as it always did. Cleared alongside `selectedId` on close, so
   // reopening the same invoice from the row never re-arms a stale action.
   const [armedAction, setArmedAction] = useState<InvoiceAction | null>(null);
-  // Seeded only on mount: reopening the composer from the "New quote" button
+  // The invoice the composer just created, so the sheet can open it by id even
+  // when the list's current window does not hold it. Cleared with the sheet.
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  // Seeded only on mount: reopening the composer from the "New invoice" button
   // later must start blank, not silently re-seed the household from a stale URL.
   const [creating, setCreating] = useState<CreatingState | null>(
     composeQuoteForKinfolkId ? { mode: 'quote', seedKinfolkId: composeQuoteForKinfolkId } : null,
@@ -322,8 +325,19 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // Only ever the id the link carried: `selectedId` also holds ids picked from
   // rows, and letting the fetched document answer for one of those would leak
   // the deep-linked invoice into a later selection.
+  //
+  // A JUST-CREATED INVOICE IS THE SAME PROBLEM ARRIVING BY A DIFFERENT DOOR
+  // (#408). The composer mints an invoice dated today; the list defaults to a
+  // 7-day window but can be on any of them, and on "Last 7 days" with a
+  // back-dated invoice, or on any narrower facet, the row the operator just
+  // made is not in the loaded page either. Same by-id read, same rule: only an
+  // id this screen itself is responsible for, and cleared when the sheet does.
   const deepLinkId =
-    initialInvoiceId !== undefined && selectedId === initialInvoiceId ? initialInvoiceId : null;
+    initialInvoiceId !== undefined && selectedId === initialInvoiceId
+      ? initialInvoiceId
+      : createdId !== null && selectedId === createdId
+        ? createdId
+        : null;
   const deepLinked = useDocById<InvoiceEntry>('invoices', deepLinkId);
 
   // NORMALIZED, the same as the list rows. `rowViewsFor` normalizes what the
@@ -473,7 +487,11 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         subtitle="Every invoice in the window you choose, by invoice date, newest first."
         trailing={
           <div className="invoices__new-actions">
-            <PrimaryButton label="New quote" onClick={() => setCreating({ mode: 'quote' })} />
+            {/* ONE ENTRY POINT, not two (#408). A quote is an invoice in QUOTE
+                status, which is what the status filters above have always said,
+                so the composer asks which kind this is rather than the screen
+                asking the operator to decide before they have picked anybody.
+                `createQuote` still does the writing when they say quote. */}
             <PrimaryButton label="New invoice" onClick={() => setCreating({ mode: 'invoice' })} />
           </div>
         }
@@ -555,15 +573,23 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             Opening the invoice this link points at…
           </p>
         )}
+        {/* Which invoice this is about, in the operator's terms. An invoice
+            they just created and one a link pointed at fail the same way and
+            need different sentences: "this link" is nonsense to somebody who
+            has just pressed Create. */}
         {deepLinkState === 'missing' && (
           <p className="invoices__deep-link-miss" role="alert">
-            The invoice this link points at is no longer available. It may have been deleted, or it
-            may belong to a household this account cannot see.
+            {deepLinkId === createdId
+              ? 'The invoice you just created cannot be opened. It was created, so look for it in the list; if it is not there either, it may belong to a household this account cannot see.'
+              : 'The invoice this link points at is no longer available. It may have been deleted, or it may belong to a household this account cannot see.'}
           </p>
         )}
         {deepLinkState === 'error' && deepLinked.status === 'error' && (
           <p className="invoices__deep-link-miss" role="alert">
-            Couldn&rsquo;t open the invoice this link points at. {deepLinked.message}
+            {deepLinkId === createdId
+              ? 'Couldn\u2019t open the invoice you just created. It was created; this is the read that failed. '
+              : 'Couldn\u2019t open the invoice this link points at. '}
+            {deepLinked.message}
             {deepLinked.retry && (
               <button type="button" className="async-retry" onClick={deepLinked.retry}>
                 Retry
@@ -669,6 +695,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           onClose={() => {
             setSelectedId(null);
             setArmedAction(null);
+            setCreatedId(null);
           }}
         />
       )}
@@ -677,6 +704,17 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
         <InvoiceCreate
           mode={creating.mode}
           {...(creating.seedKinfolkId ? { seedKinfolkId: creating.seedKinfolkId } : {})}
+          // THE NEW INVOICE OPENS (#408). Creating one used to close the dialog
+          // and drop the operator back on a list that, on the default 7-day
+          // window, frequently does not even contain it: no confirmation, no
+          // number, no sight of what was billed. The detail sheet resolves by
+          // id through the same by-id read the deep links use, so it opens
+          // whatever the list is showing, and it is where the invoice is
+          // reviewed and sent from.
+          onCreated={(invoiceId) => {
+            setCreatedId(invoiceId);
+            setSelectedId(invoiceId);
+          }}
           onClose={() => setCreating(null)}
         />
       )}

@@ -341,6 +341,11 @@ export async function getMyInvoicesHandler(
   const accountBalanceCents = numericFrom(familySnap.data()?.accountBalanceCents);
 
   const sessionIdsByInvoice = new Map<string, string[]>();
+  // Invoices whose OWN lines are bound to visits (#408). A different question
+  // from the map above: those invoices have no lines and are having a list
+  // rebuilt for them, these have lines already and need the bound visit's day
+  // filled in on each one.
+  const boundLinesByInvoice = new Map<string, StoredLineItem[]>();
   const unstampedIds: string[] = [];
 
   const all: InvoiceDto[] = invoiceSnap.docs.map((d) => {
@@ -359,6 +364,7 @@ export async function getMyInvoicesHandler(
     // editor), and the two lists are never mixed: they answer different
     // questions and their amounts come from different places.
     if (storedLines.length === 0 && sessionIds.length > 0) sessionIdsByInvoice.set(d.id, sessionIds);
+    if (storedLines.some((l) => l.sessionId !== '')) boundLinesByInvoice.set(d.id, storedLines);
     const amountDue = numericFrom(data['amountDue']);
     const total = numericFrom(data['total']);
     const stamped = statusFromStamp(data);
@@ -413,15 +419,25 @@ export async function getMyInvoicesHandler(
       }),
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
-      ...(storedLines.length > 0 ? { lineItems: storedLines.map(mapStoredLineItem) } : {}),
+      // Bound lines get their visit day filled in by the lookup pass below; a
+      // lookup that fails leaves them dated null, which is what a line with no
+      // reachable visit honestly is.
+      ...(storedLines.length > 0
+        ? { lineItems: storedLines.map((li, index) => mapStoredLineItem(li, index)) }
+        : {}),
     };
   });
 
   // FALLBACK ONLY, for invoices with no stored lines. Best-effort: a lookup
   // failure returns those invoices WITHOUT lineItems rather than failing the call.
-  if (sessionIdsByInvoice.size > 0) {
+  if (sessionIdsByInvoice.size > 0 || boundLinesByInvoice.size > 0) {
     try {
-      const uniqueIds = [...new Set([...sessionIdsByInvoice.values()].flat())];
+      const uniqueIds = [
+        ...new Set([
+          ...[...sessionIdsByInvoice.values()].flat(),
+          ...[...boundLinesByInvoice.values()].flat().map((l) => l.sessionId).filter((id) => id !== ''),
+        ]),
+      ];
       const refs = uniqueIds.map((id) => firestore.collection('kin_care_sessions').doc(id));
       const snaps = await firestore.getAll(...refs);
       const sessionDataById = new Map<string, Record<string, unknown>>();
@@ -438,6 +454,17 @@ export async function getMyInvoicesHandler(
           .map((id) => mapSessionToLineItem(id, sessionDataById.get(id)!));
         if (lineItems.length > 0) invoice.lineItems = lineItems;
       }
+      // The bound half: same lookup, opposite direction. These invoices keep
+      // the lines the operator billed, and each bound one gains the day its
+      // visit happened.
+      for (const [invoiceId, storedLines] of boundLinesByInvoice) {
+        const invoice = invoiceById.get(invoiceId);
+        if (!invoice) continue;
+        invoice.lineItems = storedLines.map((li, index) => {
+          const start = li.sessionId === '' ? undefined : sessionDataById.get(li.sessionId)?.['startTime'];
+          return mapStoredLineItem(li, index, typeof start === 'string' && start !== '' ? start : null);
+        });
+      }
     } catch (err) {
       logEvent({
         severity: 'warn',
@@ -445,7 +472,10 @@ export async function getMyInvoicesHandler(
         event: 'portal.invoices.lineItems.failed',
         uid,
         errorMessage: (err as Error)?.message,
-        extra: { kinfolkId, invoiceCount: sessionIdsByInvoice.size },
+        extra: {
+          kinfolkId,
+          invoiceCount: sessionIdsByInvoice.size + boundLinesByInvoice.size,
+        },
       });
     }
   }
@@ -563,6 +593,14 @@ export interface StoredLineItem {
   qty: number;
   unitCents: number;
   discountCents: number;
+  /**
+   * The visit this line bills for, or '' on a line typed by hand (#408).
+   *
+   * '' rather than an absent key, for the same reason the DTO's `sessionId` is:
+   * one shape for every row means no reader has to branch on presence before it
+   * can branch on emptiness.
+   */
+  sessionId: string;
 }
 
 /**
@@ -594,7 +632,11 @@ export function storedLineItemsFrom(raw: unknown): StoredLineItem[] {
     if (qty === null || !Number.isFinite(qty) || qty <= 0) continue;
     if (unitCents === null || !Number.isInteger(unitCents)) continue;
     if (!Number.isInteger(discountCents) || discountCents < 0) continue;
-    out.push({ description: description.trim(), qty, unitCents, discountCents });
+    // A binding that is not a string is not a binding. Dropped to '' rather
+    // than rejecting the line: the money on it is still what the operator
+    // billed, and losing the row would be the worse of the two lies.
+    const sessionId = typeof e['sessionId'] === 'string' ? e['sessionId'].trim() : '';
+    out.push({ description: description.trim(), qty, unitCents, discountCents, sessionId });
   }
   return out;
 }
@@ -607,17 +649,25 @@ export function storedLineItemsFrom(raw: unknown): StoredLineItem[] {
  * subtract the line discount. Any other arithmetic here would put a breakdown on
  * the household's screen that does not add up to the total printed under it.
  *
- * `dateIso` is null because a stored line carries no date. It describes what was
- * billed, not when a visit happened, and inventing the invoice date for it would
- * assert something nobody recorded.
+ * `dateIso` IS THE BOUND VISIT'S DAY, READ LIVE FROM THE VISIT (#408), and null
+ * on a line typed by hand. A line drawn from a visit is bound to it, so the
+ * household's copy can say when the work happened; a line with no visit behind
+ * it has no date, and inventing the invoice date for it would assert something
+ * nobody recorded. The date is looked up rather than copied onto the invoice at
+ * creation, so a visit whose time is later corrected corrects the bill too
+ * instead of leaving the two disagreeing.
  */
-export function mapStoredLineItem(li: StoredLineItem, index: number): InvoiceLineItemDto {
+export function mapStoredLineItem(
+  li: StoredLineItem,
+  index: number,
+  sessionStartIso: string | null = null,
+): InvoiceLineItemDto {
   return {
     lineId: `stored:${index}`,
     source: 'stored',
-    sessionId: '',
+    sessionId: li.sessionId,
     label: li.description,
-    dateIso: null,
+    dateIso: li.sessionId === '' ? null : sessionStartIso,
     amountCents: Math.round(li.qty * li.unitCents) - li.discountCents,
     qty: li.qty,
     unitCents: li.unitCents,

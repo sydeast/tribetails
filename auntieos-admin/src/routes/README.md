@@ -3,7 +3,7 @@
 Route components that are more than one screen.
 
 Most admin routes mount a screen directly, so `router.tsx` can name the screen in
-its `lazyRouteComponent(...)` and there is nothing else to keep. The seven files
+its `lazyRouteComponent(...)` and there is nothing else to keep. The nine files
 here are the routes that adapt something first (read a search param, pick
 between a list and a detail view, hand a screen a navigation callback), and that
 adapter used to live in `router.tsx` as a small function above the route.
