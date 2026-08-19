@@ -444,4 +444,19 @@ class KinTaleTemplateEngineTest {
             conditionSourceOptions.map { it.label },
         )
     }
+
+    /**
+     * #452: DefaultKinTaleTemplate is a real, live fallback (Templates screen's
+     * "Built-in default" card, KinTaleReportViewModel's no-configured-template
+     * path, the template editor's new-template moodOptions seed), so it cannot
+     * be deleted outright. What #452 actually protects against - a canned
+     * message on a KinTale template, per #394/#431 - is that its
+     * defaultEmailMessage stays on the KinTaleTemplate data-class default
+     * ("") rather than carrying its own canned string. Pins that so a third
+     * copy of "Hey y'all! ..." (or anything else) cannot quietly reappear here.
+     */
+    @Test
+    fun defaultKinTaleTemplate_shipsNoCannedMessage() {
+        assertEquals("", DefaultKinTaleTemplate.template.defaultEmailMessage)
+    }
 }
