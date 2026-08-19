@@ -49,6 +49,14 @@ import {
   InvoiceLineItemDtoSchema,
   Result as GetMyInvoicesResult,
 } from '../../src/portal/getMyInvoices';
+// The household's answer to a quote (issue #385). Two callables, one module:
+// they share every guard and differ only in the decision they record.
+import {
+  AcceptQuoteArgs,
+  AcceptQuoteResult,
+  DenyQuoteArgs,
+  DenyQuoteResult,
+} from '../../src/portal/quoteDecision';
 import { Args as PayInvoiceArgs, Result as PayInvoiceResult } from '../../src/portal/payInvoice';
 import { Args as RedeemCreditArgs, Result as RedeemCreditResult } from '../../src/portal/redeemCredit';
 import { Args as AddBookingNoteArgs, Result as AddBookingNoteResult } from '../../src/portal/addBookingNote';
@@ -106,9 +114,11 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'InvoiceDto', schema: InvoiceDtoSchema, direction: 'response' },
   ],
   callables: [
+    { name: 'acceptQuote', args: AcceptQuoteArgs, result: AcceptQuoteResult },
     { name: 'archiveInvoice', args: ArchiveInvoiceArgs, result: ArchiveInvoiceResult },
     { name: 'createInvoice', args: CreateInvoiceArgs, result: CreateInvoiceResult },
     { name: 'createQuote', args: CreateQuoteArgs, result: CreateQuoteResult },
+    { name: 'denyQuote', args: DenyQuoteArgs, result: DenyQuoteResult },
     { name: 'generateInvoicePdf', args: GenerateInvoicePdfArgs, result: GenerateInvoicePdfResult },
     { name: 'generateReceipt', args: GenerateReceiptArgs, result: GenerateReceiptResult },
     { name: 'getInvoiceLedger', args: GetInvoiceLedgerArgs, result: GetInvoiceLedgerResult },

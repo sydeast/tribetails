@@ -49,10 +49,31 @@ export interface InvoiceDto {
   paymentsHistory: string | null;
   address: string | null;
   viewed: boolean;
+  quoteDecision: 'accepted' | 'denied' | null;
+  quoteDecidedAtMs: number | null;
   creditAmountCents: number | null;
   creditTarget: 'accountBalance' | null;
   creditRedeemedAtMs: number | null;
   lineItems?: InvoiceLineItemDto[];
+}
+
+// ---------- acceptQuote ----------
+
+/**
+ * Request payload for the `acceptQuote` callable.
+ */
+export interface AcceptQuoteArgs {
+  invoiceId: string;
+  kinfolkId?: string;
+}
+
+/**
+ * Response from the `acceptQuote` callable.
+ */
+export interface AcceptQuoteResult {
+  ok: true;
+  invoiceId: string;
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
 }
 
 // ---------- archiveInvoice ----------
@@ -173,6 +194,25 @@ export interface CreateQuoteArgs {
 export interface CreateQuoteResult {
   ok: true;
   invoiceId: string;
+}
+
+// ---------- denyQuote ----------
+
+/**
+ * Request payload for the `denyQuote` callable.
+ */
+export interface DenyQuoteArgs {
+  invoiceId: string;
+  kinfolkId?: string;
+}
+
+/**
+ * Response from the `denyQuote` callable.
+ */
+export interface DenyQuoteResult {
+  ok: true;
+  invoiceId: string;
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
 }
 
 // ---------- generateInvoicePdf ----------

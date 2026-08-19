@@ -31,6 +31,8 @@ const payInvoice = vi.fn();
 const redeemCredit = vi.fn();
 const getMyInvoicePdf = vi.fn();
 
+const acceptQuote = vi.fn();
+const denyQuote = vi.fn();
 vi.mock('../api/invoicesApi', async () => {
   const actual = await vi.importActual<typeof import('../api/invoicesApi')>('../api/invoicesApi');
   return {
@@ -39,6 +41,8 @@ vi.mock('../api/invoicesApi', async () => {
     payInvoice: (...args: unknown[]) => payInvoice(...args),
     redeemCredit: (...args: unknown[]) => redeemCredit(...args),
     getMyInvoicePdf: (...args: unknown[]) => getMyInvoicePdf(...args),
+    acceptQuote: (...args: unknown[]) => acceptQuote(...args),
+    denyQuote: (...args: unknown[]) => denyQuote(...args),
   };
 });
 
@@ -86,6 +90,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   paymentsHistory: null,
   address: null,
   viewed: true,
+  quoteDecision: null,
+  quoteDecidedAtMs: null,
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
@@ -329,5 +335,93 @@ describe('InvoiceDetail — stamped states', () => {
     expect(await screen.findByText(/Saved to Account Balance/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Save to Account Balance/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+  });
+});
+
+/**
+ * THE QUOTE ANSWER (issue #385). A quote used to be a read-only row on this
+ * screen: the household could see it and could do nothing about it, because no
+ * `acceptQuote` / `denyQuote` callable existed to answer it with.
+ */
+describe('InvoiceDetail: answering a quote', () => {
+  const QUOTE: GetMyInvoicesResult['open'][number] = {
+    ...OPEN_INVOICE,
+    status: 'quote',
+    total: 240,
+    amountDue: 240,
+    dueDate: '2026-09-30',
+  };
+  async function renderWith(invoice: GetMyInvoicesResult['open'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [invoice], paid: [], credits: [], accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  beforeEach(() => {
+    acceptQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'open' });
+    denyQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'quote' });
+  });
+  it('offers both answers on an unanswered quote, and names the date it is good through', async () => {
+    await renderWith(QUOTE);
+    expect(await screen.findByRole('button', { name: 'Accept quote' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();
+    expect(screen.getByText(/good through/)).toBeInTheDocument();
+    // Still not a bill: no Pay button until it is accepted.
+    expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
+  });
+  it('sends the acceptance for this invoice', async () => {
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept quote' }));
+    await waitFor(() => expect(acceptQuote).toHaveBeenCalledWith('inv-open-1', 'kin-fam-1'));
+  });
+  it('sends the decline for this invoice', async () => {
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    await waitFor(() => expect(denyQuote).toHaveBeenCalledWith('inv-open-1', 'kin-fam-1'));
+  });
+  it('disables BOTH buttons while an answer is in flight, so neither can be sent twice', async () => {
+    let release: (v: unknown) => void = () => {};
+    acceptQuote.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept quote' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Working…' })).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeDisabled();
+    release({ ok: true, invoiceId: 'inv-open-1', status: 'open' });
+  });
+  it("surfaces the SERVER'S refusal rather than a generic one", async () => {
+    // The expiry rule lives on the server, which is the side that knows the
+    // office's own calendar day. The screen prints what it says.
+    acceptQuote.mockRejectedValue(
+      new Error('This quote was only good through 2026-08-01, so it can no longer be accepted.'),
+    );
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept quote' }));
+    await waitFor(() =>
+      expect(screen.getByText(/only good through 2026-08-01/)).toBeInTheDocument(),
+    );
+  });
+  it('a declined quote shows the decision and no buttons at all', async () => {
+    await renderWith({ ...QUOTE, quoteDecision: 'denied', quoteDecidedAtMs: 1_755_000_000_000 });
+    expect(await screen.findByText(/You declined this quote/)).toBeInTheDocument();
+    expect(screen.getByText('DECLINED')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+  });
+  it('an accepted quote is an open invoice that says who accepted it, and is payable', async () => {
+    await renderWith({
+      ...QUOTE,
+      status: 'open',
+      quoteDecision: 'accepted',
+      quoteDecidedAtMs: 1_755_000_000_000,
+    });
+    expect(await screen.findByText(/You accepted this quote/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
   });
 });

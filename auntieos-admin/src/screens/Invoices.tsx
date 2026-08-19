@@ -3,6 +3,7 @@ import {
   invoiceDispute,
   invoiceMatchesSearch,
   invoicesPageQuery,
+  invoiceQuoteDecision,
   invoiceStamp,
   invoiceWithinWindow,
   isArchivedInvoice,
@@ -726,6 +727,11 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
             : 'no date';
 
   const archived = isArchivedInvoice(entry);
+  // A quote the household turned down. It keeps `status: 'quote'` server-side
+  // (issue #385: `cancelled` means the operator withdrew it, which is a
+  // different fact), so without this marker a dead quote sits in the Quote
+  // filter looking exactly like one still waiting for an answer.
+  const declinedQuote = state === 'quote' && invoiceQuoteDecision(entry) === 'denied';
   const action = rowActionFor(state);
   // OPEN disputes only. See the chip below for why a won one is not marked.
   const disputed = invoiceDispute(entry)?.open === true;
@@ -788,6 +794,10 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
             The won history is on the detail panel, where it is read on
             purpose rather than scanned past. */}
         {disputed ? <span className="invoices__chip invoices__chip--disputed">DISPUTED</span> : null}
+        {/* BESIDE the QUOTE chip, not instead of it, for the same reason
+            ARCHIVED and DISPUTED sit beside theirs: the doc really is still a
+            quote, and re-labelling the row would be classifying. */}
+        {declinedQuote ? <span className="invoices__chip invoices__chip--declined">DECLINED</span> : null}
       </span>
     </>
   );

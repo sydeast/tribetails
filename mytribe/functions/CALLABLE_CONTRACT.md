@@ -321,6 +321,38 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Audit `BILLING_QUOTE_CREATED`, payload carrying `itemized`, `lineCount`, and
   `sendToKinfolk`.
 
+### acceptQuote / denyQuote
+- req `{ invoiceId: string, kinfolkId?: string }` (both)
+- res `{ ok: true, invoiceId: string, status: InvoiceState }` (both)
+- THE HOUSEHOLD'S ANSWER TO A QUOTE, and the only emitters of the
+  `quote.accepted` / `quote.denied` catalog keys. Until 2026-08-18 neither
+  callable existed: the catalog carried both keys, `createQuote`'s header
+  claimed the flow was "handled elsewhere", and nothing anywhere emitted
+  either. Issue #385.
+- Auth: the caller must be the household's PRIMARY member
+  (`requireKinfolkPrimary`, the same gate `payInvoice` and `redeemCredit` use)
+  and the invoice's `kinfolkId` must be one of theirs, or `permission-denied`.
+- The decision is recorded on the invoice as `quoteDecision`
+  (`accepted` | `denied`), `quoteDecidedAt`, `quoteDecidedByUid`, inside ONE
+  transaction that re-reads `quoteDecision` first, so two racing taps cannot
+  both land.
+- ACCEPT re-stamps the doc: `status` / `invoiceStatus` move off `quote` and the
+  Invoice State Classifier decides what they become (normally `open`, or `zero`
+  for a quote billed at nothing). That is what makes the invoice payable.
+- DENY leaves `status: quote` on purpose. `cancelled` means the OPERATOR
+  withdrew a bill, which is a different fact, and it would also drop the row out
+  of every `getMyInvoices` bucket, off the household's screen as the immediate
+  result of their own tap.
+- Refusals, all `failed-precondition` with a `details.code`:
+  `quote_not_a_quote` (the doc is not in QUOTE status),
+  `quote_already_decided` (a decision is terminal; a revision is a NEW quote via
+  `createQuote`), `quote_expired` (accept only, when the quote's `dueDate` has
+  passed in the business's own time zone: a quote is good THROUGH its due day,
+  and an undated quote never expires). Declining an expired quote is allowed.
+- Audit `BILLING_QUOTE_ACCEPTED` / `BILLING_QUOTE_DENIED`, actorRole `PRIMARY`.
+  The notification is best-effort: a dispatch failure is logged and swallowed,
+  so a notification outage cannot undo a decision that was already recorded.
+
 ### markInvoicePaid
 - req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, MAY BE PARTIAL; defaults to what the recorded payments leave outstanding */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`
 - res `{ ok: true, invoiceId: string, paymentId: string, state: 'unpaid'|'partial'|'settled'|'overpaid', totalCents: number, paidCents: number, amountDueCents: number, overpaidCents: number }`

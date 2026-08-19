@@ -39,6 +39,7 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceStatus
+import com.kinfolk.portal.portal.QuoteDecision
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
@@ -288,19 +289,25 @@ private fun OpenInvoiceRow(
                 if (invoice.client != null) {
                     Text("Invoice #${invoice.id}", style = type.sansMeta)
                 }
-                Text("Due ${invoice.dueDate ?: "—"}", style = type.sansMeta)
+                Text(openRowMetaLabel(invoice), style = type.sansMeta)
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                 Text(formatUsd(invoice.amountDue), style = type.heritageTitle.copy(fontSize = 18.sp))
                 StatusChip(invoice.status)
             }
         }
-        KinButton(
-            label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
-            onClick = onPay,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !paying && invoice.amountDue > 0.0,
-        )
+        // A QUOTE IS NOT A BILL, so it carries no Pay button. It used to: a
+        // quote decoded as `Open` here, so the household was invited to pay a
+        // proposal they had not agreed to (issue #385). Tapping the row opens
+        // the detail screen, where the quote can be accepted or declined.
+        if (invoice.status != InvoiceStatus.Quote) {
+            KinButton(
+                label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
+                onClick = onPay,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !paying && invoice.amountDue > 0.0,
+            )
+        }
     }
 }
 
@@ -414,7 +421,22 @@ private fun CreditEntry(
  * Friendly invoice status label shared by the list chips (uppercased there)
  * and the detail screen's Status row — never the raw enum name.
  */
+/**
+ * The meta line under an open-bucket row. A quote is not due on a date the way
+ * a bill is: it is either waiting for the household's answer or already
+ * answered, and that is what the line says.
+ */
+internal fun openRowMetaLabel(invoice: Invoice): String = when {
+    invoice.status != InvoiceStatus.Quote -> "Due ${invoice.dueDate ?: "—"}"
+    invoice.quoteDecision == QuoteDecision.Denied -> "You declined this"
+    invoice.quoteDecision == QuoteDecision.Accepted -> "You accepted this"
+    else -> "Needs your answer"
+}
 internal fun invoiceStatusLabel(status: InvoiceStatus): String = when (status) {
+    // A quote is a proposal, and it stays one after a decline: the server keeps
+    // `quote` status and marks the decision (issue #385), so the answered case
+    // is spelled out by the caller rather than by this bare status label.
+    InvoiceStatus.Quote -> "Quote"
     InvoiceStatus.Open -> "Pending"
     InvoiceStatus.Paid -> "Paid"
     InvoiceStatus.Draft -> "Draft"
@@ -425,6 +447,7 @@ internal fun invoiceStatusLabel(status: InvoiceStatus): String = when (status) {
 @Composable
 private fun StatusChip(status: InvoiceStatus) {
     val color = when (status) {
+        InvoiceStatus.Quote -> KinfolkBrand.KinTeal
         InvoiceStatus.Open -> KinfolkBrand.KinfolkOrange
         InvoiceStatus.Paid -> KinfolkBrand.KinTeal
         InvoiceStatus.Draft -> KinfolkBrand.NavySoft

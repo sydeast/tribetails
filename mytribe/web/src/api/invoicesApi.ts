@@ -1,5 +1,5 @@
 /**
- * Typed wrappers for the four invoice callables the kinfolk portal calls.
+ * Typed wrappers for the six invoice callables the kinfolk portal calls.
  *
  * THE SHAPES ARE NOT DEFINED HERE. They come from
  * `../contracts/invoiceContracts.generated`, projected from the server zod
@@ -13,6 +13,10 @@
  */
 import { call } from '../lib/fns';
 import type {
+  AcceptQuoteArgs,
+  AcceptQuoteResult,
+  DenyQuoteArgs,
+  DenyQuoteResult,
   GetMyInvoicePdfArgs,
   GetMyInvoicePdfResult,
   GetMyInvoicesResult,
@@ -103,4 +107,30 @@ export function payInvoice(
 export function redeemCredit(invoiceId: string, kinfolkId?: string): Promise<RedeemCreditResult> {
   const payload: RedeemCreditArgs = { invoiceId, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
   return call<RedeemCreditArgs, RedeemCreditResult>('redeemCredit', payload);
+}
+
+// ── acceptQuote / denyQuote (functions/src/portal/quoteDecision.ts) ─────────
+
+/**
+ * The household's answer to a quote. Until issue #385 there was no way to give
+ * one: the catalog carried `quote.accepted` and `quote.denied` as switches on
+ * the notification gate, and no callable behind either.
+ *
+ * ACCEPTING TURNS THE QUOTE INTO A BILL. The server re-stamps the doc, so the
+ * result's `status` comes back `open` and the Pay button appears on the next
+ * read. Declining leaves it a quote, marked with the decision.
+ *
+ * Both refuse a quote that has already been answered, and accept refuses one
+ * whose due date has passed. THE SERVER IS THE AUTHORITY ON BOTH: the screens
+ * surface the message it sends rather than re-deriving the rule, so a household
+ * is never told "expired" by a client whose clock disagrees with the office's.
+ */
+export function acceptQuote(invoiceId: string, kinfolkId?: string): Promise<AcceptQuoteResult> {
+  const payload: AcceptQuoteArgs = { invoiceId, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<AcceptQuoteArgs, AcceptQuoteResult>('acceptQuote', payload);
+}
+
+export function denyQuote(invoiceId: string, kinfolkId?: string): Promise<DenyQuoteResult> {
+  const payload: DenyQuoteArgs = { invoiceId, ...(kinfolkId !== undefined ? { kinfolkId } : {}) };
+  return call<DenyQuoteArgs, DenyQuoteResult>('denyQuote', payload);
 }

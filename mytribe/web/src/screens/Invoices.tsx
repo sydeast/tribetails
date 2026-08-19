@@ -7,8 +7,8 @@ import {
   creditTargetLabel,
   formatCentsUsd,
   formatUsd,
+  invoiceRowStatusInfo,
   invoiceStatusInfo,
-  partPaidStatusInfo,
   partPaidSummary,
   shortDateLabel,
 } from '../lib/invoiceFormat';
@@ -189,7 +189,7 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
   const { invoice: inv, paying, onPay, payError } = props;
   // Part-paid keeps the open bucket and the Pay button; only what the row SAYS
   // about itself changes. "PENDING" alone would hide a payment already made.
-  const status = inv.partiallyPaid ? partPaidStatusInfo() : invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
+  const status = invoiceRowStatusInfo(inv);
   const partPaid = partPaidSummary(inv);
   const tile = calTileFor(inv.dueDate);
   // The open bucket now carries four states (server-side map, ADR-0002).
@@ -197,7 +197,11 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
   // invoice asks for nothing, so neither claims a due date.
   const dueLabel =
     inv.status === 'draft' ? 'Not sent yet'
-    : inv.status === 'quote' ? 'Not billed yet'
+    // A quote the household turned down is not waiting on anybody. Saying "Not
+    // billed yet" would read as still pending, which is the state they just
+    // left. See functions/src/portal/quoteDecision.ts for why a declined quote
+    // keeps `quote` status instead of becoming `cancelled`.
+    : inv.status === 'quote' ? (inv.quoteDecision === 'denied' ? 'You declined this' : 'Needs your answer')
     : inv.status === 'zero' ? 'No charge'
     : `Due ${shortDateLabel(inv.dueDate) ?? '—'}`;
   const payable = inv.status === 'open' && inv.amountDue > 0;

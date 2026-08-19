@@ -176,6 +176,7 @@ export {
   removeMyPaymentMethod,
 } from './portal/billing';
 export { redeemCredit } from './portal/redeemCredit';
+export { acceptQuote, denyQuote } from './portal/quoteDecision';
 export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
 export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhotoUpload';

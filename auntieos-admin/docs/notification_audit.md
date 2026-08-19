@@ -71,8 +71,8 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 |---|---|---|---|---|---|---|
 | `invoice.new` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `postInvoiceEvent.ts` (isNew=true) |
 | `invoice.updated` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `postInvoiceEvent.ts` (isNew=false) |
-| `quote.accepted` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `onInvoicesWrite.ts` (quote→accepted) |
-| `quote.denied` | businessAdmins | business | e,s,p | trigger | ✓ | `onInvoicesWrite.ts` (quote→denied) |
+| `quote.accepted` | kinfolkAcct + businessAdmins | both | e,p | trigger | ✓ | `portal/quoteDecision.ts`, callable: `acceptQuote` |
+| `quote.denied` | businessAdmins | business | e,s,p | trigger | ✓ | `portal/quoteDecision.ts`, callable: `denyQuote` |
 | `invoice.charge.failed` | kinfolkAcct + businessAdmins | both | e,s,p | trigger | ✓ | `stripeWebhook.ts` (payment_failed) |
 | `invoice.payment.applied` | kinfolkAcct | kinfolk | e,p | trigger | ✓ | `stripeWebhook.ts` (payment_succeeded) |
 | `invoice.reminder` | kinfolkAcct | kinfolk | e,s,p | scheduled | ✓ | `scheduled/invoiceRemindersCron.ts` (daily 09:00 ET) |
@@ -113,7 +113,7 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 | `onBookingNoteCreate` | `families/{id}/bookings/{id}/notes/{noteId}` | `kincare.note.kinfolk` (only if authorRole=kinfolk) |
 | `onFamilyKinWrite` | `families/{id}/kin/{id}` | `pets.updated`, `pet.marked.inactive` |
 | `onFamilyProfileWrite` | `families/{id}` | `profile.updated` |
-| `onInvoicesWrite` | `families/{id}/invoices/{id}` | `quote.accepted`, `quote.denied` |
+| `onInvoicesWrite` | `invoices/{invoiceId}` | `invoice.payment.applied`, `invoice.overdue` |
 | `onKinTaleCreate` | `kin_care_reports/{reportId}` | `kintale.published`, only when the report is created already `SENT` (a DRAFT create is silent) |
 | `onKinTaleUpdate` | `kin_care_reports/{reportId}` | `kintale.published` on the DRAFT → SENT send; `kintale.note.added` on a post-publish body/media edit. Never both from one write |
 | `onKinTaleCommentCreate` | `families/{id}/kinTales/{id}/comments/{cid}` | `kintale.comment.added` (batched) |

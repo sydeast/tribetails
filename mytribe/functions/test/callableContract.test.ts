@@ -1189,6 +1189,12 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'paidCents',
     'partiallyPaid',
     'paymentsHistory',
+    // The household's answer to a quote (issue #385). Both halves ship: the
+    // decision is what tells an accepted quote (status 'open') from an ordinary
+    // invoice, and a declined one (status still 'quote') from one nobody has
+    // answered yet.
+    'quoteDecidedAtMs',
+    'quoteDecision',
     'status',
     'terms',
     'total',

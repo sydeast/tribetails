@@ -114,6 +114,21 @@ export interface InvoiceEntry {
   sessionIds: string[];
   creditTarget?: 'accountBalance' | 'originalPaymentMethod';
   creditRedeemedAt?: Timestamp;
+  /**
+   * WHAT THE HOUSEHOLD SAID ABOUT A QUOTE, written by `acceptQuote` /
+   * `denyQuote` (issue #385). Absent on every invoice that was never a quote,
+   * and on every quote nobody has answered yet.
+   *
+   * IT IS NOT REDUNDANT WITH `status`, in either direction. An accepted quote
+   * is stamped `open` and is indistinguishable from an ordinary invoice without
+   * this field. A DECLINED quote keeps `status: 'quote'`, deliberately, since
+   * `cancelled` means the operator withdrew the bill and this is the household
+   * turning it down, so without this field a dead quote sits in the Quote
+   * filter looking like one still waiting for an answer.
+   */
+  quoteDecision?: 'accepted' | 'denied';
+  /** When they answered. Absent alongside the field above, never a zero. */
+  quoteDecidedAt?: Timestamp;
   createdAt: Timestamp | null;
   /**
    * Stamped by Task 5.1's `archiveInvoice` callable, cleared by `unarchiveInvoice`.
@@ -325,6 +340,18 @@ export function invoiceStamp(row: Pick<InvoiceEntry, 'status' | 'editScope'>): I
   };
 }
 
+/**
+ * The household's answer to a quote, verified at runtime rather than trusted
+ * off the cast. Same rule as `invoiceStamp` above: an unrecognized value is
+ * evidence something wrote this field that should not have, and reads as no
+ * answer rather than being normalized into one.
+ */
+export function invoiceQuoteDecision(
+  row: Pick<InvoiceEntry, 'quoteDecision'>,
+): 'accepted' | 'denied' | null {
+  const raw: unknown = row.quoteDecision;
+  return raw === 'accepted' || raw === 'denied' ? raw : null;
+}
 /** The two values the funds lane writes. Anything else is not a funds state. */
 export const INVOICE_DISPUTE_FUNDS_STATES = ['withdrawn', 'reinstated'] as const;
 export type InvoiceDisputeFundsState = (typeof INVOICE_DISPUTE_FUNDS_STATES)[number];

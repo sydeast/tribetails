@@ -62,6 +62,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   paymentsHistory: null,
   address: null,
   viewed: true,
+  quoteDecision: null,
+  quoteDecidedAtMs: null,
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,

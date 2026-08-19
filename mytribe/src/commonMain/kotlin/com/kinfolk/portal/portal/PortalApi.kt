@@ -643,6 +643,32 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    /**
+     * THE HOUSEHOLD'S ANSWER TO A QUOTE (issue #385). Accepting turns the quote
+     * into a bill server-side, so the caller reloads rather than patching its
+     * own copy. Both refuse a quote that has already been answered, and accept
+     * refuses one whose due date has passed; the refusal arrives as the
+     * callable's own message, which is what the screen shows.
+     */
+    suspend fun acceptQuote(invoiceId: String, kinfolkId: String? = null): QuoteDecisionResult =
+        decideQuote("acceptQuote", invoiceId, kinfolkId)
+    suspend fun denyQuote(invoiceId: String, kinfolkId: String? = null): QuoteDecisionResult =
+        decideQuote("denyQuote", invoiceId, kinfolkId)
+    private suspend fun decideQuote(
+        callable: String,
+        invoiceId: String,
+        kinfolkId: String?,
+    ): QuoteDecisionResult {
+        val raw = fns.call(callable, buildJsonObject {
+            put("invoiceId", invoiceId)
+            kinfolkId?.let { put("kinfolkId", it) }
+        })
+        return QuoteDecisionResult(
+            ok = raw["ok"]?.jsonPrimitive?.booleanOrNull ?: false,
+            invoiceId = raw["invoiceId"]?.jsonPrimitive?.contentOrNull ?: invoiceId,
+            status = decodeInvoiceStatus(raw["status"]?.jsonPrimitive?.contentOrNull),
+        )
+    }
     // -- Tribe / Home Access --
     suspend fun getMyTribeProfile(kinfolkId: String? = null): TribeProfileResult {
         val raw = fns.call("getMyTribeProfile", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
@@ -1360,6 +1386,22 @@ class PortalApi(private val fns: FunctionsClient) {
         kinCares = (o["kinCares"] as? JsonArray)?.map { decodeBooking(it.jsonObject) }.orEmpty(),
     )
 
+    /**
+     * The stored Invoice State Stamp, as far as this client models it.
+     *
+     * `quote` used to fall through to `Open`, which put a Pay button on a
+     * proposal (issue #385). `zero` and `redeemed` still fall through: the
+     * money fields carry them honestly enough for the screens that exist here,
+     * and inventing a label for a state with no surface would be worse.
+     */
+    private fun decodeInvoiceStatus(raw: String?): InvoiceStatus = when (raw) {
+        "paid" -> InvoiceStatus.Paid
+        "credit" -> InvoiceStatus.Credit
+        "draft" -> InvoiceStatus.Draft
+        "quote" -> InvoiceStatus.Quote
+        "cancelled" -> InvoiceStatus.Cancelled
+        else -> InvoiceStatus.Open
+    }
     private fun decodeInvoice(el: JsonElement): Invoice {
         val o = el.jsonObject
         val statusStr = o["status"]?.jsonPrimitive?.contentOrNull
@@ -1371,13 +1413,7 @@ class PortalApi(private val fns: FunctionsClient) {
             total = o["total"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             amountDue = o["amountDue"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             isPaid = o["isPaid"]?.jsonPrimitive?.booleanOrNull ?: false,
-            status = when (statusStr) {
-                "paid" -> InvoiceStatus.Paid
-                "credit" -> InvoiceStatus.Credit
-                "draft" -> InvoiceStatus.Draft
-                "cancelled" -> InvoiceStatus.Cancelled
-                else -> InvoiceStatus.Open
-            },
+            status = decodeInvoiceStatus(statusStr),
             date = o["date"]?.jsonPrimitive?.contentOrNull,
             dueDate = o["dueDate"]?.jsonPrimitive?.contentOrNull,
             discount = o["discount"]?.jsonPrimitive?.contentOrNull,
@@ -1392,6 +1428,12 @@ class PortalApi(private val fns: FunctionsClient) {
                 else -> null
             },
             creditRedeemedAtMs = o["creditRedeemedAtMs"]?.jsonPrimitive?.longOrNull,
+            quoteDecision = when (o["quoteDecision"]?.jsonPrimitive?.contentOrNull) {
+                "accepted" -> QuoteDecision.Accepted
+                "denied" -> QuoteDecision.Denied
+                else -> null
+            },
+            quoteDecidedAtMs = o["quoteDecidedAtMs"]?.jsonPrimitive?.longOrNull,
             originalPaymentIntentId = o["originalPaymentIntentId"]?.jsonPrimitive?.contentOrNull,
             // Optional per-visit breakdown; lenient so an older backend (field
             // absent) or a malformed payload just yields null, never a throw.

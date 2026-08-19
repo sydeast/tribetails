@@ -52,9 +52,17 @@ export const AUDIT_EVENTS = {
   // Only state transitions (created/paid/failed/method-changed) get logged
   // because they are needed to investigate disputed activity.
   BILLING_INVOICE_CREATED: 'BILLING_INVOICE_CREATED',
-  // A quote is an invoice in QUOTE status (no separate model). createQuote
-  // callable mints it; accept/deny flow reuses quote.accepted/quote.denied.
+  // A quote is an invoice in QUOTE status (no separate model). The createQuote
+  // callable mints it and the household answers it through acceptQuote /
+  // denyQuote (portal/quoteDecision.ts), which are what finally emit the
+  // quote.accepted and quote.denied catalog keys. This comment used to claim
+  // the accept/deny flow already existed somewhere; it did not, and neither key
+  // had an emitter anywhere in the repo until 2026-08-18 (issue #385).
   BILLING_QUOTE_CREATED: 'BILLING_QUOTE_CREATED',
+  /** The household accepted a quote, so it is a bill from that moment on. */
+  BILLING_QUOTE_ACCEPTED: 'BILLING_QUOTE_ACCEPTED',
+  /** The household declined a quote. A different fact from the operator cancelling one. */
+  BILLING_QUOTE_DENIED: 'BILLING_QUOTE_DENIED',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
   BILLING_RECEIPT_ISSUED: 'BILLING_RECEIPT_ISSUED',

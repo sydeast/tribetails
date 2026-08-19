@@ -403,6 +403,23 @@ data class Invoice(
      * `domain.invoiceEditScopeOf` - the fail-soft ruling, never a recompute.
      */
     var editScope: String? = null,
+    /**
+     * WHAT THE HOUSEHOLD SAID ABOUT A QUOTE: `accepted`, `denied`, or absent
+     * (issue #385). Written by the portal's `acceptQuote` / `denyQuote`
+     * callables, never by this app.
+     *
+     * NULLABLE, per the Class B decode rule the fields above record: absent on
+     * every invoice that was never a quote, and a non-null Kotlin setter meeting
+     * a null under `toObject()` blanks the whole invoice query rather than one
+     * row. Read through `domain.invoiceQuoteDecision`, which verifies the value
+     * rather than trusting it.
+     *
+     * NOT redundant with [status]. An accepted quote is stamped `open` and is
+     * otherwise indistinguishable from an ordinary invoice; a DECLINED quote
+     * keeps `status = "quote"` on purpose, since `cancelled` would mean the
+     * operator withdrew it rather than the household turning it down.
+     */
+    var quoteDecision: String? = null,
     var viewed: String = "",
     // Attribution fields written by backfill_structural_links.py
     var sessionIds: List<String> = emptyList(),

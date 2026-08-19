@@ -20,7 +20,18 @@ data class PayMethod(
     val url: String?,
 )
 
-enum class InvoiceStatus { Draft, Open, Paid, Credit, Cancelled }
+/**
+ * `Quote` joined the enum with the accept/decline surface (issue #385). Before
+ * it, `decodeInvoice` fell through to `Open` for a quote, so the Android portal
+ * showed a proposal as a pending bill with a Pay button on it: the same defect
+ * the web portal fixed when the stamped states landed.
+ *
+ * Still not the server's full eight-state vocabulary: `zero` and `redeemed`
+ * have no surface here yet and keep their existing fallbacks.
+ */
+enum class InvoiceStatus { Draft, Quote, Open, Paid, Credit, Cancelled }
+/** What the household said about a quote. Null until they have answered. */
+enum class QuoteDecision { Accepted, Denied }
 
 enum class CreditTarget { AccountBalance, OriginalPaymentMethod }
 
@@ -43,6 +54,10 @@ data class Invoice(
     val creditAmountCents: Long?,
     val creditTarget: CreditTarget?,
     val creditRedeemedAtMs: Long?,
+    /** The household's answer to this quote, or null while it still waits for one. */
+    val quoteDecision: QuoteDecision? = null,
+    /** When that answer was given, epoch millis. */
+    val quoteDecidedAtMs: Long? = null,
     val originalPaymentIntentId: String?,
     /** Optional per-visit breakdown ("What this covers" on the detail screen).
      *  Null/empty until the backend ships the field — decode is lenient, so a
@@ -71,4 +86,18 @@ data class RedeemCreditResult(
     val target: CreditTarget,
     val newAccountBalanceCents: Long?,
     val refundId: String?,
+)
+
+/**
+ * The result of `acceptQuote` / `denyQuote`.
+ *
+ * `status` is the state the server stamped as it recorded the answer: `Open`
+ * after an acceptance (it is a bill now), `Quote` after a decline (still not a
+ * bill, but answered). The controller reloads either way, so this is here to
+ * be asserted on rather than to drive a screen.
+ */
+data class QuoteDecisionResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    val status: InvoiceStatus,
 )

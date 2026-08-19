@@ -77,6 +77,9 @@ data class InvoiceDto(
     val paymentsHistory: String?,
     val address: String?,
     val viewed: Boolean,
+    /** One of `accepted`, `denied`, or null when the payload omits it. */
+    val quoteDecision: String?,
+    val quoteDecidedAtMs: Double?,
     val creditAmountCents: Long?,
     /** Always `accountBalance` on the wire. */
     val creditTarget: String?,
@@ -110,10 +113,50 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         paymentsHistory = raw?.get("paymentsHistory") as? String,
         address = raw?.get("address") as? String,
         viewed = raw?.get("viewed") as? Boolean ?: false,
+        quoteDecision = raw?.get("quoteDecision") as? String,
+        quoteDecidedAtMs = (raw?.get("quoteDecidedAtMs") as? Number)?.toDouble(),
         creditAmountCents = (raw?.get("creditAmountCents") as? Number)?.toLong(),
         creditTarget = raw?.get("creditTarget") as? String,
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
+    )
+
+// ---------- acceptQuote ----------
+
+/** Request payload for the `acceptQuote` callable. */
+data class AcceptQuoteArgs(
+    val invoiceId: String,
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+    }
+}
+
+/** Response from the `acceptQuote` callable. */
+data class AcceptQuoteResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    val status: String,
+)
+
+/**
+ * Fail-soft decode of `AcceptQuoteResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeAcceptQuoteResult(raw: Map<String, Any?>?): AcceptQuoteResult =
+    AcceptQuoteResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
     )
 
 // ---------- archiveInvoice ----------
@@ -334,6 +377,44 @@ internal fun decodeCreateQuoteResult(raw: Map<String, Any?>?): CreateQuoteResult
     CreateQuoteResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+    )
+
+// ---------- denyQuote ----------
+
+/** Request payload for the `denyQuote` callable. */
+data class DenyQuoteArgs(
+    val invoiceId: String,
+    /** Optional: omitted from the payload when null. */
+    val kinfolkId: String? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        if (kinfolkId != null) put("kinfolkId", kinfolkId)
+    }
+}
+
+/** Response from the `denyQuote` callable. */
+data class DenyQuoteResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    val status: String,
+)
+
+/**
+ * Fail-soft decode of `DenyQuoteResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeDenyQuoteResult(raw: Map<String, Any?>?): DenyQuoteResult =
+    DenyQuoteResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
     )
 
 // ---------- generateInvoicePdf ----------

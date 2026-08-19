@@ -50,6 +50,8 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.InvoiceState
+import com.tribetails.auntieos.domain.QuoteDecision
+import com.tribetails.auntieos.domain.invoiceQuoteDecision
 import com.tribetails.auntieos.domain.invoiceActionsFor
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
@@ -386,10 +388,22 @@ private fun invoiceDetailBody(
                     // read as ISO - but it printed a raw instant, and both
                     // branches now say the same day the record says.
                     overdue -> "past due ${freeTextDateLabel(invoice.dueDate)}"
+                    // An accepted quote is stamped `open` and is otherwise
+                    // indistinguishable from an invoice the office raised
+                    // itself, so this line is where the acceptance shows.
+                    state == InvoiceState.OPEN && invoiceQuoteDecision(invoice) == QuoteDecision.ACCEPTED ->
+                        "quote accepted, due ${freeTextDateLabel(invoice.dueDate).ifBlank { "soon" }}"
                     state == InvoiceState.OPEN ->
                         "due ${freeTextDateLabel(invoice.dueDate).ifBlank { "soon" }}"
                     state == InvoiceState.PAID -> "paid in full"
                     state == InvoiceState.DRAFT -> "not sent yet"
+                    // The household's answer outranks the bare state here: a
+                    // declined quote keeps QUOTE status (issue #385: cancelling
+                    // it would be the operator withdrawing it, a different
+                    // fact), so "quoted, not billed" alone would read as still
+                    // waiting on an answer that already came back.
+                    state == InvoiceState.QUOTE && invoiceQuoteDecision(invoice) == QuoteDecision.DENIED ->
+                        "quote declined by the household"
                     state == InvoiceState.QUOTE -> "quoted, not billed"
                     state == InvoiceState.CANCELLED -> "cancelled"
                     state == InvoiceState.CREDIT -> "credit owed to the household"
