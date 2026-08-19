@@ -3,7 +3,12 @@ import {
   lockedChannelValueFor,
   lockedChannelsFor,
 } from '../src/notifications/getNotificationCatalog';
-import { overrideForStream, resolveChannels } from '../src/notifications/prefs';
+import { getNotificationDef } from '../src/notifications/catalog';
+import {
+  overrideForStream,
+  resolveChannels,
+  withAliasedChoicesResolved,
+} from '../src/notifications/prefs';
 import type {
   BusinessNotificationOverride,
   Channel,
@@ -137,5 +142,109 @@ describe('what a client renders equals what resolveChannels sends (#491)', () =>
     // lock tells a household they cannot change something they can.
     const def = defWith({ alwaysEnabled: true });
     expect(lockedChannelsFor(def, null, def.allowedChannels)).toEqual([]);
+  });
+});
+
+/**
+ * THE SAME INVARIANT, FOR A CHOICE STORED UNDER A RETIRED KEY (#501).
+ *
+ * Everything above uses a synthetic def with no alias, so it never exercises
+ * the other half of `explicitUserChoice`: the walk from the canonical key to
+ * whatever retired key was merged into it. `kincare.report.sent` was merged
+ * into `kintale.published` on 2026-07-24, and it crossed categories on the way
+ * ('visit' to 'kintale'), so both alias steps are live on this one pair.
+ *
+ * The direction of the failure is the opposite of #491's and worse. A
+ * household that turned email off before the merge has that stored under the
+ * retired name; `resolveChannels` honors it and sends nothing; a screen reads
+ * the canonical key, finds nothing, falls back to email-on and draws the
+ * switch ON. Somebody is waiting for a KinTale notification that is never
+ * coming, and the screen agrees with them.
+ *
+ * So the assertion is the same as above with one substitution: render reads
+ * the prefs the callables now return (`withAliasedChoicesResolved`), resolve
+ * reads what is actually in Firestore. Render must still equal resolve.
+ */
+const ALIASED = getNotificationDef('kintale.published');
+const RETIRED_KEY = 'kincare.report.sent';
+const RETIRED_CATEGORY = 'visit';
+const ALIAS_HOUSEHOLDS: { name: string; prefs: UserNotificationPrefs }[] = [
+  {
+    name: 'turned email off under the retired key, before the merge',
+    prefs: { byKey: { [RETIRED_KEY]: { email: false } } },
+  },
+  {
+    name: 'turned every channel off under the retired key',
+    prefs: { byKey: { [RETIRED_KEY]: { email: false, sms: false, push: false } } },
+  },
+  {
+    name: 'turned sms on under the retired key',
+    prefs: { byKey: { [RETIRED_KEY]: { sms: true } } },
+  },
+  {
+    name: 'turned email off for the retired CATEGORY',
+    prefs: { byCategory: { [RETIRED_CATEGORY]: { email: false } } },
+  },
+  {
+    name: 'set the retired category off and the canonical category on',
+    prefs: {
+      byCategory: { [RETIRED_CATEGORY]: { email: false }, [ALIASED.category]: { email: true } },
+    },
+  },
+  {
+    name: 'changed their mind since the merge, canonical says yes',
+    prefs: {
+      byKey: { [RETIRED_KEY]: { email: false }, [ALIASED.key]: { email: true } },
+    },
+  },
+  {
+    name: 'set only sms canonically, leaving email under the retired key',
+    prefs: {
+      byKey: { [RETIRED_KEY]: { email: false, sms: true }, [ALIASED.key]: { sms: false } },
+    },
+  },
+];
+describe('a choice under a retired key renders the way it is sent (#501)', () => {
+  for (const household of ALIAS_HOUSEHOLDS) {
+    it(household.name, () => {
+      const ov = overrideForStream(null, 'kinfolk');
+      const resolved = resolveChannels(ALIASED, household.prefs, null, 'kinfolk');
+      const forDisplay = withAliasedChoicesResolved(household.prefs);
+      for (const ch of surviving(ALIASED, ov)) {
+        expect(
+          rendered(ALIASED, ov, ch, forDisplay),
+          `${ch} rendered vs resolved for a household that ${household.name}`,
+        ).toBe(resolved[ch]);
+      }
+    });
+  }
+  it('is a real divergence, not a test that would pass either way', () => {
+    // Guards the test above: if the raw prefs already rendered correctly, the
+    // normalizer would be untested scaffolding and this file would go green
+    // whether or not #501 was ever fixed.
+    const prefs: UserNotificationPrefs = { byKey: { [RETIRED_KEY]: { email: false } } };
+    expect(resolveChannels(ALIASED, prefs, null, 'kinfolk').email).toBe(false);
+    expect(rendered(ALIASED, null, 'email', prefs)).toBe(true);
+    expect(rendered(ALIASED, null, 'email', withAliasedChoicesResolved(prefs))).toBe(false);
+  });
+  it('leaves the retired entry in place rather than folding it away', () => {
+    // The clients send the whole prefs object back on save. Dropping the
+    // retired entry here would delete, on the next save, a choice
+    // explicitUserChoice still honors.
+    const prefs: UserNotificationPrefs = { byKey: { [RETIRED_KEY]: { email: false } } };
+    const out = withAliasedChoicesResolved(prefs);
+    expect(out.byKey?.[RETIRED_KEY]).toEqual({ email: false });
+    expect(out.byKey?.[ALIASED.key]).toEqual({ email: false });
+  });
+  it('never overrides a canonical choice with a retired one', () => {
+    const prefs: UserNotificationPrefs = {
+      byKey: { [RETIRED_KEY]: { email: false }, [ALIASED.key]: { email: true } },
+    };
+    expect(withAliasedChoicesResolved(prefs).byKey?.[ALIASED.key]?.email).toBe(true);
+  });
+  it('returns the prefs untouched when nothing is stored under an alias', () => {
+    const prefs: UserNotificationPrefs = { byKey: { [ALIASED.key]: { email: false } } };
+    expect(withAliasedChoicesResolved(prefs)).toBe(prefs);
+    expect(withAliasedChoicesResolved({})).toEqual({});
   });
 });

@@ -1,5 +1,6 @@
 import { db } from '../lib/firestoreAdmin';
 import {
+  NOTIFICATION_CATALOG,
   canonicalNotificationKey,
   getNotificationDef,
   legacyCategoriesFor,
@@ -8,6 +9,7 @@ import {
 import type {
   AudienceStream,
   BusinessNotificationOverride,
+  Category,
   Channel,
   NotificationDef,
   ResolvedChannels,
@@ -145,6 +147,80 @@ function explicitUserChoice(
   return undefined;
 }
 
+/**
+ * The same prefs, with every alias-inherited choice written out under the
+ * canonical key and category a client actually reads (#501).
+ *
+ * `explicitUserChoice` above walks aliases; no client does. A household that
+ * turned a channel off before two keys were merged has that choice stored
+ * under the retired key, so `resolveChannels` finds it and sends nothing,
+ * while every settings screen looks up the canonical key, finds nothing, falls
+ * back to the catalog default, and draws the switch ON. They are opted out and
+ * the screen says they are opted in, which is the worse direction of the two:
+ * it is the case where somebody is waiting for a notification that is never
+ * coming.
+ *
+ * The fix belongs in one place rather than in each of the four clients, and
+ * this is the narrowest place that is genuinely one: both prefs callables
+ * return what this produces, so every screen resolves the canonical key and
+ * gets the honest answer without knowing aliases exist.
+ *
+ * PER CHANNEL, not per entry, because that is how `explicitUserChoice` walks:
+ * a canonical entry that sets only `sms` does not shadow a retired entry's
+ * `email`. Canonical always wins where it has an opinion, so materialising
+ * only the gaps cannot change what the dispatcher does.
+ *
+ * ADDITIVE. Retired entries are left exactly where they are rather than
+ * folded away, which keeps this a view instead of a migration. It matters
+ * because the clients send the whole prefs object back on save: if this
+ * dropped the retired entry, the first save after any edit would delete a
+ * choice `explicitUserChoice` still honors, and clearing a canonical override
+ * later would silently stop meaning what the household asked for. Leaving it
+ * means a cleared override falls back to the retired choice on the next read,
+ * on screen and in the dispatcher alike, which is what the alias list says
+ * should happen.
+ */
+export function withAliasedChoicesResolved(prefs: UserNotificationPrefs): UserNotificationPrefs {
+  const byKey: Record<string, Partial<ResolvedChannels>> = { ...(prefs.byKey ?? {}) };
+  const byCategory: Partial<Record<Category, Partial<ResolvedChannels>>> = {
+    ...(prefs.byCategory ?? {}),
+  };
+  let changed = false;
+  for (const def of Object.values(NOTIFICATION_CATALOG)) {
+    const legacyKeys = legacyKeysFor(def.key);
+    const legacyCategories = legacyCategoriesFor(def.key);
+    if (legacyKeys.length === 0 && legacyCategories.length === 0) continue;
+    for (const ch of ALL_CHANNELS) {
+      if (typeof byKey[def.key]?.[ch] !== 'boolean') {
+        for (const legacy of legacyKeys) {
+          const inherited = prefs.byKey?.[legacy]?.[ch];
+          if (typeof inherited === 'boolean') {
+            byKey[def.key] = { ...byKey[def.key], [ch]: inherited };
+            changed = true;
+            break;
+          }
+        }
+      }
+      // Categories are shared: several keys sit in one, and only the keys with
+      // an alias contribute a legacy category to it. Iterating the catalog in
+      // declaration order and skipping a channel that already has a value
+      // makes the result deterministic if two aliased keys ever land in the
+      // same canonical category with different legacy ones.
+      if (typeof byCategory[def.category]?.[ch] !== 'boolean') {
+        for (const legacyCategory of legacyCategories) {
+          const inherited = prefs.byCategory?.[legacyCategory]?.[ch];
+          if (typeof inherited === 'boolean') {
+            byCategory[def.category] = { ...byCategory[def.category], [ch]: inherited };
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (!changed) return prefs;
+  return { ...prefs, byKey, byCategory };
+}
 /**
  * Compute effective channels for a notification dispatch.
  *

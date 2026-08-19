@@ -6,6 +6,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { prefsSetOptions, SaveArgs } from '../notifications/prefsSchema';
+import { withAliasedChoicesResolved } from '../notifications/prefs';
 import type { UserNotificationPrefs } from '../notifications/types';
 
 /**
@@ -35,7 +36,13 @@ export async function getMyAdminNotificationPrefsHandler(
 
   const snap = await db().collection('staff').doc(uid).get();
   const data = snap.data() ?? {};
-  const prefs = (data['notificationPrefs'] as UserNotificationPrefs | undefined) ?? {};
+  // #501: aliases resolved here, not in each client. A choice stored under a
+  // retired key is honored by `resolveChannels` and invisible to every screen
+  // that looks the canonical key up, so the screen draws ON while the
+  // dispatcher sends nothing. See withAliasedChoicesResolved.
+  const prefs = withAliasedChoicesResolved(
+    (data['notificationPrefs'] as UserNotificationPrefs | undefined) ?? {},
+  );
   const ts = data['notificationPrefsUpdatedAt'];
   const updatedAtMs =
     ts && typeof (ts as { toMillis?: () => number }).toMillis === 'function'
