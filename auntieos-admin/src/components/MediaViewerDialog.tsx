@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Dialog } from './Dialog';
+import { PrimaryButton } from './Buttons';
 import {
   mediaKindOf,
   mediaKindHasPreview,
@@ -16,6 +17,22 @@ import './MediaViewerDialog.css';
 export interface MediaViewerDialogProps {
   media: MediaFile;
   onClose: () => void;
+  /**
+   * Display names of the kin tagged in this file, already resolved by the
+   * caller (the screen that holds the kin roster). `[]` means nobody is
+   * tagged, and the line simply does not render.
+   */
+  taggedNames?: string[];
+  /**
+   * Hands off to the tag dialog (#447). OPTIONAL, and its absence is the whole
+   * point: Android offers "Tag kin" from the GLOBAL Gallery's viewer
+   * (`GalleryScreen.kt`) and not from the entity-scoped one
+   * (`MediaGalleryScreen.kt`'s `FullscreenMediaViewer`), so `Gallery.tsx`
+   * passes this and `Media.tsx` deliberately does not. A prop rather than a
+   * hardcoded button is what keeps that difference exact, instead of inventing
+   * a tagging affordance on a screen Android never gave one.
+   */
+  onTagKin?: () => void;
 }
 
 /**
@@ -29,21 +46,24 @@ export interface MediaViewerDialogProps {
  * `mediaViewerUrl`) and a type glyph plus filename for document/audio, so one
  * shared component serves both web screens rather than two near-duplicates.
  *
- * LEFT OUT, deliberately, not silently: Android Gallery's "Tag kin" hand-off
- * (`GalleryScreen.kt`'s `MediaViewerDialog` -> `TagKinDialog` -> `saveTags`).
- * There is no kin-tagging feature anywhere on web: no tag dialog, no
- * `taggedKinIds` on this admin's `MediaFile` (`api/gallery.ts`), no `saveTags`
- * callable wired to it. Building kin-tagging is a separate feature, not part of
- * restoring the missing click target (#388); this wires the viewer that
- * genuinely exists on both platforms today and reports the gap rather than
- * faking a "Tag kin" button with nothing behind it.
+ * KIN TAGGING (#447) now exists on web too, and this viewer is where Android
+ * hands off to it. `#388` shipped without it because there was nothing behind
+ * the button -- no `taggedKinIds` on this admin's `MediaFile`, no dialog, and no
+ * callable anywhere for ANY client (Android wrote the field straight to
+ * Firestore). All three exist now, so the hand-off is real: `onTagKin` closes
+ * this viewer and opens `TagKinDialog`, exactly as `GalleryScreen.kt` does.
  *
  * Escape-to-close, backdrop-click-to-close, the Tab focus trap, and focus
  * restore to the tile that opened it are ALL `Dialog`'s job (components/
  * Dialog.tsx): this component supplies only the title and body, the same
  * division every other confirm/detail modal in this admin already uses.
  */
-export function MediaViewerDialog({ media, onClose }: MediaViewerDialogProps) {
+export function MediaViewerDialog({
+  media,
+  onClose,
+  taggedNames = [],
+  onTagKin,
+}: MediaViewerDialogProps) {
   const kind = mediaKindOf(str(media.fileType));
   const caption = mediaCaption(media);
   const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
@@ -51,7 +71,12 @@ export function MediaViewerDialog({ media, onClose }: MediaViewerDialogProps) {
   const title = caption !== '' ? caption : 'Media';
 
   return (
-    <Dialog title={title} onClose={onClose} size="wide">
+    <Dialog
+      title={title}
+      onClose={onClose}
+      size="wide"
+      footer={onTagKin ? <PrimaryButton label="Tag kin" onClick={onTagKin} /> : undefined}
+    >
       <div className="media-viewer">
         <ViewerStage kind={kind} url={mediaKindHasPreview(kind) ? mediaViewerUrl(media) : undefined} label={title} />
         {kind === 'video' && (
@@ -60,6 +85,18 @@ export function MediaViewerDialog({ media, onClose }: MediaViewerDialogProps) {
         {(meta !== '' || duration !== undefined) && (
           <p className="media-viewer__meta">
             {[meta, duration !== undefined ? `Duration ${duration}` : ''].filter((s) => s !== '').join(' · ')}
+          </p>
+        )}
+        {/*
+          Who is in the photo, spelled out. Android's viewer shows the same
+          line under the frame. Rendered only when there IS someone: an empty
+          "Tagged kin:" label would read as a failed lookup rather than as
+          nobody having been tagged yet, and the "Tag kin" button below already
+          says the affordance exists.
+        */}
+        {taggedNames.length > 0 && (
+          <p className="media-viewer__tags">
+            <span className="media-viewer__tags-label">Tagged kin</span> {taggedNames.join(', ')}
           </p>
         )}
       </div>

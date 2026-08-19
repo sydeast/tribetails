@@ -895,10 +895,20 @@ service cloud.firestore {
  // Scoped for the test-admin sandbox: read+write only docs whose kinfolkId
  // matches testScope() (create checks the incoming payload). Live media /
  // payments stay unreachable.
+ //
+ // `taggedKinIds` (which Kin are in this photo) is SERVER-BOUND: the
+ // saveMediaTags callable is its only writer (#447). Android used to patch the
+ // field straight from the client, which meant nothing checked that a tagged
+ // kin existed or even belonged to the household whose photo it is, and no
+ // audit entry was written. The callable enforces both and the admin SDK
+ // bypasses these rules, so denying the key here leaves exactly one way in.
+ // Every OTHER field on the doc keeps its existing client write path: the
+ // upload pipelines (`create`) and the soft-delete flag are untouched.
     match /media_files/{id} {
       allow read: if isAuntie() || testOwnsExisting();
       allow create: if isAuntie() || testOwnsIncoming();
-      allow update: if isAuntie() || testOwnsExisting();
+      allow update: if (isAuntie() || testOwnsExisting())
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['taggedKinIds']);
       allow delete: if isAuntie() || testOwnsExisting();
     }
     match /payments/{id} {

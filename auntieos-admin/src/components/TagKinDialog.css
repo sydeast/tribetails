@@ -1,0 +1,97 @@
+/**
+ * TagKinDialog. The panel chrome (backdrop, focus trap, Escape, title bar,
+ * footer row) is all `Dialog.css`; this file is only the body: the caption
+ * line, the scrolling kin list, and its messages.
+ */
+
+.tag-kin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tag-kin__caption {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tag-kin__fields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.tag-kin__legend {
+  padding: 0;
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.tag-kin__list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  /* Android caps the picker at 320dp and scrolls; a long roster must not push
+     the Save button off the bottom of the panel. */
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.tag-kin__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-card);
+  cursor: pointer;
+}
+
+.tag-kin__option:hover {
+  background: var(--color-surface-2);
+}
+
+/* The focus ring belongs to the ROW, not the 1rem box: the checkbox is the
+   control, but the label is what the operator is aiming at, and a ring around
+   only the tick box is easy to lose on a long list. */
+.tag-kin__option:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.tag-kin__checkbox {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.tag-kin__names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tag-kin__name {
+  font-size: var(--type-title-sm-size);
+  color: var(--color-text-primary);
+}
+
+.tag-kin__sub {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tag-kin__hint {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.tag-kin__error {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-error);
+}

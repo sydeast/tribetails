@@ -250,6 +250,21 @@ describe('Media screen, media viewer (#388: tapping a photo did nothing)', () =>
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(tileButton).toHaveFocus();
   });
+
+  it('offers NO "Tag kin" button: Android does not offer one on this screen either (#447)', async () => {
+    // Kin tagging is a GLOBAL Gallery affordance on both clients
+    // (GalleryScreen.kt / Gallery.tsx). MediaGalleryScreen.kt's
+    // FullscreenMediaViewer has no tag hand-off, so neither does this. The
+    // shared viewer takes it as an optional prop precisely so this screen can
+    // leave it off rather than inventing parity Android never had.
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
+    render(<Media targetType="kin" targetId="kf1" />);
+
+    await userEvent.click(within(tileFor('Rufus')).getByRole('button'));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Tag kin' })).toBeNull();
+  });
 });
 
 describe('Media screen, defensive reads', () => {

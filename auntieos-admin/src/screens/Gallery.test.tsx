@@ -1,13 +1,22 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type MediaFile } from '../api/gallery';
-import { type Kinfolk } from '../api/directory';
+import { type Kinfolk, type Kin } from '../api/directory';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// The tag dialog's only write path (#447). Mocked at the api seam, not at
+// `lib/fns`, so these tests exercise the screen's wiring rather than the
+// callable client `api/mediaTags.test.ts` already covers.
+const { saveMediaTags } = vi.hoisted(() => ({ saveMediaTags: vi.fn() }));
+vi.mock('../api/mediaTags', async () => {
+  const actual = await vi.importActual<typeof import('../api/mediaTags')>('../api/mediaTags');
+  return { ...actual, saveMediaTags };
+});
 
 import { Gallery } from './Gallery';
 
@@ -54,15 +63,24 @@ function kinfolkRow(over: Partial<Kinfolk>): Kinfolk {
   };
 }
 
+function kinRow(over: Partial<Kin> & { _id: string }): Kin {
+  return { kinfolkId: 'kf1', name: 'Waddles', species: 'Dog', status: 'active', ...over };
+}
+
 let mediaAsync: Async<MediaFile[]>;
 let kinfolkAsync: Async<Kinfolk[]>;
+let kinAsync: Async<Kin[]>;
 
 beforeEach(() => {
   mediaAsync = { status: 'ready', data: [] };
   kinfolkAsync = { status: 'ready', data: [] };
-  useCollection.mockReset().mockImplementation((spec: { path: string }) =>
-    spec.path === 'kinfolk' ? kinfolkAsync : mediaAsync,
-  );
+  kinAsync = { status: 'ready', data: [] };
+  saveMediaTags.mockReset();
+  useCollection.mockReset().mockImplementation((spec: { path: string }) => {
+    if (spec.path === 'kinfolk') return kinfolkAsync;
+    if (spec.path === 'kin') return kinAsync;
+    return mediaAsync;
+  });
 });
 
 function tileFor(text: string): HTMLElement {
@@ -352,5 +370,108 @@ describe('Gallery screen, filters', () => {
     expect(screen.getByText('2 of 2')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Video' }));
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
+  });
+});
+
+describe('Gallery screen, kin tagging (#447)', () => {
+  function withOnePhoto(taggedKinIds?: string[]) {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'm1', description: 'Rufus at the park', kinfolkId: 'kf1', ...(taggedKinIds ? { taggedKinIds } : {}) })],
+    };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    kinAsync = {
+      status: 'ready',
+      data: [kinRow({ _id: 'k1', name: 'Waddles' }), kinRow({ _id: 'k2', name: 'Biscuit' })],
+    };
+  }
+
+  it('names the tagged kin on the tile itself, so the grid answers "which photos have Waddles in them"', () => {
+    withOnePhoto(['k1']);
+    render(<Gallery />);
+    expect(within(tileFor('Rufus at the park')).getByText('Waddles')).toBeInTheDocument();
+  });
+
+  it('collapses two or more names to a count: a 132px tile cannot show three names', () => {
+    withOnePhoto(['k1', 'k2']);
+    render(<Gallery />);
+    expect(within(tileFor('Rufus at the park')).getByText('2 kin')).toBeInTheDocument();
+  });
+
+  it('shows no tag line on an untagged photo, rather than an empty chip', () => {
+    withOnePhoto();
+    render(<Gallery />);
+    expect(within(tileFor('Rufus at the park')).queryByText(/kin$/)).toBeNull();
+  });
+
+  it('the viewer names who is tagged and offers "Tag kin"', async () => {
+    withOnePhoto(['k1']);
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Waddles')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Tag kin' })).toBeInTheDocument();
+  });
+
+  it('"Tag kin" HANDS OFF: the viewer closes and the tag dialog opens, never both at once', async () => {
+    withOnePhoto();
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tag kin' }));
+
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Tag kin in this photo');
+  });
+
+  it('adds a tag end to end, and closes the dialog on success', async () => {
+    withOnePhoto();
+    saveMediaTags.mockResolvedValue({ ok: true, mediaFileId: 'm1', taggedKinIds: ['k1'] });
+    render(<Gallery />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tag kin' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Waddles/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save tags' }));
+
+    await waitFor(() => expect(saveMediaTags).toHaveBeenCalledWith('m1', ['k1']));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('a rejected save keeps the dialog open and shows why', async () => {
+    withOnePhoto();
+    saveMediaTags.mockRejectedValue(new Error('Admin claim required.'));
+    render(<Gallery />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tag kin' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Waddles/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save tags' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Admin claim required/));
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Tag kin in this photo');
+  });
+
+  it('closing the tag dialog returns focus to the tile the whole flow started from', async () => {
+    withOnePhoto();
+    render(<Gallery />);
+    const tile = screen.getByRole('button', { name: 'Open Rufus at the park' });
+
+    await userEvent.click(tile);
+    await userEvent.click(screen.getByRole('button', { name: 'Tag kin' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(document.activeElement).toBe(tile));
+  });
+
+  it('a failed kin stream never reads as "no kin on this household"', async () => {
+    withOnePhoto();
+    kinAsync = { status: 'error', message: 'permission denied', retry: () => undefined };
+    render(<Gallery />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Tag kin' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/permission denied/);
+    expect(screen.queryByText('No kin on this household to tag.')).toBeNull();
   });
 });

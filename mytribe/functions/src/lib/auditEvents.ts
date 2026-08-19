@@ -136,6 +136,14 @@ export const AUDIT_EVENTS = {
   BOOKING_SUBMITTED: 'BOOKING_SUBMITTED',
   PROFILE_UPDATED: 'PROFILE_UPDATED',
 
+  // #447: the Kin tagged in one `media_files` doc were changed (saveMediaTags).
+  // Audited for the same reason PROFILE_UPDATED is: a tag says a named animal
+  // was present at a visit, which is a claim about a household's record, and
+  // until this callable landed the field was writable by any admin client with
+  // nothing recorded at all. The payload carries the before and after lists, so
+  // an accidental clear is recoverable from the trail rather than gone.
+  MEDIA_TAGS_UPDATED: 'MEDIA_TAGS_UPDATED',
+
   // formSchema admin authoring callables (saveFormSchema / deleteFormSchema).
   // Already SCREAMING_SNAKE per memory project_orphan_triage_shipped, kept
   // unchanged.

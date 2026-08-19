@@ -213,6 +213,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Who is tagged in this photo (#447). Reads as a chip rather than another
+   line of grey text, because it is the one line on the tile that is about
+   the CONTENT of the photo rather than its filing. */
+.gallery__tile-tags {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Phone width ──────────────────────────────────────────────────────────
    `justify-content: flex-end` puts "Upload media" alone at the trailing edge.
    That reads as a toolbar on a desktop, where it sits under a heading whose

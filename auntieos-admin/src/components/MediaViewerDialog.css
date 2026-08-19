@@ -68,3 +68,17 @@
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
+
+/* Who is tagged in this file (#447). One line under the meta line, mirroring
+   Android's viewer; the label is a separate span so it can carry its own
+   weight/colour without a second paragraph. */
+.media-viewer__tags {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.media-viewer__tags-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}

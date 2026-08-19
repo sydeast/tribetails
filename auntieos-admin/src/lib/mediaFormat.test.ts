@@ -12,6 +12,10 @@ import {
   galleryKinfolkIds,
   galleryFileTypes,
   galleryHasUnattachedMedia,
+  mediaTaggedKinIds,
+  taggedKinNames,
+  taggableKin,
+  type TaggableKin,
   UNATTACHED_KINFOLK_ID,
   GALLERY_FILTER_DEFAULT,
   type GalleryFilter,
@@ -260,5 +264,78 @@ describe('galleryHasUnattachedMedia (Company / no household facet)', () => {
     const rows = [row({ kinfolkId: 'a' }), row({ kinfolkId: '' })];
     const filter: GalleryFilter = { kinfolkId: UNATTACHED_KINFOLK_ID, fileType: null, monthPrefix: null };
     expect(filterGalleryMedia(rows, filter)).toEqual([row({ kinfolkId: '' })]);
+  });
+});
+
+// ── kin tagging (#447) ──────────────────────────────────────────────────────
+
+function kin(over: Partial<TaggableKin> & { _id: string }): TaggableKin {
+  return { kinfolkId: 'fam1', name: 'Waddles', ...over };
+}
+
+describe('mediaTaggedKinIds (the normalisation point for a raw Firestore field)', () => {
+  it('reads the ids a document actually carries', () => {
+    expect(mediaTaggedKinIds({ taggedKinIds: ['k1', 'k2'] })).toEqual(['k1', 'k2']);
+  });
+
+  it('reads an ABSENT field as no tags, never throwing', () => {
+    // The field is missing on every doc written before tagging existed, and on
+    // every doc the upload pipeline creates. A throw here is a blank gallery.
+    expect(mediaTaggedKinIds({})).toEqual([]);
+  });
+
+  it('reads a null or wrong-typed field as no tags', () => {
+    expect(mediaTaggedKinIds({ taggedKinIds: null as unknown as string[] })).toEqual([]);
+    expect(mediaTaggedKinIds({ taggedKinIds: 'k1' as unknown as string[] })).toEqual([]);
+  });
+
+  it('drops non-string, blank and duplicate entries, keeping first-seen order', () => {
+    const raw = ['k2', '', ' k1 ', 7, 'k2', null] as unknown as string[];
+    expect(mediaTaggedKinIds({ taggedKinIds: raw })).toEqual(['k2', 'k1']);
+  });
+});
+
+describe('taggedKinNames', () => {
+  const byId = new Map<string, TaggableKin>([
+    ['k1', kin({ _id: 'k1', name: 'Waddles' })],
+    ['k2', kin({ _id: 'k2', name: 'Biscuit' })],
+    ['blank', kin({ _id: 'blank', name: '  ' })],
+  ]);
+
+  it('resolves ids to names in the order they are tagged', () => {
+    expect(taggedKinNames({ taggedKinIds: ['k2', 'k1'] }, byId)).toEqual(['Biscuit', 'Waddles']);
+  });
+
+  it('DROPS an id with no matching kin rather than rendering "Unknown"', () => {
+    expect(taggedKinNames({ taggedKinIds: ['k1', 'ghost'] }, byId)).toEqual(['Waddles']);
+  });
+
+  it('drops a kin whose name is blank', () => {
+    expect(taggedKinNames({ taggedKinIds: ['blank'] }, byId)).toEqual([]);
+  });
+
+  it('is empty while the roster is still empty, never a list of ids', () => {
+    expect(taggedKinNames({ taggedKinIds: ['k1'] }, new Map())).toEqual([]);
+  });
+});
+
+describe('taggableKin (the same scope rule the saveMediaTags callable enforces)', () => {
+  const roster = [
+    kin({ _id: 'k1', kinfolkId: 'fam1' }),
+    kin({ _id: 'k2', kinfolkId: 'fam1' }),
+    kin({ _id: 'k9', kinfolkId: 'fam9' }),
+  ];
+
+  it("offers only the photo's own household's kin", () => {
+    expect(taggableKin({ kinfolkId: 'fam1' }, roster).map((k) => k._id)).toEqual(['k1', 'k2']);
+  });
+
+  it('offers the WHOLE roster for media with no household (company / unattached)', () => {
+    expect(taggableKin({ kinfolkId: '' }, roster)).toHaveLength(3);
+    expect(taggableKin({}, roster)).toHaveLength(3);
+  });
+
+  it('offers nothing when the household has no kin, rather than falling back to everyone', () => {
+    expect(taggableKin({ kinfolkId: 'fam-empty' }, roster)).toEqual([]);
   });
 });
