@@ -9,9 +9,18 @@ export default defineConfig({
     //                                            modules (PR30: paymentMethods.ts),
     //                                            kept beside the code they cover
     //                                            rather than mirrored under test/
+    //   - functions/scripts/**/*.test.ts        — colocated unit tests for build-time
+    //                                            dev tooling under scripts/ (issue #453's
+    //                                            runtimeOptions drift checker), same
+    //                                            reasoning as src/**/*.test.ts above
     //   - ../scripts/test/**/*.test.ts          — operator seed-script unit tests
     //                                            (no Firestore deps; pure payload validators)
-    include: ['test/**/*.test.ts', 'src/**/*.test.ts', '../scripts/test/**/*.test.ts'],
+    include: [
+      'test/**/*.test.ts',
+      'src/**/*.test.ts',
+      'scripts/**/*.test.ts',
+      '../scripts/test/**/*.test.ts',
+    ],
     exclude: ['node_modules/**', 'test/rules/**'],
     // firebase-admin must be required by Node, not processed by Vite.
     //

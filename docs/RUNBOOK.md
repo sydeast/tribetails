@@ -621,6 +621,111 @@ Knobs, all off by default:
 | `RELEASE_FUNCTIONS_SETTLE=S` | Seconds between batches (default 30) |
 | `RELEASE_RETRY_KEEP=N` | Prune depth between retry rounds (default 2, `0` disables) |
 
+### Checking source and deployed runtime options agree
+
+ADR-0004 recorded that `memory` disagreed between source and the deployed
+fleet for 53 functions on 2026-08-04, and that nobody had a repeatable way to
+check `cpu`, `minInstances`, `maxInstances`, `timeoutSeconds` or `region`
+either — every one of those was read from source, never confirmed against
+what was actually running (issue #453). `mytribe/functions/scripts/runtimeOptions`
+is that check now. It resolves the exact expected shape for every function
+from `index.ts`'s `setGlobalOptions` and `lib/runtimeOptions.ts`'s named
+constants, with real inheritance (a function with no override gets the fleet
+default; one that overrides `minInstances` still gets the fleet's `cpu`), and
+diffs it against a deployed dump the operator produces. **Source is
+authoritative.** ADR-0004 already worked out what the fleet's shape should
+be — `cpu: 1`, `memory: 256MiB`, the named constants' `maxInstances`
+policy — and decided it, not merely described it. A mismatch this tool finds
+means redeploy to match source, not edit source to match whatever happens to
+be running; the one exception is a deploy an operator changed on purpose for
+a reason source doesn't yet capture, which is exactly the conversation this
+tool exists to force before anyone touches the fleet again.
+
+**Run it read-only first, no deployed data needed:**
+
+```
+npm --prefix mytribe/functions run runtime-options:expected
+```
+
+Prints the resolved expected shape for all ~250 functions as JSON. Useful on
+its own — it's "what does source currently declare, exactly" with inheritance
+already resolved — and it fails loudly (nonzero exit, every unresolved export
+named) if a future function's options object uses a shape the extractor
+hasn't been taught, rather than silently skipping it.
+
+**Then get the deployed shape.** Two ways, in order of preference:
+
+1. From an agent session, the Firebase MCP `functions_list_functions` tool
+   works here (confirmed 2026-08-19, building this) and needs no operator
+   step at all — but it only ever reports `function`, `version`, `trigger`,
+   `location` and `memory`, never `cpu`/`minInstances`/`maxInstances`/
+   `timeoutSeconds`. Save its raw JSON result (the `{"functions":[...]}`
+   object) to a file.
+2. For the full six-field picture, the operator runs:
+
+   ```
+   gcloud functions list --v2 --format=json > /tmp/deployed.json
+   ```
+
+   (`gcloud` returns empty with exit 0 from an agent session — a false
+   negative, not "no functions"; this step has to be run by a human, same as
+   every other `gcloud`/`firebase deploy` step in this file.) This dump's
+   `serviceConfig.{availableMemory,availableCpu,timeoutSeconds,
+   minInstanceCount,maxInstanceCount}` fills in the four fields the MCP tool
+   can't.
+
+**Then diff:**
+
+```
+npm --prefix mytribe/functions run runtime-options:diff -- /tmp/deployed.json
+```
+
+Prints only the functions that disagree — not all ~250, which is why this has
+never been fixed by eyeballing a full list — plus two buckets worth reading
+even when the mismatch table is empty:
+
+- **Declared in source but absent from the deployed dump.** Building this
+  tool against the live fleet on 2026-08-19 found 17 (see issue #486, filed
+  with the exact list), including `twilioVoice` and the whole quote-decision
+  and booking-reschedule family (`acceptQuote`, `denyQuote`, `resendQuote`,
+  `requestBookingReschedule`, `resolveBookingRescheduleRequest`,
+  `listRescheduleRequests`) and the billing-card callables
+  (`getMyPaymentMethod`, `createBillingSetupSession`, `syncMyPaymentMethod`,
+  `removeMyPaymentMethod`). That's not a runtime-options mismatch — it's
+  those functions never having shipped, or having shipped under a different
+  name — and it's a bigger finding than the one issue #453 asked about. This
+  bucket will keep moving as the fleet does; re-run the tool rather than
+  trusting this count. Chase it separately; don't fold it into a
+  memory/cpu conversation.
+- **Deployed but not declared here.** Expect roughly a dozen: AuntieOS's own
+  functions share the `auntieos-ttpc` project (`setAdminClaim`, `listAdmins`,
+  the `clear_dossier_household_notes`/`nightly_reconcile`/
+  `recap_recent_comms`/`synthesize_kinfolk_profile` Python functions, and a
+  few more), and this bucket is where they show up. A NEW name here that
+  isn't one of those is the actual signal to chase.
+
+v1 functions (`onAuthUserCreate`, the only one in this fleet) are excluded
+from field comparison entirely rather than diffed against a guessed SDK
+default — see `GEN1_COMPARABLE_FIELDS` in `scripts/runtimeOptions/model.ts`
+for why. It deployed to `us-east1` when this tool was built, which is worth a
+look, but it's a manual observation, not something this tool asserts.
+
+The live run on 2026-08-19 found **zero field-level mismatches** across all
+234 functions present on both sides. Read plainly: the memory drift ADR-0004
+recorded on 2026-08-04 is gone — some deploy between then and now already
+brought the fleet back to what source declares (`256MiB` fleet-wide, plus the
+two `512MiB` Twilio inbound overrides, which matched). ADR-0004 decision 5
+("do not touch memory... the operator's call") is answered: nothing to touch,
+carried out. That leaves the 16-function existence gap above as the real open
+item, not memory.
+
+Unit tests for the resolver and the diff live beside the code:
+`scripts/runtimeOptions/model.test.ts` (fixtures: inheriting the global, one
+per named constant, a deployed shape disagreeing on every field at once) and
+`scripts/runtimeOptions/extractSource.test.ts` (fixtures for every call shape
+the extractor recognizes). Both run under `npm --prefix mytribe/functions
+test`.
+
 ### Every release is tagged
 
 Step 9 names what just went live: an annotated tag `release/YYYY.MM.DD-<sha>`,
