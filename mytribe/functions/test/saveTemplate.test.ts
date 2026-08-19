@@ -254,6 +254,23 @@ describe('saveTemplate: expectNew', () => {
     expect(write?.data.subject).toBe('new');
     expect(write?.merge).toBe(true);
   });
+  it('SAD: refuses when the key is claimed between the read and the write', async () => {
+    // The read says the key is free and the create says otherwise, which is the
+    // race two operators naming the same key at the same moment produce. The
+    // handler must believe `create()`, not its own stale read: that is the whole
+    // reason the write is a create rather than a set.
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const ref = ctx.db.doc('emailTemplates/welcome.kinfolk');
+    ref.create.mockRejectedValueOnce(
+      Object.assign(new Error('ALREADY_EXISTS'), { code: 6 }),
+    );
+    const err = await saveTemplateHandler(
+      req({ templateId: 'welcome.kinfolk', subject: 's', body: 'b', expectNew: true }),
+    ).catch((e) => e);
+    expect(err.code).toBe('already-exists');
+    expect(ctx.writes).toEqual([]);
+  });
   it('SAD: rejects an id with characters a document id cannot carry', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);

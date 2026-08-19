@@ -325,6 +325,7 @@ export function buildDbMock(opts: {
   const adds: Array<{ collection: string; data: Record<string, unknown>; id: string }> = [];
   const deletes: string[] = [];
   let autoCounter = 0;
+  const docRefCache = new Map<string, any>();
 
   /** Synthesizes the `.parent.parent` chain for a nested doc path. */
   function parentChain(path: string): any {
@@ -500,7 +501,15 @@ export function buildDbMock(opts: {
   const fakeDb: any = {
     collection: (path: string) => makeCollection(path),
     collectionGroup: (name: string) => makeCollectionGroup(name),
-    doc: (path: string) => makeDocRef(path),
+    // Memoised, because real Firestore hands back an equal ref for an equal
+    // path and a test that stubs `ref.create` on one object needs the handler
+    // to reach that same object. Before this, every `db().doc(p)` built a
+    // fresh shim and a stub could only ever affect the test's own copy.
+    doc: (path: string) => docRefCache.get(path) ?? (() => {
+      const ref = makeDocRef(path);
+      docRefCache.set(path, ref);
+      return ref;
+    })(),
     // Firestore#getAll(...refs) — resolves each ref against the same `docs` map.
     getAll: vi.fn(async (...refs: any[]) => Promise.all(refs.map((r) => r.get()))),
     batch: () => makeBatch(),
