@@ -18,6 +18,8 @@ import type {
   RecordPaymentResult,
   RepairInvoicePaymentsArgs,
   RepairInvoicePaymentsResult,
+  ResendQuoteArgs,
+  ResendQuoteResult,
   ReviewAndSendDraftInvoiceArgs,
   ReviewAndSendDraftInvoiceResult,
   RunAutoApplyArgs,
@@ -316,10 +318,12 @@ export async function reviewAndSendDraftInvoice(invoiceId: string): Promise<void
  * $0. A metadata patch against such an invoice leaves the money untouched.
  *
  * Throws `failed-precondition` with `details.code` of `invoice_not_editable`
- * (paid, cancelled, credit, redeemed), `invoice_money_locked` (a payment exists,
- * so the money is frozen while the metadata stays open), or
- * `invoice_money_invalid` (a discount larger than what it is taken off).
- * `not-found` if the id is wrong. Branch on the CODE, never the message.
+ * (paid, cancelled, credit, redeemed), `quote_accepted_locked` (the household
+ * ACCEPTED this quote, so the agreed figures are frozen — issue #448),
+ * `invoice_money_locked` (a payment exists, so the money is frozen while the
+ * metadata stays open), or `invoice_money_invalid` (a discount larger than what
+ * it is taken off). `not-found` if the id is wrong. Branch on the CODE, never
+ * the message.
  */
 export async function updateInvoice(
   invoiceId: string,
@@ -327,6 +331,33 @@ export async function updateInvoice(
 ): Promise<UpdateInvoiceResultTotals> {
   const res = await call<UpdateInvoiceArgs, UpdateInvoiceResult>('updateInvoice', { invoiceId, patch });
   return res.totals;
+}
+
+/**
+ * resendQuote (admin): sends a DECLINED quote back out once it has been revised
+ * (issue #448).
+ *
+ * IT CLEARS THE HOUSEHOLD'S ANSWER, which is the whole point: both portals gate
+ * their Accept/Decline buttons on there being no `quoteDecision`, so a resend is
+ * what puts the quote back in front of the household as a live question. The
+ * `invoice.new` notification fires again on the same key that issued it, and it
+ * fires BEFORE the write, so there is no outcome where the quote reopens and
+ * nobody is told.
+ *
+ * THIS IS NOT A NEW QUOTE. The invoice number, the line items and the linked
+ * sessions all stay; only the answer is cleared, and `quoteResendCount` records
+ * that the quote has been round before.
+ *
+ * Throws `failed-precondition` with `details.code` of `quote_accepted_locked`
+ * (accepted, so it is a bill now), `quote_not_declined` (still waiting for an
+ * answer — send a reminder instead), `quote_not_a_quote`, or `quote_expired`
+ * (its due date has passed, so the household could only decline it again: give
+ * it a new due date first, which is an ordinary edit). `not-found` if the id is
+ * wrong. Branch on the CODE, never the message.
+ */
+export async function resendQuote(invoiceId: string): Promise<ResendQuoteResult['status']> {
+  const res = await call<ResendQuoteArgs, ResendQuoteResult>('resendQuote', { invoiceId });
+  return res.status;
 }
 
 /**

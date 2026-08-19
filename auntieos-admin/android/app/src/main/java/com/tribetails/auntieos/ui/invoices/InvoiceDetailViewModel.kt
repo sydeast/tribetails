@@ -80,6 +80,14 @@ data class InvoiceDetailUiState(
     val generatingReceipt: Boolean = false,
     val sendingReminder: Boolean = false,
     val sendingDraft: Boolean = false,
+    /**
+     * The revise-and-resend of a DECLINED quote is in flight (issue #448).
+     *
+     * Its own flag rather than a shared "busy": the resend sits beside the
+     * draft send and the reminder on the same screen, and one shared flag would
+     * grey out all three because one of them was working.
+     */
+    val resendingQuote: Boolean = false,
     // Stage 3 / 16.2: invoice PDF download. pdfUrlToOpen is a one-shot the screen
     // consumes (opens via Intent) then clears via consumePdfUrl().
     val generatingPdf: Boolean = false,
@@ -624,6 +632,55 @@ class InvoiceDetailViewModel(
                     _uiState.value = _uiState.value.copy(
                         sendingDraft = false,
                         toastMessage = "Couldn't send draft: ${err.message}",
+                        toastVisible = true,
+                        toastIsError = true,
+                    )
+                }
+        }
+    }
+
+    /**
+     * Sends a DECLINED quote back out, revised (issue #448).
+     *
+     * The operator ruling of 2026-08-18: a decline is a step in a conversation,
+     * not a dead end. This clears the household's answer server-side and
+     * re-fires the issued-quote notification, so the revised quote is a live
+     * question again.
+     *
+     * FAIL-LOUD AND VERBATIM. The server refuses an accepted quote, one still
+     * waiting for an answer, and one whose due date has passed, and each
+     * refusal names what to do instead — so the message is shown as written
+     * rather than replaced with a generic failure sentence.
+     */
+    fun resendQuote() {
+        val invoice = _uiState.value.invoice ?: return
+        if (_uiState.value.resendingQuote) return
+        _uiState.value = _uiState.value.copy(resendingQuote = true)
+        viewModelScope.launch {
+            invoiceRepository.resendQuote(invoice.id)
+                .onSuccess {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = repository,
+                        actionType       = "RESEND_QUOTE",
+                        description      = "Revised and resent quote ${invoice.invoiceNumber.ifBlank { invoice.id }}",
+                        targetId         = invoice.id,
+                        targetCollection = "invoices",
+                    )
+                    // Quiet reload so the decline banner drops and the quote
+                    // reads as waiting on an answer again, which is what it is.
+                    reloadInvoiceQuietly(invoice.id)
+                    _uiState.value = _uiState.value.copy(
+                        resendingQuote = false,
+                        toastMessage = "Quote sent again. The household can accept or decline it now.",
+                        toastVisible = true,
+                        toastIsError = false,
+                    )
+                }
+                .onFailure { err ->
+                    _uiState.value = _uiState.value.copy(
+                        resendingQuote = false,
+                        toastMessage = err.message ?: "Couldn't send the quote again.",
                         toastVisible = true,
                         toastIsError = true,
                     )

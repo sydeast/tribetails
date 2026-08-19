@@ -63,6 +63,13 @@ export const AUDIT_EVENTS = {
   BILLING_QUOTE_ACCEPTED: 'BILLING_QUOTE_ACCEPTED',
   /** The household declined a quote. A different fact from the operator cancelling one. */
   BILLING_QUOTE_DENIED: 'BILLING_QUOTE_DENIED',
+  /**
+   * The office revised a declined quote and sent it back out
+   * (admin/resendQuote.ts, issue #448). The resend CLEARS the decline off the
+   * doc, so this entry is the only lasting record that the household ever said
+   * no to it.
+   */
+  BILLING_QUOTE_RESENT: 'BILLING_QUOTE_RESENT',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
   BILLING_RECEIPT_ISSUED: 'BILLING_RECEIPT_ISSUED',

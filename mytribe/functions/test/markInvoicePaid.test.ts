@@ -350,3 +350,35 @@ describe('markInvoicePaid state stamp (ADR-0002)', () => {
     expect(w.data.editScope).toBe('none');
   });
 });
+
+/**
+ * ISSUE #448: locking an accepted quote must not stop it being PAID.
+ *
+ * The lock is on editing what was agreed. The bill the household agreed to is
+ * exactly the bill they are about to settle, and a quote that could be accepted
+ * and then never collected would be a worse defect than the one #448 reports.
+ */
+describe('markInvoicePaid on a quote the household accepted', () => {
+  it('collects it, and leaves the doc locked afterwards', async () => {
+    const ctx = seed({
+      kinfolkId: 'fam1',
+      invoiceNumber: 'Q-1001',
+      // What acceptQuote leaves: an open bill carrying the household answer.
+      status: 'open',
+      invoiceStatus: 'open',
+      editScope: 'none',
+      quoteDecision: 'accepted',
+      amountDue: 240,
+      total: 240,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await markInvoicePaidHandler(req({ invoiceId: 'inv1' }));
+    expect(res.ok).toBe(true);
+    expect(res.state).toBe('settled');
+    const w = invoiceWriteOf(ctx)!;
+    expect(w.data.status).toBe('paid');
+    expect(w.data.amountDue).toBe(0);
+    // Still locked, now by the payment as well as by the agreement.
+    expect(w.data.editScope).toBe('none');
+  });
+});

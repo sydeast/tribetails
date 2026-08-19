@@ -12,6 +12,7 @@ const {
   generateReceipt,
   getInvoiceLedger,
   recordPayment,
+  resendQuote,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
@@ -22,6 +23,7 @@ const {
   generateReceipt: vi.fn(),
   getInvoiceLedger: vi.fn(),
   recordPayment: vi.fn(),
+  resendQuote: vi.fn(),
   reviewAndSendDraftInvoice: vi.fn(),
   updateInvoice: vi.fn(),
   archiveInvoice: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   generateReceipt,
   getInvoiceLedger,
   recordPayment,
+  resendQuote,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
@@ -182,6 +185,7 @@ beforeEach(() => {
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
   reviewAndSendDraftInvoice.mockReset();
+  resendQuote.mockReset().mockResolvedValue('quote');
   updateInvoice.mockReset().mockResolvedValue({
     subtotalCents: 0, totalCents: 0, paidCents: 0, amountDueCents: 0,
   });
@@ -2022,5 +2026,76 @@ describe('InvoiceDetail quote decision', () => {
       />,
     );
     expect(screen.queryByText('Quote declined')).toBeNull();
+  });
+});
+/**
+ * ISSUE #448. A quote is editable until the household ACCEPTS it, and a
+ * DECLINE is a step in a conversation rather than a dead end.
+ *
+ * THE TESTS THAT WOULD HAVE CAUGHT THE BUG are the first two: the panel offered
+ * Edit on an accepted quote (the server stamped `editScope: 'all'` on it, so
+ * there was nothing here to read otherwise), and a declined quote had no way
+ * forward at all.
+ */
+describe('InvoiceDetail and a quote the household has answered (issue #448)', () => {
+  /** What acceptQuote leaves behind: an open bill, locked, carrying the answer. */
+  function acceptedQuote() {
+    return entry({
+      status: 'open',
+      editScope: 'none',
+      quoteDecision: 'accepted',
+      quoteDecidedAt: fakeTs('2026-08-18T15:00:00Z'),
+    });
+  }
+
+  function declinedQuote() {
+    return entry({
+      status: 'quote',
+      editScope: 'all',
+      quoteDecision: 'denied',
+      quoteDecidedAt: fakeTs('2026-08-18T15:00:00Z'),
+    });
+  }
+
+  it('OFFERS NO EDIT on an accepted quote, so nobody types into a form the server will refuse', () => {
+    render(<InvoiceDetail invoice={acceptedQuote()} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+  it('says the figures are locked and why, on the accepted banner', () => {
+    render(<InvoiceDetail invoice={acceptedQuote()} onClose={vi.fn()} />);
+    expect(screen.getByText(/figures are locked/)).toBeInTheDocument();
+  });
+  it('OFFERS REVISE AND RESEND on a declined quote, and keeps Edit alongside it', () => {
+    render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Revise and resend' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+  it('offers the resend on NOTHING else: not an accepted quote, not an unanswered one', () => {
+    const { unmount } = render(<InvoiceDetail invoice={acceptedQuote()} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Revise and resend' })).toBeNull();
+    unmount();
+    render(<InvoiceDetail invoice={entry({ status: 'quote' })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Revise and resend' })).toBeNull();
+  });
+  it('confirms before it sends, then calls resendQuote and says the household can answer', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Revise and resend' }));
+    // The confirm step says what reaches a real household before anything does.
+    expect(screen.getByText(/clears the decline/)).toBeInTheDocument();
+    expect(resendQuote).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Send quote again' }));
+    await waitFor(() => expect(resendQuote).toHaveBeenCalledWith('inv1'));
+    expect(await screen.findByText(/Quote sent again/)).toBeInTheDocument();
+  });
+  it('surfaces a refusal verbatim, because every one of them names what to do next', async () => {
+    const user = userEvent.setup();
+    resendQuote.mockRejectedValue(
+      new Error('This quote was only good through 2020-01-01, so the household could decline it again but never accept it. Give it a new due date, then send it back out.'),
+    );
+    render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Revise and resend' }));
+    await user.click(screen.getByRole('button', { name: 'Send quote again' }));
+    expect(await screen.findByText(/Give it a new due date/)).toBeInTheDocument();
   });
 });

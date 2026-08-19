@@ -1425,6 +1425,41 @@ internal fun decodeRunAutoApplyResult(raw: Map<String, Any?>?): RunAutoApplyResu
         accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
     )
 
+// ---------- resendQuote ----------
+
+/** Request payload for the `resendQuote` callable. */
+data class ResendQuoteArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Response from the `resendQuote` callable. */
+data class ResendQuoteResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    val status: String,
+)
+
+/**
+ * Fail-soft decode of `ResendQuoteResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeResendQuoteResult(raw: Map<String, Any?>?): ResendQuoteResult =
+    ResendQuoteResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
+    )
+
 // ---------- reviewAndSendDraftInvoice ----------
 
 /** Request payload for the `reviewAndSendDraftInvoice` callable. */

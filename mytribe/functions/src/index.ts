@@ -319,6 +319,10 @@ export { listRecoveryCandidates } from './admin/listRecoveryCandidates';
 export { postInvoiceEvent } from './admin/postInvoiceEvent';
 export { createInvoice } from './admin/createInvoice';
 export { createQuote } from './admin/createQuote';
+// Sends a DECLINED quote back out once the office has revised it (issue #448).
+// The decline is a step in a conversation, not a dead end; this is the step
+// that answers it.
+export { resendQuote } from './admin/resendQuote';
 export { sendInvoiceReminder } from './admin/sendInvoiceReminder';
 export { generateReceipt } from './admin/generateReceipt';
 export { markInvoicePaid } from './admin/markInvoicePaid';

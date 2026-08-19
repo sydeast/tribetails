@@ -190,6 +190,29 @@ class InvoiceRepositoryTest {
         assertEquals(true, forced["force"])
     }
 
+    // ── resendQuote payload (issue #448) ─────────────────────────────────────
+    @Test
+    fun `resendQuote carries the invoice id and nothing else`() {
+        // The server needs no more than that: it reads the household, the
+        // decision and the due date off the doc, so a client cannot assert any
+        // of the three. TestMode scoping is server-side, same as the other
+        // ADR-0002 callables.
+        val payload = com.tribetails.auntieos.data.contracts.ResendQuoteArgs(invoiceId = "inv1").toPayload()
+        assertEquals(setOf("invoiceId"), payload.keys)
+        assertEquals("inv1", payload["invoiceId"])
+    }
+    @Test
+    fun `resendQuote decodes the state the resend left behind`() {
+        val decoded = com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(
+            mapOf("ok" to true, "invoiceId" to "inv1", "status" to "quote"),
+        )
+        assertTrue(decoded.ok)
+        assertEquals("quote", decoded.status)
+        // Fail-soft, like every other generated decoder: a missing status is an
+        // empty string, never a thrown decode over a call that succeeded.
+        assertEquals("", com.tribetails.auntieos.data.contracts.decodeResendQuoteResult(null).status)
+    }
+
     // ── linkInvoiceSessions result decode ────────────────────────────────────
 
     @Test

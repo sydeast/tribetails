@@ -17,6 +17,7 @@ import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
 import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
+import com.tribetails.auntieos.data.contracts.ResendQuoteArgs
 import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
 import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
 import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
@@ -27,6 +28,7 @@ import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeListPaymentsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
+import com.tribetails.auntieos.data.contracts.decodeResendQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
@@ -296,6 +298,37 @@ class InvoiceRepository(
         functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).await()
         Unit
     }.onFailure { AuntieLog.e("reviewAndSendDraftInvoice failed for $invoiceId", it) }
+
+    /**
+     * Sends a DECLINED quote back out once the office has revised it (issue #448).
+     *
+     * IT CLEARS THE HOUSEHOLD'S ANSWER, which is what puts the quote back in
+     * front of them as a live question: both portals gate their Accept/Decline
+     * buttons on there being no decision on the doc. The `invoice.new`
+     * notification fires again on the same key that issued the quote, and it
+     * fires before the write, so there is no outcome where the quote reopens
+     * and nobody is told.
+     *
+     * NOT A NEW QUOTE: the invoice number, the lines and the linked sessions
+     * all stay put.
+     *
+     * Fail-loud. The server refuses an ACCEPTED quote (it is a bill now and its
+     * figures are agreed), one still WAITING for an answer (send a reminder
+     * instead), and one whose due date has PASSED (the household could only
+     * decline it again). Every refusal names what to do next, so the message
+     * surfaces verbatim rather than being replaced with a generic sentence.
+     *
+     * Returns the stamped state the resend left behind, which is 'quote'.
+     */
+    suspend fun resendQuote(invoiceId: String): Result<String> = runCatching {
+        authGate.ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "resendQuote requires an invoice id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("resendQuote")
+            .call(ResendQuoteArgs(invoiceId = invoiceId).toPayload())
+            .await().data as? Map<String, Any?>
+        decodeResendQuoteResult(raw).status
+    }.onFailure { AuntieLog.e("resendQuote failed for $invoiceId", it) }
 
     /**
      * W2-2 of ADR-0002: sets the invoice's session set via the
