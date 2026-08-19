@@ -9,7 +9,12 @@ import {
   isLiveCatalogKey,
   liveCatalogKeys,
 } from '../src/notifications/catalogKeys';
-import { NOTIFICATION_CATALOG } from '../src/notifications/catalog';
+import {
+  NOTIFICATION_CATALOG,
+  canonicalNotificationKey,
+  isRetiredNotificationKey,
+  listNotificationKeys,
+} from '../src/notifications/catalog';
 
 /**
  * The key set behind #382/#383. These are the invariants that make "a binding at
@@ -70,6 +75,25 @@ describe('explainUnbindableKey', () => {
     const msg = explainUnbindableKey('kincare.report.sent');
     expect(msg).toContain('retired');
     expect(msg).toContain("'kintale.published'");
+  });
+
+  it('tells a withdrawn key apart from a typo, and offers no replacement to bind', () => {
+    // `account.welcome.business` was not merged into anything, it was withdrawn.
+    // "Unknown catalog key, pick one from the list" would read as a typo the
+    // admin should correct; it is a decision the operator made.
+    const msg = explainUnbindableKey('account.welcome.business');
+    expect(msg).toContain('retired');
+    expect(msg).toContain('2026-08-18');
+    expect(msg).toContain('no replacement');
+    expect(msg).not.toContain('Unknown catalog key');
+  });
+
+  it('a withdrawn key is not live, and is not an alias for anything', () => {
+    expect(isLiveCatalogKey('account.welcome.business')).toBe(false);
+    expect(liveCatalogKeys().has('account.welcome.business')).toBe(false);
+    expect(canonicalNotificationKey('account.welcome.business')).toBe('account.welcome.business');
+    expect(listNotificationKeys()).not.toContain('account.welcome.business');
+    expect(isRetiredNotificationKey('account.welcome.business')).toBe(true);
   });
 });
 

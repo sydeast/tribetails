@@ -11,6 +11,8 @@
 >
 > **Counts re-checked 2026-08-04:** the catalog holds 43 entries, not the 37
 > stated below. Treat every number in this audit as of its 2026-05-12 date.
+> **2026-08-18:** 42, after `account.welcome.business` was retired at the
+> operator's request (Section 1.1).
 
 # Notification System Audit — Fresh (2026-05-12 evening, post deferred-orphan sprint)
 
@@ -37,7 +39,7 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 | `auth.account.locked` | specificUid | kinfolk | e,s,p | trigger | email | ✓ | ✓ | `loginSecurity.ts:139` + `:148` |
 | `auth.password.reset` | specificUid | kinfolk | e | trigger | email | ✓ | ⚪ | Firebase Auth native `sendPasswordResetEmail()`. Catalog entry kept dormant for future custom-flow option |
 | `account.welcome.kinfolk` | specificUid | kinfolk | e | trigger | email | ✓ | ✓ | `acceptInvite.ts` post-accept |
-| `account.welcome.business` | businessAdmins | business | e | trigger | email | ✓ | ✓ | `setKinfolkClaim.ts` post-link |
+| ~~`account.welcome.business`~~ | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **RETIRED 2026-08-18.** The operator does not want this notification. Catalog row, both emitters (`setKinfolkClaim.ts`, `acceptInvite.ts`) and seed template all removed; see `RETIRED_NOTIFICATION_KEYS` in `mytribe/functions/src/notifications/catalog.ts` |
 
 ### 1.2 KinCare visit lifecycle
 
@@ -124,7 +126,7 @@ Legend: ✓ wired catalog path, ⚪ Firebase-native (no catalog dispatch by desi
 |---|---|
 | `postInvoiceEvent` | `invoice.new` / `invoice.updated` |
 | `dispatchVisitNotification` | `kincare.auntie.on_my_way` / `arrived` / `departed` / `kincare.report.sent` |
-| `setKinfolkClaim` | `account.welcome.business` |
+| `setKinfolkClaim` | *(none: it dispatched `account.welcome.business`, retired 2026-08-18)* |
 | `acceptInvite` (member) | `account.welcome.kinfolk` |
 | `scheduleMarketingBlast` | `newsletter.announcement` / `survey.event` / `marketing.optin` |
 

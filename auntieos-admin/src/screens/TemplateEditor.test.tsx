@@ -8,7 +8,38 @@ const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
   saveTemplate: vi.fn(),
   deleteTemplate: vi.fn(),
 }));
-vi.mock('../api/templatesWrite', () => ({ saveTemplate, deleteTemplate }));
+// `isLiveNotificationKeyWarning` is NOT mocked: it is the real predicate from the
+// api module, so these tests exercise the same details-shape check the screen
+// runs in production rather than a stub that agrees with itself.
+vi.mock('../api/templatesWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/templatesWrite')>(
+    '../api/templatesWrite',
+  );
+  return { saveTemplate, deleteTemplate, isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning };
+});
+
+/**
+ * A rejection shaped like the one the Functions SDK throws for the live-key
+ * warning: a `failed-precondition` FirebaseError carrying `details`. The screen
+ * reads `details.reason`, never the sentence.
+ */
+function liveKeyRejection(message: string): Error & { details: unknown } {
+  return Object.assign(new Error(message), {
+    code: 'functions/failed-precondition',
+    details: {
+      reason: 'live-catalog-key',
+      templateId: 'kincare.booking.confirm',
+      label: 'KinCare booking confirmed',
+      acknowledgeable: true,
+    },
+  });
+}
+
+const LIVE_KEY_MESSAGE =
+  'failed-precondition: emailTemplates/kincare.booking.confirm is what the notification ' +
+  '"kincare.booking.confirm" (KinCare booking confirmed) sends, matched by name. Deleting it ' +
+  'leaves that notification throwing "email template missing" on its next send. If that is ' +
+  'what you want, confirm the delete and it will go through.';
 
 import { TemplateEditor } from './TemplateEditor';
 
@@ -338,8 +369,32 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
-    await waitFor(() => expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed'));
+    await waitFor(() =>
+      expect(deleteTemplate).toHaveBeenCalledWith('booking.confirmed', {
+        acknowledgeLiveKey: false,
+      }),
+    );
     expect(onDeleted).toHaveBeenCalledWith('booking.confirmed');
+  });
+
+  it('an ordinary template needs no acknowledgement: one press, one call, no second dialog state', async () => {
+    // The whole point of the round trip is that the operator is only asked about
+    // templates a live notification actually sends. Everything else deletes on
+    // the first press exactly as it always did.
+    deleteTemplate.mockResolvedValue({ templateId: 'one.off.blast' });
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'one.off.blast' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    await waitFor(() => expect(deleteTemplate).toHaveBeenCalledTimes(1));
+    expect(deleteTemplate).toHaveBeenCalledWith('one.off.blast', { acknowledgeLiveKey: false });
+    expect(screen.queryByRole('button', { name: /delete anyway/i })).toBeNull();
   });
 
   it('surfaces a rejected deleteTemplate call fail-loud, naming the callable, and keeps the confirm dialog open', async () => {
@@ -362,19 +417,72 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
-  it('shows the #381 name-matched refusal verbatim, including what to do next', async () => {
-    // The server refuses because routing is by name, not because anything is
-    // bound. Its sentence is the only thing telling the operator to retire the
-    // catalog row, so it has to arrive intact rather than be summarised away.
+  it('shows the #381 name-matched warning verbatim and offers to proceed', async () => {
+    // The server's sentence is the only thing telling the operator what breaks,
+    // so it has to arrive intact rather than be summarised away. What changed
+    // since #440 is the ending: it is a confirmation now, not a wall.
+    deleteTemplate.mockRejectedValue(liveKeyRejection(LIVE_KEY_MESSAGE));
+    const onDeleted = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'kincare.booking.confirm' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={onDeleted}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    expect(await screen.findByText(/matched by name/)).toBeInTheDocument();
+    expect(screen.getByText(/email template missing/)).toBeInTheDocument();
+    // A warning to read, not an error to report: no "deleteTemplate failed".
+    expect(screen.queryByText(/deleteTemplate failed/)).toBeNull();
+    expect(screen.getByRole('button', { name: /delete anyway/i })).toBeInTheDocument();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it('OPERATOR RULING: pressing Delete anyway acknowledges the warning and the delete goes through', async () => {
+    // "that was my doing I did not need that type of notification. I should be
+    // able to delete templates without being yelled at." The second press sends
+    // acknowledgeLiveKey, which is what the server needs to let it past.
+    deleteTemplate
+      .mockRejectedValueOnce(liveKeyRejection(LIVE_KEY_MESSAGE))
+      .mockResolvedValueOnce({ templateId: 'kincare.booking.confirm' });
+    const onDeleted = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'kincare.booking.confirm' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={onDeleted}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /delete anyway/i }));
+
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith('kincare.booking.confirm'));
+    expect(deleteTemplate).toHaveBeenNthCalledWith(1, 'kincare.booking.confirm', {
+      acknowledgeLiveKey: false,
+    });
+    expect(deleteTemplate).toHaveBeenNthCalledWith(2, 'kincare.booking.confirm', {
+      acknowledgeLiveKey: true,
+    });
+  });
+
+  it('a binding refusal is NOT acknowledgeable: it stays an error with no Delete anyway', async () => {
+    // The two failed-precondition cases must not blur together. A binding has a
+    // one-tap remedy (unassign), so offering "Delete anyway" here would offer a
+    // delete that can never succeed.
     deleteTemplate.mockRejectedValue(
       new Error(
-        'failed-precondition: emailTemplates/account.welcome.business is what the notification ' +
-          '"account.welcome.business" (Business welcome) sends, matched by name. Retire the catalog row first.',
+        'failed-precondition: Template "booking.confirmed" is still assigned to notification ' +
+          'catalog key(s): kin.booking.confirmed.',
       ),
     );
     render(
       <TemplateEditor
-        template={tpl({ templateId: 'account.welcome.business' })}
+        template={tpl({ templateId: 'booking.confirmed' })}
         onClose={vi.fn()}
         onSaved={vi.fn()}
         onDeleted={vi.fn()}
@@ -382,8 +490,35 @@ describe('TemplateEditor: delete (edit mode only)', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
-    expect(await screen.findByText(/matched by name/)).toBeInTheDocument();
-    expect(screen.getByText(/Retire the catalog row first/)).toBeInTheDocument();
+    expect(await screen.findByText(/deleteTemplate failed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete anyway/i })).toBeNull();
+  });
+
+  it('Back after a warning clears it, so reopening the confirm asks again unacknowledged', async () => {
+    // The acknowledgement is scoped to the warning the operator just read. If
+    // they back out, the next attempt starts from the server's judgement again
+    // rather than carrying a stale "yes" forward.
+    deleteTemplate.mockRejectedValue(liveKeyRejection(LIVE_KEY_MESSAGE));
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'kincare.booking.confirm' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    await screen.findByRole('button', { name: /delete anyway/i });
+    await userEvent.click(screen.getByRole('button', { name: /^back$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    expect(screen.getByRole('button', { name: /delete template/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete anyway/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /delete template/i }));
+    expect(deleteTemplate).toHaveBeenNthCalledWith(2, 'kincare.booking.confirm', {
+      acknowledgeLiveKey: false,
+    });
   });
 
   it('disables Back and Delete, and marks Delete busy, while a delete is in flight', async () => {

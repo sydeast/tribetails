@@ -24,10 +24,12 @@ import { expect, test, type Page, type Route } from '@playwright/test';
  * does, following `e2e/visual/callableStubs.ts`, and it stubs exactly two reads
  * and nothing else, so anything this screen grows later still fails loud.
  *
- * The template row below is VERBATIM from
- * `mytribe/seeds/notificationTemplates/account.welcome.business/email.txt`,
- * including the `[]`. A stub that "fixed" the copy on the way through would
- * make this spec prove nothing.
+ * The template row below is the `account.welcome.business` body AS IT SHIPPED,
+ * `[]` and all. That seed no longer exists on disk: the notification was retired
+ * on 2026-08-18 at the operator's request and its seed directory went with it.
+ * The body is kept here on purpose, as a frozen specimen of the defect this
+ * spec exists to catch, rather than being "fixed" on the way through the stub,
+ * which would make the spec prove nothing.
  */
 
 const WELCOME_BUSINESS_BODY = [

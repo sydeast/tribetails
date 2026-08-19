@@ -84,17 +84,24 @@ describe('orphan wire-up — dispatch contract', () => {
     expect(ids.length).toBe(1);
   });
 
-  it('HAPPY: account.welcome.business dispatches to businessAdmins', async () => {
+  it('RETIRED: account.welcome.business cannot be dispatched at all', async () => {
+    // This used to be a HAPPY case: the key dispatched to businessAdmins when an
+    // invited kinfolk finished setup. The operator retired the notification on
+    // 2026-08-18 ("I did not need that type of notification"), so the catalog row
+    // is gone and there is no send path left to reach. Both emitters
+    // (membership/acceptInvite.ts, admin/setKinfolkClaim.ts) were removed with
+    // it; this is the backstop that says so even if one crept back.
     const ctx = buildDbMock({
       docs: { 'businessSettings/admins': { uids: ['a1', 'a2'] } },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const ids = await enqueueNotification({
-      key: 'account.welcome.business',
-      recipientUid: 'newKinUid',
-      data: { kinfolkId: 'f1', kinfolkUid: 'newKinUid' },
-    });
-    expect(ids.length).toBe(2);
+    await expect(
+      enqueueNotification({
+        key: 'account.welcome.business',
+        recipientUid: 'newKinUid',
+        data: { kinfolkId: 'f1', kinfolkUid: 'newKinUid' },
+      }),
+    ).rejects.toThrow(/unknown key 'account\.welcome\.business'/);
   });
 
   it('HAPPY: kintale.published dispatches to kinfolk (catalog routed, no raw FCM)', async () => {

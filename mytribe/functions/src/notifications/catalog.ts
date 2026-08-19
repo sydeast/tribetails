@@ -662,21 +662,8 @@ const CATALOG_LIST: NotificationDef[] = [
     templates: { email: 'account.welcome.kinfolk' },
     description: 'Welcome email to kinfolk on account creation (invite redemption).',
   },
-  {
-    key: 'account.welcome.business',
-    label: 'Invited kinfolk finished account setup',
-    audience: 'business',
-    audiences: { business: true },
-    category: 'account',
-    allowedChannels: ['email'],
-    required: { email: true },
-    alwaysEnabled: false,
-    kinfolkFacing: false,
-    deliveryMode: 'trigger',
-    recipientResolver: 'businessAdmins',
-    templates: { email: 'account.welcome.business' },
-    description: 'Notify business when an invited kinfolk completes account setup.',
-  },
+  // `account.welcome.business` used to sit here, between the kinfolk welcome and
+  // the invite-expired row. It is retired: see RETIRED_NOTIFICATION_KEYS below.
   {
     // Run-4: "Kinfolk's MyTribe Invite Expired" (Business bucket). Emitted by the
     // expireStaleInvites cron when a pending invite passes its expiresAt.
@@ -945,6 +932,58 @@ export const NOTIFICATION_KEY_ALIASES: Readonly<Record<string, NotificationKeyAl
   Object.freeze({
     'kincare.report.sent': { canonical: 'kintale.published', legacyCategory: 'visit' },
   });
+
+/**
+ * A key that was withdrawn outright, with nothing taking its place.
+ *
+ * This is the OTHER way a catalog row ends, and it is not an alias. An alias
+ * says "that notification is still sent, under a different name"; a retirement
+ * says "that notification is not sent any more, by anyone". There is no
+ * canonical key to point at, so putting one of these in
+ * NOTIFICATION_KEY_ALIASES would be a lie with teeth: `canonicalNotificationKey`
+ * would redirect it, and every preference and business override stored under
+ * the retired key would silently start governing some unrelated notification.
+ *
+ * What an entry here buys is the one thing the alias list also buys, and the
+ * only one that still applies: an admin who reaches for the key they remember
+ * gets told it was retired on purpose, instead of "unknown key", which reads
+ * like a typo they should correct rather than a decision someone made.
+ */
+export interface RetiredNotificationKey {
+  /** ISO date the row came out of the catalog. */
+  retiredOn: string;
+  /** Why, in the words an admin should hear when they ask for the key. */
+  reason: string;
+}
+
+/**
+ * 2026-08-18: `account.welcome.business` told the office that an invited
+ * kinfolk had finished setting up their MyTribe account. It was emitted from
+ * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts`.
+ *
+ * The operator deleted its template during the 2026-08-17 admin walk and then
+ * ruled on it directly: "that was my doing I did not need that type of
+ * notification. I should be able to delete templates without being yelled at."
+ *
+ * So the row is gone rather than left to throw. Nothing enqueues the key, no
+ * seed recreates its template, and it is no longer a live catalog key, which
+ * means `deleteTemplate` has nothing left to warn about if a document under
+ * that name ever reappears.
+ */
+export const RETIRED_NOTIFICATION_KEYS: Readonly<Record<string, RetiredNotificationKey>> =
+  Object.freeze({
+    'account.welcome.business': {
+      retiredOn: '2026-08-18',
+      reason:
+        'The office no longer wants to be told when an invited kinfolk finishes ' +
+        'account setup. Retired at the operator’s request; nothing replaces it.',
+    },
+  });
+
+/** True when [key] was a catalog row that has since been withdrawn outright. */
+export function isRetiredNotificationKey(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(RETIRED_NOTIFICATION_KEYS, key);
+}
 
 /** The canonical key for [key]; returns [key] unchanged when it is not an alias. */
 export function canonicalNotificationKey(key: string): string {

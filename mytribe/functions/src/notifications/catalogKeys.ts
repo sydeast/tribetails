@@ -1,4 +1,9 @@
-import { NOTIFICATION_CATALOG, NOTIFICATION_KEY_ALIASES, canonicalNotificationKey } from './catalog';
+import {
+  NOTIFICATION_CATALOG,
+  NOTIFICATION_KEY_ALIASES,
+  RETIRED_NOTIFICATION_KEYS,
+  canonicalNotificationKey,
+} from './catalog';
 import type { Audience, Category } from './types';
 
 /**
@@ -142,6 +147,13 @@ export function explainUnbindableKey(key: string): string | null {
     return (
       `Catalog key '${key}' is retired and nothing dispatches it. ` +
       `Bind '${canonicalNotificationKey(key)}' instead.`
+    );
+  }
+  const retired = RETIRED_NOTIFICATION_KEYS[key];
+  if (retired) {
+    return (
+      `Catalog key '${key}' was retired on ${retired.retiredOn} and nothing sends it ` +
+      `any more. ${retired.reason} There is no replacement key to bind instead.`
     );
   }
   return (

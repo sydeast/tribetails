@@ -10,10 +10,11 @@ describe('NOTIFICATION_CATALOG integrity', () => {
     expect(listNotificationKeys().length).toBeGreaterThanOrEqual(30);
   });
 
-  it('Run-4: invite-accepted + invite-expired are Business/account via businessAdmins', () => {
-    const accepted = NOTIFICATION_CATALOG['account.welcome.business']!;
-    expect(accepted.audience).toBe('business');
-    expect(accepted.recipientResolver).toBe('businessAdmins');
+  it('Run-4: invite-expired is Business/account via businessAdmins', () => {
+    // The invite-ACCEPTED half of this pair, `account.welcome.business`, was
+    // retired on 2026-08-18 at the operator's request (see
+    // RETIRED_NOTIFICATION_KEYS in the catalog). Only invite-expired is left.
+    expect(NOTIFICATION_CATALOG['account.welcome.business']).toBeUndefined();
 
     const expired = NOTIFICATION_CATALOG['invite.expired']!;
     expect(expired).toBeTruthy();
@@ -190,7 +191,8 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'pets.updated': { kinfolk: true, staff: true },
     'profile.updated': { kinfolk: true, staff: true },
     'account.welcome.kinfolk': { kinfolk: true },
-    'account.welcome.business': { business: true },
+    // `account.welcome.business` was here. Retired 2026-08-18; this table is an
+    // exact match against the catalog, so its absence is the assertion.
     'invite.expired': { business: true },
     'auth.password.reset': { kinfolk: true },
     'auth.failedLogin.attempts': { kinfolk: true, business: true },

@@ -3,7 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { saveTemplate, deleteTemplate, assignTemplatesToCategory } from './templatesWrite';
+import {
+  saveTemplate,
+  deleteTemplate,
+  assignTemplatesToCategory,
+  isLiveNotificationKeyWarning,
+} from './templatesWrite';
 import type { SaveTemplatePayload } from '../lib/templateFormat';
 
 beforeEach(() => call.mockReset());
@@ -73,6 +78,56 @@ describe('templatesWrite api', () => {
       ),
     );
     await expect(deleteTemplate('booking.confirmed')).rejects.toThrow(/failed-precondition/);
+  });
+
+  it('deleteTemplate omits acknowledgeLiveKey entirely unless it is true', async () => {
+    // The absent-vs-false distinction does not matter to the server (both are
+    // "not acknowledged"), but sending the flag on every ordinary delete would
+    // make the acknowledgement look like boilerplate in a request log rather
+    // than the deliberate second press it is.
+    call.mockResolvedValue({ templateId: 'booking.confirmed' });
+    await deleteTemplate('booking.confirmed', { acknowledgeLiveKey: false });
+    expect(call).toHaveBeenCalledWith('deleteTemplate', { templateId: 'booking.confirmed' });
+  });
+
+  it('deleteTemplate forwards acknowledgeLiveKey: true when the caller has confirmed', async () => {
+    call.mockResolvedValue({ templateId: 'kincare.booking.confirm' });
+    await deleteTemplate('kincare.booking.confirm', { acknowledgeLiveKey: true });
+    expect(call).toHaveBeenCalledWith('deleteTemplate', {
+      templateId: 'kincare.booking.confirm',
+      acknowledgeLiveKey: true,
+    });
+  });
+
+  it('recognises the live-key warning by its details, not its prose', () => {
+    const err = Object.assign(new Error('anything at all'), {
+      details: { reason: 'live-catalog-key', templateId: 'x', label: null, acknowledgeable: true },
+    });
+    expect(isLiveNotificationKeyWarning(err)).toBe(true);
+  });
+
+  it('does NOT match the binding refusal, which is the other failed-precondition', () => {
+    // Same error code, different remedy: this one cannot be acknowledged past.
+    const err = new Error(
+      'failed-precondition: Template "booking.confirmed" is still assigned to notification ' +
+        'catalog key(s): kin.booking.confirmed.',
+    );
+    expect(isLiveNotificationKeyWarning(err)).toBe(false);
+  });
+
+  it('does not match a message that merely reads like the warning', () => {
+    // The guard against a copy edit turning prose-matching into a false positive.
+    const err = new Error('failed-precondition: is what the notification sends, matched by name.');
+    expect(isLiveNotificationKeyWarning(err)).toBe(false);
+  });
+
+  it('survives the shapes a network path actually throws', () => {
+    expect(isLiveNotificationKeyWarning(undefined)).toBe(false);
+    expect(isLiveNotificationKeyWarning(null)).toBe(false);
+    expect(isLiveNotificationKeyWarning('failed-precondition')).toBe(false);
+    expect(isLiveNotificationKeyWarning(Object.assign(new Error('x'), { details: 'nope' }))).toBe(
+      false,
+    );
   });
 
   it('assignTemplatesToCategory calls the callable by name with { category, templateIds }, unwrapping the result', async () => {
