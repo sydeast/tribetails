@@ -38,7 +38,9 @@ class AdminNotificationPrefsTest {
         overrides = mapOf(
             // ops: push disabled by the flat gate; email still on (catalog default).
             "ops.alert" to NotificationOverride(enabled = true, channels = mapOf("push" to false)),
-            // invoice: sms locked on by the operator, with an operator-written reason.
+            // invoice: sms LOCKED by the operator — locked, not switched on (#491).
+            // `channels` says nothing about sms, so the dispatcher resolves it from
+            // the catalog default, which for sms is off.
             "invoice.new" to NotificationOverride(
                 enabled = true,
                 locked = mapOf("sms" to true),
@@ -152,10 +154,66 @@ class AdminNotificationPrefsTest {
             "Set by the notification itself; your choice here can't turn it off.",
             plain.channelForcedReason(invoice, "email", STREAM_BUSINESS),
         )
+        // #491: sms is LOCKED with no value behind it, so the dispatcher sends
+        // nothing on it. The sentence has to match that direction — telling
+        // someone their choice can't turn OFF a channel that is already off is
+        // the wrong line in the one place it matters most.
         assertEquals(
-            "Set in your business settings; your choice here can't turn it off.",
+            "Set in your business settings; your choice here can't turn it on.",
             plain.channelForcedReason(invoice, "sms", STREAM_BUSINESS),
         )
+        val lockedOn = NotificationMatrix(
+            catalog = listOf(invoice),
+            overrides = mapOf(
+                "invoice.new" to NotificationOverride(
+                    locked = mapOf("sms" to true),
+                    channels = mapOf("sms" to true),
+                ),
+            ),
+        )
+        assertEquals(
+            "Set in your business settings; your choice here can't turn it off.",
+            lockedOn.channelForcedReason(invoice, "sms", STREAM_BUSINESS),
+        )
+    }
+    /**
+     * #491. Forced says the operator sitting here does not decide the channel.
+     * It does not say the channel is on, and the screen used to draw every
+     * forced toggle pinned on: a locked sms with no value behind it showed on
+     * while `resolveChannels` sent nothing, and the toggle being read-only left
+     * nothing anyone could do about the difference.
+     */
+    @Test
+    fun resolvedValueMirrorsTheDispatcherForAForcedChannel() {
+        // Locked, never switched on, not required -> the catalog default, off.
+        assertTrue(matrix.channelForcedForUser(invoice, "sms", STREAM_BUSINESS))
+        assertFalse(matrix.channelResolvedForUser(invoice, "sms", STREAM_BUSINESS))
+        // Catalog-required -> on.
+        assertTrue(matrix.channelResolvedForUser(invoice, "email", STREAM_BUSINESS))
+        // Locked AND switched on by the operator -> on.
+        val on = NotificationMatrix(
+            catalog = listOf(invoice),
+            overrides = mapOf(
+                "invoice.new" to NotificationOverride(
+                    locked = mapOf("sms" to true),
+                    channels = mapOf("sms" to true),
+                ),
+            ),
+        )
+        assertTrue(on.channelResolvedForUser(invoice, "sms", STREAM_BUSINESS))
+        // The stream overlay wins over the flat value.
+        val perStream = NotificationMatrix(
+            catalog = listOf(invoice),
+            overrides = mapOf(
+                "invoice.new" to NotificationOverride(
+                    lockedEnabled = true,
+                    channels = mapOf("sms" to true),
+                    streams = mapOf(STREAM_STAFF to StreamGate(channels = mapOf("sms" to false))),
+                ),
+            ),
+        )
+        assertTrue(perStream.channelResolvedForUser(invoice, "sms", STREAM_BUSINESS))
+        assertFalse(perStream.channelResolvedForUser(invoice, "sms", STREAM_STAFF))
     }
     /**
      * #451. The fallbacks used to read "Required for this notification." and

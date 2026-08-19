@@ -46,6 +46,7 @@ import com.tribetails.auntieos.data.model.adminReceives
 import com.tribetails.auntieos.data.model.applyBulkToggle
 import com.tribetails.auntieos.data.model.channelForcedForUser
 import com.tribetails.auntieos.data.model.channelForcedReason
+import com.tribetails.auntieos.data.model.channelResolvedForUser
 import com.tribetails.auntieos.data.model.channelOfferedToUser
 import com.tribetails.auntieos.data.model.notifChannelLabel
 import com.tribetails.auntieos.data.model.sectionedNotifEntries
@@ -357,8 +358,14 @@ private fun AdminReceiveRow(
                         leadingIcon = Lucide.Lock,
                     )
                     Spacer(Modifier.width(8.dp))
-                    // Read-only: forced on by the business, the operator can't turn it off.
-                    AuntieToggle(checked = true, enabled = false, onCheckedChange = {})
+                    // Read-only, and NOT always on (#491): forced means the business
+                    // decides this channel, so the toggle shows what the dispatcher
+                    // will actually do with it.
+                    AuntieToggle(
+                        checked = matrix.channelResolvedForUser(entry, ch, stream),
+                        enabled = false,
+                        onCheckedChange = {},
+                    )
                 } else {
                     AuntieToggle(
                         checked = prefs.effectiveReceive(entry, ch),

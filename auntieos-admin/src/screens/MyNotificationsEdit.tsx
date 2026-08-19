@@ -14,6 +14,7 @@ import { saveMyAdminNotificationPrefs } from '../api/myNotificationsWrite';
 import {
   CHANNEL_SET_BY_BUSINESS,
   adminChannelForced,
+  adminChannelResolved,
   adminChannelReason,
   adminGateEnabledChannels,
   adminVisibleNotifications,
@@ -350,14 +351,18 @@ function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBloc
       <ul className="mynotif__channels">
         {channels.map((channel) => {
           const forced = adminChannelForced(matrix, entry, stream, channel);
-          const on = forced ? true : userChannelChoice(prefs, entry.key, entry.category, channel);
+          // #491: a forced channel shows what the dispatcher resolves for it,
+          // which is not always on. Forced says this seat does not decide it.
+          const on = forced
+            ? adminChannelResolved(matrix, entry, stream, channel)
+            : userChannelChoice(prefs, entry.key, entry.category, channel);
           const label = channelLabel(channel);
           return (
             <li key={channel} className="mynotif__channel-row">
               <div className="mynotif__channel-main">
                 <span className="mynotif__channel-label">{label}</span>
                 {forced && (
-                  <span className="mynotif__channel-reason">{adminChannelReason(matrix, entry, channel)}</span>
+                  <span className="mynotif__channel-reason">{adminChannelReason(matrix, entry, stream, channel)}</span>
                 )}
               </div>
               <div className="mynotif__channel-trailing">

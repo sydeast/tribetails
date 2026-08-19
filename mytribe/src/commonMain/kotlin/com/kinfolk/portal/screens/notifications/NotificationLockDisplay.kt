@@ -9,11 +9,16 @@ import com.kinfolk.portal.notifications.NotificationKey
  * revamp). Extracted from NotificationSettingsScreen so the lock rendering
  * logic is unit-testable without Compose.
  *
- * Background: the business operator can LOCK a channel on (Run-4 #13), and the
- * revamped `getNotificationCatalog` now also returns always-on keys (booking
- * confirmations, receipts, password reset, ...) with EVERY surviving channel
- * locked plus an optional operator-authored `lockReason`. The dispatcher
- * enforces the same locks server-side; everything here is explanation only.
+ * Background: the business operator can LOCK a channel (Run-4 #13), and
+ * `getNotificationCatalog` returns those locks with an optional
+ * operator-authored `lockReason` and, since #491, the value the dispatcher will
+ * resolve for each locked channel. The dispatcher enforces the same locks
+ * server-side; everything here is explanation only.
+ *
+ * A lock is not a promise the channel is ON, and it is not the `alwaysEnabled`
+ * flag either. Locking on that flag was removed in #491: nothing in
+ * `resolveChannels` reads it, so those channels are the household's to change
+ * and rendering them read-only said otherwise.
  *
  * THE ONE SENTENCE, AND WHY IT IS NOT "ALWAYS ON" (#451). These lines used to
  * read "Always on. Required by Tribe Tails." That is a promise this screen has
@@ -123,11 +128,19 @@ internal fun categoryMarkerLegend(cat: CategoryDef): String? {
 }
 
 /**
- * Chip mechanics, unchanged from Run-4 #13 and now pure: required and
- * admin-locked channels are forced ON no matter what byKey/byCategory writes
- * say (so a category-row "select all" can never flip a locked chip), then the
- * per-key override applies, then the category default, then the email-on
- * default. The required/locked state surfaces as a [ChipMarker] icon.
+ * Chip mechanics: a channel the household does not decide shows what the
+ * DISPATCHER will do with it, then the per-key override applies, then the
+ * category default, then the email-on default. The required/locked state
+ * surfaces as a [ChipMarker] icon, and a locked chip is read-only, so a
+ * category-row "select all" can never flip it.
+ *
+ * LOCKED IS NOT ON (#491). This used to read `adminLocked -> true`. A channel
+ * pinned by the operator's `lockedEnabled` that they never switched on resolves
+ * OFF in `resolveChannels` for sms and push, so the chip claimed a channel was
+ * on and beyond the household's control while nothing was ever sent on it —
+ * and being read-only, the household could not even act on the discrepancy.
+ * The catalog now ships the resolved value with the lock; an absent value means
+ * on, which is what a required channel resolves to.
  */
 internal fun channelChipState(
     key: NotificationKey,
@@ -139,8 +152,7 @@ internal fun channelChipState(
     val required = ch in key.required
     val adminLocked = ch in key.lockedChannels
     val checked = when {
-        required -> true
-        adminLocked -> true
+        required || adminLocked -> key.lockedChannelValues[ch] ?: true
         perKey != null -> perKey
         perCat != null -> perCat
         else -> ch == NotificationChannel.EMAIL

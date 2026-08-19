@@ -184,6 +184,21 @@ data class NotificationMatrix(
         val o = overrides[key] ?: return true
         return o.streams[stream]?.channels?.get(channel) ?: o.channels[channel] ?: true
     }
+    /**
+     * The operator's EXPLICIT channel value for [stream], or null when they never
+     * gave one (#491).
+     *
+     * [streamEffectiveChannel] collapses "never set" into true, which is right for
+     * the gate question it answers — only an explicit false suppresses a channel,
+     * exactly as the dispatcher reads it. It is wrong for the value question: the
+     * dispatcher resolves an unset channel from the CATALOG default, so anything
+     * that needs to know what will actually be sent has to tell "never set" from
+     * "set on".
+     */
+    fun streamEffectiveChannelRaw(key: String, stream: String, channel: String): Boolean? {
+        val o = overrides[key] ?: return null
+        return o.streams[stream]?.channels?.get(channel) ?: o.channels[channel]
+    }
 
     /** Effective whole-notification lock for [stream]: streams[S] ?? flat ?? off. */
     fun streamEffectiveLockedEnabled(key: String, stream: String): Boolean {
@@ -580,6 +595,27 @@ fun NotificationMatrix.channelForcedForUser(
     entry.required[channel] == true ||
         streamEffectiveLockedEnabled(entry.key, stream) ||
         streamEffectiveChannelLocked(entry.key, stream, channel)
+/**
+ * What the DISPATCHER will do with a channel the recipient cannot change — the
+ * value this screen has to show for it (#491).
+ *
+ * This is `resolveChannels`'s locked branch in this seat's terms: the operator's
+ * explicit value when they gave one, else the catalog default, which is on for a
+ * required channel and for email and off for everything else. The screen used to
+ * draw every forced channel as ON, so a locked sms row the operator never
+ * switched on showed a toggle pinned on while nothing was ever sent — and being
+ * read-only, the operator could not act on the difference.
+ *
+ * An explicit operator OFF never reaches here: [channelOfferedToUser] drops that
+ * channel from the screen, the same way the dispatcher drops it. Pure; tested.
+ */
+fun NotificationMatrix.channelResolvedForUser(
+    entry: NotificationCatalogEntry,
+    channel: String,
+    stream: String,
+): Boolean =
+    streamEffectiveChannelRaw(entry.key, stream, channel)
+        ?: (entry.required[channel] == true || channel == "email")
 
 /**
  * Select-all (#390 Android parity): flips every EDITABLE channel of every row in
@@ -646,10 +682,14 @@ fun NotificationMatrix.channelForcedReason(
 ): String {
     if (!channelForcedForUser(entry, channel, stream)) return ""
     lockReasonFor(entry.key)?.let { return it }
+    // A forced channel can be forced OFF (#491), and telling someone their choice
+    // can't turn OFF a channel that is already off is the wrong sentence in the
+    // one place they most need the right one.
+    val direction = if (channelResolvedForUser(entry, channel, stream)) "off" else "on"
     return if (entry.required[channel] == true) {
-        "Set by the notification itself; your choice here can't turn it off."
+        "Set by the notification itself; your choice here can't turn it $direction."
     } else {
-        "Set in your business settings; your choice here can't turn it off."
+        "Set in your business settings; your choice here can't turn it $direction."
     }
 }
 

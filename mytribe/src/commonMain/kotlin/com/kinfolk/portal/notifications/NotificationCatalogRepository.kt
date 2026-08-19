@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -81,6 +83,18 @@ class NotificationCatalogRepository(private val fns: FunctionsClient) {
             ?.mapNotNull { decodeChannel(it.jsonPrimitive.contentOrNull) }
             ?.toSet()
             ?: emptySet()
+        // #491: the value the dispatcher resolves for each locked channel, so
+        // this client renders what will happen rather than assuming "locked
+        // means on". A server that does not send the map yet leaves it empty,
+        // and an empty map reads as on — the pre-#491 behaviour, not a crash.
+        val lockedValues = (obj["lockedChannelValues"] as? JsonObject)
+            ?.mapNotNull { (raw, v) ->
+                val ch = decodeChannel(raw) ?: return@mapNotNull null
+                val on = (v as? JsonPrimitive)?.booleanOrNull ?: return@mapNotNull null
+                ch to on
+            }
+            ?.toMap()
+            ?: emptyMap()
         val marketing = obj["marketingCategory"]?.jsonPrimitive?.contentOrNull?.let(::decodeMarketing)
         return NotificationKey(
             key = key,
@@ -89,6 +103,7 @@ class NotificationCatalogRepository(private val fns: FunctionsClient) {
             allowedChannels = allowed,
             required = required,
             lockedChannels = locked,
+            lockedChannelValues = lockedValues,
             // Notification revamp: operator-authored reason for a locked/required
             // key. Null-safe: absent field and JSON null both decode to null.
             lockReason = obj["lockReason"]?.jsonPrimitive?.contentOrNull,

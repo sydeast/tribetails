@@ -89,6 +89,41 @@ describe('MyNotificationsEdit screen', () => {
     expect(within(row).getByText('Set by your business')).toBeInTheDocument();
   });
   /**
+   * #491. Forced and OFF is a real state, and it was the one this screen could
+   * not draw. `lockedEnabled` pins every channel of a row; the operator never
+   * switched sms on, so `resolveChannels` sends nothing on it. The switch used
+   * to read on, and being disabled there was nothing the recipient could do
+   * about the difference.
+   */
+  it('a forced channel the dispatcher resolves off is disabled and OFF, and says so', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [entry({ required: {} })],
+        overrides: {
+          'kincare.booking.confirm': {
+            enabled: true,
+            channels: {},
+            lockedEnabled: true,
+            locked: {},
+            streams: {},
+          },
+        },
+      }),
+    );
+    render(<MyNotificationsEdit />);
+    const smsRow = (await screen.findByText('Text (SMS)')).closest('.mynotif__channel-row') as HTMLElement;
+    const sms = within(smsRow).getByRole('switch');
+    expect(sms).toBeDisabled();
+    expect(sms).toHaveAttribute('aria-checked', 'false');
+    expect(
+      within(smsRow).getByText("Set in your business settings; your choice here can't turn it on."),
+    ).toBeInTheDocument();
+    // Email is locked by the same row and DOES resolve on, so this is not the
+    // whole row reading off.
+    const emailRow = (await screen.findByText('Email')).closest('.mynotif__channel-row') as HTMLElement;
+    expect(within(emailRow).getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+  });
+  /**
    * #451. The pill used to read "Required", which claimed a guarantee this
    * screen cannot make: the business gate can still switch a catalog-required
    * channel off, and `resolveChannels` honors that (ruling #7, warn-but-allow-

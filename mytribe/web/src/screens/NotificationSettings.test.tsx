@@ -49,6 +49,7 @@ function key(overrides: Partial<NotificationKeyDto>): NotificationKeyDto {
     allowedChannels: ['email', 'push'],
     required: [],
     lockedChannels: [],
+    lockedChannelValues: {},
     marketingCategory: null,
     lockReason: null,
     ...overrides,
@@ -69,7 +70,24 @@ const INVOICE_POSTED = key({
   description: 'When a new invoice is ready.',
   allowedChannels: ['email', 'sms'],
   lockedChannels: ['sms'],
+  // The operator switched this one on, so the lock is a lock ON.
+  lockedChannelValues: { sms: true },
   lockReason: 'SMS billing alerts are required by Tribe Tails.',
+});
+/**
+ * #491: locked, and locked OFF. `lockedEnabled` pins every channel of the row,
+ * but the operator never switched sms on, so the dispatcher resolves it off.
+ * The screen has to say off — it used to draw this pinned on and read-only,
+ * which told a household a channel was on and beyond their control while
+ * nothing was ever sent on it.
+ */
+const RECEIPT_READY = key({
+  key: 'kincare.invoice.receipt',
+  title: 'Receipt Ready',
+  description: 'When a payment receipt is ready.',
+  allowedChannels: ['email', 'sms'],
+  lockedChannels: ['email', 'sms'],
+  lockedChannelValues: { email: true, sms: false },
 });
 
 const LIVE_CHECKIN = key({
@@ -84,7 +102,7 @@ const VISIT_CATEGORY: CategoryDto = {
   id: 'visit',
   title: 'Visit Updates',
   description: 'Check ins and visit notices.',
-  keys: [AUNTIE_ON_THE_WAY, INVOICE_POSTED, LIVE_CHECKIN],
+  keys: [AUNTIE_ON_THE_WAY, INVOICE_POSTED, LIVE_CHECKIN, RECEIPT_READY],
 };
 
 const CATALOG: GetNotificationCatalogResult = { categories: [VISIT_CATEGORY], schemaVersion: 1 };
@@ -139,6 +157,20 @@ describe('per-key expansion', () => {
     const smsBox = screen.getByRole('checkbox', { name: 'SMS for New Invoice Posted' }) as HTMLInputElement;
     expect(smsBox.disabled).toBe(true);
     expect(smsBox.checked).toBe(true);
+  });
+  // #491. Read-only and OFF is a real state, and it is the one every client got
+  // wrong: what the screen shows for a locked channel has to be what the
+  // dispatcher will do with it, not a flat "on".
+  it('shows a locked channel the dispatcher resolves off as read-only and OFF', async () => {
+    await renderLoaded();
+    const smsBox = screen.getByRole('checkbox', { name: 'SMS for Receipt Ready' }) as HTMLInputElement;
+    expect(smsBox.disabled).toBe(true);
+    expect(smsBox.checked).toBe(false);
+    // Its sibling on the same locked row IS on, so this is not the whole row
+    // reading off.
+    const emailBox = screen.getByRole('checkbox', { name: 'Email for Receipt Ready' }) as HTMLInputElement;
+    expect(emailBox.disabled).toBe(true);
+    expect(emailBox.checked).toBe(true);
   });
 
   it('shows an untouched key as following the category, not overridden', async () => {

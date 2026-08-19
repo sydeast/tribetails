@@ -38,6 +38,14 @@ data class NotificationKey(
     // Run-4 #13: channels the business admin LOCKED. Shown but read-only; the kinfolk
     // can't change them (the server also enforces this at dispatch).
     val lockedChannels: Set<NotificationChannel> = emptySet(),
+    // #491: what the dispatcher will actually do with each locked channel.
+    // Locked means the household does not decide it, NOT that it is on — a
+    // channel pinned by `lockedEnabled` that the operator never switched on
+    // resolves OFF for sms and push, and this screen used to draw every locked
+    // channel checked. Absent entry = on, which is what the static fallback
+    // below relies on: everything it locks is catalog-required, and required
+    // resolves on.
+    val lockedChannelValues: Map<NotificationChannel, Boolean> = emptyMap(),
     // Notification revamp: operator-authored reason why a locked/required
     // notification stays on. Shown on the key row in place of the stock
     // "Set by Tribe Tails Pet Care. Can't be changed here." line. Always null in
