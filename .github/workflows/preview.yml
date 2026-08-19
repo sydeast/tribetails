@@ -51,13 +51,22 @@ on:
       - 'package-lock.json'
       - '.github/workflows/preview.yml'
 
+# Left cancelling, unlike ci.yml's group. This workflow triggers on
+# `pull_request` only, so no run here is ever the one the release gate reads on
+# main, and a superseded preview is a preview of a commit nobody will look at.
 concurrency:
   group: preview-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# Every job carries a `timeout-minutes`; GitHub's default of 360 would let a
+# hung deploy park a runner for six hours. Ceilings are sized from measured
+# durations of recent successful runs. See the same block in ci.yml.
+
 jobs:
   changes:
     name: Detect changed paths
+    # Measured median 0.2 min, max 0.3, over 40 successful runs.
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -97,6 +106,12 @@ jobs:
     name: Deploy preview channel
     needs: changes
     if: needs.changes.outputs.admin == 'true'
+    # Sized against what this job costs AFTER the duplicate unit suite came out
+    # of it, not before. Measured steps over 27 successful runs: checkout 4s,
+    # setup-node 3s, npm ci 12s, typecheck 5s, build 7s, deploy 44s (max 69s),
+    # so about 1.3 min. 10 leaves room for the deploy step, which talks to
+    # Firebase and is the one part of this job with real variance.
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     # `pull_request` (not pull_request_target) on purpose: a fork PR then runs
     # WITHOUT access to the service account, so untrusted code can never reach
@@ -126,13 +141,26 @@ jobs:
       - run: npm ci
         working-directory: .
 
-      # Do not preview something that does not compile or whose tests fail.
+      # Do not preview something that does not compile.
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Tests
-        run: npm test
-
+      # NO UNIT SUITE HERE, deliberately, since 2026-08-18. This job used to run
+      # `npm test`, which is the same command, the same vitest config and the
+      # same specs that ci.yml's `React admin` job runs against the same commit
+      # of the same pull request. It measured 5.7 minutes of every preview, or
+      # roughly eighteen runner-hours a month, to learn a second time what the
+      # other workflow had already reported on the same check page.
+      #
+      # What keeps that safe is that ci.yml's `admin` path filter is now a
+      # SUPERSET of the `admin` filter above: every path that can trigger this
+      # job also triggers the job that runs the suite. The one exception is a
+      # change to this workflow file alone, which touches no application code
+      # and so has nothing for the suite to say about it.
+      #
+      # The Build step below is still a gate on compiling, not just a bundler:
+      # `npm run build` is `tsc --noEmit && vite build`, so a preview is still
+      # never published from code that does not typecheck.
       - name: Build
         run: npm run build
 
@@ -176,6 +204,9 @@ jobs:
     name: Deploy portal preview channel
     needs: changes
     if: needs.changes.outputs.portal == 'true'
+    # Same shape as the admin job above: about 1.2 min once the duplicate unit
+    # suite is gone (checkout 4s, npm ci 12s, build 4s, deploy 38s, max 52s).
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -198,13 +229,14 @@ jobs:
       - run: npm ci
         working-directory: .
 
-      # Do not preview something that does not compile or whose tests fail.
+      # Do not preview something that does not compile.
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Tests
-        run: npm test
-
+      # No unit suite here either, for the reason spelled out in the admin job
+      # above: ci.yml's `Kinfolk portal` job runs this exact `npm test` against
+      # this exact commit, and ci.yml's `portal` filter covers every path that
+      # can trigger this job. Measured at 46 seconds a run.
       - name: Build
         run: npm run build
 
