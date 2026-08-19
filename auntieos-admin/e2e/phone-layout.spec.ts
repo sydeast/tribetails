@@ -9,8 +9,8 @@ import { installCallableStubs } from './visual/callableStubs';
  * PR #209 fixed the SHELL (a drawer for the rail, a stacking `.den-heading`)
  * and could prove nothing about the rows, because the harness had no rows.
  * Every invoice, notification, activity and KinTale row lived in
- * `seed.visual.ts`, which only runs under `VISUAL_CAPTURE=1`, so the ordinary
- * database held two households and three visits and every list screen rendered
+ * `seed.visual.ts`, the seed for a capture run the ordinary suite never made, so
+ * the ordinary database held two households and three visits and every list screen rendered
  * its EMPTY state. An empty list cannot overflow. `seed.rows.ts` now belongs to
  * the base seed, and `SEEDED_BOOKINGS.today` was added so Schedule's agenda,
  * which lists the selected day, has anything at all to lay out.
@@ -296,15 +296,13 @@ async function assertOverlayFits(p: Page, what: string): Promise<void> {
  * overflow-x: auto` so Payment History's eight columns could scroll, and a table
  * set to `display: block` stops generating a table box: its rows fall into an
  * anonymous shrink-to-fit table. BOTH ledger tables quietly stopped spanning
- * their panel and shrank to the width of their own text. The only witness was
- * `visual/react/invoice-detail.png`, and `npm run visual:react:verify` could not
- * execute at all in that window (an undeclared `pngjs`, PR #311).
+ * their panel and shrank to the width of their own text. Nothing in the suite
+ * measured either table, so nothing reported it for five days.
  *
  * So this test asks the three questions that fix answers, and it stubs the
- * callable to do it, with a ledger the goldens deliberately do not carry: the
- * approved picture has NO `ledgerPayments`, because a row there trips an anomaly
- * banner, and an anomaly is the wrong thing to enshrine as a screen's ordinary
- * appearance. It is exactly the right thing to measure.
+ * callable to do it, with a ledger carrying settlement rows. A row there trips
+ * an anomaly banner, which is why the shared seed does not carry one, and which
+ * is exactly the state this measurement wants.
  *
  *   - IS THE TABLE STILL A TABLE. `display: table` and a box that fills its
  *     panel. This is the regression itself and the reason the file was opened.
@@ -327,9 +325,9 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
     // has to mean the same thing on every run.
     getInvoiceLedger: (payload): GetInvoiceLedgerResult => ({
       invoiceId: String(payload['invoiceId']),
-      // The settlement rows and the invoice's own figures, exactly as the visual
-      // fixture states them for `vis-invoice-001`: $240.00 billed, $60.00
-      // collected, $180.00 still owed.
+      // The settlement rows and the invoice's own figures, exactly as
+      // `seed.rows.ts` states them for `vis-invoice-001`: $240.00 billed,
+      // $60.00 collected, $180.00 still owed.
       payments: [
         {
           paymentId: 'phone-payment-001',
