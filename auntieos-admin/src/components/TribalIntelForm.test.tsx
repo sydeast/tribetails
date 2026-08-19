@@ -310,6 +310,68 @@ describe('TribalIntelForm', () => {
     );
   });
 
+  // ── the stale target (issue #460) ─────────────────────────────────────────
+
+  const LEGACY_NAME_ROW: TribalIntelEntry = {
+    _id: 'td-legacy-name',
+    title: 'Old note',
+    content: 'Imported before the write tool existed.',
+    // The bug: a person NAME where a newer row stores an id.
+    kinfolkRef: 'Marla Whitfield',
+  };
+
+  it('SHOWS a legacy name target instead of blanking the picker', () => {
+    renderForm({ editing: LEGACY_NAME_ROW });
+    // The select keeps the stored value selected, so the note is never silently
+    // detached from whoever it was about.
+    expect(screen.getByLabelText('Household')).toHaveValue('Marla Whitfield');
+    expect(screen.getByRole('option', { name: 'Unresolved: "Marla Whitfield"' })).toBeInTheDocument();
+  });
+
+  it('says why the stale value cannot be saved, naming the value', () => {
+    renderForm({ editing: LEGACY_NAME_ROW });
+    expect(screen.getByText(/"Marla Whitfield".*not a household on the roster/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Household')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('REFUSES to save the stale value back, so no round trip is wasted', async () => {
+    renderForm({ editing: LEGACY_NAME_ROW });
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+    expect(updateTrainingDocument).not.toHaveBeenCalled();
+  });
+
+  it('saves once the operator picks a real household, and the warning goes', async () => {
+    renderForm({ editing: LEGACY_NAME_ROW });
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    expect(screen.queryByRole('option', { name: 'Unresolved: "Marla Whitfield"' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Save intel' }));
+    expect(updateTrainingDocument).toHaveBeenCalledWith(
+      'td-legacy-name',
+      expect.objectContaining({ targetKinfolkId: 'kf1' }),
+    );
+  });
+
+  it('flags a stale PET id too, and keeps it readable', () => {
+    renderForm({
+      editing: {
+        _id: 'td-pet',
+        content: 'About the dog.',
+        targetType: 'KIN',
+        targetKinfolkId: 'kf1',
+        targetKinId: 'Biscuit',
+      },
+    });
+    expect(screen.getByRole('option', { name: 'Unresolved: "Biscuit"' })).toBeInTheDocument();
+    expect(screen.getByText(/"Biscuit".*not a pet on the roster/)).toBeInTheDocument();
+  });
+
+  it('does NOT accuse a target while the roster is still loading', () => {
+    // An empty directory means "not loaded yet", not "every id is stale". Without
+    // this guard every edit opened in that first moment would flag itself.
+    renderForm({ editing: LEGACY_NAME_ROW, kinfolk: [], kin: [] });
+    expect(screen.queryByText(/not a household on the roster/)).toBeNull();
+  });
+
   it('cancel hands control back without writing anything', async () => {
     const props = renderForm();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));

@@ -23,6 +23,14 @@ import { z } from 'zod';
  * `lib/audienceSegmentEdit.ts` states): a client rule the server does not
  * enforce blocks a save the server would have accepted, and the operator has no
  * way to find out why.
+ *
+ * That rule is why `tribalIntelStaleTargetMessage` below is a MIRROR and not an
+ * addition. As of issue #460 the server reads the referenced documents and
+ * refuses a save whose target does not resolve
+ * (`mytribe/functions/src/lib/resolveTribalIntelTarget.ts`), so a roster check
+ * on this side blocks exactly the saves the server would have rejected — and
+ * blocks them beside the picker, where the operator can see which value went
+ * stale, instead of after a round trip.
  */
 
 /** Server: `title: z.string().max(200)`. */
@@ -182,6 +190,90 @@ export function validateTribalIntelDraft(draft: TribalIntelDraft): TribalIntelDr
     if (typeof field === 'string' && !(field in errors)) {
       errors[field as keyof TribalIntelDraft] = issue.message;
     }
+  }
+  return errors;
+}
+
+// ── the stale target (issue #460) ────────────────────────────────────────
+
+/** What the reference points at, for the wording of the message. */
+export type TribalIntelTargetNoun = 'household' | 'kinfolk' | 'kin';
+
+function targetNounCopy(noun: TribalIntelTargetNoun): { thing: string; action: string } {
+  switch (noun) {
+    case 'household':
+      return { thing: 'household on the roster', action: 'Pick the right household' };
+    case 'kinfolk':
+      return { thing: 'kinfolk on the roster', action: 'Pick the right kinfolk' };
+    case 'kin':
+      return { thing: 'pet on the roster', action: 'Pick the right pet' };
+  }
+}
+
+/**
+ * The message for a stored reference the roster cannot place, or `null` when
+ * there is nothing wrong with it.
+ *
+ * WHY THIS EXISTS (issue #460): rows imported from the old system store a
+ * person's NAME where newer rows store an id. Opening one seeded the picker
+ * with that name, no `<option>` matched, and the picker fell back to its
+ * placeholder — so the editor showed a blank target for a note that did name
+ * somebody, and saving wrote the name straight back. The form now keeps the
+ * stored value on screen and says why it cannot be saved, because a note
+ * silently detached from whoever it was about is worse than one that says it is
+ * pointing at something unresolvable.
+ *
+ * `null` WHILE THE ROSTER IS EMPTY, deliberately. An empty list means the
+ * directory has not loaded yet, not that every id in the world is stale;
+ * without this guard every edit opened during that first moment would accuse
+ * its own target of being broken.
+ */
+export function tribalIntelStaleTargetMessage(
+  storedId: string,
+  rosterIds: readonly string[],
+  noun: TribalIntelTargetNoun,
+): string | null {
+  const id = storedId.trim();
+  if (id === '') return null;
+  if (rosterIds.length === 0) return null;
+  if (rosterIds.includes(id)) return null;
+  const { thing, action } = targetNounCopy(noun);
+  return `This entry points at "${id}", which is not a ${thing}. ${action}. It cannot be saved as it stands.`;
+}
+
+/**
+ * The label the picker shows for a stale value, so the operator can read what
+ * the note was filed against rather than an empty select.
+ */
+export function tribalIntelStaleOptionLabel(storedId: string): string {
+  return `Unresolved: "${storedId.trim()}"`;
+}
+
+/**
+ * The roster half of validation: which target fields name nothing the directory
+ * holds. Separate from `validateTribalIntelDraft` because it needs the loaded
+ * directory, which the schema has no business knowing about.
+ *
+ * `kinIds` must be EVERY pet, archived ones included. The server checks the pet
+ * exists, not that it is active, so narrowing this to the active list would
+ * block a save the server would have accepted — the one thing this module
+ * promises never to do.
+ */
+export function validateTribalIntelTargetRoster(
+  draft: TribalIntelDraft,
+  kinfolkIds: readonly string[],
+  kinIds: readonly string[],
+): TribalIntelDraftErrors {
+  const errors: TribalIntelDraftErrors = {};
+  const anchor = tribalIntelStaleTargetMessage(
+    draft.targetKinfolkId,
+    kinfolkIds,
+    draft.targetType === 'KINFOLK' ? 'kinfolk' : 'household',
+  );
+  if (anchor !== null) errors.targetKinfolkId = anchor;
+  if (draft.targetType === 'KIN') {
+    const pet = tribalIntelStaleTargetMessage(draft.targetKinId, kinIds, 'kin');
+    if (pet !== null) errors.targetKinId = pet;
   }
   return errors;
 }
