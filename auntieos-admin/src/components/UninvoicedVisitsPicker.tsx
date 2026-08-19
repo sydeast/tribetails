@@ -419,7 +419,11 @@ export function UninvoicedVisitsPicker({
                     />
                     <PrimaryButton
                       label={
-                        excludeBusy ? 'Marking…' : `Mark ${String(selectedSessions.length)} do not invoice`
+                        excludeBusy
+                          ? 'Marking…'
+                          : selectedSessions.length === 1
+                            ? 'Do not invoice this visit'
+                            : `Do not invoice these ${String(selectedSessions.length)} visits`
                       }
                       onClick={() =>
                         void applyExclusion(selectedSessions.map((s) => s.sessionId), true, excludeReason)
@@ -431,15 +435,24 @@ export function UninvoicedVisitsPicker({
                 </div>
               ) : (
                 <div className="visit-picker__actions visit-picker__actions--start">
+                  {/* THE SAME VERB THE CONFIRM STEP USES, and disabled with its
+                      reason beside it rather than relabelled into one. */}
                   <GhostButton
                     label={
                       selectedSessions.length === 0
-                        ? 'Select visits to mark do not invoice'
-                        : `Do not invoice ${String(selectedSessions.length)} selected`
+                        ? 'Do not invoice'
+                        : selectedSessions.length === 1
+                          ? 'Do not invoice this visit'
+                          : `Do not invoice these ${String(selectedSessions.length)} visits`
                     }
                     onClick={() => setExcluding(true)}
                     disabled={disabled || selectedSessions.length === 0}
                   />
+                  {selectedSessions.length === 0 && (
+                    <span className="visit-picker__hint">
+                      Tick the visits nobody will ever be billed for.
+                    </span>
+                  )}
                 </div>
               )}
             </>

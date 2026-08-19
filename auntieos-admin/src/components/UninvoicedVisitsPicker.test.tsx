@@ -203,9 +203,10 @@ describe('UninvoicedVisitsPicker do not invoice', () => {
     render(<Harness />);
     await screen.findByRole('checkbox');
 
-    await userEvent.click(screen.getByRole('button', { name: /do not invoice 1 selected/i }));
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
     await userEvent.type(screen.getByLabelText(/why this work is not being invoiced/i), 'Comped');
-    await userEvent.click(screen.getByRole('button', { name: /mark 1 do not invoice/i }));
+    // The same verb on the confirm step, never a new one.
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
 
     await waitFor(() => expect(setSessionDoNotInvoice).toHaveBeenCalledWith(['s1'], true, 'Comped'));
     expect(await screen.findByText(/1 visit is marked do not invoice/i)).toBeInTheDocument();
@@ -213,11 +214,12 @@ describe('UninvoicedVisitsPicker do not invoice', () => {
     expect(listUninvoicedSessions).toHaveBeenCalledTimes(2);
   });
 
-  it('cannot exclude nothing: the button is disabled and says what it wants', async () => {
+  it('cannot exclude nothing: the button is disabled and the reason sits beside it', async () => {
     render(<Harness />);
     await screen.findByRole('checkbox');
     await userEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('button', { name: /select visits to mark do not invoice/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^do not invoice$/i })).toBeDisabled();
+    expect(screen.getByText(/tick the visits nobody will ever be billed for/i)).toBeInTheDocument();
   });
 
   it('lists excluded work and puts it back on request', async () => {
@@ -254,8 +256,8 @@ describe('UninvoicedVisitsPicker do not invoice', () => {
     setSessionDoNotInvoice.mockRejectedValue(new Error('that visit is already billed on invoice INV-9'));
     render(<Harness />);
     await screen.findByRole('checkbox');
-    await userEvent.click(screen.getByRole('button', { name: /do not invoice 1 selected/i }));
-    await userEvent.click(screen.getByRole('button', { name: /mark 1 do not invoice/i }));
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
+    await userEvent.click(screen.getAllByRole('button', { name: /do not invoice this visit/i })[0]!);
     expect(
       await screen.findByText(/setSessionDoNotInvoice failed:.*already billed on invoice INV-9/i),
     ).toBeInTheDocument();

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -11,6 +12,28 @@ import { type PagedCollection } from '../lib/usePagedCollection';
  * `useCollection` stays mocked too: the household facet here, and the composer's
  * own household picker, both read the kinfolk directory through it.
  */
+/**
+ * The router's `Link`, rendered as the anchor it becomes. The composer's work
+ * rows and the detail's linked-visits panel route to `/sessions?sessionId=`
+ * (#408), and this screen is unit-rendered without a router. Same stub as
+ * `Invites.test.tsx`.
+ */
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    to,
+    search,
+    children,
+    ...rest
+  }: {
+    to: string;
+    search?: Record<string, string>;
+    children: ReactNode;
+  }) => (
+    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
@@ -24,15 +47,27 @@ vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 // Invoices.tsx) both reach these callables. Mocked here so nothing under this
 // suite ever attempts a real httpsCallable round-trip, matching the
 // InvoiceCreate.test.tsx / InvoiceDetail.test.tsx convention.
-const { createInvoice, createQuote, sendInvoiceReminder, markInvoicePaid, generateReceipt, recordPayment } =
-  vi.hoisted(() => ({
-    createInvoice: vi.fn(),
-    createQuote: vi.fn(),
-    sendInvoiceReminder: vi.fn(),
-    markInvoicePaid: vi.fn(),
-    generateReceipt: vi.fn(),
-    recordPayment: vi.fn(),
-  }));
+const {
+  createInvoice,
+  createQuote,
+  sendInvoiceReminder,
+  markInvoicePaid,
+  generateReceipt,
+  recordPayment,
+  listUninvoicedSessions,
+  setSessionDoNotInvoice,
+} = vi.hoisted(() => ({
+  createInvoice: vi.fn(),
+  createQuote: vi.fn(),
+  sendInvoiceReminder: vi.fn(),
+  markInvoicePaid: vi.fn(),
+  generateReceipt: vi.fn(),
+  recordPayment: vi.fn(),
+  // The composer reads the household's un-invoiced work the moment one is
+  // chosen (#408), so this screen's tests answer that read too.
+  listUninvoicedSessions: vi.fn(),
+  setSessionDoNotInvoice: vi.fn(),
+}));
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
   createInvoice,
@@ -41,6 +76,8 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   markInvoicePaid,
   generateReceipt,
   recordPayment,
+  listUninvoicedSessions,
+  setSessionDoNotInvoice,
 }));
 
 import { Invoices } from './Invoices';
@@ -133,6 +170,25 @@ beforeEach(() => {
   useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
   createInvoice.mockReset();
   createQuote.mockReset();
+  listUninvoicedSessions.mockReset().mockResolvedValue({
+    sessions: [
+      {
+        sessionId: 's1',
+        kinfolkId: 'kf1',
+        serviceType: 'Dog walk',
+        durationMinutes: 60,
+        startTime: '2026-07-10T14:00:00.000Z',
+        unitCents: 2500,
+      },
+    ],
+    unpriceable: [],
+    unplaceable: [],
+    excluded: [],
+    rateCardLoaded: true,
+    scanned: 4,
+    truncated: false,
+  });
+  setSessionDoNotInvoice.mockReset();
   sendInvoiceReminder.mockReset();
   markInvoicePaid.mockReset();
   generateReceipt.mockReset();
@@ -326,6 +382,35 @@ describe('Invoices screen', () => {
     expect(await screen.findByRole('heading', { name: 'New invoice' })).toBeInTheDocument();
   });
 
+  // #408: creating an invoice used to close the dialog and leave the operator
+  // on a list that, in the default 7-day window, often does not contain what
+  // they just made. The new invoice opens instead, which is where its assigned
+  // number, its Draft status, the work it bills and the Send action all are.
+  it('opens the invoice it just created, rather than dropping back on the list', async () => {
+    createInvoice.mockResolvedValue({ invoiceId: 'inv-new' });
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'someone-else' })]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'inv-new', invoiceNumber: 'INV-2026-0001', status: 'draft' }),
+    });
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [{ _id: 'kf1', firstName: 'Pat', lastName: 'Whitfield' }],
+    });
+    render(<Invoices />);
+    await userEvent.click(screen.getByRole('button', { name: /^new invoice$/i }));
+    await screen.findByRole('heading', { name: 'New invoice' });
+    // Scoped to the composer: the list's own household facet carries the same
+    // label, and picking THAT one would filter the list rather than answer the
+    // composer's only question.
+    const composer = screen.getByRole('dialog');
+    await userEvent.selectOptions(within(composer).getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
+    const detail = await screen.findByRole('dialog');
+    expect(within(detail).getByText(/INV-2026-0001/)).toBeInTheDocument();
+    expect(useDocById).toHaveBeenCalledWith('invoices', 'inv-new');
+  });
   // #408: there is no second button. A quote is an invoice in QUOTE status,
   // which is what the status filters above have always said, so the kind is
   // chosen inside the composer once a household is in front of the operator.

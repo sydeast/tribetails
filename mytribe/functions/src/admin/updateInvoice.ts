@@ -243,7 +243,17 @@ export async function updateInvoiceHandler(
   if (patch.invoiceNumber !== undefined) update['invoiceNumber'] = patch.invoiceNumber;
   if (patch.date !== undefined) update['date'] = patch.date;
   if (patch.dueDate !== undefined) update['dueDate'] = patch.dueDate;
-  if (patch.terms !== undefined) update['terms'] = patch.terms;
+  if (patch.terms !== undefined) {
+    update['terms'] = patch.terms;
+    // FREE TEXT REPLACES THE RULE, IT DOES NOT SIT BESIDE IT. An invoice whose
+    // terms were typed over by hand no longer follows a code, and leaving the
+    // old one on the doc would let it read "whatever was typed" while still
+    // claiming, in a field nothing renders today, to be net 14. That is exactly
+    // the kind of disagreement that rots unseen until the settings work reads
+    // the code back. Cleared to '' rather than deleted, so "never had a code"
+    // and "had one until an edit" stay tellable apart.
+    if (patch.termsCode === undefined) update['termsCode'] = '';
+  }
   // STRUCTURED TERMS DECIDE THE DUE DATE, here as at creation. Resolved from
   // the visits the invoice ALREADY links (`sessionIds` on the doc, which this
   // patch cannot change: linkInvoiceSessions owns that link) and from the date

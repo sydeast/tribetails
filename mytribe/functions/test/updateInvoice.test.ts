@@ -734,12 +734,23 @@ describe('updateInvoice structured terms', () => {
     await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { termsCode: 'custom' } }));
     expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-07-04');
   });
-  it('leaves free-text terms exactly as they were sent when no code comes with them', async () => {
-    const ctx = seed();
+  it('leaves free-text terms exactly as they were sent, and CLEARS the rule they replaced', async () => {
+    // An invoice typed over by hand no longer follows a code. Leaving the old
+    // one on the doc would let the two disagree in a field nothing renders yet.
+    const ctx = seed({ ...OPEN_INVOICE, termsCode: 'net_14' });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Pay when you can' } }));
     expect(invoiceWrite(ctx)?.data.terms).toBe('Pay when you can');
-    expect(invoiceWrite(ctx)?.data).not.toHaveProperty('termsCode');
+    expect(invoiceWrite(ctx)?.data.termsCode).toBe('');
+  });
+  it('keeps the code when the same patch sets both, so the words are the rule\'s own', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { terms: 'ignored', termsCode: 'net_14' } }),
+    );
+    expect(invoiceWrite(ctx)?.data.termsCode).toBe('net_14');
+    expect(invoiceWrite(ctx)?.data.terms).toBe('Due 14 days after the invoice date');
   });
 });
 /** #408: editing an invoice must not cut its lines loose from their visits. */
