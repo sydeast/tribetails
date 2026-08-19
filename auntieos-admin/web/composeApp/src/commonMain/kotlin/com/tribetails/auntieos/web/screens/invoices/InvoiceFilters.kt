@@ -23,10 +23,11 @@ fun invoiceIsDraft(invoice: Invoice): Boolean =
 /**
  * Stage 2 Step 4: a quote is an invoice in QUOTE status. createQuote stamps both
  * `status = "QUOTE"` (admin field) and `invoiceStatus = "quote"` (portal field);
- * Invoice only carries `status`, so we classify off that, case-insensitively. The
- * accepted/denied outcome is reflected by the same free-text status field once the
- * kinfolk responds (quote.accepted / quote.denied), so anything no longer "quote"
- * classifies as a normal invoice. Pure; unit-tested.
+ * Invoice only carries `status`, so we classify off that, case-insensitively.
+ * When accepted, the status changes to a normal invoice state (typically "open").
+ * When denied, the status deliberately remains "quote" with a decision record
+ * (acceptQuote / denyQuote); a declined quote is not the same as an unanswered one
+ * but cannot be distinguished by this function alone. Pure; unit-tested.
  */
 fun invoiceIsQuote(invoice: Invoice): Boolean =
     invoice.status.trim().lowercase() == "quote"
