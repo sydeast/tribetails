@@ -300,7 +300,7 @@ private fun OpenInvoiceRow(
         // quote decoded as `Open` here, so the household was invited to pay a
         // proposal they had not agreed to (issue #385). Tapping the row opens
         // the detail screen, where the quote can be accepted or declined.
-        if (invoice.status != InvoiceStatus.Quote) {
+        if (isPayable(invoice.status)) {
             KinButton(
                 label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
                 onClick = onPay,
@@ -418,30 +418,73 @@ private fun CreditEntry(
 // ---- Shared bits ----
 
 /**
- * Friendly invoice status label shared by the list chips (uppercased there)
- * and the detail screen's Status row — never the raw enum name.
- */
-/**
  * The meta line under an open-bucket row. A quote is not due on a date the way
  * a bill is: it is either waiting for the household's answer or already
- * answered, and that is what the line says.
+ * answered, and that is what the line says. A $0 invoice is not due on a date
+ * either, because there is nothing to be late with, so it says that instead
+ * of printing "Due" over an empty due date (issue #449).
  */
 internal fun openRowMetaLabel(invoice: Invoice): String = when {
+    invoice.status == InvoiceStatus.Zero -> "Nothing due"
     invoice.status != InvoiceStatus.Quote -> "Due ${invoice.dueDate ?: "—"}"
     invoice.quoteDecision == QuoteDecision.Denied -> "You declined this"
     invoice.quoteDecision == QuoteDecision.Accepted -> "You accepted this"
     else -> "Needs your answer"
 }
+
+/**
+ * Whether this state is one the household can hand money over for.
+ *
+ * STATED POSITIVELY, and total over the enum, so a state added to
+ * [InvoiceStatus] later is a compile error here rather than a Pay button
+ * appearing on it by default. That default is exactly how issue #385 happened
+ * and how issue #449 was set up to happen again: the old rule was "everything
+ * except a quote", so a $0 invoice and a spent credit both qualified.
+ *
+ * `open` alone matches the web portal (`payable = inv.status === 'open'`) and
+ * the server's own bucket table, which lists `draft` as "visible, not payable"
+ * A draft has not been sent to anybody yet, so inviting payment for it asks
+ * the household to settle a bill the office is still writing.
+ */
+internal fun isPayable(status: InvoiceStatus): Boolean = when (status) {
+    InvoiceStatus.Open -> true
+    InvoiceStatus.Draft,
+    InvoiceStatus.Quote,
+    InvoiceStatus.Zero,
+    InvoiceStatus.Paid,
+    InvoiceStatus.Credit,
+    InvoiceStatus.Redeemed,
+    InvoiceStatus.Cancelled,
+    -> false
+}
+
+/**
+ * Friendly invoice status label shared by the list chips and the detail
+ * screen's Status row. Never the raw enum name.
+ */
 internal fun invoiceStatusLabel(status: InvoiceStatus): String = when (status) {
     // A quote is a proposal, and it stays one after a decline: the server keeps
     // `quote` status and marks the decision (issue #385), so the answered case
     // is spelled out by the caller rather than by this bare status label.
     InvoiceStatus.Quote -> "Quote"
     InvoiceStatus.Open -> "Pending"
+    // Not "Paid": nothing was collected. Same wording as the web portal.
+    InvoiceStatus.Zero -> "Zero balance"
     InvoiceStatus.Paid -> "Paid"
     InvoiceStatus.Draft -> "Draft"
     InvoiceStatus.Credit -> "Credit"
+    InvoiceStatus.Redeemed -> "Redeemed"
     InvoiceStatus.Cancelled -> "Cancelled"
+}
+
+/**
+ * The chip word. Usually the label in caps, except that a chip is a couple of
+ * inches wide: "ZERO BALANCE" wraps where "ZERO" does not, and "ZERO" is what
+ * the web portal's chip says, so the two clients keep saying the same word.
+ */
+internal fun invoiceStatusChipLabel(status: InvoiceStatus): String = when (status) {
+    InvoiceStatus.Zero -> "ZERO"
+    else -> invoiceStatusLabel(status).uppercase()
 }
 
 @Composable
@@ -449,12 +492,15 @@ private fun StatusChip(status: InvoiceStatus) {
     val color = when (status) {
         InvoiceStatus.Quote -> KinfolkBrand.KinTeal
         InvoiceStatus.Open -> KinfolkBrand.KinfolkOrange
+        InvoiceStatus.Zero -> KinfolkBrand.NavySoft
         InvoiceStatus.Paid -> KinfolkBrand.KinTeal
         InvoiceStatus.Draft -> KinfolkBrand.NavySoft
         InvoiceStatus.Credit -> KinfolkBrand.PackPink
+        // The same purple the credits card already uses for a spent credit.
+        InvoiceStatus.Redeemed -> KinfolkBrand.FamilyPurple
         InvoiceStatus.Cancelled -> KinfolkBrand.SnuggleCoral
     }
-    KinTintPill(invoiceStatusLabel(status).uppercase(), color)
+    KinTintPill(invoiceStatusChipLabel(status), color)
 }
 
 @Composable

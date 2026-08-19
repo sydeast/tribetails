@@ -65,7 +65,12 @@ fun InvoiceDetailScreen(
     onBack: () -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
-    val isCredit = invoice.status == InvoiceStatus.Credit
+    // THE WHOLE CREDIT FAMILY, both states of it. The stamp writes `redeemed`
+    // once a credit is spent, and a redeemed credit still carries every credit
+    // field this screen renders, so checking `Credit` alone dropped a spent
+    // credit out of the credit branches entirely and left it rendering as a
+    // pending bill (issue #449). Same read as the web portal's `isCredit`.
+    val isCredit = invoice.status == InvoiceStatus.Credit || invoice.status == InvoiceStatus.Redeemed
     // A proposal, not a bill. `quoteDecision` is what separates one still
     // waiting for an answer from one already answered: a DECLINED quote keeps
     // its `quote` status server-side (functions/src/portal/quoteDecision.ts),
@@ -175,7 +180,13 @@ fun InvoiceDetailScreen(
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
         }
-        if (isCredit && invoice.creditRedeemedAtMs == null) {
+        // Redemption is offered for an UNSPENT credit only, and both halves of
+        // that are checked: the stamp says `Credit` rather than `Redeemed`, and
+        // no redemption time is recorded. The second half is the fail-soft the
+        // web portal keeps for the same reason: an unstamped doc can still say
+        // `credit` while carrying a redemption time, and a credit that has
+        // already been spent must never be offered for spending again.
+        if (invoice.status == InvoiceStatus.Credit && invoice.creditRedeemedAtMs == null) {
             CreditRedeemPanel(
                 hasOriginalPi = !invoice.originalPaymentIntentId.isNullOrBlank(),
                 redeeming = redeeming,
@@ -192,7 +203,14 @@ fun InvoiceDetailScreen(
                 style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
-        } else if (!isQuote && !invoice.isPaid && invoice.amountDue > 0.0) {
+        // Payment is offered for a SENT, UNSETTLED BILL and nothing else. Read
+        // off the state rather than off the money, because the money does not
+        // always disagree: `invoiceEditPolicy.ts` documents a redeemed credit
+        // that carries a positive `amountDue`, which under the old money-only
+        // condition put a Pay button on a credit the household had already
+        // spent (issue #449). `isPayable` is the same list the invoice list
+        // uses, so the row and the detail screen cannot offer different things.
+        } else if (isPayable(invoice.status) && !invoice.isPaid && invoice.amountDue > 0.0) {
             PayOptions(
                 methods = payMethods,
                 amountDue = invoice.amountDue,
