@@ -292,11 +292,21 @@ jobs:
       # not run, so the traces that would say what hung are never uploaded. When
       # this STEP times out it fails like any other failing step, the upload
       # below runs, and #456 gets evidence instead of another silent park.
-      # Measured median for this step is 3.3 min over 26 successful runs, so 8
-      # is about 2.4x, and it fires roughly two minutes inside the job ceiling,
-      # which leaves room for the upload.
+      # Measured median for this step is 3.3 min over 26 successful runs and the
+      # max is 3.5, so 7 is about 2x the worst honest run.
+      #
+      # 7 rather than 8, and the reason is the arithmetic against the job
+      # ceiling. The step cap only helps if it fires BEFORE the 12 minute job
+      # cap; if the job cap wins, the run is torn down and the artifacts are
+      # lost anyway. So the sum that matters is the SLOWEST setup this job has
+      # been measured at, not the median one: checkout and setup-node about 10s,
+      # setup-java about 15s, npm ci 15s, firebase-tools 48s at its worst and
+      # Chromium 179s at its worst, which is roughly 4.5 minutes before the step
+      # even starts. 4.5 + 8 is 12.5, past the ceiling. 4.5 + 7 is 11.5, inside
+      # it with half a minute for the upload. Raise the job cap first if this
+      # step ever needs to go back up.
       - name: E2E
-        timeout-minutes: 8
+        timeout-minutes: 7
         run: npm run e2e
       - name: Upload failure artifacts
         if: failure()
