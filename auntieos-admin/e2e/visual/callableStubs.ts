@@ -1,5 +1,7 @@
 import type { Page, Route } from '@playwright/test';
 import type { GetInvoiceLedgerResult } from '../../src/contracts/invoiceContracts.generated';
+import type { ListRescheduleRequestsResult } from '../../src/contracts/bookingContracts.generated';
+import { SEEDED_BOOKINGS } from '../fixtures/accounts';
 import { VISUAL_NOW } from './fixtures';
 
 /**
@@ -363,6 +365,78 @@ const ADMIN_INVITES = [
 ] as const;
 
 /**
+ * `listRescheduleRequests`, the operator queue #436 added above the Manage
+ * bookings list.
+ *
+ * WHY ONE ROW AND NOT ZERO, which is the whole decision here.
+ * `RescheduleRequestsSection` returns `null` when the queue is empty, so an
+ * empty fixture would photograph nothing at all: not the banner, not the row,
+ * not the two buttons. The capture would go green and pin zero pixels of the
+ * thing that shipped, and the next regression in any of it would be invisible
+ * to this golden. One row pins the banner and its count pill, the row's three
+ * lines, and the Accept/Decline pair. More rows would only repeat the same
+ * markup while pushing the Bookings list itself further down the page.
+ *
+ * EVERY FIELD THAT DESCRIBES THE VISIT IS THE SEEDED `e2e-sess-scheduled`,
+ * the upcoming Drop-in visit that the list below this section also shows:
+ *
+ *   kinfolkId          `e2e-kf-1`, the household `seed.ts` writes that session
+ *                      under (Wanda Thorne).
+ *   kinNames           `Biscuit`, the one `kin` doc seeded for that household
+ *                      (`vis-kin-1`, seed.rows.ts).
+ *   serviceType        read from `SEEDED_BOOKINGS.scheduled` rather than
+ *                      re-typed, so a rename in the seed reaches this fixture.
+ *   currentStartTimeMs the same instant `seed.ts` writes as that session's
+ *                      `startTime`, `isoDaysFromNow(3)` from `VISUAL_NOW`.
+ *   status             `confirmed`, which is the kinCares vocabulary for the
+ *                      session's `SCHEDULED`. The two collections spell the
+ *                      same state differently and the DTO carries the
+ *                      subcollection's word.
+ *
+ * `title` is NULL deliberately, which is not a shortcut: the seeded session
+ * carries no title, and the section falls back to `serviceType`, so the row's
+ * headline reads "Drop-in visit", the same string the booking below it shows.
+ * A made-up title would put two different names for one visit on one screen.
+ *
+ * `currentEndTimeMs` is null because the seeded session records no end, and
+ * `proposedEndTimeMs` is null in consequence: the server derives a proposal's
+ * end from the visit's own duration, so a visit with no end produces a
+ * proposal with none either. Inventing thirty minutes here would be a claim
+ * the database does not make, in a field the screen does not even render.
+ *
+ * `batchId` and `visitId` ARE the request's own, and there is nothing to check
+ * them against: the seed writes no `families/{id}/bookings/{batchId}/kinCares`
+ * envelope, because no admin screen reads one. What ties such a visit to the
+ * flat session is the kinCares doc's `sessionId` field, which this DTO does not
+ * carry, so nothing on screen can contradict them.
+ *
+ * The proposal itself is the one thing that exists nowhere else, because no
+ * seeded request exists. It is two days later and at a different hour than the
+ * current slot on purpose: the row prints both instants either side of an
+ * arrow, and a proposal that differed only in the day would leave half that
+ * string unpinned.
+ */
+const RESCHEDULE_REQUESTS: ListRescheduleRequestsResult = {
+  requests: [
+    {
+      kinfolkId: 'e2e-kf-1',
+      batchId: 'vis-batch-001',
+      visitId: 'vis-visit-001',
+      title: null,
+      serviceType: SEEDED_BOOKINGS.scheduled.serviceType,
+      kinNames: ['Biscuit'],
+      status: 'confirmed',
+      currentStartTimeMs: msAt(3, '12:00:00'),
+      currentEndTimeMs: null,
+      proposedStartTimeMs: msAt(5, '09:30:00'),
+      proposedEndTimeMs: null,
+      reason: 'Biscuit has a vet appointment that morning.',
+      requestedAtMs: msAt(-1, '16:20:00'),
+    },
+  ],
+};
+
+/**
  * Every callable a captured screen invokes, and the answer it gets.
  *
  * A handler returns the callable's `data`, or `undefined` to decline, which
@@ -710,6 +784,14 @@ const HANDLERS: Readonly<Record<string, CallableHandler>> = {
       },
     ],
   }),
+
+  // ── manage bookings ─────────────────────────────────────
+  /**
+   * Takes no argument today. The callable accepts an optional `limit`, and
+   * `RescheduleRequestsSection` sends none, so answering the same single
+   * request whatever arrives is answering exactly what the screen asks.
+   */
+  listRescheduleRequests: () => RESCHEDULE_REQUESTS,
 
   // ── feature flags ───────────────────────────────────────────────────────
   /**
