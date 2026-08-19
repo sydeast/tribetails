@@ -15,9 +15,7 @@
     "e2e": "npm run e2e:tsc && npm run e2e:coverage && firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts\"",
     "e2e:tsc": "tsc -p e2e",
     "e2e:coverage": "node e2e/spec-coverage.mjs",
-    "e2e:install": "playwright install --with-deps chromium",
-    "visual:react": "npm run e2e:tsc && VISUAL_CAPTURE=1 firebase emulators:exec --project auntieos-ttpc --only auth,firestore --config e2e.firebase.json \"npx playwright test --config e2e/playwright.config.ts --project visual\"",
-    "visual:react:verify": "node web/visual/baseline.mjs verify react"
+    "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",
@@ -43,8 +41,6 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^30.0.0",
-    "pixelmatch": "^7.2.0",
-    "pngjs": "^7.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
