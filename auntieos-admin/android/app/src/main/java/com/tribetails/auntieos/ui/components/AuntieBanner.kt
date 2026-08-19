@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -73,31 +75,64 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * record, like "Archived", rather than from local state). The banner then
  * hides itself; no caller-held `remember { mutableStateOf(...) }` required.
  * Passing [onDismiss] still works exactly as before and implies dismissible on
- * its own, so no existing call site's CLICK behavior changes.
+ * its own FOR THE CLOSE BUTTON, so no existing call site's click behavior
+ * changes.
  *
- * BACK PRESS IS NEW BEHAVIOR FOR EVERY EXISTING onDismiss CALL SITE, not just
- * the two newly-[dismissible] ones. Before this, none of them intercepted back
- * at all; now, for as long as one of these banners is visible, back dismisses
- * it instead of doing whatever it would otherwise do (typically leaving the
- * screen). That is the intended touch/hardware-key equivalent of web's Escape,
- * per #444, but unlike Escape it is not scoped to "focus is inside the
- * banner" — Compose has no keyboard-focus concept for a screen shown on a
- * phone, so while any dismissible banner is on screen, back dismisses it, full
- * stop. Worth knowing if a call site's designer wanted back to keep leaving
- * the screen even with the banner up; none of the current ones is that case.
+ * BACK PRESS IS SCOPED TO [dismissible] ONLY, deliberately narrower than the
+ * close button. On Android, back is the primary navigation action; a banner
+ * silently eating it just because it happened to receive an [onDismiss] for
+ * its own close button would read as "the back button is broken" to anyone
+ * trying to leave the screen with one of the ~15 pre-existing `onDismiss`
+ * banners still up. Those keep exactly the back behavior they have today
+ * (none): back press only does anything on a banner that opted in with
+ * `dismissible = true`, the same explicit opt-in every other part of this
+ * feature requires. Only the two wired call sites (`InvoiceDetailScreen.kt`'s
+ * "Archived" and "Dispute won" banners) currently do.
+ *
+ * For a [dismissible] banner, back press is the touch/hardware-key
+ * equivalent of web's Escape: it dismisses the banner instead of whatever
+ * back would otherwise do. Unlike web's Escape, which only fires while DOM
+ * focus is inside the banner, this is not scoped further, Compose exposes no
+ * stable "is focus inside this subtree" primitive to gate on here, so for as
+ * long as a `dismissible` banner is showing, back dismisses it rather than
+ * navigating past it.
  *
  * Every dismissible banner, new or existing, also gets an accessible label on
  * its close glyph ("Dismiss") via [Modifier.semantics], the same idiom
  * [AuntieIconButton] uses, mirroring `aria-label="Dismiss"` on the web
- * `<button>` (`Banner.tsx`'s `dismissible` prop, PR #419).
+ * `<button>` (`Banner.tsx`'s `dismissible` prop, PR #419), and hands
+ * TalkBack's reading position somewhere sensible on dismiss (see below)
+ * rather than dropping it, mirroring web's focus-restore.
  *
- * [BackHandler] callbacks resolve most-recently-added-first, so a banner
- * nested inside a [Dialog] that also uses `BackHandler` for its own back
- * behavior (see `NewBookingWizard.kt`) intercepts back before that dialog
- * does — verified for `Dialog`, not exercised against a focusable `Popup`
- * (e.g. `AuntieDialog`'s base), whose own key handling may consume back before
- * the activity dispatcher runs. No dismissible banner is wired inside a
- * `Popup` today.
+ * ### Where focus goes after dismiss
+ *
+ * Web restores DOM focus to whatever was focused immediately before the
+ * banner opened, snapshotted via `document.activeElement`. Compose has no
+ * equivalent snapshot: a reusable leaf composable like this one cannot read
+ * "what currently holds focus" or walk up to find it, the way a DOM ref can.
+ * What Compose DOES expose, and the mechanism Compose's own accessibility
+ * delegate is documented to sync TalkBack's reading position to, is moving
+ * INPUT focus via [LocalFocusManager]; there is no lower-level "send
+ * accessibility focus to this node" action in the public semantics API to
+ * fall back to instead. So on dismiss this calls
+ * `focusManager.moveFocus(FocusDirection.Next)`, landing focus on whatever
+ * comes after this banner (its next `LazyColumn` item, on both wired call
+ * sites) rather than the specific place web restores to. This is a real
+ * effect for a hardware-keyboard or D-pad user and for a TalkBack user
+ * navigating linearly, who typically do carry Compose input focus already;
+ * it is NOT verified end-to-end against a live TalkBack session (this repo
+ * has no such harness, and Robolectric does not run a real accessibility
+ * service), and it does nothing when nothing in the banner currently holds
+ * input focus (for example, a sighted mouse/touch dismiss with no keyboard
+ * involved) — there is simply nowhere further Compose's public API reaches.
+ *
+ * [BackHandler] callbacks resolve most-recently-added-first, so a
+ * [dismissible] banner nested inside a [Dialog] that also uses [BackHandler]
+ * for its own back behavior (see `NewBookingWizard.kt`) intercepts back
+ * before that dialog does — verified for [Dialog], not exercised against a
+ * focusable `Popup` (e.g. `AuntieDialog`'s base), whose own key handling may
+ * consume back before the activity dispatcher runs. No dismissible banner is
+ * wired inside a `Popup` today.
  */
 @Composable
 fun AuntieBanner(
@@ -121,21 +156,26 @@ fun AuntieBanner(
     // any internal state. Once hidden, this banner renders nothing further, so
     // a caller relying on onDismiss to clear its own state (the pre-existing
     // ~15 call sites) sees no CLICK behavior change: the banner disappears
-    // either way. Back press is a new interception for those same sites — see
-    // the class doc's "Dismissing" section.
+    // either way.
     val canDismiss = dismissible || onDismiss != null
     var hidden by remember { mutableStateOf(false) }
     if (hidden) return
 
+    val focusManager = LocalFocusManager.current
     val handleDismiss: () -> Unit = {
         hidden = true
         onDismiss?.invoke()
+        // Best-effort TalkBack/keyboard focus handoff; see the class doc's
+        // "Where focus goes after dismiss" section for what this can and
+        // cannot reach.
+        focusManager.moveFocus(FocusDirection.Next)
     }
 
-    // The Escape-key equivalent: back press dismisses this banner while it is
-    // showing, rather than whatever it would otherwise do (unscoped — Compose
-    // has no keyboard-focus concept to gate this on, unlike web's Escape).
-    BackHandler(enabled = canDismiss, onBack = handleDismiss)
+    // The Escape-key equivalent, but scoped to dismissible ONLY (not
+    // onDismiss alone): back is Android's primary navigation action, and a
+    // pre-existing onDismiss banner that never asked for back-press behavior
+    // must not start eating it. See the class doc's "Dismissing" section.
+    BackHandler(enabled = dismissible, onBack = handleDismiss)
 
     val corner = 14.dp
     val shape = RoundedCornerShape(corner)
