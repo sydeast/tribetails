@@ -245,7 +245,22 @@ export interface PayMethod {
 /** A handle that is a full email address, e.g. `auntie@example.com`. */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** How long an operator's instructions may run before a writer refuses them. */
+/**
+ * How long an operator's payment instructions may run.
+ *
+ * ENFORCED HERE, in `payMethodSettingsFrom`, not only in the admin textarea
+ * that also caps at this figure. `business_settings` is a DIRECT CLIENT
+ * WRITE (`firestore.rules`: `allow write: if isAuntie()`), so nothing about
+ * the admin UI having a `maxLength` proves what is on the document. This
+ * text ships straight to a household on an invoice.
+ *
+ * Over-length instructions are REFUSED, not truncated. Truncating payment
+ * details is how "routing 021000021, account 9876543210" becomes "routing
+ * 021000021, account 98", which is a household sending money to a number
+ * nobody owns. Refusing leaves the field blank, which omits the method
+ * entirely: the same omit-rather-than-ship-something-broken rule this file
+ * applies to a half-parsed handle.
+ */
 export const MAX_INSTRUCTIONS_LENGTH = 500;
 
 /**
@@ -399,7 +414,12 @@ export function payMethodSettingsFrom(raw: unknown): OperatorSettings {
       const option: PayMethodOption = {};
       if (typeof e['enabled'] === 'boolean') option.enabled = e['enabled'];
       const instructions = stringOrUndefined(e['instructions']);
-      if (instructions !== undefined) option.instructions = instructions;
+      // Refused rather than truncated once past the cap — see
+      // `MAX_INSTRUCTIONS_LENGTH` for why truncating payment details is the
+      // worse of the two failures.
+      if (instructions !== undefined && instructions.length <= MAX_INSTRUCTIONS_LENGTH) {
+        option.instructions = instructions;
+      }
       options[spec.id] = option;
     }
     out.paymentOptions = options;

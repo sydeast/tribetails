@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   formatFeeSchedule,
   isPaymentMethodEnabled,
+  MAX_PAYMENT_INSTRUCTIONS_LENGTH,
   PAYMENT_METHOD_CATALOGUE,
   PAYMENT_METHOD_FEE_SCHEDULE,
   type BusinessSettings,
@@ -532,7 +533,7 @@ function PaymentOptionRow({
           <textarea
             className="settingsEdit__input settingsEdit__textarea"
             rows={2}
-            maxLength={500}
+            maxLength={MAX_PAYMENT_INSTRUCTIONS_LENGTH}
             value={instructions}
             placeholder={method.instructionsPlaceholder ?? ''}
             disabled={busy}

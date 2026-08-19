@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   METHOD_SPECS,
   isMethodEnabled,
+  MAX_INSTRUCTIONS_LENGTH,
   payMethodSettingsFrom,
   payMethodSettingsSnapshotOf,
   resolveHomePayMethods,
@@ -284,6 +285,28 @@ describe('payMethodSettingsFrom', () => {
 
   it('ignores a wrong-typed handle instead of building a link out of it', () => {
     expect(payMethodSettingsFrom({ venmoHandle: 42 }).venmoHandle).toBeUndefined();
+  });
+
+  it('refuses over-length instructions rather than truncating payment details', () => {
+    // `business_settings` is a direct client write, so the admin textarea
+    // having a maxLength proves nothing about what is on the document. And
+    // truncating is the worse failure: half an account number looks valid
+    // and sends money nowhere. Refusing leaves the field blank, which omits
+    // the method.
+    const tooLong = 'x'.repeat(MAX_INSTRUCTIONS_LENGTH + 1);
+    const out = payMethodSettingsFrom({
+      paymentOptions: { cash: { enabled: true, instructions: tooLong } },
+    });
+    expect(out.paymentOptions?.cash).toEqual({ enabled: true });
+    expect(resolvePayMethods(out, invoice()).map((m) => m.id)).toEqual(['stripe']);
+  });
+
+  it('accepts instructions right at the cap', () => {
+    const atCap = 'x'.repeat(MAX_INSTRUCTIONS_LENGTH);
+    const out = payMethodSettingsFrom({
+      paymentOptions: { cash: { enabled: true, instructions: atCap } },
+    });
+    expect(out.paymentOptions?.cash?.instructions).toBe(atCap);
   });
 
   it('reads a doc with no payment fields at all as an empty configuration', () => {

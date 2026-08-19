@@ -311,6 +311,19 @@ export interface PaymentOptionSetting {
   instructions?: string;
 }
 
+/**
+ * How long a method's instructions may run.
+ *
+ * Mirrors `MAX_INSTRUCTIONS_LENGTH` in
+ * `mytribe/functions/src/lib/paymentMethods.ts`, which ENFORCES it: the
+ * server refuses over-length instructions outright rather than truncating
+ * payment details into something that looks valid and is not. This constant
+ * exists so the textarea stops the operator at the same figure, where she
+ * can see it happening, instead of letting her write past it and discover
+ * later that the method never appeared on an invoice.
+ */
+export const MAX_PAYMENT_INSTRUCTIONS_LENGTH = 500;
+
 export interface BusinessSettings {
   _id: string;
   businessName: string;
