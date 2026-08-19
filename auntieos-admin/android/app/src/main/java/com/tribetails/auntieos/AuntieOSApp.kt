@@ -27,14 +27,58 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class AuntieOSApp : Application() {
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    var repository: AuntieRepository = buildRepo(RetrofitClient.DEFAULT_BASE_URL)
-        private set
+    /** An n8n base URL and the repository built from it, kept together. */
+    private class N8nWiring(val baseUrl: String, val repository: AuntieRepository)
+
+    /**
+     * Built from the STORED base URL, on first read, and not before.
+     *
+     * This used to be a repository built at construction from the default URL,
+     * which `onCreate` then replaced from a coroutine once it had read the
+     * stored one. That left a window: any caller that read `repository` before
+     * the coroutine finished got the default-URL instance and kept it, and the
+     * only thing making that harmless was a comment (below, on
+     * `VoiceTokenManager.initialize`) arguing that the swapped-in difference did
+     * not matter to that caller. That argument was correct and one code change
+     * away from being wrong.
+     *
+     * Resolving here instead deletes the window rather than documenting it: the
+     * first read is the only read that can resolve anything, so no caller can
+     * hold an instance built from a URL the app has already superseded. It also
+     * removes the startup coroutine outright, which matters beyond ordering —
+     * that coroutine ran on [appScope], which nothing cancels, and wrote into a
+     * field of an Application that Robolectric rebuilds for every test method.
+     * That is the exact shape of the leak fixed in #425.
+     *
+     * The cost is one small DataStore read on whichever thread reads
+     * `repository` first, which in production is `onCreate` itself. A blocking
+     * preferences read at cold start is a real cost and is the price of there
+     * being no window at all.
+     */
+    private val startupWiring: N8nWiring by lazy { resolveStartupWiring() }
+
+    /** Set only by [rebuildRepository], the operator changing the URL in Settings. */
+    @Volatile
+    private var rebuiltWiring: N8nWiring? = null
+
+    private val wiring: N8nWiring get() = rebuiltWiring ?: startupWiring
+
+    val repository: AuntieRepository get() = wiring.repository
+
+    /**
+     * The n8n base URL [repository] is actually built from, which is the whole
+     * question this file used to answer with a race. Reading it resolves the
+     * wiring exactly as reading [repository] does, so the two can never
+     * disagree, and a test can ask which URL the live repository came from
+     * without reaching inside a Retrofit proxy.
+     */
+    val activeBaseUrl: String get() = wiring.baseUrl
 
     val bookingRepository: BookingRepository by lazy { BookingRepository() }
     val serviceRepository: ServiceRepository by lazy { ServiceRepository() }
@@ -116,28 +160,14 @@ class AuntieOSApp : Application() {
         
         createNotificationChannels()
 
-        appScope.launch {
-            try {
-                val savedUrl = baseUrlFlow().first()
-                val effectiveUrl = if (savedUrl.contains(RetrofitClient.LEGACY_N8N_HOST)) {
-                    AuntieLog.i("Migrating stale base_url '$savedUrl' → ${RetrofitClient.DEFAULT_BASE_URL}")
-                    applicationContext.saveBaseUrl(RetrofitClient.DEFAULT_BASE_URL)
-                    RetrofitClient.DEFAULT_BASE_URL
-                } else savedUrl
-                if (effectiveUrl != RetrofitClient.DEFAULT_BASE_URL) {
-                    AuntieLog.i("Rebuilding repository with saved URL: $effectiveUrl")
-                    repository = buildRepo(effectiveUrl)
-                }
-            } catch (e: Exception) {
-                AuntieLog.e("Failed to load saved URL", e)
-            }
-        }
-
         // Voice tokens come from the admin-gated `mintVoiceAccessToken` callable
         // now, not from the public Twilio Functions endpoint, so this takes the
-        // repository rather than a Retrofit binding. `repository` is read at call
-        // time; a later `rebuildRepository` swaps only the n8n base URL, which
-        // callables do not use, so the captured instance stays correct.
+        // repository rather than a Retrofit binding. Reading `repository` here is
+        // what resolves the stored base URL, so the instance handed over is the
+        // final one for this launch. It can still be replaced later, by the
+        // operator editing the URL in Settings, and the captured instance stays
+        // correct through that: `rebuildRepository` swaps only the n8n base URL,
+        // which callables do not use.
         //
         // WHAT THIS NO LONGER DOES IS THE POINT. `initialize` used to end with a
         // `mintAndRegister`, and running it from here meant minting a voice token
@@ -183,9 +213,44 @@ class AuntieOSApp : Application() {
         n8n = RetrofitClient.buildN8n(baseUrl)
     )
 
+    /**
+     * Reads the stored base URL, migrating a stale one, and builds the
+     * repository for it. Both halves are fail-safe to the default, because a
+     * device that cannot be read from, or that has a URL Retrofit rejects
+     * stored from before [saveBaseUrl] validated its input, still has to get an
+     * app it can sign into.
+     *
+     * The DataStore read blocks the calling thread deliberately. Handing the
+     * caller a repository built from the wrong URL and correcting it a moment
+     * later is what this change exists to stop, and there is no non-blocking
+     * way to answer "which URL" to a caller that is not itself suspending.
+     */
+    private fun resolveStartupWiring(): N8nWiring {
+        val url = try {
+            runBlocking {
+                val savedUrl = applicationContext.baseUrlFlow().first()
+                if (savedUrl.contains(RetrofitClient.LEGACY_N8N_HOST)) {
+                    AuntieLog.i("Migrating stale base_url '$savedUrl' → ${RetrofitClient.DEFAULT_BASE_URL}")
+                    applicationContext.saveBaseUrl(RetrofitClient.DEFAULT_BASE_URL)
+                    RetrofitClient.DEFAULT_BASE_URL
+                } else savedUrl
+            }
+        } catch (e: Exception) {
+            AuntieLog.e("Failed to load saved URL", e)
+            RetrofitClient.DEFAULT_BASE_URL
+        }
+        return try {
+            AuntieLog.i("Building repository with base URL: $url")
+            N8nWiring(url, buildRepo(url))
+        } catch (e: Exception) {
+            AuntieLog.e("Saved base URL '$url' is not usable, falling back to the default", e)
+            N8nWiring(RetrofitClient.DEFAULT_BASE_URL, buildRepo(RetrofitClient.DEFAULT_BASE_URL))
+        }
+    }
+
     fun rebuildRepository(baseUrl: String) {
         AuntieLog.i("Rebuilding repository: $baseUrl")
-        repository = buildRepo(baseUrl)
+        rebuiltWiring = N8nWiring(baseUrl, buildRepo(baseUrl))
     }
 
     private fun createNotificationChannels() {
