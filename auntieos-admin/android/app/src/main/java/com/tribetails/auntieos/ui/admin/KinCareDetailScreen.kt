@@ -22,13 +22,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
+import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.ui.admin.scheduling.assignUnavailableReason
 import com.tribetails.auntieos.ui.admin.scheduling.canAssignAuntie
 import com.tribetails.auntieos.ui.admin.scheduling.isNoteEditLocked
@@ -48,6 +51,29 @@ import java.time.format.DateTimeFormatter
  * Time row body - it's the in-the-field reference card she pulls up while
  * standing at the door or mid-visit. Action buttons live on the *list* row,
  * not here; this screen is read-only context.
+ *
+ * #446: resolves its visit BY ID (`KinCareRepository.getKinCareSession`)
+ * instead of reading every `kin_care_sessions` doc and scanning for a match,
+ * which is the pattern PR #432 moved the web admin's session/invoice/booking
+ * lookups off of via `useDocById` (`lib/firestore.ts`) - this screen was left
+ * on the old pattern deliberately in that PR because it already found the
+ * deep-linked visit at any age, so there was no reported defect to fix. There
+ * are three ways in, and all three already pass this same flat session id, so
+ * none of them needed to change: the AuntieTime tab and the Admin Data > Kin
+ * Care Sessions list both pass `session.id` straight from the row
+ * (`KinCareSessionsScreen.onOpenDetail` in `Navigation.kt`), and the
+ * `booking` notification type derives it from the envelope visit id before
+ * navigating here (`sessionIdForVisit`, added by #389 / PR #432).
+ *
+ * States mirror `useDocById`'s three (opening / not available / read error):
+ * a session that does not exist, and one this caller's test sandbox may not
+ * see, both resolve to the SAME "not available" copy below - matching
+ * `useDocById` folding a `permission-denied` snapshot error into
+ * `ready + null` so a deep link never becomes an existence oracle for a
+ * record outside the caller's scope. Anything else - a genuine read failure -
+ * gets its own message and a Retry, which the old whole-collection scan never
+ * distinguished either (a failed query silently produced the same
+ * "not available" text, because [session] just stayed null).
  */
 @Composable
 fun KinCareDetailScreen(
@@ -55,12 +81,12 @@ fun KinCareDetailScreen(
     onBack: () -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
-) {
-    val repo = AuntieOSApp.instance.repository
+    repo: AuntieRepository = AuntieOSApp.instance.repository,
     // W4-3: the visit and its KinTales read from the KinCare repo; the kinfolk,
     // kin and 411 reads on this screen are Directory domain and stay on [repo].
-    val kinCareRepo = AuntieOSApp.instance.kinCareRepository
-    val notesRepo = remember { BookingNotesRepository() }
+    kinCareRepo: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
+    notesRepo: BookingNotesRepository = remember { BookingNotesRepository() },
+) {
     val scope = rememberCoroutineScope()
 
     var session    by remember(kinCareId) { mutableStateOf<KinCareSession?>(null) }
@@ -69,29 +95,50 @@ fun KinCareDetailScreen(
     var fourOnes   by remember(kinCareId) { mutableStateOf<Map<String, Kin411>>(emptyMap()) }
     var reports    by remember(kinCareId) { mutableStateOf<List<KinCareReport>>(emptyList()) }
     var loading    by remember(kinCareId) { mutableStateOf(true) }
+    // A genuine read failure, kept apart from "not available" below - see the
+    // useDocById mirror in the doc comment above.
+    var loadError  by remember(kinCareId) { mutableStateOf<String?>(null) }
+    var retryNonce by remember(kinCareId) { mutableStateOf(0) }
 
-    LaunchedEffect(kinCareId) {
+    LaunchedEffect(kinCareId, retryNonce) {
         loading = true
+        loadError = null
         scope.launch {
-            kinCareRepo.getKinCareSessions().onSuccess { all ->
-                val s = all.firstOrNull { it.id == kinCareId }
-                session = s
-                if (s != null && s.kinfolkId.isNotBlank()) {
-                    repo.getKinfolk().onSuccess { kf ->
-                        kinfolk = kf.firstOrNull { it.id == s.kinfolkId }
+            kinCareRepo.getKinCareSession(kinCareId)
+                .onSuccess { s ->
+                    session = s
+                    if (s != null && s.kinfolkId.isNotBlank()) {
+                        repo.getKinfolk().onSuccess { kf ->
+                            kinfolk = kf.firstOrNull { it.id == s.kinfolkId }
+                        }
+                    }
+                    if (s != null) {
+                        val ids = (s.kinIds + listOf(s.kinId)).filter { it.isNotBlank() }.distinct()
+                        if (ids.isNotEmpty()) {
+                            repo.getKinByIds(ids).onSuccess { kinById = it }
+                            repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
+                        }
+                        kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
+                            reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
+                        }
                     }
                 }
-                if (s != null) {
-                    val ids = (s.kinIds + listOf(s.kinId)).filter { it.isNotBlank() }.distinct()
-                    if (ids.isNotEmpty()) {
-                        repo.getKinByIds(ids).onSuccess { kinById = it }
-                        repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
-                    }
-                    kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
-                        reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
+                .onFailure { err ->
+                    session = null
+                    // A sandbox operator reading a session outside their test scope
+                    // gets PERMISSION_DENIED straight from the Firestore rule
+                    // (`kin_care_sessions` allows read only to the owning kinfolk, a
+                    // real Auntie, or the matching test scope - see
+                    // `auntieos-admin/web/firestore.rules`). That fact reads exactly
+                    // like "this doesn't exist" to the caller, so it falls through to
+                    // the same not-available copy below instead of a scary rules
+                    // error, same as `useDocById` folds `permission-denied` into
+                    // `ready + null`.
+                    if (!isKinCarePermissionDenied(err)) {
+                        loadError = err.message
+                            ?: "Couldn't load this Kin Care. Check your connection and try again."
                     }
                 }
-            }
             loading = false
         }
     }
@@ -101,26 +148,48 @@ fun KinCareDetailScreen(
         title = s?.kinfolkName?.ifBlank { "Kin Care" } ?: "Loading…",
         onBack = onBack,
     ) {
-        if (loading || s == null) {
+        if (loading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (loading) {
-                    AuntieSpinner(modifier = Modifier.size(32.dp), color = AuntieTheme.colors.kinfolkOrange)
-                } else {
-                    // NAMES THE THIRD READING, which is the one a notification
-                    // produces: a visit that is still REQUESTED has no
-                    // `kin_care_sessions` document at all, because approval is
-                    // what creates one (approveBookingSeriesCore.ts). "Not
-                    // found" on its own sent an operator hunting for a visit
-                    // that is sitting in the incoming-requests queue waiting on
-                    // them. Same sentence the React admin's "Booking
-                    // unavailable" dialog carries.
+                AuntieSpinner(modifier = Modifier.size(32.dp), color = AuntieTheme.colors.kinfolkOrange)
+            }
+            return@AuntieScreenScaffold
+        }
+
+        if (loadError != null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                ) {
                     Text(
-                        "This Kin Care isn't available to open. A visit gets its own record " +
-                            "only once the request is approved, so a request still waiting on " +
-                            "you has none yet. Otherwise it may have been cancelled or removed.",
-                        color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                        loadError.orEmpty(),
+                        color = AuntieTheme.colors.error,
+                        style = AuntieTheme.typography.bodyMedium,
                     )
+                    PrimaryButton(label = "Retry", onClick = { retryNonce++ })
                 }
+            }
+            return@AuntieScreenScaffold
+        }
+
+        if (s == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                // NAMES THE THIRD READING, which is the one a notification
+                // produces: a visit that is still REQUESTED has no
+                // `kin_care_sessions` document at all, because approval is
+                // what creates one (approveBookingSeriesCore.ts). "Not
+                // found" on its own sent an operator hunting for a visit
+                // that is sitting in the incoming-requests queue waiting on
+                // them. Same sentence the React admin's "Booking
+                // unavailable" dialog carries. Also covers the sandbox
+                // permission-denied case folded in above.
+                Text(
+                    "This Kin Care isn't available to open. A visit gets its own record " +
+                        "only once the request is approved, so a request still waiting on " +
+                        "you has none yet. Otherwise it may have been cancelled or removed.",
+                    color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                )
             }
             return@AuntieScreenScaffold
         }
@@ -714,6 +783,11 @@ private fun shortIsoTimeOnly(iso: String): String =
         .getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+/** True iff a by-id session read failed because Firestore rules denied it -
+ *  the sandbox "not yours to see" case, folded into "not available" above. */
+private fun isKinCarePermissionDenied(err: Throwable): Boolean =
+    err is FirebaseFirestoreException && err.code == FirebaseFirestoreException.Code.PERMISSION_DENIED
 
 @Composable
 private fun BookingNotesSection(
