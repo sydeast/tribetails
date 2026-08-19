@@ -145,6 +145,39 @@ def test_extract_body_includes_content_notes_and_attachment_provenance():
     assert "provenance only" in body
 
 
+# ---------- target classification (issue #461) ----------
+#
+# resolve_target_type is the pipeline half of the agreement with the clients.
+# The other half is `tribalIntelFormat.ts#tribalIntelTarget` (web) and
+# `TribalIntelTarget.kt#tribalIntelTarget` (Android); the cases below are the
+# same cases those two suites assert, so a divergence fails on both sides.
+
+def test_resolve_target_kin_needs_a_named_kin():
+    assert rc.resolve_target_type("note", {"targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "k1"}) == "KIN"
+    # A KIN row naming no animal cannot route to one: it falls to the household.
+    assert rc.resolve_target_type("note", {"targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": ""}) == "HOUSEHOLD"
+
+
+def test_resolve_target_kinfolk_needs_an_anchor():
+    assert rc.resolve_target_type("note", {"targetType": "KINFOLK", "targetKinfolkId": "kf1"}) == "KINFOLK"
+    assert rc.resolve_target_type("note", {"targetType": "KINFOLK"}) == "HOUSEHOLD"
+
+
+def test_resolve_target_household_and_legacy_untargeted_rows():
+    assert rc.resolve_target_type("note", {"targetType": "HOUSEHOLD", "targetKinfolkId": "kf1"}) == "HOUSEHOLD"
+    # THE LEGACY DECISION: a pre-#427 row carries kinfolkRef and no targetType.
+    # It becomes HOUSEHOLD, explicitly, not by falling through a default.
+    assert rc.resolve_target_type("note", {"kinfolkRef": "kf1"}) == "HOUSEHOLD"
+    assert rc.LEGACY_UNTARGETED_TARGET == "HOUSEHOLD"
+
+
+def test_resolve_target_is_none_for_untargeted_channels():
+    """Voicemail/call/sms/email/kintale are addressed by nobody, so they are not
+    silently treated as household-targeted; they keep the old fan-out."""
+    for channel in ("voicemail", "call", "sms", "email", "kintale"):
+        assert rc.resolve_target_type(channel, {"targetType": "KIN", "targetKinId": "k1"}) is None
+
+
 # ---------- fan-out ----------
 
 def test_kin_target_fans_to_single_kin():
@@ -154,16 +187,32 @@ def test_kin_target_fans_to_single_kin():
     assert ids == ["k1"]
 
 
-def test_kinfolk_target_fans_to_all_household_kin():
+def test_kinfolk_target_reaches_no_kin_at_all():
+    """#461: a note about one person stops reaching every pet."""
     db = seed_household()
     log = {"targetType": "KINFOLK", "targetKinfolkId": "kf1"}
-    ids = rc.kin_ids_for_household(db, "kf1", log, "note")
+    assert rc.kin_ids_for_household(db, "kf1", log, "note") == []
+
+
+def test_household_target_reaches_no_kin_at_all():
+    db = seed_household()
+    log = {"targetType": "HOUSEHOLD", "targetKinfolkId": "kf1"}
+    assert rc.kin_ids_for_household(db, "kf1", log, "note") == []
+
+
+def test_untargeted_channel_still_fans_to_all_household_kin():
+    """The routing change is scoped to the note channel. A KinTale still reaches
+    every pet in the home, which is RULING R1 and is unchanged by #461."""
+    db = seed_household()
+    ids = rc.kin_ids_for_household(db, "kf1", {}, "kintale")
     assert set(ids) == {"k1", "k2"}
 
 
 # ---------- full reconcile_pass (stub, no LLM) ----------
 
-def test_reconcile_pass_kin_target_applies_dossier_and_single_411():
+def test_reconcile_pass_kin_target_writes_only_that_kins_411():
+    """KIN-targeted: the 411 and nothing else. Before #461 this also wrote the
+    household's dossier, which filed a fact about one pet under the whole home."""
     db = seed_household()
     db.data["training_documents"] = {
         "n1": {
@@ -174,37 +223,141 @@ def test_reconcile_pass_kin_target_applies_dossier_and_single_411():
     processed = rc.reconcile_pass(db, max_per_run=25, use_stub=True)
     assert processed >= 1
 
-    # Source note flipped to applied.
     note = db.data["training_documents"]["n1"]
     assert note["reconcileStatus"] == "applied"
-    assert "dossiers/" in note["reconcileNotes"]
     assert "the_411/411_k1" in note["reconcileNotes"]
-
-    # Dossier upserted for the household, citing the note as a source.
-    dossiers = [d for d in db.data.get("dossiers", {}).values() if d and d.get("kinfolkId") == "kf1"]
-    assert dossiers, "expected a dossier for kf1"
-    assert "training_documents/n1" in dossiers[0]["lastReconcileSourceLogIds"]
+    assert "dossiers/" not in note["reconcileNotes"]
+    assert "household_bank/" not in note["reconcileNotes"]
 
     # Only the single targeted kin's 411 was touched.
     the_411 = db.data.get("the_411", {})
     touched = [v for v in the_411.values() if v and "training_documents/n1" in (v.get("lastReconcileSourceLogIds") or [])]
-    touched_kin_ids = {v["kinId"] for v in touched}
-    assert touched_kin_ids == {"k1"}
+    assert {v["kinId"] for v in touched} == {"k1"}
+
+    # No dossier and no bank were created by a kin-targeted note.
+    assert db.data.get("dossiers", {}) == {}
+    assert db.data.get("household_bank", {}) == {}
 
 
-def test_reconcile_pass_kinfolk_target_fans_to_all_kin():
+def test_reconcile_pass_kinfolk_target_writes_only_the_dossier():
+    """KINFOLK-targeted: the dossier and nothing else. Before #461 this fanned
+    out to every pet in the household."""
     db = seed_household()
     db.data["training_documents"] = {
         "n2": {
             "targetType": "KINFOLK", "targetKinfolkId": "kf1",
-            "content": "Household prefers texts over calls.", "reconcileStatus": "pending",
+            "content": "Dana prefers texts over calls.", "reconcileStatus": "pending",
         }
     }
     rc.reconcile_pass(db, max_per_run=25, use_stub=True)
-    the_411 = db.data.get("the_411", {})
-    touched = {v["kinId"] for v in the_411.values()
-               if v and "training_documents/n2" in (v.get("lastReconcileSourceLogIds") or [])}
+
+    note = db.data["training_documents"]["n2"]
+    assert note["reconcileStatus"] == "applied"
+    assert "dossiers/kf1" in note["reconcileNotes"]
+    assert "the_411" not in note["reconcileNotes"]
+
+    dossier = db.data["dossiers"]["kf1"]
+    assert "training_documents/n2" in dossier["lastReconcileSourceLogIds"]
+    assert db.data.get("the_411", {}) == {}
+    assert db.data.get("household_bank", {}) == {}
+
+
+def test_reconcile_pass_household_target_writes_only_the_bank():
+    """HOUSEHOLD-targeted: the household's own record, the peer of the other two."""
+    db = seed_household()
+    db.data["training_documents"] = {
+        "n4": {
+            "targetType": "HOUSEHOLD", "targetKinfolkId": "kf1",
+            "content": "Side gate code is 4321.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    note = db.data["training_documents"]["n4"]
+    assert note["reconcileStatus"] == "applied"
+    assert "household_bank/kf1" in note["reconcileNotes"]
+
+    bank = db.data["household_bank"]["kf1"]
+    assert bank["householdId"] == "kf1"
+    assert "training_documents/n4" in bank["lastReconcileSourceLogIds"]
+    assert "4321" in bank["rawSummary"]
+    # The stub emits a real citation, so a stub-built bank is not permanently
+    # flagged needsMoreSamples for the wrong reason (NOTE-60).
+    from reconcile_prompts import count_sources
+    assert count_sources(bank["rawSummary"]) == 1
+
+    assert db.data.get("dossiers", {}) == {}
+    assert db.data.get("the_411", {}) == {}
+
+
+def test_reconcile_pass_legacy_untargeted_note_goes_to_the_bank():
+    """A row written before the three targets existed: no targetType at all.
+    It becomes HOUSEHOLD, so it lands in the bank."""
+    db = seed_household()
+    db.data["training_documents"] = {
+        "n5": {
+            "targetKinfolkId": "kf1",
+            "content": "Trash goes out Tuesday night.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    assert db.data["training_documents"]["n5"]["reconcileStatus"] == "applied"
+    assert "household_bank/kf1" in db.data["training_documents"]["n5"]["reconcileNotes"]
+    assert db.data["household_bank"]["kf1"]["householdId"] == "kf1"
+    assert db.data.get("dossiers", {}) == {}
+    assert db.data.get("the_411", {}) == {}
+
+
+def test_reconcile_pass_untargeted_channel_still_writes_dossier_and_all_411s():
+    """The other five channels are untouched by #461."""
+    db = seed_household()
+    db.data["kin_care_reports"] = {
+        "r1": {"kinfolkId": "kf1", "summary": "Both pets did great.", "reconcileStatus": "pending"},
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    assert db.data["kin_care_reports"]["r1"]["reconcileStatus"] == "applied"
+    assert db.data["dossiers"]["kf1"]["kinfolkId"] == "kf1"
+    touched = {v["kinId"] for v in db.data["the_411"].values()
+               if v and "kin_care_reports/r1" in (v.get("lastReconcileSourceLogIds") or [])}
     assert touched == {"k1", "k2"}
+    assert db.data.get("household_bank", {}) == {}
+
+
+# ---------- household bank upsert (peer of upsert_dossier / upsert_kin411) ----------
+
+def test_new_household_bank_doc_id_equals_household_id():
+    db = FakeDb()
+    rc.upsert_household_bank(db, "kf1", "bank one", "T", "training_documents/n1", False, {})
+    assert list(db.data["household_bank"]) == ["kf1"]
+    assert db.collection("household_bank").document("kf1").get().exists
+
+
+def test_existing_household_bank_reused_not_duplicated():
+    db = FakeDb()
+    db.data["household_bank"] = {"legacy-auto-id": {"householdId": "kf1", "rawSummary": "old"}}
+    rc.upsert_household_bank(db, "kf1", "new summary", "T", "training_documents/n2", False, {})
+    assert list(db.data["household_bank"]) == ["legacy-auto-id"]
+    assert db.data["household_bank"]["legacy-auto-id"]["rawSummary"] == "new summary"
+
+
+def test_empty_tldr_does_not_clobber_existing_bank_tldr():
+    db = FakeDb()
+    rc.upsert_household_bank(db, "kf1", "summary", "T", "src/1", False, {}, tldr="EXISTING TLDR")
+    assert db.data["household_bank"]["kf1"]["tldr"] == "EXISTING TLDR"
+    rc.upsert_household_bank(db, "kf1", "summary2", "T2", "src/2", False, {}, tldr="")
+    assert db.data["household_bank"]["kf1"]["tldr"] == "EXISTING TLDR"
+    rc.upsert_household_bank(db, "kf1", "summary3", "T3", "src/3", False, {}, tldr="NEW TLDR")
+    assert db.data["household_bank"]["kf1"]["tldr"] == "NEW TLDR"
+
+
+def test_operator_edited_bank_field_is_never_overwritten():
+    db = FakeDb()
+    rc.upsert_household_bank(db, "kf1", "s1", "T", "src/1", False, {"accessAndEntry": "gate 1111"})
+    assert db.data["household_bank"]["kf1"]["accessAndEntry"] == "gate 1111"
+    rc.upsert_household_bank(db, "kf1", "s2", "T2", "src/2", False, {"accessAndEntry": "gate 9999"})
+    assert db.data["household_bank"]["kf1"]["accessAndEntry"] == "gate 1111"
 
 
 def test_reconcile_pass_no_target_marks_skipped():

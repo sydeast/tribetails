@@ -870,6 +870,32 @@ service cloud.firestore {
       allow write: if isAuntie();
     }
     match /household_data/{id}                  { allow read, write: if isAuntie(); }
+ // The household bank (issue #461): the household's own reconciled record, the
+ // peer of a kinfolk dossier and a kin 411. ADMIN-ONLY, the same standing ruling
+ // that governs those two: kinfolk never see it, and no portal callable projects
+ // a field off it.
+ //
+ // Same shape as /dossiers above, and for the same reason: the wildcard doc id IS
+ // the household id (the anchoring kinfolkId, which is what upsert_household_bank
+ // writes), so a test admin's single-doc read can be scoped by the doc id alone.
+ // Writes stay admin-only; the nightly reconcile job writes through the Admin SDK.
+    match /household_bank/{householdId} {
+      allow read: if isAuntie() || (isTestAdmin() && householdId == testScope());
+      allow write: if isAuntie();
+    }
+ // The household bank (issue #461): the household's own reconciled record, the
+ // peer of a kinfolk dossier and a kin 411. ADMIN-ONLY, the same standing ruling
+ // that governs those two: kinfolk never see it, and no portal callable projects
+ // a field off it.
+ //
+ // Same shape as /dossiers above, and for the same reason: the wildcard doc id IS
+ // the household id (the anchoring kinfolkId, which is what upsert_household_bank
+ // writes), so a test admin's single-doc read can be scoped by the doc id alone.
+ // Writes stay admin-only; the nightly reconcile job writes through the Admin SDK.
+    match /household_bank/{householdId} {
+      allow read: if isAuntie() || (isTestAdmin() && householdId == testScope());
+      allow write: if isAuntie();
+    }
  // Global KinTale template catalog: test admin may READ (so the KinTale
  // composer renders), never write. Writes stay admin-only.
     match /kintale_templates/{id} {

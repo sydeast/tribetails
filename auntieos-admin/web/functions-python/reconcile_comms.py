@@ -1,9 +1,24 @@
 """Auntie OS — Comms reconcile pipeline.
 
-Watches the four comms log collections for docs with reconcileStatus=pending,
+Watches the comms log collections for docs with reconcileStatus=pending,
 matches each to a Kinfolk by phone or email, and folds the message into the
-matched Kinfolk's Dossier via Claude Sonnet (claude_merge). The stub path
-(--use-stub) appends a literal trail entry for plumbing tests without LLM cost.
+right record via Claude Sonnet. The stub path (--use-stub) appends a literal
+trail entry for plumbing tests without LLM cost.
+
+THERE ARE THREE DESTINATIONS, not two (issue #461, operator ruling 2026-08-18:
+"kin are children of households and kinfolk are owners of the household. kinfolk
+data go to kinfolks dossiers, kin data goes into the kins 411s. and then
+household gets its own bank"):
+
+    dossiers/{kinfolkId}          one human client        claude_merge
+    the_411/411_{kinId}           one animal              claude_merge_411
+    household_bank/{householdId}  the home itself         claude_merge_bank
+
+A Tribal Intel note (`training_documents`) carries a targetType and is routed to
+exactly ONE of the three, then stops. Every other channel is untargeted and keeps
+its original behaviour: the dossier plus a 411 for every kin in the home. See
+resolve_target_type for the classification, which is the same rule the clients
+apply at read time.
 
 Fail-loud: LLM errors mark reconcileStatus=error with a note; no silent fallback.
 
@@ -594,21 +609,177 @@ def upsert_kin411(db, kin_id: str, new_summary: str, ts: str, source_id: str, ne
     return ref.id
 
 
+def claude_merge_bank(household_label: str, existing_summary: str, channel: str, log_id: str, log: dict, ts: str) -> tuple[str, dict, str]:
+    """LLM merge for the household bank. Same fail-loud semantics as claude_merge.
+
+    Calls build_bank_prompt (the home, not a person and not a pet) instead of
+    build_dossier_prompt. Fail-loud: any Claude error raises (caller decides
+    retry/skip).
+
+    Returns:
+        (summary, fields, tldr), the same triple the dossier and 411 merges
+        return, so the three destinations stay interchangeable at the call site.
+
+    API key priority: os.environ["ANTHROPIC_API_KEY"] (Secret Manager binding in
+    Cloud Function) > .env file on disk (local CLI runs).
+    """
+    import os
+    from anthropic import Anthropic
+    from dotenv import dotenv_values
+    from reconcile_prompts import build_bank_prompt, extract_summary, extract_fields, extract_tldr
+
+    env_file = Path(__file__).resolve().parent / ".env"
+    dot_env = dotenv_values(env_file) if env_file.exists() else {}
+    env = {**dot_env, **os.environ}
+    api_key = env.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY missing from env / Secret Manager (fail-loud)")
+    model = env.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+    body = extract_log_body(log)
+    new_entry = {
+        "channel":   channel,
+        "timestamp": log.get("timestamp") or log.get("visitDate") or log.get("sentAt") or ts,
+        "id":        log_id,
+        "body":      body,
+    }
+    system_prompt, user_prompt = build_bank_prompt(household_label, existing_summary, [new_entry])
+    client = Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=1500,
+        temperature=0.2,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    text = resp.content[0].text if resp.content else ""
+    summary = extract_summary(text).strip()
+    if not summary:
+        raise RuntimeError(f"Claude returned empty household bank summary for {channel}/{log_id}")
+    fields = extract_fields(text, doc_type="bank")
+    tldr = extract_tldr(text)
+    return summary, fields, tldr
+
+
+def upsert_household_bank(db, household_id: str, new_summary: str, ts: str, source_id: str, needs_more_samples: bool = False, new_fields: dict | None = None, tldr: str = "") -> str:
+    """Find or create the household's bank doc; write new rawSummary + provenance.
+
+    The third destination (issue #461), built to the same recipe as
+    upsert_dossier and upsert_kin411 rather than to a new one: query by the
+    identity field so a legacy auto-id doc is still found, deterministic doc id
+    == household_id when creating so a point-read resolves it, the most recent
+    ten source ids kept, structured fields merged through merge_structured_fields
+    so an operator edit is never overwritten, and an empty tldr left out of the
+    payload entirely so a stub/no-LLM pass cannot clobber a real one.
+
+    HOUSEHOLD IDENTITY IS THE ANCHORING KINFOLK ID, the same id `families/{id}`
+    and `household_data.kinfolkId` already use. Doc id == household_id (and NOT
+    a prefixed 'bank_{id}') is load-bearing: the sandbox test-admin branch of
+    firestore.rules is keyed on the DOC ID, exactly as it is for dossiers.
+    """
+    from reconcile_prompts import merge_structured_fields
+    q = db.collection("household_bank").where("householdId", "==", household_id).limit(1).stream()
+    existing = next(q, None)
+    if existing is not None:
+        ref = db.collection("household_bank").document(existing.id)
+        prev = existing.to_dict() or {}
+    else:
+        ref  = db.collection("household_bank").document(household_id)
+        prev = {"householdId": household_id}
+    ids = ([source_id] + (prev.get("lastReconcileSourceLogIds") or []))[:10]
+    safe_fields = merge_structured_fields(prev, new_fields or {})
+    ref.set({
+        **prev,
+        **safe_fields,
+        "householdId":                household_id,
+        "rawSummary":                 new_summary,
+        "lastUpdated":                ts,
+        "lastReconciledAt":           ts,
+        "lastReconcileSourceLogIds":  ids,
+        "needsMoreSamples":           needs_more_samples,
+        **({"tldr": tldr} if tldr else {}),
+    }, merge=True)
+    return ref.id
+
+
+# ---------- three-way target routing (issue #461) ----------
+
+TARGET_HOUSEHOLD = "HOUSEHOLD"
+TARGET_KINFOLK   = "KINFOLK"
+TARGET_KIN       = "KIN"
+
+# WHAT AN UNTARGETED LEGACY ROW BECOMES, stated as a named constant rather than
+# left to a fall-through, because issue #461 asks for the decision to be visible
+# in the code.
+#
+# A Tribal Intel row written before the three targets existed (an NDJSON
+# migration import, or any row predating PR #427) carries `kinfolkRef` and no
+# `targetType` at all. The only thing such a row names is the household anchor,
+# so HOUSEHOLD is the widest honest reading of it: filing it into one person's
+# dossier or one pet's 411 would claim a scope the document never stated. It is
+# also what such a row already does today (it fans out household-wide), so no
+# existing row changes what it is ABOUT, only where the write lands.
+#
+# This is byte-for-byte the same rule the clients apply at read time
+# (`auntieos-admin/src/lib/tribalIntelFormat.ts#tribalIntelTarget` and the
+# Android `targetKindLabel` path): stored KIN with a real kin id is KIN, stored
+# KINFOLK with a real anchor is KINFOLK, everything else is HOUSEHOLD. The
+# pipeline and the screens agree by construction, not by coincidence.
+LEGACY_UNTARGETED_TARGET = TARGET_HOUSEHOLD
+
+
+def resolve_target_type(channel: str, log: dict) -> str | None:
+    """Which of the three records this log belongs in, or None when it is not targeted.
+
+    Returns None for every channel except `note`. Voicemails, calls, SMS, emails
+    and KinTale reports are not addressed to a target by anybody; they keep the
+    behaviour they have always had (fold into the household's dossier AND fan out
+    to every kin's 411), and this function says so rather than silently treating
+    them as household-targeted.
+
+    For the `note` channel it classifies by POSITIVE match on the stored value,
+    never "not one of the others, so it must be Y":
+      - stored KIN with a non-blank targetKinId  -> KIN
+      - stored KINFOLK with a non-blank anchor   -> KINFOLK
+      - anything else                            -> LEGACY_UNTARGETED_TARGET
+
+    A KIN row whose targetKinId is blank names no animal and a KINFOLK row whose
+    anchor is blank names no person, so neither can route to one; both fall to
+    the household, which is what the clients already render them as.
+    """
+    if channel != "note":
+        return None
+    stored = (log.get("targetType") or "").strip().upper()
+    anchor = (log.get("targetKinfolkId") or log.get("kinfolkRef") or "").strip()
+    kin_id = (log.get("targetKinId") or "").strip()
+    if stored == TARGET_KIN and kin_id:
+        return TARGET_KIN
+    if stored == TARGET_KINFOLK and anchor:
+        return TARGET_KINFOLK
+    return LEGACY_UNTARGETED_TARGET
+
+
 def kin_ids_for_household(db, kinfolk_id: str, log: dict, channel: str) -> list[str]:
     """Derive kin IDs to fan out a 411 update to.
 
-    Source order: (1) note channel targeting a single KIN -> [targetKinId],
-                  (2) log.kinIds[] if non-empty (kintale w/ kinIds populated),
-                  (3) query kin.where('kinfolkId','==',kinfolk_id), actual linkage direction.
+    Issue #461 (operator ruling 2026-08-18: "kinfolk data go to kinfolks
+    dossiers, kin data goes into the kins 411s, and then household gets its own
+    bank") ended the household-wide fan-out for TARGETED notes. A note is now
+    routed to exactly one record:
+      - KIN-targeted      -> [targetKinId], that one pet and no other.
+      - KINFOLK-targeted  -> [], the dossier is the destination, no pet is touched.
+      - HOUSEHOLD-targeted-> [], the household bank is the destination.
 
-    A Tribal Intel note targeting a KINFOLK (household) falls through to (3) and
-    fans out to every kin in the household; a note targeting a single KIN folds
-    only into that one pet's 411.
+    An UNTARGETED channel (voicemail / call / sms / email / kintale) is unchanged:
+      (1) log.kinIds[] if non-empty (kintale w/ kinIds populated),
+      (2) query kin.where('kinfolkId','==',kinfolk_id), the actual linkage direction.
     """
-    if channel == "note" and (log.get("targetType") or "").upper() == "KIN":
-        single = (log.get("targetKinId") or "").strip()
-        if single:
-            return [single]
+    target = resolve_target_type(channel, log)
+    if target is not None:
+        # A targeted note reaches at most one pet, and only when it named one.
+        if target == TARGET_KIN:
+            return [(log.get("targetKinId") or "").strip()]
+        return []
     explicit = list(log.get("kinIds") or [])
     if explicit:
         return explicit
@@ -782,35 +953,99 @@ def reconcile_pass(
 
             kinfolk_name = f"{kf.get('firstName', '')} {kf.get('lastName', '')}".strip() or kinfolk_id
 
-            existing_q = db.collection("dossiers").where("kinfolkId", "==", kinfolk_id).limit(1).stream()
-            existing   = next(existing_q, None)
-            prev_summary = (existing.to_dict() or {}).get("rawSummary", "") if existing else ""
+            # ---------- three-way routing (issue #461) ----------
+            # Operator ruling 2026-08-18: "kinfolk data go to kinfolks dossiers,
+            # kin data goes into the kins 411s. and then household gets its own
+            # bank." A TARGETED note therefore lands in exactly ONE record and
+            # stops; nothing fans out sideways any more.
+            #
+            #   note + KINFOLK   -> that kinfolk's dossier      (no 411, no bank)
+            #   note + KIN       -> that kin's 411              (no dossier, no bank)
+            #   note + HOUSEHOLD -> the household bank          (no dossier, no 411)
+            #   every other channel (voicemail/call/sms/email/kintale) is NOT
+            #   targeted by anybody, so it keeps exactly the behaviour it has
+            #   always had: the dossier plus a 411 for every kin in the home.
+            target = resolve_target_type(channel, log)
+            writes_dossier = target in (None, TARGET_KINFOLK)
+            writes_bank    = target == TARGET_HOUSEHOLD
 
-            if use_stub:
-                new_summary = stub_merge(prev_summary, channel, log_id, log, ts)
-                new_dossier_fields: dict = {}
-                new_dossier_tldr = ""
-                merge_label = "stub-append"
-            else:
-                try:
-                    new_summary, new_dossier_fields, new_dossier_tldr = claude_merge(kinfolk_name, prev_summary, channel, log_id, log, ts)
-                    merge_label = "claude-merge"
-                except Exception as e:
-                    print(f"[{ts}] {source_id} → CLAUDE_ERROR: {e}")
-                    if not dry_run:
-                        db.collection(coll).document(log_id).update({
-                            "reconcileStatus": "error",
-                            "reconciledAt":    ts,
-                            "reconcileNotes":  f"claude_merge failed: {str(e)[:200]}",
-                        })
-                    else:
-                        print(f"  [DRY-RUN: would set reconcileStatus=error on {source_id}]")
-                    processed += 1
-                    continue
+            prev_summary = ""
+            new_summary = ""
+            new_dossier_fields: dict = {}
+            new_dossier_tldr = ""
+            merge_label = "stub-append" if use_stub else "claude-merge"
+
+            if writes_dossier:
+                existing_q = db.collection("dossiers").where("kinfolkId", "==", kinfolk_id).limit(1).stream()
+                existing   = next(existing_q, None)
+                prev_summary = (existing.to_dict() or {}).get("rawSummary", "") if existing else ""
+
+                if use_stub:
+                    new_summary = stub_merge(prev_summary, channel, log_id, log, ts)
+                else:
+                    try:
+                        new_summary, new_dossier_fields, new_dossier_tldr = claude_merge(kinfolk_name, prev_summary, channel, log_id, log, ts)
+                    except Exception as e:
+                        print(f"[{ts}] {source_id} → CLAUDE_ERROR: {e}")
+                        if not dry_run:
+                            db.collection(coll).document(log_id).update({
+                                "reconcileStatus": "error",
+                                "reconciledAt":    ts,
+                                "reconcileNotes":  f"claude_merge failed: {str(e)[:200]}",
+                            })
+                        else:
+                            print(f"  [DRY-RUN: would set reconcileStatus=error on {source_id}]")
+                        processed += 1
+                        continue
+
+            # ---------- household bank ----------
+            # The bank is this branch's SOLE write, so a failure here is 'error'
+            # (retry the whole thing), never 'partial' (which means some of it
+            # landed and the rest needs re-attempting).
+            bank_doc_id = ""
+            prev_bank = ""
+            new_bank = ""
+            new_bank_fields: dict = {}
+            new_bank_tldr = ""
+            if writes_bank:
+                prev_bank_q   = db.collection("household_bank").where("householdId", "==", kinfolk_id).limit(1).stream()
+                prev_bank_doc = next(prev_bank_q, None)
+                prev_bank     = (prev_bank_doc.to_dict() or {}).get("rawSummary", "") if prev_bank_doc else ""
+
+                if use_stub:
+                    new_bank = stub_merge(prev_bank, channel, log_id, log, ts)
+                else:
+                    try:
+                        new_bank, new_bank_fields, new_bank_tldr = claude_merge_bank(kinfolk_name, prev_bank, channel, log_id, log, ts)
+                    except Exception as e:
+                        print(f"[{ts}] {source_id} → BANK_CLAUDE_ERROR: {e}")
+                        if not dry_run:
+                            db.collection(coll).document(log_id).update({
+                                "reconcileStatus": "error",
+                                "reconciledAt":    ts,
+                                "reconcileNotes":  f"claude_merge_bank failed: {str(e)[:200]}",
+                            })
+                        else:
+                            print(f"  [DRY-RUN: would set reconcileStatus=error on {source_id}]")
+                        processed += 1
+                        continue
+
+                if dry_run:
+                    print(f"  [DRY-RUN] household/{kinfolk_id} ({kinfolk_name}) bank:")
+                    print(f"    PREV_BANK: {(prev_bank or '(empty)')[:300]}")
+                    print(f"    NEW_BANK:  {new_bank[:300]}")
+                    if new_bank_fields:
+                        print(f"    NEW_BANK_FIELDS: {new_bank_fields}")
+                else:
+                    from reconcile_prompts import count_sources
+                    needs_more_bank = count_sources(new_bank) < 3
+                    bank_doc_id = upsert_household_bank(db, kinfolk_id, new_bank, ts, source_id, needs_more_bank, new_fields=new_bank_fields, tldr=new_bank_tldr)
+                    print(f"[{ts}] {source_id} → household/{kinfolk_id} ({kinfolk_name}) → household_bank/{bank_doc_id}")
 
             # ---------- Kin411 fan-out ----------
-            # Derive kin IDs: priority (1) log.kinIds[] if non-empty,
-            # (2) query kin.where('kinfolkId','==',kinfolk_id) for actual linkage.
+            # Derive kin IDs: a targeted note reaches at most the one kin it
+            # named; an untargeted channel keeps its old priority order,
+            # (1) log.kinIds[] if non-empty, (2) query kin.where('kinfolkId','==').
             fan_kin_ids = kin_ids_for_household(db, kinfolk_id, log, channel)
 
             # Fail-loud: kintale reports with no kin IDs is unusual.
@@ -868,28 +1103,41 @@ def reconcile_pass(
                     print(f"[{ts}] {source_id} → kin/{kin_id} ({kin_name}) → the_411/{doc_id}")
 
             # ---------- Dossier write + source log mark ----------
-            reconcile_note_parts = [f"{merge_label} → dossiers/{{dossier_id}}"]
-            if touched_411_ids:
-                reconcile_note_parts.append("411s: " + ", ".join(touched_411_ids))
-
+            # THE LOG IS RETIRED HERE FOR ALL THREE ROUTES, not just the dossier
+            # one. Before #461 this mark lived inside the dossier-write branch,
+            # which was safe only because every log wrote a dossier. A bank-only
+            # or 411-only note would have been left 'in_progress' forever.
             if dry_run:
-                print(f"[{ts}] {source_id} → kinfolk/{kinfolk_id} ({kinfolk_name}) [DRY-RUN]")
-                print(f"  PREV_SUMMARY: {(prev_summary or '(empty)')[:300]}")
-                print(f"  NEW_SUMMARY:  {new_summary[:300]}")
-                if new_dossier_fields:
-                    print(f"  NEW_DOSSIER_FIELDS: {new_dossier_fields}")
-                print(f"  [DRY-RUN: would upsert dossiers for kinfolk/{kinfolk_id} and mark {source_id} applied]")
+                if writes_dossier:
+                    print(f"[{ts}] {source_id} → kinfolk/{kinfolk_id} ({kinfolk_name}) [DRY-RUN]")
+                    print(f"  PREV_SUMMARY: {(prev_summary or '(empty)')[:300]}")
+                    print(f"  NEW_SUMMARY:  {new_summary[:300]}")
+                    if new_dossier_fields:
+                        print(f"  NEW_DOSSIER_FIELDS: {new_dossier_fields}")
+                print(f"  [DRY-RUN: would mark {source_id} applied "
+                      f"(target={target or 'untargeted'})]")
             else:
-                from reconcile_prompts import count_sources
-                needs_more_dossier = count_sources(new_summary) < 3
-                dossier_id = upsert_dossier(db, kinfolk_id, new_summary, ts, source_id, needs_more_dossier, new_fields=new_dossier_fields, tldr=new_dossier_tldr)
-                reconcile_note = "; ".join(reconcile_note_parts).replace("{dossier_id}", dossier_id)
-                # WARNING-33: if any 411 fan-out failed, the dossier write succeeded
-                # but the slice is incomplete. Mark 'partial' (a non-terminal status
-                # the 'pending' query also ignores) rather than 'applied', so an
-                # operator/retry can re-attempt the failed 411(s) without re-merging
-                # the dossier blindly. Detect failure via the flag AND any lingering
-                # ERROR(...) marker (defensive).
+                reconcile_note_parts = []
+                if writes_dossier:
+                    from reconcile_prompts import count_sources
+                    needs_more_dossier = count_sources(new_summary) < 3
+                    dossier_id = upsert_dossier(db, kinfolk_id, new_summary, ts, source_id, needs_more_dossier, new_fields=new_dossier_fields, tldr=new_dossier_tldr)
+                    reconcile_note_parts.append(f"{merge_label} → dossiers/{dossier_id}")
+                if writes_bank:
+                    reconcile_note_parts.append(f"{merge_label} → household_bank/{bank_doc_id}")
+                if touched_411_ids:
+                    reconcile_note_parts.append("411s: " + ", ".join(touched_411_ids))
+                # A targeted note that named a kin still says which record it went
+                # to even when nothing else did, so the note never reads as empty.
+                if not reconcile_note_parts:
+                    reconcile_note_parts.append(f"{merge_label} → no destination (target={target or 'untargeted'})")
+                reconcile_note = "; ".join(reconcile_note_parts)
+                # WARNING-33: if any 411 fan-out failed, the writes that DID land
+                # are complete but the slice is not. Mark 'partial' (a non-terminal
+                # status the 'pending' query also ignores) rather than 'applied', so
+                # an operator/retry can re-attempt the failed 411(s) without
+                # re-merging the rest blindly. Detect failure via the flag AND any
+                # lingering ERROR(...) marker (defensive).
                 fan_failed = kin411_had_error or any(
                     isinstance(x, str) and x.startswith("ERROR(") for x in touched_411_ids
                 )
