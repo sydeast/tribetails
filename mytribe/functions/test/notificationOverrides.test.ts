@@ -98,6 +98,181 @@ describe('getBusinessNotificationOverridesHandler', () => {
   });
 });
 
+/**
+ * #396. The catalog DTO used to strip `recipientResolver`, `secondaryResolver`
+ * and `templates`, so the only screen that lists every notification could not
+ * say who any of them reaches or which template renders it. The operator's own
+ * words were "we could be leaking info to the wrong ppl, but I have no idea".
+ * These cases pin the answer onto the wire.
+ */
+describe('getBusinessNotificationOverridesHandler: provenance projection (#396)', () => {
+  async function fetch() {
+    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    return getBusinessNotificationOverridesHandler({
+      data: {},
+      auth: { uid: 'admin1', token: {} },
+    } as any);
+  }
+
+  function row(res: Awaited<ReturnType<typeof fetch>>, key: string) {
+    const found = res.catalog.find((c) => c.key === key);
+    if (!found) throw new Error(`catalog row missing: ${key}`);
+    return found;
+  }
+
+  it('gives every row a plain-English recipient rule, never a bare enum', async () => {
+    const res = await fetch();
+    for (const entry of res.catalog) {
+      expect(entry.whoReceives.length).toBeGreaterThan(0);
+      for (const sentence of entry.whoReceives) {
+        expect(sentence).not.toBe(entry.recipientResolver);
+        // A sentence, not an identifier: identifiers have no spaces.
+        expect(sentence).toContain(' ');
+      }
+    }
+  });
+
+  it('names BOTH audiences on a row that fans out to two', async () => {
+    const res = await fetch();
+    const entry = row(res, 'invoice.new');
+    expect(entry.secondaryResolver).toBe('businessAdmins');
+    expect(entry.whoReceives).toHaveLength(2);
+    expect(entry.whoReceives.join(' ')).toMatch(/admin/i);
+  });
+
+  it('carries the template id per channel so the body is findable', async () => {
+    const res = await fetch();
+    expect(row(res, 'invoice.new').templates.email).toBe('invoice.new');
+    expect(row(res, 'kincare.booking.confirm').templates.sms).toBe('kincare.booking.confirm');
+  });
+
+  /**
+   * The gate can retarget an email TODAY, as data, with no deploy: a write to
+   * `notificationTemplateBindings/{templateId}` and `sendFromTemplate` renders a
+   * different document. If this DTO kept projecting the catalog default, the
+   * screen whose entire job is saying which template writes the message would
+   * name the wrong one, on exactly the rows the operator had changed.
+   */
+  it('names the EFFECTIVE email template when a binding has retargeted it', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        notificationTemplateBindings: [
+          { id: 'invoice.new', data: { templateId: 'invoice.new.v2', active: true } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getBusinessNotificationOverridesHandler({
+      data: {},
+      auth: { uid: 'admin1', token: {} },
+    } as any);
+    const entry = res.catalog.find((c) => c.key === 'invoice.new')!;
+    expect(entry.templates.email).toBe('invoice.new.v2');
+    expect(entry.emailTemplateRetargetedFrom).toBe('invoice.new');
+    // SMS and push read def.templates directly and consult no bindings, which is
+    // why retargeting those needs a deploy. They must not move.
+    expect(entry.templates.sms).toBe('invoice.new');
+  });
+  it('ignores an inactive binding, because disabling one means revert not silence', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        notificationTemplateBindings: [
+          { id: 'invoice.new', data: { templateId: 'invoice.new.v2', active: false } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getBusinessNotificationOverridesHandler({
+      data: {},
+      auth: { uid: 'admin1', token: {} },
+    } as any);
+    const entry = res.catalog.find((c) => c.key === 'invoice.new')!;
+    expect(entry.templates.email).toBe('invoice.new');
+    expect(entry.emailTemplateRetargetedFrom).toBeUndefined();
+  });
+  it('leaves an unretargeted row saying nothing about retargeting', async () => {
+    const res = await fetch();
+    expect(res.catalog.every((c) => c.emailTemplateRetargetedFrom === undefined)).toBe(true);
+  });
+  it('carries the merge fields a template can print', async () => {
+    const res = await fetch();
+    expect(row(res, 'invoice.new').mergeFields.length).toBeGreaterThan(0);
+  });
+
+  it('names what fires each row, in business terms and with a source file', async () => {
+    const res = await fetch();
+    const entry = row(res, 'kincare.booking.confirm');
+    expect(entry.emitters.length).toBeGreaterThan(0);
+    expect(entry.emitters[0].trigger).toMatch(/visit/i);
+    expect(entry.emitters[0].source).toMatch(/^src\//);
+    expect(entry.emitters[0].dataKeys).toContain('kinfolkId');
+  });
+
+  it('projects `neverFires`, and today no row is dead', async () => {
+    // `quote.accepted` was the standing example here: a row whose toggles were
+    // decoration, because nothing sent it. #430 gave it and `quote.denied` a
+    // real emitter in portal/quoteDecision.ts, so the badge must be off them
+    // both. An operator told "Never fires" about a live row would leave it
+    // switched on believing that changed nothing.
+    const res = await fetch();
+    expect(res.catalog.every((c) => c.neverFires === false)).toBe(true);
+    expect(row(res, 'quote.accepted').emitters.map((e) => e.source)).toEqual([
+      'src/portal/quoteDecision.ts',
+    ]);
+    expect(row(res, 'quote.denied').emitters.map((e) => e.source)).toEqual([
+      'src/portal/quoteDecision.ts',
+    ]);
+  });
+
+  it('projects `external`, and today no row is external', async () => {
+    const res = await fetch();
+    // The dispatcher skips fan-out entirely for an `external` row, so the gate's
+    // toggles would control nothing on one. NO catalog row sets the flag right
+    // now — including auth.password.reset, which this platform really does send
+    // itself (see auth/requestPasswordReset.ts). That is worth pinning: it means
+    // switching the password-reset row off in the gate genuinely stops reset
+    // mail, rather than being harmlessly ignored by an outside sender.
+    expect(res.catalog.every((c) => c.external === false)).toBe(true);
+    expect(row(res, 'auth.password.reset').external).toBe(false);
+  });
+
+  it('lists the ungated mail the gate does NOT govern', async () => {
+    const res = await fetch();
+    const ids = res.ungated.map((u) => u.templateId);
+    expect(ids).toContain('invite.primary');
+    expect(ids).toContain('recovery.requested');
+    expect(ids).toContain('error.daily-digest');
+    for (const send of res.ungated) {
+      expect(send.trigger).toContain(' ');
+      expect(send.source).toMatch(/^src\//);
+    }
+  });
+
+  it('reports the business-admin roster size, and does not write while reading it', async () => {
+    const ctx = buildDbMock({
+      docs: { 'businessSettings/admins': { uids: ['a', 'b', 'c'] } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await getBusinessNotificationOverridesHandler({
+      data: {},
+      auth: { uid: 'admin1', token: {} },
+    } as any);
+    expect(res.businessAdminCount).toBe(3);
+    expect(res.businessAdminRosterPath).toBe('businessSettings/admins.uids');
+    // The dispatch-path resolver self-heals by WRITING the roster back from
+    // AUNTIE_OPERATOR_UIDS. Opening a settings screen must never do that.
+    expect(ctx.writes.filter((w) => w.path.startsWith('businessSettings/admins'))).toEqual([]);
+  });
+
+  it('still returns the whole matrix when the roster is empty', async () => {
+    const res = await fetch();
+    // An empty roster is a real, reportable state; the 44 rows the operator
+    // came to read must not vanish because of it.
+    expect(res.businessAdminCount).toBe(0);
+    expect(res.catalog.length).toBeGreaterThan(20);
+  });
+});
+
 describe('saveBusinessNotificationOverrideHandler', () => {
   it('writes override to businessSettings/notifications byKey map', async () => {
     const ctx = buildDbMock();

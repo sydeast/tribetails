@@ -125,6 +125,14 @@ import com.tribetails.auntieos.data.model.withStreamChannelLock
 import com.tribetails.auntieos.data.model.withStreamEnabled
 import com.tribetails.auntieos.data.model.withStreamLockedEnabled
 import com.tribetails.auntieos.data.model.NotificationMatrix
+import com.tribetails.auntieos.data.model.NotificationDeliveryEvidence
+import com.tribetails.auntieos.data.model.NotifBadgeTone
+import com.tribetails.auntieos.data.model.NotifDeliveryTone
+import com.tribetails.auntieos.data.model.notifDeliveryPhrase
+import com.tribetails.auntieos.data.model.notifMergeFieldNames
+import com.tribetails.auntieos.data.model.notifRecipientLines
+import com.tribetails.auntieos.data.model.notifRowBadges
+import com.tribetails.auntieos.data.model.notifTemplateLines
 import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.model.NotificationOverride
 // Tags (2026-07-19): the vocabulary panel edits business_settings through the
@@ -1195,6 +1203,12 @@ private fun NotificationMatrixPanel() {
                             )
                         }
                     }
+                    // #396: a screen titled "every notification, with a switch"
+                    // reads as a complete inventory of outbound mail, and it is
+                    // not one. Invites, account recovery and the error digest
+                    // go straight out from a template with no catalog row and
+                    // no gate. Leaving them off is the same blindness.
+                    NotifUngatedList(m)
                 }
             }
         }
@@ -1249,6 +1263,34 @@ private fun NotifTabBar(
     }
 }
 
+/**
+ * The mail the gate does NOT govern (#396). Server-supplied, so #386 folding
+ * broadcast into the catalog changes nothing here.
+ */
+@Composable
+private fun NotifUngatedList(matrix: NotificationMatrix) {
+    if (matrix.ungated.isEmpty()) return
+    val c = AuntieTheme.colors
+    Column(
+        Modifier.fillMaxWidth().padding(top = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text("ALSO SENT, BUT NOT GATED HERE", style = AuntieTheme.typography.labelMedium, color = c.textPrimary)
+        Text(
+            "These emails go straight out from a template, with no catalog row and no channel " +
+                "resolution. Nothing on this screen turns them off.",
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textFaint,
+        )
+        matrix.ungated.forEach { send ->
+            Text(
+                "emailTemplates/${send.templateId}, sent when: ${send.trigger}  ${send.source}",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+    }
+}
 private fun notifTabIcon(tab: NotifAudience) = when (tab) {
     NotifAudience.Business -> Lucide.Building2
     NotifAudience.Staff -> Lucide.PawPrint
@@ -1300,16 +1342,32 @@ private fun NotifMatrixRow(
     val c = AuntieTheme.colors
     val stream = audience.streamKey
     val enabled = matrix.streamEffectiveEnabled(entry.key, stream)
+    var showDetail by remember(entry.key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(entry.displayTitle(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                if (entry.alwaysEnabledFor(stream)) {
-                    Text("Always on", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                // This line used to read "Always on", and it was not true: nothing
+                // enforces `alwaysEnabled` at send time (ruling #7,
+                // warn-but-allow-off). `notifRowBadges` replaces it with a risk
+                // marker that escalates to a warning once the row is actually off.
+                // See data/model/NotificationProvenance.kt for the full why.
+                notifRowBadges(entry, stream, enabled).forEach { badge ->
+                    Text(
+                        badge.label,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = if (badge.tone == NotifBadgeTone.Warn) c.warning else c.textFaint,
+                    )
                 }
                 // Shared keys: name the other copy so nobody hunts for a "missing" row.
                 sharedCopyCaption(entry.audiences, audience)?.let { caption ->
                     Text(caption, style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                }
+                AuntieTextBtn(onClick = { showDetail = !showDetail }) {
+                    Text(
+                        if (showDetail) "Hide details" else "Who gets this, and what fires it",
+                        style = AuntieTheme.typography.labelSmall,
+                    )
                 }
             }
             // On/Off master for the whole notification, on THIS audience's stream.
@@ -1338,6 +1396,149 @@ private fun NotifMatrixRow(
             audience = audience,
             onSaveLockReason = onSaveLockReason,
         )
+        if (showDetail) {
+            NotifRowDetail(entry = entry, matrix = matrix)
+        }
+    }
+}
+/**
+ * The answer half of the gate row (#396): who receives it, what fires it, which
+ * template writes each channel, what the body can carry, and what the last real
+ * sends actually did.
+ *
+ * Every sentence here is server-authored (see
+ * mytribe/functions/src/notifications/provenance.ts). This composable arranges
+ * them; it does not write them, so web and Android cannot drift into telling
+ * the operator two different stories about the same notification.
+ */
+@Composable
+private fun NotifRowDetail(
+    entry: NotificationCatalogEntry,
+    matrix: NotificationMatrix,
+) {
+    val c = AuntieTheme.colors
+    Column(
+        Modifier.fillMaxWidth().padding(top = 8.dp, start = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        NotifDetailBlock(
+            title = "WHO RECEIVES IT",
+            lines = notifRecipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath),
+            empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
+        )
+        NotifDetailBlock(
+            title = "WHAT FIRES IT",
+            lines = entry.emitters.map { "${it.trigger}  ${it.source}" },
+            empty = "Nothing in the platform dispatches this notification, so nothing sets it off. " +
+                "The toggles on this row change what nobody receives.",
+        )
+        // Reporting, not editing: Template Assignments (#439) owns the routing
+        // table and both screens read the same bindings.
+        NotifDetailBlock(
+            title = "WHICH TEMPLATE WRITES IT (REPOINT ON TEMPLATE ASSIGNMENTS)",
+            lines = notifTemplateLines(entry).map { line ->
+                val suffix = when {
+                    line.missing -> " (this channel is offered with nothing to render it)"
+                    line.retargetedFrom != null ->
+                        " (retargeted; the catalog default is ${line.retargetedFrom})"
+                    else -> ""
+                }
+                "${line.channel}: ${line.path}$suffix"
+            },
+            empty = "This row offers no channels at all.",
+        )
+        val fields = notifMergeFieldNames(entry)
+        NotifDetailBlock(
+            title = "WHAT THE BODY CAN CARRY",
+            lines = if (fields.isEmpty()) emptyList() else listOf(
+                "Anything here can appear in the message, and so reach whoever the recipient rule " +
+                    "above resolves to: " + fields.joinToString(", "),
+            ) + entry.emitters.mapNotNull { it.dataNote },
+            empty = "No merge fields are recorded for this row.",
+        )
+        NotifDeliveryEvidenceBlock(notificationKey = entry.key)
+    }
+}
+@Composable
+private fun NotifDetailBlock(title: String, lines: List<String>, empty: String) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+        if (lines.isEmpty()) {
+            Text(empty, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+        } else {
+            lines.forEach { line ->
+                Text(line, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
+    }
+}
+/**
+ * The last few real sends of one catalog key, loaded on demand.
+ *
+ * Loaded per opened row rather than up front: the operator asking "what could
+ * go out" asks about one notification, and prefetching 44 keys' dispatch
+ * history would be a lot of reads for a question nobody asked.
+ */
+@Composable
+private fun NotifDeliveryEvidenceBlock(notificationKey: String) {
+    val c = AuntieTheme.colors
+    val repo = remember { AuntieOSApp.instance.repository }
+    var evidence by remember(notificationKey) { mutableStateOf<NotificationDeliveryEvidence?>(null) }
+    var loading by remember(notificationKey) { mutableStateOf(true) }
+    var error by remember(notificationKey) { mutableStateOf<String?>(null) }
+    LaunchedEffect(notificationKey) {
+        loading = true
+        repo.listNotificationDeliveries(key = notificationKey, limit = 10)
+            .onSuccess { evidence = it; error = null }
+            .onFailure { error = it.message ?: "Couldn't read the delivery log" }
+        loading = false
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("WHETHER IT GOT OUT", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+        val ev = evidence
+        when {
+            loading -> Text("Reading the delivery log…", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+            error != null -> Text(
+                "Couldn't read the delivery log: $error",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.error,
+            )
+            ev == null || ev.deliveries.isEmpty() -> Text(
+                "This notification has not been dispatched yet, so there is nothing to show. " +
+                    "An empty log is not evidence it failed.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textFaint,
+            )
+            else -> {
+                // The server's own ceiling on what "sent" proves. Rendered rather
+                // than paraphrased, so the two clients cannot soften it differently.
+                Text(ev.sentMeaning, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+                ev.deliveries.forEach { row ->
+                    val recipient = row.recipientUid.ifBlank { "unknown recipient" }
+                    Text(
+                        "to $recipient",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                    row.attempts.forEach { attempt ->
+                        val phrase = notifDeliveryPhrase(attempt.status, attempt.skipReason, attempt.errorMessage)
+                        Text(
+                            "  ${attempt.channel}: ${phrase.label}. ${phrase.detail}" +
+                                (attempt.providerMessageId?.let { " Provider id $it." } ?: "") +
+                                (if (attempt.attempts > 1) " Tried ${attempt.attempts} times." else ""),
+                            style = AuntieTheme.typography.bodySmall,
+                            color = when (phrase.tone) {
+                                NotifDeliveryTone.Bad -> c.error
+                                NotifDeliveryTone.Warn -> c.warning
+                                NotifDeliveryTone.Neutral -> c.textFaint
+                                NotifDeliveryTone.Good -> c.textDim
+                            },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

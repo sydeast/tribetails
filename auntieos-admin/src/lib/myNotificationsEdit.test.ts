@@ -22,13 +22,28 @@ function entry(over: Partial<NotificationCatalogEntry> = {}): NotificationCatalo
     alwaysEnabledStreams: new Set(),
     kinfolkFacing: false,
     deliveryMode: 'trigger',
+    whoReceives: [],
+    recipientResolver: '',
+    emitters: [],
+    neverFires: false,
+    templates: {},
+    mergeFields: [],
+    external: false,
     description: '',
     ...over,
   };
 }
 
 function matrix(over: Partial<NotificationMatrix> = {}): NotificationMatrix {
-  return { catalog: [], overrides: {}, updatedAtMs: null, ...over };
+  return {
+    catalog: [],
+    overrides: {},
+    ungated: [],
+    businessAdminCount: null,
+    businessAdminRosterPath: 'businessSettings/admins.uids',
+    updatedAtMs: null,
+    ...over,
+  };
 }
 
 describe('setUserChannelChoice', () => {

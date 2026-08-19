@@ -27,6 +27,7 @@
     "strip:visit-location": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/stripBookingVisitLocation.ts",
     "backfill:booking-kin-roster": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillBookingKinRoster.ts",
     "backfill:kintale-provenance": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCreatedAtProvenance.ts",
+    "backfill:tribal-intel-ids": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillTribalIntelTargetIds.ts",
     "backfill:notif-split": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillNotificationDeliverySplit.ts",
     "backfill:stripe-payment-cents": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillStripePaymentAmountCents.ts",
     "repair:blocked-slots": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/repairBlockedTimeSlotShape.ts",

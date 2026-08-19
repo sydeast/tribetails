@@ -69,10 +69,19 @@ class AuntieRepository(
      * `FirebaseFirestore.getInstance()` lazily on first use.
      */
     firestoreProvider: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() },
+    /**
+     * Test seam only, the same lazy-provider shape [AuthGate] already takes.
+     * Production call sites pass nothing, so `auth` below still resolves
+     * `FirebaseAuth.getInstance()` lazily on first use. A sign-in test passes
+     * the SAME mocked [FirebaseAuth] here and to its [AuthGate], because the
+     * thing worth testing about a session ending is that the Firebase sign-out
+     * and the claim cache move together.
+     */
+    authProvider: () -> FirebaseAuth = { FirebaseAuth.getInstance() },
 ) {
     private val firestore by lazy(firestoreProvider)
     private val storage by lazy { FirebaseStorage.getInstance() }
-    private val auth by lazy { FirebaseAuth.getInstance() }
+    private val auth by lazy(authProvider)
     private val functions by lazy { functionsOverride ?: FirebaseFunctions.getInstance("us-central1") }
     private val authMutex = Mutex()
 
@@ -97,7 +106,7 @@ class AuntieRepository(
             auth.signInWithEmailAndPassword(email.trim(), password).await()
             val token = auth.currentUser?.getIdToken(true)?.await()
             if (token?.claims?.get("admin") != true) {
-                auth.signOut()
+                endSession()
                 error("This account does not have the admin claim.")
             }
             AuntieLog.i("Admin sign-in successful: ${auth.currentUser?.uid}")
@@ -149,10 +158,28 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Password change failed", it) }
 
     suspend fun signOut(): Result<Unit> = runCatching {
-        auth.signOut()
-        authGate.clearTestModeCache()
+        endSession()
         Unit
     }.onFailure { AuntieLog.e("Sign-out failed", it) }
+
+    /**
+     * The ONE way a session ends here, whatever ended it: the operator tapping
+     * Sign out, or [signInAdmin] refusing an account that turned out not to be
+     * an admin. Both of those really do sign a Firebase user out, so both owe
+     * the same teardown.
+     *
+     * The two steps are one step. Signing out of Firebase while leaving the
+     * [AuthGate] claim cache populated keeps the finished session's
+     * `testTribeId` live for whoever signs in next, and a sandbox scope is what
+     * decides which business's records a query is allowed to see. The refusal
+     * path used to call `auth.signOut()` directly and skip the cache, which is
+     * precisely that leak; it is a private method rather than a comment so the
+     * next branch that ends a session cannot half-do it by accident.
+     */
+    private fun endSession() {
+        auth.signOut()
+        authGate.clearTestModeCache()
+    }
 
     suspend fun currentAdminIdToken(forceRefresh: Boolean = false): Result<String> = runCatching {
         authGate.ensureAuthenticated()
@@ -2797,9 +2824,41 @@ class AuntieRepository(
         NotificationMatrix(
             catalog = catalog,
             overrides = overrides,
+            // #396: who receives it, what fires it, which template renders it,
+            // and the mail this gate does NOT govern. Every field defaults to
+            // empty, so a build talking to functions that predate the
+            // projection still parses and simply shows nothing.
+            ungated = ungatedSendsFromRaw(raw["ungated"]),
+            businessAdminCount = (raw["businessAdminCount"] as? Number)?.toInt(),
+            businessAdminRosterPath = raw["businessAdminRosterPath"] as? String ?: "",
             updatedAtMs = (raw["updatedAtMs"] as? Number)?.toLong(),
         )
     }.onFailure { AuntieLog.e("Failed to load notification overrides", it) }
+    /**
+     * #396: the last few real sends of one catalog key, or of every key when
+     * [key] is null.
+     *
+     * The first reader `notificationDispatch` has ever had on this client. It
+     * reports what the pipeline recorded and nothing more: "sent" means a
+     * provider accepted the message, not that it arrived, because no webhook in
+     * the platform writes a receipt back to a notification's channel subdoc.
+     */
+    suspend fun listNotificationDeliveries(
+        key: String? = null,
+        limit: Int = 10,
+    ): Result<NotificationDeliveryEvidence> = runCatching {
+        authGate.ensureAuthenticated()
+        val args = buildMap<String, Any> {
+            key?.takeIf { it.isNotBlank() }?.let { put("key", it) }
+            put("limit", limit)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listNotificationDeliveries")
+            .call(args)
+            .await().data as? Map<String, Any?>
+            ?: error("listNotificationDeliveries: non-map payload")
+        notificationDeliveryEvidenceFromMap(raw)
+    }.onFailure { AuntieLog.e("Failed to load notification deliveries", it) }
 
     suspend fun saveBusinessNotificationOverride(key: String, override: NotificationOverride): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()

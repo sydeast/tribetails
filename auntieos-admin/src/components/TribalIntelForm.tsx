@@ -11,8 +11,11 @@ import {
   TRIBAL_INTEL_TARGET_TYPES,
   blankTribalIntelDraft,
   tribalIntelCallableArgs,
+  tribalIntelStaleOptionLabel,
+  tribalIntelStaleTargetMessage,
   tribalIntelTargetTypeLabel,
   validateTribalIntelDraft,
+  validateTribalIntelTargetRoster,
   type TribalIntelDraft,
   type TribalIntelDraftErrors,
   type TribalIntelTargetType,
@@ -93,6 +96,30 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
     [kin, draft.targetKinfolkId],
   );
 
+  // ── the stale target (issue #460) ───────────────────────────────────────
+  // A legacy row stores a person NAME where a newer one stores an id. Seeding
+  // the picker with that name matched no option, so the select fell back to its
+  // placeholder and the editor showed a BLANK target for a note that plainly
+  // named somebody — and `min(1)` let the name be saved straight back. The
+  // stored value stays on screen instead, as a selected option of its own, with
+  // the reason underneath. Recomputed on every render rather than stored,
+  // because it is a fact about the current draft and the current roster.
+  const kinfolkIds = useMemo(() => kinfolk.map((kf) => kf._id), [kinfolk]);
+  // EVERY pet, archived included: the server checks the pet exists, not that it
+  // is active, so `petsForHousehold` here would refuse a save the server allows.
+  const kinIds = useMemo(() => kin.map((k) => k._id), [kin]);
+  const staleAnchor = tribalIntelStaleTargetMessage(
+    draft.targetKinfolkId,
+    kinfolkIds,
+    draft.targetType === 'KINFOLK' ? 'kinfolk' : 'household',
+  );
+  const staleKin =
+    draft.targetType === 'KIN' ? tribalIntelStaleTargetMessage(draft.targetKinId, kinIds, 'kin') : null;
+  // The save-time error wins when both exist: they say the same thing, and two
+  // copies of one message under one field reads as two problems.
+  const anchorMessage = errors.targetKinfolkId ?? staleAnchor;
+  const kinMessage = errors.targetKinId ?? staleKin;
+
   function patch(next: Partial<TribalIntelDraft>) {
     setDraft((cur) => ({ ...cur, ...next }));
     setErrors({});
@@ -130,7 +157,13 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
   }
 
   async function save() {
-    const found = validateTribalIntelDraft(draft);
+    // Two halves: the shape rules the callable's zod schema carries, and the
+    // roster rules its target resolver carries (issue #460). Both are the
+    // server's; neither is invented here.
+    const found = {
+      ...validateTribalIntelDraft(draft),
+      ...validateTribalIntelTargetRoster(draft, kinfolkIds, kinIds),
+    };
     if (Object.keys(found).length > 0) {
       setErrors(found);
       return;
@@ -253,20 +286,29 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
           className="tribal-form__select"
           value={draft.targetKinfolkId}
           onChange={(e) => chooseHousehold(e.target.value)}
-          aria-invalid={errors.targetKinfolkId !== undefined}
+          aria-invalid={anchorMessage != null}
         >
           <option value="">
             {draft.targetType === 'KINFOLK' ? 'Select a kinfolk...' : 'Select a household...'}
           </option>
+          {/*
+            The stale value gets an option of its own so the select can show it.
+            Without it the browser has nothing matching `value` to select and
+            falls back to the placeholder, which blanks the target of a note that
+            plainly named somebody (issue #460).
+          */}
+          {staleAnchor !== null && (
+            <option value={draft.targetKinfolkId}>
+              {tribalIntelStaleOptionLabel(draft.targetKinfolkId)}
+            </option>
+          )}
           {kinfolk.map((kf) => (
             <option key={kf._id} value={kf._id}>
               {draft.targetType === 'KINFOLK' ? kinfolkDisplayName(kf) : householdOptionLabel(kf)}
             </option>
           ))}
         </select>
-        {errors.targetKinfolkId !== undefined && (
-          <p className="tribal-form__error">{errors.targetKinfolkId}</p>
-        )}
+        {anchorMessage != null && <p className="tribal-form__error">{anchorMessage}</p>}
       </div>
 
       {draft.targetType === 'KIN' && (
@@ -280,11 +322,15 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
             value={draft.targetKinId}
             onChange={(e) => patch({ targetKinId: e.target.value })}
             disabled={draft.targetKinfolkId === ''}
-            aria-invalid={errors.targetKinId !== undefined}
+            aria-invalid={kinMessage != null}
           >
             <option value="">
               {draft.targetKinfolkId === '' ? 'Pick a household first...' : 'Select a pet...'}
             </option>
+            {/* Same reason as the household picker: a stale pet id stays readable. */}
+            {staleKin !== null && (
+              <option value={draft.targetKinId}>{tribalIntelStaleOptionLabel(draft.targetKinId)}</option>
+            )}
             {petsForHousehold.map((k) => (
               <option key={k._id} value={k._id}>
                 {str(k.name).trim() === '' ? k._id : str(k.name)}
@@ -296,7 +342,7 @@ export function TribalIntelForm({ editing, kinfolk, kin, onCancel, onSaved }: Tr
               This household has no active pets on file. Target the household or one kinfolk instead.
             </p>
           )}
-          {errors.targetKinId !== undefined && <p className="tribal-form__error">{errors.targetKinId}</p>}
+          {kinMessage != null && <p className="tribal-form__error">{kinMessage}</p>}
         </div>
       )}
 
@@ -387,6 +433,14 @@ function householdOptionLabel(kf: Kinfolk): string {
  * silently blank the household on every legacy row the operator opens. Such a
  * row opens as HOUSEHOLD-targeted, per `tribalIntelTarget`, and saving it is
  * what gives it an explicit target at rest.
+ *
+ * When that fallback value is a NAME rather than an id (issue #460), the draft
+ * still carries it — and the picker now shows it, labelled as unresolved,
+ * rather than quietly falling back to its placeholder. The save is blocked
+ * until a real record is chosen, which is what the callable enforces too. The
+ * sweep in `mytribe/scripts/backfillTribalIntelTargetIds.ts` is what turns
+ * those names into ids in bulk; this is what the operator sees for one that has
+ * not been swept yet.
  */
 function draftFrom(entry: TribalIntelEntry | null): TribalIntelDraft {
   if (entry === null) return blankTribalIntelDraft();

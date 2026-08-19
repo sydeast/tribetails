@@ -8,6 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget';
 
 /**
  * Phase 12 / spec 23: server-bound creation of a `training_documents` (Tribal
@@ -40,8 +41,20 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * READING AN OLD DOC: a `training_documents` row written before this change may
  * carry no `targetType` at all (the NDJSON migration import). The clients read
  * a blank one as HOUSEHOLD, the widest, non-fabricating answer, and the one the
- * nightly pipeline already acts on. Nothing is backfilled; an old doc gains an
- * explicit `targetType` the first time an operator saves it.
+ * nightly pipeline already acts on. An old doc gains an explicit `targetType`
+ * the first time an operator saves it, and the ids it points at are repaired
+ * ahead of that by `mytribe/scripts/backfillTribalIntelTargetIds.ts`.
+ *
+ * ── THE TARGET MUST RESOLVE (issue #460) ──────────────────────────────────
+ * `targetKinfolkId` used to be checked with `min(1)` alone, so a person's NAME
+ * passed validation as readily as an id — which is exactly what the legacy
+ * rows carry, and exactly what the editor handed back when its picker found no
+ * matching option. `assertTribalIntelTargetResolves` now reads the referenced
+ * documents and refuses a save that names nothing, so a note can no longer be
+ * stored pointing at text no reader can resolve. See
+ * `../lib/resolveTribalIntelTarget.ts` for what "resolves" means and why the
+ * check is imperative rather than a zod refinement (a refinement cannot await
+ * a Firestore read).
  *
  * NOTE on attachments: the reconcile LLM cannot read image bytes; attachments are
  * cited as provenance (URLs) only and never claimed to have been analyzed.
@@ -96,6 +109,10 @@ export async function createTrainingDocumentHandler(
     }
     throw err;
   }
+
+  // The shape is legal; now prove the target is a real record. Done BEFORE the
+  // write so a note is never created pointing at a name (issue #460).
+  await assertTribalIntelTargetResolves(args);
 
   const nowIso = new Date().toISOString();
   const ref = await db().collection('training_documents').add({

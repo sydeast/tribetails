@@ -29,6 +29,23 @@ fun legacyAudienceSet(audience: String): Set<String> = when (audience.trim().low
     else -> setOf(STREAM_KINFOLK)
 }
 
+/** One call site that dispatches a catalog key (#396). Server-authored English. */
+data class NotificationEmitter(
+    /** What happens in the business to set this off, in plain words. */
+    val trigger: String = "",
+    /** Where it lives, relative to mytribe/functions/. */
+    val source: String = "",
+    /** The keys that call site puts in the merge bag. This is the leak surface. */
+    val dataKeys: List<String> = emptyList(),
+    /** Set when the listed keys are not the whole story. */
+    val dataNote: String? = null,
+)
+/** One outbound email the notification gate does NOT govern (#396). */
+data class UngatedSend(
+    val templateId: String = "",
+    val trigger: String = "",
+    val source: String = "",
+)
 /** One notification type from the server catalog. */
 data class NotificationCatalogEntry(
     val key: String,
@@ -49,8 +66,41 @@ data class NotificationCatalogEntry(
     /** Streams this key fans out to (business/staff/kinfolk; subset, >=1; never
      *  business+staff together). Server-sent; defaults from the legacy audience. */
     val audiences: Set<String> = legacyAudienceSet(audience),
+    // ── #396 provenance. Every one defaults to empty, so a payload from a
+    // backend that predates the projection still parses and simply has nothing
+    // to show. The two sides deploy separately.
+    /** Who it reaches, one server-written sentence per resolver in play. */
+    val whoReceives: List<String> = emptyList(),
+    val recipientResolver: String = "",
+    val secondaryResolver: String? = null,
+    /** Every call site that dispatches this key. Empty when nothing does. */
+    val emitters: List<NotificationEmitter> = emptyList(),
+    /** True when NO code fires this key, so its toggles control nothing. */
+    val neverFires: Boolean = false,
+    /**
+     * channel -> the `${'$'}{channel}Templates/{id}` document that ACTUALLY renders
+     * it. Email is the EFFECTIVE id after `notificationTemplateBindings`, not
+     * the catalog default, because the gate can retarget an email and naming the
+     * catalog document on a retargeted row would report the wrong body.
+     */
+    val templates: Map<String, String> = emptyMap(),
+    /** The catalog default email template, when a binding has moved email off it. */
+    val emailTemplateRetargetedFrom: String? = null,
+    /** Merge fields the server hydrates for this key's templates. */
+    val mergeFields: List<String> = emptyList(),
+    /** True when an outside system delivers it and this gate controls nothing. */
+    val external: Boolean = false,
 ) {
-    /** The whole-notification toggle is locked when the catalog marks it alwaysEnabled. */
+    /**
+     * ADVISORY, NOT A LOCK (#396). This says the catalog marks the notification
+     * too important to silence. It does NOT mean the operator cannot silence
+     * it: `resolveChannels` in MyTribe functions has no alwaysEnabled check at
+     * all, deliberately, since ruling #7 (2026-06-08, warn-but-allow-off). The
+     * gate matrix must therefore never disable its On/Off toggle off this
+     * value, or Android would enforce a rule the server does not and the same
+     * operator would get two different answers on two devices. It renders as a
+     * risk badge instead; see [notifAlwaysOnBadge].
+     */
     fun enabledLocked(): Boolean = alwaysEnabled
 
     /**
@@ -99,6 +149,12 @@ data class NotificationOverride(
 data class NotificationMatrix(
     val catalog: List<NotificationCatalogEntry> = emptyList(),
     val overrides: Map<String, NotificationOverride> = emptyMap(),
+    /** Mail the platform sends that this gate does NOT govern (#396). */
+    val ungated: List<UngatedSend> = emptyList(),
+    /** How many people a `businessAdmins` row reaches now. Null = unreadable. */
+    val businessAdminCount: Int? = null,
+    /** Where that roster lives, so the number is checkable. */
+    val businessAdminRosterPath: String = "",
     val updatedAtMs: Long? = null,
 ) {
     /** Effective FLAT on/off for a whole notification key (override wins; default = on). */
@@ -356,8 +412,52 @@ fun notificationCatalogEntryFromMap(m: Map<*, *>): NotificationCatalogEntry? {
         description = m["description"] as? String ?: "",
         marketingCategory = m["marketingCategory"] as? String,
         audiences = audienceSetFromRaw(m["audiences"], audience),
+        whoReceives = stringList(m["whoReceives"]),
+        recipientResolver = m["recipientResolver"] as? String ?: "",
+        secondaryResolver = m["secondaryResolver"] as? String,
+        emitters = notificationEmittersFromRaw(m["emitters"]),
+        neverFires = m["neverFires"] as? Boolean ?: false,
+        templates = stringMap(m["templates"]),
+        emailTemplateRetargetedFrom = (m["emailTemplateRetargetedFrom"] as? String)
+            ?.takeIf { it.isNotBlank() },
+        mergeFields = stringList(m["mergeFields"]),
+        external = m["external"] as? Boolean ?: false,
     )
 }
+/** `["a", "b"]` -> `["a", "b"]`, skipping anything that is not a string. */
+fun stringList(raw: Any?): List<String> =
+    (raw as? List<*>).orEmpty().mapNotNull { it as? String }
+/** `{ email: "invoice.new" }` -> the same, skipping non-string entries. */
+fun stringMap(raw: Any?): Map<String, String> =
+    (raw as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) ->
+        val key = k as? String ?: return@mapNotNull null
+        val value = v as? String ?: return@mapNotNull null
+        key to value
+    }.toMap()
+/** Parses the server's emitter list. A row with no trigger text is dropped:
+ *  an emitter that cannot say what it does is worse than no emitter shown. */
+fun notificationEmittersFromRaw(raw: Any?): List<NotificationEmitter> =
+    (raw as? List<*>).orEmpty().mapNotNull { item ->
+        val m = item as? Map<*, *> ?: return@mapNotNull null
+        val trigger = m["trigger"] as? String ?: return@mapNotNull null
+        NotificationEmitter(
+            trigger = trigger,
+            source = m["source"] as? String ?: "",
+            dataKeys = stringList(m["dataKeys"]),
+            dataNote = (m["dataNote"] as? String)?.takeIf { it.isNotBlank() },
+        )
+    }
+/** Parses the "not gated here" list. A send with no template id is dropped. */
+fun ungatedSendsFromRaw(raw: Any?): List<UngatedSend> =
+    (raw as? List<*>).orEmpty().mapNotNull { item ->
+        val m = item as? Map<*, *> ?: return@mapNotNull null
+        val templateId = m["templateId"] as? String ?: return@mapNotNull null
+        UngatedSend(
+            templateId = templateId,
+            trigger = m["trigger"] as? String ?: "",
+            source = m["source"] as? String ?: "",
+        )
+    }
 
 /** Parses one stored override (flat fields + lockReason + per-stream gates). */
 fun notificationOverrideFromMap(o: Map<*, *>): NotificationOverride = NotificationOverride(

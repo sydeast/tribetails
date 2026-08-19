@@ -204,4 +204,54 @@ class TribalIntelTargetTest {
     fun `is null when the entry names nobody, so the row draws no target line`() {
         assertNull(tribalIntelTargetLabel(doc(), roster, pets))
     }
+    // -- the stale target (issue #460) --------------------------------------
+    private val rosterIds = listOf("kf1", "kf2")
+    @Test
+    fun `says nothing about an id the roster holds`() {
+        assertNull(tribalIntelStaleTargetMessage("kf1", rosterIds, TribalIntelTargetNoun.HOUSEHOLD))
+    }
+    @Test
+    fun `says nothing about a blank value, because an unset target is a different complaint`() {
+        assertNull(tribalIntelStaleTargetMessage("", rosterIds, TribalIntelTargetNoun.HOUSEHOLD))
+        assertNull(tribalIntelStaleTargetMessage("   ", rosterIds, TribalIntelTargetNoun.HOUSEHOLD))
+    }
+    @Test
+    fun `says nothing while the directory is empty, because that means not loaded yet`() {
+        assertNull(
+            tribalIntelStaleTargetMessage("Jane Halbrook", emptyList(), TribalIntelTargetNoun.HOUSEHOLD),
+        )
+    }
+    @Test
+    fun `names the stored value and the fix when the reference is a person name`() {
+        val msg = tribalIntelStaleTargetMessage("Jane Halbrook", rosterIds, TribalIntelTargetNoun.HOUSEHOLD)
+        assertEquals(
+            "This entry points at \"Jane Halbrook\", which is not a household on the roster. " +
+                "Pick the right household. It cannot be saved as it stands.",
+            msg,
+        )
+    }
+    @Test
+    fun `uses the noun each picker uses`() {
+        assertEquals(
+            true,
+            tribalIntelStaleTargetMessage("x", rosterIds, TribalIntelTargetNoun.KINFOLK)!!
+                .contains("kinfolk on the roster"),
+        )
+        assertEquals(
+            true,
+            tribalIntelStaleTargetMessage("x", rosterIds, TribalIntelTargetNoun.KIN)!!
+                .contains("pet on the roster"),
+        )
+    }
+    @Test
+    fun `labels the stale value with the value itself`() {
+        assertEquals("Unresolved: \"Jane Halbrook\"", tribalIntelStaleOptionLabel("Jane Halbrook"))
+    }
+    @Test
+    fun `the anchor picker is the kinfolk one only under a KINFOLK target`() {
+        assertEquals(TribalIntelTargetNoun.KINFOLK, anchorNounFor("KINFOLK"))
+        assertEquals(TribalIntelTargetNoun.HOUSEHOLD, anchorNounFor("HOUSEHOLD"))
+        assertEquals(TribalIntelTargetNoun.HOUSEHOLD, anchorNounFor("KIN"))
+        assertEquals(TribalIntelTargetNoun.HOUSEHOLD, anchorNounFor(""))
+    }
 }

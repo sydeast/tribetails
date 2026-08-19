@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { AttachmentSchema } from './createTrainingDocument';
+import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget';
 
 /**
  * Phase 12 / spec 23: server-bound edit of a `training_documents` (Tribal Intel)
@@ -19,7 +20,16 @@ import { AttachmentSchema } from './createTrainingDocument';
  * HOUSEHOLD | KINFOLK | KIN (issue #393); see createTrainingDocument.ts for
  * what each one names and which id carries it. Because this handler always
  * writes an explicit `targetType`, a legacy row that carried none picks one up
- * the first time an operator saves it, without a backfill.
+ * the first time an operator saves it.
+ *
+ * THIS IS THE HANDLER ISSUE #460 IS ABOUT. Editing a legacy row seeded the
+ * picker with the person NAME stored in `kinfolkRef`, no option matched it, and
+ * `min(1)` accepted the name back — so an edit could leave the note pointing at
+ * unresolvable text, and the operator was never told. The save now has to name
+ * a record that exists (`../lib/resolveTribalIntelTarget.ts`), and a row whose
+ * reference is still a name is repaired by
+ * `mytribe/scripts/backfillTribalIntelTargetIds.ts` rather than by a guess made
+ * here.
  */
 export const UpdateTrainingDocumentArgs = z
   .object({
@@ -70,6 +80,11 @@ export async function updateTrainingDocumentHandler(
   if (!snap.exists) {
     throw new HttpsError('not-found', 'Tribal Intel entry not found.');
   }
+
+  // Which row is being edited comes first; what it points at comes second. A
+  // caller sending a bad docId AND a bad target should hear about the row that
+  // does not exist, because that is the fault that makes the rest moot.
+  await assertTribalIntelTargetResolves(args);
 
   await docRef.set(
     {

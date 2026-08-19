@@ -30,6 +30,28 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
   } as unknown as CallableRequest<unknown>;
 }
 
+/**
+ * The roster both write handlers now READ before they accept a target
+ * (issue #460). Every fixture below carries it, because a save whose
+ * `targetKinfolkId` names no `kinfolk` document is refused — which is the whole
+ * point of the change, and is asserted on its own further down.
+ *
+ * `kin/k-other` exists to prove the pet/household pairing is checked, not just
+ * the pet's existence.
+ */
+const ROSTER: Record<string, Record<string, unknown> | null> = {
+  'kinfolk/kf1': { firstName: 'Jane', lastName: 'Halbrook' },
+  'kinfolk/kf2': { firstName: 'Marcus', lastName: 'Vance' },
+  'kin/k9': { kinfolkId: 'kf1', name: 'Rufus' },
+  'kin/k-other': { kinfolkId: 'kf2', name: 'Biscuit' },
+};
+
+function roster(
+  extra: Record<string, Record<string, unknown> | null> = {},
+): Record<string, Record<string, unknown> | null> {
+  return { ...ROSTER, ...extra };
+}
+
 const okAttachment = {
   storageUrl: 'https://res.cloudinary.com/x/image/upload/v1/tribal/a.jpg',
   cloudinaryPublicId: 'tribal/a',
@@ -40,7 +62,7 @@ const okAttachment = {
 
 describe('createTrainingDocument', () => {
   it('HAPPY: writes a pending doc with KINFOLK target + returns docId', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createTrainingDocumentHandler(req({
       title: 'Gate code', content: 'Side gate code is 4321.',
@@ -59,7 +81,7 @@ describe('createTrainingDocument', () => {
   });
 
   it('HAPPY: HOUSEHOLD target stores the household anchor and no kin id', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createTrainingDocumentHandler(req({
       title: 'Holiday plans', content: 'The whole house is away over Thanksgiving.',
@@ -77,7 +99,7 @@ describe('createTrainingDocument', () => {
   });
 
   it('HAPPY: HOUSEHOLD target drops a stale kin id rather than storing it', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createTrainingDocumentHandler(req({
       content: 'Everyone in the house is moving in March.',
@@ -90,7 +112,7 @@ describe('createTrainingDocument', () => {
   });
 
   it('SAD: an unknown target type is rejected (invalid-argument)', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(createTrainingDocumentHandler(req({
       content: 'note', targetType: 'FAMILY', targetKinfolkId: 'kf1',
@@ -98,7 +120,7 @@ describe('createTrainingDocument', () => {
   });
 
   it('HAPPY: KIN target stores targetKinId + attachments', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createTrainingDocumentHandler(req({
       content: 'Rex is allergic to chicken.',
@@ -111,7 +133,7 @@ describe('createTrainingDocument', () => {
   });
 
   it('HAPPY: writes a CREATE_TRAINING_DOCUMENT audit entry', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createTrainingDocumentHandler(req({
       content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
@@ -123,36 +145,102 @@ describe('createTrainingDocument', () => {
   });
 
   it('SAD: unauthenticated rejected', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     await expect(createTrainingDocumentHandler(req({
       content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
     }, null))).rejects.toThrow();
   });
 
   it('SAD: no title/content/attachment rejected (invalid-argument)', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     await expect(createTrainingDocumentHandler(req({
       title: '   ', content: '', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
     }))).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
   it('SAD: KIN target without targetKinId rejected', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     await expect(createTrainingDocumentHandler(req({
       content: 'note', targetType: 'KIN', targetKinfolkId: 'kf1',
     }))).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
   it('NEGATIVE: bad attachment URL rejected', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     await expect(createTrainingDocumentHandler(req({
       content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
       attachments: [{ ...okAttachment, storageUrl: 'not-a-url' }],
     }))).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
+  // ── issue #460: the target must be an id that RESOLVES ──────────────────
+
+  it('SAD: a target that is a person NAME rather than an id is refused', async () => {
+    // The exact shape of the bug: the editor seeded its picker from the legacy
+    // free-text `kinfolkRef`, nothing matched, and `min(1)` accepted the name
+    // straight back. A length check cannot tell a name from an id, so the
+    // handler reads the record instead.
+    const ctx = buildDbMock({ docs: roster() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'Gate code is 4321.', targetType: 'HOUSEHOLD', targetKinfolkId: 'Jane Halbrook',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    // Refused BEFORE the write, not cleaned up after it.
+    expect(ctx.adds.find((a) => a.collection === 'training_documents')).toBeUndefined();
+  });
+
+  it('SAD: the refusal names the value and the picker to use', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'Jane Halbrook',
+    }))).rejects.toThrow(/"Jane Halbrook"[\s\S]*Pick the right kinfolk/);
+  });
+
+  it('SAD: an id-shaped reference that no longer exists is refused too', async () => {
+    // Not only names. A household deleted after the note was filed leaves a
+    // dangling id, which resolves no better than free text does.
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'HOUSEHOLD', targetKinfolkId: 'kf-deleted',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('SAD: a reference carrying a slash is refused, not thrown as internal', async () => {
+    // `collection().doc('a/b')` throws a raw SDK error rather than reporting a
+    // miss, which would reach the operator as an opaque `internal`.
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'HOUSEHOLD', targetKinfolkId: 'kinfolk/kf1',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('SAD: a KIN target naming a pet that does not exist is refused', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'Rufus',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('SAD: a pet belonging to another household is refused', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k-other',
+    }))).rejects.toThrow(/belongs to household "kf2"/);
+  });
+
+  it('HAPPY: an orphan pet with no owner on file still saves', async () => {
+    // A `kin` row with a blank `kinfolkId` is a defect in a different
+    // collection. Refusing intel about it would punish the operator for it.
+    const ctx = buildDbMock({ docs: roster({ 'kin/k-orphan': { kinfolkId: '', name: 'Smudge' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createTrainingDocumentHandler(req({
+      content: 'note', targetType: 'KIN', targetKinfolkId: 'kf1', targetKinId: 'k-orphan',
+    }));
+    expect(res.ok).toBe(true);
+  });
+
   it('NEGATIVE: too many attachments rejected', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     const many = Array.from({ length: 26 }, () => okAttachment);
     await expect(createTrainingDocumentHandler(req({
       content: 'note', targetType: 'KINFOLK', targetKinfolkId: 'kf1', attachments: many,
@@ -162,7 +250,7 @@ describe('createTrainingDocument', () => {
 
 describe('updateTrainingDocument', () => {
   it('HAPPY: re-queues an existing doc (reconcileStatus pending)', async () => {
-    const ctx = buildDbMock({ docs: { 'training_documents/d1': { reconcileStatus: 'applied' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { reconcileStatus: 'applied' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await updateTrainingDocumentHandler(req({
       docId: 'd1', content: 'Updated note', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
@@ -174,7 +262,7 @@ describe('updateTrainingDocument', () => {
   });
 
   it('HAPPY: re-targets an entry from KINFOLK to HOUSEHOLD on edit', async () => {
-    const ctx = buildDbMock({ docs: { 'training_documents/d1': { targetType: 'KINFOLK' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { targetType: 'KINFOLK' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateTrainingDocumentHandler(req({
       docId: 'd1', content: 'Actually this is about the whole house.',
@@ -186,7 +274,7 @@ describe('updateTrainingDocument', () => {
   });
 
   it('HAPPY: re-targets an entry from HOUSEHOLD to KIN on edit', async () => {
-    const ctx = buildDbMock({ docs: { 'training_documents/d1': { targetType: 'HOUSEHOLD' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { targetType: 'HOUSEHOLD' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateTrainingDocumentHandler(req({
       docId: 'd1', content: 'This one is about Rex after all.',
@@ -200,7 +288,7 @@ describe('updateTrainingDocument', () => {
   it('HAPPY: a legacy entry carrying no target type gains an explicit one on save', async () => {
     // The migrated NDJSON rows carry `kinfolkRef` and nothing else. Saving one
     // is the upgrade path: no backfill script, and nothing touches prod.
-    const ctx = buildDbMock({ docs: { 'training_documents/legacy1': { kinfolkRef: 'kf1' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/legacy1': { kinfolkRef: 'kf1' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateTrainingDocumentHandler(req({
       docId: 'legacy1', title: 'Imported', content: 'Still true.',
@@ -212,15 +300,52 @@ describe('updateTrainingDocument', () => {
   });
 
   it('SAD: missing doc rejected (not-found)', async () => {
-    const ctx = buildDbMock({ docs: {} });
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(updateTrainingDocumentHandler(req({
       docId: 'nope', content: 'x', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
     }))).rejects.toMatchObject({ code: 'not-found' });
   });
 
+  it('SAD: saving a legacy row back with its stored NAME is refused (issue #460)', async () => {
+    // End to end, the reported bug: the row stores "Jane Halbrook" in
+    // `kinfolkRef`, the editor seeds the picker with it, nothing matches, and
+    // the operator hits Save. Before this change the name was written straight
+    // back and the note stayed unresolvable.
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/legacy1': { kinfolkRef: 'Jane Halbrook' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateTrainingDocumentHandler(req({
+      docId: 'legacy1', title: 'Imported', content: 'Still true.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'Jane Halbrook',
+    }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(ctx.writes.find((w) => w.path === 'training_documents/legacy1')).toBeUndefined();
+  });
+
+  it('HAPPY: the same legacy row saves once the picker holds a real id', async () => {
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/legacy1': { kinfolkRef: 'Jane Halbrook' } }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateTrainingDocumentHandler(req({
+      docId: 'legacy1', title: 'Imported', content: 'Still true.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    expect(res.ok).toBe(true);
+    const write = ctx.writes.find((w) => w.path === 'training_documents/legacy1');
+    // Both fields land on the id, so the nightly Python pipeline resolves the
+    // row through either one (reconcile_comms.py reads targetKinfolkId OR kinfolkRef).
+    expect(write?.data.targetKinfolkId).toBe('kf1');
+    expect(write?.data.kinfolkRef).toBe('kf1');
+  });
+
+  it('SAD: a missing row is reported before its target is judged', async () => {
+    const ctx = buildDbMock({ docs: roster() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(updateTrainingDocumentHandler(req({
+      docId: 'nope', content: 'x', targetType: 'HOUSEHOLD', targetKinfolkId: 'Jane Halbrook',
+    }))).rejects.toMatchObject({ code: 'not-found' });
+  });
+
   it('HAPPY: writes an UPDATE_TRAINING_DOCUMENT audit entry', async () => {
-    const ctx = buildDbMock({ docs: { 'training_documents/d1': { reconcileStatus: 'applied' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { reconcileStatus: 'applied' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateTrainingDocumentHandler(req({
       docId: 'd1', content: 'x', targetType: 'KINFOLK', targetKinfolkId: 'kf1',
@@ -233,7 +358,7 @@ describe('updateTrainingDocument', () => {
 
 describe('deleteTrainingDocument', () => {
   it('HAPPY: deletes an existing doc + writes audit entry with unmerge caveat', async () => {
-    const ctx = buildDbMock({ docs: { 'training_documents/d1': { reconcileStatus: 'applied' } } });
+    const ctx = buildDbMock({ docs: roster({ 'training_documents/d1': { reconcileStatus: 'applied' } }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await deleteTrainingDocumentHandler(req({ docId: 'd1' }));
     expect(res.ok).toBe(true);
@@ -245,14 +370,14 @@ describe('deleteTrainingDocument', () => {
   });
 
   it('SAD: missing doc rejected (not-found)', async () => {
-    const ctx = buildDbMock({ docs: {} });
+    const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(deleteTrainingDocumentHandler(req({ docId: 'nope' })))
       .rejects.toMatchObject({ code: 'not-found' });
   });
 
   it('SAD: blank docId rejected (invalid-argument)', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: roster() }).db);
     await expect(deleteTrainingDocumentHandler(req({ docId: '' })))
       .rejects.toMatchObject({ code: 'invalid-argument' });
   });

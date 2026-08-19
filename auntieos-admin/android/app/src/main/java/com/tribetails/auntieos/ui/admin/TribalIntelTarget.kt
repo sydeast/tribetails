@@ -104,6 +104,62 @@ fun tribalIntelTarget(
 fun tribalIntelTarget(doc: TrainingDocument): TribalIntelTarget =
     tribalIntelTarget(doc.targetType, doc.targetKinfolkId, doc.targetKinId, doc.kinfolkRef)
 
+// ── the stale target (issue #460) ────────────────────────────────────────
+
+/** What a reference points at, for the wording of the stale-target message. */
+enum class TribalIntelTargetNoun { HOUSEHOLD, KINFOLK, KIN }
+
+private fun targetNounThing(noun: TribalIntelTargetNoun): String = when (noun) {
+    TribalIntelTargetNoun.HOUSEHOLD -> "household on the roster"
+    TribalIntelTargetNoun.KINFOLK -> "kinfolk on the roster"
+    TribalIntelTargetNoun.KIN -> "pet on the roster"
+}
+
+private fun targetNounAction(noun: TribalIntelTargetNoun): String = when (noun) {
+    TribalIntelTargetNoun.HOUSEHOLD -> "Pick the right household"
+    TribalIntelTargetNoun.KINFOLK -> "Pick the right kinfolk"
+    TribalIntelTargetNoun.KIN -> "Pick the right pet"
+}
+
+/**
+ * The message for a stored reference the roster cannot place, or null when
+ * there is nothing wrong with it. Byte-identical to the web admin's
+ * `tribalIntelStaleTargetMessage` (`lib/tribalIntelDraftSchema.ts`), so the same
+ * entry is complained about in the same words on both clients.
+ *
+ * WHY THIS EXISTS (issue #460): rows imported from the old system store a
+ * person's NAME where newer rows store an id. The editor seeded its dropdown
+ * with that name, `kinfolkDirectory.firstOrNull { it.id == selectedKinfolkId }`
+ * found nothing, and the field fell back to its placeholder — so the form showed
+ * a BLANK target for a note that plainly named somebody, while `hasTarget` still
+ * read the name as a filled-in target and let it be saved straight back. The
+ * value stays on screen instead, and the save is blocked.
+ *
+ * NULL WHILE THE ROSTER IS EMPTY, deliberately: an empty directory means it has
+ * not loaded yet, not that every id is stale. Without this guard every entry
+ * opened in that first moment would accuse its own target of being broken.
+ */
+fun tribalIntelStaleTargetMessage(
+    storedId: String,
+    rosterIds: List<String>,
+    noun: TribalIntelTargetNoun,
+): String? {
+    val id = storedId.trim()
+    if (id.isEmpty()) return null
+    if (rosterIds.isEmpty()) return null
+    if (rosterIds.contains(id)) return null
+    return "This entry points at \"$id\", which is not a ${targetNounThing(noun)}. " +
+        "${targetNounAction(noun)}. It cannot be saved as it stands."
+}
+
+/** The label a stale value is shown under, so an operator can read what the note was filed against. */
+fun tribalIntelStaleOptionLabel(storedId: String): String = "Unresolved: \"${storedId.trim()}\""
+
+/** The noun the anchor picker goes by for a stored target type. */
+fun anchorNounFor(targetType: String): TribalIntelTargetNoun =
+    if (targetType.trim().uppercase() == "KINFOLK") TribalIntelTargetNoun.KINFOLK
+    else TribalIntelTargetNoun.HOUSEHOLD
+
 /** A kinfolk's own name, or a named fallback so a row never reads as blank. */
 fun kinfolkDisplayName(kf: Kinfolk): String =
     "${kf.firstName} ${kf.lastName}".trim().ifBlank { "Unnamed Kinfolk" }

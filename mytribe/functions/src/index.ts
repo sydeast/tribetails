@@ -498,6 +498,9 @@ export {
   saveBusinessNotificationOverride,
   deleteBusinessNotificationOverride,
 } from './admin/notificationOverrides';
+// #396: the read path for the delivery pipeline. `notificationDispatch` and its
+// per-channel subdocs had no reader anywhere until this callable.
+export { listNotificationDeliveries } from './admin/listNotificationDeliveries';
 
 // HTTPS
 export { getShareLink } from './share/getShareLink';
