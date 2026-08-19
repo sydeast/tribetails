@@ -309,6 +309,32 @@ def test_reconcile_pass_legacy_untargeted_note_goes_to_the_bank():
     assert db.data.get("the_411", {}) == {}
 
 
+def test_reconcile_pass_kin_target_pointing_at_a_deleted_kin_is_an_error():
+    """A targeted note has exactly one destination and no fallback.
+
+    Before #461 a KIN-targeted note whose pet had since been deleted still landed
+    in the household's dossier. Now there is nowhere else for it to go, so
+    retiring it 'applied' would drop the operator's words in silence. It must
+    fail loud and stay triageable, the way an ambiguous contact match does.
+    """
+    db = seed_household()
+    db.data["training_documents"] = {
+        "n6": {
+            "targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "ghost",
+            "content": "Ghost needs meds at 8am.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    note = db.data["training_documents"]["n6"]
+    assert note["reconcileStatus"] == "error"
+    assert "kin/ghost" in note["reconcileNotes"]
+    # Nothing was written anywhere, least of all into the household's records.
+    assert db.data.get("dossiers", {}) == {}
+    assert db.data.get("the_411", {}) == {}
+    assert db.data.get("household_bank", {}) == {}
+
+
 def test_reconcile_pass_untargeted_channel_still_writes_dossier_and_all_411s():
     """The other five channels are untouched by #461."""
     db = seed_household()

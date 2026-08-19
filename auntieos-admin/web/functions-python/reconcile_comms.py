@@ -1127,10 +1127,31 @@ def reconcile_pass(
                     reconcile_note_parts.append(f"{merge_label} → household_bank/{bank_doc_id}")
                 if touched_411_ids:
                     reconcile_note_parts.append("411s: " + ", ".join(touched_411_ids))
-                # A targeted note that named a kin still says which record it went
-                # to even when nothing else did, so the note never reads as empty.
-                if not reconcile_note_parts:
-                    reconcile_note_parts.append(f"{merge_label} → no destination (target={target or 'untargeted'})")
+                # FAIL LOUD WHEN A ROUTE HAD NOWHERE TO GO. Routing sends a
+                # targeted note to exactly one record, so it has no second
+                # destination to fall back on: a KIN-targeted note whose pet has
+                # been deleted skips the fan-out loop and lands nowhere at all.
+                # Retiring that as 'applied' would drop the operator's words in
+                # silence. Mark 'error' instead, the same status an ambiguous
+                # contact match gets (WARNING-30), so it is triaged rather than
+                # forgotten. It cannot fire on the other two routes: an upsert
+                # creates the doc when there is none.
+                wrote_nothing = not writes_dossier and not writes_bank and not touched_411_ids
+                if wrote_nothing:
+                    missing = ", ".join(f"kin/{k}" for k in fan_kin_ids) or "no destination resolved"
+                    reconcile_note = (
+                        f"routing target={target or 'untargeted'} wrote nothing: {missing}"
+                    )
+                    db.collection(coll).document(log_id).update({
+                        "reconcileStatus": "error",
+                        "reconciledAt":    ts,
+                        "reconcileNotes":  reconcile_note,
+                    })
+                    print(f"[{ts}] {source_id} → ERROR (target={target or 'untargeted'} "
+                          f"resolved to nothing writable: {missing})")
+                    processed += 1
+                    continue
+
                 reconcile_note = "; ".join(reconcile_note_parts)
                 # WARNING-33: if any 411 fan-out failed, the writes that DID land
                 # are complete but the slice is not. Mark 'partial' (a non-terminal
