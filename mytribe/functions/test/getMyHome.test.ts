@@ -181,6 +181,9 @@ describe('getMyHomeHandler', () => {
       label: 'Pay with Venmo',
       kind: 'link',
       url: 'https://venmo.com/u/auntie',
+      // Issue #409: null on a link method, which is how a client knows to
+      // draw an anchor rather than a block of the operator's text.
+      instructions: null,
     });
     expect(JSON.stringify(res.payMethods)).not.toMatch(/venmoHandle|@auntie/);
   });
@@ -197,7 +200,63 @@ describe('getMyHomeHandler', () => {
     const { getMyHomeHandler } = await import('../src/portal/getMyHome');
     const res = await getMyHomeHandler({ data: { kinfolkId: 'demo-1' }, auth: { uid: 'u1' } } as any);
 
-    expect(res.payMethods).toEqual([{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }]);
+    expect(res.payMethods).toEqual([
+      { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
+    ]);
+  });
+
+  /**
+   * ISSUE #409, and the reason `resolveHomePayMethods` exists.
+   *
+   * This business-wide list is read by portal bundles built before the
+   * `instructions` kind existed, and those render every non-checkout method
+   * as an anchor to `url`. An instructions method has no url, so shipping one
+   * here would put a dead link on a bill. The full catalogue rides the
+   * per-invoice `payMethods` on `getMyInvoices` instead, which an old client
+   * does not read at all.
+   */
+  it('#409: withholds the instructions kind from the business-wide list', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['demo-1'] },
+        'families/demo-1': { displayName: 'The Foster' },
+        'business_settings/business_settings': {
+          venmoHandle: '@auntie',
+          paymentOptions: { cash: { enabled: true, instructions: 'Leave it with Auntie.' } },
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyHomeHandler } = await import('../src/portal/getMyHome');
+    const res = await getMyHomeHandler({ data: { kinfolkId: 'demo-1' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.payMethods.map((m) => m.id)).toEqual(['stripe', 'venmo']);
+    expect(res.payMethods.every((m) => m.kind !== 'instructions')).toBe(true);
+  });
+
+  /**
+   * ISSUE #409 back-compat, stated where the whole payload can be seen.
+   *
+   * A settings doc with handles and NO `paymentOptions` map is every existing
+   * org on the day this deploys. It has to answer exactly as it did before.
+   */
+  it('#409: a settings doc with no paymentOptions map answers exactly as before', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['demo-1'] },
+        'families/demo-1': { displayName: 'The Foster' },
+        'business_settings/business_settings': {
+          venmoHandle: '@auntie',
+          paypalHandle: 'tribetails',
+          cashappHandle: '$auntie',
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyHomeHandler } = await import('../src/portal/getMyHome');
+    const res = await getMyHomeHandler({ data: { kinfolkId: 'demo-1' }, auth: { uid: 'u1' } } as any);
+
+    expect(res.payMethods.map((m) => m.id)).toEqual(['stripe', 'venmo', 'paypal', 'cashapp']);
   });
 
   /**

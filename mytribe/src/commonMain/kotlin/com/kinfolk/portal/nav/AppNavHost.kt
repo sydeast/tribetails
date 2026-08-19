@@ -38,6 +38,7 @@ import com.kinfolk.portal.screens.gallery.GalleryScreen
 import com.kinfolk.portal.screens.home.HomeScreen
 import com.kinfolk.portal.screens.invoices.InvoiceDetailScreen
 import com.kinfolk.portal.screens.invoices.InvoicesScreen
+import com.kinfolk.portal.screens.invoices.payMethodsFor
 import com.kinfolk.portal.screens.invoices.rememberInvoicesController
 import com.kinfolk.portal.screens.kin.KinAddEditScreen
 import com.kinfolk.portal.screens.kin.KinDetailHost
@@ -395,7 +396,9 @@ fun AppNavHost(
                                 paying = invoicesController.paying == invoice.id,
                                 redeeming = invoicesController.redeeming == invoice.id,
                                 downloadingPdf = invoicesController.downloadingPdf == invoice.id,
-                                payMethods = invoicesController.payMethods,
+                                // ISSUE #409: the bill's own options when it has
+                                // them, the business-wide list otherwise.
+                                payMethods = payMethodsFor(invoice, invoicesController.payMethods),
                                 decidingQuote = invoicesController.decidingQuote == invoice.id,
                                 quoteError = invoicesController.quoteErrorFor(invoice.id),
                                 onPayMethod = { method -> invoicesController.startPayMethod(invoice, method) },

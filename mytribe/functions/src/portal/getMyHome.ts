@@ -6,7 +6,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
-import { resolvePayMethods, type PayMethod } from '../lib/paymentMethods';
+import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
 
 interface GetMyHomeRequest {
   kinfolkId?: string;
@@ -79,6 +79,13 @@ interface GetMyHomeResult {
    * Never carries `feeBps`/`feeFixedCents` — kinfolk never see processor fees
    * (standing ruling; see `paymentMethods.ts`), and `PayMethod` has no field
    * for them.
+   *
+   * ISSUE #409: this list ships only the `checkout` and `link` kinds, never
+   * `instructions`. It is a deploy-skew guard, not a product decision — see
+   * `resolveHomePayMethods`. The full catalogue, including the operator's
+   * written instructions and each invoice's own frozen options, rides
+   * `getMyInvoices`'s per-invoice `payMethods`, which is where a client
+   * should read it. This field remains the business-wide fallback.
    */
   payMethods: PayMethod[];
 }
@@ -219,14 +226,13 @@ export async function getMyHomeHandler(
 
   // PR30: resolved against a nonzero placeholder — see `payMethods` on
   // `GetMyHomeResult` for why `getMyHome` has no real invoice to gate on.
-  const payMethods = resolvePayMethods(
-    {
-      venmoHandle: typeof settings['venmoHandle'] === 'string' ? (settings['venmoHandle'] as string) : undefined,
-      paypalHandle: typeof settings['paypalHandle'] === 'string' ? (settings['paypalHandle'] as string) : undefined,
-      cashappHandle: typeof settings['cashappHandle'] === 'string' ? (settings['cashappHandle'] as string) : undefined,
-    },
-    { amountDue: 1 },
-  );
+  //
+  // Issue #409: the hand-picked three fields are gone in favour of the shared
+  // decoder, so this read and the per-invoice snapshot read cannot drift
+  // apart. `resolveHomePayMethods` rather than `resolvePayMethods` because
+  // this business-wide list still ships only the two kinds an older portal
+  // bundle knows how to draw — that function's own header says why at length.
+  const payMethods = resolveHomePayMethods(payMethodSettingsFrom(settings), { amountDue: 1 });
 
   logEvent({
     severity: 'info',

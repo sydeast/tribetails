@@ -99,6 +99,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   venmoHandle: '',
   paypalHandle: '',
   cashappHandle: '',
+  paymentOptions: {},
   weatherLocation: '',
   notificationEmail: true,
   notificationSms: true,
@@ -409,7 +410,9 @@ describe('Settings — Business profile editor', () => {
     // Visit and save a DIFFERENT section.
     panel = await openSection('Payments');
     await userEvent.type(within(panel).getByLabelText('Venmo handle'), '@tribetails');
-    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    // Issue #409: this panel's button names what it saves, because it is now a
+    // toggle board rather than one more set of text boxes.
+    await userEvent.click(within(panel).getByRole('button', { name: /save payment options/i }));
     await within(panel).findByText('Saved');
 
     // Back to Business profile: the unsaved edit must still be there.

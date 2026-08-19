@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import type Stripe from 'stripe';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { getStripe } from '../lib/stripe';
@@ -8,6 +9,8 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { requireKinfolkPrimary } from '../lib/memberGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { settingsForInvoice, stripeCheckoutMethodTypes } from '../lib/paymentMethods';
+import { readLivePayMethodSettings } from '../lib/payMethodSnapshot';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -99,36 +102,95 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     source: 'mytribe-portal',
   };
 
+  // WHICH RAILS THIS SESSION ACCEPTS (issue #409). Card was hardcoded here.
+  // Klarna and Affirm are Stripe payment method types rather than separate
+  // integrations, so offering them is one more string in this array: no new
+  // secret, no new webhook, the same PaymentIntent and the same
+  // `stripeWebhook` settlement on the other side.
+  //
+  // Read off the invoice's own frozen options when it has them, so a bill
+  // issued while Affirm was on keeps offering Affirm after the operator
+  // turns it off. Live settings otherwise, which is every invoice issued
+  // before the snapshot existed. Card is always in the list
+  // (`stripeCheckoutMethodTypes` says why), so this cannot produce a
+  // checkout that has no way to take a card.
+  //
+  // Fail-soft on the settings read alone: an unreachable settings doc means
+  // card-only checkout, never a household unable to pay a bill.
+  const liveSettings = await readLivePayMethodSettings().catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.settings.unreadable',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { invoiceId: args.invoiceId },
+    });
+    return {};
+  });
+  const methodTypes = stripeCheckoutMethodTypes(settingsForInvoice(inv, liveSettings));
+
   const stripe = await getStripe();
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    payment_method_types: ['card'],
-    line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: 'usd',
-          unit_amount: amountCents,
-          product_data: {
-            name: `Invoice #${args.invoiceId}`,
-            description: typeof inv['client'] === 'string' ? (inv['client'] as string) : `Tribe ${kinfolkId}`,
+  const createSession = (paymentMethodTypes: string[]) =>
+    stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: 'usd',
+            unit_amount: amountCents,
+            product_data: {
+              name: `Invoice #${args.invoiceId}`,
+              description: typeof inv['client'] === 'string' ? (inv['client'] as string) : `Tribe ${kinfolkId}`,
+            },
           },
         },
-      },
-    ],
-    success_url: args.successUrl,
-    cancel_url: args.cancelUrl,
-    // Rides `checkout.session.completed`.
-    metadata: checkoutMetadata,
-    // Rides `payment_intent.succeeded`, and IS THE ONE THAT MATTERS. Stripe
-    // does not copy Session metadata onto the PaymentIntent it creates — that
-    // is precisely why the SDK exposes this as a separate parameter
-    // (`SessionCreateParams.PaymentIntentData.metadata`). Without it the
-    // PaymentIntent event arrives with `metadata: {}`, `stripeWebhook` cannot
-    // resolve the household, and a household that really was charged keeps an
-    // invoice reading outstanding and keeps getting reminder emails.
-    payment_intent_data: { metadata: checkoutMetadata },
-  });
+      ],
+      success_url: args.successUrl,
+      cancel_url: args.cancelUrl,
+      // Rides `checkout.session.completed`.
+      metadata: checkoutMetadata,
+      // Rides `payment_intent.succeeded`, and IS THE ONE THAT MATTERS. Stripe
+      // does not copy Session metadata onto the PaymentIntent it creates — that
+      // is precisely why the SDK exposes this as a separate parameter
+      // (`SessionCreateParams.PaymentIntentData.metadata`). Without it the
+      // PaymentIntent event arrives with `metadata: {}`, `stripeWebhook` cannot
+      // resolve the household, and a household that really was charged keeps an
+      // invoice reading outstanding and keeps getting reminder emails.
+      payment_intent_data: { metadata: checkoutMetadata },
+    });
+
+  // WHEN STRIPE REFUSES A METHOD TYPE, THE HOUSEHOLD STILL GETS TO PAY.
+  //
+  // Klarna and Affirm have to be activated on the operator's own Stripe
+  // account, and there is no way for this server to know whether she has
+  // done it: the toggle lives here, the activation lives in her Stripe
+  // dashboard. When they disagree Stripe answers with an invalid-request
+  // error naming the type, and the honest response to that is a card-only
+  // checkout plus a warn line an operator can be shown, NOT a Pay button
+  // that throws on a bill somebody is trying to settle.
+  //
+  // Only that one error is caught. A declined key, a network failure, a bad
+  // amount: all of those still surface, because retrying them card-only
+  // would fail identically and hide the real cause.
+  let session;
+  try {
+    session = await createSession(methodTypes);
+  } catch (err) {
+    const extraTypes = methodTypes.filter((t) => t !== 'card');
+    if (extraTypes.length === 0 || !isUnsupportedMethodTypeError(err)) throw err;
+    logEvent({
+      severity: 'warn',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.methodtype.rejected',
+      uid,
+      errorMessage: (err as Error)?.message,
+      extra: { invoiceId: args.invoiceId, rejectedTypes: extraTypes, retriedWith: ['card'] },
+    });
+    session = await createSession(['card']);
+  }
 
   await firestore.collection('invoices').doc(args.invoiceId).set({
     pendingCheckoutSessionId: session.id,
@@ -140,7 +202,13 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     function: 'payInvoice',
     event: 'portal.invoice.checkout.created',
     uid,
-    extra: { invoiceId: args.invoiceId, kinfolkId, amountCents, sessionId: session.id },
+    extra: {
+      invoiceId: args.invoiceId,
+      kinfolkId,
+      amountCents,
+      sessionId: session.id,
+      paymentMethodTypes: session.payment_method_types ?? methodTypes,
+    },
   });
 
   return validateResponse('payInvoice', Result, {
@@ -149,6 +217,24 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     amountCents,
     currency: 'usd',
   });
+}
+
+/**
+ * Is this the specific Stripe refusal that means "the account has not
+ * activated that payment method type"?
+ *
+ * Matched on the error TYPE plus the parameter Stripe names, not on the
+ * message text: `invalid_request_error` on `payment_method_types` is the
+ * shape Stripe returns for an unactivated or unavailable rail, and matching
+ * on prose would break the moment Stripe rewords it. Anything else is a real
+ * failure and is rethrown by the caller.
+ */
+function isUnsupportedMethodTypeError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { type?: unknown; param?: unknown; raw?: { param?: unknown } };
+  if (e.type !== 'StripeInvalidRequestError' && e.type !== 'invalid_request_error') return false;
+  const param = typeof e.param === 'string' ? e.param : typeof e.raw?.param === 'string' ? e.raw.param : '';
+  return param.startsWith('payment_method_types');
 }
 
 /**

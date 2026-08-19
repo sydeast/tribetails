@@ -29,3 +29,26 @@
   font-size: 12.5px;
   margin: 0 2px;
 }
+/* Issue #409: a method with no link to open. The operator's own words are the
+   whole thing, so this is a text block rather than a CTA. `white-space:
+   pre-line` keeps the line breaks she typed, because "routing / account /
+   name" on three lines is how bank details are readable. */
+.pay-options__instructions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+.pay-options__instructionsTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.pay-options__instructionsBody {
+  margin: 0;
+  font-size: 13.5px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

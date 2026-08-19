@@ -1,23 +1,37 @@
 package com.kinfolk.portal.portal
 
 /**
- * PR30: one configured payment processor, resolved (url + label) off
- * `getMyHome`'s `payMethods` — never a raw operator handle (the server
- * already stripped those in `resolvePayMethods`). [Checkout] is the existing
- * Stripe `payInvoice` flow; [Link] is opened via `openExternalUrl`,
- * mirroring how `InvoicesController.startDownloadPdf` already opens an
- * external URL.
+ * PR30: one configured payment option, resolved (url + label) server-side —
+ * never a raw operator handle (`resolvePayMethods` already stripped those).
+ * [Checkout] is the existing Stripe `payInvoice` flow, which now also covers
+ * the Klarna and Affirm rails riding that same account; [Link] is opened via
+ * `openExternalUrl`, mirroring how `InvoicesController.startDownloadPdf`
+ * already opens an external URL.
+ *
+ * ISSUE #409 adds [Instructions]: a method with no URL and never any, where
+ * the operator's own words are the whole thing. Cash, a check, a bank
+ * transfer and Zelle-by-phone all land here. It is NOT tappable, so nothing
+ * about it can become a dead link.
  *
  * NEVER carries a processor fee — kinfolk never see fees (standing ruling);
  * see `mytribe/functions/src/lib/paymentMethods.ts`.
  */
-enum class PayMethodKind { Checkout, Link }
+enum class PayMethodKind { Checkout, Link, Instructions }
 
 data class PayMethod(
     val id: String,
     val label: String,
     val kind: PayMethodKind,
     val url: String?,
+    /**
+     * Set only on [PayMethodKind.Instructions], and never blank: the server
+     * omits a method it has no instructions for rather than sending an empty
+     * one. Null on the other two kinds.
+     *
+     * Defaulted so every existing construction of this class — the tests and
+     * the deploy-skew fallback among them — keeps compiling unchanged.
+     */
+    val instructions: String? = null,
 )
 
 /**
@@ -73,6 +87,19 @@ data class Invoice(
      *  Null/empty until the backend ships the field — decode is lenient, so a
      *  missing or malformed payload simply yields null. */
     val lineItems: List<InvoiceLineItem>? = null,
+    /**
+     * ISSUE #409: how THIS bill can be paid, resolved server-side off the
+     * payment options it was issued with.
+     *
+     * Prefer this over `MyHomeResult.payMethods`: the home list is
+     * business-wide, cannot know what a bill sent last month was issued with,
+     * and never carries [PayMethodKind.Instructions].
+     *
+     * Null from a server older than the field, which is a different statement
+     * from an empty list (a settled invoice offers nothing). The controller
+     * falls back to the home list on null and NOT on empty.
+     */
+    val payMethods: List<PayMethod>? = null,
 )
 
 /** One covered visit on an invoice. All fields optional server-side. */

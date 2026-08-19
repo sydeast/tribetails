@@ -484,3 +484,179 @@ describe('statusFromStamp', () => {
     expect(statusFromStamp({ status: '', amountDue: -50, total: -50 })).toEqual({ status: 'open', stamped: false });
   });
 });
+
+/**
+ * ISSUE #409: payment options resolved PER INVOICE.
+ *
+ * `getMyHome` already carried a business-wide list. It cannot answer the
+ * question this field answers, which is "what was THIS bill issued with",
+ * and that question is the whole of what makes turning a method off safe.
+ */
+describe('getMyInvoices per-invoice payMethods (issue #409)', () => {
+  it('resolves live settings for an invoice carrying no snapshot', async () => {
+    // Every invoice issued before this shipped. Nothing is backfilled, and
+    // this fallback is why nothing needs to be.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { venmoHandle: '@auntie' },
+      },
+      queryDocs: {
+        invoices: [
+          { id: 'inv-old', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.open[0].payMethods.map((m) => m.id)).toEqual(['stripe', 'venmo']);
+  });
+
+  it("prefers the invoice's own snapshot over settings that have since changed", async () => {
+    // The operator turned Venmo off this morning. Last week's bill still
+    // offers it; a bill issued today would not.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': {
+          venmoHandle: '@auntie',
+          paymentOptions: { venmo: { enabled: false } },
+        },
+      },
+      queryDocs: {
+        invoices: [
+          {
+            id: 'inv-issued',
+            data: {
+              kinfolkId: '3',
+              invoiceStatus: 'open',
+              amountDue: 50,
+              total: 50,
+              payMethodSettingsSnapshot: {
+                capturedAt: '2026-08-12T00:00:00.000Z',
+                venmoHandle: '@auntie',
+                paymentOptions: { venmo: { enabled: true } },
+              },
+            },
+          },
+          {
+            id: 'inv-today',
+            data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50 },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const byId = Object.fromEntries(res.open.map((i) => [i.id, i.payMethods.map((m) => m.id)]));
+    expect(byId['inv-issued']).toEqual(['stripe', 'venmo']);
+    expect(byId['inv-today']).toEqual(['stripe']);
+  });
+
+  it('carries the instructions kind, which the business-wide list withholds', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': {
+          paymentOptions: { cash: { enabled: true, instructions: 'Leave it with Auntie at pickup.' } },
+        },
+      },
+      queryDocs: {
+        invoices: [{ id: 'inv-1', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50 } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.open[0].payMethods.find((m) => m.id === 'cash')).toEqual({
+      id: 'cash',
+      label: 'Pay in cash',
+      kind: 'instructions',
+      url: null,
+      instructions: 'Leave it with Auntie at pickup.',
+    });
+  });
+
+  it('offers nothing on a settled invoice or a credit', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { venmoHandle: '@auntie' },
+      },
+      queryDocs: {
+        invoices: [
+          { id: 'inv-paid', data: { kinfolkId: '3', invoiceStatus: 'paid', amountDue: 0, total: 200 } },
+          { id: 'inv-credit', data: { kinfolkId: '3', invoiceStatus: 'credit', amountDue: -25, total: 0 } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.paid[0].payMethods).toEqual([]);
+    expect(res.credits[0].payMethods).toEqual([]);
+  });
+
+  it('reads the integer cents field in preference to the dollars float', async () => {
+    // The cents seam is real: this collection's `amountDue` is a legacy
+    // dollars float while the resolver reads cents. An invoice whose float
+    // was left at 0 by the pre-2026-07-25 partial-payment write still owes
+    // money, and `amountDueCents` is the field that knows it.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { venmoHandle: '@auntie' },
+      },
+      queryDocs: {
+        invoices: [
+          {
+            id: 'inv-centsonly',
+            data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 0, amountDueCents: 2000, total: 50 },
+          },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.open[0].payMethods.map((m) => m.id)).toEqual(['stripe', 'venmo']);
+  });
+
+  it('shows the bill without payment buttons when settings will not load', async () => {
+    // A settings doc that fails to read is a reason to offer no buttons,
+    // never a reason to hide a household's invoices.
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        invoices: [{ id: 'inv-1', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50 } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.open).toHaveLength(1);
+    expect(res.open[0].payMethods.map((m) => m.id)).toEqual(['stripe']);
+  });
+
+  it('never ships a processor fee to a household', async () => {
+    // Standing ruling, asserted on the payload a kinfolk actually receives.
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': {
+          venmoHandle: '@auntie',
+          paymentOptions: { klarna: { enabled: true } },
+        },
+      },
+      queryDocs: {
+        invoices: [{ id: 'inv-1', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50 } }],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(JSON.stringify(res)).not.toMatch(/feeBps|feeFixedCents/);
+  });
+});

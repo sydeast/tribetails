@@ -1195,6 +1195,16 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'lineItems[].unitCents',
     'paidCents',
     'partiallyPaid',
+    // How THIS bill can be paid (issue #409), resolved off the options it was
+    // issued with. Five fields and no sixth: a fee field appearing here would
+    // be a household seeing what a processor charges their Auntie, which the
+    // standing ruling forbids, so this list is the guard as much as the
+    // schema's own `.strict()` is.
+    'payMethods[].id',
+    'payMethods[].instructions',
+    'payMethods[].kind',
+    'payMethods[].label',
+    'payMethods[].url',
     'paymentsHistory',
     // The household's answer to a quote (issue #385). Both halves ship: the
     // decision is what tells an accepted quote (status 'open') from an ordinary

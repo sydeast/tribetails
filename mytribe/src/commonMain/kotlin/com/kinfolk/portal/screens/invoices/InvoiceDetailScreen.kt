@@ -47,10 +47,14 @@ fun InvoiceDetailScreen(
     redeeming: Boolean = false,
     downloadingPdf: Boolean = false,
     /**
-     * PR30: one CTA per configured processor, resolved off `getMyHome`'s
-     * `payMethods`. Empty renders no payment row at all — same contract as
-     * the web `PayOptions` component — so a caller with nothing configured
-     * (or that hasn't loaded yet) never shows a broken action.
+     * PR30: one row per configured payment option, resolved server-side.
+     * Empty renders no payment row at all — same contract as the web
+     * `PayOptions` component — so a caller with nothing configured (or that
+     * hasn't loaded yet) never shows a broken action.
+     *
+     * ISSUE #409: the caller picks the list (`InvoicesController.payMethodsFor`
+     * prefers the invoice's own over the business-wide one). This screen only
+     * renders what it is handed.
      */
     payMethods: List<PayMethod> = emptyList(),
     /** True while this household's answer to a quote is in flight (issue #385). */
@@ -322,13 +326,20 @@ private fun CreditRedeemPanel(
 }
 
 /**
- * PR30: one CTA per configured payment processor. `Checkout` (Stripe) is the
+ * PR30: one row per configured payment option. `Checkout` (Stripe) is the
  * existing pay flow, styled the same [KinButton] the old single Pay button
  * used; `Link` (Venmo/PayPal/Cash App) is [KinGhostButton] plus a caption
  * stating the amount to send — a link method cannot be handed an amount, so
  * without the caption a household guesses and the operator reconciles the
- * mismatch by hand. Mirrors the web `PayOptions` component's contract:
- * renders nothing for an empty `methods` list rather than a broken row.
+ * mismatch by hand.
+ *
+ * ISSUE #409 adds `Instructions`: a method with no target to tap, so it draws
+ * the operator's own words under a heading and carries the same amount
+ * caption for the same reason. There is no button and no click handler,
+ * which is what keeps it from ever becoming a dead link.
+ *
+ * Mirrors the web `PayOptions` component's contract: renders nothing for an
+ * empty `methods` list rather than a broken row.
  */
 @Composable
 private fun PayOptions(
@@ -355,6 +366,14 @@ private fun PayOptions(
                         onClick = { onPayMethod(method) },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    Text(
+                        "Send ${formatUsd(amountDue)}, then let your Auntie know it’s on its way.",
+                        style = type.sansMeta,
+                    )
+                }
+                PayMethodKind.Instructions -> {
+                    Text(method.label, style = type.sansLabel)
+                    Text(method.instructions.orEmpty(), style = type.sansBody)
                     Text(
                         "Send ${formatUsd(amountDue)}, then let your Auntie know it’s on its way.",
                         style = type.sansMeta,

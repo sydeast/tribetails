@@ -135,3 +135,48 @@ describe('reviewAndSendDraftInvoice validation + sad paths', () => {
     expect(ctx.writes.find((w) => w.path === 'invoices/inv1')).toBeUndefined();
   });
 });
+
+/**
+ * ISSUE #409: the moment a draft becomes a bill is the moment its payment
+ * options are frozen onto it.
+ *
+ * Operator ruling: turning a method off stops offering it on NEW invoices,
+ * while invoices already issued keep working. That promise is kept by this
+ * write and nothing else, so this is where it is tested.
+ */
+describe('reviewAndSendDraftInvoice payment options snapshot (issue #409)', () => {
+  it('freezes the live payment options onto the invoice, in the same write as the flip', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'draft', total: 40, amountDue: 40 },
+        'business_settings/business_settings': {
+          venmoHandle: '@auntie',
+          paymentOptions: { cashapp: { enabled: false }, cash: { enabled: true, instructions: 'Exact change please.' } },
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    const write = ctx.writes.find((w) => w.path === 'invoices/inv1');
+    expect(write?.data.status).toBe('open');
+    const snapshot = write?.data.payMethodSettingsSnapshot as any;
+    expect(snapshot.venmoHandle).toBe('@auntie');
+    expect(snapshot.paymentOptions.cashapp).toEqual({ enabled: false });
+    expect(snapshot.paymentOptions.cash).toEqual({ enabled: true, instructions: 'Exact change please.' });
+    expect(typeof snapshot.capturedAt).toBe('string');
+  });
+
+  it('sends the invoice anyway when the settings doc cannot be read', async () => {
+    // The bill is the deliverable. A missing snapshot means the portal falls
+    // back to live settings, which is what every invoice did before this
+    // shipped, so there is nothing here worth failing a send over.
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'draft', total: 40, amountDue: 40 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1' });
+  });
+});

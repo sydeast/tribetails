@@ -12,6 +12,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 
@@ -173,6 +174,12 @@ export async function createInvoiceHandler(
     _id: ref.id,
     ...money,
   };
+  // The payment options live at the moment this invoice is issued, frozen onto
+  // it (issue #409). Turning a method off later stops offering it on NEW
+  // invoices; this bill keeps the answer the household was given. Fail-soft:
+  // an unreadable settings doc yields no snapshot and the portal falls back to
+  // live settings, which is what every invoice did before this shipped.
+  const payMethodSnapshot = await payMethodSnapshotForIssue('createInvoice');
   // The state stamp (ADR-0002), IN THE SAME WRITE as the money it describes.
   // Spread AFTER the caller's fields: it canonicalizes `status` to the
   // classifier's reading of this very doc (a caller's 'sent' or '' stores as
@@ -182,6 +189,7 @@ export async function createInvoiceHandler(
   await ref.set({
     ...doc,
     ...invoiceStateStampOf(doc, 0),
+    ...payMethodSnapshot,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

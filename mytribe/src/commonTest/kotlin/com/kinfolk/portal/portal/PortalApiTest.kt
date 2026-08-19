@@ -1,6 +1,7 @@
 package com.kinfolk.portal.portal
 
 import com.kinfolk.portal.firebase.FakeFunctionsClient
+import com.kinfolk.portal.screens.invoices.payMethodsFor
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -610,4 +611,161 @@ class PortalApiTest {
         assertNull(a.phone)
         assertEquals(false, a.hasPaymentMethod)
     }
+}
+
+/**
+ * ISSUE #409: the instructions kind, and each invoice carrying the payment
+ * options it was issued with.
+ *
+ * Decoding stays lenient throughout, for the reason `decodePayMethods` gives:
+ * a server ahead of this client must cost the household one fewer button, not
+ * the whole invoice screen.
+ */
+class PayMethodDecodeTest {
+
+    private fun homeWith(methods: kotlinx.serialization.json.JsonArray): FakeFunctionsClient {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyHome", buildJsonObject {
+            put("kinfolkId", "3")
+            put("displayName", "The Foster")
+            put("payMethods", methods)
+        })
+        return fake
+    }
+
+    @Test
+    fun `decodes the instructions kind, words and no url`() = runTest {
+        val fake = homeWith(buildJsonArray {
+            add(buildJsonObject {
+                put("id", "cash")
+                put("label", "Pay in cash")
+                put("kind", "instructions")
+                put("url", JsonNull)
+                put("instructions", "Exact change, handed over at pickup.")
+            })
+        })
+        val res = PortalApi(fake).getMyHome("3")
+        assertEquals(1, res.payMethods.size)
+        assertEquals(PayMethodKind.Instructions, res.payMethods[0].kind)
+        assertEquals("Exact change, handed over at pickup.", res.payMethods[0].instructions)
+        assertNull(res.payMethods[0].url)
+    }
+
+    @Test
+    fun `a link method decodes with no instructions`() = runTest {
+        val fake = homeWith(buildJsonArray {
+            add(buildJsonObject {
+                put("id", "venmo")
+                put("label", "Pay with Venmo")
+                put("kind", "link")
+                put("url", "https://venmo.com/u/auntie")
+                put("instructions", JsonNull)
+            })
+        })
+        assertNull(PortalApi(fake).getMyHome("3").payMethods[0].instructions)
+    }
+
+    @Test
+    fun `an invoice carries its own resolved payment options`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1001")
+                    put("kinfolkId", "3")
+                    put("total", 50.0)
+                    put("amountDue", 50.0)
+                    put("isPaid", false)
+                    put("status", "open")
+                    put("payMethods", buildJsonArray {
+                        add(buildJsonObject {
+                            put("id", "stripe")
+                            put("label", "Pay with Credit Card")
+                            put("kind", "checkout")
+                            put("url", JsonNull)
+                            put("instructions", JsonNull)
+                        })
+                        add(buildJsonObject {
+                            put("id", "zelle")
+                            put("label", "Pay with Zelle")
+                            put("kind", "instructions")
+                            put("url", JsonNull)
+                            put("instructions", "Zelle to 805-555-0104.")
+                        })
+                    })
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        val res = PortalApi(fake).getMyInvoices("3")
+        val methods = assertNotNull(res.open[0].payMethods)
+        assertEquals(listOf("stripe", "zelle"), methods.map { it.id })
+        assertEquals("Zelle to 805-555-0104.", methods[1].instructions)
+    }
+
+    @Test
+    fun `an invoice from a server without the field decodes to null, not empty`() = runTest {
+        // Null means "ask the business-wide list instead". An EMPTY list is a
+        // real answer (a settled bill offers nothing) and must not be
+        // confused with it, which is why the controller falls through one and
+        // not the other.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1001")
+                    put("kinfolkId", "3")
+                    put("total", 50.0)
+                    put("amountDue", 50.0)
+                    put("isPaid", false)
+                    put("status", "open")
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        assertNull(PortalApi(fake).getMyInvoices("3").open[0].payMethods)
+    }
+
+    @Test
+    fun `payMethodsFor prefers the invoice own list and falls through only on null`() {
+        val home = listOf(
+            PayMethod("stripe", "Pay with Credit Card", PayMethodKind.Checkout, null),
+            PayMethod("paypal", "Pay with PayPal", PayMethodKind.Link, "https://paypal.me/business"),
+        )
+        val invoiceOwn = listOf(
+            PayMethod("venmo", "Pay with Venmo", PayMethodKind.Link, "https://venmo.com/u/auntie"),
+        )
+        assertEquals(invoiceOwn, payMethodsFor(invoiceFixture(invoiceOwn), home))
+        assertEquals(home, payMethodsFor(invoiceFixture(null), home))
+        // An operator who has switched everything off, or a settled bill: the
+        // server said "nothing", and putting the home list back would undo it.
+        assertEquals(emptyList(), payMethodsFor(invoiceFixture(emptyList()), home))
+    }
+
+    private fun invoiceFixture(methods: List<PayMethod>?): Invoice = Invoice(
+        id = "1001",
+        kinfolkId = "3",
+        kinfolkName = null,
+        client = null,
+        total = 50.0,
+        amountDue = 50.0,
+        isPaid = false,
+        status = InvoiceStatus.Open,
+        date = null,
+        dueDate = null,
+        discount = null,
+        terms = null,
+        paymentsHistory = null,
+        address = null,
+        viewed = false,
+        creditAmountCents = null,
+        creditTarget = null,
+        creditRedeemedAtMs = null,
+        originalPaymentIntentId = null,
+        payMethods = methods,
+    )
 }

@@ -11,13 +11,18 @@ import type { PayMethod } from '../api/types';
  * `creditAmountCents`/`accountBalanceCents` elsewhere in this screen.
  */
 function stripe(): PayMethod {
-  return { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null };
+  return { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null };
 }
 function venmo(): PayMethod {
-  return { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie' };
+  return { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie', instructions: null };
 }
 function cashapp(): PayMethod {
-  return { id: 'cashapp', label: 'Pay with Cash App', kind: 'link', url: 'https://cash.app/$auntie' };
+  return { id: 'cashapp', label: 'Pay with Cash App', kind: 'link', url: 'https://cash.app/$auntie', instructions: null };
+}
+
+/** Issue #409: a method with no link to open, only the operator's own words. */
+function cash(instructions = 'Exact change, handed over at pickup.'): PayMethod {
+  return { id: 'cash', label: 'Pay in cash', kind: 'instructions', url: null, instructions };
 }
 
 afterEach(cleanup);
@@ -62,6 +67,47 @@ describe('PayOptions', () => {
     // but this pins the contract at the render layer too: nothing in
     // PayOptions' own props or markup can leak a fee figure.
     const { container } = render(<PayOptions methods={[stripe(), venmo()]} amountDue={12750} onCheckout={vi.fn()} />);
+    expect(container.textContent).not.toMatch(/fee/i);
+    expect(container.textContent).not.toMatch(/%/);
+  });
+});
+
+/**
+ * ISSUE #409: the third kind.
+ *
+ * Cash, a check, a bank transfer and Zelle-by-phone have no URL and never
+ * will. Rendering them as anchors would put a dead link on a bill, which is
+ * the exact defect the payment registry exists to prevent, so they render as
+ * the operator's own text under a heading.
+ */
+describe('PayOptions instructions kind (issue #409)', () => {
+  it("renders the operator's words, and no link or button at all", () => {
+    render(<PayOptions methods={[cash()]} amountDue={12750} onCheckout={vi.fn()} />);
+    expect(screen.getByText('Pay in cash')).toBeInTheDocument();
+    expect(screen.getByText('Exact change, handed over at pickup.')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('states the amount, same as a link method, because it cannot enforce one either', () => {
+    render(<PayOptions methods={[cash()]} amountDue={12750} onCheckout={vi.fn()} />);
+    expect(screen.getByText(/Send \$127\.50/)).toBeInTheDocument();
+  });
+
+  it('sits alongside the other two kinds in the order the server sent', () => {
+    const { container } = render(
+      <PayOptions methods={[stripe(), venmo(), cash()]} amountDue={12750} onCheckout={vi.fn()} />,
+    );
+    expect(container.querySelectorAll('.pay-options > *')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Pay with Venmo' })).toBeInTheDocument();
+    expect(screen.getByText('Pay in cash')).toBeInTheDocument();
+  });
+
+  it('never leaks a fee, whatever the mix of kinds', () => {
+    const { container } = render(
+      <PayOptions methods={[stripe(), venmo(), cash()]} amountDue={12750} onCheckout={vi.fn()} />,
+    );
     expect(container.textContent).not.toMatch(/fee/i);
     expect(container.textContent).not.toMatch(/%/);
   });

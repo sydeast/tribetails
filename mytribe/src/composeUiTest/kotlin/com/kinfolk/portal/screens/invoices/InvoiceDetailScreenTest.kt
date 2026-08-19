@@ -17,6 +17,7 @@ import com.kinfolk.portal.portal.QuoteDecision
 import com.kinfolk.portal.screens.setThemedContent
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class InvoiceDetailScreenTest {
@@ -152,6 +153,73 @@ class InvoiceDetailScreenTest {
         }
         waitForIdle()
         onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
+
+    /**
+     * ISSUE #409: a method with no link to open.
+     *
+     * Cash, a check, a bank transfer and Zelle-by-phone have no URL and never
+     * will. The operator's own words are the whole method, so the screen draws
+     * them under a heading with no button and no tap target: nothing about an
+     * instructions method can become a dead link on a bill.
+     */
+    @Test
+    fun payOptions_rendersInstructionsAsTextRatherThanAButton() = runComposeUiTest {
+        var clicked: PayMethod? = null
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(
+                    PayMethod(
+                        id = "zelle",
+                        label = "Pay with Zelle",
+                        kind = PayMethodKind.Instructions,
+                        url = null,
+                        instructions = "Zelle to 805-555-0104 and put the invoice number in the note.",
+                    ),
+                ),
+                onPayMethod = { clicked = it },
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Zelle").assertIsDisplayed()
+        onNodeWithText("Zelle to 805-555-0104 and put the invoice number in the note.").assertIsDisplayed()
+        // Same caption a link method carries, for the same reason: neither can
+        // be handed an amount, so the screen has to say the figure.
+        onNodeWithText("Send \$100.00, then let your Auntie know it’s on its way.").assertIsDisplayed()
+        // Tapping the heading does nothing. There is no target here to fire.
+        onNodeWithText("Pay with Zelle").performClick()
+        waitForIdle()
+        assertNull(clicked)
+    }
+
+    @Test
+    fun payOptions_rendersAllThreeKindsTogether() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(
+                    PayMethod(id = "stripe", label = "Pay with Credit Card", kind = PayMethodKind.Checkout, url = null),
+                    PayMethod(id = "venmo", label = "Pay with Venmo", kind = PayMethodKind.Link, url = "https://venmo.com/u/auntie"),
+                    PayMethod(
+                        id = "cash",
+                        label = "Pay in cash",
+                        kind = PayMethodKind.Instructions,
+                        url = null,
+                        instructions = "Exact change, handed over at pickup.",
+                    ),
+                ),
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Credit Card").assertIsDisplayed()
+        onNodeWithText("Pay with Venmo").assertIsDisplayed()
+        onNodeWithText("Pay in cash").assertIsDisplayed()
+        onNodeWithText("Exact change, handed over at pickup.").assertIsDisplayed()
     }
     // ---- Answering a quote (issue #385) ----
     //

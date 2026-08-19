@@ -268,3 +268,135 @@ describe('payInvoiceHandler', () => {
     expect(piMeta).toEqual(callArg.metadata);
   });
 });
+
+/**
+ * ISSUE #409: which rails the Checkout Session accepts.
+ *
+ * `payment_method_types` was the literal `['card']`. Klarna and Affirm are
+ * Stripe payment method types rather than separate integrations, so the whole
+ * of "offer Klarna" is one more string in that array, derived from the
+ * options the operator has switched on.
+ */
+describe('payInvoice payment_method_types (issue #409)', () => {
+  const invoiceDocs = {
+    'clients/u1': { kinfolkIds: ['3'] },
+    'families/3/members/u1': PRIMARY_MEMBER,
+  };
+
+  it('offers card alone for an operator who has configured nothing', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+      'card',
+    ]);
+  });
+
+  it('reaches Stripe with klarna and affirm once the operator turns them on', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': {
+          paymentOptions: { klarna: { enabled: true }, affirm: { enabled: true } },
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+      'card',
+      'klarna',
+      'affirm',
+    ]);
+  });
+
+  it("prefers the invoice's own frozen options over what settings say today", async () => {
+    // The bill was issued while Klarna was on. The operator has since turned
+    // it off. The household holding that bill still gets Klarna.
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': {
+          kinfolkId: '3',
+          amountDue: 12.5,
+          payMethodSettingsSnapshot: {
+            capturedAt: '2026-08-01T00:00:00.000Z',
+            paymentOptions: { klarna: { enabled: true } },
+          },
+        },
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: false } } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+      'card',
+      'klarna',
+    ]);
+  });
+
+  it('retries card-only when Stripe refuses a type the account has not activated', async () => {
+    // The toggle lives here; the activation lives in the operator's Stripe
+    // dashboard, and nothing makes them agree. When they disagree, the
+    // household still gets to pay their bill.
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
+      const err: any = new Error('The payment method type provided is invalid.');
+      err.type = 'StripeInvalidRequestError';
+      err.param = 'payment_method_types[1]';
+      throw err;
+    });
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+
+    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(2);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].payment_method_types).toEqual([
+      'card',
+      'klarna',
+    ]);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[1][0].payment_method_types).toEqual([
+      'card',
+    ]);
+    expect(res.checkoutUrl).toBe('https://checkout.stripe.com/test');
+  });
+
+  it('lets any OTHER Stripe failure surface instead of retrying it card-only', async () => {
+    // A bad key or an unreachable Stripe would fail identically on the
+    // retry, and swallowing it would hide the real cause behind a second
+    // copy of itself.
+    const ctx = buildDbMock({
+      docs: {
+        ...invoiceDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+        'business_settings/business_settings': { paymentOptions: { klarna: { enabled: true } } },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.create.mockImplementationOnce(async () => {
+      const err: any = new Error('Invalid API Key provided.');
+      err.type = 'StripeAuthenticationError';
+      throw err;
+    });
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await expect(payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any)).rejects.toThrow(
+      /Invalid API Key/,
+    );
+    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+});

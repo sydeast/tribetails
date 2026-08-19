@@ -12,6 +12,7 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 
@@ -152,7 +153,15 @@ export async function reviewAndSendDraftInvoiceHandler(
   // the rule uniform rather than asserted per call site.
   const paymentsSnap = await ref.collection('payments').get();
   const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
-  await ref.set({ ...update, ...invoiceStateStampOf({ ...data, ...update }, paidCents) }, { merge: true });
+  // THIS is the moment a draft becomes a bill, so this is where the payment
+  // options are frozen onto it (issue #409). Turning a method off tomorrow
+  // stops offering it on new invoices; this one keeps what the household was
+  // sent. Fail-soft: no snapshot means live settings, i.e. today's behaviour.
+  const payMethodSnapshot = await payMethodSnapshotForIssue('reviewAndSendDraftInvoice');
+  await ref.set(
+    { ...update, ...invoiceStateStampOf({ ...data, ...update }, paidCents), ...payMethodSnapshot },
+    { merge: true },
+  );
 
   await writeAuditEntry({
     status: 'SUCCESS',

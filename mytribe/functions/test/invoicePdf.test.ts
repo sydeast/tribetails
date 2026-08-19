@@ -15,7 +15,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkAccess', () => ({ resolveKinfolkAccess: mocks.resolveKinfolkAccess }));
 
-import { renderInvoicePdf, invoiceForPdf, winAnsiSafe, lineItemsForPdf, usdCents, formatQty, type InvoiceForPdf } from '../src/lib/invoicePdf';
+import { renderInvoicePdf, invoiceForPdf, winAnsiSafe, lineItemsForPdf, usdCents, formatQty, formatPaymentMethods, type InvoiceForPdf } from '../src/lib/invoicePdf';
 import { generateInvoicePdfHandler } from '../src/admin/generateInvoicePdf';
 import { getMyInvoicePdfHandler } from '../src/portal/getMyInvoicePdf';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -243,5 +243,48 @@ describe('renderInvoicePdf with line items', () => {
     const many = Array.from({ length: 100 }, (_, i) => ({ description: `Visit ${String(i)}`, qty: 1, unitCents: 2500 }));
     const bytes = await renderInvoicePdf(invoiceForPdf('i1', { ...INV, lineItems: many }));
     expect(Buffer.from(bytes.slice(0, 5)).toString()).toBe('%PDF-');
+  });
+});
+
+/**
+ * ISSUE #409: the printed "How to pay" line follows the same toggles the
+ * portal does.
+ *
+ * The paper bill and the screen offering different things is worse than
+ * either being wrong on its own, because the household cannot tell which one
+ * to believe. Both are driven off `METHOD_SPECS` now, so they cannot differ.
+ */
+describe('formatPaymentMethods (issue #409)', () => {
+  it('prints exactly what it always printed for a settings doc with no toggles', () => {
+    // Every existing org, on the day this deploys.
+    expect(
+      formatPaymentMethods({ venmoHandle: '@auntie', paypalHandle: 'tribetails', cashappHandle: '$auntie' }),
+    ).toBe('Venmo: @auntie    •    PayPal: tribetails    •    Cash App: $auntie');
+  });
+
+  it('stops printing a method the operator has switched off', () => {
+    expect(
+      formatPaymentMethods({
+        venmoHandle: '@auntie',
+        paypalHandle: 'tribetails',
+        paymentOptions: { paypal: { enabled: false } },
+      }),
+    ).toBe('Venmo: @auntie');
+  });
+
+  it("prints the operator's own instructions for a method that has no handle", () => {
+    expect(
+      formatPaymentMethods({
+        paymentOptions: { zelle: { enabled: true, instructions: 'Zelle to 805-555-0104' } },
+      }),
+    ).toBe('Zelle: Zelle to 805-555-0104');
+  });
+
+  it('prints nothing for an enabled method with nothing written under it', () => {
+    expect(formatPaymentMethods({ paymentOptions: { check: { enabled: true } } })).toBe('');
+  });
+
+  it('never prints the card, which is paid through the portal rather than off the page', () => {
+    expect(formatPaymentMethods({})).toBe('');
   });
 });
