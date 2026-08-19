@@ -28,12 +28,37 @@ import { db } from './firestoreAdmin';
  * what the pipeline checks is what makes "it resolves" mean "the note will
  * actually land".
  *
- * `families/{id}` existence is deliberately NOT checked here. Issue #461 gives
- * households their own record and routes the three target types to three
- * destinations; when it lands, the HOUSEHOLD branch below is the one place
- * that changes, and nothing else in this file has to move. Pre-empting it now
- * would refuse saves for every household whose envelope has not been
- * provisioned yet, which is a different bug from the one #460 reports.
+ * ── WHERE EACH TARGET NOW GOES, and why the check did not have to grow ────
+ * Issue #461 has landed. The three target types route to three destinations,
+ * and #460 left the HOUSEHOLD branch below as the one place that would change:
+ *
+ *   HOUSEHOLD  ->  household_bank/{householdId}   (upsert_household_bank)
+ *   KINFOLK    ->  dossiers/{kinfolkId}           (upsert_dossier)
+ *   KIN        ->  the_411/411_{kinId}            (upsert_kin411)
+ *
+ * The answer that branch needed is that a household has no identifier of its
+ * own. The household id IS the anchoring kinfolk id, the same id
+ * `household_data.kinfolkId` and `families/{id}` already use, so
+ * `household_bank/{householdId}` is keyed by the very id the anchor read above
+ * has already proved. #461 added a third destination, not a third reference to
+ * validate, which is why the check did not grow a branch.
+ *
+ * `families/{id}` existence is still deliberately NOT checked, now for a
+ * settled reason rather than a deferred one: it is not the record a household
+ * note routes to. Neither is the bank checked, and that is the load-bearing
+ * decision here. `upsert_household_bank` CREATES the bank when a household has
+ * none, exactly as `upsert_dossier` and `upsert_kin411` create theirs, so
+ * every household starts without one. Requiring it to exist would refuse the
+ * first household-targeted note ever filed against a household, which is the
+ * same bug #460 warned about one collection over. Once the anchor resolves,
+ * nothing else about a HOUSEHOLD save can fail to resolve.
+ *
+ * What #461 DID change is the cost of getting this wrong. A targeted note now
+ * lands in exactly one record and has no second destination to fall back on: a
+ * KIN note that once also reached the household's dossier now reaches only the
+ * pet's 411. This check is what keeps that one destination real at write time;
+ * `reconcile_comms.py` marks the note `error` rather than `applied` if the pet
+ * is deleted between the save and the nightly run.
  *
  * ── WHAT IT NEVER DOES ────────────────────────────────────────────────────
  * It never repairs a bad reference in passing. A save carrying a name is
@@ -122,9 +147,13 @@ export async function assertTribalIntelTargetResolves(ref: TribalIntelTargetRef)
     throw refusal(unresolvedAnchorMessage(ref.targetType, anchorId), 'targetKinfolkId');
   }
 
-  // HOUSEHOLD and KINFOLK are fully anchored by the id just proved above. The
-  // difference between them is who the note is ABOUT, not where it points, so
-  // there is no second document to check.
+  // HOUSEHOLD and KINFOLK are both fully anchored by the id just proved above.
+  // The difference between them is who the note is ABOUT and which record it
+  // folds into (the household's bank versus that person's dossier), not where
+  // it points, so neither has a second document to check. In particular a
+  // HOUSEHOLD save must NOT require `household_bank/{anchorId}` to exist: the
+  // pipeline creates it on first write, so demanding it here would refuse the
+  // first household note ever filed. See the header for the full reasoning.
   if (ref.targetType !== 'KIN') return;
 
   const kinId = (ref.targetKinId ?? '').trim();
