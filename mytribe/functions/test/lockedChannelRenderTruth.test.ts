@@ -101,7 +101,7 @@ describe('what a client renders equals what resolveChannels sends (#491)', () =>
               alwaysEnabled,
               required: requiredSms ? { sms: true } : {},
             });
-            const raw: BusinessNotificationOverride = { channels: {} };
+            const raw: BusinessNotificationOverride = { enabled: true, channels: {} };
             if (lockedEnabled) raw.lockedEnabled = true;
             if (smsLocked) raw.locked = { sms: true };
             if (adminSms.value !== undefined) raw.channels = { sms: adminSms.value };
@@ -127,7 +127,7 @@ describe('what a client renders equals what resolveChannels sends (#491)', () =>
   }
   it('a channel the operator switched off is never rendered at all', () => {
     const def = defWith({});
-    const raw: BusinessNotificationOverride = { channels: { sms: false }, lockedEnabled: true };
+    const raw: BusinessNotificationOverride = { enabled: true, channels: { sms: false }, lockedEnabled: true };
     const ov = overrideForStream(raw, 'kinfolk');
     expect(surviving(def, ov)).not.toContain('sms');
     expect(resolveChannels(def, {}, raw, 'kinfolk').sms).toBe(false);

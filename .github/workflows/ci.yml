@@ -462,6 +462,16 @@ jobs:
       # the old wording.
       - run: npm run seeds:check
       - run: npm run build
+      # `build` compiles src/ only. `typecheck` is what reaches the three
+      # tsconfigs nothing else in CI reads: tsconfig.test.json (test/**),
+      # scripts/tsconfig.json, and ../scripts/tsconfig.json. Without this
+      # step a test file can reference a field a src/ type no longer has and
+      # stay green forever, because vitest transpiles rather than
+      # typechecks. That is what happened to
+      # test/lockedChannelRenderTruth.test.ts when `enabled` became required
+      # on BusinessNotificationOverride: the suite passed on main while
+      # `npm run typecheck` failed for anyone who ran it locally.
+      - run: npm run typecheck
       # test:ci runs the in-project functions suite. Plain `npm test` also globs
       - run: npm run test:ci
 
