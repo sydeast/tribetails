@@ -489,6 +489,11 @@ private fun invoiceDetailBody(
             AuntieBanner(
                 tone  = AuntieBannerTone.Info,
                 title = "Archived",
+                // #444: computed straight from the invoice record, so there is
+                // no screen-level state an onDismiss could clear. Reopening
+                // this invoice later shows it again if still archived, same
+                // as web's dismissible Archived banner.
+                dismissible = true,
             ) {
                 Text(
                     text = "This invoice is out of the working list and out of the revenue and outstanding " +
@@ -836,7 +841,12 @@ internal fun invoiceDisputeTone(open: Boolean): AuntieBannerTone =
  * described but never computed, because the fee is not on the object and a sum
  * we cannot source is a lie with a dollar sign on it.
  *
- * There is no dismiss, no clear and no resolve control, by design.
+ * There is no clear and no resolve control, by design; disputing does not
+ * change what the record says happened. #444: the OPEN chargeback (error tone,
+ * a live constraint on the money) still gets no dismiss control for the same
+ * reason. The WON state (`!dispute.open`, info tone) does get one — it is
+ * history rather than a constraint, so an operator done reading it can put it
+ * away, matching web's `dismissible` on the same branch.
  *
  * Mirrors the web `InvoiceDisputeBanner` in `src/components/InvoiceDetail.tsx`.
  */
@@ -901,6 +911,9 @@ private fun InvoiceDisputeBanner(dispute: InvoiceDisputeInfo) {
         tone = tone,
         title = if (dispute.open) "This payment is being taken back" else "Dispute won",
         icon = if (dispute.open) Lucide.CircleAlert else Lucide.CircleCheckBig,
+        // #444: only the WON state is dismissible. The OPEN chargeback is a
+        // live constraint on the money, not a notice to file away.
+        dismissible = !dispute.open,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!dispute.open) {

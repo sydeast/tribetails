@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,7 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,6 +35,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -60,6 +65,39 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * Set [dashed] for a dashed border treatment, the Den convention for advisory or
  * placeholder callouts (for example a stubbed-feature warning) versus the solid
  * border used for live committed state.
+ *
+ * ## Dismissing (#444)
+ *
+ * [dismissible] opts a banner into a close affordance even when the caller has
+ * nothing of its own to run on dismiss (a notice computed straight from a
+ * record, like "Archived", rather than from local state). The banner then
+ * hides itself; no caller-held `remember { mutableStateOf(...) }` required.
+ * Passing [onDismiss] still works exactly as before and implies dismissible on
+ * its own, so no existing call site's CLICK behavior changes.
+ *
+ * BACK PRESS IS NEW BEHAVIOR FOR EVERY EXISTING onDismiss CALL SITE, not just
+ * the two newly-[dismissible] ones. Before this, none of them intercepted back
+ * at all; now, for as long as one of these banners is visible, back dismisses
+ * it instead of doing whatever it would otherwise do (typically leaving the
+ * screen). That is the intended touch/hardware-key equivalent of web's Escape,
+ * per #444, but unlike Escape it is not scoped to "focus is inside the
+ * banner" — Compose has no keyboard-focus concept for a screen shown on a
+ * phone, so while any dismissible banner is on screen, back dismisses it, full
+ * stop. Worth knowing if a call site's designer wanted back to keep leaving
+ * the screen even with the banner up; none of the current ones is that case.
+ *
+ * Every dismissible banner, new or existing, also gets an accessible label on
+ * its close glyph ("Dismiss") via [Modifier.semantics], the same idiom
+ * [AuntieIconButton] uses, mirroring `aria-label="Dismiss"` on the web
+ * `<button>` (`Banner.tsx`'s `dismissible` prop, PR #419).
+ *
+ * [BackHandler] callbacks resolve most-recently-added-first, so a banner
+ * nested inside a [Dialog] that also uses `BackHandler` for its own back
+ * behavior (see `NewBookingWizard.kt`) intercepts back before that dialog
+ * does — verified for `Dialog`, not exercised against a focusable `Popup`
+ * (e.g. `AuntieDialog`'s base), whose own key handling may consume back before
+ * the activity dispatcher runs. No dismissible banner is wired inside a
+ * `Popup` today.
  */
 @Composable
 fun AuntieBanner(
@@ -69,6 +107,7 @@ fun AuntieBanner(
     icon: ImageVector? = null,
     dashed: Boolean = false,
     pillLabel: String? = null,
+    dismissible: Boolean = false,
     onDismiss: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     body: @Composable () -> Unit,
@@ -76,6 +115,27 @@ fun AuntieBanner(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val toneColor = tone.color(c)
+
+    // #444: dismissible opts in a close button with no onDismiss of its own;
+    // onDismiss alone still implies it, unchanged from before this banner had
+    // any internal state. Once hidden, this banner renders nothing further, so
+    // a caller relying on onDismiss to clear its own state (the pre-existing
+    // ~15 call sites) sees no CLICK behavior change: the banner disappears
+    // either way. Back press is a new interception for those same sites — see
+    // the class doc's "Dismissing" section.
+    val canDismiss = dismissible || onDismiss != null
+    var hidden by remember { mutableStateOf(false) }
+    if (hidden) return
+
+    val handleDismiss: () -> Unit = {
+        hidden = true
+        onDismiss?.invoke()
+    }
+
+    // The Escape-key equivalent: back press dismisses this banner while it is
+    // showing, rather than whatever it would otherwise do (unscoped — Compose
+    // has no keyboard-focus concept to gate this on, unlike web's Escape).
+    BackHandler(enabled = canDismiss, onBack = handleDismiss)
 
     val corner = 14.dp
     val shape = RoundedCornerShape(corner)
@@ -179,8 +239,8 @@ fun AuntieBanner(
                 }
             }
 
-            if (onDismiss != null) {
-                BannerDismiss(toneColor = toneColor, onDismiss = onDismiss)
+            if (canDismiss) {
+                BannerDismiss(toneColor = toneColor, onDismiss = handleDismiss)
             }
         }
     }
@@ -254,6 +314,11 @@ private fun BannerPill(
 /**
  * The dismiss affordance: a borderless hover-reactive close glyph drawn with Canvas
  * (an X stroke), so no specific ImageVector is hardcoded and no Material3 Icon is used.
+ *
+ * #444: carries its own accessible label. Without it TalkBack has nothing to
+ * announce beyond "button" for an icon drawn on a raw Canvas, the same gap
+ * `aria-label="Dismiss"` closed on the web `<button>`. Same idiom as
+ * [AuntieIconButton]'s `contentDescription` parameter.
  */
 @Composable
 private fun BannerDismiss(
@@ -284,6 +349,7 @@ private fun BannerDismiss(
                 indication = null,
                 onClick = onDismiss,
             )
+            .semantics { contentDescription = "Dismiss" }
             .drawBehind {
                 val pad = 7.dp.toPx()
                 val w = strokeWidthDp.toPx()

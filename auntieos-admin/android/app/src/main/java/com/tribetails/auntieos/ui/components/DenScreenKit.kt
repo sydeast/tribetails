@@ -35,6 +35,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.PawPrint
 import androidx.compose.ui.text.font.FontStyle
@@ -263,6 +265,20 @@ fun StatCard(
  * A glass section panel with a serif [title], optional [subtitle] and [trailing]
  * slot in the header, then arbitrary [content]. The workhorse container for the
  * redesign's two-column dashboards and stacked detail pages.
+ *
+ * #445: [title] carries `Modifier.semantics { heading() }`, so TalkBack can jump
+ * panel to panel with its next-heading gesture instead of swiping through
+ * everything in between. Mirrors `DenPanel` on web (#404 / PR #417), which
+ * renders its title as a real `h2`/`h3` instead of a `<span>`. Compose has no DOM
+ * and no heading LEVEL, only the boolean marker `heading()` — every panel title
+ * is a heading, full stop, so there is no web-style "which level nests under
+ * which" to get wrong here. What web's `headingLevel` prop had to answer, this
+ * still had to check: no `DenPanel` mounts inside another `DenPanel`'s `content`
+ * anywhere in this app (surveyed every call site), so no panel title heading
+ * sits nested under a sibling panel's; and no screen composes its own
+ * `heading()` elsewhere that a panel title would collide with or duplicate.
+ * `DenScreenHeading` (the page-level title) is untouched — out of scope here,
+ * same as it was on web.
  */
 @Composable
 fun DenPanel(
@@ -292,7 +308,14 @@ fun DenPanel(
                 },
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = AuntieTheme.typography.headlineSmall, color = c.textPrimary)
+                    Text(
+                        title,
+                        style = AuntieTheme.typography.headlineSmall,
+                        color = c.textPrimary,
+                        // #445: the accessible name is the title alone, same as
+                        // web — the subtitle stays a separate, non-heading Text.
+                        modifier = Modifier.semantics { heading() },
+                    )
                     if (subtitle != null) {
                         Spacer(Modifier.height(4.dp))
                         Text(subtitle, style = AuntieTheme.typography.bodySmall, color = c.textDim)
