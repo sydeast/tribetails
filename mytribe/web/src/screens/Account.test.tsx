@@ -106,7 +106,7 @@ const HOME: GetMyHomeResult = {
     chat: { enabled: false, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 500, rateLimitPerHour: 5 },
   },
   bannerDismissedByUser: false,
-  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }],
+  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
 const KIN: GetMyKinResult = { kin: [] };

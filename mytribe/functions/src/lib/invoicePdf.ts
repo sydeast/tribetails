@@ -1,4 +1,11 @@
 import { randomUUID } from 'crypto';
+import {
+  METHOD_SPECS,
+  isMethodEnabled,
+  payMethodSettingsFrom,
+  settingsForInvoice,
+  type OperatorSettings,
+} from './paymentMethods';
 import { getAdmin } from './firestoreAdmin';
 import { lineAmountCents } from './invoiceMath';
 
@@ -354,26 +361,51 @@ export async function storeInvoicePdf(invoiceId: string, bytes: Uint8Array): Pro
 }
 
 /** Convenience: render + store in one step. Returns the download URL. */
-/** Operator-entered payment handles → one printable "How to pay" line. */
-function formatPaymentMethods(s: Record<string, unknown>): string {
-  const get = (k: string): string => (typeof s[k] === 'string' ? (s[k] as string).trim() : '');
+/**
+ * Operator-entered payment options -> one printable "How to pay" line.
+ *
+ * ISSUE #409: the three handles are still read from exactly the fields they
+ * always lived in, and a settings doc with no `paymentOptions` map prints
+ * character for character what it printed before. What changed is that a
+ * method the operator has switched OFF stops printing, and the methods that
+ * are a sentence rather than a handle (Zelle, cash, check, bank transfer)
+ * print their instructions.
+ *
+ * Driven off `METHOD_SPECS` rather than three hardcoded reads, so the paper
+ * bill and the portal screen can never offer different things: adding a
+ * method to the registry adds it here.
+ */
+export function formatPaymentMethods(settings: OperatorSettings): string {
   const parts: string[] = [];
-  const venmo = get('venmoHandle');
-  if (venmo) parts.push(`Venmo: ${venmo}`);
-  const paypal = get('paypalHandle');
-  if (paypal) parts.push(`PayPal: ${paypal}`);
-  const cashapp = get('cashappHandle');
-  if (cashapp) parts.push(`Cash App: ${cashapp}`);
+  for (const spec of METHOD_SPECS) {
+    if (!isMethodEnabled(settings, spec)) continue;
+    if (spec.kind === 'checkout') continue; // The card is paid through the portal, not off the page.
+    if (spec.kind === 'instructions') {
+      const written = settings.paymentOptions?.[spec.id]?.instructions?.trim();
+      if (written) parts.push(`${spec.shortLabel}: ${written}`);
+      continue;
+    }
+    const handle = spec.field ? (settings[spec.field] ?? '').trim() : '';
+    if (handle) parts.push(`${spec.shortLabel}: ${handle}`);
+  }
   return parts.join('    •    ');
 }
 
 export async function generateAndStoreInvoicePdf(id: string, data: Record<string, unknown>): Promise<string> {
   const inv = invoiceForPdf(id, data);
-  // Payments: pull the operator's handles off business_settings and print them.
-  // Fail-soft: a settings read error just omits the section (never blocks the PDF).
+  // Payments: pull the operator's options off business_settings and print
+  // them. Fail-soft: a settings read error just omits the section (never
+  // blocks the PDF).
+  //
+  // Issue #409: an invoice that carries its own frozen options is printed
+  // from those, so a PDF regenerated next month says what the household was
+  // originally told rather than what the settings happen to say today. An
+  // invoice with no snapshot prints from live settings, exactly as before.
   try {
     const snap = await getAdmin().firestore().collection('business_settings').doc('business_settings').get();
-    inv.paymentMethods = formatPaymentMethods(snap.data() ?? {});
+    inv.paymentMethods = formatPaymentMethods(
+      settingsForInvoice(data, payMethodSettingsFrom(snap.data() ?? {})),
+    );
   } catch {
     inv.paymentMethods = '';
   }

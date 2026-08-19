@@ -55,6 +55,31 @@ internal fun decodeInvoiceLineItemDto(raw: Map<String, Any?>?): InvoiceLineItemD
         unitCents = (raw?.get("unitCents") as? Number)?.toLong(),
     )
 
+/** `InvoiceDtoPayMethod`, shared across callables. */
+data class InvoiceDtoPayMethod(
+    /** One of `stripe`, `venmo`, `paypal`, `cashapp`, `zelle`, `cash`, `check`, `banktransfer`, `klarna`, `affirm`, `other`. `""` when the payload omits it. */
+    val id: String,
+    val label: String,
+    /** One of `checkout`, `link`, `instructions`. `""` when the payload omits it. */
+    val kind: String,
+    val url: String?,
+    val instructions: String?,
+)
+
+/**
+ * Fail-soft decode of `InvoiceDtoPayMethod` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeInvoiceDtoPayMethod(raw: Map<String, Any?>?): InvoiceDtoPayMethod =
+    InvoiceDtoPayMethod(
+        id = (raw?.get("id") as? String).orEmpty(),
+        label = (raw?.get("label") as? String).orEmpty(),
+        kind = (raw?.get("kind") as? String).orEmpty(),
+        url = raw?.get("url") as? String,
+        instructions = raw?.get("instructions") as? String,
+    )
+
 /** `InvoiceDto`, shared across callables. */
 data class InvoiceDto(
     val id: String,
@@ -86,6 +111,7 @@ data class InvoiceDto(
     val creditRedeemedAtMs: Double?,
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
+    val payMethods: List<InvoiceDtoPayMethod>,
 )
 
 /**
@@ -119,6 +145,7 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         creditTarget = raw?.get("creditTarget") as? String,
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
+        payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
     )
 
 // ---------- acceptQuote ----------

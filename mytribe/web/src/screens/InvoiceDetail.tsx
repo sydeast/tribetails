@@ -33,7 +33,9 @@ import '../styles/invoices.css';
  * `PayOptions` stays the single rendering path either way; this is the one
  * method it's ever asked to render on its own.
  */
-const STRIPE_ONLY_FALLBACK: PayMethod[] = [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }];
+const STRIPE_ONLY_FALLBACK: PayMethod[] = [
+  { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
+];
 
 /**
  * Invoice document view, ported from
@@ -49,11 +51,15 @@ export function InvoiceDetail() {
 
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
   const business = useQuery({ queryKey: ['businessContact'], queryFn: () => getBusinessContact() });
-  // PR30: `payMethods` (the resolved processor list) rides the same
+  // PR30: `payMethods` (the resolved option list) rides the same
   // `['myHome', kinfolkId]` cache PortalNav already keeps warm on every
   // screen for branding, so this is free on the common path where the nav
   // already fetched it. Same `staleTime` for the same reason PortalNav uses
-  // one: which processors are configured changes rarely.
+  // one: which options are configured changes rarely.
+  //
+  // ISSUE #409 kept this query rather than dropping it: the invoice's own
+  // list is preferred now, but a server that predates that field still
+  // answers here, and this screen must keep working across that window.
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
   const pay = useMutation({
@@ -172,10 +178,26 @@ export function InvoiceDetail() {
   // an open invoice by the time it gets back here.
   const isQuote = inv.status === 'quote';
   const awaitingDecision = isQuote && inv.quoteDecision === null;
-  // Deploy skew: an old server, or a failed `getMyHome` fetch, means
-  // `payMethods` never arrives — fall back to Stripe alone rather than
-  // leaving `payable` true with no way to act on it.
-  const payMethods = home.data?.payMethods?.length ? home.data.payMethods : STRIPE_ONLY_FALLBACK;
+  // THREE SOURCES, IN ORDER OF HOW MUCH THEY KNOW (issue #409).
+  //
+  //   1. the invoice's OWN list, resolved server-side off the options this
+  //      bill was issued with. The only one that can be right about a bill
+  //      sent before the operator changed her mind, and the only one that
+  //      carries the instructions kind.
+  //   2. the business-wide list off `getMyHome`, for a server that predates
+  //      (1). Same meaning it always had.
+  //   3. Stripe alone, when neither arrives: an old server, or a failed
+  //      `getMyHome` fetch. Better than leaving `payable` true with no way
+  //      to act on it.
+  //
+  // `?.length` rather than a presence check at every rung, because an EMPTY
+  // list from (1) is a real answer on a settled invoice, and this whole
+  // block only runs when the invoice is payable.
+  const payMethods = inv.payMethods?.length
+    ? inv.payMethods
+    : home.data?.payMethods?.length
+      ? home.data.payMethods
+      : STRIPE_ONLY_FALLBACK;
   // `inv.amountDue` is dollars (the legacy shape of this collection, see
   // `invoiceFormat.ts`); PayOptions and the rest of this codebase's money
   // fields are cents. Rounded, not truncated, so $127.505 doesn't clip.

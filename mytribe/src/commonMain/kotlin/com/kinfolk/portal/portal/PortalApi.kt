@@ -70,6 +70,7 @@ class PortalApi(private val fns: FunctionsClient) {
                 val kind = when (o["kind"]?.jsonPrimitive?.contentOrNull) {
                     "checkout" -> PayMethodKind.Checkout
                     "link" -> PayMethodKind.Link
+                    "instructions" -> PayMethodKind.Instructions
                     else -> return@mapNotNull null
                 }
                 PayMethod(
@@ -77,6 +78,7 @@ class PortalApi(private val fns: FunctionsClient) {
                     label = o["label"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                     kind = kind,
                     url = o["url"]?.jsonPrimitive?.contentOrNull,
+                    instructions = o["instructions"]?.jsonPrimitive?.contentOrNull,
                 )
             }
     }
@@ -1581,6 +1583,11 @@ class PortalApi(private val fns: FunctionsClient) {
                     )
                 }
                 ?.takeIf { it.isNotEmpty() },
+            // ISSUE #409: this bill's own payment options. `null` when the key
+            // is absent (a server older than the field), which the controller
+            // reads as "ask the home list instead". An EMPTY array is a real
+            // answer — a settled bill offers nothing — and stays empty.
+            payMethods = (o["payMethods"] as? JsonArray)?.let { decodePayMethods(it) },
         )
     }
 

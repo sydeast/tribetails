@@ -3,7 +3,7 @@ import { formatCentsUsd } from '../lib/invoiceFormat';
 import './PayOptions.css';
 
 export interface PayOptionsProps {
-  /** Resolved off `getMyHome`'s `payMethods` — never raw operator handles. */
+  /** Resolved server-side — never raw operator handles. Prefer an invoice's own `payMethods`. */
   methods: PayMethod[];
   /** Cents. What a `kind: 'link'` method's caption tells the household to send. */
   amountDue: number;
@@ -14,14 +14,20 @@ export interface PayOptionsProps {
 }
 
 /**
- * One CTA per configured payment processor. Stripe (`kind: 'checkout'`) is
- * the existing `payInvoice` flow; every other method (`kind: 'link'`) is a
- * plain anchor to its resolved URL.
+ * One row per configured payment option. `kind: 'checkout'` is the existing
+ * `payInvoice` Stripe flow; `kind: 'link'` is a plain anchor to its resolved
+ * URL; `kind: 'instructions'` (issue #409) is a method with no link to open,
+ * so it renders the operator's own words instead of a button.
  *
- * A link method cannot be handed an amount — Venmo/PayPal/Cash App have no
- * way to know what this invoice owes — so it carries a caption stating the
- * figure to send. Without it a household guesses and the operator reconciles
- * the mismatch by hand.
+ * A link or instructions method cannot be handed an amount — Venmo, a check,
+ * and a bank transfer have no way to know what this invoice owes — so each
+ * carries a caption stating the figure to send. Without it a household
+ * guesses and the operator reconciles the mismatch by hand.
+ *
+ * NOTHING HERE EVER RENDERS AN EMPTY TARGET. The server omits a method it
+ * cannot resolve (blank handle, blank instructions) rather than sending one
+ * through, so a dead link is not a state this component has to defend
+ * against. It stays a rule worth knowing when editing this file.
  *
  * Renders nothing when `methods` is empty rather than an empty action row:
  * the caller (`InvoiceDetail`) decides what "no methods configured" means for
@@ -32,18 +38,34 @@ export function PayOptions({ methods, amountDue, onCheckout, checkingOut = false
 
   return (
     <div className="pay-options">
-      {methods.map((method) =>
-        method.kind === 'checkout' ? (
-          <button
-            key={method.id}
-            type="button"
-            className="btn grad pay-options__cta"
-            onClick={onCheckout}
-            disabled={checkingOut}
-          >
-            {checkingOut ? 'Opening checkout…' : method.label}
-          </button>
-        ) : (
+      {methods.map((method) => {
+        if (method.kind === 'checkout') {
+          return (
+            <button
+              key={method.id}
+              type="button"
+              className="btn grad pay-options__cta"
+              onClick={onCheckout}
+              disabled={checkingOut}
+            >
+              {checkingOut ? 'Opening checkout…' : method.label}
+            </button>
+          );
+        }
+
+        if (method.kind === 'instructions') {
+          return (
+            <div key={method.id} className="pay-options__instructions">
+              <h4 className="pay-options__instructionsTitle">{method.label}</h4>
+              <p className="pay-options__instructionsBody">{method.instructions}</p>
+              <p className="pay-options__hint">
+                Send {formatCentsUsd(amountDue)}, then let your Auntie know it&rsquo;s on its way.
+              </p>
+            </div>
+          );
+        }
+
+        return (
           <div key={method.id} className="pay-options__link-group">
             <a
               className="btn ghost pay-options__cta"
@@ -57,8 +79,8 @@ export function PayOptions({ methods, amountDue, onCheckout, checkingOut = false
               Send {formatCentsUsd(amountDue)}, then let your Auntie know it&rsquo;s on its way.
             </p>
           </div>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }

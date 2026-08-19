@@ -55,17 +55,28 @@ export interface PortalConfig {
 }
 
 /**
- * PR30: one configured payment processor, resolved (URL + label), never a
- * raw operator handle. `kind: 'checkout'` is the existing `payInvoice` flow
- * (Stripe); `kind: 'link'` is a plain anchor to `url`. NEVER carries a
- * processor fee — kinfolk never see fees (standing ruling); see
- * `functions/src/lib/paymentMethods.ts`.
+ * PR30: one configured payment option, resolved (URL + label), never a raw
+ * operator handle. `kind: 'checkout'` is the existing `payInvoice` flow
+ * (Stripe, and the Klarna/Affirm rails that ride it); `kind: 'link'` is a
+ * plain anchor to `url`; `kind: 'instructions'` (issue #409) is a method with
+ * no link at all, where the operator's own words are the whole thing.
+ *
+ * NEVER carries a processor fee — kinfolk never see fees (standing ruling);
+ * see `functions/src/lib/paymentMethods.ts`.
+ *
+ * Hand-written rather than generated, because `getMyHome` parses its request
+ * against a plain interface and there is no zod Result to project from. The
+ * per-invoice list on `getMyInvoices` IS generated (`InvoiceDtoPayMethod` in
+ * `contracts/invoiceContracts.generated.ts`) and is the one to prefer; this
+ * shape is kept assignment-compatible with it on purpose.
  */
 export interface PayMethod {
-  id: 'stripe' | 'venmo' | 'paypal' | 'cashapp';
+  id: 'stripe' | 'venmo' | 'paypal' | 'cashapp' | 'zelle' | 'cash' | 'check' | 'banktransfer' | 'klarna' | 'affirm' | 'other';
   label: string;
-  kind: 'checkout' | 'link';
+  kind: 'checkout' | 'link' | 'instructions';
   url: string | null;
+  /** Set only on `kind: 'instructions'`, and never blank. Null on the other two. */
+  instructions: string | null;
 }
 
 export interface GetMyHomeResult {
@@ -78,9 +89,15 @@ export interface GetMyHomeResult {
   /** True when the signed-in user already dismissed the current banner. */
   bannerDismissedByUser: boolean;
   /**
-   * PR30: every payment processor the operator has configured, business-level
+   * PR30: every payment option the operator has configured, business-level
    * (not filtered to a specific invoice's amount due — see
    * `functions/src/portal/getMyHome.ts`).
+   *
+   * ISSUE #409: this list never carries the `instructions` kind, and it does
+   * not know what any particular invoice was ISSUED with. Prefer the
+   * per-invoice `payMethods` on an `InvoiceDto`; this stays as the fallback
+   * for a screen that has no invoice, and for the deploy-skew window where
+   * the server is older than this bundle.
    */
   payMethods: PayMethod[];
 }

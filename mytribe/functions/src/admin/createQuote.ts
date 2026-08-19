@@ -11,6 +11,7 @@ import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { computeInvoiceTotals, validateInvoiceMoney, centsToDollars } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { InvoiceDayArg } from '../lib/invoiceDay';
@@ -163,11 +164,17 @@ export async function createQuoteHandler(
     _id: ref.id,
     ...money,
   };
+  // The payment options live at the moment this quote is issued, frozen onto
+  // it (issue #409), so a quote the household accepts next month still offers
+  // what it offered when they read it. Fail-soft: no snapshot means the portal
+  // resolves live settings, exactly as it did before this shipped.
+  const payMethodSnapshot = await payMethodSnapshotForIssue('createQuote');
   // The state stamp (ADR-0002), in the same write. paidCents is 0 by
   // construction on a brand-new doc.
   await ref.set({
     ...doc,
     ...invoiceStateStampOf(doc, 0),
+    ...payMethodSnapshot,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

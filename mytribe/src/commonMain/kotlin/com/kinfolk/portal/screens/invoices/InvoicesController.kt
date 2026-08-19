@@ -27,6 +27,27 @@ private val STRIPE_ONLY_FALLBACK = listOf(
 )
 
 /**
+ * ISSUE #409: which list of payment options a given bill should show.
+ *
+ * Three sources, in order of how much each knows:
+ *
+ *   1. the invoice's OWN list, resolved server-side off the options it was
+ *      issued with. The only one that can be right about a bill sent before
+ *      the operator changed her mind, and the only one carrying
+ *      [PayMethodKind.Instructions].
+ *   2. the business-wide list off `getMyHome`, for a server that predates
+ *      (1). Exactly the meaning it has always had.
+ *   3. Stripe alone, when neither arrived.
+ *
+ * NULL falls through, EMPTY does not. An empty list from (1) is a real
+ * answer — a settled invoice offers nothing, an operator may have switched
+ * everything off — and falling through it would put back a Pay button the
+ * server deliberately withheld.
+ */
+internal fun payMethodsFor(invoice: Invoice, homeMethods: List<PayMethod>): List<PayMethod> =
+    invoice.payMethods ?: homeMethods
+
+/**
  * Shared invoices state holder. Both the list screen and the lifted
  * InvoiceDetailRoute destination read the same controller so the pay / redeem
  * side-effects and the post-redeem reload survive across nav destinations
@@ -66,6 +87,9 @@ class InvoicesController internal constructor(
     // invoice's amountDue — same reasoning as the getMyHome.ts handler).
     // Starts as the Stripe-only fallback so the detail screen always has a
     // way to pay, even before the first reload() completes.
+    //
+    // ISSUE #409: this is now the FALLBACK rather than the answer. A bill
+    // carries its own resolved options; see [payMethodsFor].
     var payMethods by mutableStateOf<List<PayMethod>>(STRIPE_ONLY_FALLBACK)
         private set
 
@@ -131,16 +155,20 @@ class InvoicesController internal constructor(
     }
 
     /**
-     * PR30: dispatches on [PayMethod.kind]. Checkout (Stripe) reuses
-     * [startPay] unchanged; Link (Venmo/PayPal/Cash App) is a plain external
-     * navigation, same as [startDownloadPdf]'s `openExternalUrl` — no
-     * callable round-trip, because the resolved URL already came back with
-     * the invoice/home payload.
+     * PR30: dispatches on [PayMethod.kind]. Checkout (Stripe, and the
+     * Klarna/Affirm rails riding it) reuses [startPay] unchanged; Link
+     * (Venmo/PayPal/Cash App) is a plain external navigation, same as
+     * [startDownloadPdf]'s `openExternalUrl` — no callable round-trip,
+     * because the resolved URL already came back with the invoice payload.
      */
     fun startPayMethod(invoice: Invoice, method: PayMethod) {
         when (method.kind) {
             PayMethodKind.Checkout -> startPay(invoice)
             PayMethodKind.Link -> method.url?.takeIf { it.isNotBlank() }?.let { openExternalUrl(it) }
+            // ISSUE #409: an instructions method is text, not a target. The
+            // screen renders it without a tap handler, so this branch exists
+            // to state that there is nothing to do rather than to be reached.
+            PayMethodKind.Instructions -> Unit
         }
     }
 

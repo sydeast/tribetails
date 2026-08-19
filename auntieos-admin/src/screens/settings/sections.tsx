@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { formatFeeSchedule, PAYMENT_METHOD_FEE_SCHEDULE, type BusinessSettings, type MyTribePortalConfig } from '../../api/settings';
+import {
+  formatFeeSchedule,
+  isPaymentMethodEnabled,
+  PAYMENT_METHOD_CATALOGUE,
+  PAYMENT_METHOD_FEE_SCHEDULE,
+  type BusinessSettings,
+  type MyTribePortalConfig,
+  type PaymentMethodRow,
+  type PaymentOptionSetting,
+} from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
@@ -87,6 +96,12 @@ export const BUSINESS_PROFILE_FIELDS: readonly TextFieldSpec[] = [
 // paypal.me link and omits the button rather than shipping a dead one, so a
 // placeholder inviting that exact input would set the operator up to type a
 // handle that quietly never appears to a kinfolk.
+//
+// ISSUE #409: still exported and still used. `PaymentOptionRow` reads its
+// placeholders from this list, so the guidance an operator sees while typing
+// a handle is written down in exactly one place. The three handles
+// themselves have not moved: they are the same top-level `BusinessSettings`
+// fields the PDF and the portal have always read.
 export const PAYMENT_FIELDS: readonly TextFieldSpec[] = [
   { key: 'venmoHandle', label: 'Venmo handle', placeholder: '@tribetails', hint: `Venmo charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.venmo)} per payment.` },
   { key: 'paypalHandle', label: 'PayPal', placeholder: 'paypal.me/tribetails', hint: `PayPal charges about ${formatFeeSchedule(PAYMENT_METHOD_FEE_SCHEDULE.paypal)} per payment.` },
@@ -277,6 +292,262 @@ export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionP
         </li>
       </ul>
     </DenPanel>
+  );
+}
+
+// ── Payment options (issue #409) ────────────────────────────────────────────
+
+/**
+ * Narrowed to the four fields this panel reads, the same call
+ * `KinCareRatesEditor` makes: a test can then state a payment configuration
+ * without building a fifty-field settings document that says nothing about
+ * what is being tested.
+ */
+export type PaymentSettings = Pick<
+  BusinessSettings,
+  'paymentOptions' | 'venmoHandle' | 'paypalHandle' | 'cashappHandle'
+>;
+
+interface PaymentOptionsSectionProps {
+  data: PaymentSettings;
+  onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
+}
+
+/** The full draft this panel stages: one row per method, plus the three handles. */
+interface PaymentDraft {
+  options: Record<string, PaymentOptionSetting>;
+  handles: Record<string, string>;
+}
+
+function seedDraft(data: PaymentSettings): PaymentDraft {
+  const options: Record<string, PaymentOptionSetting> = {};
+  const handles: Record<string, string> = {};
+  for (const method of PAYMENT_METHOD_CATALOGUE) {
+    options[method.id] = {
+      enabled: isPaymentMethodEnabled(data.paymentOptions, method),
+      instructions: data.paymentOptions[method.id]?.instructions ?? '',
+    };
+    if (method.handleField) handles[method.handleField] = data[method.handleField];
+  }
+  return { options, handles };
+}
+
+/**
+ * ISSUE #409: Payment Options, a real toggle per method.
+ *
+ * This panel replaces three free-text boxes whose only off switch was
+ * deleting the handle. Operator, 2026-08-17 walk mark 17: "make it a true
+ * toggle for different payment option". Every method in the catalogue gets a
+ * switch; the ones that need a handle keep the same box they always had, now
+ * next to its switch, and the ones that are a sentence rather than a link get
+ * a place to write it.
+ *
+ * ONE SAVE BUTTON, not per-flip saves like Booking behavior. A toggle and the
+ * handle beside it are one decision ("offer Venmo, at this handle"), and
+ * saving the switch the instant it moves would persist "Venmo is on" before
+ * the operator has typed where to send the money.
+ *
+ * Turning a method off does NOT clear its handle or its instructions. That is
+ * the point of having a toggle at all: the operator can stop offering Cash
+ * App this month and turn it back on next month without going to find the
+ * handle again.
+ */
+export function PaymentOptionsSection({ data, onSave }: PaymentOptionsSectionProps) {
+  // Seeded ONCE at mount, same call and same reasoning as `TextFieldsSection`
+  // above: a sibling section's save round-trips through the same `data` prop,
+  // and re-deriving from it would wipe an edit in progress here.
+  const [draft, setDraft] = useState<PaymentDraft>(() => seedDraft(data));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+
+  const saved = seedDraft(data);
+  const dirty =
+    PAYMENT_METHOD_CATALOGUE.some(
+      (m) =>
+        draft.options[m.id]?.enabled !== saved.options[m.id]?.enabled ||
+        (draft.options[m.id]?.instructions ?? '').trim() !== (saved.options[m.id]?.instructions ?? '').trim(),
+    ) ||
+    Object.keys(saved.handles).some(
+      (field) => (draft.handles[field] ?? '').trim() !== (saved.handles[field] ?? '').trim(),
+    );
+
+  function setEnabled(id: string, next: boolean) {
+    setDraft((d) => ({ ...d, options: { ...d.options, [id]: { ...d.options[id], enabled: next } } }));
+    setJustSaved(false);
+  }
+
+  function setInstructions(id: string, next: string) {
+    setDraft((d) => ({ ...d, options: { ...d.options, [id]: { ...d.options[id], instructions: next } } }));
+    setJustSaved(false);
+  }
+
+  function setHandle(field: string, next: string) {
+    setDraft((d) => ({ ...d, handles: { ...d.handles, [field]: next } }));
+    setJustSaved(false);
+  }
+
+  async function handleSave() {
+    if (!dirty || busy) return;
+    setBusy(true);
+    setError(null);
+    const options: Record<string, PaymentOptionSetting> = {};
+    const patch: Partial<BusinessSettings> = {};
+    for (const method of PAYMENT_METHOD_CATALOGUE) {
+      // Written for EVERY method, including the ones left at their default.
+      // An explicit flag is what lets a later change to a default stop
+      // silently rewriting a decision the operator already made.
+      options[method.id] = {
+        enabled: draft.options[method.id]?.enabled ?? method.defaultEnabled,
+        instructions: (draft.options[method.id]?.instructions ?? '').trim(),
+      };
+      // The handle keeps its own top-level field, untouched by the map. The
+      // invoice PDF and the portal both still read it from there.
+      if (method.handleField) {
+        patch[method.handleField] = (draft.handles[method.handleField] ?? '').trim();
+      }
+    }
+    patch.paymentOptions = options;
+    try {
+      await onSave(patch);
+      setJustSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <DenPanel
+      title="Payment options"
+      subtitle="Turn on the ways kinfolk can pay you. What is on here shows up on new invoices and prints on the PDF. Invoices already sent keep the options they were sent with."
+    >
+      {error ? (
+        <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">
+          {error}
+        </Banner>
+      ) : null}
+      <ul className="settingsEdit__toggleList">
+        {PAYMENT_METHOD_CATALOGUE.map((method) => (
+          <PaymentOptionRow
+            key={method.id}
+            method={method}
+            enabled={draft.options[method.id]?.enabled ?? method.defaultEnabled}
+            handle={method.handleField ? draft.handles[method.handleField] ?? '' : ''}
+            instructions={draft.options[method.id]?.instructions ?? ''}
+            busy={busy}
+            onEnabledChange={(next) => setEnabled(method.id, next)}
+            onHandleChange={(next) => method.handleField && setHandle(method.handleField, next)}
+            onInstructionsChange={(next) => setInstructions(method.id, next)}
+          />
+        ))}
+      </ul>
+      <div className="settingsEdit__saveRow">
+        <PrimaryButton
+          label={busy ? 'Saving…' : 'Save payment options'}
+          onClick={() => void handleSave()}
+          disabled={!dirty || busy}
+          busy={busy}
+        />
+        {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}
+      </div>
+    </DenPanel>
+  );
+}
+
+interface PaymentOptionRowProps {
+  method: PaymentMethodRow;
+  enabled: boolean;
+  handle: string;
+  instructions: string;
+  busy: boolean;
+  onEnabledChange: (next: boolean) => void;
+  onHandleChange: (next: string) => void;
+  onInstructionsChange: (next: string) => void;
+}
+
+/**
+ * One method: a switch, and whatever that method needs typed beside it.
+ *
+ * The handle and instructions boxes appear only while the method is ON.
+ * Turning it off hides them rather than clearing them, so the values survive
+ * and come back with the switch.
+ *
+ * The warning under an on-but-blank method is the one piece of copy that
+ * earns its place: the portal omits a method it cannot render rather than
+ * shipping a dead link, so an operator who flips Zelle on and types nothing
+ * would otherwise get silence with no way to tell it from success.
+ */
+function PaymentOptionRow({
+  method,
+  enabled,
+  handle,
+  instructions,
+  busy,
+  onEnabledChange,
+  onHandleChange,
+  onInstructionsChange,
+}: PaymentOptionRowProps) {
+  const needsHandle = method.kind === 'link';
+  const needsInstructions = method.kind === 'instructions';
+  const blank =
+    enabled &&
+    ((needsHandle && handle.trim().length === 0) ||
+      (needsInstructions && instructions.trim().length === 0));
+
+  return (
+    <li className="settingsEdit__toggleRow settingsEdit__paymentRow">
+      <div className="settingsEdit__paymentHead">
+        <span className="settingsEdit__toggleLabel">{method.label}</span>
+        <Toggle
+          label={`Offer ${method.label}`}
+          checked={enabled}
+          disabled={busy}
+          onChange={onEnabledChange}
+        />
+      </div>
+      {method.note ? <p className="settingsEdit__hint">{method.note}</p> : null}
+      {method.fee ? (
+        <p className="settingsEdit__hint">
+          {method.label} charges about {formatFeeSchedule(method.fee)} per payment.
+        </p>
+      ) : null}
+      {enabled && needsHandle && method.handleField ? (
+        <label className="settingsEdit__field">
+          <span className="settingsEdit__fieldLabel">{method.label} handle</span>
+          <input
+            type="text"
+            className="settingsEdit__input"
+            value={handle}
+            placeholder={PAYMENT_FIELDS.find((f) => f.key === method.handleField)?.placeholder ?? ''}
+            disabled={busy}
+            onChange={(e) => onHandleChange(e.target.value)}
+          />
+        </label>
+      ) : null}
+      {enabled && needsInstructions ? (
+        <label className="settingsEdit__field">
+          <span className="settingsEdit__fieldLabel">What kinfolk should do</span>
+          <textarea
+            className="settingsEdit__input settingsEdit__textarea"
+            rows={2}
+            maxLength={500}
+            value={instructions}
+            placeholder={method.instructionsPlaceholder ?? ''}
+            disabled={busy}
+            onChange={(e) => onInstructionsChange(e.target.value)}
+          />
+        </label>
+      ) : null}
+      {blank ? (
+        <p className="settingsEdit__hint settingsEdit__hint--warn">
+          {needsHandle
+            ? `Add your ${method.label} handle. Until then this stays off invoices, because a button with no handle behind it opens nothing.`
+            : `Write what kinfolk should do. Until then this stays off invoices, because a heading with nothing under it tells them nothing.`}
+        </p>
+      ) : null}
+    </li>
   );
 }
 

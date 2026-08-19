@@ -28,6 +28,17 @@ export interface InvoiceLineItemDto {
 }
 
 /**
+ * `InvoiceDtoPayMethod`, shared across callables.
+ */
+export interface InvoiceDtoPayMethod {
+  id: 'stripe' | 'venmo' | 'paypal' | 'cashapp' | 'zelle' | 'cash' | 'check' | 'banktransfer' | 'klarna' | 'affirm' | 'other';
+  label: string;
+  kind: 'checkout' | 'link' | 'instructions';
+  url: string | null;
+  instructions: string | null;
+}
+
+/**
  * `InvoiceDto`, shared across callables.
  */
 export interface InvoiceDto {
@@ -55,6 +66,7 @@ export interface InvoiceDto {
   creditTarget: 'accountBalance' | null;
   creditRedeemedAtMs: number | null;
   lineItems?: InvoiceLineItemDto[];
+  payMethods: InvoiceDtoPayMethod[];
 }
 
 // ---------- acceptQuote ----------

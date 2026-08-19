@@ -66,7 +66,7 @@ beforeEach(() => {
     businessName: 'Tribe Tails',
     portal: { logoUrl: '', themeId: 'default', banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' }, home: [], chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 } },
     bannerDismissedByUser: false,
-    payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null }],
+    payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
   });
 });
 
@@ -95,6 +95,10 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
+  // Issue #409: how this bill can be paid, resolved server-side off the
+  // options it was issued with. The card needs nothing configured, so a
+  // believable invoice always carries at least this one.
+  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
 const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
@@ -105,6 +109,10 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
   status: 'credit',
   creditAmountCents: 2000,
   creditRedeemedAtMs: null,
+  // Issue #409: how this bill can be paid, resolved server-side off the
+  // options it was issued with. The card needs nothing configured, so a
+  // believable invoice always carries at least this one.
+  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
 describe('InvoiceDetail — mutation error surfacing', () => {
@@ -197,19 +205,17 @@ describe('InvoiceDetail — a part-paid invoice reads honestly', () => {
     // PayOptions renders "Pay with Credit Card" for every invoice), so the
     // REMAINING-not-total claim is pinned on a link method's "Send $X"
     // caption instead, which does carry the amount.
-    getMyHome.mockResolvedValue({
-      kinfolkId: 'kin-fam-1',
-      displayName: 'The Test Family',
-      businessLogoUrl: '',
-      businessName: 'Tribe Tails',
-      portal: { logoUrl: '', themeId: 'default', banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' }, home: [], chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 } },
-      bannerDismissedByUser: false,
+    //
+    // Issue #409: the link method rides the INVOICE's own resolved options
+    // now, not the business-wide list, because that is the one this screen
+    // prefers.
+    await renderWith({
+      ...PART_PAID,
       payMethods: [
-        { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null },
-        { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie' },
+        { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
+        { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie', instructions: null },
       ],
     });
-    await renderWith(PART_PAID);
     expect(await screen.findByText(/Send \$30\.00/)).toBeInTheDocument();
   });
   it('shows what was collected from paidCents rather than inferring it', async () => {
@@ -423,5 +429,127 @@ describe('InvoiceDetail: answering a quote', () => {
     expect(await screen.findByText(/You accepted this quote/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
     expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * ISSUE #409: the invoice knows its own payment options.
+ *
+ * `getMyHome` ships a business-wide list, which cannot be right about a bill
+ * issued before the operator changed her mind, and never carries the
+ * instructions kind. The invoice now carries its own resolved list and this
+ * screen prefers it. The home query stays as the fallback for the deploy-skew
+ * window where the server is older than this bundle.
+ */
+describe('InvoiceDetail payment option sources (issue #409)', () => {
+  const HOME_ONLY = {
+    kinfolkId: 'kin-fam-1',
+    displayName: 'The Test Family',
+    businessLogoUrl: '',
+    businessName: 'Tribe Tails',
+    portal: {
+      logoUrl: '',
+      themeId: 'default',
+      banner: { enabled: false, message: '', tone: 'info', dismissMode: 'none', id: '' },
+      home: [],
+      chat: { enabled: true, awayMessage: '', hoursEnabled: false, hours: {}, maxMessageLength: 2000, rateLimitPerHour: 0 },
+    },
+    bannerDismissedByUser: false,
+    payMethods: [
+      { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
+      { id: 'paypal', label: 'Pay with PayPal', kind: 'link', url: 'https://paypal.me/business', instructions: null },
+    ],
+  };
+
+  const OPEN: GetMyInvoicesResult['open'][number] = {
+    id: 'inv-open-1',
+    kinfolkId: 'kin-fam-1',
+    kinfolkName: 'The Test Family',
+    client: 'The Test Family',
+    total: 50,
+    amountDue: 50,
+    isPaid: false,
+    status: 'open',
+    editScope: null,
+    paidCents: 0,
+    partiallyPaid: false,
+    date: '2026-07-01',
+    dueDate: '2026-07-15',
+    discount: null,
+    terms: null,
+    paymentsHistory: null,
+    address: null,
+    viewed: false,
+    quoteDecision: null,
+    quoteDecidedAtMs: null,
+    creditAmountCents: null,
+    creditTarget: null,
+    creditRedeemedAtMs: null,
+    payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
+  };
+
+  async function renderWith(invoice: GetMyInvoicesResult['open'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({
+      open: [invoice],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("renders the invoice's own options in preference to the business-wide ones", async () => {
+    getMyHome.mockResolvedValue(HOME_ONLY);
+    await renderWith({
+      ...OPEN,
+      payMethods: [
+        { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
+        { id: 'venmo', label: 'Pay with Venmo', kind: 'link', url: 'https://venmo.com/u/auntie', instructions: null },
+      ],
+    });
+    expect(await screen.findByRole('link', { name: 'Pay with Venmo' })).toBeInTheDocument();
+    // PayPal is on the business-wide list and NOT on this bill. It must not
+    // appear, or the toggle has no visible effect where it matters.
+    expect(screen.queryByRole('link', { name: 'Pay with PayPal' })).toBeNull();
+  });
+
+  it('falls back to the business-wide list when the invoice carries none', async () => {
+    // A server older than this bundle. The screen keeps working.
+    getMyHome.mockResolvedValue(HOME_ONLY);
+    await renderWith({ ...OPEN, payMethods: [] });
+    expect(await screen.findByRole('link', { name: 'Pay with PayPal' })).toBeInTheDocument();
+  });
+
+  it('falls back to the card alone when neither list arrives', async () => {
+    getMyHome.mockRejectedValue(new Error('unavailable'));
+    await renderWith({ ...OPEN, payMethods: [] });
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+  });
+
+  it('renders an instructions method the business-wide list can never carry', async () => {
+    getMyHome.mockResolvedValue(HOME_ONLY);
+    await renderWith({
+      ...OPEN,
+      payMethods: [
+        {
+          id: 'zelle',
+          label: 'Pay with Zelle',
+          kind: 'instructions',
+          url: null,
+          instructions: 'Zelle to 805-555-0104 and put the invoice number in the note.',
+        },
+      ],
+    });
+    expect(await screen.findByText('Pay with Zelle')).toBeInTheDocument();
+    expect(
+      screen.getByText('Zelle to 805-555-0104 and put the invoice number in the note.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 });

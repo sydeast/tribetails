@@ -212,3 +212,36 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* ── Payment options (issue #409) ────────────────────────────────────────────
+   One method per row: a switch on its own line, then whatever that method
+   needs typed underneath. The row overrides the flex direction the shared
+   `settingsEdit__toggleRow` sets, because a payment method is a stack (name +
+   switch, then a field) rather than the single line the booking toggles are. */
+.settingsEdit__paymentRow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+.settingsEdit__paymentRow:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.settingsEdit__paymentHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.settingsEdit__textarea {
+  resize: vertical;
+  min-height: 3.5rem;
+  font: inherit;
+}
+/* An enabled method with nothing typed into it. The portal omits such a method
+   rather than shipping a dead link, so without this line the operator gets
+   silence and no way to tell it from success. */
+.settingsEdit__hint--warn {
+  color: var(--color-warning);
+}

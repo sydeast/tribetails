@@ -10,8 +10,8 @@ import {
   TextFieldsSection,
   BookingBehaviorSection,
   MyTribePortalSection,
+  PaymentOptionsSection,
   BUSINESS_PROFILE_FIELDS,
-  PAYMENT_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { CalendarSection } from './settings/CalendarSection';
@@ -299,16 +299,11 @@ function renderDataSection(
       return <TimeOffEditor data={data} onSave={persist} />;
     case 'kinCare':
       return <KinCareRatesEditor data={data} onSave={persist} />;
+    // ISSUE #409: a real toggle per method, replacing the three free-text
+    // boxes whose only off switch was deleting the handle. Operator, walk
+    // mark 17: "make it a true toggle for different payment option".
     case 'payments':
-      return (
-        <TextFieldsSection
-          title="Payment options"
-          subtitle="How kinfolk pay you; each handle prints on every invoice. Leave one blank to hide it."
-          data={data}
-          fields={PAYMENT_FIELDS}
-          onSave={persist}
-        />
-      );
+      return <PaymentOptionsSection data={data} onSave={persist} />;
     case 'branding':
       return <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'mytribe':

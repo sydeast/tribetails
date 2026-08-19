@@ -67,6 +67,10 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
+  // Issue #409: how this bill can be paid, resolved server-side off the
+  // options it was issued with. The card needs nothing configured, so a
+  // believable invoice always carries at least this one.
+  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
 const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
@@ -74,6 +78,10 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
   status: 'credit',
   creditAmountCents: 2000,
   creditRedeemedAtMs: null,
+  // Issue #409: how this bill can be paid, resolved server-side off the
+  // options it was issued with. The card needs nothing configured, so a
+  // believable invoice always carries at least this one.
+  payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 
 describe('Invoices — mutation error surfacing', () => {

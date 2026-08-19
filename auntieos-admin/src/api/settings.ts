@@ -168,6 +168,149 @@ export function formatFeeSchedule(entry: { feeBps: number; feeFixedCents: number
   return `${pct}% + $${cents}`;
 }
 
+/**
+ * ISSUE #409: one row per payment option the operator can switch on.
+ *
+ * Mirrored from `mytribe/functions/src/lib/paymentMethods.ts`'s `METHOD_SPECS`
+ * for the same reason `PAYMENT_METHOD_FEE_SCHEDULE` above is mirrored: this
+ * app and `mytribe/functions` are not workspace members of each other (repo
+ * root `package.json` — Cloud Functions deploy as a self-contained artifact),
+ * so there is no import to share. `settings.paymentOptions.test.ts` asserts
+ * the two agree, which is what keeps a mirror from becoming a fork.
+ *
+ * `kind` decides what the settings row shows:
+ *   checkout      a toggle and nothing else. The card, Klarna and Affirm all
+ *                 ride the operator's existing Stripe account and need
+ *                 nothing typed here.
+ *   link          a toggle and a handle box. The handle lives in the same
+ *                 top-level field it always has (`venmoHandle` and friends),
+ *                 untouched by this change.
+ *   instructions  a toggle and a text box. There is no link to build, so the
+ *                 operator's own words are the whole method.
+ */
+export type PaymentMethodKind = 'checkout' | 'link' | 'instructions';
+
+export interface PaymentMethodRow {
+  id: string;
+  /** The settings row heading: "Venmo", not "Pay with Venmo". */
+  label: string;
+  kind: PaymentMethodKind;
+  /** What an operator who has never touched this toggle gets. See the server registry for why. */
+  defaultEnabled: boolean;
+  /** The `BusinessSettings` field holding this method's handle, for `kind: 'link'` only. */
+  handleField?: StringSettingKey;
+  /** Placeholder for the instructions box. */
+  instructionsPlaceholder?: string;
+  /** Fee schedule, admin-only. Absent for the methods no processor charges for. */
+  fee?: { feeBps: number; feeFixedCents: number };
+  /** One line under the row explaining what turning this on does. */
+  note?: string;
+}
+
+/** The `BusinessSettings` keys a payment row may write a handle into. */
+export type StringSettingKey = 'venmoHandle' | 'paypalHandle' | 'cashappHandle';
+
+export const PAYMENT_METHOD_CATALOGUE: readonly PaymentMethodRow[] = [
+  {
+    id: 'stripe',
+    label: 'Credit card',
+    kind: 'checkout',
+    defaultEnabled: true,
+    fee: PAYMENT_METHOD_FEE_SCHEDULE.stripe,
+    note: 'Runs through Stripe. Kinfolk pay from the invoice and the balance clears itself.',
+  },
+  {
+    id: 'venmo',
+    label: 'Venmo',
+    kind: 'link',
+    defaultEnabled: true,
+    handleField: 'venmoHandle',
+    fee: PAYMENT_METHOD_FEE_SCHEDULE.venmo,
+  },
+  {
+    id: 'paypal',
+    label: 'PayPal',
+    kind: 'link',
+    defaultEnabled: true,
+    handleField: 'paypalHandle',
+    fee: PAYMENT_METHOD_FEE_SCHEDULE.paypal,
+  },
+  {
+    id: 'cashapp',
+    label: 'Cash App',
+    kind: 'link',
+    defaultEnabled: true,
+    handleField: 'cashappHandle',
+    fee: PAYMENT_METHOD_FEE_SCHEDULE.cashapp,
+  },
+  {
+    id: 'klarna',
+    label: 'Klarna',
+    kind: 'checkout',
+    defaultEnabled: false,
+    fee: { feeBps: 599, feeFixedCents: 30 },
+    note: 'Rides your Stripe account. Activate Klarna in Stripe first, or checkout falls back to card.',
+  },
+  {
+    id: 'affirm',
+    label: 'Affirm',
+    kind: 'checkout',
+    defaultEnabled: false,
+    fee: { feeBps: 599, feeFixedCents: 30 },
+    note: 'Rides your Stripe account. Activate Affirm in Stripe first, or checkout falls back to card.',
+  },
+  {
+    id: 'zelle',
+    label: 'Zelle',
+    kind: 'instructions',
+    defaultEnabled: false,
+    instructionsPlaceholder: 'Zelle to (555) 555-0104, and put the invoice number in the note.',
+  },
+  {
+    id: 'banktransfer',
+    label: 'Bank transfer',
+    kind: 'instructions',
+    defaultEnabled: false,
+    instructionsPlaceholder: 'Routing 000000000, account 000000000, Tribe Tails Care.',
+  },
+  {
+    id: 'check',
+    label: 'Check',
+    kind: 'instructions',
+    defaultEnabled: false,
+    instructionsPlaceholder: 'Make it out to Tribe Tails Care and hand it over at pickup.',
+  },
+  {
+    id: 'cash',
+    label: 'Cash',
+    kind: 'instructions',
+    defaultEnabled: false,
+    instructionsPlaceholder: 'Exact change, handed to your Auntie at pickup.',
+  },
+  {
+    id: 'other',
+    label: 'Other',
+    kind: 'instructions',
+    defaultEnabled: false,
+    instructionsPlaceholder: 'Anything else you take, in your own words.',
+  },
+] as const;
+
+/**
+ * One method's saved configuration on `business_settings.paymentOptions`.
+ *
+ * ABSENT IS NOT OFF. A method with no entry falls back to its
+ * `defaultEnabled`, which is how every settings doc written before this panel
+ * existed keeps offering exactly what it offered before. Only an explicit
+ * `false` turns a method off. The server registry
+ * (`mytribe/functions/src/lib/paymentMethods.ts`) is the authority on that
+ * rule; this mirror follows it.
+ */
+export interface PaymentOptionSetting {
+  enabled?: boolean;
+  instructions?: string;
+}
+
 export interface BusinessSettings {
   _id: string;
   businessName: string;
@@ -198,6 +341,18 @@ export interface BusinessSettings {
   venmoHandle: string;
   paypalHandle: string;
   cashappHandle: string;
+  /**
+   * ISSUE #409: which payment options are offered, keyed by the catalogue ids
+   * above. The three handles keep their own top-level fields and are still
+   * read from them by the invoice PDF and the portal; this map says whether
+   * each method is OFFERED, and carries the written instructions for the
+   * methods that are a sentence rather than a link.
+   *
+   * SPARSE, and absent on every doc written before this panel shipped. A
+   * method with no entry here reads as its `defaultEnabled`, so nothing is
+   * backfilled and no invoice changes under anybody.
+   */
+  paymentOptions: Record<string, PaymentOptionSetting>;
   weatherLocation: string;
   notificationEmail: boolean;
   notificationSms: boolean;
@@ -309,6 +464,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   venmoHandle: '',
   paypalHandle: '',
   cashappHandle: '',
+  paymentOptions: {},
   weatherLocation: '',
   notificationEmail: true,
   notificationSms: true,
@@ -440,6 +596,39 @@ function mergePortalHome(raw: unknown): PortalHome {
   return { sections: pickList<HomeSectionCfg>(r.sections, DEFAULT_PORTAL_HOME.sections) };
 }
 
+/**
+ * Reads `business_settings.paymentOptions` into a shape the panel can render.
+ *
+ * Only rows for methods IN THE CATALOGUE are kept, and only the two fields
+ * this app knows about: a stale key left by an older build, or a typo made in
+ * the Firestore console, cannot put a payment option on screen that no
+ * invoice will ever offer. An absent or malformed map reads as `{}`, which is
+ * "nothing configured" and resolves every method to its default.
+ */
+function mergePaymentOptions(raw: unknown): Record<string, PaymentOptionSetting> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const rows = raw as Record<string, unknown>;
+  const out: Record<string, PaymentOptionSetting> = {};
+  for (const method of PAYMENT_METHOD_CATALOGUE) {
+    const entry = rows[method.id];
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const e = entry as Record<string, unknown>;
+    const option: PaymentOptionSetting = {};
+    if (typeof e.enabled === 'boolean') option.enabled = e.enabled;
+    if (typeof e.instructions === 'string') option.instructions = e.instructions;
+    out[method.id] = option;
+  }
+  return out;
+}
+
+/** Is this method offered? Absent is not off; see `PaymentOptionSetting`. */
+export function isPaymentMethodEnabled(
+  options: Record<string, PaymentOptionSetting>,
+  method: PaymentMethodRow,
+): boolean {
+  return options[method.id]?.enabled ?? method.defaultEnabled;
+}
+
 function mergeMyTribePortal(raw: unknown): MyTribePortalConfig {
   const r = (raw ?? {}) as Partial<MyTribePortalConfig>;
   return {
@@ -474,6 +663,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     venmoHandle: pickString(r.venmoHandle, d.venmoHandle),
     paypalHandle: pickString(r.paypalHandle, d.paypalHandle),
     cashappHandle: pickString(r.cashappHandle, d.cashappHandle),
+    paymentOptions: mergePaymentOptions(r.paymentOptions),
     weatherLocation: pickString(r.weatherLocation, d.weatherLocation),
     notificationEmail: (r.notificationEmail as boolean) ?? d.notificationEmail,
     notificationSms: (r.notificationSms as boolean) ?? d.notificationSms,

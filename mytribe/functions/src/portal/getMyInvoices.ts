@@ -9,6 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
 import { validateResponse } from '../lib/callableResponse';
 import { quoteDecisionOf } from '../lib/quoteDecision';
+import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import {
   CentsSchema,
   DollarsSchema,
@@ -28,6 +29,44 @@ interface GetMyInvoicesRequest {
  * truth and this handler only READS it — see `statusFromStamp`.
  */
 type Status = InvoiceState;
+
+/**
+ * ONE PAYMENT OPTION, RESOLVED FOR THIS BILL (issue #409).
+ *
+ * Resolved off the payment options this invoice was ISSUED with, falling
+ * back to the operator's live settings for any invoice that predates the
+ * snapshot (`lib/paymentMethods.ts` explains that fallback at length). That
+ * is what makes turning a method off mean "stop offering it on new
+ * invoices" rather than "break the bill somebody is already holding".
+ *
+ * `getMyHome` already ships a business-wide `payMethods`. This is the same
+ * shape, one bill narrower, and it is the field a client should prefer:
+ * only this one knows what THIS invoice was issued with, and only this one
+ * carries the `instructions` kind.
+ *
+ * NEVER CARRIES A FEE. `feeBps`/`feeFixedCents` live on the registry's
+ * `MethodSpec` and stop there; kinfolk never see processor fees (standing
+ * ruling). `.strict()` is what keeps that true by construction rather than
+ * by intention: a fee field added to the resolver would fail this schema
+ * here instead of reaching a household's screen.
+ */
+export const PayMethodDtoSchema = z
+  .object({
+    id: z.enum(['stripe', 'venmo', 'paypal', 'cashapp', 'zelle', 'cash', 'check', 'banktransfer', 'klarna', 'affirm', 'other']),
+    /** What the button, or the instructions heading, says. */
+    label: z.string().min(1),
+    /**
+     * `checkout` opens the Stripe session (`payInvoice`); `link` is an
+     * anchor to `url`; `instructions` renders `instructions` as text and has
+     * no clickable target at all.
+     */
+    kind: z.enum(['checkout', 'link', 'instructions']),
+    /** Set only on `link`. Null elsewhere, never an empty string a client might put in an href. */
+    url: z.string().nullable(),
+    /** Set only on `instructions`, and never blank: a blank one is omitted from the list entirely. */
+    instructions: z.string().nullable(),
+  })
+  .strict();
 
 export const InvoiceLineItemDtoSchema = z
   .object({
@@ -172,6 +211,22 @@ export const InvoiceDtoSchema = z
      * has lines. The portal's mirror types it `lineItems?:` to match.
      */
     lineItems: z.array(InvoiceLineItemDtoSchema).optional(),
+    /**
+     * How this invoice can be paid, resolved for THIS bill (issue #409).
+     * See `PayMethodDtoSchema`.
+     *
+     * Always present, often empty: a settled invoice, a credit, and an
+     * invoice whose operator has turned everything off all resolve to `[]`.
+     * Empty means "offer nothing", which every client already renders as no
+     * payment row, and it is a different statement from the field being
+     * ABSENT (an older server), which is why this is a plain array rather
+     * than `.optional()`.
+     *
+     * The client still decides whether the invoice is PAYABLE at all: a
+     * quote is not a bill, a draft was never sent. This field answers "with
+     * what", not "may they".
+     */
+    payMethods: z.array(PayMethodDtoSchema),
   })
   .strict();
 
@@ -262,10 +317,26 @@ export async function getMyInvoicesHandler(
   const firestore = db();
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyInvoices');
 
-  const [invoiceSnap, familySnap] = await Promise.all([
+  // The settings read joins the existing parallel batch rather than adding a
+  // round trip: it is one document, it is needed for every invoice in the
+  // answer, and it must not serialize behind the invoice query. Fail-soft on
+  // its own, below, because a settings doc that will not load is a reason to
+  // show a bill with no payment buttons, never a reason to hide the bill.
+  const [invoiceSnap, familySnap, settingsSnap] = await Promise.all([
     firestore.collection('invoices').where('kinfolkId', '==', kinfolkId).get(),
     firestore.collection('families').doc(kinfolkId).get(),
+    firestore
+      .collection('business_settings')
+      .doc('business_settings')
+      .get()
+      .catch(() => null),
   ]);
+
+  // Issue #409. The LIVE payment options, used for any invoice carrying no
+  // snapshot of its own: everything issued before the snapshot existed, which
+  // is every invoice on the day this deploys. That fallback is why this ships
+  // with no backfill and nothing changing under a household.
+  const liveSettings = payMethodSettingsFrom(settingsSnap?.data() ?? {});
 
   const accountBalanceCents = numericFrom(familySnap.data()?.accountBalanceCents);
 
@@ -303,6 +374,14 @@ export async function getMyInvoicesHandler(
     // the invoices this exists to describe.
     const paidCents = integerCentsFrom(data['paidCents']);
     const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
+    // THE CENTS SEAM, deliberately (issue #409). `resolvePayMethods` reads
+    // CENTS; this collection's `amountDue` is a legacy DOLLARS float. Read
+    // the integer field the settlement pass writes first and fall back to
+    // rounding the float, the same order and the same reason as
+    // `payInvoice.ts`: a real charge should never be a re-rounding of a
+    // re-rounding. Rounded rather than truncated so $127.505 does not clip.
+    const amountDueCents =
+      integerCentsOrNull(data['amountDueCents']) ?? Math.round(amountDue * 100);
     return {
       id: d.id,
       kinfolkId,
@@ -327,6 +406,11 @@ export async function getMyInvoicesHandler(
       creditAmountCents: isCredit ? Math.round(Math.abs(amountDue !== 0 ? amountDue : total) * 100) : null,
       creditTarget: isCredit && data['creditTarget'] === 'accountBalance' ? 'accountBalance' : null,
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,
+      // Resolved against the options this invoice was ISSUED with when it
+      // carries a snapshot, and against live settings when it does not.
+      payMethods: resolvePayMethods(settingsForInvoice(data, liveSettings), {
+        amountDue: amountDueCents,
+      }),
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
       ...(storedLines.length > 0 ? { lineItems: storedLines.map(mapStoredLineItem) } : {}),
@@ -557,6 +641,17 @@ function numericOrNull(v: unknown): number | null {
  */
 function integerCentsFrom(v: unknown): number {
   return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+}
+
+/**
+ * An integer count of cents, or null when the field is absent or is not one.
+ * Null rather than 0, so a caller falls back to the dollars float instead of
+ * reading a real balance as nothing owed. Same helper, same name, and the
+ * same reasoning as `payInvoice.ts`'s: the two are the payable-amount reads
+ * on the two sides of one payment.
+ */
+function integerCentsOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) ? v : null;
 }
 
 function numericFrom(v: unknown): number {

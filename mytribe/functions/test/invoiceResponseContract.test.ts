@@ -102,6 +102,10 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,
+    // Issue #409: how this bill can be paid, resolved off the options it was
+    // issued with. A believable invoice carries at least the card, because
+    // the card needs nothing configured.
+    payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
     ...over,
   };
 }
