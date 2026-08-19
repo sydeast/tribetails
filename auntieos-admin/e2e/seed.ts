@@ -25,11 +25,74 @@ const FIRESTORE = 'http://127.0.0.1:8385';
 const OWNER = { Authorization: 'Bearer owner' };
 
 /**
+ * How long any one seed call may take before it is called a failure.
+ *
+ * Nothing here is waiting on a boot: `npm run e2e` wraps this whole run in
+ * `firebase emulators:exec`, so both emulators are already listening by the
+ * time globalSetup starts. A healthy local emulator answers each of these
+ * calls in single-digit milliseconds, and the heaviest of them, the Firestore
+ * wipe against a fully seeded database, stays well under a second. Ten seconds
+ * is orders of magnitude past that, which leaves room for a loaded CI box
+ * while still failing in seconds rather than burning the whole step budget.
+ *
+ * `E2E_SEED_TIMEOUT_MS` raises it for a machine that genuinely needs more. A
+ * malformed value is fatal rather than silently falling back, for the same
+ * reason `E2E_SEED_NOW`'s is: a deadline that quietly reverts to its default
+ * fails later for no nameable reason.
+ */
+function seedTimeoutMs(): number {
+  const raw = process.env.E2E_SEED_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return 10_000;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new Error(`E2E_SEED_TIMEOUT_MS is not a positive number of ms: "${raw}"`);
+  }
+  return ms;
+}
+/** `127.0.0.1:8385`, for a message that says which emulator went quiet. */
+function hostPort(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+/**
  * Every call goes through this. A seeder that swallows a failure hands the
  * specs an empty database and lets them fail somewhere else entirely, with a
  * message about a missing row instead of about the write that never happened.
+ *
+ * IT ALSO CARRIES THE DEADLINE, and that is the point of the helper. Playwright
+ * puts no timeout on globalSetup and `fetch` has none of its own, so an
+ * emulator that accepts the connection and then never answers parks the whole
+ * run with no error at all -- the same shape as the apt stall that sat on three
+ * CI jobs for hours (#456). The E2E step now carries a 7-minute cap, so the
+ * cost is bounded, but a cap only ever reports "the operation was canceled".
+ * The deadline is what makes the failure legible: it names the seed call and
+ * the emulator that owed the answer.
+ *
+ * The signal covers reading the body too, not just the headers, so a response
+ * that starts and never finishes is caught the same way.
  */
-async function must(res: Response, what: string): Promise<Record<string, unknown>> {
+async function seedFetch(
+  url: string,
+  init: RequestInit,
+  what: string,
+): Promise<Record<string, unknown>> {
+  const budget = seedTimeoutMs();
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: AbortSignal.timeout(budget) });
+  } catch (cause) {
+    // `AbortSignal.timeout` aborts with a `TimeoutError`; anything else here is
+    // the connection itself failing, which is a different thing to go and look
+    // at, so the two do not share a message.
+    const failed =
+      (cause as { name?: string } | undefined)?.name === 'TimeoutError'
+        ? `timed out after ${budget}ms at ${what}: ${hostPort(url)} accepted the connection and never answered. Raise E2E_SEED_TIMEOUT_MS if this machine is genuinely that slow`
+        : `could not reach ${hostPort(url)} at ${what}. Are the emulators up? (npm run e2e starts them)`;
+    throw new Error(`e2e seed ${failed}`, { cause });
+  }
   if (!res.ok) {
     throw new Error(`e2e seed failed at ${what}: ${res.status} ${await res.text()}`);
   }
@@ -37,15 +100,14 @@ async function must(res: Response, what: string): Promise<Record<string, unknown
 }
 
 async function wipe(): Promise<void> {
-  await must(
-    await fetch(`${AUTH}/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE', headers: OWNER }),
+  await seedFetch(
+    `${AUTH}/emulator/v1/projects/${PROJECT}/accounts`,
+    { method: 'DELETE', headers: OWNER },
     'wipe auth',
   );
-  await must(
-    await fetch(`${FIRESTORE}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, {
-      method: 'DELETE',
-      headers: OWNER,
-    }),
+  await seedFetch(
+    `${FIRESTORE}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`,
+    { method: 'DELETE', headers: OWNER },
     'wipe firestore',
   );
 }
@@ -56,24 +118,26 @@ async function createUser(
   password: string,
   claims: Record<string, unknown>,
 ): Promise<string> {
-  const signUp = await must(
-    await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake`, {
+  const signUp = await seedFetch(
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake`,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, returnSecureToken: true }),
-    }),
+    },
     `signUp ${email}`,
   );
   const localId = signUp.localId as string;
   // Claims are a JSON STRING in this API, not an object. Passing an object is
   // accepted and then silently stored as "[object Object]", which decodes to no
   // claims at all and denies the admin at the gate with no error anywhere.
-  await must(
-    await fetch(`${AUTH}/identitytoolkit.googleapis.com/v1/accounts:update`, {
+  await seedFetch(
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:update`,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...OWNER },
       body: JSON.stringify({ localId, customAttributes: JSON.stringify(claims) }),
-    }),
+    },
     `claims ${email}`,
   );
   return localId;
@@ -103,12 +167,13 @@ export async function put(
 ): Promise<void> {
   const url = `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${collection}?documentId=${id}`;
   const fields = Object.fromEntries(Object.entries(doc).map(([k, v]) => [k, enc(v)]));
-  await must(
-    await fetch(url, {
+  await seedFetch(
+    url,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...OWNER },
       body: JSON.stringify({ fields }),
-    }),
+    },
     `${collection}/${id}`,
   );
 }
