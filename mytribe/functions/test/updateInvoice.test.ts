@@ -572,3 +572,108 @@ describe('updateInvoice W2-1 metadata fields (kinfolkName / client / address / d
     expect(ctx.writes).toHaveLength(0);
   });
 });
+/**
+ * ISSUE #448. The operator ruling of 2026-08-18: a quote is editable until the
+ * household ACCEPTS it, and a DECLINED one stays editable so the office can
+ * revise it and send it back out.
+ *
+ * THE TEST THAT WOULD HAVE CAUGHT THE BUG is the first one. PR #430 built the
+ * accept/deny path and wrote down that "a revision is a new quote" without
+ * enforcing anything: `acceptQuote` re-stamps the doc to `open`/`editScope:
+ * 'all'`, so this callable happily rewrote the line items of a figure the
+ * household had already agreed to.
+ */
+const ACCEPTED_QUOTE = {
+  kinfolkId: 'fam1',
+  invoiceNumber: 'Q-1001',
+  // What `acceptQuote` actually leaves behind: the quote status is GONE (that
+  // is what makes the portal's Pay button appear), and the household's answer
+  // is the only field that still says where this bill came from.
+  status: 'open',
+  invoiceStatus: 'open',
+  editScope: 'all',
+  quoteDecision: 'accepted',
+  amountDue: 240,
+  total: 240,
+};
+const DECLINED_QUOTE = {
+  kinfolkId: 'fam1',
+  invoiceNumber: 'Q-1002',
+  status: 'quote',
+  invoiceStatus: 'quote',
+  editScope: 'all',
+  quoteDecision: 'denied',
+  amountDue: 240,
+  total: 240,
+};
+describe('updateInvoice and the household answer to a quote (issue #448)', () => {
+  it('REFUSES to edit the money on a quote the household accepted', async () => {
+    const ctx = seed(ACCEPTED_QUOTE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      updateInvoiceHandler(
+        req({
+          invoiceId: 'inv1',
+          patch: { lineItems: [{ description: 'More walks', qty: 9, unitCents: 5000 }] },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('refuses a metadata-only edit to an accepted quote too, and names the reason', async () => {
+    const ctx = seed(ACCEPTED_QUOTE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { terms: 'Net 60' } }),
+    ).catch((e) => e);
+    expect(err.code).toBe('failed-precondition');
+    // The operator has to be able to act on the sentence. 'open' is not a
+    // frozen state, so the generic frozen-state copy has nothing to say here
+    // and an empty message is exactly what the missing branch would produce.
+    expect(err.message).toContain('accepted this quote');
+    expect(err.details).toMatchObject({ code: 'quote_accepted_locked' });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+  it('EDITS A DECLINED QUOTE FREELY, because revising it is the next step', async () => {
+    const ctx = seed(DECLINED_QUOTE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateInvoiceHandler(
+      req({
+        invoiceId: 'inv1',
+        patch: {
+          lineItems: [{ description: 'Two walks a week', qty: 8, unitCents: 2000 }],
+          dueDate: '2999-12-31',
+        },
+      }),
+    );
+    expect(res.ok).toBe(true);
+    const w = invoiceWrite(ctx)!;
+    expect(w.data.totalCents).toBe(16000);
+    expect(w.data.dueDate).toBe('2999-12-31');
+    // Still a quote, still editable, still carrying the decline until the
+    // office sends it back out through resendQuote.
+    expect(w.data.status).toBe('quote');
+    expect(w.data.editScope).toBe('all');
+  });
+  it('re-stamps an accepted quote it CAN edit as locked, so the affordance disappears', async () => {
+    // The part-paid repair case: the acceptance lock yields to it (a
+    // part-collected bill must stay correctable), and the moment the payment
+    // no longer falls short the doc goes back to locked.
+    const ctx = seed(
+      { ...ACCEPTED_QUOTE, editScope: 'all' },
+      [{ id: 'p1', data: { amountCents: 4000 } }],
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateInvoiceHandler(
+      req({
+        invoiceId: 'inv1',
+        patch: { lineItems: [{ description: 'Walks', qty: 1, unitCents: 4000 }] },
+      }),
+    );
+    expect(res.ok).toBe(true);
+    const w = invoiceWrite(ctx)!;
+    // The edit settles the bill, so the standing stops being 'partial' and the
+    // acceptance lock applies again on the very write that made it true.
+    expect(w.data.editScope).toBe('none');
+  });
+});

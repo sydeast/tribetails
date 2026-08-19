@@ -28,6 +28,7 @@ import {
   generateReceipt,
   getInvoiceLedger,
   recordPayment,
+  resendQuote,
   reviewAndSendDraftInvoice,
   updateInvoice,
   archiveInvoice,
@@ -488,6 +489,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // is the state-driven action matrix and archiving is orthogonal to state: an
   // invoice in any state can be archived.
   const [archivePrompt, setArchivePrompt] = useState<ArchivePrompt | null>(null);
+  /**
+   * The revise-and-resend confirm for a DECLINED quote (issue #448).
+   *
+   * Separate from `pending` for the same reason `archivePrompt` is: the ACTIONS
+   * array is the state-driven matrix, and this action does not turn on the
+   * state. A declined quote and one still waiting for an answer are BOTH in
+   * state 'quote'; the household's answer is the only thing that tells them
+   * apart, so it cannot be derived from `invoiceActionsFor`.
+   */
+  const [resendPrompt, setResendPrompt] = useState(false);
 
   // THE LEDGER: what was paid against this invoice, and which visits it bills.
   //
@@ -766,6 +777,28 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     }
   }
 
+  async function confirmResend() {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await resendQuote(invoice._id);
+      setBusy(false);
+      setResendPrompt(false);
+      setNoticeIncomplete(false);
+      setNotice('Quote sent again. The household can accept or decline it now.');
+    } catch (caught) {
+      setBusy(false);
+      setResendPrompt(false);
+      // Fail loud and verbatim: every refusal this callable makes names what to
+      // do next (give it a new due date, send a reminder instead), and
+      // paraphrasing it here would throw that away.
+      setActionError(
+        `resendQuote failed: ${caught instanceof Error ? caught.message : 'Resend failed'}`,
+      );
+    }
+  }
+
   async function confirmPending() {
     if (!meta || busy) return;
     setBusy(true);
@@ -999,11 +1032,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           >
             {quoteDecision === 'accepted' ? (
               <p>
-                {`The household accepted this quote${quoteDecidedLabel(invoice)}, so it is an invoice now and the balance above is owed.`}
+                {`The household accepted this quote${quoteDecidedLabel(invoice)}, so it is an invoice now and the balance above is owed. The figures are locked from here: they are what the household agreed to. Issue a new quote if the work has changed.`}
               </p>
             ) : (
               <p>
-                {`The household declined this quote${quoteDecidedLabel(invoice)}. Nothing is owed and nothing has been cancelled: revising it means issuing a new quote, which is what tells them there is something new to look at.`}
+                {`The household declined this quote${quoteDecidedLabel(invoice)}. Nothing is owed and nothing has been cancelled. Edit it and send it back out, and they can answer the revised one; the quote number and everything on it stay as they are.`}
               </p>
             )}
           </Banner>
@@ -1180,6 +1213,27 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               <PrimaryButton
                 label={busy ? 'Saving…' : 'Save changes'}
                 onClick={() => void saveEdit()}
+                disabled={busy}
+                busy={busy}
+              />
+            </div>
+          </div>
+        ) : resendPrompt ? (
+          <div className="invoice-detail__confirm">
+            <p className="invoice-detail__confirm-copy">
+              This sends the quote to the household again and clears the decline, so they can
+              accept or decline the revised one. It is the SAME quote, keeping its number and its
+              lines; nothing new is created. Send it now?
+            </p>
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton
+                label="Cancel"
+                onClick={() => !busy && setResendPrompt(false)}
+                disabled={busy}
+              />
+              <PrimaryButton
+                label={busy ? 'Sending…' : 'Send quote again'}
+                onClick={() => void confirmResend()}
                 disabled={busy}
                 busy={busy}
               />
@@ -1388,6 +1442,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 enforcement; a refusal that gets through comes back with a code
                 and a sentence, and is shown verbatim above. */}
             {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
+            {/* THE WAY OUT OF A DECLINE (issue #448). Offered only when the
+                household has actually said no: one still waiting for an answer
+                has nothing to revive (a reminder is the action for that), and an
+                accepted one is agreed and frozen. Like Edit, this is an
+                affordance, not the enforcement — the server refuses the other
+                two by name and the refusal is shown verbatim above. */}
+            {quoteDecision === 'denied' && (
+              <GhostButton label="Revise and resend" onClick={() => setResendPrompt(true)} />
+            )}
             {/* Archive is deliberately NOT part of the state-driven action
                 matrix. That matrix answers "what can be done about the money",
                 and archiving is orthogonal to it: an invoice in any state can be

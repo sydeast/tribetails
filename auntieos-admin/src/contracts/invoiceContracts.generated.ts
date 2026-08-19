@@ -720,6 +720,24 @@ export interface RunAutoApplyResult {
   accountBalanceCents: number;
 }
 
+// ---------- resendQuote ----------
+
+/**
+ * Request payload for the `resendQuote` callable.
+ */
+export interface ResendQuoteArgs {
+  invoiceId: string;
+}
+
+/**
+ * Response from the `resendQuote` callable.
+ */
+export interface ResendQuoteResult {
+  ok: true;
+  invoiceId: string;
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+}
+
 // ---------- reviewAndSendDraftInvoice ----------
 
 /**

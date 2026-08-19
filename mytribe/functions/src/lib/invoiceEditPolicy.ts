@@ -36,6 +36,14 @@ export interface InvoiceStateDoc {
   amountDue?: unknown;
   total?: unknown;
   creditRedeemedAt?: unknown;
+  /**
+   * The household's answer to a quote, written by `portal/quoteDecision.ts`.
+   * Read by the EDIT SCOPE, never by `invoiceStateOf`: an answered quote is
+   * still whatever state its status and its money say it is (an accepted one
+   * re-stamps to 'open'), and the answer only changes what may still be
+   * changed about it. See `quoteAcceptanceOf` and `invoiceEditScope`.
+   */
+  quoteDecision?: unknown;
 }
 
 /** A non-finite or non-numeric field reads as "no evidence" (0), never as NaN. */
@@ -121,6 +129,50 @@ export function paymentStandingOf(totalCents: number, paidCents: number): Invoic
 }
 
 /**
+ * Whether the household has answered the quote this invoice began life as.
+ *
+ *   undecided  no answer on the doc — either still out for one, or it was
+ *              never a quote at all. The two are the same fact HERE: nobody
+ *              has agreed to anything, so nothing is locked by agreement.
+ *   accepted   the household said yes
+ *   denied     the household said no
+ *
+ * WHY THE EDIT POLICY NEEDS A THIRD INPUT (issue #448). The operator ruling of
+ * 2026-08-18 is that a quote is editable until it is ACCEPTED, and stays
+ * editable when it is DECLINED. Neither half of that can be read off the state
+ * alone: `acceptQuote` re-stamps an accepted quote to 'open' (that is what
+ * makes the portal's Pay button appear), so by the time an edit arrives the
+ * doc is indistinguishable from an ordinary sent invoice — which this module
+ * deliberately keeps fully editable — and a DECLINED quote keeps `status:
+ * 'quote'`, so it is indistinguishable from one still awaiting an answer.
+ * `quoteDecision` is the only field that tells the three apart.
+ *
+ * NOT A NINTH STATE, and deliberately not. The eight `INVOICE_STATES` are
+ * generated into both web clients and into Kotlin, and the portal's
+ * `isPayable` is a total predicate over them (#470); a ninth entry would fork
+ * "can this be paid" as the price of answering "can this be edited". The
+ * acceptance is a separate dimension of the same doc, exactly as the payment
+ * standing is, and it is passed alongside rather than folded in.
+ */
+export type QuoteAcceptance = 'undecided' | 'accepted' | 'denied';
+
+/**
+ * The stored answer, verified rather than trusted: anything that is not one of
+ * the two values `portal/quoteDecision.ts` writes reads as 'undecided'.
+ *
+ * The same two-value vocabulary as `lib/quoteDecision.ts#quoteDecisionOf`,
+ * restated here rather than imported because THIS module has no dependencies
+ * at all — it is imported by the backfill script and by the pure tests, and
+ * `quoteDecision.ts` reaches Firestore for the business time zone.
+ */
+export function quoteAcceptanceOf(doc: InvoiceStateDoc): QuoteAcceptance {
+  const raw = doc.quoteDecision;
+  if (raw === 'accepted') return 'accepted';
+  if (raw === 'denied') return 'denied';
+  return 'undecided';
+}
+
+/**
  * THE RULE, stated once.
  *
  * A draft or a quote is fully editable: nothing has been asserted to anyone yet.
@@ -159,30 +211,60 @@ export function paymentStandingOf(totalCents: number, paidCents: number): Invoic
  * withdrawn, or points the other way (a credit is owed TO the household, and
  * editing it here would contradict the redemption flow).
  *
+ * AN ACCEPTED QUOTE IS FROZEN, and that is the 2026-08-18 ruling (issue #448).
+ * Everything above is about a bill the office wrote and may correct. A quote
+ * the household has ACCEPTED is different in kind: it is a figure two parties
+ * have agreed on, and editing it afterwards would change what was agreed
+ * without anyone being asked. So the acceptance overrides the state's own
+ * answer and freezes the doc outright. A DECLINED quote is untouched by this
+ * and stays fully editable, because revising a declined quote and sending it
+ * back is the whole point of a decline — see `admin/resendQuote.ts`, which is
+ * how it goes back out.
+ *
+ * THE REPAIR DOCTRINE OUTRANKS THE ACCEPTANCE LOCK. A PART-PAID invoice stays
+ * fully editable even when it started as an accepted quote, for exactly the
+ * reason the paragraph above gives: a part-collected bill is the one an
+ * operator most needs to be able to correct, and the $40-invoice-with-$20 case
+ * that motivated the three-state standing is not less likely on a quote the
+ * household accepted. The lock protects an agreed figure; it must not create a
+ * second unrepairable invoice.
+ *
  * TOTAL BY CONSTRUCTION: the switch enumerates all eight states with no
  * `default`, so a ninth state is a compile error here rather than a silent
- * "editable" (or a silent "frozen") at runtime.
+ * "editable" (or a silent "frozen") at runtime. `acceptance` is a REQUIRED
+ * argument for the same reason: a call site that has not decided what the
+ * household said cannot compile, rather than defaulting to "not accepted" and
+ * quietly unlocking an agreed quote on the next re-stamp.
  */
-export function invoiceEditScope(state: InvoiceState, standing: InvoicePaymentStanding): InvoiceEditScope {
-  switch (state) {
-    case 'draft':
-    case 'quote':
-      return 'all';
-    case 'open':
-    case 'zero':
-      return standing === 'settled' ? 'metadataOnly' : 'all';
-    case 'paid':
-      return standing === 'partial' ? 'all' : 'none';
-    case 'cancelled':
-    case 'credit':
-    case 'redeemed':
-      return 'none';
-  }
+export function invoiceEditScope(
+  state: InvoiceState,
+  standing: InvoicePaymentStanding,
+  acceptance: QuoteAcceptance,
+): InvoiceEditScope {
+  const byState = ((): InvoiceEditScope => {
+    switch (state) {
+      case 'draft':
+      case 'quote':
+        return 'all';
+      case 'open':
+      case 'zero':
+        return standing === 'settled' ? 'metadataOnly' : 'all';
+      case 'paid':
+        return standing === 'partial' ? 'all' : 'none';
+      case 'cancelled':
+      case 'credit':
+      case 'redeemed':
+        return 'none';
+    }
+  })();
+
+  if (acceptance === 'accepted' && standing !== 'partial') return 'none';
+  return byState;
 }
 
 export interface InvoiceEditRefusal {
   /** Clients branch on this, never on the message text. */
-  code: 'invoice_not_editable' | 'invoice_money_locked';
+  code: 'invoice_not_editable' | 'invoice_money_locked' | 'quote_accepted_locked';
   message: string;
 }
 
@@ -219,10 +301,29 @@ export function invoiceEditRefusal(
   state: InvoiceState,
   standing: InvoicePaymentStanding,
   touchesMoney: boolean,
+  acceptance: QuoteAcceptance,
 ): InvoiceEditRefusal | null {
-  const scope = invoiceEditScope(state, standing);
+  const scope = invoiceEditScope(state, standing, acceptance);
 
   if (scope === 'none') {
+    // WHICH OF THE TWO REASONS IS THE REAL ONE. An accepted quote classifies as
+    // 'open' (acceptQuote re-stamps it), and `frozenBecause('open')` has
+    // nothing to say, because 'open' is not a frozen state: without the
+    // acceptance branch the refusal would arrive with an EMPTY message and the
+    // operator would be told a bill they are looking at cannot be edited for no
+    // stated reason. But an accepted quote that was later cancelled, paid, or
+    // turned into a credit is frozen by that, and saying "the household
+    // accepted it" would name the wrong fact. So the STATE answers whenever the
+    // state alone is enough, and the acceptance answers only when it is the
+    // thing doing the freezing.
+    const frozenByState = invoiceEditScope(state, standing, 'undecided') === 'none';
+    if (!frozenByState && acceptance === 'accepted') {
+      return {
+        code: 'quote_accepted_locked',
+        message:
+          'The household accepted this quote, so its figures are locked: editing them would change what was agreed. Issue a new quote if the work has changed.',
+      };
+    }
     return { code: 'invoice_not_editable', message: frozenBecause(state) };
   }
   if (scope === 'metadataOnly' && touchesMoney) {

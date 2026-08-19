@@ -371,6 +371,12 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invoiceId', 'isQuote'],
     },
     {
+      trigger:
+        'An admin revises a DECLINED quote and sends it back out (issue #448). The same key that issued it, because it is the same quote: `resent` is what tells the two apart.',
+      source: 'src/admin/resendQuote.ts',
+      dataKeys: ['kinfolkId', 'invoiceId', 'isQuote', 'resent'],
+    },
+    {
       trigger: 'An admin reviews a draft invoice and sends it.',
       source: 'src/admin/reviewAndSendDraftInvoice.ts',
       dataKeys: ['kinfolkId', 'invoiceId'],

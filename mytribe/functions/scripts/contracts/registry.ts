@@ -28,6 +28,9 @@ import { Args as ManageBookingSeriesArgs, Result as ManageBookingSeriesResult } 
 import { Args as RescheduleBookingArgs, Result as RescheduleBookingResult } from '../../src/admin/rescheduleBooking';
 import { Args as CreateInvoiceArgs, Result as CreateInvoiceResult } from '../../src/admin/createInvoice';
 import { Args as CreateQuoteArgs, Result as CreateQuoteResult } from '../../src/admin/createQuote';
+// The office's answer to a decline (issue #448): revise the quote and send it
+// back out, which clears the household's answer so they can give a new one.
+import { Args as ResendQuoteArgs, Result as ResendQuoteResult } from '../../src/admin/resendQuote';
 import { Args as GenerateInvoicePdfArgs, Result as GenerateInvoicePdfResult } from '../../src/admin/generateInvoicePdf';
 import { Args as GenerateReceiptArgs, Result as GenerateReceiptResult } from '../../src/admin/generateReceipt';
 import { Args as GetInvoiceLedgerArgs, Result as GetInvoiceLedgerResult } from '../../src/admin/getInvoiceLedger';
@@ -135,6 +138,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'redeemCredit', args: RedeemCreditArgs, result: RedeemCreditResult },
     { name: 'repairInvoicePayments', args: RepairInvoicePaymentsArgs, result: RepairInvoicePaymentsResult },
     { name: 'runAutoApply', args: RunAutoApplyArgs, result: RunAutoApplyResult },
+    { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },

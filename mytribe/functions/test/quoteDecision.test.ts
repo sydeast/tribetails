@@ -106,8 +106,11 @@ describe('acceptQuote happy path', () => {
     // Both spellings move together, or the two sides bucket the doc differently.
     expect(data.status).toBe('open');
     expect(data.invoiceStatus).toBe('open');
-    // The ADR-0002 stamp rides the same write.
-    expect(data.editScope).toBe('all');
+    // The ADR-0002 stamp rides the same write, and since issue #448 it locks
+    // the doc: the household has agreed to this figure, so it is no longer the
+    // office's to change. (This read 'all' until 2026-08-19, which is the
+    // defect #448 reports.)
+    expect(data.editScope).toBe('none');
   });
 
   it('writes a BILLING_QUOTE_ACCEPTED audit entry attributed to the household', async () => {

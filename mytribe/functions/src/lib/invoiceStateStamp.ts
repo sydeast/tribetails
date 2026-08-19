@@ -41,6 +41,7 @@ import {
   invoiceStateOf,
   invoiceEditScope,
   paymentStandingOf,
+  quoteAcceptanceOf,
   type InvoiceState,
   type InvoiceEditScope,
   type InvoiceStateDoc,
@@ -78,7 +79,17 @@ export interface InvoiceStateStamp {
 export function invoiceStateStampOf(doc: InvoiceStampDoc, paidCents: number): InvoiceStateStamp {
   const status = invoiceStateOf(doc);
   const standing = paymentStandingOf(invoiceTotalCentsOf(doc), paidCents);
-  return { status, editScope: invoiceEditScope(status, standing) };
+  // THE QUOTE ANSWER IS READ OFF THE DOC, not passed in, and that is what makes
+  // the acceptance lock (issue #448) hold everywhere. Every adopter hands this
+  // function the WHOLE post-write doc, so an invoice that began as an accepted
+  // quote re-stamps to `editScope: 'none'` through markInvoicePaid, the Stripe
+  // webhook, the session linker and the backfill alike, with no adopter needing
+  // to know the rule exists. An adopter that passed only the fields it changed
+  // would silently unlock the doc on its next write; none does.
+  return {
+    status,
+    editScope: invoiceEditScope(status, standing, quoteAcceptanceOf(doc)),
+  };
 }
 
 /**

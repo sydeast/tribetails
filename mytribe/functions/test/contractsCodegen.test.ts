@@ -285,8 +285,9 @@ describe('the committed Contracts module', () => {
     const model = readModel(INVOICE_CONTRACT_REGISTRY);
     // 24 since issue #385: acceptQuote and denyQuote joined the invoice
     // family (a quote is an invoice in QUOTE status, so its two decision
-    // callables belong to this registry rather than a fourth one).
-    expect(model.callables).toHaveLength(24);
+    // callables belong to this registry rather than a fourth one). 25 since
+    // issue #448, which added the office's answer to a decline: resendQuote.
+    expect(model.callables).toHaveLength(25);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

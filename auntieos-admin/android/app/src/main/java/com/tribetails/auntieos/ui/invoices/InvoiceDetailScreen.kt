@@ -231,6 +231,7 @@ fun InvoiceDetailScreen(
                         generatingReceipt = uiState.generatingReceipt,
                         sendingReminder   = uiState.sendingReminder,
                         sendingDraft      = uiState.sendingDraft,
+                        resendingQuote    = uiState.resendingQuote,
                         generatingPdf     = uiState.generatingPdf,
                         businessSettings  = uiState.businessSettings,
                         archiving         = uiState.archiving,
@@ -240,6 +241,7 @@ fun InvoiceDetailScreen(
                         onGenerateReceipt = { viewModel.generateReceipt() },
                         onSendReminder    = { viewModel.sendReminder() },
                         onSendDraft       = { viewModel.reviewAndSendDraft() },
+                        onResendQuote     = { viewModel.resendQuote() },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
                     )
@@ -326,6 +328,7 @@ private fun invoiceDetailBody(
     generatingReceipt: Boolean,
     sendingReminder: Boolean,
     sendingDraft: Boolean,
+    resendingQuote: Boolean,
     generatingPdf: Boolean,
     businessSettings: com.tribetails.auntieos.data.model.BusinessSettings?,
     archiving: Boolean,
@@ -335,6 +338,7 @@ private fun invoiceDetailBody(
     onGenerateReceipt: () -> Unit,
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
+    onResendQuote: () -> Unit,
     onDownloadPdf: () -> Unit,
     onArchive: () -> Unit,
 ) = with(scope) {
@@ -526,6 +530,53 @@ private fun invoiceDetailBody(
                 body = {
                     Text(
                         "This invoice is still a draft. Review it, then send it to notify the client.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                },
+            )
+        }
+    }
+
+    // ── The household's answer to this quote (issue #448) ───────────────────────
+    //
+    // NOT PART OF `actions`, for the same reason Archive is not: that matrix
+    // answers "what can be done about the money" from the STATE alone, and this
+    // turns on the household's answer. A declined quote and one still waiting
+    // for one are both in state QUOTE; only `quoteDecision` tells them apart.
+    //
+    // The ruling of 2026-08-18: an ACCEPTED quote is agreed, so its figures are
+    // frozen (the server stamps `editScope: 'none'` on it and refuses an edit
+    // by name), and a DECLINED one is revised and sent back out rather than
+    // abandoned. Both halves are said here, because a decline with no way
+    // forward reads as a dead end whatever the copy says.
+    val quoteAnswer = invoiceQuoteDecision(invoice)
+    if (quoteAnswer != null) {
+        item {
+            AuntieBanner(
+                tone      = if (quoteAnswer == QuoteDecision.ACCEPTED) AuntieBannerTone.Success else AuntieBannerTone.Info,
+                pillLabel = if (quoteAnswer == QuoteDecision.ACCEPTED) "ACCEPTED" else "DECLINED",
+                trailing  = {
+                    if (quoteAnswer == QuoteDecision.DENIED) {
+                        PrimaryButton(
+                            label   = "Revise and resend",
+                            onClick = onResendQuote,
+                            loading = resendingQuote,
+                            enabled = !resendingQuote,
+                        )
+                    }
+                },
+                body = {
+                    Text(
+                        text = if (quoteAnswer == QuoteDecision.ACCEPTED) {
+                            "The household accepted this quote, so it is an invoice now and the balance above " +
+                                "is owed. The figures are locked from here: they are what the household agreed " +
+                                "to. Issue a new quote if the work has changed."
+                        } else {
+                            "The household declined this quote. Nothing is owed and nothing has been cancelled. " +
+                                "Edit it and send it back out, and they can answer the revised one; the quote " +
+                                "number and everything on it stay as they are."
+                        },
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.textDim,
                     )

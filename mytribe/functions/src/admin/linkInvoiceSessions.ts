@@ -9,7 +9,12 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
-import { invoiceStateOf, paymentStandingOf, invoiceEditScope } from '../lib/invoiceEditPolicy';
+import {
+  invoiceStateOf,
+  paymentStandingOf,
+  invoiceEditScope,
+  quoteAcceptanceOf,
+} from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
 import {
@@ -206,7 +211,14 @@ export async function linkInvoiceSessionsHandler(
     const paymentsSnap = await tx.get(invRef.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
     const state = invoiceStateOf(data);
-    const scope = invoiceEditScope(state, paymentStandingOf(invoiceTotalCentsOf(data), paidCents));
+    const scope = invoiceEditScope(
+      state,
+      paymentStandingOf(invoiceTotalCentsOf(data), paidCents),
+      // Re-stamped, never refused: linking sessions is attribution, not an edit
+      // of what the household was asked for, so an accepted quote's lock is
+      // carried forward here rather than blocking the link.
+      quoteAcceptanceOf(data),
+    );
 
     tx.set(
       invRef,

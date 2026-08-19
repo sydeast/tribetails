@@ -8,7 +8,12 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { invoiceStateOf, invoiceEditRefusal, paymentStandingOf } from '../lib/invoiceEditPolicy';
+import {
+  invoiceStateOf,
+  invoiceEditRefusal,
+  paymentStandingOf,
+  quoteAcceptanceOf,
+} from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
@@ -202,7 +207,17 @@ export async function updateInvoiceHandler(
 
   const touchesMoney = patch.lineItems !== undefined || patch.invoiceDiscountCents !== undefined;
 
-  const refusal = invoiceEditRefusal(invoiceStateOf(data), standing, touchesMoney);
+  // The FOURTH input is the household's answer (issue #448). An accepted quote
+  // is frozen outright, and it has to be checked here rather than left to the
+  // state: `acceptQuote` re-stamps the doc to 'open', so by the time an edit
+  // arrives the only thing separating an agreed figure from an ordinary sent
+  // invoice is `quoteDecision`.
+  const refusal = invoiceEditRefusal(
+    invoiceStateOf(data),
+    standing,
+    touchesMoney,
+    quoteAcceptanceOf(data),
+  );
   if (refusal) {
     throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
   }

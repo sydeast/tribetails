@@ -157,6 +157,52 @@ describe('the stamp is a fixpoint (what makes the backfill idempotent)', () => {
   });
 });
 
+/**
+ * ISSUE #448. The acceptance lock lives HERE, in the stamp, rather than in each
+ * adopter: every money-touching callable hands this function the whole
+ * post-write doc, so reading `quoteDecision` off it is what makes an accepted
+ * quote stay locked through markInvoicePaid, the Stripe webhook, the session
+ * linker and the backfill alike.
+ */
+describe('the stamp reads the household answer to a quote', () => {
+  /** What `acceptQuote` leaves: an open bill whose figures are agreed. */
+  const acceptedQuote: InvoiceStampDoc = {
+    status: 'open',
+    amountDue: 240,
+    total: 240,
+    totalCents: 24000,
+    quoteDecision: 'accepted',
+  };
+  it('LOCKS an accepted quote, which is otherwise an ordinary open invoice', () => {
+    const stamp = invoiceStateStampOf(acceptedQuote, 0);
+    // The state is untouched: the acceptance is a second dimension, not a ninth
+    // state, so the portal's payable predicate over the eight still applies.
+    expect(stamp.status).toBe('open');
+    expect(stamp.editScope).toBe('none');
+    // Without the answer, the very same doc is fully editable.
+    const { quoteDecision: _answer, ...unanswered } = acceptedQuote;
+    expect(invoiceStateStampOf(unanswered, 0).editScope).toBe('all');
+  });
+  it('leaves a DECLINED quote fully editable', () => {
+    const declined: InvoiceStampDoc = {
+      status: 'quote',
+      amountDue: 240,
+      total: 240,
+      totalCents: 24000,
+      quoteDecision: 'denied',
+    };
+    expect(invoiceStateStampOf(declined, 0)).toEqual({ status: 'quote', editScope: 'all' });
+  });
+  it('stays a fixpoint on an answered quote, so the backfill is still idempotent', () => {
+    const first = invoiceStateStampOf(acceptedQuote, 0);
+    expect(invoiceStateStampOf({ ...acceptedQuote, ...first }, 0)).toEqual(first);
+  });
+  it('keeps a PART-PAID accepted quote repairable', () => {
+    // The repair doctrine outranks the lock: money that came in short is the
+    // case an operator most needs to be able to correct.
+    expect(invoiceStateStampOf(acceptedQuote, 4000).editScope).toBe('all');
+  });
+});
 describe('invoiceStampIsCurrent', () => {
   const stamp = invoiceStateStampOf(STATE_FIXTURES.open.doc, 0);
 
