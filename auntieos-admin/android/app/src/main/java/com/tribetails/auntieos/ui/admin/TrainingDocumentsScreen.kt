@@ -524,8 +524,29 @@ private fun AddDocumentForm(
         contract = ActivityResultContracts.GetContent(),
     ) { uri -> if (uri != null) viewModel.uploadTribalIntelAttachment(context, uri) }
 
+    // ── the stale target (issue #460) ───────────────────────────────────────
+    // A legacy row stores a person NAME where a newer one stores an id. The
+    // dropdown found no match for it and fell back to its placeholder, so the
+    // form showed a blank target for a note that plainly named somebody — and
+    // `hasTarget` counted the name as a target and let it be saved back. The
+    // stored value is surfaced instead, and the save is refused until a real
+    // record is chosen, which is also what the callable now enforces.
+    val staleAnchor = tribalIntelStaleTargetMessage(
+        selectedKinfolkId,
+        kinfolkDirectory.map { it.id },
+        anchorNounFor(targetType),
+    )
+    val staleKin =
+        if (targetType == "KIN") {
+            tribalIntelStaleTargetMessage(selectedKinId, kinForSelected.map { it.id }, TribalIntelTargetNoun.KIN)
+        } else {
+            null
+        }
+
     val hasContent = title.isNotBlank() || content.isNotBlank() || attachments.isNotEmpty()
-    val hasTarget = selectedKinfolkId.isNotBlank() && (targetType != "KIN" || selectedKinId.isNotBlank())
+    val hasTarget = selectedKinfolkId.isNotBlank() &&
+        staleAnchor == null &&
+        (targetType != "KIN" || (selectedKinId.isNotBlank() && staleKin == null))
     val canSave = hasContent && hasTarget && !isSaving && !isUploading
 
     DenPanel(
@@ -620,6 +641,18 @@ private fun AddDocumentForm(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // The stored value the dropdown could not place, kept on screen so the
+        // note is never silently detached from whoever it was about.
+        staleAnchor?.let { msg ->
+            Spacer(Modifier.height(AuntieTheme.dims.space2))
+            Text(
+                text = tribalIntelStaleOptionLabel(selectedKinfolkId),
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.error,
+            )
+            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+        }
+
         if (targetType == "KIN") {
             Spacer(Modifier.height(AuntieTheme.dims.space3))
             AuntieDropdownField(
@@ -632,6 +665,16 @@ private fun AddDocumentForm(
                 enabled = selectedKinfolkId.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             )
+            // Same reason as the household picker: a stale pet id stays readable.
+            staleKin?.let { msg ->
+                Spacer(Modifier.height(AuntieTheme.dims.space2))
+                Text(
+                    text = tribalIntelStaleOptionLabel(selectedKinId),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.error,
+                )
+                Text(text = msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
         }
 
         Spacer(Modifier.height(AuntieTheme.dims.space5))

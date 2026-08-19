@@ -8,8 +8,11 @@ import {
   blankTribalIntelDraft,
   canSaveTribalIntelDraft,
   tribalIntelCallableArgs,
+  tribalIntelStaleOptionLabel,
+  tribalIntelStaleTargetMessage,
   tribalIntelTargetTypeLabel,
   validateTribalIntelDraft,
+  validateTribalIntelTargetRoster,
   type TribalIntelDraft,
 } from './tribalIntelDraftSchema';
 
@@ -214,5 +217,73 @@ describe('Tribal Intel targets', () => {
       );
       expect(errors.targetKinfolkId).toBe('Pick the household this intel belongs to.');
     }
+  });
+});
+
+/**
+ * Issue #460: the target must be an id the roster holds, and a stored value it
+ * cannot place has to stay readable rather than vanish.
+ */
+describe('tribalIntelStaleTargetMessage', () => {
+  const roster = ['kf1', 'kf2'];
+  it('is silent about an id the roster holds', () => {
+    expect(tribalIntelStaleTargetMessage('kf1', roster, 'household')).toBeNull();
+  });
+  it('is silent about a blank value: an unset target is a different complaint', () => {
+    expect(tribalIntelStaleTargetMessage('', roster, 'household')).toBeNull();
+    expect(tribalIntelStaleTargetMessage('   ', roster, 'household')).toBeNull();
+  });
+  it('is silent while the roster is empty, because that means "not loaded yet"', () => {
+    expect(tribalIntelStaleTargetMessage('Marla Whitfield', [], 'household')).toBeNull();
+  });
+  it('names the value and the fix for a stored NAME', () => {
+    const msg = tribalIntelStaleTargetMessage('Marla Whitfield', roster, 'household');
+    expect(msg).toContain('"Marla Whitfield"');
+    expect(msg).toContain('not a household on the roster');
+    expect(msg).toContain('Pick the right household');
+  });
+  it('uses the noun the picker uses for each target', () => {
+    expect(tribalIntelStaleTargetMessage('x', roster, 'kinfolk')).toContain('kinfolk on the roster');
+    expect(tribalIntelStaleTargetMessage('x', roster, 'kin')).toContain('pet on the roster');
+  });
+  it('labels the stale option with the value itself', () => {
+    expect(tribalIntelStaleOptionLabel('Marla Whitfield')).toBe('Unresolved: "Marla Whitfield"');
+  });
+});
+describe('validateTribalIntelTargetRoster', () => {
+  const kinfolkIds = ['kf1'];
+  const kinIds = ['kin1', 'kin-archived'];
+  it('passes a draft whose ids are all on the roster', () => {
+    expect(validateTribalIntelTargetRoster(draft(), kinfolkIds, kinIds)).toEqual({});
+  });
+  it('flags an anchor the roster cannot place', () => {
+    const errors = validateTribalIntelTargetRoster(
+      draft({ targetKinfolkId: 'Marla Whitfield' }),
+      kinfolkIds,
+      kinIds,
+    );
+    expect(errors.targetKinfolkId).toContain('"Marla Whitfield"');
+  });
+  it('only judges the pet on a KIN-targeted draft', () => {
+    expect(
+      validateTribalIntelTargetRoster(draft({ targetKinId: 'Biscuit' }), kinfolkIds, kinIds).targetKinId,
+    ).toBeUndefined();
+    expect(
+      validateTribalIntelTargetRoster(
+        draft({ targetType: 'KIN', targetKinId: 'Biscuit' }),
+        kinfolkIds,
+        kinIds,
+      ).targetKinId,
+    ).toContain('"Biscuit"');
+  });
+  it('accepts an ARCHIVED pet, because the server checks existence and not status', () => {
+    // Stricter than the server is the one thing this module promises never to be.
+    expect(
+      validateTribalIntelTargetRoster(
+        draft({ targetType: 'KIN', targetKinId: 'kin-archived' }),
+        kinfolkIds,
+        kinIds,
+      ),
+    ).toEqual({});
   });
 });
