@@ -22,6 +22,7 @@ import {
   type UngatedSend,
 } from '../notifications/provenance';
 import { readBusinessAdmins } from '../lib/businessAdmins';
+import { readTemplateBindings } from '../lib/sendFromTemplate';
 import type { BusinessNotificationOverride } from '../notifications/types';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
@@ -171,31 +172,28 @@ export async function getBusinessNotificationOverridesHandler(
     | { byKey?: Record<string, BusinessNotificationOverride>; updatedAtMs?: number }
     | undefined;
 
-  // Email retargeting is a live capability of this very screen: an operator can
-  // point a catalog key's email at a different `emailTemplates/{id}` by writing
-  // `notificationTemplateBindings/{templateId}`, and `sendFromTemplate` honors
-  // it at send time. So the catalog default is NOT the answer to "which template
-  // writes this" on a retargeted row. Read the bindings once here and project
-  // the EFFECTIVE id, matching `resolveTemplateId` (lib/sendFromTemplate.ts):
-  // an active binding with a templateId wins; an inactive one falls back to the
-  // default, because disabling a binding means "revert", not "send nothing".
+  // Email retargeting is a live capability of the Template Assignments screen
+  // (#439): a `notificationTemplateBindings` doc points a catalog key's email at
+  // a different `emailTemplates/{id}`, and `sendFromTemplate` honors it at send
+  // time. So the catalog default is NOT the answer to "which template writes
+  // this" on a retargeted row, and this screen would otherwise name a document
+  // that has not rendered anything in weeks.
+  //
+  // The resolution itself is NOT reimplemented here. `readTemplateBindings`
+  // (lib/sendFromTemplate.ts) is the same read `listCatalogKeys` uses to build
+  // the Assignments routing table, so the two screens cannot disagree about what
+  // a key sends. Assignments remains the place to CHANGE the routing; this is
+  // the gate reporting it, and the gate's row detail says so.
   //
   // Email only. `smsChannel` and `pushChannel` read `def.templates.*` directly
-  // and consult no bindings, which is why the issue says retargeting those needs
-  // a deploy.
-  const bindings = new Map<string, string>();
+  // and consult no bindings, which is why retargeting those needs a deploy.
+  let bindings: ReadonlyMap<string, string> = new Map();
   try {
-    const bindingSnap = await db().collection('notificationTemplateBindings').get();
-    for (const doc of bindingSnap.docs) {
-      const b = doc.data() as { templateId?: string; active?: boolean };
-      if (b.active !== false && typeof b.templateId === 'string' && b.templateId !== '') {
-        bindings.set(doc.id, b.templateId);
-      }
-    }
+    bindings = (await readTemplateBindings()).activeBindings;
   } catch {
     // Same rule as the roster read below: a settings GET must not fail the whole
-    // 44-row matrix. With no bindings read, every row shows its catalog default,
-    // which is what an un-retargeted row would show anyway.
+    // matrix. With no bindings read, every row shows its catalog default, which
+    // is what an un-retargeted row would show anyway.
   }
   const catalog = Object.values(NOTIFICATION_CATALOG).map((def) => {
     // The binding is keyed by the TEMPLATE id the sender asks for, not by the

@@ -1,3 +1,4 @@
+import { DIRECT_SEND_KEYS } from './catalogKeys';
 import type { NotificationDef, RecipientResolver } from './types';
 
 /**
@@ -134,6 +135,21 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'serviceName',
         'startTimeMs',
         'changedFields',
+      ],
+    },
+  ],
+  'kincare.reschedule.requested': [
+    {
+      trigger: 'A household asks to move a visit to a different time.',
+      source: 'src/triggers/onBookingsWrite.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'visitId',
+        'serviceName',
+        'startTimeMs',
+        'reason',
       ],
     },
   ],
@@ -447,6 +463,20 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     },
   ],
 
+  'broadcast.message': [
+    {
+      // NOT an `enqueueNotification` caller, and the only row here that is not.
+      // `broadcastMessage` resolves each recipient through `resolveChannels`
+      // against this row itself and then sends on the channels that survive, so
+      // the gate governs it exactly like any other key while the dispatch path
+      // is its own. The drift guard below knows about both shapes.
+      trigger: 'An admin sends an announcement to a segment of households.',
+      source: 'src/admin/broadcastMessage.ts',
+      dataKeys: ['subject', 'body'],
+      dataNote: 'The subject and body are whatever the operator typed into the composer.',
+    },
+  ],
+
   // ── Household, account, messages ────────────────────────────────────────
   'message.received': [
     {
@@ -604,58 +634,70 @@ export const NEVER_FIRES: readonly string[] = ['quote.accepted', 'quote.denied']
  * separately giving broadcast a catalog row of its own. When that lands, this
  * list is unaffected.
  */
-export const UNGATED_SENDS: readonly UngatedSend[] = [
-  {
-    templateId: 'invite.primary',
-    trigger: 'A tribe is provisioned, an invite is minted, or a household is invited to the portal.',
+/**
+ * What fires each direct-send key, keyed by the key itself.
+ *
+ * The KEY LIST is not repeated here. `DIRECT_SEND_KEYS` (notifications/
+ * catalogKeys.ts, #423) is the one honest list of keys handed straight to
+ * `sendFromTemplate`, and `catalogKeys.test.ts` greps the source for every such
+ * literal and fails when that list drifts. A second list here would be a second
+ * thing to forget. What this map adds is the part the gate needs and the key
+ * list does not carry: what actually sets each one off, and where that lives.
+ */
+const UNGATED_TRIGGERS: Record<string, { trigger: string; source: string }> = {
+  'invite.primary': {
+    trigger:
+      'A tribe is provisioned, an invite is minted by hand, or a household is invited to the portal.',
     source: 'src/admin/inviteKinfolkToPortal.ts',
   },
-  {
-    templateId: 'invite.primary',
-    trigger: 'An admin mints an invite by hand.',
-    source: 'src/admin/mintInvite.ts',
-  },
-  {
-    templateId: 'invite.primary',
-    trigger: 'A new tribe is provisioned and its primary is invited.',
-    source: 'src/admin/provisionTribe.ts',
-  },
-  {
-    templateId: 'invite.secondary',
+  'invite.secondary': {
     trigger: 'A household primary invites a second member.',
     source: 'src/membership/mintInviteFromPrimary.ts',
   },
-  {
-    templateId: 'invite.auntie-notify',
+  'invite.auntie-notify': {
     trigger: 'A household primary invites a second member, and the office is copied.',
     source: 'src/membership/mintInviteFromPrimary.ts',
   },
-  {
-    templateId: 'invite.primary-receipt',
+  'invite.primary-receipt': {
     trigger: 'A household primary invites a second member, and the primary gets a receipt.',
     source: 'src/membership/mintInviteFromPrimary.ts',
   },
-  {
-    templateId: 'invite.verify-email',
+  'invite.verify-email': {
     trigger: 'An invite is accepted and the address needs verifying.',
     source: 'src/membership/acceptInvite.ts',
   },
-  {
-    templateId: 'recovery.requested',
+  'recovery.requested': {
     trigger: 'A household asks to recover its primary account.',
     source: 'src/recovery/requestPrimaryRecovery.ts',
   },
-  {
-    templateId: 'recovery.completed',
+  'recovery.completed': {
     trigger: 'An admin completes a primary-account recovery.',
     source: 'src/admin/executePrimaryRecovery.ts',
   },
-  {
-    templateId: 'error.daily-digest',
+  'error.daily-digest': {
     trigger: 'The daily error digest cron runs.',
     source: 'src/scheduled/errorDailyDigest.ts',
   },
-];
+};
+
+/**
+ * Email the platform sends that the notification gate does NOT govern.
+ *
+ * These go out through `sendFromTemplate`, straight to an address, with no
+ * catalog row, no channel resolution and no recipient preference. Every toggle
+ * on the gate screen is irrelevant to them. They are listed so the answer to
+ * "what could be sent out to users" is the whole answer and not just the gated
+ * part.
+ *
+ * `broadcast.message` is deliberately absent: #424 gave broadcasts a real
+ * catalog row, and the gate governs them now, so a broadcast belongs in the
+ * matrix rather than in this footnote.
+ */
+export const UNGATED_SENDS: readonly UngatedSend[] = DIRECT_SEND_KEYS.map((d) => ({
+  templateId: d.key,
+  trigger: UNGATED_TRIGGERS[d.key]?.trigger ?? d.label,
+  source: UNGATED_TRIGGERS[d.key]?.source ?? '',
+}));
 
 /**
  * The recipient rule for one catalog row, as one sentence per resolver.

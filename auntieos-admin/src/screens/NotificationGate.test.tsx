@@ -299,6 +299,17 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     expect(await screen.findByText('emailTemplates/invoice.new.v2')).toBeInTheDocument();
     expect(screen.getByText(/the catalog default is invoice\.new/)).toBeInTheDocument();
   });
+  /**
+   * The gate REPORTS the routing; Template Assignments (#439) owns changing it.
+   * Two screens offering the same edit is how they end up disagreeing, so the
+   * gate names the one that owns it rather than growing its own control.
+   */
+  it('points at Template Assignments rather than offering its own repoint control', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
+    await open();
+    expect(await screen.findByText(/Repoint an email on the Template/)).toBeInTheDocument();
+  });
+
   it('lists the merge fields, emitter data keys included, as the leak surface', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [documented] }));
     await open();

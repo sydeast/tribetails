@@ -13,6 +13,7 @@ import {
   getNotificationDef,
   legacyKeysFor,
 } from '../src/notifications/catalog';
+import { DIRECT_SEND_KEYS } from '../src/notifications/catalogKeys';
 
 /**
  * The drift guard for `notifications/provenance.ts`, modelled on the
@@ -46,13 +47,6 @@ const SOURCE_FILES = allSourceFiles(SRC);
 
 function read(relPath: string): string {
   return readFileSync(join(FUNCTIONS_ROOT, relPath), 'utf8');
-}
-
-/** Files that actually call [fnName], excluding the ones that define/wrap it. */
-function callersOf(fnName: string, exclude: readonly string[]): string[] {
-  return SOURCE_FILES.filter(
-    (f) => !exclude.includes(f) && read(f).includes(`${fnName}(`),
-  ).sort();
 }
 
 describe('provenance covers the catalog exactly once', () => {
@@ -106,37 +100,84 @@ describe('every claimed source file exists and mentions its key', () => {
 });
 
 describe('no emitter can land undocumented', () => {
-  it('the files calling enqueueNotification are exactly the files provenance names', () => {
-    // dispatcher.ts DEFINES enqueueNotification rather than calling it.
-    const actual = callersOf('enqueueNotification', ['src/notifications/dispatcher.ts']);
+  /**
+   * A catalog key reaches a recipient by one of exactly two routes: the
+   * dispatcher (`enqueueNotification`), or a caller that resolves the gate
+   * itself with `resolveChannels` and then sends. `broadcastMessage` is the
+   * only one of the second kind, added by #424, and it is a real dispatch path
+   * that the operator can see in the gate, so the guard admits both shapes
+   * rather than pretending broadcasts have no trigger.
+   */
+  const DISPATCH_CALLS = ['enqueueNotification', 'resolveChannels'];
+
+  function dispatchingFiles(): string[] {
+    return SOURCE_FILES.filter((f) => {
+      // These DEFINE the two entry points rather than calling them, and prefs.ts
+      // is where resolveChannels lives.
+      if (
+        f === 'src/notifications/dispatcher.ts' ||
+        f === 'src/notifications/prefs.ts' ||
+        f === 'src/admin/notificationOverrides.ts'
+      ) {
+        return false;
+      }
+      const src = read(f);
+      return DISPATCH_CALLS.some((fn) => src.includes(`${fn}(`));
+    }).sort();
+  }
+
+  it('every file that dispatches a catalog key is named by provenance', () => {
+    const claimed = new Set(
+      Object.values(NOTIFICATION_EMITTERS).flatMap((list) => list.map((e) => e.source)),
+    );
+    const undocumented = dispatchingFiles().filter((f) => !claimed.has(f));
+    expect(undocumented).toEqual([]);
+  });
+
+  it('every file provenance names really does dispatch something', () => {
+    // The inverse failure: a source path that is stale, renamed, or invented.
+    const dispatching = new Set(dispatchingFiles());
     const claimed = [
       ...new Set(
         Object.values(NOTIFICATION_EMITTERS).flatMap((list) => list.map((e) => e.source)),
       ),
     ].sort();
-    expect(claimed).toEqual(actual);
+    expect(claimed.filter((f) => !dispatching.has(f))).toEqual([]);
   });
 
-  it('the files calling sendFromTemplate are exactly the files UNGATED_SENDS names', () => {
-    // sendFromTemplate.ts defines it; emailChannel.ts is the GATED path (it is
-    // how a catalog notification's email is rendered), so it is not an ungated
-    // send and must not appear in the list.
-    const actual = callersOf('sendFromTemplate', [
-      'src/lib/sendFromTemplate.ts',
-      'src/notifications/senders/emailChannel.ts',
-    ]);
-    const claimed = [...new Set(UNGATED_SENDS.map((u) => u.source))].sort();
-    expect(claimed).toEqual(actual);
+  /**
+   * The ungated list does NOT keep its own copy of the key set. `DIRECT_SEND_KEYS`
+   * (notifications/catalogKeys.ts, #423) is the one honest list of keys handed
+   * straight to `sendFromTemplate`, and `catalogKeys.test.ts` already greps the
+   * source for every such literal. Duplicating that grep here would be a second
+   * list to forget; what this checks instead is that the gate's footnote covers
+   * exactly that list and adds a real trigger sentence for each entry.
+   */
+  it('UNGATED_SENDS covers exactly the direct-send keys, and nothing else', () => {
+    expect(UNGATED_SENDS.map((u) => u.templateId).sort()).toEqual(
+      DIRECT_SEND_KEYS.map((d) => d.key).slice().sort(),
+    );
   });
 
-  it('every ungated send names a template its source really asks for', () => {
+  it('every ungated send says what fires it, and names a file that really sends it', () => {
     for (const send of UNGATED_SENDS) {
-      expect(existsSync(join(FUNCTIONS_ROOT, send.source))).toBe(true);
+      expect(send.trigger, `${send.templateId} has no trigger`).toContain(' ');
+      expect(existsSync(join(FUNCTIONS_ROOT, send.source)), `${send.source} missing`).toBe(true);
       expect(
         read(send.source).includes(`'${send.templateId}'`),
         `${send.source} never asks for '${send.templateId}'`,
       ).toBe(true);
     }
+  });
+
+  /**
+   * #424 gave broadcasts a real catalog row, so the gate governs them. A
+   * broadcast listed as ungated would tell the operator the gate's toggles do
+   * not apply to the one message type they send by hand, which is backwards.
+   */
+  it('does not list broadcast.message as ungated, because it has a catalog row now', () => {
+    expect(UNGATED_SENDS.map((u) => u.templateId)).not.toContain('broadcast.message');
+    expect(NOTIFICATION_EMITTERS['broadcast.message']).toBeTruthy();
   });
 });
 

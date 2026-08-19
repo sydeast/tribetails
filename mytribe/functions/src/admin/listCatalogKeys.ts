@@ -5,6 +5,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { buildCatalogKeyRows, type CatalogKeyRow } from '../notifications/catalogKeys';
+import { readTemplateBindings } from '../lib/sendFromTemplate';
 
 /**
  * The catalog keys an admin can bind a template to, and what each one does today.
@@ -40,22 +41,16 @@ export async function listCatalogKeysHandler(
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data ?? {});
 
-  const [bindingSnap, templateSnap] = await Promise.all([
-    db().collection('notificationTemplateBindings').get(),
+  // The bindings read moved to `readTemplateBindings` (lib/sendFromTemplate.ts),
+  // beside `resolveTemplateId`, when #396 needed the same answer for the
+  // notification gate's "which template writes it" line. Two admin screens each
+  // looping this collection is how they start disagreeing about what a key
+  // sends, and the inactive-binding fallback is the rule that would drift first.
+  const [bindings, templateSnap] = await Promise.all([
+    readTemplateBindings(),
     db().collection('emailTemplates').get(),
   ]);
-
-  const boundKeys = new Set<string>();
-  // Mirrors resolveTemplateId: an inactive binding falls back to the default, so
-  // it must not be reported as the template the key resolves to.
-  const activeBindings = new Map<string, string>();
-  for (const d of bindingSnap.docs) {
-    const data = d.data() as { catalogKey?: string; templateId?: string; active?: boolean };
-    const key = (typeof data.catalogKey === 'string' && data.catalogKey) || d.id;
-    if (!key) continue;
-    boundKeys.add(key);
-    if (data.active !== false && data.templateId) activeBindings.set(key, data.templateId);
-  }
+  const { boundKeys, activeBindings } = bindings;
 
   const templateIds = new Set<string>(templateSnap.docs.map((d) => d.id));
 

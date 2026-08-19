@@ -106,17 +106,28 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
         {templates.length === 0 ? (
           <p className="notifgate__detail-empty">This row offers no channels at all.</p>
         ) : (
-          <ul className="notifgate__detail-list">
-            {templates.map((line) => (
-              <li key={line.channel}>
-                {line.channel}: <code className="notifgate__code">{line.path}</code>
-                {line.missing && ' (this channel is offered with nothing to render it)'}
-                {line.retargetedFrom && (
-                  <> (retargeted; the catalog default is {line.retargetedFrom})</>
-                )}
-              </li>
-            ))}
-          </ul>
+          <>
+            {/* Reporting, not editing. Template Assignments (#439) owns the
+                routing table and is where an email gets repointed; both screens
+                read the same bindings, so they cannot disagree about what a key
+                sends. This line exists so the gate stops naming a catalog
+                document that has not rendered anything since the rebind. */}
+            <p className="notifgate__detail-note">
+              This is what each channel sends today. Repoint an email on the Template
+              Assignments screen.
+            </p>
+            <ul className="notifgate__detail-list">
+              {templates.map((line) => (
+                <li key={line.channel}>
+                  {line.channel}: <code className="notifgate__code">{line.path}</code>
+                  {line.missing && ' (this channel is offered with nothing to render it)'}
+                  {line.retargetedFrom && (
+                    <> (retargeted; the catalog default is {line.retargetedFrom})</>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 

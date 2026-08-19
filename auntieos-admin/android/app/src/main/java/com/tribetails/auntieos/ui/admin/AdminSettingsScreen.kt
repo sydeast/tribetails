@@ -1432,8 +1432,10 @@ private fun NotifRowDetail(
             empty = "Nothing in the platform dispatches this notification, so nothing sets it off. " +
                 "The toggles on this row change what nobody receives.",
         )
+        // Reporting, not editing: Template Assignments (#439) owns the routing
+        // table and both screens read the same bindings.
         NotifDetailBlock(
-            title = "WHICH TEMPLATE WRITES IT",
+            title = "WHICH TEMPLATE WRITES IT (REPOINT ON TEMPLATE ASSIGNMENTS)",
             lines = notifTemplateLines(entry).map { line ->
                 val suffix = when {
                     line.missing -> " (this channel is offered with nothing to render it)"
