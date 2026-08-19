@@ -12,6 +12,10 @@ const { useAuth, signOut } = vi.hoisted(() => ({ useAuth: vi.fn(), signOut: vi.f
 // live number goes through.
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 const { reportError } = vi.hoisted(() => ({ reportError: vi.fn() }));
+// Mocked at the hook rather than at the Firebase boundary: the monitor's own
+// timers and backoff belong to lib/sessionHealth.test.ts. What the shell owes
+// is that a degraded session reaches the screen at all (#454).
+const { useSessionHealth } = vi.hoisted(() => ({ useSessionHealth: vi.fn() }));
 
 vi.mock('@tanstack/react-router', () => ({
   useRouteContext,
@@ -39,6 +43,7 @@ vi.mock('@tanstack/react-router', () => ({
 vi.mock('../lib/auth', () => ({ useAuth, signOut }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 vi.mock('../lib/sentry', () => ({ reportError }));
+vi.mock('../lib/sessionHealth', () => ({ useSessionHealth }));
 
 import { AppShell, RailItem, railCount } from './AppShell';
 import { CONVERSATIONS_QUERY } from '../api/inbox';
@@ -63,6 +68,7 @@ beforeEach(() => {
   // Default for the tests that are not about the badge: the listener has not
   // reported yet, so no count exists and no pill renders.
   useCollection.mockReturnValue({ status: 'loading' });
+  useSessionHealth.mockReturnValue({ status: 'ok' });
 });
 
 describe('AppShell account chip', () => {
@@ -113,6 +119,28 @@ describe('AppShell account chip', () => {
     useRouteContext.mockReturnValue({ access: { status: 'testAdmin', testTribeId: '0I' } });
     render(<AppShell />);
     expect(screen.getByText('Sandbox account')).toBeInTheDocument();
+  });
+
+  // #454. The 2026-08-17 walk lost six securetoken refreshes in a row and the
+  // shell said nothing, because nothing was watching. These two are the shell's
+  // half of that: when the monitor does report, an operator sees it wherever
+  // they happen to be standing.
+  it('says nothing about the session while the token still mints', () => {
+    render(<AppShell />);
+    expect(screen.queryByText('Signed in, but out of touch')).toBeNull();
+    expect(screen.queryByText('Sign in again to keep working')).toBeNull();
+  });
+
+  it('puts a refused token refresh on screen, above the sandbox notice', () => {
+    useRouteContext.mockReturnValue({ access: { status: 'testAdmin', testTribeId: '0I' } });
+    useSessionHealth.mockReturnValue({ status: 'unreachable', failures: 2 });
+    render(<AppShell />);
+
+    const session = screen.getByText('Signed in, but out of touch');
+    const sandbox = screen.getByText('Sandbox account');
+    // Node.DOCUMENT_POSITION_FOLLOWING: the sandbox notice comes after, so the
+    // session warning is the first thing read.
+    expect(session.compareDocumentPosition(sandbox) & 4).toBe(4);
   });
 
   it('still renders the rail groups it always did', () => {

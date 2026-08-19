@@ -21,13 +21,25 @@ import { clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 // wrapper, not worth its own chunk.
 import { SignIn } from './screens/SignIn';
 import { LaunchError } from './screens/LaunchError';
+import { SessionNotice } from './components/SessionNotice';
 
-/** Shared chrome: the two drifting orbs behind every screen. */
+/**
+ * Shared chrome: the two drifting orbs behind every screen, and the session
+ * notice.
+ *
+ * The notice lives HERE rather than in PortalNav because the portal has no
+ * layout route — every screen renders its own nav, and several (the claim
+ * flow, SecureReset, LaunchError) render none at all. The root layout is the
+ * one component every route passes through, which is the only place a fact
+ * about the whole session can be told once. It renders nothing while the
+ * session is healthy, so signed-out screens are untouched.
+ */
 function RootLayout() {
   return (
     <>
       <span className="orb a" aria-hidden="true" />
       <span className="orb b" aria-hidden="true" />
+      <SessionNotice />
       <Outlet />
     </>
   );
