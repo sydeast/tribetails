@@ -1387,18 +1387,25 @@ class PortalApi(private val fns: FunctionsClient) {
     )
 
     /**
-     * The stored Invoice State Stamp, as far as this client models it.
+     * The stored Invoice State Stamp, every state of it.
      *
-     * `quote` used to fall through to `Open`, which put a Pay button on a
-     * proposal (issue #385). `zero` and `redeemed` still fall through: the
-     * money fields carry them honestly enough for the screens that exist here,
-     * and inventing a label for a state with no surface would be worse.
+     * A state this decoder does not name does not go missing. It arrives
+     * wearing another state's clothes. `quote` used to fall through to `Open`,
+     * which put a Pay button on a proposal (issue #385), and `zero` and
+     * `redeemed` fell through the same hole until issue #449.
+     *
+     * The `else` stays `Open` rather than throwing, and stays a STRING read: it
+     * is the same fail-soft the server's own `statusFromStamp` applies to a doc
+     * it cannot read, so an older or newer backend leaves the household looking
+     * at an invoice rather than an error. Nothing reaches it today.
      */
     private fun decodeInvoiceStatus(raw: String?): InvoiceStatus = when (raw) {
         "paid" -> InvoiceStatus.Paid
         "credit" -> InvoiceStatus.Credit
+        "redeemed" -> InvoiceStatus.Redeemed
         "draft" -> InvoiceStatus.Draft
         "quote" -> InvoiceStatus.Quote
+        "zero" -> InvoiceStatus.Zero
         "cancelled" -> InvoiceStatus.Cancelled
         else -> InvoiceStatus.Open
     }

@@ -21,15 +21,25 @@ data class PayMethod(
 )
 
 /**
+ * The stored Invoice State Stamp (ADR-0002), all eight states of it.
+ *
  * `Quote` joined the enum with the accept/decline surface (issue #385). Before
  * it, `decodeInvoice` fell through to `Open` for a quote, so the Android portal
  * showed a proposal as a pending bill with a Pay button on it: the same defect
  * the web portal fixed when the stamped states landed.
  *
- * Still not the server's full eight-state vocabulary: `zero` and `redeemed`
- * have no surface here yet and keep their existing fallbacks.
+ * `Zero` and `Redeemed` are the last two to arrive (issue #449), and the
+ * fallback they were left on was that same defect waiting its turn. A
+ * `redeemed` invoice read as `Open`, and a redeemed credit can carry a positive
+ * `amountDue` (`functions/src/lib/invoiceEditPolicy.ts` says so in as many
+ * words), so a spent credit could be shown to a household with a Pay button
+ * on it. A `zero` invoice read as `Open` as well, which captioned a $0 bill
+ * "PENDING" and offered to collect nothing.
+ *
+ * The server sends nothing outside this list: `getMyInvoices` validates
+ * `status` against the same eight-state enum before it answers.
  */
-enum class InvoiceStatus { Draft, Quote, Open, Paid, Credit, Cancelled }
+enum class InvoiceStatus { Draft, Quote, Open, Zero, Paid, Credit, Redeemed, Cancelled }
 /** What the household said about a quote. Null until they have answered. */
 enum class QuoteDecision { Accepted, Denied }
 
