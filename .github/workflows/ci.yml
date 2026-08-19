@@ -7,10 +7,29 @@ on:
     branches: ['**']
   workflow_dispatch:
 
-# A second push to the same PR cancels the first run rather than queueing it.
+# PULL REQUESTS share a group per branch and cancel: a second push to the same
+# PR kills the first run rather than paying for a verdict on a commit nobody
+# will merge.
+#
+# PUSHES TO MAIN get a group of their own per run, and never cancel. That is
+# not a style choice, it is what the release gate requires. scripts/release.sh
+# reads the check runs for the commit it is about to ship and maps them through
+# `ci_verdict`, where `success|skipped|neutral` is a pass and EVERYTHING ELSE,
+# `cancelled` included, is a fail (release.sh, the `ci_verdict` function). A
+# cancelled run on main therefore does not mean "superseded", it means the gate
+# refuses to release that commit until CI is re-run. In the fortnight before
+# this change 50 of 170 push-to-main runs ended `cancelled`, i.e. roughly a
+# third of main's commits carried a verdict the release gate would not accept.
+#
+# A shared group would still cancel even with `cancel-in-progress: false`,
+# because a concurrency group holds one running plus one pending run and drops
+# the pending one when a third arrives. During a merge burst that is exactly
+# how a middle commit acquires a cancelled verdict. Giving every push its own
+# group is the only form that guarantees no main run is ever cancelled by
+# another main run.
 concurrency:
-  group: ci-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege for the whole file: no job here writes to the repo, and a
 # read-only token is what makes "this job must never push" enforced rather
@@ -19,9 +38,22 @@ concurrency:
 permissions:
   contents: read
 
+# EVERY job below carries a `timeout-minutes`. GitHub's default is 360, so an
+# untimed job that hangs parks a runner for six hours and bills every minute of
+# it; issue #456 records this job file doing exactly that, for over four hours
+# on one pull request run. The ceilings are sized from measured durations of
+# recent successful runs, not guessed, and each one is annotated with what it
+# was measured against so a future slowdown is raised deliberately rather than
+# absorbed. Jobs that install dependencies get a floor of 10 minutes whatever
+# their median, because below that the ceiling stops measuring the job and
+# starts measuring npm registry latency.
+
 jobs:
   changes:
     name: Detect changed paths
+    # Measured median 0.2 min, max 0.3, over 58 successful runs. A checkout and
+    # a paths filter, no install, so no registry latency to absorb.
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,6 +84,16 @@ jobs:
             # bump, ships green.
             admin:
               - 'auntieos-admin/src/**'
+              # index.html and firebase.json are here so that this filter is a
+              # SUPERSET of preview.yml's `admin` filter. preview.yml no longer
+              # runs the unit suite itself (it ran the identical `npm test` this
+              # job runs, on the same commit, for another six minutes a PR), and
+              # that is only safe while every path which triggers a preview also
+              # triggers this job. Without these two lines an index.html-only or
+              # firebase.json-only PR would deploy a preview and be tested by
+              # nothing.
+              - 'auntieos-admin/index.html'
+              - 'auntieos-admin/firebase.json'
               - 'auntieos-admin/package.json'
               - 'auntieos-admin/tsconfig.json'
               - 'auntieos-admin/vite.config.ts'
@@ -127,6 +169,11 @@ jobs:
               - '.github/workflows/ci.yml'
             portal:
               - 'mytribe/web/**'
+              # Same reason as `auntieos-admin/firebase.json` on the `admin`
+              # filter: preview.yml's `portal` filter watches it, preview.yml no
+              # longer runs the portal unit suite, so this job has to be the one
+              # that covers a firebase.json-only change.
+              - 'mytribe/firebase.json'
               # See the comment on `admin` above: mytribe/web is a workspace
               # member too, resolving against the root lockfile and importing
               # packages/geo.
@@ -170,6 +217,9 @@ jobs:
     name: React admin
     needs: changes
     if: needs.changes.outputs.admin == 'true' || github.event_name == 'workflow_dispatch'
+    # Measured median 6.3 min, max 6.7, over 37 successful runs, and 5.8 of
+    # those minutes are the vitest suite alone. Roughly 2.4x the median.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -200,6 +250,12 @@ jobs:
     name: React admin e2e
     needs: changes
     if: needs.changes.outputs.adminE2e == 'true' || github.event_name == 'workflow_dispatch'
+    # THE KNOWN OFFENDER (#456), so this ceiling is the tight one. Measured
+    # median 4.7 min, max 7.0, over 39 successful runs. 12 is about 2.5x the
+    # median and still nearly double the worst honest run, while a hang now
+    # costs at most twelve minutes instead of the 45 and 240 minute parks the
+    # issue records.
+    timeout-minutes: 12
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -231,7 +287,26 @@ jobs:
       # No Firebase credentials anywhere in this job, deliberately. The
       # emulators run entirely offline against a throwaway project id, so
       # nothing here can read or write real data even if a spec is wrong.
+      # A STEP timeout as well as the job one, and the difference matters. When
+      # the JOB ceiling fires the run is torn down and `if: failure()` steps do
+      # not run, so the traces that would say what hung are never uploaded. When
+      # this STEP times out it fails like any other failing step, the upload
+      # below runs, and #456 gets evidence instead of another silent park.
+      # Measured median for this step is 3.3 min over 26 successful runs and the
+      # max is 3.5, so 7 is about 2x the worst honest run.
+      #
+      # 7 rather than 8, and the reason is the arithmetic against the job
+      # ceiling. The step cap only helps if it fires BEFORE the 12 minute job
+      # cap; if the job cap wins, the run is torn down and the artifacts are
+      # lost anyway. So the sum that matters is the SLOWEST setup this job has
+      # been measured at, not the median one: checkout and setup-node about 10s,
+      # setup-java about 15s, npm ci 15s, firebase-tools 48s at its worst and
+      # Chromium 179s at its worst, which is roughly 4.5 minutes before the step
+      # even starts. 4.5 + 8 is 12.5, past the ceiling. 4.5 + 7 is 11.5, inside
+      # it with half a minute for the upload. Raise the job cap first if this
+      # step ever needs to go back up.
       - name: E2E
+        timeout-minutes: 7
         run: npm run e2e
       - name: Upload failure artifacts
         if: failure()
@@ -248,6 +323,7 @@ jobs:
     name: AuntieOS functions
     needs: changes
     if: needs.changes.outputs.functions == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -272,6 +348,7 @@ jobs:
     name: MyTribe functions
     needs: changes
     if: needs.changes.outputs.mytribe == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 12
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -312,6 +389,7 @@ jobs:
     name: MyTribe Firestore rules
     needs: changes
     if: needs.changes.outputs.mytribeRules == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -358,6 +436,7 @@ jobs:
     name: Kinfolk portal
     needs: changes
     if: needs.changes.outputs.portal == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -386,6 +465,7 @@ jobs:
     name: Issue recorder
     needs: changes
     if: needs.changes.outputs.recorder == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -419,6 +499,7 @@ jobs:
     name: Deploy guard
     needs: changes
     if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -455,10 +536,23 @@ jobs:
           else
             echo "scripts/release-bg.test.sh not present yet, skipping."
           fi
+      # This job is where the workflow files check themselves. The `scripts`
+      # filter watches ci.yml, so adding a job here is enough to re-run this,
+      # and the test refuses a job that carries no timeout-minutes. Without it
+      # the fix for #456 lasts exactly until the next job somebody adds, which
+      # would silently inherit GitHub's six-hour default again.
+      - name: Run the workflow budget test if present
+        run: |
+          if [ -f scripts/workflow-budget.test.sh ]; then
+            bash scripts/workflow-budget.test.sh
+          else
+            echo "scripts/workflow-budget.test.sh not present yet, skipping."
+          fi
   mytribe-gradle:
     name: Portal shared (jvm)
     needs: changes
     if: needs.changes.outputs.mytribeGradle == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -485,6 +579,7 @@ jobs:
     name: Shared + desktop (jvm)
     needs: changes
     if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -502,6 +597,7 @@ jobs:
     name: Android unit tests
     needs: changes
     if: needs.changes.outputs.android == 'true' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     defaults:
       run:
