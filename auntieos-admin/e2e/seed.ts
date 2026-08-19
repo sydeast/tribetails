@@ -8,7 +8,7 @@ import { seedDenseRows } from './seed.rows';
  * identitytoolkit and Firestore REST surfaces the SDKs speak, and
  * `Authorization: Bearer owner` bypasses security rules on both, so the admin
  * SDK would buy nothing but a 60 MB dependency and a service-account code path
- * that does not exist here. `web/visual/seed-emulator.mjs` already established
+ * that does not exist here. The older wasm harness's seed script established
  * this pattern in this repo; this file follows it rather than inventing a
  * second one.
  *
@@ -128,12 +128,12 @@ function isoDaysFromNow(days: number): string {
  * The instant "now" means for this seed, in ms.
  *
  * Real wall clock by default, so `npm run e2e` behaves exactly as it always
- * has. `E2E_SEED_NOW` overrides it with a fixed ISO instant, which is what the
- * VISUAL surface sets: a screenshot golden of a row that says "in 3 days" is
- * only reproducible if the seed and the browser's frozen clock agree on the same
- * origin. Nothing else may set it, and a malformed value is fatal rather than
- * silently falling back, because a seed that quietly reverts to the wall clock
- * produces goldens that fail tomorrow for no nameable reason.
+ * has. `E2E_SEED_NOW` overrides it with a fixed ISO instant, for a run that has
+ * to be reproducible: a row that says "in 3 days" only means the same thing
+ * twice if the seed and the browser's clock agree on the same origin. A
+ * malformed value is fatal rather than silently falling back, because a seed
+ * that quietly reverts to the wall clock fails tomorrow for no nameable
+ * reason.
  */
 export function seedNow(): number {
   const pinned = process.env.E2E_SEED_NOW;
@@ -223,8 +223,9 @@ export default async function seed(): Promise<void> {
     // is exactly the half-written link `getInvoiceLedger` reports as
     // `linkedBack: false` and the detail panel calls out as a visit that can be
     // billed a second time. That is a real shape and it deserves a test; it does
-    // not deserve to be the fixture behind the invoice screenshot, where it
-    // would put a warning banner in the golden. `linkInvoiceSessions` writes
+    // not deserve to be the fixture behind the invoice detail panel, where it
+    // would put a warning banner on a screen the specs read. `linkInvoiceSessions`
+    // writes
     // both directions in one transaction, so this is what a correctly linked
     // visit looks like.
     invoiceId: 'vis-invoice-001',

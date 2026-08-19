@@ -1,5 +1,6 @@
 import { str } from './coerce';
 import { normalizedTargetType, notificationKinfolkId } from './notificationContext';
+import { sessionIdForVisit } from '../api/bookings';
 import { type NotificationEntry } from '../api/notifications';
 
 /**
@@ -33,19 +34,32 @@ export interface NotificationRoute {
  * Where a notification's linked item lives. One entry per target type the
  * dispatcher writes; anything else is null.
  *
- * Deep links land as SEARCH params rather than paths for invoices and kintales
- * because both screens open their detail as an in-screen modal over the list
- * (the list is the route), while a household profile is a screen of its own, so
- * `kinfolk` gets the real `/directory/{id}` path.
+ * Deep links land as SEARCH params rather than paths for invoices, bookings and
+ * kintales because all three screens open their detail as an in-screen modal
+ * over the list (the list is the route), while a household profile is a screen
+ * of its own, so `kinfolk` gets the real `/directory/{id}` path.
  *
- * BOOKING CARRIES NO ID, and that is not an oversight. A booking notification's
- * `targetId` is an ENVELOPE visit id (`families/{kinfolkId}/bookings/{batchId}/
- * kinCares/{visitId}`, the model `batchUpdateBookings` acts on), while the
- * Bookings screen lists the FLAT `kin_care_sessions` collection. Those are
- * different id spaces, so `?bookingId=<envelope id>` would select nothing and
- * be exactly the dead link this table exists to prevent. The row's Approve/Deny
- * buttons act on that envelope id directly, which is what the operator actually
- * wants from a booking-request notification; Open just takes them to Bookings.
+ * BOOKING CROSSES TWO ID SPACES, and the crossing is deterministic. A booking
+ * notification's `targetId` is an ENVELOPE visit id
+ * (`families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, the model
+ * `batchUpdateBookings` acts on), while the Bookings screen lists the FLAT
+ * `kin_care_sessions` collection. This table used to drop the id entirely, on
+ * the reasoning that the two spaces were unbridgeable. They are not: the
+ * session doc is minted at exactly `vis_{visitId}` by
+ * `approveBookingSeriesCore.ts:95`, and `manageBookingSeries.ts:100` and
+ * `batchUpdateBookings.ts:184` both re-derive that id to mirror onto it.
+ * `sessionIdForVisit` is that derivation. Dropping the id was the booking half
+ * of issue #389: Open landed on the list, the behaviour the operator called out
+ * as contradicting the purpose of the feature.
+ *
+ * ONE REAL CAVEAT, answered on the screen rather than here: a visit that is
+ * still REQUESTED has no session document at all, because one is only created
+ * on approval, so its derived id resolves to nothing. Bookings says so in its
+ * "Booking unavailable" dialog; it never opens an empty sheet and never leaves
+ * the operator to conclude the list was the destination.
+ *
+ * The Approve/Deny path below still carries the RAW envelope id. Those
+ * callables act on the envelope, so deriving there would break them.
  */
 export function notificationTargetRoute(rawType: unknown, rawId: unknown): NotificationRoute | null {
   const type = normalizedTargetType(rawType);
@@ -59,7 +73,7 @@ export function notificationTargetRoute(rawType: unknown, rawId: unknown): Notif
     case 'kinfolk':
       return { to: '/directory/$kinfolkId', params: { kinfolkId: id } };
     case 'booking':
-      return { to: '/bookings' };
+      return { to: '/bookings', search: { bookingId: sessionIdForVisit(id) } };
   }
 }
 
@@ -81,7 +95,12 @@ export function notificationQuoteRoute(rawKinfolkId: unknown): NotificationRoute
 export interface NotificationActionSet {
   /** Destination for "Open", or null when there is nothing to open. */
   open: NotificationRoute | null;
-  /** Booking id for Approve/Deny, or '' when this is not a booking notification. */
+  /**
+   * The RAW envelope visit id for Approve/Deny, or '' when this is not a
+   * booking notification. Underived on purpose: those callables act on
+   * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`, so the
+   * `vis_` form `open` carries would be the wrong id here.
+   */
   bookingId: string;
   /** Destination for "Create quote", or null when no household is identifiable. */
   quote: NotificationRoute | null;

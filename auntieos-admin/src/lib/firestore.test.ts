@@ -7,6 +7,8 @@ const { onSnapshot } = vi.hoisted(() => ({ onSnapshot: vi.fn() }));
 vi.mock('./firebase', () => ({ db: {} }));
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(() => 'coll'),
+  doc: vi.fn((_db: unknown, path: string, id: string) => ({ path, id })),
+  documentId: vi.fn(() => '__name__'),
   query: vi.fn((...a: unknown[]) => a),
   orderBy: vi.fn(() => 'orderBy'),
   limit: vi.fn(() => 'limit'),
@@ -14,7 +16,7 @@ vi.mock('firebase/firestore', () => ({
   onSnapshot,
 }));
 
-import { useCollection, type CollectionSpec } from './firestore';
+import { useCollection, useDocById, type CollectionSpec } from './firestore';
 import { setTestScope } from './testScope';
 
 type NextFn = (snap: { docs: { id: string; data: () => unknown }[] }) => void;
@@ -132,6 +134,121 @@ describe('useCollection', () => {
       expect(result.current.status).toBe('loading');
       expect(onSnapshot).toHaveBeenCalledOnce();
       expect(orderBy).toHaveBeenCalledWith('uploadedAt', 'desc');
+    });
+  });
+});
+
+/**
+ * The by-id read behind every notification deep link (issue #389). A list query
+ * answers "what is in the window"; a link names a record, and those are
+ * different questions. Resolving the second with the first is what put the
+ * operator on the Invoices LIST for a 46-day-old invoice.
+ */
+describe('useDocById', () => {
+  type DocSnap = { exists: () => boolean; id: string; data: () => Record<string, unknown> };
+
+  function captureDocCallbacks() {
+    const cb: { next?: (s: DocSnap) => void; err?: (e: { code?: string; message: string }) => void; unsub: () => void } =
+      { unsub: vi.fn() };
+    onSnapshot.mockImplementation(
+      (_ref: unknown, next: (s: DocSnap) => void, err: (e: { code?: string; message: string }) => void) => {
+        cb.next = next;
+        cb.err = err;
+        return cb.unsub;
+      },
+    );
+    return cb;
+  }
+
+  const found = (id: string, data: Record<string, unknown>): DocSnap => ({
+    exists: () => true,
+    id,
+    data: () => data,
+  });
+  const absent: DocSnap = { exists: () => false, id: 'x', data: () => ({}) };
+
+  it('starts loading, then resolves the document with its id merged in as _id', () => {
+    const cb = captureDocCallbacks();
+    const { result } = renderHook(() => useDocById<{ _id: string; total: number }>('invoices', 'inv9'));
+    expect(result.current.status).toBe('loading');
+    act(() => cb.next!(found('inv9', { total: 40 })));
+    expect(result.current).toEqual({ status: 'ready', data: { _id: 'inv9', total: 40 } });
+  });
+
+  it('resolves a document that is not there to ready + null, never an error', () => {
+    const cb = captureDocCallbacks();
+    const { result } = renderHook(() => useDocById('invoices', 'gone'));
+    act(() => cb.next!(absent));
+    expect(result.current).toEqual({ status: 'ready', data: null });
+  });
+
+  it('treats permission-denied as "not available", not as a fault to report', () => {
+    // A link into a record this account may not read is answered the same way a
+    // deleted one is: saying which of the two it was would make the screen an
+    // existence oracle for documents the operator cannot see.
+    const cb = captureDocCallbacks();
+    const { result } = renderHook(() => useDocById('invoices', 'someone-elses'));
+    act(() => cb.err!({ code: 'permission-denied', message: 'Missing or insufficient permissions.' }));
+    expect(result.current).toEqual({ status: 'ready', data: null });
+  });
+
+  it('surfaces any other read failure as an error WITH a retry', () => {
+    const cb = captureDocCallbacks();
+    const { result } = renderHook(() => useDocById('invoices', 'inv9'));
+    act(() => cb.err!({ code: 'unavailable', message: 'backend unreachable' }));
+    expect(result.current.status).toBe('error');
+    if (result.current.status === 'error') {
+      expect(result.current.message).toBe('backend unreachable');
+      expect(typeof result.current.retry).toBe('function');
+    }
+  });
+
+  it('settles immediately on a blank id instead of waiting on a read it will never issue', () => {
+    captureDocCallbacks();
+    const { result } = renderHook(() => useDocById('invoices', null));
+    expect(result.current).toEqual({ status: 'ready', data: null });
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('resubscribes when the id changes, and unsubscribes on unmount', () => {
+    const cb = captureDocCallbacks();
+    const { rerender, unmount } = renderHook((id: string) => useDocById('invoices', id), {
+      initialProps: 'inv1',
+    });
+    rerender('inv1');
+    expect(cb.unsub).not.toHaveBeenCalled();
+    rerender('inv2');
+    expect(cb.unsub).toHaveBeenCalledOnce();
+    unmount();
+    expect(cb.unsub).toHaveBeenCalledTimes(2);
+  });
+
+  describe('the sandbox scope, asked of one document', () => {
+    it('hides a document belonging to another tribe', () => {
+      const cb = captureDocCallbacks();
+      setTestScope('test-kinfolk-001');
+      const { result } = renderHook(() => useDocById('invoices', 'inv9'));
+      act(() => cb.next!(found('inv9', { kinfolkId: 'some-other-tribe', total: 40 })));
+      expect(result.current).toEqual({ status: 'ready', data: null });
+    });
+
+    it('hands back a document inside the sandbox', () => {
+      const cb = captureDocCallbacks();
+      setTestScope('test-kinfolk-001');
+      const { result } = renderHook(() => useDocById<{ _id: string }>('invoices', 'inv9'));
+      act(() => cb.next!(found('inv9', { kinfolkId: 'test-kinfolk-001' })));
+      expect(result.current).toEqual({
+        status: 'ready',
+        data: { _id: 'inv9', kinfolkId: 'test-kinfolk-001' },
+      });
+    });
+
+    it('never opens a read on a collection rules deny a sandbox account outright', () => {
+      captureDocCallbacks();
+      setTestScope('test-kinfolk-001');
+      const { result } = renderHook(() => useDocById('training_documents', 't1'));
+      expect(result.current).toEqual({ status: 'ready', data: null });
+      expect(onSnapshot).not.toHaveBeenCalled();
     });
   });
 });

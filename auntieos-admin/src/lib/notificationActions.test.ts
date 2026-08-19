@@ -32,10 +32,25 @@ describe('notificationTargetRoute', () => {
     });
   });
 
-  it('routes a booking notification to Bookings, WITHOUT the id', () => {
-    // The targetId is an envelope visit id, not a kin_care_sessions id, so an
-    // id-scoped deep link would select nothing. See notificationActions.ts.
-    expect(notificationTargetRoute('booking', 'b_1')).toEqual({ to: '/bookings' });
+  // ISSUE #389, the booking half. This used to drop the id and land on the
+  // Bookings LIST, on the reasoning that an envelope visit id and a flat session
+  // id were unbridgeable. They are bridged deterministically: the session doc is
+  // minted at `vis_{visitId}`.
+  it('routes a booking notification to the booking itself, bridging the two id spaces', () => {
+    expect(notificationTargetRoute('booking', 'b_1')).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_b_1' },
+    });
+  });
+
+  it('leaves a targetId that is ALREADY a flat session id alone', () => {
+    // The dispatcher's resolveTargetRef accepts `data.bookingId` as well as
+    // `data.visitId`, and those are not always the same id space, so the
+    // derivation has to be idempotent or it would double the prefix.
+    expect(notificationTargetRoute('booking', 'vis_b_1')).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_b_1' },
+    });
   });
 
   it('returns null for an UNKNOWN targetType, so no dead Open button is offered', () => {

@@ -62,8 +62,8 @@ export function filterSchemas(rows: FormSchemaSummary[], query: string): FormSch
  * The middle part is `formSchemaUpdatedLabel`, NOT `row.updatedAt`. This line
  * used to interpolate the raw field, so the operator read
  * `2026-08-02T10:15:00.000Z` off the row, in UTC, milliseconds and all. It went
- * unnoticed because the screen's golden photographed a failed-callable error
- * panel until PR #251 put real rows in the picture.
+ * unnoticed because until PR #251 the only rendering anybody looked at was a
+ * failed-callable error panel, with no rows in it to be wrong.
  *
  * `formSchemaUpdatedLabel` never returns blank, so unlike the version and
  * `updatedBy` parts the timestamp part is never dropped: a schema with no

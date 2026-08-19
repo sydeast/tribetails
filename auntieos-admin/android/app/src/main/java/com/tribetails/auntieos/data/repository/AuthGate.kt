@@ -59,7 +59,7 @@ class AuthGate(
      */
     fun ensureAuthenticated() {
         if (auth.currentUser == null) {
-            throw IllegalStateException("Admin sign-in required before using AuntieOS.")
+            throw IllegalStateException(SIGN_IN_REQUIRED)
         }
     }
 
@@ -102,6 +102,19 @@ class AuthGate(
     }
 
     companion object {
+        /**
+         * The sentence [ensureAuthenticated] throws with, named once so a caller
+         * can RECOGNISE it rather than pattern-match a copy of the literal.
+         *
+         * `VoiceTokenManager.classifyTokenFailure` is that caller: a mint refused
+         * because nobody is signed in has to read as "not authorized", which is
+         * recoverable on the next sign-in, and not as a generic failure worth
+         * retrying against a server that is working fine. That distinction is the
+         * difference between a phone that starts ringing a second after the
+         * operator signs in and one that does not ring all session (#433).
+         */
+        const val SIGN_IN_REQUIRED: String = "Admin sign-in required before using AuntieOS."
+
         /**
          * The process-wide gate, and the constructor default of every repo that
          * takes one. ONE INSTANCE BECAUSE ONE CACHE: a second gate would mean a

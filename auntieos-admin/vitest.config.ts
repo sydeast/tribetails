@@ -9,11 +9,7 @@ export default defineConfig({
     // `// @vitest-environment jsdom` comment, so plain-logic specs (token
     // parity, formatters, mappers) keep running under the cheaper environment.
     environment: 'node',
-    // `web/visual/**` is here for one file: the visual gate's verify step, `baseline.mjs`.
-    // It is a build-time script rather than app code, so it has no home under `src/`, and
-    // until #405 it had no runner anywhere in the repo, which is how the CI job around it
-    // grew a step that deleted the goldens a branch committed, with nothing to notice.
-    include: ['src/**/*.test.{ts,tsx}', 'web/visual/**/*.test.mjs'],
+    include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./test-setup.ts'],
   },
 });
