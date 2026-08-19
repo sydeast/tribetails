@@ -36,6 +36,38 @@ class TemplateRepository(
         val active: Boolean,
     )
 
+    /** One channel's outcome inside an import report row. */
+    data class ImportChannel(
+        val channel: String,
+        val outcome: String,
+        val notes: List<String>,
+    )
+    /** One template's line of the import report. */
+    data class ImportRow(
+        val templateId: String,
+        /** Set when this id is a retired key kept alive for older bindings. */
+        val aliasOf: String?,
+        val channels: List<ImportChannel>,
+        val differsFromRepo: Boolean,
+        val blocked: Boolean,
+    )
+    /**
+     * What an import did, or would do.
+     *
+     * [written] is documents, not templates, and is always zero on a dry run.
+     * [needsOverwriteChoice] names the templates whose stored copy differs from
+     * the repo copy and which were therefore left alone; importing one of those
+     * takes a second call naming it in `overwriteIds`.
+     */
+    data class ImportReport(
+        val dryRun: Boolean,
+        val written: Int,
+        val counts: Map<String, Int>,
+        val rows: List<ImportRow>,
+        val needsOverwriteChoice: List<String>,
+        val refused: List<Pair<String, String>>,
+    )
+
     /**
      * One row of the routing table, from listCatalogKeys.
      *
@@ -106,7 +138,18 @@ class TemplateRepository(
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listBindings failed", it) }
 
-    suspend fun saveTemplate(template: EmailTemplate): Result<String> = runCatching {
+    /**
+     * Upserts a template, or creates one.
+     *
+     * [expectNew] rides along only from the New Template path. With it set the
+     * server refuses a key that is already taken instead of replacing whatever
+     * is stored under it. The editor's own collision check is a fast path over
+     * the page of templates it happens to hold; this is the one that is true.
+     */
+    suspend fun saveTemplate(
+        template: EmailTemplate,
+        expectNew: Boolean = false,
+    ): Result<String> = runCatching {
         val payload = buildMap<String, Any> {
             put("templateId", template.templateId)
             put("subject", template.subject)
@@ -116,6 +159,7 @@ class TemplateRepository(
             template.description?.let { put("description", it) }
             put("tags", template.tags)
             template.category?.let { put("category", it) }
+            if (expectNew) put("expectNew", true)
         }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("saveTemplate").call(payload).await().data as? Map<String, Any?>
@@ -195,6 +239,80 @@ class TemplateRepository(
             )
         }
     }.onFailure { AuntieLog.e("TemplateRepository.listCatalogKeys failed", it) }
+    /**
+     * Loads the notification templates committed to the repo into Firestore.
+     *
+     * Issue #468. The operator ruled out the seed script, and a notification
+     * whose template document is missing does not fall back to anything: the
+     * channel sender throws and no email goes out. This is the route that
+     * replaces the script, and it is the same callable the web admin uses.
+     *
+     * [dryRun] defaults to true, so a caller that forgets the argument plans
+     * rather than writes. A template whose stored copy differs from the repo
+     * copy is skipped unless its id is in [overwriteIds], which is how an
+     * import can never quietly replace wording someone edited in the Bank.
+     */
+    suspend fun importSeedTemplates(
+        dryRun: Boolean = true,
+        overwriteIds: List<String> = emptyList(),
+        onlyIds: List<String> = emptyList(),
+    ): Result<ImportReport> = runCatching {
+        val payload = buildMap<String, Any> {
+            put("dryRun", dryRun)
+            if (overwriteIds.isNotEmpty()) put("overwriteIds", overwriteIds)
+            if (onlyIds.isNotEmpty()) put("onlyIds", onlyIds)
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("importSeedTemplates").call(payload).await().data as? Map<String, Any?>
+            ?: error("importSeedTemplates: non-map payload")
+        decodeImportReport(raw)
+    }.onFailure { AuntieLog.e("TemplateRepository.importSeedTemplates failed", it) }
+}
+/**
+ * Pure: turns the callable's payload into an [TemplateRepository.ImportReport].
+ *
+ * Split out of the repo so the JVM suite can exercise the decoding without a
+ * mocked Firebase, and because a report the phone cannot read is a report an
+ * operator acts on blind. A row missing its id is dropped rather than guessed
+ * at, matching how `listCatalogKeys` handles the same problem.
+ */
+internal fun decodeImportReport(raw: Map<String, Any?>): TemplateRepository.ImportReport {
+    val rows = (raw["rows"] as? List<*>).orEmpty().mapNotNull { item ->
+        val m = item as? Map<*, *> ?: return@mapNotNull null
+        val templateId = m["templateId"] as? String ?: return@mapNotNull null
+        TemplateRepository.ImportRow(
+            templateId = templateId,
+            aliasOf = m["aliasOf"] as? String,
+            channels = (m["channels"] as? List<*>).orEmpty().mapNotNull { c ->
+                val cm = c as? Map<*, *> ?: return@mapNotNull null
+                TemplateRepository.ImportChannel(
+                    channel = cm["channel"] as? String ?: return@mapNotNull null,
+                    outcome = cm["outcome"] as? String ?: "unknown",
+                    notes = (cm["notes"] as? List<*>).orEmpty().mapNotNull { it as? String },
+                )
+            },
+            differsFromRepo = m["differsFromRepo"] as? Boolean ?: false,
+            blocked = m["blocked"] as? Boolean ?: false,
+        )
+    }
+    val counts = (raw["counts"] as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) ->
+        val name = k as? String ?: return@mapNotNull null
+        name to ((v as? Number)?.toInt() ?: return@mapNotNull null)
+    }.toMap()
+    return TemplateRepository.ImportReport(
+        // Absent means dry run, the same default the server applies. Reading a
+        // silent absence as "it wrote" is the one mistake with consequences.
+        dryRun = raw["dryRun"] as? Boolean ?: true,
+        written = (raw["written"] as? Number)?.toInt() ?: 0,
+        counts = counts,
+        rows = rows,
+        needsOverwriteChoice = (raw["needsOverwriteChoice"] as? List<*>).orEmpty().mapNotNull { it as? String },
+        refused = (raw["refused"] as? List<*>).orEmpty().mapNotNull { item ->
+            val m = item as? Map<*, *> ?: return@mapNotNull null
+            val id = m["templateId"] as? String ?: return@mapNotNull null
+            id to (m["reason"] as? String ?: "Refused.")
+        },
+    )
 }
 
 /**

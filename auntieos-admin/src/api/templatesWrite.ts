@@ -31,6 +31,17 @@ import type { SaveTemplatePayload } from '../lib/templateFormat';
  * server decides and surfaces the rejection fail-loud, the same way
  * `saveTemplate`'s Handlebars-triple-stash rejection is surfaced above.
  */
+/**
+ * Issue #468: the server's refusal when `expectNew` was sent and the key was
+ * already taken. Duck-typed on `details.reason` rather than `instanceof
+ * FirebaseError`, matching `isLiveNotificationKeyWarning` below, so a plain
+ * rejected object in a test takes the same branch production does.
+ */
+export function isTemplateKeyTakenError(err: unknown): boolean {
+  const details = (err as { details?: unknown } | null | undefined)?.details;
+  if (typeof details !== 'object' || details === null) return false;
+  return (details as { reason?: unknown }).reason === 'template-exists';
+}
 export async function saveTemplate(payload: SaveTemplatePayload): Promise<{ templateId: string }> {
   // Explicitly awaited, not `return call(...)`: matches the `await
   // call(...)` convention every other write module in this repo uses

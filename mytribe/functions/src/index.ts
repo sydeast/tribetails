@@ -375,6 +375,7 @@ export { dispatchVisitNotification } from './admin/dispatchVisitNotification';
 export { scheduleMarketingBlast } from './admin/scheduleMarketingBlast';
 export { addInternalBookingNote } from './admin/addInternalBookingNote';
 export { saveTemplate } from './admin/saveTemplate';
+export { importSeedTemplates } from './admin/importSeedTemplates';
 export { deleteTemplate } from './admin/deleteTemplate';
 export { assignTemplate } from './admin/assignTemplate';
 export { assignTemplatesToCategory } from './admin/assignTemplatesToCategory';

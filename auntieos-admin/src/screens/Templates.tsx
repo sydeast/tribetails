@@ -20,6 +20,7 @@ import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TemplateEditor } from './TemplateEditor';
 import { TemplateAssignments } from './TemplateAssignments';
+import { TemplateImport } from './TemplateImport';
 import { CategoryBindingDialog } from './CategoryBindingDialog';
 import './Templates.css';
 
@@ -120,7 +121,10 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   // Communicate.tsx compose/personalize pattern): swap the whole tree rather
   // than grow an if/else through the JSX. Ports TemplateAssignmentScreen.kt,
   // the "wholly separate screen" this file's doc comment named as not-yet-built.
-  const [view, setView] = useState<'bank' | 'assignments'>('bank');
+  // 'import' joined the pair under issue #468: the seed script is no longer an
+  // operator step, so loading the repo's notification templates has to be a
+  // screen. Same sibling-view treatment as assignments, not a route.
+  const [view, setView] = useState<'bank' | 'assignments' | 'import'>('bank');
 
   // Hoisted so a failed load can hand AsyncRegion a real retry, same shape as
   // FormSchemas.tsx's load(). Only the TEMPLATES load drives AsyncRegion;
@@ -294,6 +298,18 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   if (view === 'assignments') {
     return <TemplateAssignments onClose={() => setView('bank')} />;
   }
+  if (view === 'import') {
+    return (
+      <TemplateImport
+        onClose={() => setView('bank')}
+        onImported={(message) => {
+          setNotice(message);
+          setView('bank');
+          load();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="screen">
@@ -305,6 +321,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         trailing={
           <>
             <GhostButton label="Manage assignments" onClick={() => setView('assignments')} />
+            <GhostButton label="Import from repo" onClick={() => setView('import')} />
             <GhostButton label="New binding" onClick={() => setBindingOpen(true)} />
             <PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />
           </>

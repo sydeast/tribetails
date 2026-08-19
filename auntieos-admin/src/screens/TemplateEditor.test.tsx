@@ -8,14 +8,20 @@ const { saveTemplate, deleteTemplate } = vi.hoisted(() => ({
   saveTemplate: vi.fn(),
   deleteTemplate: vi.fn(),
 }));
-// `isLiveNotificationKeyWarning` is NOT mocked: it is the real predicate from the
-// api module, so these tests exercise the same details-shape check the screen
-// runs in production rather than a stub that agrees with itself.
+// `isLiveNotificationKeyWarning` and `isTemplateKeyTakenError` are NOT mocked:
+// they are the real predicates from the api module, so these tests exercise the
+// same details-shape checks the screen runs in production rather than stubs that
+// agree with themselves.
 vi.mock('../api/templatesWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/templatesWrite')>(
     '../api/templatesWrite',
   );
-  return { saveTemplate, deleteTemplate, isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning };
+  return {
+    saveTemplate,
+    deleteTemplate,
+    isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
+    isTemplateKeyTakenError: actual.isTemplateKeyTakenError,
+  };
 });
 
 /**
@@ -141,6 +147,9 @@ describe('TemplateEditor: create mode', () => {
         tags: ['booking', 'confirmation'],
         usageInstructions: '',
         sectionDefinitions: [],
+        // Issue #468: create says so, so the server refuses a taken key rather
+        // than upserting over whatever is already stored under it.
+        expectNew: true,
       }),
     );
     expect(onSaved).toHaveBeenCalledWith('booking.confirmed');
@@ -625,5 +634,54 @@ describe('TemplateEditor: a template that also carries HTML', () => {
       />,
     );
     expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+  });
+});
+// Issue #468. Creating a template used to be an upsert with a friendly name on
+// it: typing the key of a template that already existed replaced its subject
+// and body without a word. The editor now says it is creating, and the server
+// refuses when the key is taken.
+describe('TemplateEditor: creating cannot overwrite an existing template', () => {
+  function keyTakenRejection(templateId: string): Error & { details: unknown } {
+    return Object.assign(new Error('already exists'), {
+      code: 'functions/already-exists',
+      details: { reason: 'template-exists', templateId },
+    });
+  }
+  it('sends expectNew on create, so the server refuses a taken key', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    fireEvent.change(screen.getByLabelText(/^body/i), { target: { value: 'Body copy.' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+    expect(saveTemplate.mock.calls[0]?.[0]).toMatchObject({ expectNew: true });
+  });
+  it('does NOT send expectNew when editing, so an edit stays an update', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed', subject: 'Hi', body: 'Body' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalled());
+    expect(saveTemplate.mock.calls[0]?.[0]).not.toHaveProperty('expectNew');
+  });
+  it('explains a taken key rather than showing the raw callable failure', async () => {
+    saveTemplate.mockImplementationOnce(() =>
+      Promise.reject(keyTakenRejection('booking.confirmed')),
+    );
+    render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
+    await userEvent.type(screen.getByLabelText(/^subject$/i), 'Hi');
+    fireEvent.change(screen.getByLabelText(/^body/i), { target: { value: 'Body copy.' } });
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(
+      await screen.findByText(/The key booking\.confirmed is already in use/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/saveTemplate failed/)).not.toBeInTheDocument();
   });
 });

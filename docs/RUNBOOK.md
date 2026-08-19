@@ -1188,14 +1188,28 @@ earlier, and is pinged again when it closes; the withdrawal asks nothing new of
 them. The loudness lives in the audit entry and an `error`-stream log line
 (`stripe.dispute.fundsWithdrawn`).
 
-The `invoice.payment.disputed` notification needs its templates seeded before the
-email and push copies can render (the in-app copy lands regardless):
-
-```bash
-# from mytribe/functions
-npm run seed:notif-templates -- --dry-run --key invoice.payment.disputed
-npm run seed:notif-templates -- --key invoice.payment.disputed --allow-prod
-```
+The `invoice.payment.disputed` notification needs its templates in Firestore
+before the email and push copies can render (the in-app copy lands regardless).
+**This is no longer a command.** The operator ruled on 2026-08-18: "no, i
+shouldn't seed templates at this point, we should have a importer and allow
+creation of templates in the ui" (issue #468). Templates are loaded from the
+admin, and `npm run seed:notif-templates` is not part of any release procedure.
+The script still exists and still reads the same seed directories, but running
+it against production replaces whole documents and drops the title, category,
+tags and description an operator authored in the Template Bank. The importer
+merges the content fields and leaves the rest alone.
+Do this instead, on the web admin or the phone:
+1. Admin, then **Templates**.
+2. **Import from repo** on web, or the **Import** tab on Android.
+3. Read the plan. It writes nothing yet. `invoice.payment.disputed` shows one
+   line per channel: `create` where Firestore has no copy, `unchanged` where the
+   stored copy already matches, `skipped` where it differs.
+4. A `skipped` line means somebody edited that template here. Tick **Replace the
+   stored copy with the repo wording** only if you mean to lose that edit.
+5. Press **Import**. The button names how many documents it will write.
+A template that is refused (a Handlebars triple stash, an unparseable seed file)
+is named with the reason, and nothing for it is written, including its other two
+channels.
 
 ### 5. Prove it is connected
 

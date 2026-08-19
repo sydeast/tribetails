@@ -1,0 +1,116 @@
+.template-import__headline {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.template-import__refusals {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.template-import__rows {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.template-import__row {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface-2);
+  padding: var(--space-3);
+}
+
+/* A refused row reads as refused without relying on colour alone: the outcome
+   word beside every channel says so too. */
+.template-import__row[data-blocked='true'] {
+  border-color: var(--color-error);
+}
+
+.template-import__row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.template-import__key {
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+}
+
+.template-import__summary {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.template-import__alias {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.template-import__channels {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--type-body-sm-size);
+}
+
+.template-import__channels li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.template-import__channel-name {
+  min-width: 3.5rem;
+  color: var(--color-text-dim);
+}
+
+.template-import__outcome {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.template-import__outcome[data-outcome='blocked'] {
+  color: var(--color-error);
+}
+
+.template-import__outcome[data-outcome='skipped'] {
+  color: var(--color-warning);
+}
+
+.template-import__outcome[data-outcome='unchanged'] {
+  color: var(--color-text-dim);
+}
+
+.template-import__notes {
+  flex: 1 1 16rem;
+  color: var(--color-text-dim);
+}
+
+.template-import__overwrite {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}
+
+.template-import__actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+  margin-top: var(--space-4);
+}

@@ -325,6 +325,7 @@ export function buildDbMock(opts: {
   const adds: Array<{ collection: string; data: Record<string, unknown>; id: string }> = [];
   const deletes: string[] = [];
   let autoCounter = 0;
+  const docRefCache = new Map<string, any>();
 
   /** Synthesizes the `.parent.parent` chain for a nested doc path. */
   function parentChain(path: string): any {
@@ -361,6 +362,17 @@ export function buildDbMock(opts: {
       }),
       update: vi.fn(async (data: Record<string, unknown>) => {
         writes.push({ path, data, merge: true });
+      }),
+      // `create()` is the one write whose OUTCOME depends on what is already
+      // stored, so unlike set/update it cannot just record the intent: a caller
+      // reaching for it is asking Firestore to referee the collision, and a
+      // shim that always succeeded would make every such test pass. Rejects
+      // with gRPC status 6 (ALREADY_EXISTS), the real code.
+      create: vi.fn(async (data: Record<string, unknown>) => {
+        if (docs[path] != null) {
+          throw Object.assign(new Error(`ALREADY_EXISTS: ${path}`), { code: 6 });
+        }
+        writes.push({ path, data, merge: false });
       }),
       delete: vi.fn(async () => {
         deletes.push(path);
@@ -489,7 +501,15 @@ export function buildDbMock(opts: {
   const fakeDb: any = {
     collection: (path: string) => makeCollection(path),
     collectionGroup: (name: string) => makeCollectionGroup(name),
-    doc: (path: string) => makeDocRef(path),
+    // Memoised, because real Firestore hands back an equal ref for an equal
+    // path and a test that stubs `ref.create` on one object needs the handler
+    // to reach that same object. Before this, every `db().doc(p)` built a
+    // fresh shim and a stub could only ever affect the test's own copy.
+    doc: (path: string) => docRefCache.get(path) ?? (() => {
+      const ref = makeDocRef(path);
+      docRefCache.set(path, ref);
+      return ref;
+    })(),
     // Firestore#getAll(...refs) — resolves each ref against the same `docs` map.
     getAll: vi.fn(async (...refs: any[]) => Promise.all(refs.map((r) => r.get()))),
     batch: () => makeBatch(),

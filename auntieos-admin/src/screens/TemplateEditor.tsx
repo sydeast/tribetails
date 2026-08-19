@@ -1,5 +1,10 @@
 import { useCallback, useId, useState } from 'react';
-import { saveTemplate, deleteTemplate, isLiveNotificationKeyWarning } from '../api/templatesWrite';
+import {
+  saveTemplate,
+  deleteTemplate,
+  isLiveNotificationKeyWarning,
+  isTemplateKeyTakenError,
+} from '../api/templatesWrite';
 import type { TemplateSummary } from '../api/templates';
 import {
   blankFormFields,
@@ -171,12 +176,23 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setSaving(true);
     setError(null);
     try {
-      const payload = buildSaveTemplatePayload(fields);
+      const payload = buildSaveTemplatePayload(fields, { isCreate });
       const result = await saveTemplate(payload);
       setSaving(false);
       onSaved(result.templateId);
     } catch (err) {
       setSaving(false);
+      // A taken key is the one save failure with an obvious next move, so it
+      // gets its own sentence rather than the generic prefix. The server is the
+      // only place that knows: this editor holds one page of templates, and the
+      // key it is about to claim may be on another.
+      if (isTemplateKeyTakenError(err)) {
+        setError(
+          `The key ${fields.templateId.trim()} is already in use. Pick a different key, ` +
+            `or close this and edit the existing template.`,
+        );
+        return;
+      }
       setError(`saveTemplate failed: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }

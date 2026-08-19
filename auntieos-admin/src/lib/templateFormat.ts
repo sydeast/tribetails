@@ -375,9 +375,18 @@ export interface SaveTemplatePayload {
    */
   usageInstructions: string;
   sectionDefinitions: TemplateSection[];
+  /**
+   * Issue #468: sent as `true` only from the New Template path, where it makes
+   * the server refuse a key that already exists instead of upserting over it.
+   * Omitted when editing, so an edit stays the upsert it has always been.
+   */
+  expectNew?: boolean;
 }
 
-export function buildSaveTemplatePayload(fields: TemplateFormFields): SaveTemplatePayload {
+export function buildSaveTemplatePayload(
+  fields: TemplateFormFields,
+  opts: { isCreate?: boolean } = {},
+): SaveTemplatePayload {
   const title = fields.title.trim();
   const description = fields.description.trim();
   const category = fields.category.trim();
@@ -394,5 +403,6 @@ export function buildSaveTemplatePayload(fields: TemplateFormFields): SaveTempla
     tags: parseTagsInput(fields.tagsInput),
     usageInstructions: fields.usageInstructions.trim(),
     sectionDefinitions: parseSections(fields.sections),
+    ...(opts.isCreate ? { expectNew: true } : {}),
   };
 }
