@@ -4,10 +4,10 @@ import { type CollectionSpec } from '../lib/firestore';
  * Gallery API layer, ported from the wasm `GalleryScreen.kt` / `GalleryFilters.kt`
  * (#13 global Gallery: every piece of business media across all KinTales/entities
  * in one place). Backs the LIST/GRID plus the fullscreen viewer a tile opens
- * (`components/MediaViewerDialog.tsx`, #388): upload and caption editing remain
- * separate, not-yet-built surfaces (see Gallery.tsx), and the "Tag kin" hand-off
- * Android's viewer offers is a whole not-yet-built feature on web, not part of
- * this screen's scope (see MediaViewerDialog.tsx's header).
+ * (`components/MediaViewerDialog.tsx`, #388) and the "Tag kin" hand-off that
+ * viewer offers (`components/TagKinDialog.tsx` -> the `saveMediaTags` callable,
+ * #447). Caption editing remains a separate, not-yet-built surface (see
+ * Gallery.tsx).
  *
  * ONE live Firestore collection backs this screen:
  *
@@ -25,10 +25,13 @@ import { type CollectionSpec } from '../lib/firestore';
  * ~20-field MediaFile shape in MediaModels.kt): the Kinfolk/InvoiceEntry subset
  * convention. Dropped: entityId/entityType (which KinTale/session it belongs to,
  * not shown in the grid), fileName/mimeType/fileSizeBytes/width/height/
- * cloudinaryPublicId (storage bookkeeping, not rendered), tags/taggedKinIds (the
- * free-text tag list and the kin-tagging feature: kin-tagging itself is the
- * not-yet-built surface, not the viewer that would offer it, out of scope for a
- * LIST/GRID port).
+ * cloudinaryPublicId (storage bookkeeping, not rendered), and `tags` (a
+ * separate free-text tag list nothing on this screen reads).
+ *
+ * `taggedKinIds` IS modeled now (#447): the Gallery tags kin in a photo and
+ * shows who is tagged, mirroring Android's `GalleryScreen.kt`. Writes go
+ * through the `saveMediaTags` callable (`api/mediaTags.ts`), never a direct
+ * document write -- `firestore.rules` refuses a client update touching the key.
  */
 
 /**
@@ -66,6 +69,16 @@ export interface MediaFile {
   isProfilePhoto: boolean;
   /** Video-only. 0/absent on every other type: `mediaDurationLabel` treats <=0 as "no duration to show", never fabricating "0:00". */
   durationSeconds: number;
+  /**
+   * Kin document ids tagged in this file (#447). ABSENT on every doc written
+   * before tagging existed, and on every doc the upload pipeline creates, which
+   * is why it is optional like the rest: read it through
+   * `lib/mediaFormat.ts#mediaTaggedKinIds`, which coerces a missing field, a
+   * `null`, or the wrong type to `[]` rather than letting `.map` throw and take
+   * the whole grid down with it (the AO-12 lesson this file's header spells
+   * out). Written ONLY by the `saveMediaTags` callable.
+   */
+  taggedKinIds?: string[] | undefined;
 }
 
 /**

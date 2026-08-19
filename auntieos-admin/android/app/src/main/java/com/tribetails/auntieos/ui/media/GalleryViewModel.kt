@@ -58,12 +58,19 @@ class GalleryViewModel(
         _uiState.value = _uiState.value.copy(filter = f)
     }
 
-    /** Persist taggedKinIds, then reflect locally so the grid updates without a reload. */
+    /**
+     * Persist taggedKinIds through the `saveMediaTags` callable (#447), then
+     * reflect locally so the grid updates without a reload.
+     *
+     * What is reflected is the list the SERVER returned, not the list this
+     * screen sent: the callable de-duplicates, so echoing the request back
+     * would leave the grid showing a list the document does not hold.
+     */
     fun saveTags(mediaId: String, kinIds: List<String>, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
-            repository.updateMediaTags(mediaId, kinIds).onSuccess {
+            repository.updateMediaTags(mediaId, kinIds).onSuccess { stored ->
                 _uiState.value = _uiState.value.copy(
-                    media = _uiState.value.media.map { if (it.id == mediaId) it.copy(taggedKinIds = kinIds) else it },
+                    media = _uiState.value.media.map { if (it.id == mediaId) it.copy(taggedKinIds = stored) else it },
                 )
                 onDone(true)
             }.onFailure { e ->

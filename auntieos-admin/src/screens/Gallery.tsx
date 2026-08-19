@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { GALLERY_QUERY, type MediaFile } from '../api/gallery';
-import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
+import { KINFOLK_QUERY, KIN_QUERY, kinfolkDisplayName, type Kinfolk, type Kin } from '../api/directory';
 import {
   mediaKindOf,
   mediaKindHasPreview,
@@ -13,6 +13,7 @@ import {
   galleryKinfolkIds,
   galleryFileTypes,
   galleryHasUnattachedMedia,
+  taggedKinNames,
   UNATTACHED_KINFOLK_ID,
   GALLERY_FILTER_DEFAULT,
   type GalleryFilter,
@@ -27,6 +28,7 @@ import { Avatar } from '../components/Avatar';
 import { PrimaryButton } from '../components/Buttons';
 import { MediaUploadDialog, type KinfolkOption } from '../components/MediaUploadDialog';
 import { MediaViewerDialog } from '../components/MediaViewerDialog';
+import { TagKinDialog } from '../components/TagKinDialog';
 import './Gallery.css';
 
 /**
@@ -48,22 +50,29 @@ import './Gallery.css';
  *              viewer (`components/MediaViewerDialog.tsx`), porting
  *              `GalleryScreen.kt`'s `MediaViewerDialog` (`:305`).
  *
+ *              KIN TAGGING (#447) is now in scope too: the viewer's "Tag kin"
+ *              button hands off to `components/TagKinDialog.tsx`, which writes
+ *              through the `saveMediaTags` callable (`api/mediaTags.ts`).
+ *              Android's `GalleryScreen.kt` has had exactly this flow the whole
+ *              time; the web half was the missing part.
+ *
  *   OUT OF SCOPE, flagged rather than silently dropped:
- *     - The "Tag kin" hand-off Android's `MediaViewerDialog` offers
- *       (-> `TagKinDialog` -> `saveTags`). There is no kin-tagging feature on
- *       web at all: no tag dialog, no `taggedKinIds` on this screen's
- *       `MediaFile`, no `saveTags` callable. See `MediaViewerDialog.tsx`'s own
- *       header for the full accounting; that is a separate feature, not part
- *       of restoring the missing click target.
  *     - Caption editing. The caption shown is READ-ONLY (`description` falling
  *       back to `originalFileName`, via `lib/mediaFormat.ts#mediaCaption`); there
  *       is no write path from this screen.
+ *     - A "tagged kin" FILTER. Android's `GalleryFilter` has three facets
+ *       (household / type / month) and no fourth; inventing one here would put
+ *       the two clients back out of step in the opposite direction.
  *
- * Two streams back the grid: `media_files` (GALLERY_QUERY, this screen's own
- * data) and `kinfolk` (KINFOLK_QUERY, reused verbatim from api/directory.ts,
+ * Three streams back the grid: `media_files` (GALLERY_QUERY, this screen's own
+ * data), `kinfolk` (KINFOLK_QUERY, reused verbatim from api/directory.ts,
  * the same household roster Directory.tsx already streams) purely to resolve a
- * tile's `kinfolkId` to a display name. A broken kinfolk read degrades to
- * "Household unavailable" rather than blocking the grid, disclosed via the banner below (the
+ * tile's `kinfolkId` to a display name, and `kin` (KIN_QUERY, the same roster
+ * Directory's Kin tab reads) for tagging: the picker's options and the names on
+ * the tag chips both come out of it, one stream serving both.
+ *
+ * A broken kinfolk read degrades to "Household unavailable" rather than
+ * blocking the grid, disclosed via the banner below (the
  * same non-blocking-secondary-stream pattern as Directory's Kin banner). The
  * SAME roster also backs the Upload dialog's household picker (`kinfolkOptions`
  * below): one stream, two consumers, no second fetch.
@@ -71,6 +80,7 @@ import './Gallery.css';
 export function Gallery() {
   const mediaState = useCollection<MediaFile>(GALLERY_QUERY);
   const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinState = useCollection<Kin>(KIN_QUERY);
   const [filter, setFilter] = useState<GalleryFilter>(GALLERY_FILTER_DEFAULT);
   const [uploadOpen, setUploadOpen] = useState(false);
   // The fullscreen viewer a tile opens (#388). The MediaFile itself, not just
@@ -78,11 +88,23 @@ export function Gallery() {
   // in `rows` would fail silently the instant a filter narrows it out of view
   // while the viewer is still open.
   const [viewerMedia, setViewerMedia] = useState<MediaFile | null>(null);
+  // The tag dialog (#447). SEPARATE state from `viewerMedia`, and only ever
+  // one of the two is set: Android dismisses its viewer when it hands off to
+  // the tag dialog (`onTag = { selected = media; pendingView = null }`), and
+  // two stacked `Dialog`s would both answer a single Escape keypress anyway
+  // (see TagKinDialog's header).
+  const [tagMedia, setTagMedia] = useState<MediaFile | null>(null);
 
   const kinfolkLabel = useMemo(() => {
     if (kinfolkState.status !== 'ready') return new Map<string, string>();
     return new Map(kinfolkState.data.map((kf) => [kf._id, kinfolkDisplayName(kf)]));
   }, [kinfolkState]);
+
+  // The kin roster in the two shapes this screen needs: a flat list for the
+  // tag picker's options, and an id lookup for resolving a file's tags to
+  // names. Empty (never fabricated) until the stream resolves.
+  const allKin = useMemo(() => (kinState.status === 'ready' ? kinState.data : []), [kinState]);
+  const kinById = useMemo(() => new Map(allKin.map((k) => [k._id, k])), [allKin]);
 
   // The Upload dialog's household picker reuses this same already-streamed
   // roster (no second fetch): an {id, label} pair per household, in stream
@@ -132,6 +154,7 @@ export function Gallery() {
             filter={filter}
             onFilterChange={setFilter}
             kinfolkLabel={kinfolkLabel}
+            kinById={kinById}
             onOpen={setViewerMedia}
           />
         )}
@@ -145,7 +168,33 @@ export function Gallery() {
         />
       )}
 
-      {viewerMedia && <MediaViewerDialog media={viewerMedia} onClose={() => setViewerMedia(null)} />}
+      {viewerMedia && (
+        <MediaViewerDialog
+          media={viewerMedia}
+          taggedNames={taggedKinNames(viewerMedia, kinById)}
+          onTagKin={() => {
+            setTagMedia(viewerMedia);
+            setViewerMedia(null);
+          }}
+          onClose={() => setViewerMedia(null)}
+        />
+      )}
+
+      {tagMedia && (
+        <TagKinDialog
+          media={tagMedia}
+          allKin={allKin}
+          kinLoading={kinState.status === 'loading'}
+          kinError={kinState.status === 'error' ? kinState.message : null}
+          onClose={() => setTagMedia(null)}
+          // Closing is all this has to do. The grid's own `media_files`
+          // listener re-delivers the row the callable just wrote, so the
+          // tiles and a re-opened viewer show the saved tags because the ROW
+          // changed, not because this screen patched a copy of it. Same
+          // hand-off as Android's `saveTags(...) { ok -> if (ok) selected = null }`.
+          onSaved={() => setTagMedia(null)}
+        />
+      )}
     </div>
   );
 }
@@ -155,6 +204,8 @@ interface GalleryGridProps {
   filter: GalleryFilter;
   onFilterChange: (updater: (f: GalleryFilter) => GalleryFilter) => void;
   kinfolkLabel: Map<string, string>;
+  /** Kin by id, for resolving a tile's `taggedKinIds` to names (#447). Empty until the roster stream resolves. */
+  kinById: Map<string, Kin>;
   onOpen: (media: MediaFile) => void;
 }
 
@@ -163,7 +214,14 @@ function toggleValue<T>(current: T | null, candidate: T): T | null {
   return current === candidate ? null : candidate;
 }
 
-function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel, onOpen }: GalleryGridProps) {
+function GalleryGrid({
+  rows,
+  filter,
+  onFilterChange,
+  kinfolkLabel,
+  kinById,
+  onOpen,
+}: GalleryGridProps) {
   const months = useMemo(() => galleryMonths(rows), [rows]);
   const types = useMemo(() => galleryFileTypes(rows), [rows]);
   const kinfolkIds = useMemo(() => galleryKinfolkIds(rows), [rows]);
@@ -236,6 +294,7 @@ function GalleryGrid({ rows, filter, onFilterChange, kinfolkLabel, onOpen }: Gal
               key={m._id}
               media={m}
               householdName={str(m.kinfolkId) !== '' ? kinfolkLabel.get(str(m.kinfolkId)) ?? '' : ''}
+              taggedNames={taggedKinNames(m, kinById)}
               onOpen={onOpen}
             />
           ))}
@@ -274,6 +333,8 @@ interface GalleryTileProps {
   media: MediaFile;
   /** Resolved household name, or '' when unresolved OR absent. The tile tells the two apart via `media.kinfolkId` (see householdText). */
   householdName: string;
+  /** Names of the kin tagged in this file (#447). Empty means nobody tagged, or the roster has not resolved: either way no badge. */
+  taggedNames: string[];
   /** Opens the fullscreen viewer for this tile's media (#388). */
   onOpen: (media: MediaFile) => void;
 }
@@ -314,7 +375,7 @@ function householdText(kinfolkId: string, householdName: string): string {
   return householdName !== '' ? householdName : 'Household unavailable';
 }
 
-function GalleryTile({ media, householdName, onOpen }: GalleryTileProps) {
+function GalleryTile({ media, householdName, taggedNames, onOpen }: GalleryTileProps) {
   const kind = mediaKindOf(str(media.fileType));
   const previewUrl = mediaPreviewUrl(media);
   const caption = mediaCaption(media);
@@ -354,6 +415,18 @@ function GalleryTile({ media, householdName, onOpen }: GalleryTileProps) {
             {householdText(str(media.kinfolkId), householdName)}
           </span>
           {meta !== '' && <span className="gallery__tile-meta">{meta}</span>}
+          {/*
+            Who is tagged, on the tile itself, so the grid answers "which
+            photos have Waddles in them" without opening every one. Android's
+            `GalleryThumb` puts the same thing on its cell, collapsing to a
+            count past one name because a tile is 132px wide and three names
+            would just be an ellipsis.
+          */}
+          {taggedNames.length > 0 && (
+            <span className="gallery__tile-tags">
+              {taggedNames.length === 1 ? taggedNames[0] : `${taggedNames.length} kin`}
+            </span>
+          )}
         </div>
       </button>
     </li>

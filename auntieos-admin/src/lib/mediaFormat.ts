@@ -246,3 +246,81 @@ export function galleryFileTypes(all: GalleryRow[]): string[] {
   }
   return [...set].sort(cmp);
 }
+
+// ── kin tagging (#447) ─────────────────────────────────────────────────────
+
+/**
+ * The subset of `Kin` (api/directory.ts) the tagging helpers read. A `Pick`-shaped
+ * structural type rather than an import of the full interface, matching
+ * `GalleryRow` above: a test fixture should not have to invent an `updatedAt`
+ * Timestamp to exercise a name lookup.
+ */
+export interface TaggableKin {
+  _id: string;
+  kinfolkId?: string | undefined;
+  name?: string | undefined;
+  status?: string | undefined;
+}
+
+/**
+ * The normalisation point for `MediaFile.taggedKinIds`.
+ *
+ * The field is ABSENT on every doc written before #447 and on every doc the
+ * upload pipeline creates, and `useCollection` casts raw Firestore data without
+ * validating it, so the declared `string[] | undefined` is a promise TypeScript
+ * cannot keep. A stray non-array (or an array carrying a number, which nothing
+ * writes today but nothing prevents either) must read as "no tags", never throw
+ * inside a `.map` and take the whole grid down with it. Same discipline as
+ * `str()`/`arr()` in lib/coerce.ts, plus the blank/dupe squeeze the callable
+ * applies server-side, so what the screen shows and what the server stored are
+ * the same list.
+ */
+export function mediaTaggedKinIds(media: Pick<MediaFile, 'taggedKinIds'>): string[] {
+  const raw: unknown = media.taggedKinIds;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    const id = str(v).trim();
+    if (id === '' || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Resolves a file's tagged kin ids to display names. Ports Android's
+ * `taggedKinNames` (domain/GalleryFilters.kt) verbatim, including the part that
+ * looks like a bug and is not: an id with no matching kin, or a kin with a blank
+ * name, is DROPPED rather than rendered as "Unknown". A tag chip exists to say
+ * who is in the photo; a chip that says "Unknown" answers nothing and takes up
+ * the space that a real name would.
+ */
+export function taggedKinNames(
+  media: Pick<MediaFile, 'taggedKinIds'>,
+  kinById: Map<string, TaggableKin>,
+): string[] {
+  return mediaTaggedKinIds(media)
+    .map((id) => str(kinById.get(id)?.name).trim())
+    .filter((name) => name !== '');
+}
+
+/**
+ * Which kin the tag picker may offer for one file. Ports Android's `taggableKin`
+ * (domain/GalleryFilters.kt): scoped to the file's own household when it has
+ * one, otherwise the whole roster, because media genuinely unrelated to any
+ * household (company uploads, operator ruling 2026-07-31) still shows animals.
+ *
+ * The SERVER enforces this same rule in `saveMediaTags`, which is what makes it
+ * a rule rather than a picker convenience: narrowing the list here only means
+ * the operator is never offered a choice the callable would reject.
+ */
+export function taggableKin<T extends TaggableKin>(
+  media: Pick<MediaFile, 'kinfolkId'>,
+  allKin: T[],
+): T[] {
+  const kinfolkId = str(media.kinfolkId).trim();
+  if (kinfolkId === '') return allKin;
+  return allKin.filter((k) => str(k.kinfolkId).trim() === kinfolkId);
+}

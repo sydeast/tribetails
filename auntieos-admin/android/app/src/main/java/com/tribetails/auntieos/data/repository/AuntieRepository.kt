@@ -1364,12 +1364,32 @@ class AuntieRepository(
         scoped.scopedQuery("media_files").toObjects(MediaFile::class.java)
     }.onFailure { AuntieLog.e("Failed to get all media", it) }
 
-    /** #13 Gallery: set the kin tagged in a media file (rules gate to isAuntie/testOwns). */
-    suspend fun updateMediaTags(mediaFileId: String, taggedKinIds: List<String>): Result<Unit> = runCatching {
+    /**
+     * #13 Gallery / #447: set the kin tagged in a media file.
+     *
+     * SERVER-BOUND since #447. This used to be a bare
+     * `.update("taggedKinIds", ids)` straight onto the document, which meant
+     * nothing checked that a tagged kin existed, or even belonged to the
+     * household whose photo it is, and no audit entry was written. The
+     * `saveMediaTags` callable enforces both, `firestore.rules` now REFUSES any
+     * client update that touches the key, and the React admin's tag dialog
+     * calls the same callable with the same payload, so the two clients cannot
+     * drift apart again.
+     *
+     * The payload is the COMPLETE list after the edit, never a delta; an empty
+     * list clears every tag. Returns the list AS STORED (the server
+     * de-duplicates), so the caller reflects what actually landed rather than
+     * what it hoped to send.
+     */
+    suspend fun updateMediaTags(mediaFileId: String, taggedKinIds: List<String>): Result<List<String>> = runCatching {
         authGate.ensureAuthenticated()
-        firestore.collection("media_files").document(mediaFileId)
-            .update("taggedKinIds", taggedKinIds).await()
-        Unit
+        val raw = functions.getHttpsCallable("saveMediaTags")
+            .call(mapOf("mediaFileId" to mediaFileId, "taggedKinIds" to taggedKinIds))
+            .await().data as? Map<*, *>
+        // Fall back to the sent list rather than to EMPTY on an unreadable
+        // response: the write succeeded (no exception reached here), and
+        // reporting "no tags" would repaint the grid as though it had failed.
+        (raw?.get("taggedKinIds") as? List<*>)?.mapNotNull { it as? String } ?: taggedKinIds
     }.onFailure { AuntieLog.e("Failed to update media tags", it) }
 
     suspend fun saveMediaFile(mediaFile: MediaFile): Result<String> = runCatching {

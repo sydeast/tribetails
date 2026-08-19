@@ -458,6 +458,7 @@ export { generate } from './portal/generate';
 export { generateInvoicePdf } from './admin/generateInvoicePdf';
 export { getMyInvoicePdf } from './portal/getMyInvoicePdf';
 export { setMediaProfilePhoto } from './admin/setMediaProfilePhoto';
+export { saveMediaTags } from './admin/saveMediaTags';
 export { manageBookingSeries } from './admin/manageBookingSeries';
 export { batchUpdateBookings } from './admin/batchUpdateBookings';
 export { aiBackfillTaleTitles } from './admin/aiBackfillTaleTitles';

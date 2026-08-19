@@ -520,4 +520,67 @@ describe('rules: flat top-level collections', () => {
       asTestAdmin(env).firestore().doc('vet_clinics/vc4').set({ name: 'Nope' }),
     );
   });
+
+  // ── media_files.taggedKinIds is server-bound (#447) ────────────────────────
+  //
+  // Android used to patch this field straight from the client. The saveMediaTags
+  // callable now owns it (admin SDK, which bypasses rules), so a client update
+  // that TOUCHES the key must be refused however privileged the caller is, while
+  // every other field on the doc keeps working exactly as before.
+
+  async function seedMedia(env: Awaited<ReturnType<typeof getEnv>>, id: string) {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc(`media_files/${id}`).set({
+        kinfolkId: 'test-kinfolk-001',
+        storageUrl: 'https://cdn/x.jpg',
+        taggedKinIds: ['k1'],
+      });
+    });
+  }
+
+  it('media_files: an operator can still patch a NON-tag field', async () => {
+    const env = await getEnv();
+    await seedMedia(env, 'mf1');
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('media_files/mf1').update({ description: 'Beach day' }),
+    );
+  });
+
+  it('media_files: even an OPERATOR cannot write taggedKinIds directly', async () => {
+    const env = await getEnv();
+    await seedMedia(env, 'mf1');
+    await assertFails(
+      asAuntie(env).firestore().doc('media_files/mf1').update({ taggedKinIds: ['k1', 'k2'] }),
+    );
+  });
+
+  it('media_files: an operator cannot CLEAR taggedKinIds directly either', async () => {
+    const env = await getEnv();
+    await seedMedia(env, 'mf1');
+    await assertFails(
+      asAuntie(env).firestore().doc('media_files/mf1').update({ taggedKinIds: [] }),
+    );
+  });
+
+  it('media_files: a sandbox test admin cannot write taggedKinIds on its own doc', async () => {
+    const env = await getEnv();
+    await seedMedia(env, 'test-kinfolk-001-mf2');
+    await assertFails(
+      asTestAdmin(env)
+        .firestore()
+        .doc('media_files/test-kinfolk-001-mf2')
+        .update({ taggedKinIds: ['k9'] }),
+    );
+  });
+
+  it('media_files: a CREATE may still carry taggedKinIds (upload pipelines untouched)', async () => {
+    const env = await getEnv();
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('media_files/mf-new').set({
+        kinfolkId: 'test-kinfolk-001',
+        storageUrl: 'https://cdn/new.jpg',
+        taggedKinIds: [],
+      }),
+    );
+  });
 });

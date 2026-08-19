@@ -118,3 +118,40 @@ describe('MediaViewerDialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+describe('MediaViewerDialog, kin tagging (#447)', () => {
+  it('offers NO "Tag kin" button when the caller does not pass the hand-off', () => {
+    // Media.tsx's entity-scoped grid is exactly this case, matching Android's
+    // MediaGalleryScreen.kt, whose viewer has no tag affordance either.
+    render(<MediaViewerDialog media={media({ description: 'Rufus' })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Tag kin' })).toBeNull();
+  });
+
+  it('offers a named, keyboard-reachable "Tag kin" button when the caller passes one', async () => {
+    const onTagKin = vi.fn();
+    render(
+      <MediaViewerDialog media={media({ description: 'Rufus' })} onClose={vi.fn()} onTagKin={onTagKin} />,
+    );
+    const button = screen.getByRole('button', { name: 'Tag kin' });
+    button.focus();
+    fireEvent.keyDown(button, { key: 'Enter' });
+    fireEvent.click(button);
+    expect(onTagKin).toHaveBeenCalled();
+  });
+
+  it('names the kin tagged in the photo', () => {
+    render(
+      <MediaViewerDialog
+        media={media({ description: 'Rufus' })}
+        taggedNames={['Waddles', 'Biscuit']}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Waddles, Biscuit')).toBeInTheDocument();
+  });
+
+  it('shows no "Tagged kin" line at all when nobody is tagged, rather than an empty label', () => {
+    render(<MediaViewerDialog media={media({ description: 'Rufus' })} taggedNames={[]} onClose={vi.fn()} />);
+    expect(screen.queryByText('Tagged kin')).toBeNull();
+  });
+});
