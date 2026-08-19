@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   adminChannelForced,
   adminChannelReason,
+  adminChannelResolved,
   adminGateEnabledChannels,
   adminVisibleNotifications,
   channelLabel,
@@ -182,6 +183,66 @@ describe('myNotificationsFormat', () => {
     });
   });
 
+  /**
+   * #491. Forced says "you do not decide this channel". It does not say the
+   * channel is on, and this screen used to render every forced channel as on:
+   * a locked sms row the operator never switched on drew a switch pinned on
+   * while `resolveChannels` sent nothing, with no control the recipient could
+   * use to act on the difference.
+   *
+   * These cases mirror the dispatcher's locked branch: the operator's explicit
+   * value when there is one, else the catalog default (required or email on,
+   * everything else off).
+   */
+  describe('adminChannelResolved', () => {
+    const locked = (over: Record<string, unknown> = {}) =>
+      matrix({
+        overrides: {
+          'kincare.booking.confirm': {
+            enabled: true,
+            channels: {},
+            lockedEnabled: true,
+            locked: {},
+            streams: {},
+            ...over,
+          },
+        },
+      });
+    it('is OFF for a locked sms the operator never switched on', () => {
+      const m = locked();
+      const e = entry({ required: {} });
+      expect(adminChannelForced(m, e, STREAM_BUSINESS, 'sms')).toBe(true);
+      expect(adminChannelResolved(m, e, STREAM_BUSINESS, 'sms')).toBe(false);
+    });
+    it('is ON for a locked email, which is the catalog default', () => {
+      expect(adminChannelResolved(locked(), entry({ required: {} }), STREAM_BUSINESS, 'email')).toBe(
+        true,
+      );
+    });
+    it('is ON for a locked sms the operator did switch on', () => {
+      const m = locked({ channels: { sms: true } });
+      expect(adminChannelResolved(m, entry({ required: {} }), STREAM_BUSINESS, 'sms')).toBe(true);
+    });
+    it('is ON for a catalog-required sms with no operator value', () => {
+      const e = entry({ required: { sms: true } });
+      expect(adminChannelResolved(matrix(), e, STREAM_BUSINESS, 'sms')).toBe(true);
+    });
+    it('reads the stream overlay before the flat value', () => {
+      const m = matrix({
+        overrides: {
+          'kincare.booking.confirm': {
+            enabled: true,
+            channels: { sms: true },
+            lockedEnabled: true,
+            locked: {},
+            streams: { [STREAM_STAFF]: { channels: { sms: false } } },
+          },
+        },
+      } as never);
+      expect(adminChannelResolved(m, entry({ required: {} }), STREAM_BUSINESS, 'sms')).toBe(true);
+      expect(adminChannelResolved(m, entry({ required: {} }), STREAM_STAFF, 'sms')).toBe(false);
+    });
+  });
   describe('adminChannelReason', () => {
     it('prefers the operator-written lock reason when one exists', () => {
       const m = matrix({
@@ -189,19 +250,19 @@ describe('myNotificationsFormat', () => {
           k: { enabled: true, channels: {}, lockedEnabled: false, locked: {}, lockReason: 'Legal hold.', streams: {} },
         },
       });
-      expect(adminChannelReason(m, entry({ key: 'k' }), 'email')).toBe('Legal hold.');
+      expect(adminChannelReason(m, entry({ key: 'k' }), STREAM_BUSINESS, 'email')).toBe('Legal hold.');
     });
 
     it('falls back to the catalog-required stock line', () => {
       const e = entry({ key: 'k', required: { email: true } });
-      expect(adminChannelReason(matrix(), e, 'email')).toBe(
+      expect(adminChannelReason(matrix(), e, STREAM_BUSINESS, 'email')).toBe(
         "Set by the notification itself; your choice here can't turn it off.",
       );
     });
 
     it('falls back to the business-locked stock line when not catalog-required', () => {
       const e = entry({ key: 'k', required: {} });
-      expect(adminChannelReason(matrix(), e, 'email')).toBe(
+      expect(adminChannelReason(matrix(), e, STREAM_BUSINESS, 'email')).toBe(
         "Set in your business settings; your choice here can't turn it off.",
       );
     });
@@ -215,11 +276,33 @@ describe('myNotificationsFormat', () => {
      */
     it('never promises the channel is always on or simply required', () => {
       for (const required of [{ email: true } as const, {} as const]) {
-        const line = adminChannelReason(matrix(), entry({ key: 'k', required }), 'email');
+        const line = adminChannelReason(matrix(), entry({ key: 'k', required }), STREAM_BUSINESS, 'email');
         expect(line.toLowerCase()).not.toContain('always');
         expect(line.toLowerCase()).not.toContain('required');
         expect(line).toContain('Set');
       }
+    });
+    // #491: the sentence has to match the direction. Telling someone their
+    // choice cannot turn OFF a channel that is already off is the wrong line in
+    // the one place it matters most.
+    it('says "turn it on" for a forced channel that resolves off', () => {
+      const m = matrix({
+        overrides: {
+          'kincare.booking.confirm': {
+            enabled: true,
+            channels: {},
+            lockedEnabled: true,
+            locked: {},
+            streams: {},
+          },
+        },
+      });
+      expect(adminChannelReason(m, entry({ required: {} }), STREAM_BUSINESS, 'sms')).toBe(
+        "Set in your business settings; your choice here can't turn it on.",
+      );
+      expect(adminChannelReason(m, entry({ required: {} }), STREAM_BUSINESS, 'email')).toBe(
+        "Set in your business settings; your choice here can't turn it off.",
+      );
     });
     it('ignores a blank (whitespace-only) lock reason', () => {
       const m = matrix({
@@ -227,7 +310,7 @@ describe('myNotificationsFormat', () => {
           k: { enabled: true, channels: {}, lockedEnabled: false, locked: {}, lockReason: '   ', streams: {} },
         },
       });
-      expect(adminChannelReason(m, entry({ key: 'k', required: { email: true } }), 'email')).toBe(
+      expect(adminChannelReason(m, entry({ key: 'k', required: { email: true } }), STREAM_BUSINESS, 'email')).toBe(
         "Set by the notification itself; your choice here can't turn it off.",
       );
     });

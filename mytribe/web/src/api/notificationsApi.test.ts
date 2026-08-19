@@ -21,6 +21,7 @@ function key(overrides: Partial<NotificationKeyDto>): NotificationKeyDto {
     allowedChannels: ['email', 'push'],
     required: [],
     lockedChannels: [],
+    lockedChannelValues: {},
     marketingCategory: null,
     lockReason: null,
     ...overrides,
@@ -78,9 +79,46 @@ describe('channelChecked', () => {
     expect(channelChecked(c, 'sms', undefined)).toBe(false);
   });
 
-  it('always reads true for a channel locked across every key, ignoring saved prefs', () => {
-    const c = cat('visit', [key({ allowedChannels: ['email'], lockedChannels: ['email'] })]);
+  it('reads the catalog’s value for a channel locked across every key, ignoring saved prefs', () => {
+    const c = cat('visit', [
+      key({
+        allowedChannels: ['email'],
+        lockedChannels: ['email'],
+        lockedChannelValues: { email: true },
+      }),
+    ]);
     expect(channelChecked(c, 'email', { email: false })).toBe(true);
+  });
+  // #491. A locked channel is not an ON channel: `lockedEnabled` with no value
+  // set for sms resolves OFF in the dispatcher, and this row used to read on.
+  it('reads OFF for a locked channel the dispatcher resolves off', () => {
+    const c = cat('visit', [
+      key({
+        allowedChannels: ['sms'],
+        lockedChannels: ['sms'],
+        lockedChannelValues: { sms: false },
+      }),
+    ]);
+    expect(channelChecked(c, 'sms', { sms: true })).toBe(false);
+  });
+  // The category row aggregates several keys, so "on" has to be true of all of
+  // them; one key resolving off makes the row's promise false for that key.
+  it('reads OFF when one of the keys locking the channel resolves off', () => {
+    const c = cat('visit', [
+      key({
+        key: 'a',
+        allowedChannels: ['sms'],
+        lockedChannels: ['sms'],
+        lockedChannelValues: { sms: true },
+      }),
+      key({
+        key: 'b',
+        allowedChannels: ['sms'],
+        lockedChannels: ['sms'],
+        lockedChannelValues: { sms: false },
+      }),
+    ]);
+    expect(channelChecked(c, 'sms', undefined)).toBe(false);
   });
 });
 
@@ -92,7 +130,13 @@ describe('categoryMasterChecked', () => {
   });
 
   it('reads on for a fully-locked category (nothing left to toggle)', () => {
-    const c = cat('visit', [key({ allowedChannels: ['email'], lockedChannels: ['email'] })]);
+    const c = cat('visit', [
+      key({
+        allowedChannels: ['email'],
+        lockedChannels: ['email'],
+        lockedChannelValues: { email: true },
+      }),
+    ]);
     expect(categoryMasterChecked(c, undefined)).toBe(true);
   });
 });
@@ -144,9 +188,39 @@ describe('keyLockedChannels', () => {
 });
 
 describe('keyChannelChecked', () => {
-  it('always reads true for a channel in the key’s own lockedChannels, ignoring saved prefs', () => {
-    const k = key({ allowedChannels: ['sms'], lockedChannels: ['sms'] });
+  it('reads the catalog’s value for a channel in the key’s own lockedChannels, ignoring saved prefs', () => {
+    const k = key({
+      allowedChannels: ['sms'],
+      lockedChannels: ['sms'],
+      lockedChannelValues: { sms: true },
+    });
     expect(keyChannelChecked(k, 'sms', { sms: false }, { sms: false })).toBe(true);
+  });
+  /**
+   * The deploy skew window. This app ships on its own schedule; the callable
+   * ships in the operator's batched functions release. A browser running this
+   * code against a callable that predates `lockedChannelValues` must render the
+   * old way, not throw on `undefined[ch]` and take the settings screen down.
+   */
+  it('renders a locked channel as on when the server has not shipped the values yet', () => {
+    const stale = { ...key({ allowedChannels: ['sms'], lockedChannels: ['sms'] }) } as Record<
+      string,
+      unknown
+    >;
+    delete stale.lockedChannelValues;
+    const k = stale as unknown as NotificationKeyDto;
+    expect(keyChannelChecked(k, 'sms', { sms: false }, undefined)).toBe(true);
+    expect(channelChecked(cat('visit', [k]), 'sms', { sms: false })).toBe(true);
+  });
+  // #491: the case every client got wrong. Locked says the household does not
+  // decide it; what was decided here is off, and the row has to say so.
+  it('reads OFF for a locked channel the dispatcher resolves off, whatever the household saved', () => {
+    const k = key({
+      allowedChannels: ['sms'],
+      lockedChannels: ['sms'],
+      lockedChannelValues: { sms: false },
+    });
+    expect(keyChannelChecked(k, 'sms', { sms: true }, { sms: true })).toBe(false);
   });
 
   it('prefers the key’s own byKey override over the category default', () => {

@@ -59,6 +59,25 @@ export function streamEffectiveEnabled(matrix: NotificationMatrix, key: string, 
   return matrix.overrides[key]?.streams[stream]?.enabled ?? flatEffectiveEnabled(matrix, key);
 }
 
+/**
+ * The operator's EXPLICIT channel value for `stream`, or undefined when they
+ * never gave one (#491).
+ *
+ * `streamEffectiveChannel` below collapses "never set" into `true`, which is
+ * right for the gate question it answers -- only an explicit false suppresses a
+ * channel, exactly as the dispatcher reads it. It is wrong for the value
+ * question: the dispatcher resolves an unset channel from the CATALOG default,
+ * not from `true`, so anything that needs to know what will actually be sent
+ * has to be able to tell "never set" from "set on".
+ */
+export function streamEffectiveChannelRaw(
+  matrix: NotificationMatrix,
+  key: string,
+  stream: NotifStream,
+  channel: NotificationChannel,
+): boolean | undefined {
+  return matrix.overrides[key]?.streams[stream]?.channels[channel] ?? matrix.overrides[key]?.channels[channel];
+}
 /** Effective on/off of one channel of `key` for `stream`: stream gate wins, else flat. */
 export function streamEffectiveChannel(
   matrix: NotificationMatrix,
@@ -163,6 +182,31 @@ export function adminChannelForced(
 }
 
 /**
+ * What the DISPATCHER will do with a forced channel — the value this screen has
+ * to show for it, since the person sitting here does not decide it (#491).
+ *
+ * This is `resolveChannels`'s locked branch, in this seat's terms: the
+ * operator's explicit value when they gave one, else the catalog default, which
+ * is on for a required channel and for email and off for everything else. The
+ * screen used to render every forced channel as ON, so a locked sms row with no
+ * operator value drew a switch pinned on while the dispatcher sent nothing —
+ * and being read-only, there was nothing the recipient could do about it.
+ *
+ * An explicit operator OFF never reaches here: `adminGateEnabledChannels` drops
+ * that channel from the screen entirely, the same way the dispatcher drops it.
+ */
+export function adminChannelResolved(
+  matrix: NotificationMatrix,
+  entry: NotificationCatalogEntry,
+  stream: NotifStream,
+  channel: NotificationChannel,
+): boolean {
+  return (
+    streamEffectiveChannelRaw(matrix, entry.key, stream, channel) ??
+    (channelRequired(entry, channel) || channel === 'email')
+  );
+}
+/**
  * THE RECIPIENT-LAYER VOCABULARY (#451).
  *
  * This screen is a RECIPIENT seat: it edits one person's own receive prefs.
@@ -188,13 +232,18 @@ export const CHANNEL_SET_BY_BUSINESS = 'Set by your business';
 export function adminChannelReason(
   matrix: NotificationMatrix,
   entry: NotificationCatalogEntry,
+  stream: NotifStream,
   channel: NotificationChannel,
 ): string {
   const ownReason = lockReasonFor(matrix, entry.key);
   if (ownReason !== undefined) return ownReason;
+  // A forced channel can be forced OFF (#491), and telling someone their choice
+  // can't turn OFF a channel that is already off is the wrong sentence in the
+  // one place they most need the right one.
+  const direction = adminChannelResolved(matrix, entry, stream, channel) ? 'off' : 'on';
   return channelRequired(entry, channel)
-    ? 'Set by the notification itself; your choice here can\'t turn it off.'
-    : 'Set in your business settings; your choice here can\'t turn it off.';
+    ? `Set by the notification itself; your choice here can't turn it ${direction}.`
+    : `Set in your business settings; your choice here can't turn it ${direction}.`;
 }
 
 /**

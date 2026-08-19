@@ -46,9 +46,15 @@ describe('getNotificationCatalogHandler', () => {
   });
 
   // Audience revamp 2026-07: alwaysEnabled keys are no longer hidden from the
-  // kinfolk portal; they appear fully LOCKED so the household can see what it
-  // will always receive (the old test asserted they were excluded).
-  it('includes alwaysEnabled keys presented fully locked (e.g. kincare.booking.confirm)', async () => {
+  // kinfolk portal. They are surfaced with their REQUIRED channels locked and
+  // the rest free.
+  //
+  // This assertion used to read `lockedChannels === allowedChannels`, i.e. the
+  // flag locked everything. #491 removed that: `resolveChannels` has no
+  // alwaysEnabled check (ruling #7), so the household's own preference is what
+  // decides those channels, and a screen rendering them read-only was telling
+  // a household it could not change something it can.
+  it('surfaces alwaysEnabled keys with only their required channels locked', async () => {
     const result = await getNotificationCatalogHandler({
       data: {},
       auth: SIGNED_IN,
@@ -57,8 +63,16 @@ describe('getNotificationCatalogHandler', () => {
     for (const key of ['kincare.booking.confirm', 'kincare.booking.cancel']) {
       const dto = allKeys.find((k) => k.key === key);
       expect(dto, `${key} must now be surfaced`).toBeDefined();
-      expect(dto!.lockedChannels, `${key} must be fully locked`).toEqual(dto!.allowedChannels);
+      expect(dto!.lockedChannels, `${key} locks exactly its required channels`).toEqual(
+        dto!.required,
+      );
       expect(dto!.allowedChannels.length).toBeGreaterThan(0);
+      // Every lock ships the value the dispatcher will use for it.
+      for (const ch of dto!.lockedChannels) {
+        expect(dto!.lockedChannelValues[ch], `${key}/${ch} must carry its resolved value`).toBe(
+          true,
+        );
+      }
     }
   });
 
@@ -264,9 +278,11 @@ describe('getNotificationCatalogHandler', () => {
     expect(
       lockedChannelsFor(syntheticDef as never, { enabled: true, channels: {}, lockedEnabled: true }, surviving),
     ).toEqual(surviving);
-    // alwaysEnabled pins everything even without an override.
+    // alwaysEnabled pins NOTHING on its own (#491). The flag is advisory —
+    // nothing in resolveChannels reads it — so locking on it made every client
+    // draw a read-only control over a channel the household still governs.
     expect(
       lockedChannelsFor({ ...syntheticDef, alwaysEnabled: true } as never, null, surviving),
-    ).toEqual(surviving);
+    ).toEqual(['email']);
   });
 });

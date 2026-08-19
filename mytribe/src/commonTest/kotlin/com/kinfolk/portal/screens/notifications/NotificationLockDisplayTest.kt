@@ -16,8 +16,9 @@ import kotlin.test.assertTrue
  *    names who decides rather than promising "always on" (#451)
  *  - the "All in category" row only offers channels at least one key can
  *    actually toggle (no dead select-all chips over locked keys)
- *  - chip mechanics: required/admin-locked chips stay checked no matter what
- *    byKey/byCategory writes say.
+ *  - chip mechanics: a required/admin-locked chip ignores byKey/byCategory
+ *    writes and shows what the DISPATCHER resolves for it, which is not always
+ *    on (#491).
  */
 class NotificationLockDisplayTest {
 
@@ -29,6 +30,7 @@ class NotificationLockDisplayTest {
         allowed: Set<NotificationChannel>,
         required: Set<NotificationChannel> = emptySet(),
         locked: Set<NotificationChannel> = emptySet(),
+        lockedValues: Map<NotificationChannel, Boolean> = emptyMap(),
         lockReason: String? = null,
         keyId: String = "test.key",
     ) = NotificationKey(
@@ -38,6 +40,7 @@ class NotificationLockDisplayTest {
         allowedChannels = allowed,
         required = required,
         lockedChannels = locked,
+        lockedChannelValues = lockedValues,
         lockReason = lockReason,
     )
 
@@ -250,6 +253,30 @@ class NotificationLockDisplayTest {
         assertTrue(chip.locked)
     }
 
+    @Test
+    fun chip_adminLocked_reads_OFF_when_the_dispatcher_resolves_it_off() {
+        // #491, the case every client got wrong. `lockedEnabled` pins the row,
+        // the operator never switched sms on, and resolveChannels sends nothing
+        // on it. The chip must say off — and stay read-only, because the
+        // household still does not decide it.
+        val k = key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS),
+            lockedValues = mapOf(EMAIL to true, SMS to false))
+        val sms = channelChipState(k, SMS, marketingGate = false, perKey = true, perCat = true)
+        assertFalse(sms.checked)
+        assertTrue(sms.locked)
+        assertEquals(ChipMarker.AdminLock, sms.marker)
+        // Its sibling on the same locked row is on, so this is not the whole
+        // row reading off.
+        assertTrue(channelChipState(k, EMAIL, marketingGate = false, perKey = false, perCat = false).checked)
+    }
+    @Test
+    fun chip_locked_without_a_shipped_value_reads_on() {
+        // A server that has not shipped lockedChannelValues yet leaves the map
+        // empty. On is the right reading there: everything the static fallback
+        // catalog locks is catalog-required, and required resolves on.
+        val k = key(allowed = setOf(EMAIL, SMS), locked = setOf(SMS))
+        assertTrue(channelChipState(k, SMS, marketingGate = false, perKey = false, perCat = false).checked)
+    }
     @Test
     fun chip_required_checked_locked_with_check_marker() {
         val k = key(allowed = setOf(EMAIL), required = setOf(EMAIL))

@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { NOTIFICATION_CATALOG, alwaysEnabledForStream } from './catalog';
+import { NOTIFICATION_CATALOG } from './catalog';
 import { overrideForStream } from './prefs';
 import type {
   Channel,
@@ -109,11 +109,27 @@ export interface NotificationKeyDto {
    * Run-4 #13: channels the admin has LOCKED. The kinfolk can see these but must not
    * change them (render read-only); the dispatcher enforces the lock server-side too,
    * so a stale client that ignores this still can't override. `lockedEnabled` locks
-   * every allowed channel. Audience revamp 2026-07: alwaysEnabled keys and
-   * catalog-required channels also surface here, they are user-immutable in
-   * resolveChannels, so from the household's seat they ARE locked.
+   * every allowed channel. Catalog-required channels are here for the same reason:
+   * `resolveChannels` ignores the household's preference for them.
+   *
+   * NOT alwaysEnabled keys (#491). That flag is advisory — `resolveChannels` has no
+   * check for it (ruling #7), so the household's preference IS honored on those
+   * channels, and rendering them read-only told a household they could not change
+   * something they can. They carry a "meant to stay on" marker instead, which is
+   * what the flag actually means.
    */
   lockedChannels: Channel[];
+  /**
+   * What `resolveChannels` will produce for each channel in `lockedChannels` (#491).
+   *
+   * Locked does not mean on. A channel locked by `lockedEnabled` that the operator
+   * never gave a value to resolves to the catalog default — on for email and for a
+   * required channel, OFF for sms and push — so a client that rendered every locked
+   * channel as on was showing a household an sms switch pinned on while the
+   * dispatcher sent nothing. The value travels with the lock so no client has to
+   * re-derive it, which is how the four of them drifted apart in the first place.
+   */
+  lockedChannelValues: Partial<Record<Channel, boolean>>;
   marketingCategory: MarketingCategory | null;
   /** Operator-authored reason shown on locked/required rows (trimmed), null when unset. */
   lockReason: string | null;
@@ -161,10 +177,34 @@ export function lockedChannelsFor(
   effectiveOverride: BusinessNotificationOverride | null,
   survivingChannels: Channel[],
 ): Channel[] {
-  if (alwaysEnabledForStream(def, 'kinfolk')) return [...survivingChannels];
   if (effectiveOverride?.lockedEnabled) return [...survivingChannels];
   return survivingChannels.filter(
     (ch) => effectiveOverride?.locked?.[ch] === true || def.required[ch] === true,
+  );
+}
+/**
+ * The value `resolveChannels` will produce for a LOCKED channel — the one a
+ * client must render, since the household's own preference does not enter into
+ * it (#491).
+ *
+ * This is `resolveChannels`'s locked branch, and it is deliberately the same
+ * expression: the operator's explicit channel value when they gave one, else
+ * the catalog default, which is on for a required channel and for email and off
+ * for everything else. An explicit OFF never reaches here — such a channel is
+ * dropped from the catalog entirely — so in practice this answers the case the
+ * clients all got wrong: locked, never given a value, not required, not email,
+ * which resolves OFF while every one of them drew it on.
+ *
+ * `effectiveOverride` must already be the kinfolk stream-effective view.
+ */
+export function lockedChannelValueFor(
+  def: NotificationDef,
+  effectiveOverride: BusinessNotificationOverride | null,
+  channel: Channel,
+): boolean {
+  return (
+    effectiveOverride?.channels?.[channel] ??
+    (def.required[channel] === true || channel === 'email')
   );
 }
 
@@ -205,6 +245,10 @@ export async function getNotificationCatalogHandler(
     // Run-4 #13 + audience revamp 2026-07: surface everything the kinfolk must
     // render read-only (admin locks, alwaysEnabled keys, required channels).
     const lockedChannels: Channel[] = lockedChannelsFor(def, ov, allowedChannels);
+    // The lock and its value travel together: locked says the household does not
+    // decide this channel, and the value says what was decided (#491).
+    const lockedChannelValues: Partial<Record<Channel, boolean>> = {};
+    for (const ch of lockedChannels) lockedChannelValues[ch] = lockedChannelValueFor(def, ov, ch);
     // lockReason is flat (per-notification, never per-stream); trim, empty -> null.
     const rawLockReason = byKey[def.key]?.lockReason;
     const lockReason =
@@ -218,6 +262,7 @@ export async function getNotificationCatalogHandler(
       allowedChannels,
       required,
       lockedChannels,
+      lockedChannelValues,
       marketingCategory: def.marketingCategory ?? null,
       lockReason,
     };
