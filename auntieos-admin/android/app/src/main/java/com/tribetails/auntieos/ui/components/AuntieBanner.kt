@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,11 +18,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -32,6 +36,9 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -60,6 +67,72 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * Set [dashed] for a dashed border treatment, the Den convention for advisory or
  * placeholder callouts (for example a stubbed-feature warning) versus the solid
  * border used for live committed state.
+ *
+ * ## Dismissing (#444)
+ *
+ * [dismissible] opts a banner into a close affordance even when the caller has
+ * nothing of its own to run on dismiss (a notice computed straight from a
+ * record, like "Archived", rather than from local state). The banner then
+ * hides itself; no caller-held `remember { mutableStateOf(...) }` required.
+ * Passing [onDismiss] still works exactly as before and implies dismissible on
+ * its own FOR THE CLOSE BUTTON, so no existing call site's click behavior
+ * changes.
+ *
+ * BACK PRESS IS SCOPED TO [dismissible] ONLY, deliberately narrower than the
+ * close button. On Android, back is the primary navigation action; a banner
+ * silently eating it just because it happened to receive an [onDismiss] for
+ * its own close button would read as "the back button is broken" to anyone
+ * trying to leave the screen with one of the ~15 pre-existing `onDismiss`
+ * banners still up. Those keep exactly the back behavior they have today
+ * (none): back press only does anything on a banner that opted in with
+ * `dismissible = true`, the same explicit opt-in every other part of this
+ * feature requires. Only the two wired call sites (`InvoiceDetailScreen.kt`'s
+ * "Archived" and "Dispute won" banners) currently do.
+ *
+ * For a [dismissible] banner, back press is the touch/hardware-key
+ * equivalent of web's Escape: it dismisses the banner instead of whatever
+ * back would otherwise do. Unlike web's Escape, which only fires while DOM
+ * focus is inside the banner, this is not scoped further, Compose exposes no
+ * stable "is focus inside this subtree" primitive to gate on here, so for as
+ * long as a `dismissible` banner is showing, back dismisses it rather than
+ * navigating past it.
+ *
+ * Every dismissible banner, new or existing, also gets an accessible label on
+ * its close glyph ("Dismiss") via [Modifier.semantics], the same idiom
+ * [AuntieIconButton] uses, mirroring `aria-label="Dismiss"` on the web
+ * `<button>` (`Banner.tsx`'s `dismissible` prop, PR #419), and hands
+ * TalkBack's reading position somewhere sensible on dismiss (see below)
+ * rather than dropping it, mirroring web's focus-restore.
+ *
+ * ### Where focus goes after dismiss
+ *
+ * Web restores DOM focus to whatever was focused immediately before the
+ * banner opened, snapshotted via `document.activeElement`. Compose has no
+ * equivalent snapshot: a reusable leaf composable like this one cannot read
+ * "what currently holds focus" or walk up to find it, the way a DOM ref can.
+ * What Compose DOES expose, and the mechanism Compose's own accessibility
+ * delegate is documented to sync TalkBack's reading position to, is moving
+ * INPUT focus via [LocalFocusManager]; there is no lower-level "send
+ * accessibility focus to this node" action in the public semantics API to
+ * fall back to instead. So on dismiss this calls
+ * `focusManager.moveFocus(FocusDirection.Next)`, landing focus on whatever
+ * comes after this banner (its next `LazyColumn` item, on both wired call
+ * sites) rather than the specific place web restores to. This is a real
+ * effect for a hardware-keyboard or D-pad user and for a TalkBack user
+ * navigating linearly, who typically do carry Compose input focus already;
+ * it is NOT verified end-to-end against a live TalkBack session (this repo
+ * has no such harness, and Robolectric does not run a real accessibility
+ * service), and it does nothing when nothing in the banner currently holds
+ * input focus (for example, a sighted mouse/touch dismiss with no keyboard
+ * involved) — there is simply nowhere further Compose's public API reaches.
+ *
+ * [BackHandler] callbacks resolve most-recently-added-first, so a
+ * [dismissible] banner nested inside a [Dialog] that also uses [BackHandler]
+ * for its own back behavior (see `NewBookingWizard.kt`) intercepts back
+ * before that dialog does — verified for [Dialog], not exercised against a
+ * focusable `Popup` (e.g. `AuntieDialog`'s base), whose own key handling may
+ * consume back before the activity dispatcher runs. No dismissible banner is
+ * wired inside a `Popup` today.
  */
 @Composable
 fun AuntieBanner(
@@ -69,6 +142,7 @@ fun AuntieBanner(
     icon: ImageVector? = null,
     dashed: Boolean = false,
     pillLabel: String? = null,
+    dismissible: Boolean = false,
     onDismiss: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     body: @Composable () -> Unit,
@@ -76,6 +150,32 @@ fun AuntieBanner(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val toneColor = tone.color(c)
+
+    // #444: dismissible opts in a close button with no onDismiss of its own;
+    // onDismiss alone still implies it, unchanged from before this banner had
+    // any internal state. Once hidden, this banner renders nothing further, so
+    // a caller relying on onDismiss to clear its own state (the pre-existing
+    // ~15 call sites) sees no CLICK behavior change: the banner disappears
+    // either way.
+    val canDismiss = dismissible || onDismiss != null
+    var hidden by remember { mutableStateOf(false) }
+    if (hidden) return
+
+    val focusManager = LocalFocusManager.current
+    val handleDismiss: () -> Unit = {
+        hidden = true
+        onDismiss?.invoke()
+        // Best-effort TalkBack/keyboard focus handoff; see the class doc's
+        // "Where focus goes after dismiss" section for what this can and
+        // cannot reach.
+        focusManager.moveFocus(FocusDirection.Next)
+    }
+
+    // The Escape-key equivalent, but scoped to dismissible ONLY (not
+    // onDismiss alone): back is Android's primary navigation action, and a
+    // pre-existing onDismiss banner that never asked for back-press behavior
+    // must not start eating it. See the class doc's "Dismissing" section.
+    BackHandler(enabled = dismissible, onBack = handleDismiss)
 
     val corner = 14.dp
     val shape = RoundedCornerShape(corner)
@@ -179,8 +279,8 @@ fun AuntieBanner(
                 }
             }
 
-            if (onDismiss != null) {
-                BannerDismiss(toneColor = toneColor, onDismiss = onDismiss)
+            if (canDismiss) {
+                BannerDismiss(toneColor = toneColor, onDismiss = handleDismiss)
             }
         }
     }
@@ -254,6 +354,11 @@ private fun BannerPill(
 /**
  * The dismiss affordance: a borderless hover-reactive close glyph drawn with Canvas
  * (an X stroke), so no specific ImageVector is hardcoded and no Material3 Icon is used.
+ *
+ * #444: carries its own accessible label. Without it TalkBack has nothing to
+ * announce beyond "button" for an icon drawn on a raw Canvas, the same gap
+ * `aria-label="Dismiss"` closed on the web `<button>`. Same idiom as
+ * [AuntieIconButton]'s `contentDescription` parameter.
  */
 @Composable
 private fun BannerDismiss(
@@ -284,6 +389,7 @@ private fun BannerDismiss(
                 indication = null,
                 onClick = onDismiss,
             )
+            .semantics { contentDescription = "Dismiss" }
             .drawBehind {
                 val pad = 7.dp.toPx()
                 val w = strokeWidthDp.toPx()
