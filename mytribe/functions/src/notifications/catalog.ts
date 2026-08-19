@@ -18,10 +18,23 @@ import type { Category, Channel, NotificationDef } from './types';
  *   batched   , append items; scheduler emits digest every batchWindowMs.
  *   scheduled , fire at explicit fireAt timestamp (caller-provided).
  *
- * Required vs alwaysEnabled:
- *   required.email = true       → email channel cannot be disabled by admin or user.
- *   alwaysEnabled = true        → entire notification cannot be silenced by admin.
+ * Required vs alwaysEnabled — READ THIS BEFORE WORDING ANY UI (#451):
+ *   required.email = true       → email is on unless the OPERATOR turns the
+ *                                 channel off in the gate. A recipient's own
+ *                                 pref cannot turn it off; the operator's can
+ *                                 (resolveChannels step 2 beats step 3).
+ *   alwaysEnabled = true        → ADVISORY ONLY. Nothing enforces it. Ruling #7
+ *                                 (2026-06-08, warn-but-allow-off) deliberately
+ *                                 removed enforcement, and resolveChannels has
+ *                                 no alwaysEnabled check at all, so the operator
+ *                                 can silence any of these rows and it will then
+ *                                 genuinely stop sending to everyone.
  *   kinfolkFacing = false       → hidden from kinfolk prefs UI (still sent).
+ *
+ * So no surface may caption either flag "Always on" or "Required" full stop.
+ * The settled words are "Meant to stay on" for alwaysEnabled and, on a
+ * recipient's own screen, "Set by your business" / "Set by Tribe Tails Pet
+ * Care" for a channel that recipient cannot change.
  */
 
 const DEBOUNCE_30_MIN = 30 * 60 * 1000;

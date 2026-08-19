@@ -617,8 +617,27 @@ fun AdminNotificationPrefs.applyBulkToggle(
 }
 
 /**
- * Plain-language reason a forced channel can't be changed. The operator's own
- * lockReason wins; otherwise the built-in fallback strings. Empty when not forced.
+ * THE RECIPIENT-LAYER VOCABULARY (#451).
+ *
+ * `AdminNotificationPrefsScreen` is a RECIPIENT seat: it edits one person's own
+ * receive prefs. The only thing this layer can honestly guarantee about a
+ * forced channel is that the person sitting here does not decide it — the
+ * business gate does. It cannot promise the notification keeps arriving,
+ * because the gate can switch the whole row (or that channel) off in Business
+ * Settings and `resolveChannels` honors that even for a catalog-required
+ * channel (ruling #7, warn-but-allow-off).
+ *
+ * So the pill says this and never "Required" or "Always on": it names WHO
+ * decides, and promises nothing about permanence. Mirrors
+ * CHANNEL_SET_BY_BUSINESS in `auntieos-admin/src/lib/myNotificationsFormat.ts`,
+ * and sits one layer in from the portal's "Set by Tribe Tails Pet Care."
+ */
+const val NOTIF_CHANNEL_SET_BY_BUSINESS = "Set by your business"
+/**
+ * Plain-language reason a forced channel can't be changed on this screen. The
+ * operator's own lockReason wins; otherwise the built-in fallback strings.
+ * Empty when not forced. Both fallbacks name the layer that decides and where
+ * it can be changed; neither says the channel will always send.
  */
 fun NotificationMatrix.channelForcedReason(
     entry: NotificationCatalogEntry,
@@ -628,9 +647,9 @@ fun NotificationMatrix.channelForcedReason(
     if (!channelForcedForUser(entry, channel, stream)) return ""
     lockReasonFor(entry.key)?.let { return it }
     return if (entry.required[channel] == true) {
-        "Required for this notification."
+        "Set by the notification itself; your choice here can't turn it off."
     } else {
-        "Locked on by your business settings."
+        "Set in your business settings; your choice here can't turn it off."
     }
 }
 

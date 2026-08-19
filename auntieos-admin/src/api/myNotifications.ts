@@ -402,8 +402,8 @@ function decodePrefs(raw: RawPrefsDto['prefs']): AdminNotificationPrefs {
 /**
  * The business gate matrix: catalog (every notification type this business
  * can send) plus any saved overrides. Same callable and same doc the Settings
- * gate matrix panel reads, so a channel this screen shows as "Required" always
- * agrees with what Settings shows as locked.
+ * gate matrix panel reads, so a channel this screen shows as "Set by your
+ * business" always agrees with what Settings shows as locked.
  */
 export async function getNotificationMatrix(): Promise<NotificationMatrix> {
   const raw = await call<Record<string, never>, RawGetOverridesResult>(

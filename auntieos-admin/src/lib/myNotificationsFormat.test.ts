@@ -194,14 +194,33 @@ describe('myNotificationsFormat', () => {
 
     it('falls back to the catalog-required stock line', () => {
       const e = entry({ key: 'k', required: { email: true } });
-      expect(adminChannelReason(matrix(), e, 'email')).toBe('Always on for this notification.');
+      expect(adminChannelReason(matrix(), e, 'email')).toBe(
+        "Set by the notification itself; your choice here can't turn it off.",
+      );
     });
 
     it('falls back to the business-locked stock line when not catalog-required', () => {
       const e = entry({ key: 'k', required: {} });
-      expect(adminChannelReason(matrix(), e, 'email')).toBe('Locked on by your business settings.');
+      expect(adminChannelReason(matrix(), e, 'email')).toBe(
+        "Set in your business settings; your choice here can't turn it off.",
+      );
     });
 
+    /**
+     * #451: three surfaces used three words for this and all three implied a
+     * guarantee. Neither stock line may promise permanence, because the
+     * business gate can switch a catalog-required channel off and
+     * `resolveChannels` honors that (ruling #7, warn-but-allow-off). This is
+     * the assertion that stops "Always on" / bare "Required" coming back.
+     */
+    it('never promises the channel is always on or simply required', () => {
+      for (const required of [{ email: true } as const, {} as const]) {
+        const line = adminChannelReason(matrix(), entry({ key: 'k', required }), 'email');
+        expect(line.toLowerCase()).not.toContain('always');
+        expect(line.toLowerCase()).not.toContain('required');
+        expect(line).toContain('Set');
+      }
+    });
     it('ignores a blank (whitespace-only) lock reason', () => {
       const m = matrix({
         overrides: {
@@ -209,7 +228,7 @@ describe('myNotificationsFormat', () => {
         },
       });
       expect(adminChannelReason(m, entry({ key: 'k', required: { email: true } }), 'email')).toBe(
-        'Always on for this notification.',
+        "Set by the notification itself; your choice here can't turn it off.",
       );
     });
   });

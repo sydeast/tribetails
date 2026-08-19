@@ -31,6 +31,23 @@ data class NotifRowBadge(
 )
 
 /**
+ * THE ONE VOCABULARY FOR THE CATALOG'S ADVISORY FLAG (#451).
+ *
+ * Three surfaces used to have three words for "this one is important": the
+ * gate said "Always on", `AdminNotificationPrefsScreen` showed a "Required"
+ * lock pill, and the kinfolk portal said "Always on. Required by Tribe Tails."
+ * All three implied a guarantee, and they sat at different layers. These two
+ * constants are the admin-side half of the settlement: wherever the catalog's
+ * `alwaysEnabled` flag is shown to anyone it is shown with these words and no
+ * lock icon, because the flag is advice and not a lock. The recipient-side
+ * half is [NOTIF_CHANNEL_SET_BY_BUSINESS] in `NotificationMatrix.kt`, which
+ * names WHO decides rather than promising the notification keeps arriving.
+ * Mirrors MEANT_TO_STAY_ON / OFF_AND_MEANT_TO_STAY_ON in
+ * `auntieos-admin/src/lib/notificationProvenance.ts`.
+ */
+const val NOTIF_MEANT_TO_STAY_ON = "Meant to stay on"
+const val NOTIF_OFF_AND_MEANT_TO_STAY_ON = "Off, and meant to stay on"
+/**
  * WHY THIS EXISTS, AND WHY IT IS NOT THE WORDS "ALWAYS ON".
  *
  * The gate matrix captioned an `alwaysEnabled` row "Always on". It is not.
@@ -59,7 +76,7 @@ fun notifAlwaysOnBadge(
     if (!entry.alwaysEnabledFor(stream)) return null
     return if (!enabled) {
         NotifRowBadge(
-            label = "Off, and meant to stay on",
+            label = NOTIF_OFF_AND_MEANT_TO_STAY_ON,
             detail = "The catalog marks this one too important to silence, and it is switched off " +
                 "anyway. Nothing in the sending code overrides you: while it is off, this " +
                 "notification is not sent to anyone.",
@@ -67,7 +84,7 @@ fun notifAlwaysOnBadge(
         )
     } else {
         NotifRowBadge(
-            label = "Meant to stay on",
+            label = NOTIF_MEANT_TO_STAY_ON,
             detail = "The catalog marks this one too important to silence. That is advice, not " +
                 "a lock: you can switch it off here, and it will stop sending.",
             tone = NotifBadgeTone.Info,

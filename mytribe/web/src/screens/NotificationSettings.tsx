@@ -71,6 +71,23 @@ import '../styles/notifications.css';
  * D12 relabel (catalog id/key untouched, prefs still write the same).
  */
 
+/**
+ * THE ONE SENTENCE FOR A CHANNEL THE HOUSEHOLD CANNOT CHANGE (#451).
+ *
+ * This screen used to say "Always on. Required by Tribe Tails." on the category
+ * rows while the per-key rows already said this. "Always on" is a promise this
+ * screen has no standing to make: the catalog's `alwaysEnabled` flag is
+ * advisory (ruling #7, 2026-06-08, warn-but-allow-off — `resolveChannels` has
+ * no alwaysEnabled check), so Tribe Tails can switch the notification off at any
+ * time and it will genuinely stop sending. The static fallback catalog the
+ * Android portal falls back to when `getNotificationCatalog` fails does not even
+ * know the operator's current gate, so "always" there is a guess printed as a
+ * fact.
+ *
+ * What IS true at this layer, and all this sentence claims: the household is not
+ * the one who decides this channel, and this screen is not where it changes.
+ */
+export const SET_BY_BUSINESS_NOTE = 'Set by Tribe Tails Pet Care. Can’t be changed here.';
 const CATEGORY_ICON: Record<string, string> = {
   visit: '\u{1F43E}', // paw
   kintale: '\u{1F4DD}', // memo
@@ -378,7 +395,7 @@ export function NotificationSettings() {
                       <div className="cico">{copy.icon}</div>
                       <div className="cinfo">
                         <b>{copy.label}</b>
-                        <small>{locked ? 'Always on. Required by Tribe Tails.' : copy.desc}</small>
+                        <small>{locked ? SET_BY_BUSINESS_NOTE : copy.desc}</small>
                       </div>
                       <label className={`sw ${locked ? 'dis' : ''}`}>
                         <input
@@ -426,7 +443,7 @@ export function NotificationSettings() {
                               <div className="nf-key-chinfo">
                                 <b>{copy.label}</b>
                                 {locked ? (
-                                  <small>{k.lockReason?.trim() || 'Set by Tribe Tails Pet Care. Can’t be changed here.'}</small>
+                                  <small>{k.lockReason?.trim() || SET_BY_BUSINESS_NOTE}</small>
                                 ) : (
                                   <span className={`nf-key-badge ${overridden ? 'overridden' : 'following'}`}>
                                     {overridden ? 'Overridden' : 'Following category'}

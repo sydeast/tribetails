@@ -163,9 +163,27 @@ export function adminChannelForced(
 }
 
 /**
+ * THE RECIPIENT-LAYER VOCABULARY (#451).
+ *
+ * This screen is a RECIPIENT seat: it edits one person's own receive prefs.
+ * The only thing this layer can honestly guarantee about a forced channel is
+ * that the person sitting here does not decide it — the business gate does.
+ * It cannot promise the notification keeps arriving, because the gate can
+ * switch the whole row (or that channel) off in Business Settings, and
+ * `resolveChannels` honors that even for a catalog-required channel (ruling #7,
+ * warn-but-allow-off).
+ *
+ * So the pill says "Set by your business", never "Required" or "Always on":
+ * it names WHO decides and where to go and change it, and promises nothing
+ * about permanence. Same shape as the portal's "Set by Tribe Tails Pet Care.
+ * Can't be changed here." one layer further out.
+ */
+export const CHANNEL_SET_BY_BUSINESS = 'Set by your business';
+/**
  * Plain-language reason a forced channel is read-only: the operator's own
  * lock reason when one was written, else the stock line for catalog-required
- * versus business-locked.
+ * versus business-locked. Both stock lines name the layer that decides and
+ * where it can be changed; neither says the channel will always send.
  */
 export function adminChannelReason(
   matrix: NotificationMatrix,
@@ -175,8 +193,8 @@ export function adminChannelReason(
   const ownReason = lockReasonFor(matrix, entry.key);
   if (ownReason !== undefined) return ownReason;
   return channelRequired(entry, channel)
-    ? 'Always on for this notification.'
-    : 'Locked on by your business settings.';
+    ? 'Set by the notification itself; your choice here can\'t turn it off.'
+    : 'Set in your business settings; your choice here can\'t turn it off.';
 }
 
 /**

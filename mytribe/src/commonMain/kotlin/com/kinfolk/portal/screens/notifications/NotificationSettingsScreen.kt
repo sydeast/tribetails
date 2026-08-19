@@ -69,10 +69,11 @@ import kotlinx.coroutines.launch
  * Channels outside a key's `allowedChannels` are hidden.
  *
  * Notification revamp: admin-locked channels explain themselves with the
- * operator's lockReason when one exists (default "Required by Tribe Tails"
- * line otherwise). Fully locked keys read as always-on, and the category
- * "select all" row only offers channels some key can actually toggle (see
- * NotificationLockDisplay.kt for the pure rules).
+ * operator's lockReason when one exists (else the stock "Set by Tribe Tails
+ * Pet Care. Can't be changed here." line — #451: never "Always on", which this
+ * screen has no standing to promise). A fully locked key gets that same
+ * sentence, and the category "select all" row only offers channels some key can
+ * actually toggle (see NotificationLockDisplay.kt for the pure rules).
  */
 @Composable
 fun NotificationSettingsScreen(
@@ -364,10 +365,10 @@ private fun CategoryChannelRow(
     // chips below stay on regardless, so the row would visually contradict
     // them. When NOTHING in the category is toggleable, say so instead of
     // rendering a dead row.
-    val alwaysOnNote = categoryAlwaysOnNote(cat)
-    if (alwaysOnNote != null) {
+    val setByBusinessNote = categorySetByBusinessNote(cat)
+    if (setByBusinessNote != null) {
         Text(
-            alwaysOnNote,
+            setByBusinessNote,
             style = type.sansBody.copy(color = KinfolkBrand.NavyMuted),
             modifier = Modifier.padding(top = KinfolkSpacing.s),
         )

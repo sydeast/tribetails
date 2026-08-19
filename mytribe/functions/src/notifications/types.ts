@@ -72,9 +72,20 @@ export interface NotificationDef {
   category: Category;
   /** Channels available to this notification. SMS/push may be off until E3. */
   allowedChannels: Channel[];
-  /** Channels forced ON regardless of admin/user prefs (e.g. legal/security). */
+  /**
+   * Channels forced ON over a RECIPIENT's own prefs (e.g. legal/security). Not
+   * over the operator's: an explicit business-gate `channels.{ch} = false`
+   * still wins (resolveChannels step 2 beats step 3), so UI must not caption
+   * this "Always on". See #451 for the settled vocabulary.
+   */
   required: Partial<Record<Channel, true>>;
-  /** When true, admin cannot disable the entire notification. */
+  /**
+   * ADVISORY, NOT A LOCK. Says the catalog considers this notification too
+   * important to silence. Nothing enforces it: ruling #7 (2026-06-08,
+   * warn-but-allow-off) removed enforcement and `resolveChannels` has no
+   * alwaysEnabled check, so the operator can silence any of these rows. UI
+   * renders it as a risk marker ("Meant to stay on"), never a lock (#451).
+   */
   alwaysEnabled: boolean;
   /**
    * Scopes `alwaysEnabled` to specific audience streams. When set, only the

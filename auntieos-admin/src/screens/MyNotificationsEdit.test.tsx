@@ -86,7 +86,30 @@ describe('MyNotificationsEdit screen', () => {
     const toggle = within(row).getByRole('switch');
     expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute('aria-checked', 'true');
-    expect(within(row).getByText('Required')).toBeInTheDocument();
+    expect(within(row).getByText('Set by your business')).toBeInTheDocument();
+  });
+  /**
+   * #451. The pill used to read "Required", which claimed a guarantee this
+   * screen cannot make: the business gate can still switch a catalog-required
+   * channel off, and `resolveChannels` honors that (ruling #7, warn-but-allow-
+   * off). What is true here is only that the person editing their own prefs is
+   * not the one who decides, so that is all the pill and its accessible name
+   * are allowed to say.
+   */
+  it('never labels a forced channel "Required" or "Always on", on the pill or the switch', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({ required: { email: true } })] }));
+    render(<MyNotificationsEdit />);
+    const row = (await screen.findByText('Email')).closest('.mynotif__channel-row') as HTMLElement;
+    expect(within(row).queryByText('Required')).not.toBeInTheDocument();
+    expect(within(row).queryByText(/always on/i)).not.toBeInTheDocument();
+    const toggle = within(row).getByRole('switch');
+    const name = toggle.getAttribute('aria-label') ?? '';
+    expect(name).toContain('set by your business');
+    expect(name).not.toContain('required');
+    // The reason line names who decides and where it changes, not "always".
+    expect(
+      within(row).getByText("Set by the notification itself; your choice here can't turn it off."),
+    ).toBeInTheDocument();
   });
 
   it('a non-forced channel is a live, enabled toggle', async () => {

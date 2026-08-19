@@ -34,6 +34,8 @@ import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.AdminNotificationPrefs
 import com.tribetails.auntieos.data.model.NOTIF_CHANNELS
+import com.tribetails.auntieos.data.model.NOTIF_CHANNEL_SET_BY_BUSINESS
+import com.tribetails.auntieos.data.model.NOTIF_MEANT_TO_STAY_ON
 import com.tribetails.auntieos.data.model.NotificationCatalogEntry
 import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.STREAM_BUSINESS
@@ -73,6 +75,17 @@ import kotlinx.coroutines.launch
  * read-only with its reason (the operator's lockReason when written, else the built-in
  * fallback). Backed by getMyAdminNotificationPrefs / saveMyAdminNotificationPrefs
  * (staff/{uid}.notificationPrefs). Fail-loud on load/save errors.
+ *
+ * Vocabulary (#451): this screen used to mark both the catalog's advisory
+ * `alwaysEnabled` flag AND a genuinely forced channel with the same "Required"
+ * lock pill, flattening two different layers into one promise the platform does
+ * not keep. They are told apart now. The row pill reads
+ * [NOTIF_MEANT_TO_STAY_ON] with no lock, because `alwaysEnabled` is advice the
+ * operator may overrule in the gate. The channel pill reads
+ * [NOTIF_CHANNEL_SET_BY_BUSINESS] and keeps its lock, because that one really is
+ * forced against this person's own preference — though the business gate can
+ * still switch it off, which is why the words name who decides rather than
+ * promising it always sends.
  */
 
 /** One receive section on the prefs screen: a stream plus its heading copy. */
@@ -167,8 +180,8 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
                 title = "What you",
                 accentTail = "receive.",
                 subtitle = "Two hats, two stacks: what reaches you as the owner and what reaches you " +
-                    "as the Auntie, within the channels your business enabled. Locked channels are " +
-                    "required and can't be turned off.",
+                    "as the Auntie, within the channels your business enabled. Anything your business " +
+                    "set for you is read-only here; change those in Business Settings.",
             )
             Spacer(Modifier.height(20.dp))
 
@@ -279,9 +292,10 @@ private fun AdminReceiveRow(
                 color = c.textPrimary,
                 modifier = Modifier.weight(1f),
             )
-            // Always-on for THIS stream (per-stream scope, not the flat catalog flag).
+            // The catalog's advisory flag for THIS stream (per-stream scope, not the
+            // flat catalog flag). Deliberately no lock icon: nothing enforces this.
             if (entry.alwaysEnabledFor(stream)) {
-                AuntieStatusPill(label = "Required", tone = AuntieStatusTone.Neutral, leadingIcon = Lucide.Lock)
+                AuntieStatusPill(label = NOTIF_MEANT_TO_STAY_ON, tone = AuntieStatusTone.Neutral)
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -298,7 +312,11 @@ private fun AdminReceiveRow(
                     }
                 }
                 if (forced) {
-                    AuntieStatusPill(label = "Required", tone = AuntieStatusTone.Neutral, leadingIcon = Lucide.Lock)
+                    AuntieStatusPill(
+                        label = NOTIF_CHANNEL_SET_BY_BUSINESS,
+                        tone = AuntieStatusTone.Neutral,
+                        leadingIcon = Lucide.Lock,
+                    )
                     Spacer(Modifier.width(8.dp))
                     // Read-only: forced on by the business, the operator can't turn it off.
                     AuntieToggle(checked = true, enabled = false, onCheckedChange = {})
