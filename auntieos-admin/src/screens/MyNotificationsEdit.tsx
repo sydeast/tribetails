@@ -12,6 +12,7 @@ import {
 } from '../api/myNotifications';
 import { saveMyAdminNotificationPrefs } from '../api/myNotificationsWrite';
 import {
+  CHANNEL_SET_BY_BUSINESS,
   adminChannelForced,
   adminChannelReason,
   adminGateEnabledChannels,
@@ -172,7 +173,8 @@ export function MyNotificationsEdit() {
         title="What reaches"
         accentTail="you."
         subtitle="Your business decides which channels each notification can use. Choose what you actually
-        receive within those, and how. Anything your business locked on stays required."
+        receive within those, and how. Anything your business set for you is read-only here; change those
+        in Business Settings."
         trailing={
           <>
             <GhostButton label="Discard" onClick={discard} disabled={!dirty || saving} />
@@ -331,6 +333,13 @@ interface NotifBlockProps {
  * forced row (catalog-required or business-locked, for this stream) stays
  * `disabled` and pinned on, exactly like the read screen. Everything else is
  * a live `Toggle` writing straight into the draft via `onChannelChange`.
+ *
+ * The forced pill reads "Set by your business" (#451). It used to say
+ * "Required", which promised a guarantee this layer does not have: the
+ * business gate can still switch the channel — or the whole notification —
+ * off in Business Settings, and `resolveChannels` honors that even for a
+ * catalog-required channel. What IS true here is only that the person editing
+ * this screen is not the one who decides, so that is all the pill claims.
  */
 function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBlockProps) {
   const channels = adminGateEnabledChannels(matrix, entry, stream);
@@ -354,14 +363,14 @@ function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBloc
               <div className="mynotif__channel-trailing">
                 {forced && (
                   <span className="den-pill" data-tone="teal">
-                    Required
+                    {CHANNEL_SET_BY_BUSINESS}
                   </span>
                 )}
                 <Toggle
                   checked={on}
                   onChange={(next) => onChannelChange(entry.key, channel, next)}
                   disabled={forced}
-                  label={`${title} via ${label}${forced ? ', required' : ''}`}
+                  label={`${title} via ${label}${forced ? ', set by your business' : ''}`}
                 />
               </div>
             </li>

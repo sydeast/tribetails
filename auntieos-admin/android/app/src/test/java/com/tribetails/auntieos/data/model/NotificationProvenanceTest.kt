@@ -73,6 +73,30 @@ class NotificationProvenanceTest {
         assertTrue(off.detail.contains("not sent to anyone"))
     }
 
+    /**
+     * #451: the gate matrix and `AdminNotificationPrefsScreen` render the
+     * advisory flag with the SAME words, from the same two constants, so the
+     * operator cannot get one answer on one screen and another on the next.
+     * "Meant to stay on" is deliberately not "Required" and not "Always on":
+     * those are promises the flag cannot keep, since `resolveChannels` never
+     * checks it (ruling #7, warn-but-allow-off).
+     */
+    @Test
+    fun theAdvisoryBadgeUsesTheOneSharedVocabulary() {
+        val critical = entry(alwaysEnabled = true)
+        assertEquals(
+            NOTIF_MEANT_TO_STAY_ON,
+            notifAlwaysOnBadge(critical, STREAM_BUSINESS, enabled = true)!!.label,
+        )
+        assertEquals(
+            NOTIF_OFF_AND_MEANT_TO_STAY_ON,
+            notifAlwaysOnBadge(critical, STREAM_BUSINESS, enabled = false)!!.label,
+        )
+        listOf(NOTIF_MEANT_TO_STAY_ON, NOTIF_OFF_AND_MEANT_TO_STAY_ON).forEach { label ->
+            assertFalse(label, label.contains("required", ignoreCase = true))
+            assertFalse(label, label.contains("always on", ignoreCase = true))
+        }
+    }
     @Test
     fun respectsAlwaysEnabledStreamsScoping() {
         val scoped = entry(alwaysEnabled = true, alwaysEnabledStreams = setOf(STREAM_KINFOLK))

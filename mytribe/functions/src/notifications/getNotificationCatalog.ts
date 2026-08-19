@@ -20,7 +20,10 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * Filter rules (audience revamp 2026-07):
  *   - `audiences.kinfolk === true`   (business/staff-only keys hidden)
  *   - alwaysEnabled keys ARE included, presented fully locked, so the
- *     household can see what it will always receive (they were hidden before).
+ *     household can see what it is currently set to receive (they were hidden
+ *     before). "Locked" here means the HOUSEHOLD cannot change it, not that it
+ *     is guaranteed: the operator can still switch the row off in the gate, at
+ *     which point the filter below drops it from this payload entirely (#451).
  *   - gate reads use the KINFOLK stream-effective override view; a key whose
  *     kinfolk stream the operator disabled (or gated to zero channels) hides.
  *
@@ -142,7 +145,9 @@ function titleCaseFromKey(key: string): string {
 /**
  * Audience revamp 2026-07: which of the gate-surviving channels render locked
  * (read-only) for the kinfolk.
- *   alwaysEnabled            → every surviving channel (cannot silence the key at all)
+ *   alwaysEnabled            → every surviving channel (the HOUSEHOLD cannot
+ *                              silence the key; the operator still can, and a
+ *                              row they silenced never reaches this function)
  *   effective lockedEnabled  → every surviving channel (operator pinned the row)
  *   otherwise                → operator per-channel locks UNION catalog-required
  *                              channels (required forces the channel on in

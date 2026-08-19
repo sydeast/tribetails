@@ -119,12 +119,15 @@ class NotificationSettingsScreenTest {
     }
 
     // Run-4 #13: when the business operator LOCKS a delivery channel on, the
-    // kinfolk must see it as required-on AND read it as a clear reason, not just
-    // an icon. The catalog (getNotificationCatalog) reports the lock via
-    // lockedChannels; the screen surfaces it as a "Required by Tribe Tails" line
-    // and the chip stays read-only (the dispatcher enforces the lock server-side).
+    // kinfolk must see it pinned on AND read a clear reason, not just an icon.
+    // The catalog (getNotificationCatalog) reports the lock via lockedChannels;
+    // the screen surfaces it as a "Set by Tribe Tails Pet Care" line and the chip
+    // stays read-only (the dispatcher enforces the lock server-side).
+    //
+    // #451: the line names who decides. It does not say "always on", which the
+    // operator can falsify at any time by switching the row off in the gate.
     @Test
-    fun lockedChannel_showsRequiredByTribeTailsReason() = runComposeUiTest {
+    fun lockedChannel_showsSetByTribeTailsReason() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyNotificationPrefs", buildJsonObject {
             put("prefs", buildJsonObject {})
@@ -158,11 +161,11 @@ class NotificationSettingsScreenTest {
         // Per-key channel chips (and the lock reason) live in the expanded section.
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
-        onNodeWithText("Required by Tribe Tails (can't be changed here): SMS").assertExists()
+        onNodeWithText("Set by Tribe Tails Pet Care, can't be changed here: SMS").assertExists()
     }
 
     // Notification revamp: when the operator authored a lockReason, the kinfolk
-    // reads that reason instead of the generic "Required by Tribe Tails" line.
+    // reads that reason instead of the stock "Set by Tribe Tails Pet Care" line.
     @Test
     fun lockReason_showsOperatorReasonInsteadOfDefaultLine() = runComposeUiTest {
         val fake = FakeFunctionsClient()
@@ -198,15 +201,22 @@ class NotificationSettingsScreenTest {
         onNodeWithText("Visit Updates").performClick()
         waitForIdle()
         onNodeWithText("We text when your Auntie is en route so nobody misses her arrival.").assertExists()
-        onNodeWithText("Required by Tribe Tails (can't be changed here): SMS").assertDoesNotExist()
+        onNodeWithText("Set by Tribe Tails Pet Care, can't be changed here: SMS").assertDoesNotExist()
     }
 
     // Notification revamp: always-on keys (e.g. password reset, receipts) now
     // arrive with every channel locked. A category made only of those keys must
-    // read as always-on and must NOT offer the "All in category" select-all
-    // chips — they would write byCategory with zero effect on the locked chips.
+    // say so and must NOT offer the "All in category" select-all chips — they
+    // would write byCategory with zero effect on the locked chips.
+    //
+    // #451: what it says is "Set by Tribe Tails Pet Care. Can't be changed
+    // here." and never "Always on". The catalog's alwaysEnabled flag is
+    // advisory (ruling #7, warn-but-allow-off), so the operator can switch any
+    // of these rows off; a household told "Always on" about a row that is off
+    // has been told something false. This test pins both halves: the honest
+    // sentence is present, and the old promise is gone.
     @Test
-    fun fullyLockedCategory_readsAlwaysOn_withoutSelectAllChips() = runComposeUiTest {
+    fun fullyLockedCategory_saysWhoDecides_withoutSelectAllChips() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyNotificationPrefs", buildJsonObject {
             put("prefs", buildJsonObject {})
@@ -247,16 +257,22 @@ class NotificationSettingsScreenTest {
         val catalog = NotificationCatalogRepository(fake)
         setThemedContent { NotificationSettingsScreen("The Foster", PortalApi(fake), catalog) }
         waitForIdle()
-        // Collapsed card: the select-all row is replaced by an always-on note.
-        onNodeWithText("Always on. Required by Tribe Tails.").assertExists()
+        // Collapsed card: the select-all row is replaced by the honest note.
+        onNodeWithText("Set by Tribe Tails Pet Care. Can't be changed here.").assertExists()
         onNodeWithText("All in category:").assertDoesNotExist()
-        // Expanded: each fully locked key reads as always-on too.
+        onNodeWithText("Always on. Required by Tribe Tails.").assertDoesNotExist()
+        // Expanded: each fully locked key carries the same sentence (3 in all:
+        // the category note plus one per key), and none of them says "always".
         onNodeWithText("Account & Security").performClick()
         waitForIdle()
-        val alwaysOnKeyLines = onAllNodesWithText(
+        val honestLines = onAllNodesWithText(
+            "Set by Tribe Tails Pet Care. Can't be changed here.",
+        ).fetchSemanticsNodes().size
+        assertTrue(honestLines == 3, "expected the category note plus both key lines, got $honestLines")
+        val oldPromise = onAllNodesWithText(
             "Always on. Required by Tribe Tails (can't be changed here).",
         ).fetchSemanticsNodes().size
-        assertTrue(alwaysOnKeyLines == 2, "expected both fully locked keys to read always-on, got $alwaysOnKeyLines")
+        assertTrue(oldPromise == 0, "the always-on promise came back on $oldPromise key lines")
     }
 
     // ---- task 27a: override revert + category-control semantics ----

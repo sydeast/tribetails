@@ -39,9 +39,12 @@ data class NotificationKey(
     // can't change them (the server also enforces this at dispatch).
     val lockedChannels: Set<NotificationChannel> = emptySet(),
     // Notification revamp: operator-authored reason why a locked/required
-    // notification stays on. Shown on the key row in place of the default
-    // "Required by Tribe Tails" line. Always null in the static fallback below;
-    // operator prose only arrives via getNotificationCatalog.
+    // notification stays on. Shown on the key row in place of the stock
+    // "Set by Tribe Tails Pet Care. Can't be changed here." line. Always null in
+    // the static fallback below; operator prose only arrives via
+    // getNotificationCatalog. #451: this fallback knows nothing about the
+    // operator's current gate, which is exactly why the stock line names who
+    // decides instead of claiming the notification is always on.
     val lockReason: String? = null,
     val marketingCategory: MarketingCategory? = null,
 )

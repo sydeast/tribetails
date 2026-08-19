@@ -6,6 +6,8 @@ import {
 } from '../api/myNotifications';
 import type { BusinessAdminRoster } from '../api/businessAdmins';
 import {
+  MEANT_TO_STAY_ON,
+  OFF_AND_MEANT_TO_STAY_ON,
   alwaysOnBadge,
   businessAdminLines,
   businessAdminSourceNote,
@@ -71,6 +73,20 @@ describe('alwaysOnBadge tells the truth about alwaysEnabled', () => {
     expect(off!.detail).toContain('not sent to anyone');
   });
 
+  /**
+   * #451: the gate, the Android gate, and the operator's own prefs screen all
+   * render the advisory flag from these two constants, so a wording change on
+   * one surface can never leave the others saying something else. Neither may
+   * be "Required" or "Always on", which are promises the flag cannot keep.
+   */
+  it('renders from the one shared vocabulary, which promises nothing', () => {
+    expect(alwaysOnBadge(critical, STREAM_BUSINESS, true)!.label).toBe(MEANT_TO_STAY_ON);
+    expect(alwaysOnBadge(critical, STREAM_BUSINESS, false)!.label).toBe(OFF_AND_MEANT_TO_STAY_ON);
+    for (const label of [MEANT_TO_STAY_ON, OFF_AND_MEANT_TO_STAY_ON]) {
+      expect(label.toLowerCase()).not.toContain('required');
+      expect(label.toLowerCase()).not.toContain('always on');
+    }
+  });
   it('respects alwaysEnabledStreams, so a per-stream flag stays per-stream', () => {
     const scoped = entry({ alwaysEnabled: true, alwaysEnabledStreams: new Set([STREAM_KINFOLK]) });
     expect(alwaysOnBadge(scoped, STREAM_KINFOLK, true)).not.toBeNull();

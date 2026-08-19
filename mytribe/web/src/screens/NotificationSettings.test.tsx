@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { NotificationSettings } from './NotificationSettings';
+import { NotificationSettings, SET_BY_BUSINESS_NOTE } from './NotificationSettings';
 import type {
   CategoryDto,
   GetMyNotificationPrefsResult,
@@ -150,6 +150,56 @@ describe('per-key expansion', () => {
   });
 });
 
+/**
+ * #451. The category channel row used to read "Always on. Required by Tribe
+ * Tails." whenever no key in the category could toggle that channel. That is a
+ * promise this screen has no standing to make: the catalog's `alwaysEnabled`
+ * flag is advisory (ruling #7, 2026-06-08, warn-but-allow-off — `resolveChannels`
+ * has no alwaysEnabled check), so Tribe Tails can switch the notification off
+ * and it genuinely stops sending. What is true, and all the line now says, is
+ * that the household is not the one who decides and this is not where it
+ * changes. Asserted on the rendered text, not on a class name, and the cards
+ * default to expanded so nothing here is hidden behind a fold.
+ */
+describe('a channel the household cannot change', () => {
+  const LOCKED_ONLY = key({
+    key: 'auth.password.reset',
+    title: 'Password Reset Link',
+    description: 'The link that gets you back into your account.',
+    allowedChannels: ['email'],
+    lockedChannels: ['email'],
+  });
+  const ACCOUNT_CATEGORY: CategoryDto = {
+    id: 'account',
+    title: 'Account',
+    description: 'Account changes and recovery messages.',
+    keys: [LOCKED_ONLY],
+  };
+  async function renderLockedCategory() {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [ACCOUNT_CATEGORY],
+      schemaVersion: 1,
+    } satisfies GetNotificationCatalogResult);
+    mocks.getMyNotificationPrefs.mockResolvedValue({ prefs: BASE_PREFS, updatedAtMs: null });
+    const result = renderScreen();
+    await waitFor(() => expect(screen.getByText('Password Reset Link')).toBeTruthy());
+    return result;
+  }
+  it('names who decides on the category row, on both the row and the key line', async () => {
+    await renderLockedCategory();
+    // One on the category channel row, one on the per-key channel row.
+    expect(screen.getAllByText(SET_BY_BUSINESS_NOTE)).toHaveLength(2);
+  });
+  it('never tells the household the notification is always on', async () => {
+    await renderLockedCategory();
+    expect(screen.queryByText(/always on/i)).toBeNull();
+    expect(screen.queryByText('Always on. Required by Tribe Tails.')).toBeNull();
+    const emailBox = screen.getByRole('checkbox', {
+      name: 'Email for Password Reset Link',
+    }) as HTMLInputElement;
+    expect(emailBox.disabled).toBe(true);
+  });
+});
 describe('saving byKey', () => {
   it('toggling a key channel writes byKey[key][channel] and leaves byCategory untouched', async () => {
     await renderLoaded();

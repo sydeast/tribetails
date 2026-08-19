@@ -11,8 +11,9 @@ import kotlin.test.assertTrue
 
 /**
  * Pure lock-display rules for the notification revamp:
- *  - operator lockReason wins over the default "Required by Tribe Tails" line
- *  - a fully locked key (no toggleable channels) reads as always-on
+ *  - operator lockReason wins over the stock "Set by Tribe Tails Pet Care." line
+ *  - a fully locked key (no toggleable channels) gets that stock line, which
+ *    names who decides rather than promising "always on" (#451)
  *  - the "All in category" row only offers channels at least one key can
  *    actually toggle (no dead select-all chips over locked keys)
  *  - chip mechanics: required/admin-locked chips stay checked no matter what
@@ -100,26 +101,26 @@ class NotificationLockDisplayTest {
     }
 
     @Test
-    fun alwaysOnNote_when_every_key_is_fully_locked() {
+    fun setByBusinessNote_when_every_key_is_fully_locked() {
         val cat = category(
             key(allowed = setOf(EMAIL), locked = setOf(EMAIL), keyId = "a"),
             key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS), keyId = "b"),
         )
-        assertEquals("Always on. Required by Tribe Tails.", categoryAlwaysOnNote(cat))
+        assertEquals("Set by Tribe Tails Pet Care. Can't be changed here.", categorySetByBusinessNote(cat))
     }
 
     @Test
-    fun noAlwaysOnNote_when_something_is_toggleable() {
+    fun noSetByBusinessNote_when_something_is_toggleable() {
         val cat = category(
             key(allowed = setOf(EMAIL), locked = setOf(EMAIL), keyId = "a"),
             key(allowed = setOf(EMAIL), keyId = "b"),
         )
-        assertNull(categoryAlwaysOnNote(cat))
+        assertNull(categorySetByBusinessNote(cat))
     }
 
     @Test
-    fun noAlwaysOnNote_for_empty_category() {
-        assertNull(categoryAlwaysOnNote(category()))
+    fun noSetByBusinessNote_for_empty_category() {
+        assertNull(categorySetByBusinessNote(category()))
     }
 
     // ---- lockExplanation ----
@@ -148,7 +149,7 @@ class NotificationLockDisplayTest {
     fun explanation_falls_back_to_default_line_listing_channels() {
         val k = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(EMAIL, SMS))
         assertEquals(
-            "Required by Tribe Tails (can't be changed here): Email, SMS",
+            "Set by Tribe Tails Pet Care, can't be changed here: Email, SMS",
             lockExplanation(k),
         )
     }
@@ -157,7 +158,7 @@ class NotificationLockDisplayTest {
     fun explanation_treats_blank_lockReason_as_absent() {
         val k = key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(SMS), lockReason = "   ")
         assertEquals(
-            "Required by Tribe Tails (can't be changed here): SMS",
+            "Set by Tribe Tails Pet Care, can't be changed here: SMS",
             lockExplanation(k),
         )
     }
@@ -169,12 +170,43 @@ class NotificationLockDisplayTest {
     }
 
     @Test
-    fun explanation_fullyLocked_without_reason_reads_always_on() {
+    fun explanation_fullyLocked_without_reason_names_who_decides() {
         val k = key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS))
         assertEquals(
-            "Always on. Required by Tribe Tails (can't be changed here).",
+            "Set by Tribe Tails Pet Care. Can't be changed here.",
             lockExplanation(k),
         )
+    }
+    /**
+     * #451. Every stock line on this screen used to promise "Always on", which
+     * the household's layer cannot deliver: the catalog's `alwaysEnabled` flag
+     * is advisory (ruling #7, 2026-06-08, warn-but-allow-off — `resolveChannels`
+     * never checks it), so Tribe Tails can switch the notification off and it
+     * genuinely stops sending. The static fallback catalog does not even know
+     * the current gate. So the lines may name WHO decides and say the household
+     * cannot change it here; they may not say "always". Operator prose is
+     * exempt: a lockReason is the operator's own sentence, shown verbatim.
+     */
+    @Test
+    fun stockLines_never_promise_always_on() {
+        val stock = listOfNotNull(
+            categorySetByBusinessNote(
+                category(key(allowed = setOf(EMAIL), locked = setOf(EMAIL), keyId = "a")),
+            ),
+            lockExplanation(key(allowed = setOf(EMAIL, SMS), locked = setOf(EMAIL, SMS))),
+            lockExplanation(key(allowed = setOf(EMAIL, SMS, PUSH), locked = setOf(EMAIL))),
+            categoryMarkerLegend(
+                category(key(allowed = setOf(EMAIL), locked = setOf(EMAIL), keyId = "a")),
+            ),
+        )
+        assertEquals(4, stock.size)
+        stock.forEach { line ->
+            assertFalse(line.contains("always", ignoreCase = true), "still promises always: $line")
+            assertTrue(
+                line.contains("Tribe Tails Pet Care"),
+                "does not name who decides: $line",
+            )
+        }
     }
 
     @Test
@@ -253,7 +285,10 @@ class NotificationLockDisplayTest {
 
     @Test
     fun legend_shown_when_category_has_required_or_locked_channels() {
-        val expected = "A check means always on. A lock means set by Tribe Tails Pet Care."
+        // #451: the two markers mean the same thing from the household's seat, so
+        // the legend says that once instead of promising one of them is "always on".
+        val expected =
+            "A check or a lock means Tribe Tails Pet Care sets that channel; you can't change it here."
         val withLock = category(key(allowed = setOf(EMAIL, SMS), locked = setOf(SMS)))
         val withRequired = category(key(allowed = setOf(EMAIL), required = setOf(EMAIL)))
         assertEquals(expected, categoryMarkerLegend(withLock))

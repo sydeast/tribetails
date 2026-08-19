@@ -148,8 +148,44 @@ class AdminNotificationPrefsTest {
             catalog = listOf(invoice),
             overrides = mapOf("invoice.new" to NotificationOverride(locked = mapOf("sms" to true))),
         )
-        assertEquals("Required for this notification.", plain.channelForcedReason(invoice, "email", STREAM_BUSINESS))
-        assertEquals("Locked on by your business settings.", plain.channelForcedReason(invoice, "sms", STREAM_BUSINESS))
+        assertEquals(
+            "Set by the notification itself; your choice here can't turn it off.",
+            plain.channelForcedReason(invoice, "email", STREAM_BUSINESS),
+        )
+        assertEquals(
+            "Set in your business settings; your choice here can't turn it off.",
+            plain.channelForcedReason(invoice, "sms", STREAM_BUSINESS),
+        )
+    }
+    /**
+     * #451. The fallbacks used to read "Required for this notification." and
+     * "Locked on by your business settings." Both implied a guarantee this
+     * layer does not have: the business gate can switch even a catalog-required
+     * channel off, and `resolveChannels` honors that (ruling #7, 2026-06-08,
+     * warn-but-allow-off). The words may name WHO decides; they may not promise
+     * the channel keeps sending. This is the test that stops "Always on" and a
+     * bare "Required" coming back.
+     */
+    @Test
+    fun forcedReasonNeverPromisesAlwaysOnOrBareRequired() {
+        val plain = NotificationMatrix(
+            catalog = listOf(invoice),
+            overrides = mapOf("invoice.new" to NotificationOverride(locked = mapOf("sms" to true))),
+        )
+        listOf("email", "sms").forEach { channel ->
+            val line = plain.channelForcedReason(invoice, channel, STREAM_BUSINESS)
+            assertFalse("reason for $channel says always: $line", line.contains("always", ignoreCase = true))
+            assertFalse("reason for $channel says required: $line", line.contains("required", ignoreCase = true))
+            assertTrue("reason for $channel does not name who decides: $line", line.startsWith("Set "))
+        }
+    }
+    /**
+     * #451 vocabulary check on the constant the prefs screen's channel pill
+     * renders: it names who decides and never claims permanence.
+     */
+    @Test
+    fun channelPillNamesWhoDecidesRatherThanPromisingAlwaysOn() {
+        assertEquals("Set by your business", NOTIF_CHANNEL_SET_BY_BUSINESS)
     }
 
     // ── the admin's own prefs precedence (unchanged by the revamp) ───────────

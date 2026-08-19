@@ -14,15 +14,34 @@ import com.kinfolk.portal.notifications.NotificationKey
  * confirmations, receipts, password reset, ...) with EVERY surviving channel
  * locked plus an optional operator-authored `lockReason`. The dispatcher
  * enforces the same locks server-side; everything here is explanation only.
+ *
+ * THE ONE SENTENCE, AND WHY IT IS NOT "ALWAYS ON" (#451). These lines used to
+ * read "Always on. Required by Tribe Tails." That is a promise this screen has
+ * no standing to make. The catalog's `alwaysEnabled` flag is ADVISORY: ruling #7
+ * (2026-06-08, warn-but-allow-off) removed its enforcement, `resolveChannels`
+ * has no alwaysEnabled check, and the operator can switch any of those fourteen
+ * rows off — after which the notification genuinely stops sending to anyone.
+ * The static fallback catalog in `NotificationCatalog.kt`, which renders
+ * whenever `getNotificationCatalog` fails, does not even know the operator's
+ * current gate, so a household can be sitting in front of "Always on" for a row
+ * that is off right now.
+ *
+ * What IS true at this layer, and all these lines now claim: the household is
+ * not the one who decides this channel, and this screen is not where it
+ * changes. The admin surfaces say the same thing in their own seat's words
+ * ("Meant to stay on" for the advisory flag, "Set by your business" for a
+ * channel the recipient cannot change).
  */
+/** The one sentence for a channel the household cannot change here. */
+internal const val SET_BY_BUSINESS_NOTE = "Set by Tribe Tails Pet Care. Can't be changed here."
 
 /** Channels the kinfolk can actually toggle on this key. */
 internal fun NotificationKey.toggleableChannels(): Set<NotificationChannel> =
     allowedChannels - lockedChannels - required
 
 /**
- * True when the key renders chips but none can be changed: the notification is
- * always-on for this kinfolk.
+ * True when the key renders chips but none can be changed: every channel on
+ * this key is Tribe Tails' call, not the household's.
  */
 internal fun NotificationKey.isFullyLocked(): Boolean =
     allowedChannels.isNotEmpty() && toggleableChannels().isEmpty()
@@ -38,12 +57,12 @@ internal fun CategoryDef.toggleableChannelsInCategory(): Set<NotificationChannel
 
 /**
  * When every key in the category is fully locked there is nothing to select,
- * so the "All in category" row is replaced by this always-on note. Null when
- * the row should render its chips as usual.
+ * so the "All in category" row is replaced by this note. Null when the row
+ * should render its chips as usual.
  */
-internal fun categoryAlwaysOnNote(cat: CategoryDef): String? =
+internal fun categorySetByBusinessNote(cat: CategoryDef): String? =
     if (cat.keys.isNotEmpty() && cat.toggleableChannelsInCategory().isEmpty()) {
-        "Always on. Required by Tribe Tails."
+        SET_BY_BUSINESS_NOTE
     } else {
         null
     }
@@ -51,9 +70,9 @@ internal fun categoryAlwaysOnNote(cat: CategoryDef): String? =
 /**
  * The explanatory line under a key with locked channels:
  *  - the operator's lockReason wins when present (verbatim, trimmed);
- *  - a fully locked key without a reason reads clearly as always-on;
- *  - a partial lock without a reason keeps the original default line naming
- *    the locked channels;
+ *  - a fully locked key without a reason gets the whole sentence;
+ *  - a partial lock without a reason gets the same sentence, naming which
+ *    channels it covers;
  *  - null when nothing is locked (required-only keys keep their check chips
  *    with no line, unchanged).
  *
@@ -68,13 +87,15 @@ internal fun lockExplanation(key: NotificationKey): String? {
     val reason = key.lockReason?.trim()?.takeUnless { it.isEmpty() }
     return when {
         reason != null -> reason
-        key.isFullyLocked() -> "Always on. Required by Tribe Tails (can't be changed here)."
-        else -> "Required by Tribe Tails (can't be changed here): ${lockedLabels.joinToString(", ")}"
+        key.isFullyLocked() -> SET_BY_BUSINESS_NOTE
+        else -> "Set by Tribe Tails Pet Care, can't be changed here: ${lockedLabels.joinToString(", ")}"
     }
 }
 
-/** Trailing indicator on a channel chip: a check for required (always on),
- *  a lock for admin-locked. Rendered as a real vector icon, never a glyph. */
+/** Trailing indicator on a channel chip: a check for a catalog-required
+ *  channel, a lock for admin-locked. Both mean the same thing from the
+ *  household's seat — Tribe Tails decides that channel, not you — which is what
+ *  [categoryMarkerLegend] says. Rendered as a real vector icon, never a glyph. */
 internal enum class ChipMarker { RequiredCheck, AdminLock }
 
 /** Resolved render state for one per-key channel chip. */
@@ -95,7 +116,7 @@ internal fun categoryMarkerLegend(cat: CategoryDef): String? {
         k.allowedChannels.any { it in k.required || it in k.lockedChannels }
     }
     return if (hasMarker) {
-        "A check means always on. A lock means set by Tribe Tails Pet Care."
+        "A check or a lock means Tribe Tails Pet Care sets that channel; you can't change it here."
     } else {
         null
     }
