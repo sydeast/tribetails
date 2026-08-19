@@ -38,12 +38,29 @@
   gap: var(--space-5);
 }
 
+/* The boundary (#391): a rule at --border-emphasis weight in the full
+   --color-border, the same "this outranks a row hairline" idiom the invoice
+   total-row dividers use (InvoiceLineItems.css, InvoiceLedger.css). Heavier
+   and darker than the --border-hairline/--color-border-soft every channel row
+   below already carries, so the boundary reads before the rows do instead of
+   getting lost in them. The first section in a hat has nothing above it to
+   divide from, so it carries neither the rule nor the padding that makes room
+   for it. */
+.mynotif__section {
+  padding-top: var(--space-4);
+  border-top: var(--border-emphasis) solid var(--color-border);
+}
+.mynotif__section:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
 .mynotif__section-heading {
   font-family: var(--type-label-md-family);
   font-size: var(--type-label-md-size);
   font-weight: var(--type-label-md-weight);
   letter-spacing: var(--type-label-md-tracking);
-  color: var(--color-text-faint);
+  color: var(--color-text-dim);
   margin: 0 0 var(--space-2);
 }
 
