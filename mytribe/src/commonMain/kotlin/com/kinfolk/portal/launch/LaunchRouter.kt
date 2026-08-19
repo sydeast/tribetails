@@ -40,6 +40,14 @@ sealed interface LaunchDestination {
  * case — so it fails loud as Error rather than auto-picking a household at
  * random or resurrecting the picker for a non-operator.
  */
+/**
+ * What a kinfolk reads when the sign-in check could not complete (#494). It
+ * says what happened, says what it is not (a sign-out), and leaves them
+ * something to do. The throwable's own message stays in the log, where it is
+ * useful, rather than on a screen where it is not.
+ */
+const val COULD_NOT_CHECK_SIGN_IN =
+    "Couldn't reach Tribe Tails to check your sign-in. Your account is fine. Retry when you're back online."
 fun resolveLaunchDestination(
     authState: AuthState,
     access: MyAccessResult?,
@@ -47,6 +55,11 @@ fun resolveLaunchDestination(
 ): LaunchDestination? = when (authState) {
     is AuthState.Loading -> null
     is AuthState.SignedOut -> LaunchDestination.SignIn
+    // #494: we could not check, so we do not send anyone to the sign-in screen.
+    // Error is the honest destination and already the retryable one: its screen
+    // offers Retry, which re-runs refresh(), and Sign out for anybody who did
+    // mean to leave.
+    is AuthState.Unreachable -> LaunchDestination.Error(COULD_NOT_CHECK_SIGN_IN)
     is AuthState.SignedIn -> when {
         error != null -> LaunchDestination.Error(error)
         access == null -> null

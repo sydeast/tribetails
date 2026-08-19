@@ -74,6 +74,36 @@ class AuthRepositoryTest {
         assertEquals(AuthState.SignedOut, repo.state.value)
     }
 
+    /**
+     * #494. A throw from the backend is the CALL failing, not an answer of "no
+     * session": every backend reports a real absence as SignedOut. Reading it as
+     * a sign-out is what put a sign-in screen in front of kinfolk who never
+     * signed out, one for each of the short connection bursts the 2026-08-17
+     * walk recorded.
+     */
+    @Test
+    fun refresh_backendThrows_setsUnreachable_notSignedOut() = runTest {
+        val repo = AuthRepository(StubBackend(onCurrent = {
+            throw RuntimeException("Failed to fetch")
+        }))
+        repo.refresh()
+        val s = repo.state.value
+        assertTrue(s is AuthState.Unreachable, "a failed check must not read as a sign-out")
+        assertEquals("Failed to fetch", (s as AuthState.Unreachable).reason)
+    }
+    /** A recovered connection resolves normally, with nothing left behind. */
+    @Test
+    fun refresh_afterUnreachable_resolvesOnceTheCallSucceeds() = runTest {
+        var fail = true
+        val repo = AuthRepository(StubBackend(onCurrent = {
+            if (fail) throw RuntimeException("offline") else AuthState.SignedIn("u1", null, null)
+        }))
+        repo.refresh()
+        assertTrue(repo.state.value is AuthState.Unreachable)
+        fail = false
+        repo.refresh()
+        assertTrue(repo.state.value is AuthState.SignedIn)
+    }
     @Test
     fun refresh_signedIn_setsSignedIn() = runTest {
         val repo = AuthRepository(StubBackend(onCurrent = {

@@ -21,6 +21,26 @@ class LaunchRouterTest {
         assertEquals(LaunchDestination.SignIn, d)
     }
 
+    /**
+     * #494. "We could not check" is not "you are signed out", and it must not
+     * land on the sign-in screen: to the kinfolk that reads as having been
+     * logged out of an app they never left. The launch error screen is where it
+     * goes, because that screen already offers Retry (which re-runs refresh)
+     * and Sign out for anybody who did mean to leave.
+     */
+    @Test
+    fun unreachable_routesToRetryableError_notSignIn() {
+        val d = resolveLaunchDestination(AuthState.Unreachable("Failed to fetch"), null, null)
+        assertTrue(d is LaunchDestination.Error)
+        assertEquals(COULD_NOT_CHECK_SIGN_IN, (d as LaunchDestination.Error).message)
+    }
+    /** The backend's own words stay in the log; the screen gets a sentence. */
+    @Test
+    fun unreachable_doesNotPutTheRawFailureOnScreen() {
+        val d = resolveLaunchDestination(AuthState.Unreachable("NSURLErrorDomain -1009"), null, null)
+        assertTrue(d is LaunchDestination.Error)
+        assertTrue(!(d as LaunchDestination.Error).message.contains("NSURLError"))
+    }
     @Test
     fun signedIn_butAccessNotYetResolved_returnsNull() {
         val d = resolveLaunchDestination(AuthState.SignedIn("u1", null, null), null, null)

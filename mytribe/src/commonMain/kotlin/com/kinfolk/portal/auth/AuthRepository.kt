@@ -41,8 +41,14 @@ class AuthRepository(private val backend: AuthBackend) {
                 (if (resolved is AuthState.SignedIn) " uid=${resolved.uid}" else ""))
             _state.value = resolved
         } catch (t: Throwable) {
+            // #494: NOT SignedOut. Every backend answers SignedOut for a real
+            // absence of a session — Firebase for a null currentUser, REST for a
+            // missing refresh token — so a throwable here is the call itself
+            // failing, which is a different fact and mostly means the network.
+            // Reporting it as a sign-out logged people out of an app they were
+            // still signed in to, and there was no third answer to give.
             println("[Auth] refresh() THREW ${t::class.simpleName}: ${t.message}")
-            _state.value = AuthState.SignedOut
+            _state.value = AuthState.Unreachable(t.message)
         }
     }
 
