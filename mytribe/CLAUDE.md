@@ -25,6 +25,31 @@ Android/desktop build, NOT the portal", which is how the release script came to
 build one of the two Android apps and nobody noticed for a week: `src/` was read
 as dead, so its versionCode sat at 2 while the web shipped every release.
 
+## Testing `src/`: `:jvmTest` is the task that counts
+
+Two Gradle test tasks run from `mytribe/`, and they are not interchangeable:
+
+```
+./gradlew :jvmTest            # commonTest + composeUiTest. The gate.
+./gradlew testDebugUnitTest   # commonTest, compiled for Android. Narrower.
+```
+
+`:jvmTest` is the one a change to `src/` has to pass. It is the only place the
+Compose UI tests execute, because they need a live Compose host and the JVM
+target is the only test target that has one.
+
+`testDebugUnitTest` runs the shared tests compiled against Android. The Compose
+UI tests are held out of it on purpose: the Android unit-test variant links
+against the stub `android.jar`, where `android.os.Build.FINGERPRINT` is null, and
+`runComposeUiTest` throws on that before reaching an assertion. Robolectric does
+not rescue it either. The activity it would have to launch is declared in a
+test-only manifest that never reaches the resource APK Robolectric reads, and
+issue #473 has the whole trail. Both tasks run in CI now.
+
+So: **a Compose UI test belongs in `src/composeUiTest`, not `src/commonTest`.**
+`ComposeUiTestSourceSetTest` fails if one lands in the wrong place, which is how
+143 failures stopped being the normal state of that task.
+
 ## A prefix in the monorepo, not a separate repo
 
 `mytribe/` is a sibling prefix of `auntieos-admin/` in the one `tribetails`
