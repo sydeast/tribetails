@@ -685,7 +685,7 @@ class AdminDataViewModel(
             repository.createTrainingDocument(title, content, notes, targetType, targetKinfolkId, targetKinId, attachments).onSuccess {
                 _trainingDocSaving.value = false
                 _trainingDocQueuedMessage.value =
-                    "Queued for reconcile. The dossier and 411 update on the next reconcile pass, not instantly."
+                    "Queued for reconcile. The dossier, the household bank and the 411 update on the next reconcile pass, not instantly."
                 loadTrainingDocuments()
                 onResult(null)
             }.onFailure { throwable ->
@@ -714,7 +714,7 @@ class AdminDataViewModel(
             repository.updateTrainingDocument(docId, title, content, notes, targetType, targetKinfolkId, targetKinId, attachments).onSuccess {
                 _trainingDocSaving.value = false
                 _trainingDocQueuedMessage.value =
-                    "Queued for reconcile. The dossier and 411 update on the next reconcile pass, not instantly."
+                    "Queued for reconcile. The dossier, the household bank and the 411 update on the next reconcile pass, not instantly."
                 loadTrainingDocuments()
                 onResult(null)
             }.onFailure { throwable ->

@@ -559,6 +559,23 @@ class AuntieRepository(
         }
     }.onFailure { AuntieLog.e("Failed to get dossier for $kinfolkId", it) }
 
+    /**
+     * The household's bank (issue #461), read the same way [getDossier] reads a
+     * dossier: a field query rather than a point read, so a legacy auto-id doc is
+     * still found. A household with nothing household-targeted on file yet has no
+     * bank, and null is the honest answer for it, not an error.
+     */
+    suspend fun getHouseholdBank(householdId: String): Result<HouseholdBank?> = runCatching {
+        AuntieLog.d("Fetching household bank for household: $householdId")
+        authGate.ensureAuthenticated()
+        val snapshot = firestore.collection("household_bank")
+            .whereEqualTo("householdId", householdId)
+            .get().await()
+        snapshot.documents.firstOrNull()?.toObject(HouseholdBank::class.java).also {
+            AuntieLog.d("Household bank found: ${it != null}")
+        }
+    }.onFailure { AuntieLog.e("Failed to get household bank for $householdId", it) }
+
     suspend fun get411ForKin(kinId: String): Result<Kin411?> = runCatching {
         AuntieLog.d("Fetching 411 for kin: $kinId")
         authGate.ensureAuthenticated()

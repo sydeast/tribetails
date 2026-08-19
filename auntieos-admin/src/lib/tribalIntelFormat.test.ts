@@ -366,6 +366,13 @@ describe('honesty copy', () => {
     expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/dossier/i);
     expect(TRIBAL_INTEL_DELETE_CAVEAT).toMatch(/411/);
   });
+  it('both strings name all THREE destinations, because a household note reaches none of the other two', () => {
+    for (const copy of [TRIBAL_INTEL_QUEUED_MESSAGE, TRIBAL_INTEL_DELETE_CAVEAT]) {
+      expect(copy).toMatch(/dossier/i);
+      expect(copy).toMatch(/household bank/i);
+      expect(copy).toMatch(/411/);
+    }
+  });
 
   it('neither string uses an em dash or en dash (Den copy rule)', () => {
     expect(TRIBAL_INTEL_QUEUED_MESSAGE).not.toMatch(/[—–]/);

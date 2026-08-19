@@ -157,10 +157,14 @@ class TrainingDocumentsScreenRobolectricTest {
         rule.waitForIdle()
 
         rule.onNodeWithText("Delete this Tribal Intel entry?").assertExists()
+        // All THREE destinations are named. A household-targeted note folds into
+        // the household bank and reaches neither of the other two (issue #461),
+        // so a caveat listing only the dossier and the 411 would be telling the
+        // operator their deleted note left nothing behind when it did.
         rule.onNodeWithText(
             "This removes the source note. It does NOT unmerge any text the reconcile " +
-                "pipeline has already folded into the dossier or 411. Those summaries keep prior " +
-                "content until they are regenerated.",
+                "pipeline has already folded into the dossier, the household bank or the 411. Those " +
+                "summaries keep prior content until they are regenerated.",
         ).assertExists()
     }
 }

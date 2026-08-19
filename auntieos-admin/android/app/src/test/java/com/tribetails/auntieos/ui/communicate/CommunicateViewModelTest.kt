@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.communicate
 
 import com.tribetails.auntieos.TestFixtures
 import com.tribetails.auntieos.data.model.GenerateResponse
+import com.tribetails.auntieos.data.model.HouseholdBank
 import com.tribetails.auntieos.data.model.SmsMessage
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.RecentComms
@@ -41,6 +42,10 @@ class CommunicateViewModelTest {
         // selectKinfolk, but stub sensible defaults so any flow that does reach them
         // never NPEs on a bare mock.
         coEvery { mockRepo.recentCommsForKinfolk(any()) } returns Result.success(RecentComms())
+        // The household bank is the third destination (issue #461) and is read in
+        // the same batch as the dossier, so every selectKinfolk flow reaches it.
+        // Default it to "no bank on file", which is the common real state.
+        coEvery { mockRepo.getHouseholdBank(any()) } returns Result.success(null)
     }
 
     @After
@@ -205,6 +210,61 @@ class CommunicateViewModelTest {
         advanceUntilIdle()
 
         assertEquals(TestFixtures.kinfolk1, vm.uiState.value.selectedKinfolk)
+    }
+
+    @Test
+    fun `selectKinfolk loads the household bank alongside the dossier`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getDossier(any()) } returns Result.success(null)
+        coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.getHouseholdBank(any()) } returns Result.success(
+            HouseholdBank(householdId = TestFixtures.kinfolk1.id, tldr = "Side gate, code on the lockbox."),
+        )
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.selectKinfolk(TestFixtures.kinfolk1)
+        advanceUntilIdle()
+
+        coVerify { mockRepo.getHouseholdBank(TestFixtures.kinfolk1.id) }
+        assertEquals("Side gate, code on the lockbox.", vm.uiState.value.householdBank?.tldr)
+    }
+
+    @Test
+    fun `a household with no bank yet reads as null, which is not an error`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getDossier(any()) } returns Result.success(null)
+        coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.selectKinfolk(TestFixtures.kinfolk1)
+        advanceUntilIdle()
+
+        assertNull(vm.uiState.value.householdBank)
+        assertNull(vm.uiState.value.error)
+    }
+
+    @Test
+    fun `switching recipients drops the previous household's bank`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getDossier(any()) } returns Result.success(null)
+        coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.getHouseholdBank(TestFixtures.kinfolk1.id) } returns Result.success(
+            HouseholdBank(householdId = TestFixtures.kinfolk1.id, tldr = "First household."),
+        )
+        coEvery { mockRepo.getHouseholdBank(TestFixtures.kinfolk2.id) } returns Result.success(null)
+
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.selectKinfolk(TestFixtures.kinfolk1)
+        advanceUntilIdle()
+        assertEquals("First household.", vm.uiState.value.householdBank?.tldr)
+
+        // A bank is one household's, so it must not linger on the next one.
+        vm.selectKinfolk(TestFixtures.kinfolk2)
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.householdBank)
     }
 
     @Test

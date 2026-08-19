@@ -474,8 +474,8 @@ private fun DocRow(
     ) {
         Text(
             text = "This removes the source note. It does NOT unmerge any text the reconcile " +
-                "pipeline has already folded into the dossier or 411. Those summaries keep prior " +
-                "content until they are regenerated.",
+                "pipeline has already folded into the dossier, the household bank or the 411. Those " +
+                "summaries keep prior content until they are regenerated.",
             style = AuntieTheme.typography.bodySmall,
             color = AuntieTheme.colors.textDim,
         )

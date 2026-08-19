@@ -111,6 +111,45 @@ describe('createTrainingDocument', () => {
     expect(add?.data.targetKinId).toBe('');
   });
 
+  it('HAPPY: a HOUSEHOLD target saves before the household has a bank (issue #461)', async () => {
+    // #460 left the HOUSEHOLD branch of assertTribalIntelTargetResolves as the
+    // one thing #461 would settle. It is settled the other way from how it
+    // reads: a household has NO identifier of its own, so there is no second
+    // record to look up. The household id is the anchoring kinfolk id, and
+    // `household_bank/{householdId}` is created by upsert_household_bank on the
+    // first write, exactly as a dossier and a 411 are.
+    //
+    // Both records are spelled out as ABSENT here so this cannot pass by
+    // accident. If somebody ever "finishes" the deferral by requiring one of
+    // them, this test fails, and it fails for the right reason: that rule would
+    // refuse the first household note ever filed against every household.
+    const ctx = buildDbMock({
+      docs: roster({ 'household_bank/kf1': null, 'families/kf1': null }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await createTrainingDocumentHandler(req({
+      content: 'Side gate code is 4321.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf1',
+    }));
+    expect(res.ok).toBe(true);
+    const add = ctx.adds.find((a) => a.collection === 'training_documents');
+    expect(add?.data.targetType).toBe('HOUSEHOLD');
+    expect(add?.data.targetKinfolkId).toBe('kf1');
+  });
+
+  it('SAD: a HOUSEHOLD target still needs an anchor that resolves (issue #461 changed nothing here)', async () => {
+    // The bank being creatable does not make the anchor optional. A household
+    // note whose anchor names nobody would create a bank at an id no household
+    // answers to, which is worse than refusing the save.
+    const ctx = buildDbMock({ docs: roster() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createTrainingDocumentHandler(req({
+      content: 'Side gate code is 4321.',
+      targetType: 'HOUSEHOLD', targetKinfolkId: 'kf-nobody',
+    }))).rejects.toThrow(/not a household on the roster/);
+    expect(ctx.adds.find((a) => a.collection === 'training_documents')).toBeUndefined();
+  });
+
   it('SAD: an unknown target type is rejected (invalid-argument)', async () => {
     const ctx = buildDbMock({ docs: roster() });
     mocks.dbFn.mockReturnValue(ctx.db);

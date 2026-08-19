@@ -72,6 +72,7 @@ data class CommunicateUiState(
 
     // Profile panels
     val dossier: Dossier? = null,
+    val householdBank: HouseholdBank? = null,
     val kin: List<Kin> = emptyList(),
     val kin411Map: Map<String, Kin411> = emptyMap(), // kinId -> 411
     val profileLoading: Boolean = false,
@@ -200,6 +201,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         _uiState.value = _uiState.value.copy(
             selectedKinfolk = kinfolk,
             dossier = null,
+            householdBank = null,
             kin = emptyList(),
             kin411Map = emptyMap(),
             commsBox = CommsBoxState.Empty,
@@ -283,9 +285,14 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
             _uiState.value = _uiState.value.copy(profileLoading = true)
             try {
                 val dossierDeferred = async { repo.getDossier(kinfolk.id) }
+                // The third destination (issue #461). Read in the same parallel
+                // batch as the dossier: one household has exactly one bank, so it
+                // costs one read and never a round trip per pet.
+                val bankDeferred    = async { repo.getHouseholdBank(kinfolk.id) }
                 val kinDeferred     = async { repo.getKin(kinfolk.id) }
 
                 val dossier = dossierDeferred.await().getOrNull()
+                val bank    = bankDeferred.await().getOrNull()
                 val kinList = kinDeferred.await().getOrDefault(emptyList())
 
                 val kin411Map = mutableMapOf<String, Kin411>()
@@ -296,6 +303,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 AuntieLog.d("Related profiles loaded for ${kinfolk.id}")
                 _uiState.value = _uiState.value.copy(
                     dossier = dossier,
+                    householdBank = bank,
                     kin = kinList,
                     kin411Map = kin411Map,
                     profileLoading = false

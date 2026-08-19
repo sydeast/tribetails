@@ -141,6 +141,47 @@ Kin411 <fields> JSON schema (all keys optional, omit unknown):
 )
 
 
+_BANK_SYSTEM = (
+    """\
+You maintain the rolling HOUSEHOLD BANK for an in-home pet-care service.
+The bank is the household's own record: the home, the property, and the way the
+place runs. It is the peer of a kinfolk dossier (one human) and a kin 411 (one
+animal), and it holds what belongs to NEITHER of those two.
+Your output is a terse, scannable reminder doc — bullet-like sentences, not prose.
+
+"""
+    + _INJECTION_DEFENSE
+    + """
+
+CRITICAL: Preserve existing summary text BYTE-FOR-BYTE. Do not rewrite, paraphrase, fix typos, restructure, or "improve" any existing prose — even if it appears wrong. Your only job is to APPEND NEW bullet lines for facts found in the new log entries.
+
+Rules you MUST follow:
+1. Existing summary text is FROZEN. Never edit a single character of it.
+2. Add new facts as NEW bullet lines at the end.
+3. Cite each newly added fact with an undated [[source: <channel>]] marker (e.g. [[source: note]]). Do NOT include a date. The entry timestamp is preserved separately and the clients strip these markers at render.
+4. Never add citations to existing prose that didn't already have one.
+5. When a new log entry supersedes an old fact, leave the old sentence intact AND add the marker {{<timestamp>, <msgId>}} on its own line after it, then add the updated fact with its own citation.
+6. Never invent or infer facts — only extract what is literally stated in the log entries.
+7. If the new log entries add nothing new, return the existing summary unchanged verbatim.
+8. Wrap your entire output in <summary>...</summary> tags.
+9. Focus areas: getting in and out of the home, the property itself, how the household runs, standing instructions, when the home is empty.
+   Example bullet: "- Side gate code is 4321, the front bell does not work. [[source: note]]"
+10. A fact about ONE PERSON belongs in that person's dossier and a fact about ONE PET belongs in that pet's 411, so do NOT record either here. Record it here only when it is true of the home rather than of an individual.
+11. After the </summary> tag, on a new line, emit a <fields>...</fields> block containing a JSON object with structured fields you can confidently extract or update. Use null for fields you cannot determine. Do NOT invent values. Only fill from log evidence. Null = unknown.
+12. After the </fields> tag, on a new line, emit a <tldr>...</tldr> block: at most 2 sentences, plain language, NO citation markers, summarizing what an admin needs to know about THIS HOME before someone is sent to it. Fresh write each run (not frozen). If nothing meaningful yet, emit an empty <tldr></tldr>.
+
+HouseholdBank <fields> JSON schema (all keys optional, omit unknown):
+{
+  "accessAndEntry": "string|null  (e.g. 'side gate code 4321, lockbox on the hose bib, park on the street')",
+  "propertyNotes": "string|null  (e.g. 'pool is uncovered, back stairs are steep, dog door in the kitchen')",
+  "householdRoutine": "string|null  (e.g. 'nobody home before 6pm on weekdays, cleaner comes Thursdays')",
+  "standingInstructions": "string|null  (e.g. 'always text on arrival, never leave the side gate unlatched')",
+  "schedulingNotes": "string|null  (e.g. 'travels the first week of every month, books a month ahead')"
+}
+"""
+)
+
+
 def _format_log_entries(entries: list[dict]) -> str:
     """Render a list of log entry dicts into a readable block for the user prompt.
 
@@ -236,6 +277,46 @@ Update the summary following the system rules.  Return the <summary>...</summary
     return (_411_SYSTEM, user_prompt)
 
 
+def build_bank_prompt(
+    household_label: str,
+    existing_rawSummary: str,
+    new_log_entries: list[dict],
+) -> tuple[str, str]:
+    """
+    Build (system_prompt, user_prompt) for updating a household bank doc.
+
+    The third destination, alongside build_dossier_prompt (one human) and
+    build_411_prompt (one animal). Same shape as both, deliberately: the bank is
+    their peer, so it carries the same frozen-prose rules, the same citation
+    convention, the same <summary>/<fields>/<tldr> envelope, and differs only in
+    what it is a record OF.
+
+    Args:
+        household_label: How to name this home in the prompt (e.g. "the Wrens"
+            or the anchoring kinfolk's name). Never blank; callers pass the id
+            when they have no better label.
+        existing_rawSummary: Current rawSummary from Firestore (may be empty).
+        new_log_entries: Same shape as build_dossier_prompt.
+
+    Returns:
+        (system_prompt, user_prompt) both as plain strings.
+    """
+    existing_block = existing_rawSummary.strip() if existing_rawSummary else "(empty — this is a new summary)"
+
+    user_prompt = f"""\
+Household: {household_label}
+
+--- EXISTING SUMMARY ---
+{existing_block}
+
+--- NEW LOG ENTRIES ---
+{_format_log_entries(new_log_entries)}
+
+Update the summary following the system rules.  Return the <summary>...</summary> block, then the <fields>...</fields> block, then the <tldr>...</tldr> block.
+"""
+    return (_BANK_SYSTEM, user_prompt)
+
+
 def extract_summary(claude_response_text: str) -> str:
     """
     Extract the text between the first <summary>...</summary> tags.
@@ -282,6 +363,17 @@ _KIN411_STR_FIELDS = frozenset({
     "vetName",
     "vetPhone",
 })
+# The household bank's own allow-list. Deliberately disjoint from the dossier's
+# and the 411's: a key that appears on two of the three would let a note about a
+# person or a pet land in the home's record wearing the right key name, which is
+# the exact cross-contamination issue #461 exists to stop.
+_BANK_STR_FIELDS = frozenset({
+    "accessAndEntry",
+    "propertyNotes",
+    "householdRoutine",
+    "standingInstructions",
+    "schedulingNotes",
+})
 # Boolean fields, per doc type.
 _KIN411_BOOL_FIELDS = frozenset({"reactive"})
 
@@ -289,6 +381,7 @@ _KIN411_BOOL_FIELDS = frozenset({"reactive"})
 _FIELD_SCHEMAS = {
     "dossier": (_DOSSIER_STR_FIELDS, frozenset()),
     "kin411": (_KIN411_STR_FIELDS, _KIN411_BOOL_FIELDS),
+    "bank": (_BANK_STR_FIELDS, frozenset()),
 }
 
 
@@ -299,7 +392,7 @@ def validate_fields(parsed: dict, doc_type: str = "dossier") -> dict:
     coerce string-booleans into real booleans, drops None/empty, and caps string
     length at _FIELD_STR_MAX. Returns a clean dict safe to merge.
 
-    doc_type: "dossier" or "kin411". Unknown doc_type yields {} (fail closed).
+    doc_type: "dossier", "kin411" or "bank". Unknown doc_type yields {} (fail closed).
     """
     if not isinstance(parsed, dict):
         return {}
@@ -339,7 +432,7 @@ def extract_fields(claude_response_text: str, doc_type: str = "dossier") -> dict
       null/empty values dropped.
     - On any failure (no tags, malformed JSON, non-dict result), returns {}.
 
-    doc_type selects which schema to validate against ("dossier" | "kin411").
+    doc_type selects which schema to validate against ("dossier" | "kin411" | "bank").
     """
     if not claude_response_text or not claude_response_text.strip():
         return {}

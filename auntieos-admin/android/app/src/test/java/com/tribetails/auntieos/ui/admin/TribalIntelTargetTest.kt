@@ -254,4 +254,57 @@ class TribalIntelTargetTest {
         assertEquals(TribalIntelTargetNoun.HOUSEHOLD, anchorNounFor("KIN"))
         assertEquals(TribalIntelTargetNoun.HOUSEHOLD, anchorNounFor(""))
     }
+
+    // ── agreement with the nightly job (issue #461) ───────────────────────
+    //
+    // The screen and the pipeline must classify an entry the same way, because
+    // the classification now decides WHERE the entry is written, not just what
+    // word the chip shows. The pipeline half of each case below is
+    // `resolve_target_type` in
+    // `auntieos-admin/web/functions-python/reconcile_comms.py`, pinned by
+    // `test_reconcile_note.py`. One kind, one destination:
+    //
+    //   HOUSEHOLD -> household_bank/{householdId}
+    //   KINFOLK   -> dossiers/{kinfolkId}
+    //   KIN       -> the_411/411_{kinId}
+
+    @Test
+    fun `a kinfolk-targeted entry classifies as one person, so it folds into that dossier`() {
+        val target = tribalIntelTarget(doc(targetType = "KINFOLK", targetKinfolkId = "kf1"))
+        assertEquals(TribalIntelTargetKind.KINFOLK, target.kind)
+        assertEquals("kf1", target.id)
+    }
+
+    @Test
+    fun `a kin-targeted entry classifies as one animal, so it folds into that 411`() {
+        val target = tribalIntelTarget(doc(targetType = "KIN", targetKinfolkId = "kf1", targetKinId = "k9"))
+        assertEquals(TribalIntelTargetKind.KIN, target.kind)
+        assertEquals("k9", target.id)
+    }
+
+    @Test
+    fun `a household-targeted entry classifies as the home, so it folds into the bank`() {
+        val target = tribalIntelTarget(doc(targetType = "HOUSEHOLD", targetKinfolkId = "kf1"))
+        assertEquals(TribalIntelTargetKind.HOUSEHOLD, target.kind)
+        assertEquals("kf1", target.id)
+    }
+
+    @Test
+    fun `a legacy row with no target type is the household, the same answer the pipeline gives`() {
+        val target = tribalIntelTarget(doc(kinfolkRef = "kf1"))
+        assertEquals(TribalIntelTargetKind.HOUSEHOLD, target.kind)
+        assertEquals("kf1", target.id)
+    }
+
+    @Test
+    fun `a KIN row naming no animal falls to the household rather than routing to a pet`() {
+        val target = tribalIntelTarget(doc(targetType = "KIN", targetKinfolkId = "kf1"))
+        assertEquals(TribalIntelTargetKind.HOUSEHOLD, target.kind)
+    }
+
+    @Test
+    fun `a KINFOLK row naming no anchor falls to the household rather than routing to a person`() {
+        val target = tribalIntelTarget(doc(targetType = "KINFOLK"))
+        assertEquals(TribalIntelTargetKind.HOUSEHOLD, target.kind)
+    }
 }

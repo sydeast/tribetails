@@ -6,15 +6,19 @@ import type { CollectionSpec } from '../lib/firestore';
 import type { CommsChannel } from '../lib/recipientContext';
 
 /**
- * The read surface behind the recipient context panel: the household's dossier,
- * each pet's 411, and the four communication logs.
+ * The read surface behind the recipient context panel: each kinfolk's dossier,
+ * the household's own bank, each pet's 411, and the four communication logs.
  *
  * ── EVERYTHING HERE IS ADMIN-READABLE DIRECTLY ──────────────────────────────
- * `dossiers`, `the_411`, `sms_messages`, `emails`, `calls_log` and `voicemails`
- * are all `allow read: if isAuntie()` in firestore.rules, so no callable is
- * needed to read them. The one callable in this module, `recap_recent_comms`,
- * exists for a different reason: it summarizes with Claude, and the Anthropic
- * key cannot live in a browser.
+ * `dossiers`, `household_bank`, `the_411`, `sms_messages`, `emails`, `calls_log`
+ * and `voicemails` are all `allow read: if isAuntie()` in firestore.rules, so no
+ * callable is needed to read them. The one callable in this module,
+ * `recap_recent_comms`, exists for a different reason: it summarizes with
+ * Claude, and the Anthropic key cannot live in a browser.
+ *
+ * All three reconciled records are ADMIN-ONLY, a standing operator ruling.
+ * Kinfolk never see a dossier, a 411, or a bank, and no portal callable projects
+ * a field off any of them.
  */
 
 // ── dossier ─────────────────────────────────────────────────────────────────
@@ -57,6 +61,56 @@ export async function getDossier(kinfolkId: string): Promise<Dossier | null> {
     communicationStyle: str(d['communicationStyle']),
     householdNotes: str(d['householdNotes']),
     relationshipWithAuntie: str(d['relationshipWithAuntie']),
+  };
+}
+
+// ── the household bank ──────────────────────────────────────────────────────
+
+/**
+ * The household's own reconciled record (issue #461), narrowed to what the panel
+ * renders. The peer of the dossier above and the 411 below: same rawSummary,
+ * same regenerated `tldr`, same `str`-defensive read for the same reason.
+ *
+ * Its five structured fields are DISJOINT from the dossier's and the 411's on
+ * purpose. A dossier holds one person, a 411 holds one animal, and the bank
+ * holds what is true of the home itself and of neither of them.
+ */
+export interface HouseholdBank {
+  tldr: string;
+  rawSummary: string;
+  accessAndEntry: string;
+  propertyNotes: string;
+  householdRoutine: string;
+  standingInstructions: string;
+  schedulingNotes: string;
+}
+
+/**
+ * Point-read at `household_bank/{householdId}`, the deterministic id
+ * `upsert_household_bank` writes, where the household id is the anchoring
+ * kinfolk id.
+ *
+ * Same call shape as `getDossier` and for all the same reasons, the sandbox one
+ * included: `firestore.rules` scopes a test admin's read of this collection by
+ * the DOC ID matching their tribe, which a collection query cannot prove.
+ *
+ * A missing bank returns null. That is a household nothing household-targeted
+ * has been written about yet, which is normal and not an error.
+ */
+export async function getHouseholdBank(householdId: string): Promise<HouseholdBank | null> {
+  const id = householdId.trim();
+  if (id === '') return null;
+  const snap = await getDoc(doc(db, 'household_bank', id));
+  if (!snap.exists()) return null;
+  const d = snap.data() as Record<string, unknown>;
+  return {
+    tldr: str(d['tldr']),
+    rawSummary: str(d['rawSummary']),
+    accessAndEntry: str(d['accessAndEntry']),
+    propertyNotes: str(d['propertyNotes']),
+    householdRoutine: str(d['householdRoutine']),
+    standingInstructions: str(d['standingInstructions']),
+    schedulingNotes: str(d['schedulingNotes']),
   };
 }
 

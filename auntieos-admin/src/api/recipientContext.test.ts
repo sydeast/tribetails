@@ -10,6 +10,7 @@ vi.mock('../lib/fns', () => ({ call: callMock }));
 
 import {
   getDossier,
+  getHouseholdBank,
   getKin411,
   commsQueries,
   recapRecentComms,
@@ -61,6 +62,54 @@ describe('getDossier', () => {
     getDocMock.mockReset();
     getDocMock.mockImplementation(() => Promise.reject(new Error('permission-denied')));
     await expect(getDossier('kf1')).rejects.toThrow('permission-denied');
+  });
+});
+
+/**
+ * The household bank (issue #461).
+ *
+ * The path assertion is the point: `upsert_household_bank` in
+ * reconcile_comms.py writes the doc at an id equal to the household id, and the
+ * sandbox rule branch is keyed on that same doc id. If either side ever moves,
+ * this test and the pipeline's own `test_new_household_bank_doc_id_equals_household_id`
+ * fail together rather than the screen quietly reading nothing.
+ */
+describe('getHouseholdBank', () => {
+  it('point-reads the bank whose doc id IS the household id', async () => {
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue(snap({ tldr: 'Side gate.', accessAndEntry: 'code 4321' }));
+
+    const b = await getHouseholdBank('kf1');
+
+    expect((getDocMock.mock.calls[0]?.[0] as { _path: string })._path).toBe('household_bank/kf1');
+    expect(b?.accessAndEntry).toBe('code 4321');
+  });
+
+  it('returns null for a household with no bank yet, which is not an error', async () => {
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue(snap(null));
+    expect(await getHouseholdBank('kf1')).toBeNull();
+  });
+
+  it('reads every field defensively, so a legacy doc missing one cannot blank the panel', async () => {
+    getDocMock.mockReset();
+    getDocMock.mockResolvedValue(snap({ tldr: 42, propertyNotes: null }));
+    const b = await getHouseholdBank('kf1');
+    expect(b?.tldr).toBe('');
+    expect(b?.propertyNotes).toBe('');
+    expect(b?.standingInstructions).toBe('');
+  });
+
+  it('never queries on a blank id, which would read a collection root', async () => {
+    getDocMock.mockReset();
+    expect(await getHouseholdBank('   ')).toBeNull();
+    expect(getDocMock).not.toHaveBeenCalled();
+  });
+
+  it('propagates a permission failure rather than reporting an empty bank', async () => {
+    getDocMock.mockReset();
+    getDocMock.mockImplementation(() => Promise.reject(new Error('permission-denied')));
+    await expect(getHouseholdBank('kf1')).rejects.toThrow('permission-denied');
   });
 });
 

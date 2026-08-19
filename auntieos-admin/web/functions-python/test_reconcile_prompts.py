@@ -5,6 +5,7 @@ from reconcile_prompts import (
     validate_fields,
     build_dossier_prompt,
     build_411_prompt,
+    build_bank_prompt,
     _UNTRUSTED_START,
     _UNTRUSTED_END,
     _FIELD_STR_MAX,
@@ -155,3 +156,53 @@ def test_unknown_doc_type_fails_closed():
 def test_none_and_empty_values_dropped():
     out = validate_fields({"breed": None, "personality": "", "vetName": "  "}, doc_type="kin411")
     assert out == {}
+
+
+# ---------- household bank, the third destination (issue #461) ----------
+
+def test_bank_prompt_names_the_household_and_fences_the_body():
+    system, user = build_bank_prompt(
+        "the Wrens",
+        "existing bank text",
+        [{"channel": "note", "timestamp": "2026-08-18T00:00:00Z", "id": "n1", "body": "Gate code 4321."}],
+    )
+    assert "HOUSEHOLD BANK" in system
+    assert "Household: the Wrens" in user
+    assert "existing bank text" in user
+    assert _UNTRUSTED_START in user and _UNTRUSTED_END in user
+    # Same envelope as the other two, so one parser serves all three.
+    assert "<summary>" in user and "<fields>" in user and "<tldr>" in user
+
+
+def test_bank_system_prompt_sends_person_and_pet_facts_elsewhere():
+    system, _ = build_bank_prompt("the Wrens", "", [])
+    assert "dossier" in system and "411" in system
+
+
+def test_bank_fields_are_disjoint_from_dossier_and_kin411():
+    # A household field is not a dossier field and not a 411 field...
+    assert validate_fields({"accessAndEntry": "gate 4321"}, doc_type="bank") == {"accessAndEntry": "gate 4321"}
+    assert validate_fields({"accessAndEntry": "gate 4321"}, doc_type="dossier") == {}
+    assert validate_fields({"accessAndEntry": "gate 4321"}, doc_type="kin411") == {}
+    # ...and neither of theirs may land in the bank wearing the right key name.
+    assert validate_fields({"communicationStyle": "texter"}, doc_type="bank") == {}
+    assert validate_fields({"medicalNotes": "insulin 2x daily", "reactive": True}, doc_type="bank") == {}
+
+
+def test_bank_fields_extract_through_the_shared_parser():
+    text = (
+        "<summary>s</summary>\n"
+        '<fields>{"accessAndEntry": "side gate 4321", "propertyNotes": "pool uncovered", '
+        '"bogusKey": "x"}</fields>\n'
+        "<tldr>Side gate, uncovered pool.</tldr>"
+    )
+    assert extract_fields(text, doc_type="bank") == {
+        "accessAndEntry": "side gate 4321",
+        "propertyNotes": "pool uncovered",
+    }
+    assert extract_tldr(text) == "Side gate, uncovered pool."
+
+
+def test_bank_overlong_string_is_capped():
+    out = validate_fields({"householdRoutine": "r" * (_FIELD_STR_MAX + 50)}, doc_type="bank")
+    assert len(out["householdRoutine"]) == _FIELD_STR_MAX
