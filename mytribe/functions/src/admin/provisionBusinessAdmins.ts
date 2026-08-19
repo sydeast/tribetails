@@ -7,6 +7,8 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import {
   BusinessAdminRosterError,
   addBusinessAdminUids,
+  defaultAssigneeUidFrom,
+  operatorAllowlistUids,
   readBusinessAdmins,
   removeBusinessAdminUids,
   resolveBusinessAdminUids,
@@ -238,6 +240,108 @@ export async function checkBusinessAdminsHandler(
   }
 }
 
+/** Where the roster lives, in the words the notification gate already uses. */
+const ROSTER_PATH = 'businessSettings/admins.uids';
+
+/** One person on the roster, resolved from a uid to somebody with a name. */
+export interface BusinessAdminMember {
+  uid: string;
+  /** From `staff/{uid}`. Null when there is no staff record, or it has no name. */
+  displayName: string | null;
+  email: string | null;
+  /**
+   * False when no `staff/{uid}` document exists for this uid. A real state, not
+   * an error: the self-heal in `lib/businessAdmins.ts` can seed an operator
+   * from `AUNTIE_OPERATOR_UIDS` who never had a staff record, and
+   * `setBusinessAdmins` grandfathers them in deliberately. They still receive
+   * every business notification, so they belong on this list with the uid
+   * showing rather than being quietly dropped from it.
+   */
+  hasStaffRecord: boolean;
+  /** True when unassigned visits default to this person. */
+  defaultAssignee: boolean;
+}
+
+/** Which arm of the recipient order answered. */
+export type BusinessAdminRosterSource = 'roster' | 'operatorAllowlist' | 'none';
+
+export interface ListBusinessAdminsResult {
+  members: BusinessAdminMember[];
+  source: BusinessAdminRosterSource;
+  rosterPath: string;
+  /** Why there is nobody, when there is nobody. Null when there are members. */
+  reason: string | null;
+}
+
+/**
+ * WHO a business notification reaches, by name (issue #450).
+ *
+ * The notification gate could say "every business admin, that is 4 people
+ * today" and name the Firestore document, and stop there. For every other
+ * audience the gate answers with a description of a person; for this one the
+ * operator had to go and read the roster themselves, which is the "look it up
+ * yourself" #396 was filed against.
+ *
+ * READ ONLY, AND THAT IS THE POINT. `resolveBusinessAdminUids` answers the same
+ * question on the dispatch path and SELF-HEALS by writing the roster back from
+ * `AUNTIE_OPERATOR_UIDS`. That is right for a dispatch and wrong here, for the
+ * same reason `admin/notificationOverrides.ts` gives for not calling it either:
+ * opening a settings screen must not quietly edit who receives business mail.
+ * So this walks the same recipient order by hand, using
+ * `operatorAllowlistUids()` for arm (2), and reports which arm answered in
+ * `source` instead of writing anything.
+ *
+ * `hasStaffRecord: false` is how an allowlist-seeded operator with no
+ * `staff/{uid}` document appears. They are on the list, because they do receive
+ * the mail; there is simply no name to put next to the uid.
+ */
+export async function listBusinessAdminsHandler(
+  _req: CallableRequest<unknown>,
+): Promise<ListBusinessAdminsResult> {
+  initSentry();
+  const settings = await readBusinessAdmins();
+  const fromRoster = settings.uids.length > 0;
+  const uids = fromRoster ? settings.uids : operatorAllowlistUids();
+
+  if (uids.length === 0) {
+    return {
+      members: [],
+      source: 'none',
+      rosterPath: ROSTER_PATH,
+      reason:
+        `${ROSTER_PATH} is empty and this function has no operator allowlist to fall back on, `
+        + 'so a business notification currently reaches nobody and fails to dispatch. '
+        + 'Call provisionBusinessAdmins as an operator to seed the roster.',
+    };
+  }
+
+  const defaultAssigneeUid = defaultAssigneeUidFrom(settings);
+  const firestore = db();
+  const snaps = await firestore.getAll(...uids.map((uid) => firestore.collection('staff').doc(uid)));
+  const members: BusinessAdminMember[] = uids.map((uid, i) => {
+    const snap = snaps[i];
+    const data = (snap?.exists ? snap.data() : undefined) as
+      | { displayName?: unknown; email?: unknown }
+      | undefined;
+    const displayName = typeof data?.displayName === 'string' ? data.displayName.trim() : '';
+    const email = typeof data?.email === 'string' ? data.email.trim() : '';
+    return {
+      uid,
+      displayName: displayName || null,
+      email: email || null,
+      hasStaffRecord: snap?.exists === true,
+      defaultAssignee: uid === defaultAssigneeUid,
+    };
+  });
+
+  return {
+    members,
+    source: fromRoster ? 'roster' : 'operatorAllowlist',
+    rosterPath: ROSTER_PATH,
+    reason: null,
+  };
+}
+
 const CALLABLE_OPTS: CallableOptions = {
   region: 'us-central1',
   cors: TRIBETAILS_CORS,
@@ -265,4 +369,8 @@ export const removeBusinessAdmins = onCall(
 export const checkBusinessAdmins = onCall(
   CALLABLE_OPTS,
   wrapAdminCallable('checkBusinessAdmins', checkBusinessAdminsHandler),
+);
+export const listBusinessAdmins = onCall(
+  CALLABLE_OPTS,
+  wrapAdminCallable('listBusinessAdmins', listBusinessAdminsHandler),
 );

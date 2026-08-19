@@ -4,11 +4,15 @@ import {
   STREAM_KINFOLK,
   type NotificationCatalogEntry,
 } from '../api/myNotifications';
+import type { BusinessAdminRoster } from '../api/businessAdmins';
 import {
   alwaysOnBadge,
+  businessAdminLines,
+  businessAdminSourceNote,
   deliveryPhrase,
   hasPartialDataNote,
   mergeFieldNames,
+  reachesBusinessAdmins,
   recipientLines,
   rowBadges,
   templateLines,
@@ -129,6 +133,72 @@ describe('recipientLines answers "how many people is that"', () => {
   });
 });
 
+/**
+ * Issue #450. "Every business admin" plus a count and a Firestore path was the
+ * one audience the gate could not turn into people.
+ */
+describe('the business admin roster, resolved to people', () => {
+  function roster(over: Partial<BusinessAdminRoster> = {}): BusinessAdminRoster {
+    return {
+      members: [],
+      source: 'roster',
+      rosterPath: 'businessSettings/admins.uids',
+      reason: null,
+      ...over,
+    };
+  }
+  function member(over: Partial<BusinessAdminRoster['members'][number]> = {}) {
+    return {
+      uid: 'op1',
+      displayName: 'Auntie Nora',
+      email: 'nora@tribetails.com',
+      hasStaffRecord: true,
+      defaultAssignee: false,
+      ...over,
+    };
+  }
+  it('offers the roster for a row whose primary resolver is businessAdmins', () => {
+    expect(reachesBusinessAdmins(entry({ recipientResolver: 'businessAdmins' }))).toBe(true);
+  });
+  it('offers it for a SECONDARY businessAdmins resolver too', () => {
+    expect(
+      reachesBusinessAdmins(entry({ recipientResolver: 'kinfolkAcct', secondaryResolver: 'businessAdmins' })),
+    ).toBe(true);
+  });
+  it('does not offer it for a row that never reaches business admins', () => {
+    expect(reachesBusinessAdmins(entry({ recipientResolver: 'kinfolkAcct' }))).toBe(false);
+  });
+  it('names each person and how the mail reaches them', () => {
+    const [line] = businessAdminLines(roster({ members: [member()] }));
+    expect(line).toContain('Auntie Nora');
+    expect(line).toContain('nora@tribetails.com');
+  });
+  it('says which of them unassigned visits default to', () => {
+    const [line] = businessAdminLines(roster({ members: [member({ defaultAssignee: true })] }));
+    expect(line).toContain('unassigned visits default to them');
+  });
+  /**
+   * An allowlist-seeded operator has no staff doc and therefore no name. They
+   * receive every business notification anyway, so the line shows the uid and
+   * says why there is nothing better to show.
+   */
+  it('falls back to the uid when there is no staff record to name', () => {
+    const [line] = businessAdminLines(
+      roster({ members: [member({ uid: 'op8', displayName: null, email: null, hasStaffRecord: false })] }),
+    );
+    expect(line).toContain('op8');
+    expect(line).toContain('no staff record');
+    expect(line).toContain('no email on file');
+  });
+  it('warns when the list is the allowlist fallback rather than the stored roster', () => {
+    const note = businessAdminSourceNote(roster({ source: 'operatorAllowlist', members: [member()] }));
+    expect(note).toContain('businessSettings/admins.uids');
+    expect(note).toContain('provisionBusinessAdmins');
+  });
+  it('adds no caveat when the stored roster answered', () => {
+    expect(businessAdminSourceNote(roster({ members: [member()] }))).toBeNull();
+  });
+});
 describe('templateLines names the document that writes each body', () => {
   it('builds the collection path per channel', () => {
     const row = entry({

@@ -391,6 +391,7 @@ export {
   setBusinessAdmins,
   removeBusinessAdmins,
   checkBusinessAdmins,
+  listBusinessAdmins,
 } from './admin/provisionBusinessAdmins';
 export {
   getMyAdminNotificationPrefs,

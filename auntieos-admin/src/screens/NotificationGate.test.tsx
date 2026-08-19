@@ -27,6 +27,8 @@ const { listNotificationDeliveries } = vi.hoisted(() => ({
   listNotificationDeliveries: vi.fn(),
 }));
 vi.mock('../api/notificationDeliveries', () => ({ listNotificationDeliveries }));
+const { listBusinessAdmins } = vi.hoisted(() => ({ listBusinessAdmins: vi.fn() }));
+vi.mock('../api/businessAdmins', () => ({ listBusinessAdmins }));
 
 import { NotificationGate } from './NotificationGate';
 
@@ -74,6 +76,12 @@ beforeEach(() => {
     deliveries: [],
     sentMeaning: 'Sent means the provider accepted the message.',
     receiptAvailable: false,
+  });
+  listBusinessAdmins.mockReset().mockResolvedValue({
+    members: [],
+    source: 'none',
+    rosterPath: 'businessSettings/admins.uids',
+    reason: 'businessSettings/admins.uids is empty.',
   });
 });
 
@@ -453,5 +461,98 @@ describe('NotificationGate: who / what fires it / whether it arrived (#396)', ()
     render(<NotificationGate />);
     await screen.findByText('New invoice');
     expect(screen.queryByText(/ALSO SENT, BUT NOT GATED HERE/)).not.toBeInTheDocument();
+  });
+});
+/**
+ * Issue #450. Every other audience on this screen resolves to a description of
+ * a person. `businessAdmins` resolved to a count and a Firestore path, because
+ * nothing could read the roster back, so the answer to "who does this reach"
+ * was still "go and look it up yourself".
+ */
+describe('NotificationGate: naming the business admin roster (#450)', () => {
+  const businessRow = entry({
+    key: 'kincare.requested',
+    label: 'Booking requested',
+    recipientResolver: 'businessAdmins',
+    whoReceives: ['Every business admin on the roster, one copy each.'],
+  });
+  const householdRow = entry({
+    key: 'invoice.new',
+    label: 'New invoice',
+    recipientResolver: 'kinfolkAcct',
+    whoReceives: ["The household's own portal account."],
+  });
+  const roster = {
+    members: [
+      {
+        uid: 'op1',
+        displayName: 'Auntie Nora',
+        email: 'nora@tribetails.com',
+        hasStaffRecord: true,
+        defaultAssignee: true,
+      },
+      {
+        uid: 'op8',
+        displayName: null,
+        email: null,
+        hasStaffRecord: false,
+        defaultAssignee: false,
+      },
+    ],
+    source: 'roster' as const,
+    rosterPath: 'businessSettings/admins.uids',
+    reason: null,
+  };
+  async function open(label = /Who gets this, and what fires it/i) {
+    render(<NotificationGate />);
+    await userEvent.click(await screen.findByRole('button', { name: label }));
+  }
+  it('names the people behind "every business admin"', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue(roster);
+    await open();
+    expect(await screen.findByText(/Auntie Nora/)).toBeInTheDocument();
+    expect(screen.getByText(/nora@tribetails.com/)).toBeInTheDocument();
+  });
+  it('shows an allowlist-seeded operator by uid rather than dropping them', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 2 }));
+    listBusinessAdmins.mockResolvedValue(roster);
+    await open();
+    expect(await screen.findByText(/op8/)).toBeInTheDocument();
+    expect(screen.getByText(/no staff record/)).toBeInTheDocument();
+  });
+  it('warns when the list is the allowlist fallback and the roster is empty', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 0 }));
+    listBusinessAdmins.mockResolvedValue({ ...roster, source: 'operatorAllowlist' });
+    await open();
+    expect(await screen.findByText(/operator allowlist accounts/)).toBeInTheDocument();
+  });
+  it('reports an empty roster as the outage it is, in the server’s words', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow], businessAdminCount: 0 }));
+    listBusinessAdmins.mockResolvedValue({
+      members: [],
+      source: 'none',
+      rosterPath: 'businessSettings/admins.uids',
+      reason: 'businessSettings/admins.uids is empty, so this reaches nobody. Call provisionBusinessAdmins.',
+    });
+    await open();
+    expect(await screen.findByText(/Call provisionBusinessAdmins/)).toBeInTheDocument();
+  });
+  it('surfaces a roster read failure with a way to try again', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [businessRow] }));
+    listBusinessAdmins.mockRejectedValue(new Error('permission-denied'));
+    await open();
+    expect(await screen.findByText(/Couldn’t read the business admin roster/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+  /**
+   * One extra callable per opened row is worth it for the row it answers and
+   * not for any other, so a household-only row must not pay for it.
+   */
+  it('does not read the roster for a row that never reaches business admins', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [householdRow] }));
+    await open();
+    await screen.findByText(/The household's own portal account/);
+    expect(listBusinessAdmins).not.toHaveBeenCalled();
   });
 });

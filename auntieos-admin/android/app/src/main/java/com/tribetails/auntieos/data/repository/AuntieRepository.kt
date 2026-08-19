@@ -2877,6 +2877,26 @@ class AuntieRepository(
         notificationDeliveryEvidenceFromMap(raw)
     }.onFailure { AuntieLog.e("Failed to load notification deliveries", it) }
 
+    /**
+     * WHO "every business admin" is, by name (issue #450).
+     *
+     * Loaded per opened gate row rather than with the matrix: it is one extra
+     * read, and it is only worth making for a row that actually reaches
+     * business admins and that somebody opened.
+     *
+     * The callable is READ ONLY. It walks the server's recipient order without
+     * the dispatch path's self-heal write, so opening the gate cannot change
+     * who receives business mail. Editing the roster is `setBusinessAdmins`.
+     */
+    suspend fun listBusinessAdmins(): Result<BusinessAdminRoster> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listBusinessAdmins")
+            .call(emptyMap<String, Any>())
+            .await().data as? Map<String, Any?>
+            ?: error("listBusinessAdmins: non-map payload")
+        businessAdminRosterFromMap(raw)
+    }.onFailure { AuntieLog.e("Failed to load the business admin roster", it) }
     suspend fun saveBusinessNotificationOverride(key: String, override: NotificationOverride): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         require(key.isNotBlank()) { "notification override key required" }

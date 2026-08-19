@@ -139,8 +139,24 @@ function normalize(data: unknown): BusinessAdminsSettings {
   };
 }
 
-function envOperatorUids(): string[] {
+/**
+ * Arm (2) of the recipient order, read and nothing else.
+ *
+ * Exported for the read surfaces that have to SHOW who a business notification
+ * would reach without changing it. `resolveBusinessAdminUidsFrom` answers the
+ * same question but self-heals by writing the roster back, which is right on a
+ * dispatch and wrong on a settings screen (see the note in
+ * `admin/notificationOverrides.ts`: reading a screen must not quietly edit who
+ * receives business mail).
+ *
+ * Empty unless the calling function binds the `AUNTIE_OPERATOR_UIDS` secret.
+ */
+export function operatorAllowlistUids(): string[] {
   return dedupe((process.env.AUNTIE_OPERATOR_UIDS ?? '').split(','));
+}
+
+function envOperatorUids(): string[] {
+  return operatorAllowlistUids();
 }
 
 function adminsRef() {

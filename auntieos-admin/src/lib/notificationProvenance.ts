@@ -4,6 +4,7 @@ import {
   type NotificationChannel,
   type NotifStream,
 } from '../api/myNotifications';
+import type { BusinessAdminRoster } from '../api/businessAdmins';
 import { alwaysEnabledFor } from './notificationGateEdit';
 
 /**
@@ -139,6 +140,54 @@ export function recipientLines(
     const people = businessAdminCount === 1 ? 'person' : 'people';
     return `${sentence} That is ${businessAdminCount} ${people} today.`;
   });
+}
+
+/**
+ * True when this row's recipients include the business admin roster, and so
+ * when the gate should offer to name them (issue #450).
+ *
+ * Reads the resolver fields rather than searching `whoReceives` for the words
+ * "business admin". The sentences are server-authored prose meant for a human;
+ * matching on them would make a reworded sentence silently stop offering the
+ * roster, and `recipientResolver` is the field the dispatcher itself branches
+ * on.
+ */
+export function reachesBusinessAdmins(entry: NotificationCatalogEntry): boolean {
+  return entry.recipientResolver === 'businessAdmins' || entry.secondaryResolver === 'businessAdmins';
+}
+
+/**
+ * One line per person on the roster: their name, how to reach them, and
+ * anything about them the operator would otherwise have to know already.
+ *
+ * A uid with no `staff/{uid}` record says so and shows the uid. That member is
+ * NOT dropped: they receive every business notification, and a list that hides
+ * them under-reports the audience, which is the whole failure this panel exists
+ * to end.
+ */
+export function businessAdminLines(roster: BusinessAdminRoster): string[] {
+  return roster.members.map((member) => {
+    const name = member.displayName ?? member.uid;
+    const parts = [member.email ?? 'no email on file'];
+    if (!member.hasStaffRecord) parts.push(`no staff record for ${member.uid}`);
+    if (member.defaultAssignee) parts.push('unassigned visits default to them');
+    return `${name} (${parts.join('; ')})`;
+  });
+}
+
+/**
+ * The caveat above the list, when there is one.
+ *
+ * `operatorAllowlist` is the state where the stored roster is empty and sends
+ * fall back to `AUNTIE_OPERATOR_UIDS`. The people below are still the ones who
+ * would receive the next business notification, so the list is real, but the
+ * operator should know the roster itself is empty.
+ */
+export function businessAdminSourceNote(roster: BusinessAdminRoster): string | null {
+  if (roster.source !== 'operatorAllowlist') return null;
+  return `Nobody is stored at ${roster.rosterPath}, so these are the operator allowlist accounts `
+    + 'the next business notification would fall back to. Call provisionBusinessAdmins to make the '
+    + 'roster explicit.';
 }
 
 /** One "channel → template document" line per channel the row can use. */

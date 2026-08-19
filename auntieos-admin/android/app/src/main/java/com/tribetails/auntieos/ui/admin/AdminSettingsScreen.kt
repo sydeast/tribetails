@@ -128,7 +128,11 @@ import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.NotificationDeliveryEvidence
 import com.tribetails.auntieos.data.model.NotifBadgeTone
 import com.tribetails.auntieos.data.model.NotifDeliveryTone
+import com.tribetails.auntieos.data.model.BusinessAdminRoster
+import com.tribetails.auntieos.data.model.businessAdminLines
+import com.tribetails.auntieos.data.model.businessAdminSourceNote
 import com.tribetails.auntieos.data.model.notifDeliveryPhrase
+import com.tribetails.auntieos.data.model.notifReachesBusinessAdmins
 import com.tribetails.auntieos.data.model.notifMergeFieldNames
 import com.tribetails.auntieos.data.model.notifRecipientLines
 import com.tribetails.auntieos.data.model.notifRowBadges
@@ -1426,6 +1430,9 @@ private fun NotifRowDetail(
             lines = notifRecipientLines(entry, matrix.businessAdminCount, matrix.businessAdminRosterPath),
             empty = "The server sent no recipient rule for this row. Update MyTribe functions to see it.",
         )
+        if (notifReachesBusinessAdmins(entry)) {
+            NotifBusinessAdminRosterBlock()
+        }
         NotifDetailBlock(
             title = "WHAT FIRES IT",
             lines = entry.emitters.map { "${it.trigger}  ${it.source}" },
@@ -1457,6 +1464,80 @@ private fun NotifRowDetail(
             empty = "No merge fields are recorded for this row.",
         )
         NotifDeliveryEvidenceBlock(notificationKey = entry.key)
+    }
+}
+/**
+ * WHO "every business admin" is, by name (issue #450).
+ *
+ * The line above this block could say "every business admin on the roster, that
+ * is 4 people today" and name a Firestore document. Every other audience on
+ * this screen resolves to a person; for this one the operator was told to go
+ * and read the document themselves, which is the "look it up yourself" #396 was
+ * filed against.
+ *
+ * Loaded on demand per opened row, like the delivery evidence below it, and
+ * only for a row that actually reaches business admins.
+ *
+ * READ ONLY: `listBusinessAdmins` walks the server's recipient order without
+ * the dispatch path's self-heal write, so opening this cannot change who
+ * receives business mail. Editing the roster is `setBusinessAdmins`.
+ */
+@Composable
+private fun NotifBusinessAdminRosterBlock() {
+    val c = AuntieTheme.colors
+    val repo = remember { AuntieOSApp.instance.repository }
+    var roster by remember { mutableStateOf<BusinessAdminRoster?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableStateOf(0) }
+    LaunchedEffect(attempt) {
+        loading = true
+        repo.listBusinessAdmins()
+            .onSuccess { roster = it; error = null }
+            .onFailure { error = it.message ?: "Couldn't read the business admin roster" }
+        loading = false
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        val current = roster
+        when {
+            loading -> Text(
+                "Reading the business admin roster…",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textFaint,
+            )
+            error != null -> {
+                Text(
+                    "Couldn't read the business admin roster: $error",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.error,
+                )
+                Text(
+                    "Retry",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.accent,
+                    modifier = Modifier.clickable { attempt += 1 },
+                )
+            }
+            current == null || current.members.isEmpty() -> Text(
+                current?.reason
+                    ?: "Nobody is on the business admin roster, so this notification currently reaches nobody.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textFaint,
+            )
+            else -> {
+                Text(
+                    "By name:",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textFaint,
+                )
+                businessAdminSourceNote(current)?.let { note ->
+                    Text(note, style = AuntieTheme.typography.bodySmall, color = c.textFaint)
+                }
+                businessAdminLines(current).forEach { line ->
+                    Text(line, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+            }
+        }
     }
 }
 @Composable
