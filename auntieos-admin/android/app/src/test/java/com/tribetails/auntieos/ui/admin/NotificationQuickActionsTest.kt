@@ -2,6 +2,8 @@ package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.tribetails.auntieos.ui.notificationTargetRoute
+import com.tribetails.auntieos.ui.sessionIdForVisit
+import com.tribetails.auntieos.ui.visitIdForSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -62,8 +64,16 @@ class NotificationQuickActionsTest {
 
     // ── notificationTargetRoute ──────────────────────────────────────────────────
 
-    @Test fun `booking routes to kin care detail`() {
-        assertEquals("kin_care_detail/bk-1", notificationTargetRoute("booking", "bk-1"))
+    // ISSUE #389. This used to pass the BARE envelope visit id into
+    // KinCareDetail, which matches it against `kin_care_sessions` ids, and
+    // those carry the `vis_` prefix, so it never matched and the screen showed
+    // "not found" for a visit that exists.
+    @Test fun `booking routes to kin care detail on the DERIVED session id`() {
+        assertEquals("kin_care_detail/vis_bk-1", notificationTargetRoute("booking", "bk-1"))
+    }
+
+    @Test fun `booking leaves a targetId that is already a session id alone`() {
+        assertEquals("kin_care_detail/vis_bk-1", notificationTargetRoute("booking", "vis_bk-1"))
     }
 
     @Test fun `invoice routes to invoice detail`() {
@@ -74,8 +84,12 @@ class NotificationQuickActionsTest {
         assertEquals("kinfolk_profile/kf-1", notificationTargetRoute("kinfolk", "kf-1"))
     }
 
-    @Test fun `kintale routes to the kintales list`() {
-        assertEquals("admin_kintale_logs", notificationTargetRoute("kintale", "rpt-1"))
+    // ISSUE #389. This used to drop the id and open the logs LIST, which is the
+    // operator's complaint verbatim: the button opened the feature instead of
+    // the record. Android has no route keyed by report id alone, so one was
+    // added, and it resolves the report's session and opens that report.
+    @Test fun `kintale routes to the report itself, carrying its id`() {
+        assertEquals("kintale_report/rpt-1", notificationTargetRoute("kintale", "rpt-1"))
     }
 
     @Test fun `unknown type or blank id routes nowhere`() {
@@ -83,6 +97,46 @@ class NotificationQuickActionsTest {
         assertNull(notificationTargetRoute("", "x"))
         assertNull(notificationTargetRoute("invoice", ""))
         assertNull(notificationTargetRoute("booking", "   "))
+    }
+
+    // ── the visit-id / session-id bridge ─────────────────────────────────────────
+    // Mirrors `sessionIdForVisit` / `visitIdForSession` in the React admin's
+    // `src/api/bookings.ts`, pinned by the same cases in `api/bookingIds.test.ts`.
+    // The session doc is minted at `vis_{visitId}` by approveBookingSeriesCore.ts
+    // and re-derived by manageBookingSeries.ts and batchUpdateBookings.ts.
+
+    @Test fun `prefixes a bare envelope visit id`() {
+        assertEquals("vis_v123", sessionIdForVisit("v123"))
+    }
+
+    @Test fun `recovers the visit id from a session id`() {
+        assertEquals("v123", visitIdForSession("vis_v123"))
+    }
+
+    @Test fun `round-trips a visit id through the session id and back`() {
+        for (visitId in listOf("v123", "abc-def", "VIS_upper", "vis", "9", "visit_1")) {
+            assertEquals(visitId, visitIdForSession(sessionIdForVisit(visitId)))
+        }
+    }
+
+    @Test fun `round-trips a session id through the visit id and back`() {
+        for (sessionId in listOf("vis_v123", "vis_abc-def", "vis_9")) {
+            assertEquals(sessionId, sessionIdForVisit(visitIdForSession(sessionId)))
+        }
+    }
+
+    @Test fun `deriving twice cannot double the prefix`() {
+        assertEquals("vis_v123", sessionIdForVisit(sessionIdForVisit("v123")))
+    }
+
+    @Test fun `leaves an unprefixed session id alone rather than inventing a visit id`() {
+        assertEquals("ad-hoc-session", visitIdForSession("ad-hoc-session"))
+    }
+
+    @Test fun `trims, and answers a blank id with a blank id rather than a bare prefix`() {
+        assertEquals("vis_v123", sessionIdForVisit("  v123  "))
+        assertEquals("", sessionIdForVisit(""))
+        assertEquals("", sessionIdForVisit("   "))
     }
 
     // ── archived filter (Step 4) ─────────────────────────────────────────────────

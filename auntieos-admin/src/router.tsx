@@ -182,7 +182,8 @@ const householdMembersRoute = createRoute({
 const bookingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'bookings',
-  component: lazyRouteComponent(() => import('./screens/Bookings'), 'Bookings'),
+  validateSearch: optionalIdSearch(['bookingId'] as const),
+  component: lazyRouteComponent(() => import('./routes/BookingsView'), 'BookingsView'),
 });
 
 const sessionsRoute = createRoute({

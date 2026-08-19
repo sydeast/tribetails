@@ -1,8 +1,8 @@
 /**
  * The DENSE ROWS: the content that makes a list screen a list screen.
  *
- * WHY IT MOVED HERE. Every row below used to live in `seed.visual.ts`, which
- * only runs under `VISUAL_CAPTURE=1`. The ordinary `npm run e2e` database
+ * WHY IT MOVED HERE. Every row below used to live in `seed.visual.ts`, the seed
+ * for the removed screenshot-capture run. The ordinary `npm run e2e` database
  * therefore had two households and three visits and nothing else, so Invoices,
  * Activity Log, Notifications, KinTales and the Inbox channel lists all
  * rendered their EMPTY state to every spec in the suite. PR #209's phone-width
@@ -102,7 +102,7 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
   // billed, $60.00 collected, $180.00 still owed. The detail overlay prints
   // "Paid so far" and "Still owed" from THIS document, then prints "Collected"
   // and "Still owed" again a few rows lower from the callable. Two sources, one
-  // picture, so they have to agree or the golden shows an invoice arguing with
+  // screen, so they have to agree or the panel shows an invoice arguing with
   // itself.
   //
   // `editScope` is `metadataOnly` for the same reason: a payment exists, so the
@@ -317,16 +317,16 @@ export async function seedDenseRows(put: Put, now: number): Promise<void> {
 
   // ── conversations ─────────────────────────────────────────────────────────
   // The message THREADS arrive through `listConversations`, a callable, which
-  // the visual surface stubs (`e2e/visual/callableStubs.ts`). These documents
+  // `e2e/visual/callableStubs.ts` answers. These documents
   // are here because the callable is not the only reader: `useUnreadInbox`
   // streams this collection on every screen to put the unread count on the nav
   // rail, and it does that with or without a functions emulator. The two must
   // therefore describe the same two threads and the same read state, or the
-  // rail and the Inbox disagree in a picture that shows both.
+  // rail and the Inbox disagree on one screen that shows both.
   //
-  // Both READ. An unread thread would be a fine thing to photograph, but it
-  // would put a badge on the rail of all nineteen goldens, which is a change to
-  // every screen made for the sake of one.
+  // Both READ. An unread thread would be a fine state to seed, but the badge it
+  // puts on the rail is on EVERY screen, so one thread's state would change what
+  // every other spec sees.
   await put('conversations', 'e2e-kf-1', {
     kinfolkId: 'e2e-kf-1',
     kinfolkName: 'Wanda Thorne',

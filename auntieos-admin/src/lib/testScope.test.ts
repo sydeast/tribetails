@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   applyTestScope,
   isSuppressedInTestMode,
+  isVisibleInTestScope,
   setTestScope,
   SCOPED_BY_ALT_FIELD,
   SCOPED_BY_KINFOLK,
@@ -189,5 +190,39 @@ describe('isSuppressedInTestMode', () => {
         'voicemails',
       ].sort(),
     );
+  });
+});
+/**
+ * The doc-level half of the same scope, which `useDocById` needs: a by-id read
+ * has no query to constrain, so the question is asked of what came back. This
+ * NARROWS, it never grants: a collection with no scope field, or an operator
+ * with no sandbox claim, is unaffected.
+ */
+describe('isVisibleInTestScope', () => {
+  beforeEach(() => setTestScope(null));
+  it('lets everything through when no test admin is signed in', () => {
+    expect(isVisibleInTestScope('invoices', 'inv1', { kinfolkId: 'anyone' })).toBe(true);
+  });
+  it('scopes a kinfolkId-carrying collection by that field', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isVisibleInTestScope('invoices', 'inv1', { kinfolkId: 'test-kinfolk-001' })).toBe(true);
+    expect(isVisibleInTestScope('invoices', 'inv1', { kinfolkId: 'other' })).toBe(false);
+    // No field at all is not a pass: a doc that cannot prove it is in scope is
+    // out of scope.
+    expect(isVisibleInTestScope('invoices', 'inv1', {})).toBe(false);
+  });
+  it('scopes the kinfolk collection by DOC ID, since its id IS the tribe id', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isVisibleInTestScope('kinfolk', 'test-kinfolk-001', {})).toBe(true);
+    expect(isVisibleInTestScope('kinfolk', 'another-tribe', {})).toBe(false);
+  });
+  it('honours the one collection whose household FK is spelled kinfolk_id', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isVisibleInTestScope('generated_drafts', 'd1', { kinfolk_id: 'test-kinfolk-001' })).toBe(true);
+    expect(isVisibleInTestScope('generated_drafts', 'd1', { kinfolkId: 'test-kinfolk-001' })).toBe(false);
+  });
+  it('leaves a collection with no scope field alone rather than guessing one', () => {
+    setTestScope('test-kinfolk-001');
+    expect(isVisibleInTestScope('kin_care_reports_unscoped_example', 'x', {})).toBe(true);
   });
 });

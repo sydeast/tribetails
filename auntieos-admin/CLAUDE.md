@@ -84,41 +84,23 @@ That path is this tree's only. The Kinfolk portal keeps its own mockups in
 `mytribe/ui-ideas/`; see `mytribe/CLAUDE.md`. A portal screen is never answered
 from here.
 
-`visual/mockups/` is Playwright output rendered from the mockups at some past
-moment. It is never itself a design source. On 2026-08-01 the operator deleted it
-along with `visual/baselines/`, because both held the pre-ruling concept round and
-captures of the superseded Compose app, and agents kept building from them. The
-harness stays; `web/visual/manifest.json` now lists only screens whose mockup is
-live, with the withdrawn ones under `pendingRemock`.
+`visual/` is gone, and so is everything that wrote to it. On 2026-08-18 the
+operator ruled: "honestly I dont trust the visual goldens. I want them gone and
+whatever is creating them. no more goldens until we are where we need to be in
+development." That removed the committed golden PNGs on all four surfaces, the
+`web/visual/` harness (`baseline.mjs`, `approvals.json`, the capture scripts),
+the react capture spec, the Compose and Android screenshot tests, and the CI
+gate that compared them.
 
-`visual/baselines/` is populated again and the new contents are trustworthy.
-Commit `6bd585c`, the same day, added a fourth capture surface, `react`, and
-recorded 19 goldens under `visual/baselines/react/` from captures in
-`visual/react/`. Those photograph the React admin that auntie.tribetails.com has
-served since 2026-07-20, pinned deterministic (reduced motion, fixed clock, fixed
-timezone and locale, every non-localhost request aborted) and byte-identical
-across four runs. `web/visual/baseline.mjs:31` carries all four surfaces.
+SO THERE IS NO PICTURE OF THE SHIPPED ADMIN IN THIS REPO. Do not go looking for
+one, and do not re-create one. If a task needs to know what a screen looks like
+today, run it (`npm run dev`) or read the component. What a screen SHOULD look
+like still comes from `ui-ideas/`, which is now the only visual source of any
+kind. Appearance regressions are caught by the real-browser e2e specs and by
+review, not by a byte comparison.
 
-The determinism still holds (re-proved 2026-08-09: three consecutive captures,
-one sha256 each, eighteen of nineteen screens at 0.000%). ONE GOLDEN IS OUT OF
-DATE, which is a different thing and reads the same from a dirty `git status`.
-`visual/react/invoice-detail.png` and `visual/baselines/react/invoice-detail.png`
-both photograph the invoice overlay as it was before `a2486f0` made the ledger
-tables scroll inside their own box (`src/components/InvoiceLedger.css:132-136`),
-so every capture since then overwrites them with the current, correct rendering
-and looks like a flake. It is not one. Until an operator either approves the new
-picture (`node web/visual/baseline.mjs update react`, moving `visual/react/` and
-`visual/baselines/react/` together) or changes the CSS back, expect exactly that
-one file to be modified after a capture run, and read a diff on any OTHER screen
-as a real regression. Nobody was told sooner because
-`npm run visual:react:verify` could not run at all until `pngjs` and
-`pixelmatch` were declared in `package.json`.
-
-That changes what the goldens are good for, not what they are. `visual/react/`
-answers "what does the shipped admin look like today", which is a regression
-question. What a screen SHOULD look like comes from `ui-ideas/`, which is now
-the only source. `visual/web/`, `visual/desktop/` and `visual/android/` remain captures
-of the superseded Compose app and answer nothing.
+Do not reintroduce a golden system, a screenshot baseline or a pixel-diff CI job
+without an explicit operator instruction. The ruling is standing, not a pause.
 
 A screen with no live mockup does not get one invented. It waits for the operator
 re-mock, tracked in `docs/punchlists/PUNCHLIST_2026-07-31-remaining.md` (F1 to F5).

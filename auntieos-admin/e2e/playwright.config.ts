@@ -24,23 +24,7 @@ const PORT = 5174; // matches vite.config.ts's dev port
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 /**
- * The react VISUAL surface is opt-in, and the gate is not a convenience.
- *
- * Capture rewrites 20 git-tracked PNGs under `visual/react/`. The runbook's
- * standing complaint about the desktop surface is that `DesktopScreenshotTest`
- * is an ordinary member of `jvmTest` and so re-captures everything as a side
- * effect of an unrelated gradle run. Registering the project only when
- * `VISUAL_CAPTURE=1` means `npm run e2e` can never do that here, and the spec
- * file simply matches no project the rest of the time.
- *
- * It also swaps the seed. `seed.visual.ts` layers extra fixed-date rows on top
- * of `seed.ts` so the screenshots have content; the ordinary suite keeps the
- * exact database it has always had, counts included.
- */
-const CAPTURING_VISUALS = process.env.VISUAL_CAPTURE === '1';
-
-/**
- * Spec selection is a default plus two named exceptions, not an allowlist.
+ * Spec selection is a default plus one named exception, not an allowlist.
  *
  * It used to be an allowlist: every project named its files in one regex, so a
  * spec nobody remembered to add was collected by NO project and the suite
@@ -53,7 +37,7 @@ const CAPTURING_VISUALS = process.env.VISUAL_CAPTURE === '1';
  * to collide over. `auth.setup.ts` is not a `.spec.ts`, so the default cannot
  * swallow it.
  *
- * The exceptions are enumerated here and nowhere else, because being in the
+ * The exception is enumerated here and nowhere else, because being in the
  * wrong project is worse than the problem this fixes: a signed-out spec that
  * inherits an operator session, or an operator spec that runs without one,
  * fails or passes for reasons that have nothing to do with what it asserts.
@@ -67,20 +51,11 @@ const CAPTURING_VISUALS = process.env.VISUAL_CAPTURE === '1';
  */
 const SIGNED_OUT_SPECS = ['typography', 'cascade', 'signin'];
 
-/**
- * The one spec deliberately outside the ordinary run, excluded here in writing
- * rather than by nobody having named it. Capture rewrites 20 tracked PNGs, so
- * it runs only in the `visual` project under `VISUAL_CAPTURE=1`. Without this
- * entry the default above would pull it into `npm run e2e`.
- */
-const CAPTURE_ONLY_SPECS = ['visual.capture'];
-
 /** Anchored: `signin` must not also claim a future `admin-signin.spec.ts`. */
 const specsNamed = (names: string[]) =>
   new RegExp(`(^|/)(${names.map((n) => n.replace(/\./g, '\\.')).join('|')})\\.spec\\.ts$`);
 
 const SIGNED_OUT_MATCH = specsNamed(SIGNED_OUT_SPECS);
-const CAPTURE_ONLY_MATCH = specsNamed(CAPTURE_ONLY_SPECS);
 
 export default defineConfig({
   testDir: '.',
@@ -96,7 +71,7 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   reporter: process.env.CI === undefined ? [['list']] : [['list'], ['html', { open: 'never' }]],
-  globalSetup: CAPTURING_VISUALS ? './seed.visual.ts' : './seed.ts',
+  globalSetup: './seed.ts',
 
   use: {
     baseURL: BASE_URL,
@@ -117,28 +92,15 @@ export default defineConfig({
     },
     {
       name: 'operator',
-      // The default. Everything under `e2e/` that is not one of the two named
-      // exceptions above runs here, with a session.
+      // The default. Everything under `e2e/` that the signed-out project does
+      // not claim runs here, with a session.
       testMatch: /\.spec\.ts$/,
-      // Both exclusions are the SAME constants the other projects match on, so
-      // the two halves cannot drift into a spec that runs twice or not at all.
-      testIgnore: [SIGNED_OUT_MATCH, CAPTURE_ONLY_MATCH],
+      // The exclusion is the SAME constant `signed-out` matches on, so the two
+      // halves cannot drift into a spec that runs twice or not at all.
+      testIgnore: [SIGNED_OUT_MATCH],
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
     },
-    // Capture-only, and only when asked for. Viewport, scale, timezone, locale
-    // and reduced motion are set by the spec's own `test.use`, next to the
-    // reasons for each.
-    ...(CAPTURING_VISUALS
-      ? [
-          {
-            name: 'visual',
-            testMatch: CAPTURE_ONLY_MATCH,
-            dependencies: ['setup'],
-            use: { ...devices['Desktop Chrome'], storageState: './e2e/.auth/operator.json' },
-          },
-        ]
-      : []),
   ],
 
   webServer: {
