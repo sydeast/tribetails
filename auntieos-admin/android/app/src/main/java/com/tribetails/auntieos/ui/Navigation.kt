@@ -71,6 +71,9 @@ import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.util.CallEventStore
 import com.tribetails.auntieos.util.MessageStore
 import com.tribetails.auntieos.util.VoicemailStore
+import com.tribetails.auntieos.session.SessionHealthMonitor
+import com.tribetails.auntieos.session.SessionNotice
+import com.tribetails.auntieos.session.sessionHealthNotice
 import com.tribetails.auntieos.voice.VoiceRegistrationNotice
 import com.tribetails.auntieos.voice.VoiceTokenManager
 import com.tribetails.auntieos.voice.voiceRegistrationNotice
@@ -495,6 +498,54 @@ private fun VoiceRegistrationBanner(notice: VoiceRegistrationNotice) {
     }
 }
 
+/**
+ * Says so when this session can no longer renew its own sign-in (#454).
+ *
+ * Shell level, beside [TestModeBanner] and [VoiceRegistrationBanner], for the
+ * same reason both of those are: the fact is true of the whole app rather than
+ * of a screen. It is also the only place it CAN be told, because the failure it
+ * reports otherwise arrives as an unrelated-looking refusal on whichever screen
+ * the operator happened to be using.
+ *
+ * The "Sign in again" button appears only when retrying cannot help. While the
+ * network is merely refusing a renewal there is nothing for the operator to
+ * press, and offering a sign-out then would turn a blip they can wait out into
+ * a re-authentication they did not need.
+ */
+@Composable
+private fun SessionHealthBanner(notice: SessionNotice, onReauth: () -> Unit) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        com.tribetails.auntieos.ui.components.AuntieBanner(
+            tone = if (notice.reauth) {
+                com.tribetails.auntieos.ui.components.AuntieBannerTone.Error
+            } else {
+                com.tribetails.auntieos.ui.components.AuntieBannerTone.Warning
+            },
+            title = notice.title,
+            icon = Lucide.ShieldAlert,
+            trailing = if (notice.reauth) {
+                {
+                    TextButton(onClick = onReauth) {
+                        Text(
+                            text = "Sign in again",
+                            style = AuntieTheme.typography.labelMedium,
+                            color = AuntieTheme.colors.error,
+                        )
+                    }
+                }
+            } else {
+                null
+            },
+        ) {
+            Text(
+                text = notice.detail,
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
+    }
+}
+
 @Composable
 private fun AuthenticatedNavHost(
     startOnCalls: Boolean,
@@ -587,6 +638,12 @@ private fun AuthenticatedNavHost(
     // while the consequence was inbound business calls that never arrived.
     val voiceState by VoiceTokenManager.state.collectAsState()
 
+    // #454: the first consumer SessionHealthMonitor.state has. Before it, a
+    // session that could not renew its ID token said nothing on this surface
+    // either, and turned into permission failures nobody could account for.
+    val sessionHealth by SessionHealthMonitor.state.collectAsState()
+    val shellScope = rememberCoroutineScope()
+
     CompositionLocalProvider(LocalFeatureFlags provides flags) {
     Box(modifier = Modifier.fillMaxSize().background(AuntieTheme.colors.background)) {
     Column(
@@ -605,6 +662,15 @@ private fun AuthenticatedNavHost(
                 },
                 onBell        = { navController.navigate(Screen.AdminNotifications.route) { launchSingleTop = true } },
                 onOpenSearch  = { searchOpen = true },
+            )
+        }
+        // First of the shell banners: a session that cannot renew its sign-in
+        // affects every screen and every save, so it outranks a standing fact
+        // about which account is in use or whether this phone can ring.
+        sessionHealthNotice(sessionHealth)?.let {
+            SessionHealthBanner(
+                notice = it,
+                onReauth = { shellScope.launch { app.repository.signOut() } },
             )
         }
         if (testMode.active) {

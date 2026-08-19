@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { allowIntoApp, testModeFromClaim } from './gate';
 import { setTestScope } from './testScope';
 import { useAuth } from './auth';
+import { reportError } from './sentry';
 
 /**
  * The admin GATE decision, derived from a signed-in user's custom claims.
@@ -52,6 +53,15 @@ export async function resolveAccess(user: User, forceRefresh = false): Promise<A
 /**
  * Reactive access for components (e.g. the shell's "Test admin, sandbox" banner).
  * Null while auth is loading or resolving; a concrete AdminAccess once known.
+ *
+ * A REJECTION LEAVES IT NULL, ON PURPOSE (#454). `getIdTokenResult` mints a
+ * token, so a refresh outage rejects here. Before this catch existed that was
+ * an unhandled promise rejection and access simply stayed null forever with
+ * nothing said. Null is still the right answer — it means "not resolved yet",
+ * which is true — and mapping the failure to `denied` would be worse: a few
+ * seconds of bad network would read to every caller as this operator not
+ * being an admin. lib/sessionHealth.ts is what tells the operator, and the
+ * report below is what tells us.
  */
 export function useAdminAccess(): AdminAccess | null {
   const state = useAuth();
@@ -59,9 +69,14 @@ export function useAdminAccess(): AdminAccess | null {
   useEffect(() => {
     let live = true;
     if (state.status === 'signedIn') {
-      void resolveAccess(state.user).then((a) => {
-        if (live) setAccess(a);
-      });
+      void resolveAccess(state.user)
+        .then((a) => {
+          if (live) setAccess(a);
+        })
+        .catch((err: unknown) => {
+          console.warn('Admin access unresolved: could not read the ID token.', err);
+          reportError(err, 'useAdminAccess');
+        });
     } else {
       setAccess(null);
     }

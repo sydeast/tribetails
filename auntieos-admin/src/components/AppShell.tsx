@@ -14,6 +14,7 @@ import { profileDisplayName, profileInitials } from '../lib/accountFormat';
 import { NavGlyph } from './NavGlyphs';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
+import { SessionBanner } from './SessionBanner';
 
 const GROUP_ORDER: NavGroup[] = ['den', 'careOps', 'more'];
 
@@ -427,6 +428,11 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
           </Link>
           <GhostButton label="Sign out" onClick={() => void signOut()} />
         </header>
+
+        {/* Above the sandbox notice: a session that cannot renew its sign-in
+            affects every screen and every save, so it outranks a standing fact
+            about which account is in use. See lib/sessionHealth.ts (#454). */}
+        <SessionBanner />
 
         {access.status === 'testAdmin' ? (
           <Banner tone="warning" title="Sandbox account">

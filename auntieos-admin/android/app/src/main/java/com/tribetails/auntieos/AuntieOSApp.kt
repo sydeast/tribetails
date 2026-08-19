@@ -19,6 +19,7 @@ import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.baseUrlFlow
 import com.tribetails.auntieos.util.saveBaseUrl
+import com.tribetails.auntieos.session.SessionHealthMonitor
 import com.tribetails.auntieos.voice.VoiceRegistrationCoordinator
 import com.tribetails.auntieos.voice.VoiceTokenManager
 import io.sentry.android.core.SentryAndroid
@@ -199,10 +200,13 @@ class AuntieOSApp : Application() {
         } else {
             try {
                 VoiceTokenManager.initialize(this, repository, appScope)
-                voiceRegistration.start(
-                    scope = appScope,
-                    sessionUids = repository.authStateFlow().map { it?.uid },
-                )
+                val sessionUids = repository.authStateFlow().map { it?.uid }
+                voiceRegistration.start(scope = appScope, sessionUids = sessionUids)
+                // #454: watch whether the signed-in session can still renew its
+                // ID token. Started from the same auth-state flow and skipped
+                // under Robolectric for the same reasons as the block above:
+                // it is a process-wide object holding a long-lived collector.
+                SessionHealthMonitor.start(scope = appScope, sessionUids = sessionUids)
             } catch (e: Exception) {
                 AuntieLog.e("Failed to initialize voice registration", e)
             }
