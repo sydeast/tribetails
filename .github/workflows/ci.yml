@@ -645,13 +645,13 @@ jobs:
     name: Portal shared (jvm + android unit)
     needs: changes
     if: needs.changes.outputs.mytribeGradle == 'true' || github.event_name == 'workflow_dispatch'
-    # Raised from 15 with the testDebugUnitTest step below (issue #473). Adding
-    # that step makes this the first job to build the mytribe ANDROID target at
-    # all, which is most of the cost: measured 3.5 min for :jvmTest and 17.5 min
-    # for a cold testDebugUnitTest locally, against 15 min for the whole job
-    # before. 40 leaves room for a GitHub runner being slower than the machine
-    # those were measured on.
-    timeout-minutes: 40
+    # Raised from 15 with the testDebugUnitTest step below (issue #473), which
+    # makes this the first job to build the mytribe ANDROID target at all.
+    # Measured on run 32223068657, the first one to carry both steps: 2m15s for
+    # :jvmTest and 2m15s for testDebugUnitTest, 4m44s for the whole job. 20 is
+    # roughly four times that, which is the headroom the old ceiling gave the
+    # jvm-only job.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     defaults:
       run:
