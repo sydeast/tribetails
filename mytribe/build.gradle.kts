@@ -93,9 +93,41 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
-            implementation(compose.uiTest)
         }
+        // composeUiTest = the tests that need a running Compose host, kept OUT of
+        // commonTest so the Android unit-test variant never collects them.
+        //
+        // Issue #473: `./gradlew testDebugUnitTest` failed 143 of 524 on a clean
+        // main, every one of them the same NullPointerException out of
+        // androidx.compose.ui.test.RobolectricIdlingStrategy, where
+        // `Build.FINGERPRINT` is null because the Android unit-test variant runs
+        // against the stub android.jar. Those tests could not pass there and were
+        // verifying nothing; the other 381 ran fine.
+        //
+        // Robolectric is the obvious answer and it does not work here. Compose's
+        // `runComposeUiTest` launches `androidx.activity.ComponentActivity` through
+        // ActivityScenario, so that activity has to be in the manifest Robolectric
+        // reads. Robolectric reads the binary manifest inside
+        // `apk_for_local_test`, and AGP builds that one from the MAIN manifest, not
+        // the merged unit-test manifest, so the declaration that
+        // `androidx.compose.ui:ui-test-manifest` contributes never arrives, and the
+        // launch dies with "Unable to resolve activity". Verified on this branch:
+        // adding robolectric 4.16.1 + ui-test-manifest 1.10.1 gets past
+        // FINGERPRINT and straight into that. The only way through would be to
+        // declare a test-only activity in the app's shipping AndroidManifest, which
+        // is a worse trade than this source set.
+        //
+        // These tests are NOT skipped. Every one of them runs, unchanged, under
+        // `:jvmTest`, the task that counts for this module. See CLAUDE.md.
+        val composeUiTest by creating {
+            dependsOn(commonTest.get())
+            dependencies {
+                @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+                implementation(compose.uiTest)
+            }
+        }
+        jvmTest.get().dependsOn(composeUiTest)
+        jsTest.get().dependsOn(composeUiTest)
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             // Ktor client + JSON for Firebase REST (Auth + Firestore).

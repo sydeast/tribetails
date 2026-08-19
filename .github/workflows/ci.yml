@@ -642,10 +642,16 @@ jobs:
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
           fi
   mytribe-gradle:
-    name: Portal shared (jvm)
+    name: Portal shared (jvm + android unit)
     needs: changes
     if: needs.changes.outputs.mytribeGradle == 'true' || github.event_name == 'workflow_dispatch'
-    timeout-minutes: 15
+    # Raised from 15 with the testDebugUnitTest step below (issue #473), which
+    # makes this the first job to build the mytribe ANDROID target at all.
+    # Measured on run 32223068657, the first one to carry both steps: 2m15s for
+    # :jvmTest and 2m15s for testDebugUnitTest, 4m44s for the whole job. 20 is
+    # roughly four times that, which is the headroom the old ceiling gave the
+    # jvm-only job.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -659,7 +665,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+      # The authoritative task for mytribe/src: it runs commonTest and the
+      # Compose UI tests in composeUiTest. See mytribe/CLAUDE.md.
       - run: ./gradlew :jvmTest --no-daemon
+      # The Android unit-test variant. Nothing ran it until issue #473, by which
+      # point it was failing 143 of its 524 tests on a clean main. It passes
+      # now, and it only stays passing if something runs it.
+      - run: ./gradlew testDebugUnitTest --no-daemon
   # composeApp builds the wasm admin and the desktop (jvm) app, and per
   # auntieos-admin/CLAUDE.md both are off the delivery path by owner ruling:
   # the wasm admin is superseded by src/, and desktop parity is paused. No
