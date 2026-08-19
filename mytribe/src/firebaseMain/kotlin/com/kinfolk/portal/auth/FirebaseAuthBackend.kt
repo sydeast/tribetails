@@ -85,6 +85,14 @@ class FirebaseAuthBackend : AuthBackend {
         // forceRefresh=true bypasses the cached token so a just-changed custom
         // claim (O-5's setActiveTribe) is reflected immediately rather than
         // waiting up to an hour for the SDK's normal refresh cycle.
-        auth.currentUser?.getIdToken(true)
+        //
+        // #494: the `?.` used to swallow the one case worth knowing about. With
+        // no current user nothing is minted, and the caller was told the refresh
+        // had happened — so an invitee who really had verified their address got
+        // refused a second time by the stale token, and nothing anywhere named
+        // the reason. Saying so lets ClaimInviteScreen put a real sentence on
+        // the screen instead.
+        val user = auth.currentUser ?: error("No signed-in user to refresh a token for")
+        user.getIdToken(true)
     }
 }
