@@ -58,3 +58,58 @@ fun clockTime(iso: String?): String? {
     val amPm = if (local.hour >= 12) "PM" else "AM"
     return "$hour12:$minute $amPm"
 }
+
+private val WEEKDAY_ABBREV = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+private val MONTH_ABBREV =
+    listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+/**
+ * "Mon, 8:00 AM" in the caller's own time zone. Empty string on a null
+ * timestamp, never a fabricated time.
+ *
+ * Mirrors `weekdayTime` in mytribe/web/src/lib/portalFormat.ts, so a proposed
+ * visit time reads the same on both clients. [relativeTime] answers a
+ * different question ("in 2d") and is wrong for a time a household is being
+ * asked to check.
+ */
+fun weekdayTime(epochMillis: Long?, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
+    if (epochMillis == null) return ""
+    val local = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(timeZone)
+    val hour12 = when (val h = local.hour % 12) {
+        0 -> 12
+        else -> h
+    }
+    val minute = local.minute.toString().padStart(2, '0')
+    val amPm = if (local.hour >= 12) "PM" else "AM"
+    // kotlinx-datetime counts the ISO week from Monday; the web list counts
+    // from Sunday. Both name the same day, and WEEKDAY_ABBREV is ordered to
+    // match the ordinal it is indexed with.
+    val weekday = WEEKDAY_ABBREV[local.dayOfWeek.ordinal]
+    return "$weekday, $hour12:$minute $amPm"
+}
+
+/**
+ * "Today" / "Yesterday" / "3 days ago", falling back to "Mar 14" past a week.
+ * Empty string on a null timestamp.
+ *
+ * Mirrors `relativeDay` in mytribe/web/src/lib/portalFormat.ts, which is what
+ * the web Gallery captions a photo with when its KinTale carries no title.
+ * Unlike [relativeTime] this counts whole calendar days, so a photo sent this
+ * morning reads "Today" rather than "7h ago".
+ */
+fun relativeDay(
+    epochMillis: Long?,
+    nowMillis: Long = Clock.System.now().toEpochMilliseconds(),
+    timeZone: TimeZone = TimeZone.currentSystemDefault(),
+): String {
+    if (epochMillis == null) return ""
+    val then = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(timeZone).date
+    val today = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).date
+    val days = today.toEpochDays() - then.toEpochDays()
+    return when {
+        days <= 0L -> "Today"
+        days == 1L -> "Yesterday"
+        days < 7L -> "$days days ago"
+        else -> "${MONTH_ABBREV[then.month.ordinal]} ${then.day}"
+    }
+}

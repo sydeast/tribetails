@@ -1111,6 +1111,44 @@ class PortalApi(private val fns: FunctionsClient) {
         )
     }
 
+    /**
+     * Proposes a new time for one KinCare. Like the cancellation ask, this is
+     * an ASK: the server records the proposed window and a pending flag, and
+     * the visit keeps its own time and status until the office rules on it.
+     * `admin/rescheduleBooking` is the only thing that moves a visit and stays
+     * admin-gated.
+     *
+     * No end time is sent. The server carries the visit's current duration
+     * over to the proposed start, which is what a household moving a 30-minute
+     * drop-in to a different hour means, and is one fewer control on the
+     * screen. The web portal makes the same call the same way.
+     *
+     * Throws fail-loud, and the server writes those messages for a household
+     * to read: a past time comes back as invalid-argument, and a second ask
+     * while one is pending comes back as already-exists naming the pending one.
+     */
+    suspend fun requestBookingReschedule(
+        batchId: String,
+        visitId: String,
+        proposedStartTimeMs: Long,
+        reason: String? = null,
+        kinfolkId: String? = null,
+    ): RescheduleRequestResult {
+        val raw = fns.call("requestBookingReschedule", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("batchId", batchId)
+            put("visitId", visitId)
+            put("proposedStartTimeMs", proposedStartTimeMs)
+            reason?.trim()?.takeIf { it.isNotEmpty() }?.let { put("reason", it) }
+        })
+        return RescheduleRequestResult(
+            ok = raw["ok"]?.jsonPrimitive?.booleanOrNull ?: false,
+            visitId = raw["visitId"]?.jsonPrimitive?.contentOrNull ?: visitId,
+            proposedStartTimeMs = raw["proposedStartTimeMs"]?.jsonPrimitive?.longOrNull ?: proposedStartTimeMs,
+            proposedEndTimeMs = raw["proposedEndTimeMs"]?.jsonPrimitive?.longOrNull,
+        )
+    }
+
     // -- Message Auntie (16.4): two-way kinfolk<->auntie conversation thread --
     /**
      * Sends a message from this kinfolk to the auntie. The server resolves the
@@ -1326,6 +1364,60 @@ class PortalApi(private val fns: FunctionsClient) {
         }.orEmpty()
     }
 
+    /**
+     * One page of the household's photo archive, for the Gallery screen.
+     *
+     * [before] is the previous page's `nextBefore` (the last tale's sent time),
+     * the same opaque cursor `getMyKinTales` uses, and [limit] counts TALES,
+     * not photos: a tale can carry twenty pictures or none. Portraits arrive on
+     * the first page only, so passing [before] returns an empty portrait list.
+     *
+     * A photo entry with no id or no url is skipped rather than surfaced as a
+     * blank tile, the same tolerance the KinTale `thumbs` decode applies.
+     */
+    suspend fun getMyKinPhotos(
+        kinfolkId: String? = null,
+        limit: Int? = null,
+        before: Long? = null,
+    ): KinPhotosResult {
+        val payload: JsonObject? = if (kinfolkId == null && limit == null && before == null) null
+        else buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            limit?.let { put("limit", it) }
+            before?.let { put("before", it) }
+        }
+        val raw = fns.call("getMyKinPhotos", payload)
+        val photos = (raw["photos"] as? JsonArray)?.mapNotNull { el ->
+            val o = el.jsonObject
+            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val url = o["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            KinPhoto(
+                id = id,
+                url = url,
+                contentType = o["contentType"]?.jsonPrimitive?.contentOrNull,
+                taleId = o["taleId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                taleTitle = o["taleTitle"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                takenAtMs = o["takenAtMs"]?.jsonPrimitive?.longOrNull,
+            )
+        }.orEmpty()
+        val portraits = (raw["portraits"] as? JsonArray)?.mapNotNull { el ->
+            val o = el.jsonObject
+            val kinId = o["kinId"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val url = o["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            KinPortrait(
+                kinId = kinId,
+                kinName = o["kinName"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                url = url,
+            )
+        }.orEmpty()
+        return KinPhotosResult(
+            photos = photos,
+            portraits = portraits,
+            hasMore = raw["hasMore"]?.jsonPrimitive?.booleanOrNull ?: false,
+            nextBefore = raw["nextBefore"]?.jsonPrimitive?.longOrNull,
+        )
+    }
+
     // -- Helpers --
     private fun decodeBooking(o: JsonObject): Booking = Booking(
         id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("booking: missing id"),
@@ -1359,7 +1451,25 @@ class PortalApi(private val fns: FunctionsClient) {
         sourceBookingId = o["sourceBookingId"]?.jsonPrimitive?.contentOrNull,
         sessionId = o["sessionId"]?.jsonPrimitive?.contentOrNull,
         cancelRequested = o["cancelRequested"]?.jsonPrimitive?.booleanOrNull ?: false,
+        rescheduleRequestStatus = decodeRescheduleStatus(o["rescheduleRequestStatus"]?.jsonPrimitive?.contentOrNull),
+        rescheduleRequestedStartTimeMs = o["rescheduleRequestedStartTimeMs"]?.jsonPrimitive?.longOrNull,
+        rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,
+        rescheduleRequestReason = o["rescheduleRequestReason"]?.jsonPrimitive?.contentOrNull,
+        rescheduleResponseNote = o["rescheduleResponseNote"]?.jsonPrimitive?.contentOrNull,
     )
+
+    /**
+     * Absent, null, or anything this client does not model reads as "never
+     * asked". An older deployed getMyBookings that predates the reschedule ask
+     * sends no such field at all, and that has to decode as no ask rather than
+     * as a crash.
+     */
+    private fun decodeRescheduleStatus(raw: String?): RescheduleRequestStatus? = when (raw) {
+        "pending" -> RescheduleRequestStatus.Pending
+        "accepted" -> RescheduleRequestStatus.Accepted
+        "declined" -> RescheduleRequestStatus.Declined
+        else -> null
+    }
 
     private fun decodeEnvelopeStatus(raw: String?): EnvelopeStatus = when (raw) {
         "partiallyConfirmed" -> EnvelopeStatus.PartiallyConfirmed

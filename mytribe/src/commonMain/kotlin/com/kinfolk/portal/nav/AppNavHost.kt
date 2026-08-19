@@ -34,6 +34,7 @@ import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeSummary
 import com.kinfolk.portal.screens.account.AccountSettingsScreen
 import com.kinfolk.portal.screens.claim.ClaimInviteScreen
+import com.kinfolk.portal.screens.gallery.GalleryScreen
 import com.kinfolk.portal.screens.home.HomeScreen
 import com.kinfolk.portal.screens.invoices.InvoiceDetailScreen
 import com.kinfolk.portal.screens.invoices.InvoicesScreen
@@ -288,6 +289,20 @@ fun AppNavHost(
                             onEditProfile = { navController.navigate(TribeEditRoute) },
                             onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onManageKin = { navController.navigate(KinRoute) { launchSingleTop = true } },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
+                            onOpenGallery = { navController.navigate(GalleryRoute) },
+                        )
+                    }
+                }
+            }
+            composable<GalleryRoute> {
+                Shell { mod ->
+                    Box(mod) {
+                        GalleryScreen(
+                            kinfolkId = kinId,
+                            portalApi = portalApi,
+                            onBack = { navController.popBackStack() },
+                            onOpenKinDetail = { kinId2 -> navController.navigate(KinDetailRoute(kinId2)) },
                             onOpenKinTales = { navController.navigate(KinTalesRoute) { launchSingleTop = true } },
                         )
                     }

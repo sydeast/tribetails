@@ -62,6 +62,7 @@ fun TribeHubScreen(
     onOpenKinDetail: (String) -> Unit,
     onManageKin: () -> Unit,
     onOpenKinTales: () -> Unit,
+    onOpenGallery: () -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
@@ -106,10 +107,12 @@ fun TribeHubScreen(
             }
         }
 
-        // ---- Gallery (Kin faces; full photo stories live in KinTales) ----
+        // ---- Gallery (Kin faces here; "All photos" opens the whole archive) ----
+        // The strip is the roster's portraits, so it hides when no Kin has a
+        // photo on file. Same gating the web hub applies to the same card.
         val withPhotos = kin?.filter { !it.photoUrl.isNullOrBlank() }.orEmpty()
         if (withPhotos.isNotEmpty()) {
-            SectionCard(title = "Gallery", linkText = "All photos", onLink = onOpenKinTales) {
+            SectionCard(title = "Gallery", linkText = "All photos", onLink = onOpenGallery) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                     items(withPhotos) { k ->
                         KinfolkAvatar(

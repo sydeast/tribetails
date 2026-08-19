@@ -41,6 +41,10 @@ import kotlinx.serialization.Serializable
 @Serializable data object NotificationsRoute
 
 // ---- Detail destinations (lifted out of per-screen state) ----
+// The household's whole photo archive (#469), reached from the Tribe hub's
+// "All photos". A drill-in rather than a tab, the way the web portal's
+// /gallery is one link from /tribe.
+@Serializable data object GalleryRoute
 @Serializable data class KinDetailRoute(val kinId: String)
 @Serializable data class KinAddEditRoute(val kinId: String? = null) // null = add new
 @Serializable data class InvoiceDetailRoute(val invoiceId: String)
