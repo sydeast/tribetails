@@ -68,8 +68,26 @@ class InvoiceDetailScreenTest {
     fun lineItems_present_rendersCoverageRows() = runComposeUiTest {
         val invoice = openInvoice().copy(
             lineItems = listOf(
-                InvoiceLineItem(sessionId = "s1", label = "Dog Walk", dateIso = "2026-06-01", amountCents = 4500L),
-                InvoiceLineItem(sessionId = "s2", label = "Overnight Stay", dateIso = "2026-06-02", amountCents = 15000L),
+                // Days that are not the invoice's own date, which reads the
+                // same way now that a line's day is formatted rather than
+                // printed raw: two identical labels would make the assertion
+                // below ambiguous rather than wrong.
+                InvoiceLineItem(
+                    sessionId = "s1",
+                    label = "Dog Walk",
+                    dateIso = "2026-06-03",
+                    amountCents = 4500L,
+                    qty = null,
+                    unitCents = null,
+                ),
+                InvoiceLineItem(
+                    sessionId = "s2",
+                    label = "Overnight Stay",
+                    dateIso = "2026-06-04",
+                    amountCents = 15000L,
+                    qty = null,
+                    unitCents = null,
+                ),
             ),
         )
         setThemedContent {
@@ -78,10 +96,64 @@ class InvoiceDetailScreenTest {
         waitForIdle()
         onNodeWithText("What this covers").assertIsDisplayed()
         onNodeWithText("Dog Walk").assertIsDisplayed()
-        onNodeWithText("2026-06-01").assertIsDisplayed()
+        // The DAY, not the stored timestamp (#408).
+        onNodeWithText("Jun 03, 2026").assertIsDisplayed()
         onNodeWithText("\$45.00").assertIsDisplayed()
         onNodeWithText("Overnight Stay").assertIsDisplayed()
         onNodeWithText("\$150.00").assertIsDisplayed()
+    }
+    /**
+     * #408: a line drawn from a visit carries that visit's day, as an ISO
+     * TIMESTAMP rather than a bare day, because the server reads it live off
+     * the visit. The household must see a date, not a machine string.
+     */
+    @Test
+    fun boundLine_rendersTheVisitDayNotTheRawTimestamp() = runComposeUiTest {
+        val invoice = openInvoice().copy(
+            lineItems = listOf(
+                InvoiceLineItem(
+                    sessionId = "s1",
+                    label = "Dog walk, 2026-07-10",
+                    dateIso = "2026-07-10T14:00:00.000Z",
+                    amountCents = 2500L,
+                    qty = 1.0,
+                    unitCents = 2500L,
+                ),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", invoice, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Jul 10, 2026").assertIsDisplayed()
+        onNodeWithText("2026-07-10T14:00:00.000Z").assertDoesNotExist()
+        // A quantity of one is not shown: it would only repeat the amount.
+        onNodeWithText("1 x \$25.00").assertDoesNotExist()
+    }
+    /**
+     * A line billed three times must not read as a bare total. The household is
+     * the party least able to check a figure shown with no working.
+     */
+    @Test
+    fun repeatedLine_showsTheWorkingBehindItsAmount() = runComposeUiTest {
+        val invoice = openInvoice().copy(
+            lineItems = listOf(
+                InvoiceLineItem(
+                    sessionId = "",
+                    label = "Daily visit",
+                    dateIso = null,
+                    amountCents = 6000L,
+                    qty = 3.0,
+                    unitCents = 2000L,
+                ),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", invoice, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("3 x \$20.00").assertIsDisplayed()
+        onNodeWithText("\$60.00").assertIsDisplayed()
     }
 
     @Test

@@ -1580,6 +1580,8 @@ class PortalApi(private val fns: FunctionsClient) {
                         label = li["label"]?.jsonPrimitive?.contentOrNull,
                         dateIso = li["dateIso"]?.jsonPrimitive?.contentOrNull,
                         amountCents = li["amountCents"]?.jsonPrimitive?.longOrNull,
+                        qty = li["qty"]?.jsonPrimitive?.doubleOrNull,
+                        unitCents = li["unitCents"]?.jsonPrimitive?.longOrNull,
                     )
                 }
                 ?.takeIf { it.isNotEmpty() },

@@ -37,6 +37,8 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.formatUsd
+import com.kinfolk.portal.util.invoiceDayLabel
+import com.kinfolk.portal.util.invoiceLineUnits
 import com.kinfolk.portal.util.relativeTime
 
 @Composable
@@ -150,8 +152,19 @@ fun InvoiceDetailScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(item.label ?: "Visit", style = type.sansBody)
-                                if (!item.dateIso.isNullOrBlank()) {
-                                    Text(item.dateIso, style = type.sansMeta)
+                                // The DAY the work happened, not the raw
+                                // timestamp the server stores (#408). Every
+                                // invoice built from work carries these now.
+                                val day = invoiceDayLabel(item.dateIso)
+                                if (day.isNotBlank()) {
+                                    Text(day, style = type.sansMeta)
+                                }
+                                // The working behind the amount, when there is
+                                // any: a line billed 3 x $20 must not read as a
+                                // bare $60.
+                                val units = invoiceLineUnits(item.qty, item.unitCents)
+                                if (units.isNotBlank()) {
+                                    Text(units, style = type.sansMeta)
                                 }
                             }
                             item.amountCents?.let { cents ->

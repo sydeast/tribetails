@@ -32,6 +32,10 @@ class InvoiceLineItemsDecodeTest {
                     put("label", "Dog Walk")
                     put("dateIso", "2026-06-01")
                     put("amountCents", 4500L)
+                    // #408: the invoice's OWN lines carry their working, so the
+                    // household can check a total rather than take it on trust.
+                    put("qty", 3.0)
+                    put("unitCents", 1500L)
                 })
                 // Sparse item: every field optional server-side.
                 add(buildJsonObject { put("label", "Overnight Stay") })
@@ -65,9 +69,15 @@ class InvoiceLineItemsDecodeTest {
         assertEquals("Dog Walk", items?.get(0)?.label)
         assertEquals("2026-06-01", items?.get(0)?.dateIso)
         assertEquals(4500L, items?.get(0)?.amountCents)
+        assertEquals(3.0, items?.get(0)?.qty)
+        assertEquals(1500L, items?.get(0)?.unitCents)
         assertEquals("Overnight Stay", items?.get(1)?.label)
         assertNull(items?.get(1)?.sessionId)
         assertNull(items?.get(1)?.amountCents)
+        // A row rebuilt from a visit knows only its total, and says so with
+        // nulls rather than with a fabricated 1 x the amount.
+        assertNull(items?.get(1)?.qty)
+        assertNull(items?.get(1)?.unitCents)
     }
 
     @Test

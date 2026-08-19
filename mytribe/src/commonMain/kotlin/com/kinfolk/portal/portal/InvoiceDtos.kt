@@ -104,10 +104,29 @@ data class Invoice(
 
 /** One covered visit on an invoice. All fields optional server-side. */
 data class InvoiceLineItem(
+    /** The visit this line bills for, or null/'' on a line typed by hand (#408). */
     val sessionId: String?,
     val label: String?,
+    /**
+     * The day the work happened, ISO-8601. Carried by a line drawn from a
+     * visit, read LIVE off that visit by the server, so a corrected visit time
+     * corrects this too. Null on a line with no visit behind it, which has no
+     * date to state.
+     */
     val dateIso: String?,
     val amountCents: Long?,
+    /**
+     * How many units this line bills, and what each one cost. Present on the
+     * invoice's OWN lines; null on a row rebuilt from a visit, which knows only
+     * its total.
+     *
+     * Decoded so the household can check the arithmetic: a line billed 3 x $20
+     * that reads as a bare $60 shows a figure with no working, which is the one
+     * thing a person receiving a bill most wants to see. The web portal has
+     * shown it since the stored lines landed.
+     */
+    val qty: Double?,
+    val unitCents: Long?,
 )
 
 data class InvoicesResult(

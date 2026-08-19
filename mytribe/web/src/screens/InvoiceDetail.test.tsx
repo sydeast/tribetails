@@ -286,6 +286,45 @@ describe('InvoiceDetail line items', () => {
     const rows = document.querySelectorAll('table.items tbody tr');
     expect(rows).toHaveLength(2);
   });
+  /**
+   * #408: an invoice built from work carries STORED lines that are bound to
+   * their visits, so the household's copy names the service AND the day the
+   * work happened. The date is read live off the visit by the server, so a
+   * corrected visit time corrects the bill with it.
+   */
+  it('shows the day behind a stored line that is bound to a visit', async () => {
+    await renderWith({
+      ...OPEN_INVOICE,
+      total: 25,
+      amountDue: 25,
+      lineItems: [
+        {
+          lineId: 'stored:0', source: 'stored', sessionId: 'vis_1',
+          label: 'Dog walk, 2026-07-10', dateIso: '2026-07-10T14:00:00.000Z', amountCents: 2500, qty: 1, unitCents: 2500,
+        },
+      ],
+    });
+    expect(await screen.findByText('Dog walk, 2026-07-10')).toBeInTheDocument();
+    // The DAY, never the stored timestamp.
+    expect(screen.getByText('Jul 10, 2026')).toBeInTheDocument();
+    expect(screen.queryByText('2026-07-10T14:00:00.000Z')).not.toBeInTheDocument();
+  });
+  it('leaves a hand-typed line undated rather than inventing the invoice date for it', async () => {
+    await renderWith({
+      ...OPEN_INVOICE,
+      total: 10,
+      amountDue: 10,
+      lineItems: [
+        {
+          lineId: 'stored:0', source: 'stored', sessionId: '',
+          label: 'Mileage', dateIso: null, amountCents: 1000, qty: 1, unitCents: 1000,
+        },
+      ],
+    });
+    await screen.findByText('Mileage');
+    const cell = document.querySelector('table.items tbody tr td.date');
+    expect(cell?.textContent).toBe('—');
+  });
   it('still renders a legacy session-derived line, dates and all', async () => {
     await renderWith({
       ...OPEN_INVOICE,
