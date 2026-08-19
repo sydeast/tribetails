@@ -52,6 +52,15 @@ export async function submitRatingHandler(
   await ratingRef.set({
     batchId: resolved.batchId,
     visitId: resolved.visitId,
+    // THE VISIT THIS RATING IS ABOUT, under the name the notification pipeline
+    // reads. `onRatingCreate` hands `bookingId` to the dispatcher, whose
+    // `resolveTargetRef` needs it to give the notification a BOOKING target;
+    // without it every rating notification fell through to the household, and
+    // its Open button landed on the household profile rather than the visit
+    // that was rated (issue #389's emitter half). Same value as `visitId` and
+    // as this document's own id, written explicitly so a reader does not have
+    // to already know that the id and the field are the same thing.
+    bookingId: resolved.visitId,
     score: args.score,
     comment: args.comment ? sanitizeRichText(args.comment) || null : null,
     submittedByUid: uid,

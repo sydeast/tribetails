@@ -106,7 +106,20 @@ fun KinCareDetailScreen(
                 if (loading) {
                     AuntieSpinner(modifier = Modifier.size(32.dp), color = AuntieTheme.colors.kinfolkOrange)
                 } else {
-                    Text("Kin Care not found", color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f))
+                    // NAMES THE THIRD READING, which is the one a notification
+                    // produces: a visit that is still REQUESTED has no
+                    // `kin_care_sessions` document at all, because approval is
+                    // what creates one (approveBookingSeriesCore.ts). "Not
+                    // found" on its own sent an operator hunting for a visit
+                    // that is sitting in the incoming-requests queue waiting on
+                    // them. Same sentence the React admin's "Booking
+                    // unavailable" dialog carries.
+                    Text(
+                        "This Kin Care isn't available to open. A visit gets its own record " +
+                            "only once the request is approved, so a request still waiting on " +
+                            "you has none yet. Otherwise it may have been cancelled or removed.",
+                        color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                    )
                 }
             }
             return@AuntieScreenScaffold

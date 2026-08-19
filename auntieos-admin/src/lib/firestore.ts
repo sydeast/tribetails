@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   collection,
+  doc,
   documentId,
   limit as fbLimit,
   onSnapshot,
@@ -12,7 +13,12 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { type Async } from './async';
-import { applyTestScope, isSuppressedInTestMode, DOC_ID_FIELD } from './testScope';
+import {
+  applyTestScope,
+  isSuppressedInTestMode,
+  isVisibleInTestScope,
+  DOC_ID_FIELD,
+} from './testScope';
 
 /** One server-side predicate: [field, op, value]. */
 export type Filter = [string, WhereFilterOp, unknown];
@@ -105,5 +111,100 @@ export function useCollection<T>(spec: CollectionSpec): Async<T[]> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, nonce]);
 
+  return state;
+}
+/**
+ * Subscribe to ONE document by id as `Async<T | null>`, where `null` means the
+ * document is not there for this operator to see.
+ *
+ * WHY THIS EXISTS. A deep link names a record; resolving it by searching the
+ * rows a screen happens to have loaded answers a different question. Invoices
+ * streams one page of one date window (7 days by default), Bookings streams the
+ * 200 newest sessions, so `/invoices?invoiceId=<id>` for a 46-day-old invoice
+ * found nothing and dropped the operator on the list, which is the whole of
+ * issue #389's invoice half. A by-id read does not care what the list shows.
+ *
+ * A SUBSCRIPTION, not a one-shot get, for the same reason `useCollection` is
+ * one: the sheets these ids open host writes (record a payment, approve a
+ * booking), and a frozen copy of the record would disagree with the list behind
+ * it the moment one landed. Reusable across target types by construction: the
+ * path is a parameter, and it shapes nothing (`normalizeInvoice` and friends
+ * stay the caller's job, exactly as they are for a row off `useCollection`).
+ *
+ * THE THREE OUTCOMES, kept apart on purpose (the async.ts rule):
+ *   ready + data    the document, its id merged in as `_id` as rows carry it.
+ *   ready + null    no such document, or not this account's to read. Callers
+ *                   render "no longer available", never a blank sheet.
+ *   error           anything else, WITH a retry (a listener that errors is
+ *                   detached permanently, so recovery re-subscribes).
+ *
+ * `permission-denied` resolves to `null` rather than `error` deliberately. To a
+ * sandbox operator following a link into another tribe's record, "you may not
+ * read this" and "it isn't there" are the same fact and neither is a fault to
+ * report; rendering the raw rules message would also turn the screen into an
+ * existence oracle for documents the account cannot see.
+ */
+export function useDocById<T>(path: string, id: string | null | undefined): Async<T | null> {
+  const [state, setState] = useState<Async<T | null>>({ status: 'loading' });
+  const [nonce, setNonce] = useState(0);
+  const retry = () => setNonce((n) => n + 1);
+  const docId = (id ?? '').trim();
+  useEffect(() => {
+    // No id to resolve is a settled answer, not a pending one: a screen with no
+    // deep link must not sit in `loading` forever waiting for a read that will
+    // never be issued.
+    if (docId === '') {
+      setState({ status: 'ready', data: null });
+      return;
+    }
+    // Same suppression `useCollection` applies, for the same reason: a sandbox
+    // account cannot read these collections at all and they carry no field to
+    // scope by, so the honest answer is "not available here", not a red banner.
+    if (isSuppressedInTestMode(path)) {
+      setState({ status: 'ready', data: null });
+      return;
+    }
+    setState({ status: 'loading' });
+    let ref;
+    try {
+      ref = doc(db, path, docId);
+    } catch (err) {
+      setState({
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Invalid document path.',
+        retry,
+      });
+      return;
+    }
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) {
+          setState({ status: 'ready', data: null });
+          return;
+        }
+        const data = snap.data();
+        // The doc-level half of the sandbox scope `applyTestScope` applies to
+        // queries. Rules deny most cross-tribe reads outright (handled in the
+        // error branch below), but a collection whose rule is broader would
+        // otherwise hand a test admin a record from outside their sandbox.
+        if (!isVisibleInTestScope(path, docId, data)) {
+          setState({ status: 'ready', data: null });
+          return;
+        }
+        setState({ status: 'ready', data: { ...data, _id: snap.id } as T });
+      },
+      (err) => {
+        if (err.code === 'permission-denied') {
+          setState({ status: 'ready', data: null });
+          return;
+        }
+        setState({ status: 'error', message: err.message, retry });
+      },
+    );
+    return unsub;
+    // nonce forces a re-subscribe on retry (see useCollection's note).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, docId, nonce]);
   return state;
 }
