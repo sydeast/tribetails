@@ -459,6 +459,54 @@ fun ScheduleViewScreen(
                 }
             }
 
+            // ── #438 (+ #399 item 2): change requests on visits that already
+            //    exist. Above the stat row and the agenda because it is work
+            //    waiting on a human, not a view of the schedule: a household
+            //    asked to move or cancel a visit and nothing happens until
+            //    someone here answers. Renders nothing when both queues are
+            //    empty, which is most days.
+            state.visitRequestsError?.let { msg ->
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Error,
+                        title = "Change requests",
+                        icon = Lucide.CircleAlert,
+                        onDismiss = { viewModel.clearVisitRequestsError() },
+                    ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                }
+            }
+            state.visitRequestMessage?.let { msg ->
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Success,
+                        title = "Change requests",
+                        icon = Lucide.CircleCheckBig,
+                        onDismiss = { viewModel.clearVisitRequestMessage() },
+                    ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
+                }
+            }
+            if (state.visitRequests.isNotEmpty()) {
+                item {
+                    DenPanel(
+                        title = "Change requests",
+                        subtitle = "Households asked to move or cancel these visits. Accepting writes the change to the schedule and to their portal; declining leaves the visit alone and sends them your reason.",
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            state.visitRequests.forEach { row ->
+                                VisitRequestRowCard(
+                                    row = row,
+                                    inFlight = state.visitRequestKey == row.key,
+                                    actionsLocked = state.visitRequestKey != null,
+                                    onResolve = { decision, note ->
+                                        viewModel.resolveVisitRequest(row, decision, note)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── Stat row: counts mirror the booking sections ──
             item {
                 Row(
@@ -2346,6 +2394,97 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
 // whole series via manageBookingSeries; approving creates the linked sessions
 // server-side so the visits show up on Auntie Time.
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * One row in the change-request queue (#438, #399 item 2).
+ *
+ * Accept is one tap; DECLINE IS NOT, because a decline needs a reason. Tapping
+ * Decline opens the reason field inline rather than firing, so an operator
+ * cannot send a household a "no" with nothing attached, which is what the
+ * server refuses anyway, and finding that out after a round trip is worse.
+ */
+@Composable
+private fun VisitRequestRowCard(
+    row: VisitRequestRow,
+    inFlight: Boolean,
+    actionsLocked: Boolean,
+    onResolve: (decision: String, note: String?) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    var declining by remember(row.key) { mutableStateOf(false) }
+    var note by remember(row.key) { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            AuntieStatusPill(
+                label = row.kindLabel(),
+                tone = if (row is VisitRequestRow.Cancel) AuntieStatusTone.Orange else AuntieStatusTone.Teal,
+            )
+            Text(text = row.title, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+        }
+        if (row.kinNames.isNotBlank()) {
+            Text(text = row.kinNames, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        Text(text = visitRequestWhen(row), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+        row.reason?.takeIf { it.isNotBlank() }?.let {
+            Text(text = it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+
+        if (declining) {
+            AuntieField(
+                value = note,
+                onValueChange = { note = it.take(500) },
+                label = row.declineNoteLabel(),
+                singleLine = false,
+                enabled = !actionsLocked,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton(
+                    label = if (inFlight) "Working…" else "Send the decline",
+                    onClick = { onResolve("decline", note) },
+                    enabled = !actionsLocked && note.isNotBlank(),
+                )
+                GhostButton(
+                    label = "Never mind",
+                    onClick = { declining = false },
+                    enabled = !actionsLocked,
+                )
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrimaryButton(
+                    label = if (inFlight) "Working…" else row.acceptLabel(),
+                    onClick = { onResolve("accept", null) },
+                    enabled = !actionsLocked,
+                )
+                GhostButton(
+                    label = "Decline",
+                    onClick = { declining = true },
+                    enabled = !actionsLocked,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The times on a row. A reschedule shows both windows, because the decision is
+ * about the difference between them; a cancellation shows the visit that would
+ * come off the books.
+ */
+private fun visitRequestWhen(row: VisitRequestRow): String = when (row) {
+    is VisitRequestRow.Cancel -> visitRequestTime(row.dto.startTimeMs)
+    is VisitRequestRow.Reschedule ->
+        "${visitRequestTime(row.dto.currentStartTimeMs)} → ${visitRequestTime(row.dto.proposedStartTimeMs)}"
+}
+
+/** "Not set" rather than an epoch, when the record carries no time. */
+private fun visitRequestTime(ms: Long?): String {
+    if (ms == null) return "Not set"
+    val local = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
+    return local.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d 'at' h:mm a"))
+}
+
 @Composable
 private fun IncomingSeriesRow(
     series: IncomingSeries,

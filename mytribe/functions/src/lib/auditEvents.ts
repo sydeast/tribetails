@@ -183,6 +183,12 @@ export const AUDIT_EVENTS = {
   // APPROVE -> ACCEPTED, REJECT/CANCEL -> REJECTED (android's native
   // enhanced_bookings ids). Applied per-id and audited as one batch action.
   BOOKING_BATCH_ACTION: 'BOOKING_BATCH_ACTION',
+  // #438: an operator ruled on a kinfolk's cancellation ask
+  // (resolveBookingCancellationRequest). Separate from BOOKING_BATCH_ACTION,
+  // which records the office cancelling of its own accord: this one records an
+  // ANSWER to a household that asked, and a decline changes no status at all,
+  // so it would otherwise leave no trace of a decision anyone made.
+  CANCEL_REQUEST_RESOLVED: 'CANCEL_REQUEST_RESOLVED',
   // A3: ONE operator transition on ONE flat `kin_care_sessions` row
   // (transitionBookingStatus callable): APPROVE / REJECT / CANCEL / COMPLETE.
   // These four used to be a bare client `updateDoc` on the session document

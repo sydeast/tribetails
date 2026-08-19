@@ -30,9 +30,21 @@ data class Booking(
     val batchId: String? = null,
     val sourceBookingId: String? = null,
     val sessionId: String? = null,
-    /** True when a kinfolk cancellation ask is pending on this visit. The
-     *  status does NOT change; only the business cancels for real. */
+    /** True when a kinfolk cancellation ask is PENDING on this visit. The
+     *  status does NOT change; only the business cancels for real. Pending, not
+     *  "was ever asked": a declined ask clears this so the household can ask
+     *  again, with [cancelRequestStatus] carrying what happened. */
     val cancelRequested: Boolean = false,
+    /**
+     * Where the kinfolk's cancellation ask stands (#438), or null when this
+     * visit has never had one. The reason and the office's note survive the
+     * decision on purpose, so the screen can say what came back rather than
+     * silently reopening the button.
+     */
+    val cancelRequestStatus: CancelRequestStatus? = null,
+    val cancelRequestReason: String? = null,
+    /** What the office said when it accepted or declined the cancellation. */
+    val cancelResponseNote: String? = null,
     /**
      * Where the kinfolk's ask for a new time stands, or null when this visit
      * has never had one. The proposed window and the office's note survive the
@@ -53,6 +65,14 @@ data class Booking(
  * tolerance the server's own `rescheduleStatusOf` applies on the way out.
  */
 enum class RescheduleRequestStatus { Pending, Accepted, Declined }
+
+/**
+ * The three answers a cancellation ask can be waiting on (#438). Anything else
+ * the server sends decodes to null, which reads as "never asked": the same
+ * tolerance the reschedule status above applies, and the tolerance an older
+ * deployed getMyBookings needs, since it sends no such field at all.
+ */
+enum class CancelRequestStatus { Pending, Accepted, Declined }
 
 /** Result of the requestBookingCancellation callable. alreadyPending=true
  *  means an earlier ask is on file; the UI treats both as the pending state. */

@@ -1545,10 +1545,17 @@ the handler.
 - req `{ kinfolkId?: string, batchId: string, visitId: string, reason?: string }`
 - res `{ ok: true, visitId: string, alreadyPending: boolean }`
 - Vendor-parity (2026-07-02): NOT a status change. Stamps
-  `cancelRequestedAt`/`cancelRequestReason`/`cancelRequestedByUid` on the
-  visit; only the business cancels for real, via `batchUpdateBookings` or
-  `manageBookingSeries`. A second request on an already-pending visit is a
-  no-op (`alreadyPending: true`), not an error.
+  `cancelRequestedAt`/`cancelRequestReason`/`cancelRequestedByUid` plus (since
+  #438) `cancelRequestStatus: 'pending'` on the visit; only the business
+  cancels for real, via `batchUpdateBookings`, `manageBookingSeries`, or
+  `admin/resolveBookingCancellationRequest`. A second request while one is
+  still pending is a no-op (`alreadyPending: true`), not an error.
+- A fresh ask after a DECLINE is allowed, and clears the previous answer
+  (`cancelResponseNote` / `cancelResolvedAt` / `cancelResolvedByUid`), the same
+  way `requestBookingReschedule` clears its own.
+- A request written before #438 carries the stamp and no status. Everything
+  that reads this field treats a bare stamp as pending, because those are the
+  asks that sat unread from 2026-07-02 until #438 built the queue.
 - Only `requested`/`confirmed` visits are cancelable; anything else is
   `failed-precondition`.
 - kinfolk portal only.
@@ -1605,8 +1612,55 @@ the handler.
 - Exists as a callable because the React admin's `useCollection` wraps a single
   `collection(db, path)` and has no collection-group variant (see the note in
   `auntieos-admin/src/api/bookings.ts` reserving an "incoming requests"
-  surface). `auntieos-admin/src/components/RescheduleRequestsSection.tsx` is
-  that surface.
+  surface). `auntieos-admin/src/components/VisitRequestsSection.tsx` is that
+  surface, and it renders the cancellation queue below in the same list.
+
+### resolveBookingCancellationRequest
+- req `{ kinfolkId: string, batchId: string, visitId: string, decision: 'accept' | 'decline', note?: string }`
+- res `{ ok: true, visitId: string, decision: 'accept' | 'decline', status: string | null, sessionUpdated: boolean, rescheduleRequestClosed: boolean }`
+- GATE: `wrapAdminCallable` (admin claim, or the AUNTIE_OPERATOR_UIDS fallback).
+- #438. Until this landed, `cancelRequestedAt` had been written to visits since
+  2026-07-02 with NO admin surface reading it: no queue, no badge, no list. The
+  portal told the household their request was sent and the office never saw it.
+- ACCEPTING CANCELS BOTH RECORDS. The kinCares doc goes to `status: 'cancelled'`
+  and the flat `kin_care_sessions` row to `status: 'CANCELLED'`. Lowercase on
+  the subcollection, uppercase on the flat row, because the two collections
+  genuinely use different status vocabularies (see `batchUpdateBookings`). The
+  mirror id is the visit's own `sessionId` when it carries one, else
+  `vis_{visitId}`, and it is written ONLY when the doc exists (a still-pending
+  request has none). `sessionUpdated` reports which happened. Writing one side
+  of the pair is the trap PR #436 documents: the household and the office then
+  disagree about a visit one of them thinks is cancelled.
+- Accepting also closes any reschedule request still pending on the same visit
+  (`rescheduleRequestClosed`), because `listRescheduleRequests` filters on its
+  own status and would otherwise keep asking an operator to move a visit that
+  no longer happens.
+- A decline REQUIRES a note; `invalid-argument` without one. Declining writes
+  the answer and changes no status, on either record.
+- `failed-precondition` when no ask is waiting. A bare `cancelRequestedAt` with
+  no status IS waiting; those pre-#438 requests are resolvable here.
+- `onBookingsWrite` tells the household the outcome through the catalog:
+  `kincare.booking.cancel` on an accept (the status change reaches it already)
+  and `kincare.cancel.declined` on a decline, which is the only way a decline
+  (a decision that changes nothing) ever reaches them.
+
+### listCancelRequests
+- req `{ limit?: number }` (integer 1..100, default 50)
+- res `{ requests: CancelRequestDto[] }`
+- GATE: `wrapAdminCallable`.
+- A collection-group query over `kinCares` ordered by `cancelRequestedAt`
+  ascending, oldest first. NEEDS THE COLLECTION-GROUP FIELD OVERRIDE declared in
+  `mytribe/firestore.indexes.json`; automatic single-field indexes are
+  collection-scoped only.
+- The resolved rows are filtered OUT IN MEMORY rather than by a `where` clause,
+  and the query reads up to 200 docs to do it. This is deliberate: a request
+  written before #438 has no `cancelRequestStatus` field at all, Firestore has
+  no "field is missing" predicate, and an equality filter would therefore hide
+  exactly the July backlog the queue exists to drain. The scan cap logs a
+  warning when it is reached.
+- Same surface as `listRescheduleRequests`: both queues render as one list in
+  `auntieos-admin/src/components/VisitRequestsSection.tsx`, and the Android
+  admin renders the same pair on its schedule screen.
 ### createMultiDateBookingRequest
 - req: see `src/admin/createMultiDateBookingRequest.ts`'s `export const Args`.
   Mirrors `requestBooking`'s multi-visit shape field for field (`kinfolkId`

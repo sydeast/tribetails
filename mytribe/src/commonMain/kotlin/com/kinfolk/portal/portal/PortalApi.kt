@@ -1451,6 +1451,9 @@ class PortalApi(private val fns: FunctionsClient) {
         sourceBookingId = o["sourceBookingId"]?.jsonPrimitive?.contentOrNull,
         sessionId = o["sessionId"]?.jsonPrimitive?.contentOrNull,
         cancelRequested = o["cancelRequested"]?.jsonPrimitive?.booleanOrNull ?: false,
+        cancelRequestStatus = decodeCancelStatus(o["cancelRequestStatus"]?.jsonPrimitive?.contentOrNull),
+        cancelRequestReason = o["cancelRequestReason"]?.jsonPrimitive?.contentOrNull,
+        cancelResponseNote = o["cancelResponseNote"]?.jsonPrimitive?.contentOrNull,
         rescheduleRequestStatus = decodeRescheduleStatus(o["rescheduleRequestStatus"]?.jsonPrimitive?.contentOrNull),
         rescheduleRequestedStartTimeMs = o["rescheduleRequestedStartTimeMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,
@@ -1468,6 +1471,19 @@ class PortalApi(private val fns: FunctionsClient) {
         "pending" -> RescheduleRequestStatus.Pending
         "accepted" -> RescheduleRequestStatus.Accepted
         "declined" -> RescheduleRequestStatus.Declined
+        else -> null
+    }
+
+    /**
+     * The cancellation ask's state (#438). Same tolerance as the reschedule
+     * decoder above: absent, null, or anything this client does not model reads
+     * as "never asked", because a getMyBookings deployed before #438 sends no
+     * such field.
+     */
+    private fun decodeCancelStatus(raw: String?): CancelRequestStatus? = when (raw) {
+        "pending" -> CancelRequestStatus.Pending
+        "accepted" -> CancelRequestStatus.Accepted
+        "declined" -> CancelRequestStatus.Declined
         else -> null
     }
 

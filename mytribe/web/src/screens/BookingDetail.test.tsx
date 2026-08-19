@@ -76,6 +76,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     sourceBookingId: null,
     sessionId: null,
     cancelRequested: false,
+    cancelRequestStatus: null,
+    cancelRequestReason: null,
+    cancelResponseNote: null,
     rescheduleRequestStatus: null,
     rescheduleRequestedStartTimeMs: null,
     rescheduleRequestedEndTimeMs: null,
@@ -259,12 +262,59 @@ describe('BookingDetail: request cancellation', () => {
     expect(await screen.findByText(/No access\./)).toBeInTheDocument();
   });
 
-  it('shows an "already requested" banner instead of the button when cancelRequested is already true', async () => {
+  it('shows the waiting state instead of the button while an ask is pending', async () => {
     mocks.getMyBookings.mockResolvedValue(
-      bookingsResult({ upcoming: [booking({ status: 'confirmed', cancelRequested: true })] }),
+      bookingsResult({
+        upcoming: [
+          booking({ status: 'confirmed', cancelRequested: true, cancelRequestStatus: 'pending' }),
+        ],
+      }),
     );
     renderScreen();
-    expect(await screen.findByText(/already requested/i)).toBeInTheDocument();
+    // #438: the copy may now promise a queue, because there is one. Before it,
+    // this banner told the household the office knew when nothing had read the
+    // flag since July.
+    expect(await screen.findByTestId('cancel-pending')).toHaveTextContent(/queue/i);
+    expect(screen.queryByRole('button', { name: /Request cancellation/i })).not.toBeInTheDocument();
+  });
+
+  it('#438: shows the office’s reason when the cancellation was declined, and lets them ask again', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({
+        upcoming: [
+          booking({
+            status: 'confirmed',
+            cancelRequested: false,
+            cancelRequestStatus: 'declined',
+            cancelResponseNote: 'Inside the 48-hour window.',
+          }),
+        ],
+      }),
+    );
+    renderScreen();
+    const declined = await screen.findByTestId('cancel-declined');
+    expect(declined).toHaveTextContent(/keeping this visit/i);
+    expect(declined).toHaveTextContent('Inside the 48-hour window.');
+    expect(screen.getByRole('button', { name: /Ask again/i })).toBeInTheDocument();
+  });
+
+  it('#438: says the visit is cancelled once the office accepted', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({
+        recent: [
+          booking({
+            status: 'cancelled',
+            cancelRequested: false,
+            cancelRequestStatus: 'accepted',
+            cancelResponseNote: 'No charge for this one.',
+          }),
+        ],
+      }),
+    );
+    renderScreen();
+    const accepted = await screen.findByTestId('cancel-accepted');
+    expect(accepted).toHaveTextContent(/this visit is cancelled/i);
+    expect(accepted).toHaveTextContent('No charge for this one.');
     expect(screen.queryByRole('button', { name: /Request cancellation/i })).not.toBeInTheDocument();
   });
 
@@ -273,7 +323,7 @@ describe('BookingDetail: request cancellation', () => {
     renderScreen();
     await screen.findByRole('heading', { name: 'Drop-in Visit' });
     expect(screen.queryByRole('button', { name: /Request cancellation/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/already requested/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cancel-pending')).not.toBeInTheDocument();
   });
 
   it('does not offer cancellation for a booking with no batchId', async () => {

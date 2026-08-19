@@ -47,6 +47,7 @@ import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingStatus
 import com.kinfolk.portal.portal.BookingsResult
+import com.kinfolk.portal.portal.CancelRequestStatus
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -365,10 +366,19 @@ private fun VisitRow(b: Booking, index: Int, onClick: (() -> Unit)? = null) {
             if (parts.isNotEmpty()) {
                 Text(parts.joinToString(" • "), style = type.sansMeta)
             }
+            // #438: the ask AND the answer to it. `cancelRequested` is the
+            // pending state, so a declined ask clears it and needs its own
+            // line. Otherwise the row goes quiet and the household never
+            // learns from this screen that the visit is still on.
             if (b.cancelRequested) {
                 Text(
                     "Cancellation requested",
                     style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                )
+            } else if (b.cancelRequestStatus == CancelRequestStatus.Declined) {
+                Text(
+                    "Cancellation declined. This visit is still on.",
+                    style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
                 )
             }
         }

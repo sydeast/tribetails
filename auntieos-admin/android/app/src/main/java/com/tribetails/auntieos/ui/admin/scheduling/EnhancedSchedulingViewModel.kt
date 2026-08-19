@@ -96,6 +96,15 @@ data class SchedulingState(
     val incomingError: String? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
+    // #438 (+ #399 item 2): the household's OWN asks on visits that already
+    // exist -- move this one, cancel that one -- merged into one queue and
+    // ordered oldest first. Distinct from [incomingSeries] above, which is a
+    // brand-new booking waiting on approval; these are changes to a booking the
+    // office already agreed to.
+    val visitRequests: List<VisitRequestRow> = emptyList(),
+    val visitRequestsError: String? = null,
+    val visitRequestKey: String? = null, // row currently being accepted/declined
+    val visitRequestMessage: String? = null,
     // Task 7.2: Google Calendar over OAuth, the editable half. A different
     // feature from calendarSyncRun above (that one is 7.1's free/busy read);
     // this one writes visits onto a calendar the operator connects to.
@@ -209,6 +218,8 @@ class EnhancedSchedulingViewModel(
     // W4-3: creating a visit, rescheduling it, patching its status and writing
     // back onto the MyTribe booking envelope are all KinCare domain.
     private val kinCareRepository: KinCareRepository = com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository,
+    private val visitRequestRepository: com.tribetails.auntieos.data.repository.VisitRequestRepository =
+        com.tribetails.auntieos.data.repository.VisitRequestRepository(),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SchedulingState())
@@ -231,6 +242,7 @@ class EnhancedSchedulingViewModel(
         loadInitialData()
         observeBusyTimeSlots()
         observeIncomingSeries()
+        loadVisitRequests()
         loadGoogleCalendarState()
     }
 
@@ -345,6 +357,119 @@ class EnhancedSchedulingViewModel(
 
     fun clearSeriesActionMessage() { _state.value = _state.value.copy(seriesActionMessage = null) }
     fun clearIncomingError() { _state.value = _state.value.copy(incomingError = null) }
+
+    /**
+     * The household's change requests on existing visits (#399 item 2, #438).
+     *
+     * A one-shot callable read rather than a stream, because both queues are
+     * collection-group reads the server owns; this client is not allowed to run
+     * them itself. The two are read INDEPENDENTLY and reported independently,
+     * so a broken reschedule read cannot hide a cancellation that has been
+     * waiting since July, which is the exact failure this feature exists to end.
+     */
+    fun loadVisitRequests() {
+        viewModelScope.launch {
+            // Stage-0I sandbox: the underlying reads are cross-tenant and a test
+            // admin cannot make them, so their permission-denied must not paint
+            // a banner. Same rule as observeIncomingSeries.
+            val sandbox = auntieRepository.isTestAdminActive()
+            val reschedule = visitRequestRepository.listRescheduleRequests()
+            val cancel = visitRequestRepository.listCancelRequests()
+            val failures = buildList {
+                reschedule.exceptionOrNull()?.let { add("Reschedule requests: ${it.message ?: "the read did not land"}") }
+                cancel.exceptionOrNull()?.let { add("Cancellation requests: ${it.message ?: "the read did not land"}") }
+            }
+            _state.value = _state.value.copy(
+                visitRequests = mergeVisitRequests(
+                    reschedule.getOrDefault(emptyList()),
+                    cancel.getOrDefault(emptyList()),
+                ),
+                visitRequestsError = if (failures.isEmpty() || sandbox) {
+                    null
+                } else {
+                    failures.joinToString(" ") + " Anything waiting there is not on this list."
+                },
+            )
+        }
+    }
+
+    /**
+     * Accepts or declines ONE request.
+     *
+     * Accepting is what changes the visit, and the server writes both the
+     * household's kinCares doc and the flat `kin_care_sessions` row so this
+     * screen and the portal cannot end up disagreeing. Declining changes
+     * nothing about the visit and REQUIRES a note: "no" with no reason is not
+     * an answer, and the server refuses one without it, so the check is made
+     * here too rather than after a round trip.
+     *
+     * The resolved row is dropped locally the moment the server confirms,
+     * never re-fetched and never assumed.
+     */
+    fun resolveVisitRequest(row: VisitRequestRow, decision: String, note: String? = null) {
+        if (_state.value.visitRequestKey != null) return
+        val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }
+        if (decision == "decline" && trimmed == null) {
+            _state.value = _state.value.copy(
+                visitRequestsError = "Say why, so the household knows where they stand.",
+            )
+            return
+        }
+        _state.value = _state.value.copy(
+            visitRequestKey = row.key,
+            visitRequestMessage = null,
+            visitRequestsError = null,
+        )
+        viewModelScope.launch {
+            val outcome = when (row) {
+                is VisitRequestRow.Cancel -> visitRequestRepository.resolveCancellationRequest(
+                    kinfolkId = row.kinfolkId,
+                    batchId = row.batchId,
+                    visitId = row.visitId,
+                    decision = decision,
+                    note = trimmed,
+                ).map { res -> cancelOutcomeMessage(decision, res.sessionUpdated) }
+                is VisitRequestRow.Reschedule -> visitRequestRepository.resolveRescheduleRequest(
+                    kinfolkId = row.kinfolkId,
+                    batchId = row.batchId,
+                    visitId = row.visitId,
+                    decision = decision,
+                    note = trimmed,
+                ).map { res -> rescheduleOutcomeMessage(decision, res.sessionUpdated) }
+            }
+            outcome
+                .onSuccess { message ->
+                    _state.value = _state.value.copy(
+                        visitRequestKey = null,
+                        visitRequests = _state.value.visitRequests.filterNot { it.key == row.key },
+                        visitRequestMessage = message,
+                    )
+                }
+                .onFailure { e ->
+                    // The row STAYS. A refused decision leaves the household
+                    // still waiting, and dropping the row would hide that.
+                    _state.value = _state.value.copy(
+                        visitRequestKey = null,
+                        visitRequestsError = e.message ?: "That did not go through. Try again.",
+                    )
+                }
+        }
+    }
+
+    private fun cancelOutcomeMessage(decision: String, sessionUpdated: Boolean): String = when {
+        decision == "decline" -> "Declined. The visit stays on the schedule and the household gets your reason."
+        sessionUpdated -> "Cancelled. It is off the schedule and off the household's portal."
+        else -> "Cancelled. This visit was still a request, so it had no schedule row to take off."
+    }
+
+    private fun rescheduleOutcomeMessage(decision: String, sessionUpdated: Boolean): String = when {
+        decision == "decline" -> "Declined. The household will see your reason on their booking."
+        sessionUpdated -> "Moved. The schedule and the household now show the new time."
+        else -> "Moved. This visit is still a request, so it has no schedule row to move yet."
+    }
+
+    fun clearVisitRequestMessage() { _state.value = _state.value.copy(visitRequestMessage = null) }
+    fun clearVisitRequestsError() { _state.value = _state.value.copy(visitRequestsError = null) }
 
     /**
      * Live booking_time_slots subscription (replaces the one-shot getTimeSlots .get()).

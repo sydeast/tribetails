@@ -20,7 +20,7 @@ import { Dialog } from '../components/Dialog';
 import { BookingDetailModal } from '../components/BookingDetailModal';
 import { BookingStatusActions } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
-import { RescheduleRequestsSection } from '../components/RescheduleRequestsSection';
+import { VisitRequestsSection } from '../components/VisitRequestsSection';
 import {
   approveBooking,
   rejectBooking,
@@ -430,11 +430,12 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         </Banner>
       )}
 
-      {/* #399 item 2. Above the list because it is work waiting on a human,
-          not a view of the schedule: a household has asked to move a visit and
-          nothing happens until someone here accepts or declines. Renders
-          nothing at all when the queue is empty. */}
-      <RescheduleRequestsSection />
+      {/* #399 item 2 and #438, in one queue. Above the list because it is work
+          waiting on a human, not a view of the schedule: a household has asked
+          to move or cancel a visit and nothing happens until someone here
+          accepts or declines. Renders nothing at all when both queues are
+          empty. */}
+      <VisitRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
 
       {bulkError !== null && (

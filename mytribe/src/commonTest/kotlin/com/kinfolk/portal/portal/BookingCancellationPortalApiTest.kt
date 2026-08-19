@@ -18,7 +18,12 @@ import kotlin.test.assertTrue
 
 class BookingCancellationPortalApiTest {
 
-    private fun bookingsWith(cancelRequested: Boolean?) = buildJsonObject {
+    private fun bookingsWith(
+        cancelRequested: Boolean?,
+        cancelRequestStatus: String? = null,
+        cancelResponseNote: String? = null,
+        cancelRequestReason: String? = null,
+    ) = buildJsonObject {
         put("liveVisit", JsonNull)
         put("upcoming", buildJsonArray {
             add(buildJsonObject {
@@ -27,6 +32,9 @@ class BookingCancellationPortalApiTest {
                 put("status", "confirmed")
                 put("batchId", "batch-1")
                 cancelRequested?.let { put("cancelRequested", it) }
+                cancelRequestStatus?.let { put("cancelRequestStatus", it) }
+                cancelResponseNote?.let { put("cancelResponseNote", it) }
+                cancelRequestReason?.let { put("cancelRequestReason", it) }
             })
         })
         put("recent", buildJsonArray {})
@@ -46,6 +54,50 @@ class BookingCancellationPortalApiTest {
         fake.stub("getMyBookings", bookingsWith(cancelRequested = null))
         val res = PortalApi(fake).getMyBookings()
         assertFalse(res.upcoming.single().cancelRequested)
+    }
+
+    @Test
+    fun `getMyBookings decodes the cancellation ask's three answers`() = runTest {
+        for ((raw, expected) in listOf(
+            "pending" to CancelRequestStatus.Pending,
+            "accepted" to CancelRequestStatus.Accepted,
+            "declined" to CancelRequestStatus.Declined,
+        )) {
+            val fake = FakeFunctionsClient()
+            fake.stub("getMyBookings", bookingsWith(cancelRequested = raw == "pending", cancelRequestStatus = raw))
+            val res = PortalApi(fake).getMyBookings()
+            assertEquals(expected, res.upcoming.single().cancelRequestStatus)
+        }
+    }
+
+    @Test
+    fun `getMyBookings carries the office's reason and the household's own`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub(
+            "getMyBookings",
+            bookingsWith(
+                cancelRequested = false,
+                cancelRequestStatus = "declined",
+                cancelResponseNote = "Inside the 48-hour window.",
+                cancelRequestReason = "We are away",
+            ),
+        )
+        val b = PortalApi(fake).getMyBookings().upcoming.single()
+        assertEquals("Inside the 48-hour window.", b.cancelResponseNote)
+        assertEquals("We are away", b.cancelRequestReason)
+    }
+
+    @Test
+    fun `getMyBookings reads an unknown or absent cancel status as never asked`() = runTest {
+        // A getMyBookings deployed before #438 sends no such field at all, and
+        // that has to decode as no ask rather than as a crash.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", bookingsWith(cancelRequested = false, cancelRequestStatus = "sideways"))
+        assertNull(PortalApi(fake).getMyBookings().upcoming.single().cancelRequestStatus)
+
+        val bare = FakeFunctionsClient()
+        bare.stub("getMyBookings", bookingsWith(cancelRequested = null))
+        assertNull(PortalApi(bare).getMyBookings().upcoming.single().cancelRequestStatus)
     }
 
     @Test
@@ -128,6 +180,15 @@ class BookingCancellationPortalApiTest {
         visitProgress = null,
         cancelRequested = cancelRequested,
     )
+
+    @Test
+    fun `a declined ask reopens the button, because cancelRequested means pending`() {
+        // #438: the household may ask again with new information. Reading the
+        // flag as "was ever asked" would strand them behind a caption forever.
+        val declined = booking(BookingStatus.Confirmed, cancelRequested = false)
+            .copy(cancelRequestStatus = CancelRequestStatus.Declined)
+        assertTrue(declined.canRequestCancellation())
+    }
 
     @Test
     fun `canRequestCancellation true only for upcoming visits without a pending ask`() {

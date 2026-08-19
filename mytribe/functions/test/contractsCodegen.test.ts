@@ -322,10 +322,13 @@ describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
 
   // 9 at the ADR-0003 follow-up, 12 since #399 item 2 added the kinfolk
   // reschedule ask (requestBookingReschedule) and the office's two ends of it
-  // (resolveBookingRescheduleRequest, listRescheduleRequests).
-  it('covers all 12 booking callables, both directions where a schema exists', () => {
+  // (resolveBookingRescheduleRequest, listRescheduleRequests), 14 since #438
+  // gave the cancellation ask the same two ends (resolveBookingCancellation-
+  // Request, listCancelRequests). The ask itself, requestBookingCancellation,
+  // was already here: it is the READ side that was missing.
+  it('covers all 14 booking callables, both directions where a schema exists', () => {
     const model = readModel(BOOKING_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(12);
+    expect(model.callables).toHaveLength(14);
     // getMyBookings is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

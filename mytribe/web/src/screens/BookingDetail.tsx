@@ -144,6 +144,9 @@ export function BookingDetail() {
   const chip = bookingStatusChip(found.status);
   const timelineIndex = bookingTimelineIndex(found.status);
   const canAct = found.batchId !== null;
+  // `cancelRequested` means an ask is PENDING, not "was ever asked". A declined
+  // ask therefore reopens the button, which is the point: the household can ask
+  // again with new information rather than being stuck behind a banner.
   const canRequestCancel = canAct && !found.cancelRequested && (found.status === 'requested' || found.status === 'confirmed');
   // Same window as a cancellation ask, and for the same reason: a visit that is
   // under way or finished is not moved by asking. A pending ask is handled
@@ -406,16 +409,31 @@ export function BookingDetail() {
                   </>
                 )}
 
-                {found.cancelRequested ? (
-                  <div className="cancel-pending">
+                {found.cancelRequestStatus === 'pending' ? (
+                  <div className="cancel-pending" data-testid="cancel-pending">
                     <span className="dot" />
-                    Cancellation already requested. We&rsquo;ll confirm shortly.
+                    Cancellation requested. Tribe Tails has it in their queue and will answer soon.
                   </div>
-                ) : canRequestCancel ? (
+                ) : (
+                  <>
+                    {found.cancelRequestStatus === 'accepted' && (
+                      <div className="note" role="status" data-testid="cancel-accepted">
+                        <span className="dot" />
+                        {`This visit is cancelled. ${found.cancelResponseNote ?? ''}`.trim()}
+                      </div>
+                    )}
+                    {found.cancelRequestStatus === 'declined' && (
+                      <div className="note err" role="status" data-testid="cancel-declined">
+                        <span className="dot" />
+                        {`Tribe Tails is keeping this visit on the books. ${found.cancelResponseNote ?? ''}`.trim()}
+                      </div>
+                    )}
+                    {canRequestCancel ? (
                   confirmingCancel ? (
                     <div className="cancel-confirm">
                       <p className="sub">
-                        This asks Tribe Tails to cancel the visit, it is not instant. Add a reason if you&rsquo;d like.
+                        This asks Tribe Tails to cancel the visit, it is not instant. It goes to their
+                        requests queue and they will accept or decline it. Add a reason if you&rsquo;d like.
                       </p>
                       <textarea
                         className="note-ta"
@@ -447,16 +465,18 @@ export function BookingDetail() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      className="btn ghost block"
-                      type="button"
-                      style={{ color: 'var(--coral)', borderColor: 'rgba(213,83,90,.3)' }}
-                      onClick={() => setConfirmingCancel(true)}
-                    >
-                      {'✕'} Request cancellation
-                    </button>
-                  )
-                ) : null}
+                      <button
+                        className="btn ghost block"
+                        type="button"
+                        style={{ color: 'var(--coral)', borderColor: 'rgba(213,83,90,.3)' }}
+                        onClick={() => setConfirmingCancel(true)}
+                      >
+                        {'✕'} {found.cancelRequestStatus === 'declined' ? 'Ask again' : 'Request cancellation'}
+                      </button>
+                    )
+                  ) : null}
+                  </>
+                )}
               </div>
             </section>
           </div>

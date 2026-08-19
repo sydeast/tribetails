@@ -43,8 +43,31 @@ const BookingDtoSchema = z
     /** AuntieOS back-references (null until AuntieOS writes them). */
     sourceBookingId: z.string().nullable(),
     sessionId: z.string().nullable(),
-    /** Vendor-parity (2026-07-02): a cancellation ask is pending on this visit. */
+    /**
+     * Vendor-parity (2026-07-02): a cancellation ask is PENDING on this visit.
+     *
+     * Pending, not "was ever asked for". Every client uses this flag to hide
+     * the ask button and show the waiting banner, which is what pending means;
+     * reading it as "ever asked" would leave a household that was declined
+     * staring at a waiting banner it can never leave. A declined ask flips this
+     * back to false so they can ask again, with `cancelRequestStatus` carrying
+     * what happened.
+     */
     cancelRequested: z.boolean(),
+    /**
+     * The cancellation ask (#438), or null when this visit has never had one.
+     * `pending` while the office has not ruled; `accepted` once the visit has
+     * been cancelled; `declined` when the office is keeping it on the schedule.
+     *
+     * A request written before #438 landed carries no status field at all --
+     * those are the July backlog the issue is about -- so an old
+     * `cancelRequestedAt` with nothing else reads as `pending` here.
+     */
+    cancelRequestStatus: z.enum(['pending', 'accepted', 'declined']).nullable(),
+    /** Why the household asked. */
+    cancelRequestReason: z.string().nullable(),
+    /** What the office said when it accepted or declined. */
+    cancelResponseNote: z.string().nullable(),
     /**
      * The kinfolk reschedule ask (#399 item 2), or null when this visit has
      * never had one. `pending` while the office has not ruled; `accepted` once
@@ -127,6 +150,7 @@ export async function getMyBookingsHandler(
   const all: BookingDto[] = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     const batchId = resolveBatchId(d, data);
+    const cancelStatus = cancelRequestStatusOf(data);
     const dto: BookingDto = {
       id: d.id,
       batchId,
@@ -147,7 +171,10 @@ export async function getMyBookingsHandler(
       visitProgress: (data['visitProgress'] as BookingDto['visitProgress']) ?? null,
       sourceBookingId: stringOrNull(data['sourceBookingId']),
       sessionId: stringOrNull(data['sessionId']),
-      cancelRequested: Boolean(data['cancelRequestedAt']),
+      cancelRequested: cancelStatus === 'pending',
+      cancelRequestStatus: cancelStatus,
+      cancelRequestReason: stringOrNull(data['cancelRequestReason']),
+      cancelResponseNote: stringOrNull(data['cancelResponseNote']),
       rescheduleRequestStatus: rescheduleStatusOf(data['rescheduleRequestStatus']),
       rescheduleRequestedStartTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
       rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),
@@ -216,6 +243,9 @@ export async function getMyBookingsHandler(
       sourceBookingId: stringOrNull(s['sourceBookingId']),
       sessionId: d.id,
       cancelRequested: false,
+      cancelRequestStatus: null,
+      cancelRequestReason: null,
+      cancelResponseNote: null,
       // A session with no booking envelope has no kinCares doc to carry a
       // request, and the portal cannot ask for one on it either (both request
       // callables need a batchId). Null is the honest answer, not a default.
@@ -300,6 +330,20 @@ function isoMillis(v: unknown): number | null {
  */
 function rescheduleStatusOf(v: unknown): 'pending' | 'accepted' | 'declined' | null {
   return v === 'pending' || v === 'accepted' || v === 'declined' ? v : null;
+}
+/**
+ * The cancellation ask's state, healing the requests written before #438.
+ *
+ * `requestBookingCancellation` only ever stamped `cancelRequestedAt`; the
+ * status field arrives with #438. A doc carrying the stamp and no status is a
+ * request nobody has ruled on, so it reads as `pending` -- which is the whole
+ * point of the issue, since those are the asks that have been sitting in
+ * Firestore since July.
+ */
+function cancelRequestStatusOf(data: Record<string, unknown>): 'pending' | 'accepted' | 'declined' | null {
+  const explicit = data['cancelRequestStatus'];
+  if (explicit === 'pending' || explicit === 'accepted' || explicit === 'declined') return explicit;
+  return data['cancelRequestedAt'] ? 'pending' : null;
 }
 /** Prefers the doc's own `batchId` field; falls back to the parent doc id. */
 function resolveBatchId(
