@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
@@ -230,13 +232,8 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                         // Rows grouped under the shared workflow sections;
                                         // unmatched categories land in a trailing "Other".
-                                        sectionedNotifEntries(rows, section.stream).forEach { (sectionTitle, sectionRows) ->
-                                            Text(
-                                                sectionTitle,
-                                                style = AuntieTheme.typography.labelMedium,
-                                                color = c.textPrimary,
-                                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
-                                            )
+                                        sectionedNotifEntries(rows, section.stream).forEachIndexed { index, (sectionTitle, sectionRows) ->
+                                            NotifSubsectionHeading(title = sectionTitle, isFirst = index == 0)
                                             sectionRows.forEach { entry ->
                                                 AdminReceiveRow(
                                                     entry = entry,
@@ -256,6 +253,48 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * One sub-section's boundary + label, inside a hat's [DenPanel] (#391: the web
+ * screen's `.mynotif__section` counterpart). Every sub-section but the first
+ * gets a rule at [AuntieTheme.dims.borderEmphasis] in the full
+ * [AuntieTheme.colors.border]: heavier and darker than the
+ * `dims.borderHairline` / `colors.borderSoft` line each [AdminReceiveRow]
+ * below it draws, the same "outranks a row hairline" idiom
+ * `InvoicesScreen`'s row dividers sit one step under. The title itself is
+ * now uppercased, matching the web heading, where before it read as plain
+ * body text with nothing marking it as a boundary. The first sub-section in
+ * a hat has nothing above it to divide from, so it carries neither the rule
+ * nor the extra top space that makes room for one.
+ *
+ * Pulled out of the loop in [AdminNotificationPrefsScreen] so it is directly
+ * testable: that composable reads `AuntieOSApp.instance.repository` itself
+ * (no injectable dependency to mock), while this one takes plain values.
+ */
+@Composable
+internal fun NotifSubsectionHeading(title: String, isFirst: Boolean, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Column(modifier) {
+        if (!isFirst) {
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(AuntieTheme.dims.borderEmphasis)
+                    .background(c.border)
+                    .testTag("mynotif-section-divider"),
+            )
+        }
+        Text(
+            title.uppercase(),
+            style = AuntieTheme.typography.labelMedium,
+            color = c.textPrimary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (isFirst) 0.dp else 10.dp, bottom = 2.dp),
+        )
     }
 }
 
