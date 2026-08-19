@@ -294,6 +294,17 @@ private fun attributeLabel(catalog: List<ConditionAttribute>, key: String): Stri
 //
 // Items modelled after Auntie's reference screenshot from her competitor's
 // product (Peed, Pooed, Fed, Fresh water provided, Medications given, Played).
+//
+// This is a REAL, live fallback (#452 confirmed it, contrary to the "not
+// reachable" premise #431 left it under): the Templates screen renders it as
+// the "Built-in default" card, KinTaleReportViewModel falls back to it when a
+// service type has no configured template, and the template editor seeds a
+// new template's moodOptions from it. It cannot be deleted without breaking
+// those. What #452 actually asks for - no canned message on a KinTale
+// template - is satisfied by leaving `defaultEmailMessage` unset so it takes
+// the KinTaleTemplate data-class default (`""`, per #431/#394's ruling): the
+// message is the story of the visit, and a canned default invites sending it
+// unedited. See KinTaleModelsTest for the pin.
 object DefaultKinTaleTemplate {
 
     val template: KinTaleTemplate by lazy {
@@ -301,7 +312,6 @@ object DefaultKinTaleTemplate {
             id = "__default__",
             name = "Standard Visit",
             description = "Built-in default. Used when no service-specific template is configured.",
-            defaultEmailMessage = "Hey y'all! Here's how today's visit went.",
             isActive = true,
             isDefault = true,
 

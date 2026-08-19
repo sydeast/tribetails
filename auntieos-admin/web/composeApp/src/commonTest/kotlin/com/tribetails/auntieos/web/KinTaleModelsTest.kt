@@ -117,9 +117,16 @@ class KinTaleModelsTest {
         assertTrue(DefaultKinTaleTemplate.template.serviceTypeKeys.isEmpty())
     }
 
+    /**
+     * #452: was assertIsNotBlank, enforcing the exact canned-message bug
+     * #394/#431 ruled out on the other two platforms - the message is the
+     * story of the visit, and a canned default invites sending it unedited.
+     * `defaultEmailMessage` must stay on the [KinTaleTemplate] class default
+     * ("") until a real template supplies its own.
+     */
     @Test
-    fun defaultTemplate_defaultEmailMessage_isNotBlank() {
-        assertTrue(DefaultKinTaleTemplate.template.defaultEmailMessage.isNotBlank())
+    fun defaultTemplate_defaultEmailMessage_isBlank() {
+        assertEquals("", DefaultKinTaleTemplate.template.defaultEmailMessage)
     }
 
     // ---- ConditionSource / ConditionOp wire format ----

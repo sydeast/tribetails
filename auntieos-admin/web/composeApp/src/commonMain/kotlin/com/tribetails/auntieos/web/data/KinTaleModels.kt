@@ -16,7 +16,14 @@ data class KinTaleTemplate(
     val _id: String = "",
     val name: String = "",
     val description: String = "",
-    val defaultEmailMessage: String = "I had a wonderful time caring for your furry friends! Here's how they did today.",
+    // Deliberately blank. #394/#431: a canned default here invited Auntie to
+    // send it unedited, when the message is meant to be the story of THIS
+    // visit - matches the Android `KinTaleTemplate.defaultEmailMessage` and TS
+    // `DEFAULT_KINTALE_TEMPLATE.defaultEmailMessage` class/const defaults.
+    // #452 found this class default still carried the canned string, which
+    // [DefaultKinTaleTemplate] (below) and every "new template" scaffold in
+    // KinTaleTemplateEditorScreen inherit by not overriding it.
+    val defaultEmailMessage: String = "",
     val serviceTypeKeys: List<String> = emptyList(),
     val isActive: Boolean = true,
     val isDefault: Boolean = false,
@@ -117,6 +124,12 @@ data class FieldResponse(
  * Built-in fallback template - used when no Firestore template matches the
  * session's service type. Kept identical to the Android default so a session
  * scaffolded on either platform produces the same shape.
+ *
+ * Does not set `defaultEmailMessage`, so it takes [KinTaleTemplate]'s blank
+ * class default (#452) - it must never carry its own canned string, because
+ * `KinTaleTemplateEditorScreen`'s "new template" scaffold copies this object
+ * verbatim and templates saved from there round-trip to the same Firestore
+ * collection the React admin and Android editor read.
  */
 object DefaultKinTaleTemplate {
     const val ID = "__builtin_default__"
