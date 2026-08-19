@@ -21,13 +21,16 @@ import type { NotificationDef, RecipientResolver } from './types';
  * description of the wiring.
  *
  * WHAT KEEPS IT HONEST. `test/notificationProvenance.test.ts`, modelled on the
- * TEMPLATE_FIELDS / seeds drift guard, checks all four directions:
+ * TEMPLATE_FIELDS / seeds drift guard, checks all five directions:
  *   1. every catalog key is either emitted or explicitly listed in NEVER_FIRES,
  *      and never both;
  *   2. every `source` names a file that exists and contains that key literally;
  *   3. the set of files calling `enqueueNotification` is exactly the set of
  *      files named here, so a new emitter cannot land undocumented;
- *   4. the same, for `sendFromTemplate` and UNGATED_SENDS.
+ *   4. the same, for `sendFromTemplate` and UNGATED_SENDS;
+ *   5. nothing here still describes a key from RETIRED_NOTIFICATION_KEYS, so
+ *      withdrawing a notification tells you to come and delete its paragraph
+ *      instead of leaving you to work that out from a set difference.
  * Rule 3 is the one that matters: it fails the build for the next person who
  * adds an emitter and forgets this file, which is the only way a hand-authored
  * map stays true.
@@ -462,6 +465,24 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       ],
     },
   ],
+  'quote.accepted': [
+    {
+      // Both halves of this row come from ONE call. The catalog gives
+      // quote.accepted a secondary resolver, so the single dispatch below fans
+      // out to the household and to the office; there is no separate office
+      // emitter to look for.
+      trigger: 'A household primary accepts a quote, which turns it into a bill they can pay.',
+      source: 'src/portal/quoteDecision.ts',
+      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
+    },
+  ],
+  'quote.denied': [
+    {
+      trigger: 'A household primary declines a quote. The quote stays on their screen, marked declined.',
+      source: 'src/portal/quoteDecision.ts',
+      dataKeys: ['kinfolkId', 'invoiceId', 'invoiceNumber'],
+    },
+  ],
 
   'broadcast.message': [
     {
@@ -514,18 +535,12 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invitedEmail', 'role'],
     },
   ],
-  'account.welcome.business': [
-    {
-      trigger: 'An invited household member accepts their invite. This is the office copy.',
-      source: 'src/membership/acceptInvite.ts',
-      dataKeys: ['kinfolkId', 'invitedEmail', 'role'],
-    },
-    {
-      trigger: 'An admin grants a portal account its kinfolk claim by hand.',
-      source: 'src/admin/setKinfolkClaim.ts',
-      dataKeys: ['kinfolkId', 'kinfolkUid', 'actorUid'],
-    },
-  ],
+  // `account.welcome.business` sat here, with two emitters: the office copy of
+  // an accepted invite (membership/acceptInvite.ts) and a hand-granted kinfolk
+  // claim (admin/setKinfolkClaim.ts). The operator retired the whole
+  // notification on 2026-08-18 ("I did not need that type of notification"),
+  // and #458 removed the catalog row, both emitters and the seed template with
+  // it. See RETIRED_NOTIFICATION_KEYS in notifications/catalog.ts.
   'invite.expired': [
     {
       trigger: 'The invite sweep expires an invite nobody accepted.',
@@ -609,16 +624,23 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
 };
 
 /**
- * Catalog rows that no code dispatches. They are real rows with real templates
- * and real toggles, and toggling them changes nothing, because nothing calls
- * `enqueueNotification` with these keys.
+ * Catalog rows that no code dispatches. A row listed here is a real row with a
+ * real template and real toggles, and toggling it changes nothing, because
+ * nothing calls `enqueueNotification` with that key. The gate screen badges
+ * these rows "Never fires" so the operator stops treating their state as a
+ * control.
  *
- * `createQuote.ts` mentions both in a comment explaining that quotes ride
- * `invoice.new` instead; that comment is the closest thing to an accept/deny
- * emitter that exists. The gate screen badges these rows "Never fires" so the
- * operator stops treating their state as a control.
+ * EMPTY TODAY, AND THAT IS THE POINT. `quote.accepted` and `quote.denied` were
+ * the only two entries: the catalog carried the switches, nothing anywhere sent
+ * them, and `createQuote.ts` carried a comment saying accept/deny were handled
+ * elsewhere when they were handled nowhere. #430 built the two callables
+ * (`portal/quoteDecision.ts`) that a household actually answers a quote with,
+ * so both keys now have a genuine emitter and both are documented above.
+ *
+ * The list stays, because the next dead row wants somewhere honest to sit and
+ * the drift guard demands every catalog key be either emitted or named here.
  */
-export const NEVER_FIRES: readonly string[] = ['quote.accepted', 'quote.denied'];
+export const NEVER_FIRES: readonly string[] = [];
 
 /**
  * Email the platform sends that the notification gate does NOT govern.

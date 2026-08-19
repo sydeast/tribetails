@@ -10,6 +10,7 @@ import {
 } from '../src/notifications/provenance';
 import {
   NOTIFICATION_CATALOG,
+  RETIRED_NOTIFICATION_KEYS,
   getNotificationDef,
   legacyKeysFor,
 } from '../src/notifications/catalog';
@@ -181,21 +182,68 @@ describe('no emitter can land undocumented', () => {
   });
 });
 
-describe('quote.accepted and quote.denied really do not fire', () => {
-  // The issue claims these two rows are dead. Verified rather than trusted:
-  // nothing may pass either key to enqueueNotification anywhere in src/.
+describe('quote.accepted and quote.denied fire from the portal now', () => {
+  /**
+   * These two rows were dead for the whole life of the catalog, and this block
+   * used to prove it. #430 built `acceptQuote` / `denyQuote`, so the same block
+   * now proves the opposite: both keys reach someone through
+   * `portal/quoteDecision.ts`, and neither may still be badged "Never fires" on
+   * the gate, which would tell the operator their toggles are decoration when
+   * they are live controls over real mail.
+   *
+   * NOT ASSERTED WITH A `key:\s*'quote.accepted'` REGEX. The emitter picks the
+   * key into a variable and passes it by shorthand, so a literal-argument regex
+   * finds nothing, which is how the old negative version of this test stayed
+   * green for a file that had already started dispatching both keys. The check
+   * below looks for the key literal and the dispatch call in the same file,
+   * which is the shape the map itself is guarded by.
+   */
   for (const key of ['quote.accepted', 'quote.denied']) {
-    it(`${key} is passed to no enqueueNotification call`, () => {
-      const dispatching = SOURCE_FILES.filter((f) => {
-        const src = read(f);
-        return src.includes('enqueueNotification(') && new RegExp(`key:\\s*'${key.replace('.', '\\.')}'`).test(src);
-      });
-      expect(dispatching).toEqual([]);
+    it(`${key} is dispatched by src/portal/quoteDecision.ts`, () => {
+      const emitters = NOTIFICATION_EMITTERS[key] ?? [];
+      expect(emitters.map((e) => e.source)).toContain('src/portal/quoteDecision.ts');
+      const src = read('src/portal/quoteDecision.ts');
+      expect(src.includes(`'${key}'`), `quoteDecision.ts never names '${key}'`).toBe(true);
+      expect(src.includes('enqueueNotification(')).toBe(true);
     });
-    it(`${key} is listed in NEVER_FIRES`, () => {
-      expect(NEVER_FIRES).toContain(key);
+    it(`${key} is no longer listed in NEVER_FIRES`, () => {
+      expect(NEVER_FIRES).not.toContain(key);
     });
   }
+});
+
+describe('a retired key leaves no paragraph behind', () => {
+  /**
+   * Retiring a key deletes its catalog row, and the first check in this file
+   * then fails with a bare set difference: a key on one side, absent from the
+   * other, and the reader left to work out why. That is how #458
+   * (`account.welcome.business`, withdrawn at the operator's request) left this
+   * suite red without saying what to do about it.
+   *
+   * This does NOT filter retired keys out of that comparison before it runs.
+   * Doing so would be an allow-list swallowing the exact drift the guard exists
+   * to catch, and a provenance paragraph for a notification nobody sends any
+   * more would sail through. Nor does it make retirement a one-list job: the
+   * prose still has to be deleted by hand, because the prose IS the map. What
+   * it adds is a failure that names the key, the date it was retired and the
+   * operator's reason, so the next person reads an instruction rather than a
+   * diff.
+   */
+  for (const [key, retired] of Object.entries(RETIRED_NOTIFICATION_KEYS)) {
+    it(`${key} is described by no emitter and by no never-fires entry`, () => {
+      const why =
+        `'${key}' was retired on ${retired.retiredOn}. ${retired.reason} ` +
+        'Delete its entry from notifications/provenance.ts.';
+      expect(NOTIFICATION_EMITTERS[key], why).toBeUndefined();
+      expect(NEVER_FIRES, why).not.toContain(key);
+    });
+  }
+
+  it('and is gone from the catalog too, so the two checks cannot disagree', () => {
+    for (const key of Object.keys(RETIRED_NOTIFICATION_KEYS)) {
+      expect(NOTIFICATION_CATALOG[key], `${key} is retired but still a catalog row`).toBeUndefined();
+    }
+  });
 });
 
 describe('whoReceives renders sentences, not enums', () => {
