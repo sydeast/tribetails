@@ -478,7 +478,10 @@ fun TemplateBankBody(
             onDismiss = { editing = null; creating = false },
             onSave = { updated ->
                 scope.launch {
-                    templateRepo.saveTemplate(updated)
+                    // expectNew on create: the collision check above only sees
+                    // the templates this screen loaded, and the server sees them
+                    // all. Issue #468.
+                    templateRepo.saveTemplate(updated, expectNew = creating)
                         .onSuccess { editing = null; creating = false; reload() }
                         .onFailure { error = it.message ?: "Save failed." }
                 }
@@ -710,6 +713,43 @@ private fun MergeFieldChips(onInsert: (String) -> Unit) {
     }
 }
 
+/**
+ * The template key rule, phrased for a human.
+ *
+ * Issue #468: Android used to check only that the key was non-blank and unused
+ * among the templates it had loaded, so a key with a slash or a space in it
+ * reached the server and came back as a zod complaint about a regex. The rule
+ * is a document id rule, and it is the same one the React admin's
+ * `templateIdError` enforces; the wording matches so an operator reads one
+ * sentence, not two.
+ */
+internal const val TEMPLATE_KEY_RULE: String =
+    "Letters, numbers, dots, dashes and underscores only, up to 120 characters. " +
+        "The convention is a dotted key that matches the notification it renders, " +
+        "for example kincare.reschedule.requested."
+private val TEMPLATE_KEY_PATTERN = Regex("^[a-zA-Z0-9_.-]+$")
+internal const val TEMPLATE_KEY_MAX_LENGTH = 120
+/**
+ * What is wrong with a proposed template key, or null when it is usable.
+ *
+ * [existingKeys] is the page of templates the Bank happens to hold, so a null
+ * here is not a promise the key is free: `saveTemplate` is called with
+ * `expectNew` and the server has the last word. This is the fast, local half.
+ */
+internal fun templateKeyError(key: String, existingKeys: List<String>): String? {
+    val trimmed = key.trim()
+    return when {
+        trimmed.isEmpty() -> "A template key is required. $TEMPLATE_KEY_RULE"
+        trimmed.length > TEMPLATE_KEY_MAX_LENGTH ->
+            "That key is ${trimmed.length} characters, and the limit is $TEMPLATE_KEY_MAX_LENGTH. $TEMPLATE_KEY_RULE"
+        !TEMPLATE_KEY_PATTERN.matches(trimmed) ->
+            "That key uses characters a template key cannot carry. $TEMPLATE_KEY_RULE"
+        trimmed in existingKeys ->
+            "A template with the key \"$trimmed\" already exists. Pick a different key, " +
+                "or close this and edit the existing one."
+        else -> null
+    }
+}
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TemplateEditorOverlay(
@@ -732,9 +772,8 @@ private fun TemplateEditorOverlay(
     var category by remember(template.templateId, creating) { mutableStateOf(template.category ?: "") }
     var description by remember(template.templateId, creating) { mutableStateOf(template.description ?: "") }
 
-    val keyTaken = creating && templateId.trim() in existingKeys
-    val keyValid = !creating || (templateId.isNotBlank() && !keyTaken)
-    val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyValid
+    val keyError = if (creating) templateKeyError(templateId, existingKeys) else null
+    val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null
 
     AuntieDialog(
         visible = true,
@@ -764,14 +803,16 @@ private fun TemplateEditorOverlay(
             )
         },
     ) {
-        if (keyTaken) {
+        // Only complain once the operator has started typing. An empty field on
+        // a dialog that just opened is not a mistake yet.
+        if (keyError != null && templateId.isNotBlank()) {
             AuntieBanner(
                 tone = AuntieBannerTone.Warning,
-                title = "That key is already taken",
+                title = "That key will not do",
                 modifier = Modifier.fillMaxWidth(),
                 body = {
                     Text(
-                        "A template with key \"${templateId.trim()}\" already exists. Pick a unique key, or close and edit the existing one.",
+                        keyError,
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
@@ -785,7 +826,14 @@ private fun TemplateEditorOverlay(
             AuntieField(
                 value = templateId,
                 onValueChange = { templateId = it },
-                label = "Key (e.g. booking.confirmed)",
+                label = "Key (e.g. kincare.reschedule.requested)",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // The rule is readable before it is broken, not only after.
+            Text(
+                TEMPLATE_KEY_RULE,
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
                 modifier = Modifier.fillMaxWidth(),
             )
             AuntieField(

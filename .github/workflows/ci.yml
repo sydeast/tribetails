@@ -368,6 +368,12 @@ jobs:
       # artifact is reported as staleness here rather than as a client compile
       # error in another job that cannot explain it.
       - run: npm run contracts:check
+      # The same gate, for the same reason, over the notification template seed
+      # corpus. The bundled module is what the importer callable reads in
+      # production, because mytribe/seeds/ sits outside the functions deploy
+      # root, so a seed file edited without regenerating would quietly import
+      # the old wording.
+      - run: npm run seeds:check
       - run: npm run build
       # test:ci runs the in-project functions suite. Plain `npm test` also globs
       - run: npm run test:ci

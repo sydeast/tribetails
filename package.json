@@ -42,10 +42,12 @@
 
     "contracts:generate": "npm --prefix mytribe/functions run contracts:generate",
     "contracts:check": "npm --prefix mytribe/functions run contracts:check",
+    "seeds:generate": "npm --prefix mytribe/functions run seeds:generate",
+    "seeds:check": "npm --prefix mytribe/functions run seeds:check",
 
     "e2e": "npm --prefix auntieos-admin run e2e",
 
-    "check": "npm run typecheck && npm run lint && npm run contracts:check && npm test && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run contracts:check && npm run seeds:check && npm test && npm run build",
 
     "deploy": "bash scripts/release.sh",
     "deploy:bg": "bash scripts/release-bg.sh"

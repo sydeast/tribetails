@@ -362,6 +362,17 @@ export function buildDbMock(opts: {
       update: vi.fn(async (data: Record<string, unknown>) => {
         writes.push({ path, data, merge: true });
       }),
+      // `create()` is the one write whose OUTCOME depends on what is already
+      // stored, so unlike set/update it cannot just record the intent: a caller
+      // reaching for it is asking Firestore to referee the collision, and a
+      // shim that always succeeded would make every such test pass. Rejects
+      // with gRPC status 6 (ALREADY_EXISTS), the real code.
+      create: vi.fn(async (data: Record<string, unknown>) => {
+        if (docs[path] != null) {
+          throw Object.assign(new Error(`ALREADY_EXISTS: ${path}`), { code: 6 });
+        }
+        writes.push({ path, data, merge: false });
+      }),
       delete: vi.fn(async () => {
         deletes.push(path);
       }),

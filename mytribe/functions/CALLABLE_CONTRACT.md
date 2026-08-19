@@ -85,7 +85,11 @@ the stale "~26":
 
 - Nested / effects shapes (added 2026-07-21), frozen by RECURSIVE signature:
   `saveFormSchema` (3-level `schema.sections[].fields[]`), `saveTemplate`
-  (`sectionDefinitions[]`), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
+  (`sectionDefinitions[]`, plus `expectNew` added under issue #468 so a create
+  refuses an id that is already taken instead of upserting over it),
+  `importSeedTemplates` (`dryRun`, `onlyIds[]`, `overwriteIds[]`, issue #468,
+  frozen from birth because the React admin and the Android Templates screen
+  both hand-mirror it), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
   a nested `criteria`). The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.

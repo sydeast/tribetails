@@ -179,3 +179,87 @@ describe('saveTemplate', () => {
     ).rejects.toThrow();
   });
 });
+// Issue #468. Two rules that had no test at all until now: the triple-stash
+// guard, which is the only thing standing between an author and a raw-HTML
+// merge field in a kinfolk inbox, and the create-versus-upsert distinction,
+// which is why naming an existing key used to replace it in silence.
+describe('saveTemplate: the triple-stash guard', () => {
+  for (const field of ['subject', 'body', 'html'] as const) {
+    it(`SAD: rejects {{{ in ${field}, and the message names the fix`, async () => {
+      const ctx = buildDbMock({});
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const base: Record<string, unknown> = {
+        templateId: 'welcome.kinfolk',
+        subject: 'Hello',
+        body: 'Body copy.',
+      };
+      base[field] = `Hello {{{payload}}}`;
+      await expect(saveTemplateHandler(req(base))).rejects.toThrow(
+        /Change every \{\{\{name\}\}\} to \{\{name\}\}/,
+      );
+      expect(ctx.writes).toEqual([]);
+    });
+  }
+  it('HAPPY: the ordinary double stash is untouched', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(
+      req({ templateId: 'welcome.kinfolk', subject: 'Hi {{kinfolkName}}', body: 'Your {{kinName}}.' }),
+    );
+    expect(ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk')).toBeDefined();
+  });
+});
+describe('saveTemplate: expectNew', () => {
+  it('SAD: refuses to create over a key that is already taken', async () => {
+    const ctx = buildDbMock({
+      docs: { 'emailTemplates/welcome.kinfolk': { subject: 'theirs', body: 'theirs' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveTemplateHandler(
+        req({ templateId: 'welcome.kinfolk', subject: 's', body: 'b', expectNew: true }),
+      ),
+    ).rejects.toThrow(/already exists/);
+    // The existing template is untouched, which is the whole point.
+    expect(ctx.writes).toEqual([]);
+  });
+  it('SAD: the refusal carries a machine-readable reason for the clients', async () => {
+    const ctx = buildDbMock({
+      docs: { 'emailTemplates/welcome.kinfolk': { subject: 'theirs', body: 'theirs' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await saveTemplateHandler(
+      req({ templateId: 'welcome.kinfolk', subject: 's', body: 'b', expectNew: true }),
+    ).catch((e) => e);
+    expect(err.code).toBe('already-exists');
+    expect(err.details).toMatchObject({ reason: 'template-exists', templateId: 'welcome.kinfolk' });
+  });
+  it('HAPPY: creates when the key is free, stamping createdBy', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await saveTemplateHandler(
+      req({ templateId: 'brand.new', subject: 's', body: 'b', expectNew: true }),
+    );
+    expect(res).toEqual({ templateId: 'brand.new' });
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/brand.new');
+    expect(write?.data.createdBy).toBe('admin1');
+  });
+  it('HAPPY: without the flag the callable still upserts, as the older clients expect', async () => {
+    const ctx = buildDbMock({
+      docs: { 'emailTemplates/welcome.kinfolk': { subject: 'old', body: 'old' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await saveTemplateHandler(req({ templateId: 'welcome.kinfolk', subject: 'new', body: 'new' }));
+    const write = ctx.writes.find((w) => w.path === 'emailTemplates/welcome.kinfolk');
+    expect(write?.data.subject).toBe('new');
+    expect(write?.merge).toBe(true);
+  });
+  it('SAD: rejects an id with characters a document id cannot carry', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      saveTemplateHandler(req({ templateId: 'has spaces', subject: 's', body: 'b', expectNew: true })),
+    ).rejects.toThrow();
+    expect(ctx.writes).toEqual([]);
+  });
+});
