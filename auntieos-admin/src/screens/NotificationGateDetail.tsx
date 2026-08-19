@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { NotificationCatalogEntry, NotificationMatrix, UngatedSend } from '../api/myNotifications';
 import { listNotificationDeliveries, type DeliveryEvidence } from '../api/notificationDeliveries';
+import { listBusinessAdmins, type BusinessAdminRoster } from '../api/businessAdmins';
 import {
+  businessAdminLines,
+  businessAdminSourceNote,
   deliveryPhrase,
   hasPartialDataNote,
   mergeFieldNames,
+  reachesBusinessAdmins,
   recipientLines,
   templateLines,
   type RowBadge,
@@ -81,6 +85,7 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
             ))}
           </ul>
         )}
+        {reachesBusinessAdmins(entry) && <BusinessAdminRosterPanel />}
       </section>
 
       <section className="notifgate__detail-block">
@@ -162,6 +167,84 @@ export function GateRowDetail({ entry, matrix }: DetailProps) {
 
       <DeliveryEvidencePanel notificationKey={entry.key} />
     </div>
+  );
+}
+
+/**
+ * WHO "every business admin" is, by name (issue #450).
+ *
+ * The sentence above this panel could say "every business admin on the roster,
+ * that is 4 people today" and name a Firestore document. For every other
+ * audience the gate answers with a person; for this one the operator was told
+ * to go and read the document themselves, which is the "look it up yourself"
+ * #396 was filed against.
+ *
+ * Loaded on demand, per opened row, exactly like the delivery evidence below:
+ * the roster is one extra read, and it is only worth making for a row somebody
+ * opened and only for a row that actually reaches business admins.
+ *
+ * READ ONLY. `listBusinessAdmins` walks the recipient order without the
+ * dispatch path's self-heal write, so opening this panel cannot change who
+ * receives business mail. Editing the roster is `setBusinessAdmins` and is not
+ * offered here.
+ */
+export function BusinessAdminRosterPanel() {
+  const [roster, setRoster] = useState<BusinessAdminRoster | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    let live = true;
+    setLoading(true);
+    listBusinessAdmins()
+      .then((res) => {
+        if (!live) return;
+        setRoster(res);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof Error ? err.message : 'Something went wrong');
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => load(), [load]);
+
+  if (loading) {
+    return <p className="notifgate__detail-empty">Reading the business admin roster…</p>;
+  }
+  if (error) {
+    return (
+      <p className="notifgate__detail-error">
+        Couldn&rsquo;t read the business admin roster: {error}{' '}
+        <GhostButton label="Retry" onClick={load} />
+      </p>
+    );
+  }
+  if (!roster || roster.members.length === 0) {
+    return (
+      <p className="notifgate__detail-empty">
+        {roster?.reason
+          ?? 'Nobody is on the business admin roster, so this notification currently reaches nobody.'}
+      </p>
+    );
+  }
+  const note = businessAdminSourceNote(roster);
+  return (
+    <>
+      <p className="notifgate__detail-note">By name:</p>
+      {note && <p className="notifgate__detail-note">{note}</p>}
+      <ul className="notifgate__detail-list">
+        {businessAdminLines(roster).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </>
   );
 }
 

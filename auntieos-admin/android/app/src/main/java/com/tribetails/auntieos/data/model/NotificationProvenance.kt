@@ -139,6 +139,50 @@ fun notifRecipientLines(
     }
 }
 
+/**
+ * True when this row's recipients include the business admin roster, and so
+ * when the gate should offer to name them (issue #450).
+ *
+ * Reads the resolver fields rather than searching [NotificationCatalogEntry.whoReceives]
+ * for the words "business admin". Those sentences are server-authored prose for
+ * a human to read; matching on them would make a reworded sentence silently
+ * stop offering the roster, and `recipientResolver` is what the dispatcher
+ * itself branches on.
+ */
+fun notifReachesBusinessAdmins(entry: NotificationCatalogEntry): Boolean =
+    entry.recipientResolver == "businessAdmins" || entry.secondaryResolver == "businessAdmins"
+/**
+ * One line per person on the roster: their name, how the mail reaches them, and
+ * anything the operator would otherwise have to already know.
+ *
+ * A uid with no `staff/{uid}` record says so and shows the uid. That member is
+ * NOT dropped: they receive every business notification, and a list that hides
+ * them under-reports the audience, which is the failure this panel exists to
+ * end.
+ */
+fun businessAdminLines(roster: BusinessAdminRoster): List<String> = roster.members.map { member ->
+    val name = member.displayName ?: member.uid
+    val parts = buildList {
+        add(member.email ?: "no email on file")
+        if (!member.hasStaffRecord) add("no staff record for ${member.uid}")
+        if (member.defaultAssignee) add("unassigned visits default to them")
+    }
+    "$name (${parts.joinToString("; ")})"
+}
+/**
+ * The caveat above that list, when there is one.
+ *
+ * [BusinessAdminRosterSource.OperatorAllowlist] is the state where the stored
+ * roster is empty and sends fall back to `AUNTIE_OPERATOR_UIDS`. Those people
+ * would still receive the next business notification, so the list is real, but
+ * the operator should know the roster itself is empty.
+ */
+fun businessAdminSourceNote(roster: BusinessAdminRoster): String? {
+    if (roster.source != BusinessAdminRosterSource.OperatorAllowlist) return null
+    return "Nobody is stored at ${roster.rosterPath}, so these are the operator allowlist accounts " +
+        "the next business notification would fall back to. Call provisionBusinessAdmins to make " +
+        "the roster explicit."
+}
 /** One "channel -> template document" line for a channel the row offers. */
 data class NotifTemplateLine(
     val channel: String,
