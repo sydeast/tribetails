@@ -89,6 +89,11 @@ const LIVE_LINKS = {
   // a finished screen as "(coming soon)" (operator issue #8). AppShell.test.tsx
   // now asserts no rail entry can fall through the fallback again.
   'kintale-templates': linkOptions({ to: '/kintale-templates' }),
+  // The business notification gate. The route in router.tsx and the screen
+  // both predate #396; only the rail entry was missing, and un-marking it
+  // `contextual` without adding it here would have rendered the finished screen
+  // as a "(coming soon)" span — the exact operator issue #8 shape.
+  'notification-gate': linkOptions({ to: '/notification-gate' }),
   'tribal-intel': linkOptions({ to: '/tribal-intel' }),
   packages: linkOptions({ to: '/packages' }),
   schedule: linkOptions({ to: '/schedule' }),

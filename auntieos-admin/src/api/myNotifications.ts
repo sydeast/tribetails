@@ -7,7 +7,14 @@ import { arr, str } from '../lib/coerce';
  * whatever channels the business gate even offers. Distinct from the admin
  * `Notifications` screen (`api/notifications.ts`), which is the whole-collection
  * dispatch audit. This module ports two data sources the wasm screen reads,
- * verbatim against the deployed MyTribe callables (do not change the backend):
+ * verbatim against the deployed MyTribe callables. That used to carry a "do not
+ * change the backend" rule, which held for the wasm port and no longer holds:
+ * #396 widened `getBusinessNotificationOverrides` deliberately, because the
+ * facts the operator needed (who a notification reaches, what fires it, which
+ * template renders it) had to come from the server or the web and Android
+ * clients would each hand-maintain their own copy and drift. Every added field
+ * is additive and every decoder below defaults it, so either side can deploy
+ * first. Read them:
  *
  *   - getBusinessNotificationOverrides -> the SAME catalog + business gate
  *     matrix the Settings gate matrix uses (MyTribe/functions/src/admin/
@@ -63,6 +70,22 @@ type ChannelMap = Partial<Record<NotificationChannel, boolean>>;
  * blanking the whole screen via the error boundary, the exact failure that took
  * down Invoices and Bookings on 2026-07-20.
  */
+export interface NotificationEmitter {
+  /** What happens in the business to set this off, in plain words. */
+  trigger: string;
+  /** Where it lives, relative to mytribe/functions/. */
+  source: string;
+  /** The keys that call site puts in the merge bag. This is the leak surface. */
+  dataKeys: readonly string[];
+  /** Set when the listed keys are not the whole story. */
+  dataNote?: string;
+}
+/** One outbound email the notification gate does NOT govern. */
+export interface UngatedSend {
+  templateId: string;
+  trigger: string;
+  source: string;
+}
 export interface NotificationCatalogEntry {
   key: string;
   label: string;
@@ -81,6 +104,28 @@ export interface NotificationCatalogEntry {
   deliveryMode: string;
   description: string;
   marketingCategory?: string;
+  // ── #396 provenance, projected as finished English by the callable ──────
+  /** Who it reaches, one sentence per resolver in play. Never a bare enum. */
+  whoReceives: readonly string[];
+  recipientResolver: string;
+  secondaryResolver?: string;
+  /** Every call site that dispatches this key. Empty when nothing does. */
+  emitters: readonly NotificationEmitter[];
+  /** True when NO code fires this key, so its toggles control nothing. */
+  neverFires: boolean;
+  /**
+   * channel -> the `${channel}Templates/{id}` document that ACTUALLY renders it.
+   * Email is the EFFECTIVE id after `notificationTemplateBindings`, not the
+   * catalog default, because this screen can retarget an email and naming the
+   * catalog document on a retargeted row would report the wrong body.
+   */
+  templates: Readonly<Record<string, string>>;
+  /** The catalog default email template, when a binding has moved email off it. */
+  emailTemplateRetargetedFrom?: string;
+  /** Merge fields the server hydrates for this key's templates. */
+  mergeFields: readonly string[];
+  /** True when an outside system delivers it and this gate controls nothing. */
+  external: boolean;
 }
 
 /** Per-stream overlay on a `NotificationOverride`. A missing field falls back to the flat one. */
@@ -106,6 +151,12 @@ export interface NotificationOverride {
 export interface NotificationMatrix {
   catalog: NotificationCatalogEntry[];
   overrides: Record<string, NotificationOverride>;
+  /** Mail the platform sends that this gate does NOT govern (#396). */
+  ungated: UngatedSend[];
+  /** How many people a `businessAdmins` row reaches now. Null = unreadable. */
+  businessAdminCount: number | null;
+  /** Where that roster lives, so the number is checkable. */
+  businessAdminRosterPath: string;
   updatedAtMs: number | null;
 }
 
@@ -139,6 +190,15 @@ interface RawCatalogEntry {
   deliveryMode?: string;
   description?: string;
   marketingCategory?: string;
+  whoReceives?: string[];
+  recipientResolver?: string;
+  secondaryResolver?: string;
+  emitters?: Array<{ trigger?: string; source?: string; dataKeys?: string[]; dataNote?: string }>;
+  neverFires?: boolean;
+  templates?: Record<string, string>;
+  emailTemplateRetargetedFrom?: string;
+  mergeFields?: string[];
+  external?: boolean;
 }
 
 interface RawStreamGate {
@@ -157,9 +217,17 @@ interface RawOverride {
   streams?: Partial<Record<NotifStream, RawStreamGate>>;
 }
 
+interface RawUngatedSend {
+  templateId?: string;
+  trigger?: string;
+  source?: string;
+}
 interface RawGetOverridesResult {
   catalog?: RawCatalogEntry[];
   overrides?: Record<string, RawOverride>;
+  ungated?: RawUngatedSend[];
+  businessAdminCount?: number | null;
+  businessAdminRosterPath?: string;
   updatedAtMs?: number | null;
 }
 
@@ -212,6 +280,38 @@ function decodeChannelList(raw: string[] | undefined): NotificationChannel[] {
   );
 }
 
+/**
+ * #396 provenance decoders. Same rule as everything else in this module: coerce
+ * by TYPE, not by presence. A backend that has not shipped the projection yet
+ * sends none of these fields, and the screen must render "not recorded" rather
+ * than throw on `.map` of an absent array — the two sides deploy separately.
+ */
+function decodeEmitters(raw: RawCatalogEntry['emitters']): NotificationEmitter[] {
+  return arr<Record<string, unknown>>(raw).map((e) => ({
+    trigger: str(e.trigger),
+    source: str(e.source),
+    dataKeys: arr<unknown>(e.dataKeys).map((k) => str(k)),
+    ...(typeof e.dataNote === 'string' ? { dataNote: e.dataNote } : {}),
+  }));
+}
+function decodeStringList(raw: unknown): string[] {
+  return arr<unknown>(raw).map((v) => str(v));
+}
+function decodeTemplates(raw: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const channel of NOTIFICATION_CHANNELS) {
+    const id = raw?.[channel];
+    if (typeof id === 'string' && id !== '') out[channel] = id;
+  }
+  return out;
+}
+function decodeUngated(raw: RawUngatedSend[] | undefined): UngatedSend[] {
+  return arr<RawUngatedSend>(raw).map((u) => ({
+    templateId: str(u.templateId),
+    trigger: str(u.trigger),
+    source: str(u.source),
+  }));
+}
 function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
   // `audience` is coerced before anything else because `legacyAudienceStreams`
   // calls `.trim()` on it during THIS decode — a non-string there takes out the
@@ -233,6 +333,17 @@ function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
     // Only carried when it really is a string: the field is declared `string`,
     // and spreading a number through would make the interface lie.
     ...(typeof raw.marketingCategory === 'string' ? { marketingCategory: raw.marketingCategory } : {}),
+    whoReceives: decodeStringList(raw.whoReceives),
+    recipientResolver: str(raw.recipientResolver),
+    ...(typeof raw.secondaryResolver === 'string' ? { secondaryResolver: raw.secondaryResolver } : {}),
+    emitters: decodeEmitters(raw.emitters),
+    neverFires: raw.neverFires === true,
+    templates: decodeTemplates(raw.templates),
+    ...(typeof raw.emailTemplateRetargetedFrom === 'string'
+      ? { emailTemplateRetargetedFrom: raw.emailTemplateRetargetedFrom }
+      : {}),
+    mergeFields: decodeStringList(raw.mergeFields),
+    external: raw.external === true,
   };
 }
 
@@ -269,7 +380,14 @@ function decodeMatrix(raw: RawGetOverridesResult): NotificationMatrix {
   for (const [key, o] of Object.entries(raw.overrides ?? {})) {
     overrides[key] = decodeOverride(o);
   }
-  return { catalog, overrides, updatedAtMs: raw.updatedAtMs ?? null };
+  return {
+    catalog,
+    overrides,
+    ungated: decodeUngated(raw.ungated),
+    businessAdminCount: typeof raw.businessAdminCount === 'number' ? raw.businessAdminCount : null,
+    businessAdminRosterPath: str(raw.businessAdminRosterPath),
+    updatedAtMs: raw.updatedAtMs ?? null,
+  };
 }
 
 function decodePrefs(raw: RawPrefsDto['prefs']): AdminNotificationPrefs {

@@ -263,4 +263,114 @@ class NotificationParseTest {
         )
         assertEquals(o, notificationOverrideFromMap(o.toCallablePayload()))
     }
+
+    // ── #396: provenance + delivery wire fields ─────────────────────────────
+    /**
+     * Every provenance field is additive and optional, because the backend and
+     * this app deploy separately. An older payload must still parse into a row
+     * that simply has nothing to show, never into a crash or a half-row.
+     */
+    @Test
+    fun catalogParsesProvenanceFields() {
+        val entry = notificationCatalogEntryFromMap(
+            mapOf(
+                "key" to "invoice.new",
+                "audience" to "both",
+                "whoReceives" to listOf("The household's own portal account.", "Every business admin."),
+                "recipientResolver" to "kinfolkAcct",
+                "secondaryResolver" to "businessAdmins",
+                "emitters" to listOf(
+                    mapOf(
+                        "trigger" to "An admin creates an invoice.",
+                        "source" to "src/admin/createInvoice.ts",
+                        "dataKeys" to listOf("kinfolkId", "invoiceId"),
+                    ),
+                ),
+                "neverFires" to false,
+                "templates" to mapOf("email" to "invoice.new.v2"),
+                "emailTemplateRetargetedFrom" to "invoice.new",
+                "mergeFields" to listOf("amount"),
+                "external" to false,
+            ),
+        )!!
+        assertEquals(2, entry.whoReceives.size)
+        assertEquals("businessAdmins", entry.secondaryResolver)
+        assertEquals(1, entry.emitters.size)
+        assertEquals("src/admin/createInvoice.ts", entry.emitters[0].source)
+        assertEquals(listOf("kinfolkId", "invoiceId"), entry.emitters[0].dataKeys)
+        assertEquals("invoice.new.v2", entry.templates["email"])
+        assertEquals("invoice.new", entry.emailTemplateRetargetedFrom)
+        assertEquals(listOf("amount"), entry.mergeFields)
+    }
+    @Test
+    fun catalogWithoutProvenanceStillParsesEmpty() {
+        val entry = notificationCatalogEntryFromMap(mapOf("key" to "k", "audience" to "kinfolk"))!!
+        assertEquals(emptyList<String>(), entry.whoReceives)
+        assertEquals(emptyList<NotificationEmitter>(), entry.emitters)
+        assertNull(entry.secondaryResolver)
+        assertFalse(entry.neverFires)
+        assertFalse(entry.external)
+    }
+    @Test
+    fun emitterWithNoTriggerIsDroppedRatherThanShownBlank() {
+        val parsed = notificationEmittersFromRaw(
+            listOf(mapOf("source" to "src/a.ts"), mapOf("trigger" to "Real one.")),
+        )
+        assertEquals(listOf("Real one."), parsed.map { it.trigger })
+    }
+    @Test
+    fun ungatedSendsParseAndDropRowsWithNoTemplateId() {
+        val parsed = ungatedSendsFromRaw(
+            listOf(
+                mapOf("templateId" to "invite.primary", "trigger" to "t", "source" to "src/a.ts"),
+                mapOf("trigger" to "no id"),
+            ),
+        )
+        assertEquals(listOf("invite.primary"), parsed.map { it.templateId })
+    }
+    /**
+     * A channel record with no status had no sender run. Defaulting it to
+     * "sent" would be the screen inventing a delivery, which is exactly what
+     * #396 says not to do.
+     */
+    @Test
+    fun deliveryAttemptWithNoStatusParsesAsUnknownNotSent() {
+        val attempt = notificationDeliveryAttemptFromMap(mapOf("channel" to "email"))
+        assertEquals("unknown", attempt.status)
+        assertNull(attempt.providerMessageId)
+        assertEquals(0, attempt.attempts)
+    }
+    @Test
+    fun deliveryEvidenceParsesRowsAndKeepsReceiptAvailableFalseWhenAbsent() {
+        val evidence = notificationDeliveryEvidenceFromMap(
+            mapOf(
+                "deliveries" to listOf(
+                    mapOf(
+                        "dispatchId" to "d1",
+                        "key" to "invoice.new",
+                        "recipientUid" to "kin1",
+                        "status" to "dispatched",
+                        "channels" to listOf("email"),
+                        "createdAtMs" to 1234,
+                        "attempts" to listOf(
+                            mapOf(
+                                "channel" to "email",
+                                "status" to "sent",
+                                "providerMessageId" to "smtp-1",
+                                "attempts" to 1,
+                            ),
+                        ),
+                    ),
+                ),
+                "sentMeaning" to "Sent means the provider accepted the message.",
+            ),
+        )
+        assertEquals(1, evidence.deliveries.size)
+        assertEquals("kin1", evidence.deliveries[0].recipientUid)
+        assertEquals(1234L, evidence.deliveries[0].createdAtMs)
+        assertEquals("smtp-1", evidence.deliveries[0].attempts[0].providerMessageId)
+        // Absent means the backend predates the field; the safe read of an
+        // unknown is "we have no receipt", never "we have one".
+        assertFalse(evidence.receiptAvailable)
+    }
 }

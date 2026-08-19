@@ -94,6 +94,15 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'kinTaleTemplates', title: 'KinTale templates', group: 'more', slug: 'kintale-templates' },
   { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas' },
   { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags' },
+  // The business notification gate: every notification the platform can send,
+  // who receives it, what fires it, which template renders it, and whether the
+  // last attempts got out. It used to be marked `contextual`, so it was
+  // reachable only by opening Settings and already knowing to look for it. That
+  // one flag is most of why the operator said "I am blind to what could be sent
+  // out to users" (#396): the screen answering the question could not be found
+  // from the rail. Pinned beside Templates and Feature Flags, the other two
+  // screens about what the platform emits rather than about one household.
+  { dest: 'notificationGate', title: 'Notification gate', group: 'more', slug: 'notification-gate' },
 
   // Contextual: reachable, never pinned.
   { dest: 'mediaGallery', title: 'Media', group: 'more', slug: 'media', contextual: true },
@@ -103,14 +112,6 @@ export const NAV: readonly NavEntry[] = [
     title: 'My notifications',
     group: 'more',
     slug: 'my-notifications',
-    contextual: true,
-  },
-  // The business notification gate matrix. Reached from Settings, not pinned.
-  {
-    dest: 'notificationGate',
-    title: 'Notification gate',
-    group: 'more',
-    slug: 'notification-gate',
     contextual: true,
   },
   // B1. Household members and invites, always about ONE household, so it is

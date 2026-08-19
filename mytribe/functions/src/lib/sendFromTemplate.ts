@@ -23,6 +23,43 @@ export async function resolveTemplateId(catalogKey: string): Promise<string> {
   return catalogKey;
 }
 
+/** Everything the bindings collection says, read once. */
+export interface TemplateBindings {
+  /** Every key that has a binding doc, active or not. */
+  boundKeys: Set<string>;
+  /** key -> templateId for bindings that are NOT inactive. */
+  activeBindings: Map<string, string>;
+}
+/**
+ * THE one read of `notificationTemplateBindings`, for every caller that needs
+ * to answer "what does this key send right now" in bulk.
+ *
+ * `resolveTemplateId` above is the single-key version and reads one doc, which
+ * is right on the send path. Anything rendering a LIST (the Assignments screen
+ * via listCatalogKeys, the notification gate's "which template writes it" line
+ * via getBusinessNotificationOverrides) needs the whole collection, and each of
+ * those growing its own loop is how two admin screens start disagreeing about
+ * which template a key sends. The inactive-binding rule in particular is easy
+ * to get subtly wrong in a second copy: an inactive binding falls back to the
+ * default, because disabling a binding means "revert to default", not "send
+ * nothing", and that decision is made here exactly once.
+ *
+ * A doc's `catalogKey` field wins over its id when present, matching what
+ * `listCatalogKeys` has always done for hand-seeded rows.
+ */
+export async function readTemplateBindings(): Promise<TemplateBindings> {
+  const snap = await db().collection('notificationTemplateBindings').get();
+  const boundKeys = new Set<string>();
+  const activeBindings = new Map<string, string>();
+  for (const d of snap.docs) {
+    const data = d.data() as { catalogKey?: string; templateId?: string; active?: boolean };
+    const key = (typeof data.catalogKey === 'string' && data.catalogKey) || d.id;
+    if (!key) continue;
+    boundKeys.add(key);
+    if (data.active !== false && data.templateId) activeBindings.set(key, data.templateId);
+  }
+  return { boundKeys, activeBindings };
+}
 export async function sendFromTemplate(
   key: string,
   to: string,
