@@ -19,7 +19,6 @@ could not see the other.
 | `web/composeApp/` | Kotlin Multiplatform: shared logic plus the desktop (jvm) app. The wasm admin it also builds is superseded by `src/`. |
 | `web/functions/` | AuntieOS-owned Cloud Functions (Node). Firebase codebase `default`. |
 | `web/functions-python/` | The dossier and 411 reconcile pipeline. Firebase codebase `reconcile`. |
-| `visual/` | The comparison harness and its captures, on four surfaces: `react` (the live admin) plus `web`, `desktop` and `android`, which all photograph the superseded Compose app. Only `react` has goldens; `visual/baselines/react/` holds 19. See `docs/runbooks/visual-regression.md`. |
 | `docs/` | Specs, runbooks, reviews, punch lists, and the backlog. |
 | `scripts/` | Build and ops helpers. `loud-build.sh` is the one to use for anything slow. |
 | `twilio-service/` | Telephony (canonical — see [`docs/twilio/README.md`](../docs/twilio/README.md) at repo root for setup/env vars/known issues). `twilio-functions/` was the pre-migration copy; archived under `archive/twilio-functions-deprecated/`. |
@@ -48,12 +47,7 @@ cd web && ./gradlew :composeApp:jvmTest     # shared + desktop Kotlin
 cd android && ./gradlew :app:testDebugUnitTest
 ```
 
-Two traps worth knowing before running those.
-
-`:composeApp:jvmTest` rewrites tracked golden PNGs under `visual/desktop/`, so
-they follow you into a `git add -A`. The android suite no longer does this: its
-record mode reads a gradle property and defaults to off. Pass
-`-Proborazzi.record` when you actually mean to capture.
+One trap worth knowing before running those.
 
 Do not pipe gradle to `tail`. It masks the exit code, and a failing build then
 reports success. `scripts/loud-build.sh` preserves the code and prints a
@@ -156,14 +150,11 @@ while the other six formats keep working, so it fails loud rather than quietly.
 
 ## Visual regression
 
-```
-cd web/visual
-node baseline.mjs            # verify, exits non-zero on regression
-node baseline.mjs update     # approve current captures as the new goldens
-```
-
-`update` has no per-screen mode; it promotes a whole surface at once. Read
-`docs/runbooks/visual-regression.md` before approving anything.
+There is none, by operator ruling of 2026-08-18. The screenshot goldens, the
+harness that captured them and the CI gate that compared them were all removed:
+the comparisons were not trustworthy enough to block a pull request on. What
+checks appearance now is the real-browser e2e suite (`npm run e2e`) and review.
+Nothing in this repo records or compares screenshots.
 
 ## Conventions that are not obvious
 

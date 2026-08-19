@@ -98,27 +98,19 @@ invention of this harness. `no-production-egress.spec.ts` executes both the
 failure and the stub, so the pattern above cannot rot into documentation of
 something that no longer works.
 
-The visual surface also aborts every non-localhost request in
-`visual.capture.spec.ts`, and the callable half of that is now redundant. It was
-introduced because callables dialled production and failed on the network's
-schedule, which made two screenshots of one screen. The pin removes that cause.
-The abort is kept, with its comment rewritten, because a golden must not be
-decided by anything outside the machine and that is a wider claim than callables:
-an absolute-URL `fetch` added later, or a webfont that escapes Vite's bundling,
-would each be a slow flake in the screenshots. The production guarantee is the
-pin, which holds whether or not a spec remembers to install a route.
+`e2e/visual/callableStubs.ts` is the one place that stubs callables in BULK, and
+it is the worked example to copy from. It is the same one route as above,
+registered once in `beforeEach` and dispatching on the callable's name, and it is
+installed AFTER the production abort so that Playwright's reverse-order matching
+gives it the callable port while the abort keeps everything else. Read it before
+writing your own: it shows what a stub has to get right beyond the wire format,
+which is that the answer must be shaped like the callable's real contract and
+must not contradict what the seed wrote.
 
-The visual surface is also the one place that stubs callables in BULK, and
-`e2e/visual/callableStubs.ts` is the worked example to copy from. It is the same
-one route as above, registered once in `beforeEach` and dispatching on the
-callable's name, and it is installed AFTER the abort so that Playwright's
-reverse-order matching gives it the callable port while the abort keeps
-everything else. Read it before writing your own: it shows what a stub has to get
-right beyond the wire format, which is that the answer must be shaped like the
-callable's real contract and must not contradict what the seed wrote. Between
-2026-08-01 and 2026-08-04 nobody had stubbed anything there, and nine of the
-nineteen captured screens rendered a failed callable in a red `Banner`. Seven of
-those pictures were the approved golden.
+It is named for the visual capture surface it was written for. That surface was
+removed with the visual golden system on 2026-08-18; the stubs stayed, because
+`phone-layout.spec.ts` drives sixteen callables through them and is an ordinary
+member of the `operator` project.
 
 Until 2026-08-01 none of this was true. The emulator branch connected auth and
 Firestore and left `functions` alone, so every `httpsCallable` in a run went to
@@ -176,8 +168,8 @@ rules under `e2e/` would drift.
 `e2e/seed.ts` runs once per invocation as `globalSetup`. It wipes both emulators
 before writing, because emulator state survives a crashed run and a
 double-seeded database reads as a broken assertion rather than as leftover
-state. It talks plain REST rather than pulling in `firebase-admin`, following
-`web/visual/seed-emulator.mjs`, which established that pattern here first.
+state. It talks plain REST rather than pulling in `firebase-admin`, a pattern the
+older wasm harness's seed script established here first.
 
 Two accounts, checked into `e2e/fixtures/accounts.ts`: an admin carrying
 `admin: true`, and a kinfolk carrying the portal's claim shape and no admin
@@ -204,8 +196,8 @@ cannot drift.
 This used to be an allowlist per project, and a spec nobody added to it was
 collected by NO project: it ran zero times and the suite still reported green.
 `npm run e2e` now runs `e2e/spec-coverage.mjs` first, which asks Playwright
-itself (`--list`, twice, once under `VISUAL_CAPTURE=1`) which project claims
-each file and fails if any spec file is claimed by none or by two. A spec file
+itself (`--list`) which project claims each file and fails if any spec file is
+claimed by none or by two. A spec file
 that declares no tests fails it too, for the same reason: it is a file that
 executes nothing and passes.
 
@@ -218,16 +210,14 @@ parallel workers would race each other's writes and an assertion about a seeded
 row would stop meaning anything. Leave it at 1. If the suite gets slow enough to
 hurt, the fix is a seed per worker, not a higher worker count.
 
-## The visual harness borrows this one
+## There is no visual capture surface any more
 
-`web/visual`'s fourth surface (`react`) is a capture-only Playwright project in
-this same config, gated behind `VISUAL_CAPTURE=1` and run with
-`npm run visual:react`. It reuses the emulators, `auth.setup.ts`'s real-form
-login and the saved operator session rather than growing a second credential
-path, which is what the Compose `web` surface did and why that one needs a
-`.env` nobody has. Its seed, `e2e/seed.visual.ts`, calls this one and then adds
-rows, so `seed.ts` keeps the exact database the specs above assert against,
-counts included. See `docs/runbooks/visual-regression.md`.
+This config used to carry a fourth project, `visual`, gated behind
+`VISUAL_CAPTURE=1`, which photographed nineteen screens into git-tracked PNGs for
+a pixel comparison. It went on 2026-08-18 by operator ruling, along with the
+goldens, the `web/visual` harness and the CI gate. `seed.ts` is now the only
+`globalSetup` and every project here runs on the one database. Do not add a
+screenshot-comparison project back without an explicit operator instruction.
 
 ## Not covered yet
 
@@ -249,11 +239,10 @@ ordinary `npm run e2e` every one of them renders `CallableNotStubbedError`.
 which is all it ever asserted. A spec that wants to make a claim about a widget
 must stub its callable first.
 
-The visual capture run does stub all five (`e2e/visual/callableStubs.ts`), and
-that changes nothing about this gap. A stub proves the CLIENT renders a given
-response; the response was written by hand in this repo, so nothing about the
-server is under test either way. What it buys is a screenshot of the widget
-rather than of its error panel.
+`e2e/visual/callableStubs.ts` does answer all five, and that changes nothing
+about this gap. A stub proves the CLIENT renders a given response; the response
+was written by hand in this repo, so nothing about the server is under test
+either way. What it buys is a rendered widget rather than its error panel.
 
 ### Why the functions emulator is not started
 
@@ -284,13 +273,12 @@ Phase 8.1 specs need the seed to grow into.
 
 The seed would stop being the state the specs assert on, and the harness would
 have to grow a shim exporting a curated subset of callables to get its
-determinism back. That was tried once already:
-`web/visual/functions-emu/` is the shim the older wasm harness used, and it is
-now dead. Its `require` path points seven directories up at
-`CascadeProjects/MyTribe`, which the monorepo merge moved and the 2026-07-21
-archive renamed, so it resolves to `/Users/sydeast/Projects/Projects/...` and
-does not exist. Only `web/firebase.dev.json` still references it. It is left in
-place because it belongs to the wasm tree, which this runbook does not own.
+determinism back. That was tried once already, in `web/visual/functions-emu/`,
+and it had been dead for months before it was deleted: its `require` path pointed
+seven directories up at a `CascadeProjects/MyTribe` the monorepo merge had moved,
+so it resolved to a path that does not exist. It went with the rest of
+`web/visual/` on 2026-08-18, together with `web/firebase.dev.json`, the only
+file that still named it.
 
 None of that cost buys an assertion today, because no spec makes a claim about a
 callable's output. Revisit it when one does, and revisit it knowing the trigger

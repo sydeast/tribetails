@@ -147,16 +147,18 @@ android {
             isReturnDefaultValues = true
             isIncludeAndroidResources = true
             all {
-                // Roborazzi record mode (plugin omitted under AGP 9) for the visual harness.
+                // Roborazzi record mode (plugin omitted under AGP 9).
                 //
-                // OFF by default. Recording rewrites the tracked PNGs under visual/android/,
-                // so a plain `./gradlew test` used to drag 20 screenshot changes into any
-                // `git add -A`. Opt in only when you mean to re-capture:
+                // OFF by default. Nothing tracked is written any more: the golden
+                // capture test that rewrote visual/android/ went with the visual
+                // regression system on 2026-08-18. What survives is a DEBUGGING
+                // affordance in two invoice tests, which write the panel they
+                // assert on to app/build/reports/roborazzi/ so a human can look at
+                // it. Turn it on when you want that picture:
                 //   ./gradlew :app:testDebugUnitTest -Proborazzi.record=true
-                // Then verify/approve from web/visual (npm run visual:verify | visual:approve).
                 // Roborazzi compares this property against the literal "true", and
                 // captureRoboImage early-returns when no task type is enabled, so
-                // "false" makes the screenshot tests run without touching any file.
+                // "false" makes those tests assert normally and write nothing.
                 // A bare `-Proborazzi.record` arrives as "" from Gradle; treat that
                 // as opt-in rather than silently doing nothing.
                 val recordProp = project.findProperty("roborazzi.record")?.toString()

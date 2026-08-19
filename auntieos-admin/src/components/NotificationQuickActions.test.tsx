@@ -55,7 +55,9 @@ describe('NotificationQuickActions', () => {
     ['invoice', 'inv1', { to: '/invoices', search: { invoiceId: 'inv1' } }],
     ['kintale', 't1', { to: '/kintales', search: { kinTaleId: 't1' } }],
     ['kinfolk', 'k1', { to: '/directory/$kinfolkId', params: { kinfolkId: 'k1' } }],
-    ['booking', 'b1', { to: '/bookings' }],
+    // The envelope visit id is bridged to the flat session id here (issue #389);
+    // see the round-trip suite in api/bookingIds.test.ts.
+    ['booking', 'b1', { to: '/bookings', search: { bookingId: 'vis_b1' } }],
   ])('Open on a %s notification navigates to its detail', async (targetType, targetId, route) => {
     const h = handlers();
     render(

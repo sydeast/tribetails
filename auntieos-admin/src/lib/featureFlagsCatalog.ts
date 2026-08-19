@@ -53,10 +53,9 @@ export const KEY_COMMUNICATE_COMMS_RECAP = 'auntieos.communicate.commsRecap';
  *      names the losing arm.
  *   3. If SECTIONS LOSE, `groupThreadsByWaiting` (both clients),
  *      `SECTION_READ_STATE`, `ThreadSectionKey`, the `.inbox__status-*` CSS and
- *      the empty-section copy all go with it, and the Inbox golden must be
- *      re-recorded. If SECTIONS WIN, nothing in `inboxFormat.ts` dies:
- *      `groupThreadsByDay` still runs inside every section, and the golden
- *      already photographs that arrangement.
+ *      the empty-section copy all go with it. If SECTIONS WIN, nothing in
+ *      `inboxFormat.ts` dies: `groupThreadsByDay` still runs inside every
+ *      section.
  *   4. Clear the key out of `business_settings/feature_flags.flags`, so no
  *      stale doc outlives the code that read it.
  */
@@ -89,8 +88,8 @@ export const DEFAULTS: Readonly<Record<string, boolean>> = {
   [KEY_COMMUNICATE_COMMS_RECAP]: false,
   // Defaults TRUE, unlike every other gated flag here, and deliberately so:
   // merging this PR must not change what the operator already sees. The
-  // sectioned Inbox is what main renders today and what the committed golden
-  // photographs, so the safe baseline is "keep it", and the flag's job is to
+  // sectioned Inbox is what main renders today, so the safe baseline is
+  // "keep it", and the flag's job is to
   // let the operator step BACK to the older arrangement, not forward into an
   // unproven one. Deliberately NOT in ALWAYS_ON below: an ALWAYS_ON key gets no
   // toggle row and ignores remote overrides, which are the two things an A/B
