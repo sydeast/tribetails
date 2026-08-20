@@ -1,5 +1,21 @@
 name: CI
 
+# WHERE THESE JOBS RUN is a repository variable, not a literal.
+#
+# `vars.CI_RUNNER` unset means `ubuntu-latest`, which is what this always was
+# and what it goes back to by deleting the variable. Set it to `self-hosted`
+# and every job moves to a registered runner instead.
+#
+# 2026-08-20: GitHub stopped starting jobs ("recent account payments have
+# failed or your spending limit needs to be increased") and three PRs sat with
+# a red X against zero executed steps. A self-hosted runner is the way to keep
+# a real verdict on a PR without a hosted-minutes bill. Flipping back is one
+# variable deletion, so nothing here is a one-way door.
+#
+# A self-hosted runner needs the SDKs the ubuntu images ship with. The Android
+# jobs read `$ANDROID_HOME`; set it in the runner's own `.env` rather than here,
+# so the workflow stays honest for hosted runners too.
+
 on:
   push:
     branches: [main]
@@ -54,7 +70,7 @@ jobs:
     # Measured median 0.2 min, max 0.3, over 58 successful runs. A checkout and
     # a paths filter, no install, so no registry latency to absorb.
     timeout-minutes: 5
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -220,7 +236,7 @@ jobs:
     # Measured median 6.3 min, max 6.7, over 37 successful runs, and 5.8 of
     # those minutes are the vitest suite alone. Roughly 2.4x the median.
     timeout-minutes: 15
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: auntieos-admin
@@ -266,7 +282,7 @@ jobs:
     # 14, so 15 leaves a minute of slack. Change any step cap here and redo
     # this sum; a stale one is worse than none.
     timeout-minutes: 15
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: auntieos-admin
@@ -411,7 +427,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.functions == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: auntieos-admin/web/functions
@@ -436,7 +452,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.mytribe == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 12
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: mytribe/functions
@@ -493,7 +509,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.mytribeRules == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: mytribe/functions
@@ -540,7 +556,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.portal == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: mytribe/web
@@ -569,7 +585,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.recorder == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: packages/issue-recorder
@@ -603,7 +619,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - name: Run the deploy-guard test if present
@@ -662,7 +678,7 @@ jobs:
     # roughly four times that, which is the headroom the old ceiling gave the
     # jvm-only job.
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: mytribe
@@ -703,7 +719,7 @@ jobs:
     needs: changes
     if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: auntieos-admin/web
@@ -721,7 +737,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.android == 'true' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: auntieos-admin/android
