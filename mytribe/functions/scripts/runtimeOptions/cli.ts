@@ -40,7 +40,7 @@
  */
 import { writeFileSync } from 'node:fs';
 
-import { loadDeployedFleetShape } from './deployedShape';
+import { loadDeployedFleetShape, loadDeployedTimestamps } from './deployedShape';
 import { diffFleet, GEN1_COMPARABLE_FIELDS } from './model';
 import { resolveAll } from './resolveAll';
 import { RUNTIME_KEYS, RuntimeKey } from './types';
@@ -76,14 +76,58 @@ function printExpectedOnly(): number {
   return 0;
 }
 
+/**
+ * When the fleet actually deployed, which is a different question from what it
+ * declares and the one nobody could answer before #504.
+ *
+ * Printed as a spread rather than a single date on purpose. A fleet deployed in
+ * one window is ordinary; a fleet whose oldest function predates its newest by
+ * days means some deploy did not finish, and the functions left behind are
+ * serving older code while reporting nothing wrong. That is exactly what #503
+ * was: 209 functions from one evening and a contiguous alphabetical block of 25
+ * still on the previous day's source.
+ *
+ * ONLY functions this codebase declares. The `auntieos-ttpc` project is shared,
+ * and AuntieOS's own functions deploy on their own schedule from another tree,
+ * so including them made the first version of this report name thirteen
+ * perfectly healthy functions as a stalled deploy.
+ */
+function printDeployWindow(deployedAtMs: Record<string, number>, ours: Set<string>): void {
+  const mine = Object.entries(deployedAtMs).filter(([name]) => ours.has(name));
+  const stamps = mine.map(([, ms]) => ms);
+  if (stamps.length === 0) return;
+  const oldest = new Date(Math.min(...stamps));
+  const newest = new Date(Math.max(...stamps));
+  const spreadHours = (newest.getTime() - oldest.getTime()) / 3_600_000;
+  console.log(
+    `Deployed source spans ${oldest.toISOString().slice(0, 16)} to ` +
+      `${newest.toISOString().slice(0, 16)} (${spreadHours.toFixed(1)}h).`,
+  );
+  if (spreadHours > 24) {
+    const cutoff = newest.getTime() - 24 * 3_600_000;
+    const stale = mine
+      .filter(([, ms]) => ms < cutoff)
+      .map(([name]) => name)
+      .sort((a, b) => a.localeCompare(b));
+    console.log(
+      `  ${stale.length} function(s) are more than a day older than the newest deploy.`,
+    );
+    console.log('  A contiguous run of these is a deploy that stopped partway (#503):');
+    for (const name of stale) console.log(`    ${name}`);
+  }
+  console.log('');
+}
 function printDiff(deployedPath: string, outPath: string | undefined): number {
   const { declarations, errors } = resolveAll();
   const deployed = loadDeployedFleetShape(deployedPath);
+  const deployedAtMs = loadDeployedTimestamps(deployedPath);
   const { matched, deployedOnly, sourceOnly } = diffFleet(declarations, deployed);
 
   console.log(
     `Compared ${declarations.length} source-declared function(s) against ${Object.keys(deployed).length} deployed.\n`,
   );
+
+  printDeployWindow(deployedAtMs, new Set(declarations.map((d) => d.name)));
 
   if (matched.length === 0) {
     console.log(
@@ -136,6 +180,7 @@ function printDiff(deployedPath: string, outPath: string | undefined): number {
     sourceOnly,
     deployedOnly,
     unresolved: errors,
+    deployedAtMs,
     fieldsCompared: RUNTIME_KEYS,
     gen1ComparableFields: GEN1_COMPARABLE_FIELDS,
   };
