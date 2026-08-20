@@ -1,6 +1,5 @@
 import org.jetbrains.compose.ExperimentalComposeLibrary
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -10,17 +9,15 @@ plugins {
 }
 
 kotlin {
-    @OptIn(ExperimentalWasmDsl::class)
-    wasmJs {
-        moduleName = "auntieos-web"
-        browser {
-            commonWebpackConfig {
-                outputFileName = "auntieos-web.js"
-            }
-        }
-        binaries.executable()
-    }
-
+    // The wasm admin is gone (#481). It was superseded by the React admin in
+    // `auntieos-admin/src/`, and what was left here was a target nothing ships
+    // from carrying logic nobody applied fixes to: #452 found it still holding
+    // a canned KinTale message the React admin had already had removed, with a
+    // test asserting the canned string was present.
+    //
+    // The desktop (jvm) target stays. It is paused, not withdrawn, and it is
+    // also the host `:composeApp:jvmTest` runs on, so `commonMain` keeps its
+    // coverage either way.
     jvm()
 
     sourceSets {
@@ -54,12 +51,8 @@ kotlin {
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor3)
 
-            // Firebase: GitLive 2.1.0 has no wasmJs publication. Lifted into
-            // wasmJsMain via raw Firebase JS SDK (npm) — see FirestoreClient.wasmJs.kt.
-        }
-
-        wasmJsMain.dependencies {
-            implementation(libs.ktor.client.js)
+            // Firebase: the desktop target has no Firebase SDK and talks to
+            // Identity Toolkit / Firestore / callables over REST. See JvmFirestoreRest.kt.
         }
 
         jvmMain.dependencies {
@@ -87,10 +80,11 @@ kotlin {
                 implementation(compose.uiTest)
                 implementation(compose.desktop.currentOs)
                 implementation(compose.desktop.uiTestJUnit4)
-                // N8nClient builds a no-engine Ktor HttpClient; on JVM there is no engine
-                // on the classpath (only ktor-client-js ships for wasm), so its init throws
-                // when the inbox/communicate screens construct it. Supply the JDK engine so
-                // construction succeeds (screenshots never actually issue a request).
+                // N8nClient builds a no-engine Ktor HttpClient, and with the wasm
+                // target gone (#481) nothing puts an engine on the classpath here,
+                // so its init throws when the inbox/communicate screens construct
+                // it. Supply the JDK engine so construction succeeds (screenshots
+                // never actually issue a request).
                 implementation(libs.ktor.client.java)
             }
         }

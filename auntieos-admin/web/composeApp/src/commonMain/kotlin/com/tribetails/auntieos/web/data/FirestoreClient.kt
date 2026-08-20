@@ -30,8 +30,9 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Common-side facade over Firestore. Each stream delegates to a platform-specific
- * [platformXxxStream] expect function - wasmJs binds to the Firebase Web SDK via
- * `window.__fb` (see [data/FirestoreInterop.wasmJs.kt] and [resources/index.html]).
+ * [platformXxxStream] expect function. Since #481 removed the wasm admin, jvm is
+ * the only actual: it talks to Firestore over REST (see [data/JvmFirestoreRest]),
+ * with the mobile-only reads left as fail-loud stubs.
  *
  * Baserow is retired, but the migration it fed left collections sparse, so every
  * screen that reads these flows MUST still handle the empty case explicitly.
@@ -1914,8 +1915,9 @@ internal expect suspend fun platformAddKinTaleComment(taleId: String, kinfolkId:
  * as a JSON object string. On success, [WriteResult.Ok.value] carries the raw
  * JSON string of the response `data` field - caller decodes.
  *
- * wasmJs: routes through `window.__fb.callFunction`. jvm: stub error until the
- * REST/admin-SDK shim is wired.
+ * jvm routes through [JvmFirestoreRest.callable], which is a real REST call, not
+ * a stub. This comment used to say otherwise, and used to name a wasmJs actual
+ * that #481 deleted.
  */
 internal expect suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String>
 

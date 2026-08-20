@@ -682,9 +682,9 @@ jobs:
       # point it was failing 143 of its 524 tests on a clean main. It passes
       # now, and it only stays passing if something runs it.
       - run: ./gradlew testDebugUnitTest --no-daemon
-  # composeApp builds the wasm admin and the desktop (jvm) app, and per
-  # auntieos-admin/CLAUDE.md both are off the delivery path by owner ruling:
-  # the wasm admin is superseded by src/, and desktop parity is paused. No
+  # composeApp builds the desktop (jvm) app, which per auntieos-admin/CLAUDE.md
+  # is off the delivery path by owner ruling: desktop parity is paused. It also
+  # built a wasm admin until #481 deleted it, superseded by src/. No
   # PR needs this to go green, so it no longer runs on the path-filter
   # trigger. To run it, dispatch the workflow by hand: gh workflow run ci.yml
   # --ref <branch>, or Actions tab -> CI -> Run workflow. Note a dispatch runs

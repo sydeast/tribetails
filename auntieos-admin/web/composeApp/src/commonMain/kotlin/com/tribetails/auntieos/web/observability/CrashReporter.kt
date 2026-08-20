@@ -8,12 +8,14 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * Cross-platform crash/error reporting seam (0H). Android has its own Sentry setup; this
- * brings coverage to the web/ project's two targets:
+ * brings coverage to the web/ project's remaining target:
  *   - desktop (JVM): the official io.sentry:sentry SDK (see CrashReporter.jvm.kt)
- *   - web (Wasm): a self-hosted sentry-bridge.js that POSTs Sentry envelopes (CrashReporter.wasmJs.kt)
  *
- * Both report to the shared `auntieos-admin` Sentry project (reused per the 0H decision),
- * distinguished by the `platform` tag the actuals set. The DSN is a public client key (it
+ * There was a wasm actual too, a self-hosted sentry-bridge.js posting Sentry
+ * envelopes; it went with the wasm admin in #481.
+ *
+ * Reports go to the shared `auntieos-admin` Sentry project (reused per the 0H decision),
+ * distinguished by the `platform` tag the actual sets. The DSN is a public client key (it
  * already ships in the Android APK and the browser bridge), so embedding it is safe.
  */
 const val AUNTIEOS_SENTRY_DSN =
