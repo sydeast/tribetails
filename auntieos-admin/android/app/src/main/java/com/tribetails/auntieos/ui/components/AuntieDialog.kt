@@ -158,12 +158,22 @@ fun AuntieDialog(
                         onDismiss = onDismiss,
                     )
 
-                    // Scrollable body. heightIn lets short dialogs hug their
-                    // content while tall ones scroll within the capped card.
+                    // Scrollable body, and it YIELDS TO THE FOOTER rather than
+                    // pushing it out of the card. `weight(1f, fill = false)` is
+                    // what makes that true: a short dialog still hugs its
+                    // content, but a tall one gives the footer its height first
+                    // and scrolls inside what is left.
+                    //
+                    // Without the weight the body took its full intrinsic height
+                    // and the footer was laid out past the card's 760dp cap,
+                    // where `clip(cardShape)` swallowed it: the buttons rendered
+                    // in the tree, were reachable by a screen reader, and could
+                    // not be tapped. The #408 composer is the first dialog long
+                    // enough to hit it, and its footer holds the create button.
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 0.dp)
+                            .weight(1f, fill = false)
                             .verticalScroll(rememberScrollState())
                             .padding(
                                 start = dims.space6,

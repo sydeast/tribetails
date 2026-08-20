@@ -118,6 +118,12 @@ fun InvoiceDetailScreen(
     invoiceId: String,
     onBack: () -> Unit,
     viewModel: InvoiceDetailViewModel = viewModel(),
+    /**
+     * Routes to one visit. #408: a line drawn from a visit is BOUND to it, its
+     * money comes from that visit, and so this screen offers the way there
+     * rather than a field to type over the figure with.
+     */
+    onOpenVisit: (sessionId: String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -235,6 +241,7 @@ fun InvoiceDetailScreen(
                         generatingPdf     = uiState.generatingPdf,
                         businessSettings  = uiState.businessSettings,
                         archiving         = uiState.archiving,
+                        onOpenVisit       = onOpenVisit,
                         onOpenEdit        = { viewModel.openEditMode() },
                         onRecordPayment   = { viewModel.openRecordPayment() },
                         onRetryPayments   = { viewModel.retryPayments() },
@@ -341,6 +348,7 @@ private fun invoiceDetailBody(
     onResendQuote: () -> Unit,
     onDownloadPdf: () -> Unit,
     onArchive: () -> Unit,
+    onOpenVisit: (String) -> Unit,
 ) = with(scope) {
     val todayKey = runCatching { LocalDate.now().toString() }.getOrDefault("")
     // State is the STORED stamp the server persisted (ADR-0002), decoded by the
@@ -599,8 +607,11 @@ private fun invoiceDetailBody(
     }
 
     // ── Line items ──────────────────────────────────────────────────────────────
-    // Read-only in Task 5.1 by explicit ruling: Android renders what the web
-    // wrote. The editor and the un-invoiced-visits picker are task 5.1a.
+    // READ-ONLY, AND A BOUND LINE IS READ-ONLY ON PURPOSE (#408). A line carrying
+    // a session id got its money from the rate card by way of that visit, so the
+    // route to change it is the visit, and this line follows. Every bound row
+    // says so and offers that route. Lines nobody bound are the web editor's to
+    // change; Android composes invoices but does not re-itemize them afterwards.
     item {
         val lines = com.tribetails.auntieos.domain.invoiceLineItems(invoice)
         DenPanel(title = "Line items") {
@@ -615,7 +626,7 @@ private fun invoiceDetailBody(
                     lines.isEmpty() -> EmptyHint("Itemized as billing nothing: there is a breakdown, and it is empty.")
                     else -> {
                         lines.forEachIndexed { idx, line ->
-                            InvoiceLineItemRow(line, showDivider = idx > 0)
+                            InvoiceLineItemRow(line, showDivider = idx > 0, onOpenVisit = onOpenVisit)
                         }
                         InvoiceLineTotalsRows(lines, invoice.invoiceDiscountCents)
                     }
@@ -1123,10 +1134,12 @@ private fun LinkedSessionsSection(
 private fun InvoiceLineItemRow(
     line: com.tribetails.auntieos.data.model.InvoiceLineItem,
     showDivider: Boolean,
+    onOpenVisit: (String) -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
+    Column {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1177,6 +1190,26 @@ private fun InvoiceLineItemRow(
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
+    }
+    // THE #408 RULING ON BOUND LINES, rendered. Not decoration: without it the
+    // row looks exactly like a typed one, and an operator who wants the figure
+    // changed has nowhere to go but a field that does not exist here.
+    if (line.sessionId.isNotBlank()) {
+        Column(
+            modifier = Modifier.padding(bottom = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "Billed from a visit, so this figure is the visit's. Change it there and this line follows.",
+                style = AuntieTheme.typography.labelSmall,
+                color = c.textDim,
+            )
+            GhostButton(
+                label = "Open this visit",
+                onClick = { onOpenVisit(line.sessionId) },
+            )
+        }
+    }
     }
 }
 

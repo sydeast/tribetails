@@ -16,12 +16,12 @@ import kotlin.math.roundToLong
  * but they are a SERVER-DERIVED PROJECTION of the cents figures, never an input.
  * Nothing in this file adds one dollar amount to another.
  *
- * ANDROID IS READ-ONLY ON LINE ITEMS in Task 5.1, by explicit ruling. It renders
- * what the web wrote and never writes lines itself, so there is no validator and
- * no editor here. The editable version, and the un-invoiced-visits picker that
- * depends on it, are task 5.1a. Archive was NOT deferred with them, because an
- * invoice archived on web would otherwise still be counted into Android's
- * revenue tiles, which is a correctness bug rather than a parity nicety.
+ * ANDROID WRITES LINE ITEMS NOW (issue #408). It was read-only through Task 5.1
+ * by explicit ruling, rendering what the web wrote; the composer builds bound
+ * lines from a household's un-invoiced visits and sends them on `createInvoice`.
+ * The building and validating live in `ui/admin/InvoiceComposer.kt`, next to the
+ * screen state they serve; this file stays the arithmetic and the decode, which
+ * every surface shares.
  */
 
 /**
@@ -73,6 +73,10 @@ fun decodeInvoiceLineItems(raw: Any?): List<InvoiceLineItem>? {
                 qty = qty,
                 unitCents = unitCents,
                 discountCents = (map["discountCents"] as? Number)?.toLong() ?: 0L,
+                // ABSENT ON EVERY LINE WRITTEN BEFORE #408, so a missing key
+                // reads as "nobody bound this line" rather than as a decode
+                // failure that would drop the whole row.
+                sessionId = (map["sessionId"] as? String).orEmpty(),
             ),
         )
     }

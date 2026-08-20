@@ -265,6 +265,9 @@ fun InvoicesScreen(
     viewModel: AdminDataViewModel = viewModel(),
     onBack: () -> Unit,
     onOpenDetail: (invoiceId: String) -> Unit = {},
+    // #408: the composer's bound rows route to the visit they bill for, because
+    // the way to change a bound line's money is to change the visit.
+    onOpenVisit: (sessionId: String) -> Unit = {},
     composeQuoteFor: String? = null,
 ) {
     val invoices by viewModel.invoices.collectAsState()
@@ -287,17 +290,23 @@ fun InvoicesScreen(
     // hide them, show them alongside, show only them.
     var archived by remember { mutableStateOf(ArchivedMode.Hide) }
     var showComposer by remember { mutableStateOf(false) }
-    // PART B: the same composer drives both invoice and quote creation. quoteMode
-    // flips the dialog into "New quote" + the Send-to-kinfolk toggle.
-    var quoteMode by remember { mutableStateOf(false) }
-    // N1: a notification routed here to compose a quote; open the composer in quote
-    // mode preselected to that household.
+    // ONE COMPOSER, ONE BUTTON (#408). A quote is an invoice in QUOTE status, so
+    // the kind is a field inside the dialog rather than a second CTA the operator
+    // has to choose between before seeing what the work looks like. This is only
+    // which kind the dialog OPENS on.
+    var composerKind by remember { mutableStateOf(InvoiceCreateKind.INVOICE) }
+    // N1: a notification routed here to compose a quote; open the composer in
+    // quote mode preselected to that household.
     var quoteSeedKinfolkId by remember { mutableStateOf("") }
+    // The create is in flight, and the dialog stays open with the form intact
+    // until the server has actually written something.
+    var creating by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(composeQuoteFor) {
         val kid = composeQuoteFor
         if (!kid.isNullOrBlank()) {
             quoteSeedKinfolkId = kid
-            quoteMode = true
+            composerKind = InvoiceCreateKind.QUOTE
             showComposer = true
         }
     }
@@ -321,8 +330,12 @@ fun InvoicesScreen(
                         accentTail = "paid.",
                         trailing = {
                             HeaderCtas(
-                                onNewInvoice = { quoteMode = false; showComposer = true },
-                                onNewQuote = { quoteMode = true; showComposer = true },
+                                onNewInvoice = {
+                                    composerKind = InvoiceCreateKind.INVOICE
+                                    quoteSeedKinfolkId = ""
+                                    createError = null
+                                    showComposer = true
+                                },
                             )
                         },
                     )
@@ -441,29 +454,48 @@ fun InvoicesScreen(
     NewInvoiceDialog(
         visible = showComposer,
         kinfolk = kinfolk,
-        quoteMode = quoteMode,
+        todayIso = todayIso,
+        initialKind = composerKind,
         initialKinfolkId = quoteSeedKinfolkId,
-        onDismiss = { showComposer = false; quoteSeedKinfolkId = "" },
-        onConfirm = { invoice, sendToKinfolk ->
-            showComposer = false
-            if (quoteMode) {
-                viewModel.createQuote(invoice, sendToKinfolk)
-            } else {
-                viewModel.createInvoice(invoice)
+        submitting = creating,
+        submitError = createError,
+        onDismiss = { showComposer = false; quoteSeedKinfolkId = ""; createError = null },
+        onOpenVisit = { sessionId -> showComposer = false; onOpenVisit(sessionId) },
+        loadUninvoiced = { kinfolkId, from, to -> viewModel.loadUninvoicedSessions(kinfolkId, from, to) },
+        setDoNotInvoice = { ids, doNotInvoice, reason ->
+            viewModel.setSessionDoNotInvoice(ids, doNotInvoice, reason)
+        },
+        onConfirm = { request ->
+            creating = true
+            createError = null
+            viewModel.composeInvoice(request) { result ->
+                creating = false
+                result
+                    .onSuccess { invoiceId ->
+                        // LAND ON THE INVOICE. Creating one and being dropped back
+                        // on a list is how an operator ends up hunting for the row
+                        // they just made in order to check it.
+                        showComposer = false
+                        quoteSeedKinfolkId = ""
+                        onOpenDetail(invoiceId)
+                    }
+                    .onFailure { throwable ->
+                        createError = throwable.message ?: "The server refused this invoice."
+                    }
             }
         },
     )
 }
 
 /**
- * Header CTAs: "New invoice" (createInvoice) and "New quote" (createQuote). Both
- * route through the shared composer dialog; the quote CTA flips it into quote mode.
+ * The header CTA. ONE BUTTON, not two (#408): a quote is an invoice in QUOTE
+ * status, which is what the status filters here have always said, so the kind is
+ * chosen inside the composer once the operator can see the household's work.
  */
 @Composable
-private fun HeaderCtas(onNewInvoice: () -> Unit, onNewQuote: () -> Unit) {
+private fun HeaderCtas(onNewInvoice: () -> Unit) {
     val c = AuntieTheme.colors
     Row(horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2)) {
-        GhostButton(label = "New quote", onClick = onNewQuote)
         PrimaryButton(
             label = "New invoice",
             onClick = onNewInvoice,

@@ -968,6 +968,12 @@ private fun AuthenticatedNavHost(
                         onOpenDetail = { invoiceId ->
                             navController.navigate(Screen.InvoiceDetail.createRoute(invoiceId))
                         },
+                        // #408: `listUninvoicedSessions` returns flat
+                        // `kin_care_sessions` ids, which is exactly what
+                        // KinCareDetail matches on, so no `vis_` bridging here.
+                        onOpenVisit = { sessionId ->
+                            navController.navigate(Screen.KinCareDetail.createRoute(sessionId))
+                        },
                     )
                 }
             }
@@ -980,6 +986,9 @@ private fun AuthenticatedNavHost(
                         onBack = { navController.popBackStack() },
                         onOpenDetail = { invoiceId ->
                             navController.navigate(Screen.InvoiceDetail.createRoute(invoiceId))
+                        },
+                        onOpenVisit = { sessionId ->
+                            navController.navigate(Screen.KinCareDetail.createRoute(sessionId))
                         },
                         composeQuoteFor = kinfolkId,
                     )
@@ -995,6 +1004,12 @@ private fun AuthenticatedNavHost(
                         invoiceId = invoiceId,
                         onBack    = { navController.popBackStack() },
                         viewModel = InvoiceDetailViewModel(app.repository, app.invoiceRepository),
+                        // #408: a bound line's money belongs to its visit, so the
+                        // line routes there. `lineItems[].sessionId` holds the flat
+                        // `kin_care_sessions` id KinCareDetail matches on.
+                        onOpenVisit = { sessionId ->
+                            navController.navigate(Screen.KinCareDetail.createRoute(sessionId))
+                        },
                     )
                 }
             }
