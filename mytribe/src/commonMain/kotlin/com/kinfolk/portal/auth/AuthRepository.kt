@@ -1,8 +1,11 @@
 package com.kinfolk.portal.auth
 
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 
 interface AuthBackend {
     suspend fun currentUser(): AuthState
@@ -26,6 +29,24 @@ interface AuthBackend {
      * backend needs this; REST/desktop and test fakes have nothing to refresh.
      */
     suspend fun refreshIdToken() {}
+    /**
+     * Auth state for as long as somebody collects it, not just once at boot
+     * (#502).
+     *
+     * [currentUser] answers "who is signed in right now" and then stops
+     * caring. That left the portal deaf for the whole rest of the session: a
+     * session revoked by the operator, a token that stops refreshing, a
+     * sign-out performed on another device, none of it reached this app until
+     * something else happened to call [AuthRepository.refresh]. #454 closed the
+     * same blind spot for both web apps and the Android admin; the KMP portal
+     * never got its half.
+     *
+     * The default is a single emission of [currentUser], which is exactly what
+     * the portal did before, so the REST backend and the test fakes are correct
+     * without implementing anything. Only a backend with something real to
+     * subscribe to needs to override it.
+     */
+    fun authStateChanges(): Flow<AuthState> = flow { emit(currentUser()) }
 }
 
 class AuthRepository(private val backend: AuthBackend) {
@@ -48,6 +69,42 @@ class AuthRepository(private val backend: AuthBackend) {
             // Reporting it as a sign-out logged people out of an app they were
             // still signed in to, and there was no third answer to give.
             println("[Auth] refresh() THREW ${t::class.simpleName}: ${t.message}")
+            _state.value = AuthState.Unreachable(t.message)
+        }
+    }
+    /**
+     * Follows [AuthBackend.authStateChanges] until the caller's scope is
+     * cancelled, which is the lifecycle: the composable that starts this owns
+     * it, and leaving the composition ends it. Suspends for as long as it is
+     * collecting, so it belongs in its own LaunchedEffect and not in front of
+     * anything that needs to run after it.
+     *
+     * No [AuthState.Loading] per emission. Loading is the state before the
+     * first answer arrives, and the flow's own first emission is that answer;
+     * setting it again on every later transition would flash a spinner over a
+     * screen the kinfolk is already using.
+     *
+     * A throw is [AuthState.Unreachable], never [AuthState.SignedOut], for the
+     * same reason [refresh] does it (#494): a subscription that dies is the
+     * subscription failing, not a statement about whether anybody is signed in.
+     * Collection stops there, because the flow is done either way; the retry
+     * path is the launch error's, which calls [refresh].
+     */
+    suspend fun observe() {
+        try {
+            backend.authStateChanges().collect { resolved ->
+                println("[Auth] observe() -> ${resolved::class.simpleName}" +
+                    (if (resolved is AuthState.SignedIn) " uid=${resolved.uid}" else ""))
+                _state.value = resolved
+            }
+        } catch (c: CancellationException) {
+            // The composable left. That is this subscription ending normally,
+            // not the sign-in service failing, and writing Unreachable here
+            // would have stamped a teardown onto the state a returning screen
+            // reads back. Rethrow so the cancelling scope still completes.
+            throw c
+        } catch (t: Throwable) {
+            println("[Auth] observe() THREW ${t::class.simpleName}: ${t.message}")
             _state.value = AuthState.Unreachable(t.message)
         }
     }

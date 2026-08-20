@@ -1,5 +1,10 @@
 package com.kinfolk.portal.auth
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,6 +28,7 @@ private class StubBackend(
     },
     private val onSignOut: suspend () -> Unit = {},
     private val onPasswordReset: suspend (String) -> Unit = {},
+    private val states: Flow<AuthState>? = null,
 ) : AuthBackend {
     var signOutCount = 0
     var magicSendCount = 0
@@ -57,6 +63,8 @@ private class StubBackend(
     override suspend fun refreshIdToken() {
         refreshIdTokenCount++
     }
+    /** Left null by default, so the interface's single-emission default is what runs. */
+    override fun authStateChanges(): Flow<AuthState> = states ?: super.authStateChanges()
 }
 
 class AuthRepositoryTest {
@@ -256,5 +264,110 @@ class AuthRepositoryTest {
         val repo = AuthRepository(backend)
         repo.refreshIdToken()
         assertEquals(1, backend.refreshIdTokenCount)
+    }
+}
+
+/**
+ * NOTHING WAS LISTENING (#502).
+ *
+ * `refresh()` asks once. Before this, that was the only time the portal ever
+ * heard from the sign-in service: `FirebaseAuthBackend.currentUser()` took
+ * `authStateChanged.first()`, one emission, and then the app was deaf for the
+ * rest of the session. A revoked session, an account signed out on another
+ * device, a token that stopped being renewable, none of it reached a screen
+ * until something else happened to call `refresh()`.
+ *
+ * These exercise the seam that makes it testable at all. `firebaseMain` has no
+ * test source set, so the subscription had to be designed into `AuthBackend`
+ * in `commonMain` first; what the real backend then does is map one flow to
+ * another.
+ */
+class AuthRepositoryObserveTest {
+    @Test
+    fun observe_appliesEveryEmission_notJustTheFirst() = runTest {
+        val states = MutableSharedFlow<AuthState>(replay = 0, extraBufferCapacity = 8)
+        val repo = AuthRepository(StubBackend(states = states))
+        val job = launch { repo.observe() }
+        // runTest's scheduler is virtual: without this the collector has not
+        // subscribed yet and a replay-less SharedFlow drops what nobody hears.
+        runCurrent()
+        states.emit(AuthState.SignedIn("u1", "kin@example.com", null))
+        runCurrent()
+        assertTrue(repo.state.value is AuthState.SignedIn, "first emission must land")
+        // The whole point: the session ends mid-visit and the portal hears it.
+        states.emit(AuthState.SignedOut)
+        runCurrent()
+        assertEquals(AuthState.SignedOut, repo.state.value)
+        job.cancel()
+    }
+    @Test
+    fun observe_neverFlashesLoadingBetweenEmissions() = runTest {
+        // Loading is "no answer yet". Re-entering it on a later transition
+        // would put a spinner over a screen somebody is already using.
+        val states = MutableSharedFlow<AuthState>(extraBufferCapacity = 8)
+        val repo = AuthRepository(StubBackend(states = states))
+        val seen = mutableListOf<AuthState>()
+        val watcher = launch { repo.state.collect { seen.add(it) } }
+        val job = launch { repo.observe() }
+        runCurrent()
+        states.emit(AuthState.SignedIn("u1", null, null))
+        runCurrent()
+        states.emit(AuthState.SignedOut)
+        runCurrent()
+        assertEquals(1, seen.count { it == AuthState.Loading }, "Loading is the initial state only")
+        job.cancel()
+        watcher.cancel()
+    }
+    /** #494's rule, on this path too: a broken subscription is not a sign-out. */
+    @Test
+    fun observe_flowThrows_setsUnreachable_notSignedOut() = runTest {
+        val repo = AuthRepository(StubBackend(states = flow { throw RuntimeException("socket closed") }))
+        repo.observe()
+        val s = repo.state.value
+        assertTrue(s is AuthState.Unreachable, "a dead subscription must not read as a sign-out")
+        assertEquals("socket closed", (s as AuthState.Unreachable).reason)
+    }
+    @Test
+    fun observe_throwMidStream_keepsTheStateItAlreadyKnew_asUnreachable() = runTest {
+        val repo = AuthRepository(StubBackend(states = flow {
+            emit(AuthState.SignedIn("u1", null, null))
+            throw RuntimeException("stream died")
+        }))
+        repo.observe()
+        assertTrue(repo.state.value is AuthState.Unreachable)
+    }
+    /**
+     * The default implementation is what the REST backend and every fake use,
+     * and it has to reproduce exactly what the portal did before: resolve once,
+     * from currentUser().
+     */
+    @Test
+    fun observe_defaultBackend_emitsCurrentUserOnce_thenCompletes() = runTest {
+        val repo = AuthRepository(StubBackend(onCurrent = { AuthState.SignedIn("u1", "a@b.co", null) }))
+        repo.observe()
+        val s = repo.state.value
+        assertTrue(s is AuthState.SignedIn)
+        assertEquals("u1", (s as AuthState.SignedIn).uid)
+    }
+    @Test
+    fun observe_defaultBackend_currentUserThrows_isUnreachable() = runTest {
+        val repo = AuthRepository(StubBackend(onCurrent = { throw RuntimeException("Failed to fetch") }))
+        repo.observe()
+        assertTrue(repo.state.value is AuthState.Unreachable)
+    }
+    /** Cancelling the collector is how the composable releases it; nothing else moves. */
+    @Test
+    fun observe_stopsApplyingEmissionsOnceCancelled() = runTest {
+        val states = MutableSharedFlow<AuthState>(extraBufferCapacity = 8)
+        val repo = AuthRepository(StubBackend(states = states))
+        val job = launch { repo.observe() }
+        runCurrent()
+        states.emit(AuthState.SignedIn("u1", null, null))
+        runCurrent()
+        job.cancel()
+        job.join()
+        states.emit(AuthState.SignedOut)
+        runCurrent()
+        assertTrue(repo.state.value is AuthState.SignedIn, "a cancelled collector applies nothing")
     }
 }

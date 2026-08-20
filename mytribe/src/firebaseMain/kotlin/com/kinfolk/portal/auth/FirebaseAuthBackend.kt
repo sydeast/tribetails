@@ -4,7 +4,9 @@ import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.EmailAuthProvider
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.functions.functions
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
 class FirebaseAuthBackend : AuthBackend {
     private val auth get() = Firebase.auth
@@ -22,6 +24,30 @@ class FirebaseAuthBackend : AuthBackend {
             ?: AuthState.SignedOut
     }
 
+    /**
+     * The subscription #502 asked for: gitlive's `authStateChanged` is a real
+     * Flow, and it emits on every transition rather than only the first, so
+     * mapping it is the whole implementation.
+     *
+     * WHAT THIS DOES AND DOES NOT NOTICE. It fires when the SDK's idea of who
+     * is signed in changes: a sign-out here or on another device, a session an
+     * operator revoked, an account deleted. It does NOT fire when a token
+     * simply stops being renewable while the SDK still believes a user is
+     * present, which is the failure #495 closed for the web apps and the
+     * Android admin with a token-refresh observer. That gap is still open on
+     * this client and is tracked separately (#494 filed it as KMP work); this
+     * closes the state half, not the token half.
+     *
+     * The first emission is the same one [currentUser] awaits, so a collector
+     * started at boot gets the restored-from-IndexedDB answer exactly as
+     * before, with no extra round trip and no window where the portal shows a
+     * sign-in screen to somebody the SDK is still rehydrating.
+     */
+    override fun authStateChanges(): Flow<AuthState> =
+        auth.authStateChanged.map { user ->
+            user?.let { AuthState.SignedIn(it.uid, it.email, it.displayName) }
+                ?: AuthState.SignedOut
+        }
     override suspend fun signInWithEmailPassword(email: String, password: String): AuthState.SignedIn {
         val u = auth.signInWithEmailAndPassword(email, password).user
             ?: throw IllegalStateException("auth-failed")

@@ -1,7 +1,15 @@
 package com.kinfolk.portal.launch
 
+import com.kinfolk.portal.auth.AuthBackend
+import com.kinfolk.portal.auth.AuthProviderId
+import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
 import com.kinfolk.portal.portal.MyAccessResult
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -125,5 +133,90 @@ class LaunchRouterTest {
             null,
         )
         assertEquals(LaunchDestination.NoTribes, d)
+    }
+}
+
+/**
+ * THE OTHER HALF OF #502, JOINED UP.
+ *
+ * `AuthRepositoryObserveTest` proves a mid-session transition reaches
+ * `repo.state`. That on its own is not the thing the issue asked for: a state
+ * nothing re-reads is still invisible to whoever is sitting in front of the
+ * screen. What makes it visible is that `rememberLaunchDestination` collects
+ * `repo.state` with `collectAsState` and recomputes `resolveLaunchDestination`
+ * on every recomposition, so a new auth state is a new destination without
+ * anything else having to notice.
+ *
+ * These tests bind the two halves without a Compose runtime: emit through the
+ * backend's flow, read `repo.state`, and route it exactly as the composable
+ * does. Together with the collectAsState above, that is the whole path from
+ * "the session ended" to "the screen changed".
+ */
+class MidSessionAuthChangeRoutingTest {
+    private class FlowBackend(private val states: Flow<AuthState>) : AuthBackend {
+        override suspend fun currentUser(): AuthState = AuthState.SignedOut
+        override fun authStateChanges(): Flow<AuthState> = states
+        override suspend fun signInWithEmailPassword(email: String, password: String) =
+            AuthState.SignedIn("u1", email, null)
+        override suspend fun signInWithCustomToken(token: String) = AuthState.SignedIn("u1", null, null)
+        override suspend fun sendMagicLink(email: String) = Unit
+        override suspend fun signInWithMagicLink(email: String, link: String) =
+            AuthState.SignedIn("u1", email, null)
+        override suspend fun signInWithIdToken(provider: AuthProviderId, idToken: String, rawNonce: String?) =
+            AuthState.SignedIn("u1", null, null)
+        override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String) =
+            AuthState.SignedIn("u1", null, null)
+        override suspend fun signOut() = Unit
+        override suspend fun sendPasswordReset(email: String) = Unit
+        override suspend fun changePassword(currentPassword: String, newPassword: String) = Unit
+        override suspend fun changeEmail(currentPassword: String, newEmail: String) = Unit
+    }
+    private val access = MyAccessResult(kinfolkIds = listOf("k1"), isOperator = false)
+    @Test
+    fun revokedMidVisit_takesTheKinfolkFromHomeToSignIn() = runTest {
+        val states = MutableSharedFlow<AuthState>(extraBufferCapacity = 8)
+        val repo = AuthRepository(FlowBackend(states))
+        val job = launch { repo.observe() }
+        runCurrent()
+        states.emit(AuthState.SignedIn("u1", "kin@example.com", null))
+        runCurrent()
+        assertEquals(
+            LaunchDestination.Home("k1"),
+            resolveLaunchDestination(repo.state.value, access, null),
+            "signed in with one household lands on Home",
+        )
+        // The session ends somewhere else: revoked by the operator, signed out
+        // on another device. Nothing in this app was asked anything.
+        states.emit(AuthState.SignedOut)
+        runCurrent()
+        assertEquals(
+            LaunchDestination.SignIn,
+            resolveLaunchDestination(repo.state.value, null, null),
+            "a session that ended mid-visit has to leave the household's screen",
+        )
+        job.cancel()
+    }
+    /**
+     * And the failure mode #494 fixed does not come back through this door: a
+     * subscription that dies is Unreachable, so it routes to the retryable
+     * launch error, not to the sign-in screen.
+     */
+    @Test
+    fun subscriptionDies_routesToRetryableError_notSignIn() = runTest {
+        val states = MutableSharedFlow<AuthState>(extraBufferCapacity = 8)
+        val repo = AuthRepository(FlowBackend(states))
+        val job = launch { repo.observe() }
+        runCurrent()
+        states.emit(AuthState.SignedIn("u1", null, null))
+        runCurrent()
+        job.cancel()
+        val broken = AuthRepository(FlowBackend(kotlinx.coroutines.flow.flow {
+            emit(AuthState.SignedIn("u1", null, null))
+            throw RuntimeException("stream died")
+        }))
+        broken.observe()
+        val d = resolveLaunchDestination(broken.state.value, null, null)
+        assertTrue(d is LaunchDestination.Error)
+        assertEquals(COULD_NOT_CHECK_SIGN_IN, (d as LaunchDestination.Error).message)
     }
 }
