@@ -4,7 +4,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
 import com.tribetails.auntieos.data.contracts.CreateInvoiceArgs
+import com.tribetails.auntieos.data.contracts.CreateInvoiceArgsLineItem
 import com.tribetails.auntieos.data.contracts.CreateQuoteArgs
+import com.tribetails.auntieos.data.contracts.CreateQuoteArgsLineItem
 import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
 import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerArgs
@@ -13,12 +15,16 @@ import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsArgs
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.ListPaymentsArgs
 import com.tribetails.auntieos.data.contracts.ListPaymentsResult
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsArgs
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidArgs
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgs
 import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
 import com.tribetails.auntieos.data.contracts.ResendQuoteArgs
 import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
+import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceArgs
+import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
 import com.tribetails.auntieos.data.contracts.decodeCreateInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeCreateQuoteResult
@@ -26,10 +32,12 @@ import com.tribetails.auntieos.data.contracts.decodeGenerateInvoicePdfResult
 import com.tribetails.auntieos.data.contracts.decodeGetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.decodeLinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeListPaymentsResult
+import com.tribetails.auntieos.data.contracts.decodeListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.decodeMarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.contracts.decodeResendQuoteResult
 import com.tribetails.auntieos.data.contracts.decodeSendInvoiceReminderResult
+import com.tribetails.auntieos.data.contracts.decodeSetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.scopedKinfolkId
@@ -122,12 +130,23 @@ class InvoiceRepository(
      * calling is to learn the new invoice's id, so returning "" as a success
      * would hand the ViewModel a doc reference that resolves to nothing.
      */
-    suspend fun createInvoice(invoice: Invoice): Result<String> = runCatching {
+    suspend fun createInvoice(
+        invoice: Invoice,
+        termsCode: String? = null,
+        lineItems: List<CreateInvoiceArgsLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
+    ): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
         // In test mode force the invoice's household to the sandbox kinfolk so the
         // server write lands inside the rules-enforced scope.
-        val args = createInvoiceArgs(invoice, familyId = mode.scopedKinfolkId(invoice.kinfolkId))
+        val args = createInvoiceArgs(
+            invoice,
+            familyId = mode.scopedKinfolkId(invoice.kinfolkId),
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+        )
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).await().data as? Map<String, Any?>
             ?: error("createInvoice: non-map payload")
@@ -141,15 +160,113 @@ class InvoiceRepository(
      * [sendToKinfolk] is true, dispatches the issued-quote notification (catalog key
      * invoice.new) targeting the new invoice doc. Returns the new invoiceId.
      */
-    suspend fun createQuote(invoice: Invoice, sendToKinfolk: Boolean): Result<String> = runCatching {
+    suspend fun createQuote(
+        invoice: Invoice,
+        sendToKinfolk: Boolean,
+        termsCode: String? = null,
+        lineItems: List<CreateQuoteArgsLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
+    ): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
-        val args = createQuoteArgs(invoice, familyId = mode.scopedKinfolkId(invoice.kinfolkId), sendToKinfolk = sendToKinfolk)
+        val args = createQuoteArgs(
+            invoice,
+            familyId = mode.scopedKinfolkId(invoice.kinfolkId),
+            sendToKinfolk = sendToKinfolk,
+            termsCode = termsCode,
+            lineItems = lineItems,
+            invoiceDiscountCents = invoiceDiscountCents,
+        )
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).await().data as? Map<String, Any?>
             ?: error("createQuote: non-map payload")
         decodeCreateQuoteResult(raw).invoiceId.ifBlank { error("createQuote: missing invoiceId") }
     }.onFailure { AuntieLog.e("Failed to create quote", it) }
+
+    // --- The un-invoiced queue (#408) ---
+
+    /**
+     * A household's completed visits that no invoice has claimed yet, priced
+     * from the rate card where that is possible.
+     *
+     * THE READ HALF OF "TURN THIS HOUSEHOLD'S WORK INTO AN INVOICE", and the
+     * reason the composer can stop asking the operator to describe an invoice.
+     * It writes nothing.
+     *
+     * [kinfolkId] narrows the read AT THE SERVER, which is what lets the date
+     * range be left out: all of a household's outstanding work arrives at once,
+     * rather than only whatever fell inside a window the operator had to guess.
+     * Pass [from] and [to] only to NARROW a result the server said it truncated.
+     *
+     * BOTH DATES OR NEITHER, checked here so a caller that dropped one hears
+     * about it before the round trip. Half a range is not a narrower window; it
+     * is a different question, and the server refuses it too.
+     *
+     * TestMode-scoped exactly as [createInvoice] is, so a sandbox session cannot
+     * read a real household's work.
+     *
+     * Fail-loud: a failure surfaces. There is no empty-list fallback, because an
+     * empty list here reads as "this household has nothing outstanding", which
+     * is the one wrong answer that looks entirely reasonable.
+     */
+    suspend fun listUninvoicedSessions(
+        kinfolkId: String,
+        from: String? = null,
+        to: String? = null,
+    ): Result<ListUninvoicedSessionsResult> = runCatching {
+        authGate.ensureAuthenticated()
+        require(kinfolkId.isNotBlank()) { "listUninvoicedSessions requires a household" }
+        require((from == null) == (to == null)) {
+            "listUninvoicedSessions needs both dates or neither"
+        }
+        val mode = authGate.requireTestMode()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listUninvoicedSessions")
+            .call(
+                ListUninvoicedSessionsArgs(
+                    kinfolkId = mode.scopedKinfolkId(kinfolkId),
+                    from = from,
+                    to = to,
+                ).toPayload(),
+            )
+            .await().data as? Map<String, Any?>
+        decodeListUninvoicedSessionsResult(raw)
+    }.onFailure { AuntieLog.e("listUninvoicedSessions failed for $kinfolkId", it) }
+
+    /**
+     * Takes completed visits out of the un-invoiced queue without billing for
+     * them, and puts them back.
+     *
+     * A STATE, NOT A DELETION, AND IT REVERSES. Nothing is removed and no money
+     * moves: the visit keeps every field it had and gains a flag, a reason, and
+     * who set it when. Calling this with [doNotInvoice] false clears the flag
+     * and the visit rejoins the queue.
+     *
+     * The server refuses a visit an invoice already bills for, and refuses the
+     * WHOLE batch rather than half of it, so the result's `changed` and
+     * `unchanged` lists are the honest count to confirm with. A visit that was
+     * already in the requested state lands in `unchanged`: not an error, and not
+     * something to report as a change.
+     */
+    suspend fun setSessionDoNotInvoice(
+        sessionIds: List<String>,
+        doNotInvoice: Boolean,
+        reason: String = "",
+    ): Result<SetSessionDoNotInvoiceResult> = runCatching {
+        authGate.ensureAuthenticated()
+        require(sessionIds.isNotEmpty()) { "setSessionDoNotInvoice requires at least one visit" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("setSessionDoNotInvoice")
+            .call(
+                SetSessionDoNotInvoiceArgs(
+                    sessionIds = sessionIds,
+                    doNotInvoice = doNotInvoice,
+                    reason = reason,
+                ).toPayload(),
+            )
+            .await().data as? Map<String, Any?>
+        decodeSetSessionDoNotInvoiceResult(raw)
+    }.onFailure { AuntieLog.e("setSessionDoNotInvoice failed", it) }
 
     /**
      * Stage 3 / 16.2: generates a downloadable PDF of an invoice via the
@@ -511,24 +628,46 @@ class InvoiceRepository(
  *
  * [familyId] is passed in already TestMode-scoped rather than read here, so this
  * stays pure and the sandbox decision has exactly one home (the caller).
- * `lineItems` and `invoiceDiscountCents` are left at their generated defaults:
- * Android's composer sends the dollar `total`/`amountDue` pair, and the server
- * treats the line-item pair as the alternative to it, not an addition.
+ *
+ * A BLANK INVOICE NUMBER IS OMITTED, NOT SENT BLANK (#408). The server mints the
+ * next number in the sequence when the key is absent, which is what the composer
+ * relies on now that nobody types one. Sending `""` would happen to mint too,
+ * but it puts an answer on the wire to a question the client did not ask.
+ *
+ * [lineItems] AND [invoiceDiscountCents] ARE NULL BY DEFAULT AND MUST STAY THAT
+ * WAY ON THE BLANK PATH. The server reads the PRESENCE of `lineItems` as "this
+ * invoice is itemized", so an empty list is not a weaker version of an absent
+ * one: it arms `updateInvoice`'s recompute on an invoice whose total was typed
+ * by hand, and a later due-date correction would rewrite that total to $0.
+ *
+ * [termsCode] absent leaves `terms` and `dueDate` stored verbatim, exactly as
+ * they always were. Present, the SERVER writes `terms` as the rule in words,
+ * works the due date out from the visits it actually links, and refuses a
+ * `dueDate` that disagrees.
  */
-internal fun createInvoiceArgs(invoice: Invoice, familyId: String): CreateInvoiceArgs = CreateInvoiceArgs(
+internal fun createInvoiceArgs(
+    invoice: Invoice,
+    familyId: String,
+    termsCode: String? = null,
+    lineItems: List<CreateInvoiceArgsLineItem>? = null,
+    invoiceDiscountCents: Long? = null,
+): CreateInvoiceArgs = CreateInvoiceArgs(
     familyId = familyId,
     kinfolkName = invoice.kinfolkName,
-    invoiceNumber = invoice.invoiceNumber,
+    invoiceNumber = invoice.invoiceNumber.takeIf { it.isNotBlank() },
     client = invoice.client,
     address = invoice.address,
     date = invoice.date,
     terms = invoice.terms,
     dueDate = invoice.dueDate,
+    termsCode = termsCode,
     discount = invoice.discount,
     total = invoice.total,
     amountDue = invoice.amountDue,
     status = invoice.status,
     sessionIds = invoice.sessionIds,
+    lineItems = lineItems,
+    invoiceDiscountCents = invoiceDiscountCents,
 )
 
 /**
@@ -540,19 +679,29 @@ internal fun createInvoiceArgs(invoice: Invoice, familyId: String): CreateInvoic
  * the arg, so forwarding a composer's draft status here would put a value on the
  * wire that reads as a request the server refuses to honour.
  */
-internal fun createQuoteArgs(invoice: Invoice, familyId: String, sendToKinfolk: Boolean): CreateQuoteArgs = CreateQuoteArgs(
+internal fun createQuoteArgs(
+    invoice: Invoice,
+    familyId: String,
+    sendToKinfolk: Boolean,
+    termsCode: String? = null,
+    lineItems: List<CreateQuoteArgsLineItem>? = null,
+    invoiceDiscountCents: Long? = null,
+): CreateQuoteArgs = CreateQuoteArgs(
     familyId = familyId,
     kinfolkName = invoice.kinfolkName,
-    invoiceNumber = invoice.invoiceNumber,
+    invoiceNumber = invoice.invoiceNumber.takeIf { it.isNotBlank() },
     client = invoice.client,
     address = invoice.address,
     date = invoice.date,
     terms = invoice.terms,
     dueDate = invoice.dueDate,
+    termsCode = termsCode,
     discount = invoice.discount,
     total = invoice.total,
     amountDue = invoice.amountDue,
     sessionIds = invoice.sessionIds,
+    lineItems = lineItems,
+    invoiceDiscountCents = invoiceDiscountCents,
     sendToKinfolk = sendToKinfolk,
 )
 

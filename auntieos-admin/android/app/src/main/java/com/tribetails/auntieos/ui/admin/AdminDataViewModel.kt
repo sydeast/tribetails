@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.contracts.ListPaymentsResultPayment
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
+import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
@@ -491,6 +493,78 @@ class AdminDataViewModel(
             }
         }
     }
+
+    /**
+     * The #408 composer's write: whichever of `createInvoice` / `createQuote` the
+     * operator chose inside the one dialog, with the structured terms and the
+     * lines it built from the household's un-invoiced work.
+     *
+     * ONE ENTRY POINT, because a quote is an invoice in QUOTE status and the
+     * composer picks between them as a field rather than as a second button.
+     *
+     * [onResult] carries the NEW INVOICE ID back so the caller can open it: the
+     * point of creating one is to land on it, and the dialog needs the failure
+     * too, so it can stay open with the form intact instead of closing over a
+     * write that never happened. Errors still reach [_error] as well, which is
+     * how every other write on this ViewModel reports.
+     */
+    fun composeInvoice(request: NewInvoiceRequest, onResult: (Result<String>) -> Unit = {}) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val result = when (request.kind) {
+                InvoiceCreateKind.QUOTE -> invoiceRepository.createQuote(
+                    invoice = request.invoice,
+                    sendToKinfolk = request.sendToKinfolk,
+                    termsCode = request.termsCode,
+                    lineItems = request.lineItems?.map { it.toCreateQuoteLine() },
+                    invoiceDiscountCents = request.invoiceDiscountCents,
+                )
+                InvoiceCreateKind.INVOICE -> invoiceRepository.createInvoice(
+                    invoice = request.invoice,
+                    termsCode = request.termsCode,
+                    lineItems = request.lineItems?.map { it.toCreateInvoiceLine() },
+                    invoiceDiscountCents = request.invoiceDiscountCents,
+                )
+            }
+            result.onSuccess {
+                _invoiceActionMessage.value = when {
+                    request.kind == InvoiceCreateKind.QUOTE && request.sendToKinfolk -> "Quote created and sent."
+                    request.kind == InvoiceCreateKind.QUOTE -> "Quote created."
+                    else -> "Invoice created as a draft. Nothing has been sent to the household yet."
+                }
+                loadInvoices() // Refresh the list
+            }.onFailure { throwable ->
+                _error.value = throwable.message
+                    ?: if (request.kind == InvoiceCreateKind.QUOTE) "Failed to create quote" else "Failed to create invoice"
+                _isLoading.value = false
+            }
+            onResult(result)
+        }
+    }
+
+    /**
+     * A household's un-invoiced completed work, for the composer's picker.
+     *
+     * Handed straight through rather than cached on a StateFlow: the picker asks
+     * for exactly one household at a time and reloads whenever the queue changes,
+     * so a cached copy here would only ever be a second answer to disagree with.
+     */
+    suspend fun loadUninvoicedSessions(
+        kinfolkId: String,
+        from: String? = null,
+        to: String? = null,
+    ): Result<ListUninvoicedSessionsResult> = invoiceRepository.listUninvoicedSessions(kinfolkId, from, to)
+
+    /**
+     * Marks visits do-not-invoice, or puts them back. Reversible by design; see
+     * `InvoiceRepository.setSessionDoNotInvoice`.
+     */
+    suspend fun setSessionDoNotInvoice(
+        sessionIds: List<String>,
+        doNotInvoice: Boolean,
+        reason: String,
+    ): Result<SetSessionDoNotInvoiceResult> =
+        invoiceRepository.setSessionDoNotInvoice(sessionIds, doNotInvoice, reason)
 
     /** Slice 2: issue a receipt for an invoice via the generateReceipt callable. */
     fun generateReceipt(invoiceId: String) {

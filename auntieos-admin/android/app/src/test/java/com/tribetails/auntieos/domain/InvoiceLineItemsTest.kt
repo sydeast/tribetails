@@ -10,12 +10,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
- * Read-only invoice line items and the archive flag (Task 5.1).
+ * Invoice line items and the archive flag.
  *
- * Android renders what the web wrote and never writes lines itself, so what
- * matters here is that it DECODES honestly: a malformed document must not take
- * down the surface, and an un-itemized invoice must not read as one billing
- * nothing.
+ * What matters here is that the decode is HONEST: a malformed document must not
+ * take down the surface, an un-itemized invoice must not read as one billing
+ * nothing, and a line drawn from a visit must carry that visit so every surface
+ * can route the money back to where it came from (#408).
  */
 class InvoiceLineItemsTest {
 
@@ -217,5 +217,43 @@ class InvoiceLineItemsTest {
         assertEquals("3", formatQty(3.0))
         assertEquals("2.5", formatQty(2.5))
         assertEquals("0", formatQty(Double.NaN))
+    }
+
+    // ------------------------------------------------------------ bound lines
+
+    @Test
+    fun `a line drawn from a visit decodes carrying the visit`() {
+        // #408: the session id is what lets every surface route the money back
+        // to the work it came from instead of offering a field to type over it.
+        val decoded = decodeInvoiceLineItems(
+            listOf(
+                mapOf(
+                    "description" to "Dog walk, 2026-08-11",
+                    "qty" to 1,
+                    "unitCents" to 2500,
+                    "sessionId" to "s1",
+                ),
+            ),
+        )
+        assertEquals("s1", decoded!!.single().sessionId)
+    }
+
+    @Test
+    fun `a line nobody bound still decodes, with no visit on it`() {
+        // Every line written before #408 is in this state, so an absent key must
+        // read as "unbound" rather than dropping the whole row.
+        val decoded = decodeInvoiceLineItems(
+            listOf(mapOf("description" to "Mileage", "qty" to 10, "unitCents" to 70)),
+        )
+        assertEquals("", decoded!!.single().sessionId)
+        assertEquals(700L, lineAmountCents(decoded.single()))
+    }
+
+    @Test
+    fun `a session id of the wrong type reads as unbound rather than losing the row`() {
+        val decoded = decodeInvoiceLineItems(
+            listOf(mapOf("description" to "Mileage", "qty" to 1, "unitCents" to 70, "sessionId" to 12)),
+        )
+        assertEquals("", decoded!!.single().sessionId)
     }
 }

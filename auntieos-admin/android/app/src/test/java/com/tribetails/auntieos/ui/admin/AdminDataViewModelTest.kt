@@ -525,6 +525,85 @@ class AdminDataViewModelTest {
         assertFalse(vm.isLoading.value)
     }
 
+    // ─── composeInvoice (#408) ────────────────────────────────────────────────
+
+    @Test
+    fun `composeInvoice routes an invoice request through createInvoice and hands back the id`() =
+        runTest(testDispatcher) {
+            coEvery {
+                mockInvoiceRepo.createInvoice(any(), any(), any(), any())
+            } returns Result.success("inv-new")
+            coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(listOf(TestFixtures.invoice1))
+
+            val vm = buildViewModel()
+            var handed: Result<String>? = null
+            vm.composeInvoice(
+                NewInvoiceRequest(
+                    kind = InvoiceCreateKind.INVOICE,
+                    invoice = TestFixtures.invoice1,
+                    termsCode = "net_14",
+                    lineItems = listOf(
+                        com.tribetails.auntieos.data.model.InvoiceLineItem("Dog walk", 1.0, 2500L, sessionId = "s1"),
+                    ),
+                    invoiceDiscountCents = 0L,
+                ),
+            ) { handed = it }
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { mockInvoiceRepo.createInvoice(any(), "net_14", any(), 0L) }
+            coVerify(exactly = 0) { mockInvoiceRepo.createQuote(any(), any(), any(), any(), any()) }
+            // The caller needs the id: the point of creating an invoice is to
+            // land on it.
+            assertEquals("inv-new", handed!!.getOrNull())
+            assertEquals(
+                "Invoice created as a draft. Nothing has been sent to the household yet.",
+                vm.invoiceActionMessage.value,
+            )
+        }
+
+    @Test
+    fun `composeInvoice routes a quote request through createQuote`() = runTest(testDispatcher) {
+        coEvery {
+            mockInvoiceRepo.createQuote(any(), any(), any(), any(), any())
+        } returns Result.success("q-new")
+        coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.composeInvoice(
+            NewInvoiceRequest(
+                kind = InvoiceCreateKind.QUOTE,
+                invoice = TestFixtures.invoice1,
+                sendToKinfolk = true,
+                termsCode = "due_on_receipt",
+            ),
+        )
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockInvoiceRepo.createQuote(any(), true, "due_on_receipt", null, null) }
+        assertEquals("Quote created and sent.", vm.invoiceActionMessage.value)
+    }
+
+    @Test
+    fun `composeInvoice reports a refusal to the caller as well as to the error flow`() =
+        runTest(testDispatcher) {
+            coEvery {
+                mockInvoiceRepo.createInvoice(any(), any(), any(), any())
+            } returns Result.failure(RuntimeException("due date disagrees with the terms"))
+
+            val vm = buildViewModel()
+            var handed: Result<String>? = null
+            vm.composeInvoice(
+                NewInvoiceRequest(kind = InvoiceCreateKind.INVOICE, invoice = TestFixtures.invoice1),
+            ) { handed = it }
+            advanceUntilIdle()
+
+            // The dialog needs the failure so it can stay open with the form
+            // intact rather than closing over a write that never happened.
+            assertTrue(handed!!.isFailure)
+            assertTrue(vm.error.value!!.contains("due date disagrees with the terms"))
+            assertFalse(vm.isLoading.value)
+        }
+
     // ─── notification quick actions (Step 4 PART A) ───────────────────────────
 
     @Test

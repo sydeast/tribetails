@@ -603,6 +603,21 @@ data class InvoiceLineItem(
     val unitCents: Long = 0L,
     /** Optional per-line reduction, integer cents. */
     val discountCents: Long = 0L,
+    /**
+     * The visit this line bills for, or `""` on a line somebody typed.
+     *
+     * A BOUND LINE, and the difference matters on every surface that renders one
+     * (issue #408). A line carrying a session id is not a description that
+     * happens to mention a date: its money came from the rate card by way of the
+     * visit, so the way to change the money is to change the visit, and the
+     * invoice follows. Every screen showing one offers the route to that visit
+     * instead of a field to type over it with.
+     *
+     * `""` rather than null, matching this model's other string fields: an
+     * absent key means nobody bound this line, which is true of every line
+     * written before #408.
+     */
+    val sessionId: String = "",
 )
 
 @Keep

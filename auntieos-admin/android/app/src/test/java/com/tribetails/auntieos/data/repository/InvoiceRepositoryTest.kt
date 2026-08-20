@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.data.repository
 
+import com.tribetails.auntieos.data.contracts.CreateInvoiceArgsLineItem
+import com.tribetails.auntieos.data.contracts.CreateQuoteArgsLineItem
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
 import org.junit.Assert.assertEquals
@@ -142,6 +144,83 @@ class InvoiceRepositoryTest {
         // empty and read as "this invoice has no lines".
         assertFalse(p.containsKey("lineItems"))
         assertFalse(p.containsKey("invoiceDiscountCents"))
+    }
+
+    @Test
+    fun `createInvoice omits a blank invoice number rather than sending an empty one`() {
+        // #408: the server mints the next number from a transactional counter
+        // when the key is absent, which is what the composer relies on now that
+        // nobody types one. An empty string would happen to mint too, but it
+        // puts an answer on the wire to a question the client did not ask.
+        val p = createInvoiceArgs(invoice.copy(invoiceNumber = "   "), familyId = "kf1").toPayload()
+        assertFalse(p.containsKey("invoiceNumber"))
+    }
+
+    @Test
+    fun `createInvoice carries the structured terms code and the bound lines`() {
+        val p = createInvoiceArgs(
+            invoice,
+            familyId = "kf1",
+            termsCode = "net_14_after_last_visit",
+            lineItems = listOf(
+                CreateInvoiceArgsLineItem(
+                    description = "Dog walk, 2026-08-11",
+                    qty = 1.0,
+                    unitCents = 2500L,
+                    sessionId = "ses1",
+                ),
+            ),
+            invoiceDiscountCents = 500L,
+        ).toPayload()
+
+        assertEquals("net_14_after_last_visit", p["termsCode"])
+        assertEquals(500L, p["invoiceDiscountCents"])
+        @Suppress("UNCHECKED_CAST")
+        val lines = p["lineItems"] as List<Map<String, Any?>>
+        assertEquals(1, lines.size)
+        // The session id is what makes it a BOUND line: without it the invoice
+        // cannot be routed back to the work it bills for.
+        assertEquals("ses1", lines.single()["sessionId"])
+        assertEquals(2500L, lines.single()["unitCents"])
+    }
+
+    @Test
+    fun `the blank path leaves lineItems off the payload entirely`() {
+        // NOT an empty list. The server reads the KEY'S PRESENCE as "this
+        // invoice is itemized", so an empty one arms updateInvoice's recompute
+        // on an invoice whose total was typed by hand, and a later due-date
+        // correction would rewrite that total to $0.
+        val p = createInvoiceArgs(invoice, familyId = "kf1", termsCode = "due_on_receipt").toPayload()
+        assertFalse(p.containsKey("lineItems"))
+        assertFalse(p.containsKey("invoiceDiscountCents"))
+        assertEquals("due_on_receipt", p["termsCode"])
+    }
+
+    @Test
+    fun `a caller that sends no terms code leaves terms and dueDate stored verbatim`() {
+        // The pre-#408 shape, still reachable: an absent termsCode means the
+        // server stores what it was given rather than owning the due date.
+        val p = createInvoiceArgs(invoice, familyId = "kf1").toPayload()
+        assertFalse(p.containsKey("termsCode"))
+        assertEquals("Net 30", p["terms"])
+        assertEquals("2026-05-31", p["dueDate"])
+    }
+
+    @Test
+    fun `createQuote carries the terms code and bound lines too`() {
+        val p = createQuoteArgs(
+            invoice,
+            familyId = "kf1",
+            sendToKinfolk = false,
+            termsCode = "net_7",
+            lineItems = listOf(
+                CreateQuoteArgsLineItem(description = "Dog walk", qty = 1.0, unitCents = 2500L, sessionId = "ses1"),
+            ),
+        ).toPayload()
+        assertEquals("net_7", p["termsCode"])
+        @Suppress("UNCHECKED_CAST")
+        val lines = p["lineItems"] as List<Map<String, Any?>>
+        assertEquals("ses1", lines.single()["sessionId"])
     }
 
     @Test
