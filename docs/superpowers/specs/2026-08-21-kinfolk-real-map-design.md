@@ -37,14 +37,38 @@ and two screens that build real `MapView`s, `LiveTrackingScreen.kt` and
 (`credentials.password`) that downloads the SDK at build time. It cannot authenticate a
 `MapView`.
 
-`MapboxConfig.kt` records why: on 2026-07-25 a live Mapbox key compiled into the APK was
-removed as a security fix, because anyone with the APK could extract it and spend the
-account's quota. The removal was correct and the replacement was never provisioned, so
-`mapboxMap.loadStyle(...)` has been running without a credential ever since. Maps SDK v11
-cannot load a style without one.
+### The map was never wired, and the July security fix is not why
+
+`MapboxConfig.kt` records that a live Mapbox key compiled into the APK was removed on
+2026-07-25, which invites the conclusion that the removal broke the map. It did not, and
+the distinction matters because it changes what this spec is doing.
+
+Commit `ae18968` is narrow and correct. Before it, `MapboxConfig.ACCESS_TOKEN` had exactly
+one reader:
+
+```
+AddressAutocompleteField.kt:41
+    geocodingApi.suggest(query = value, token = MapboxConfig.ACCESS_TOKEN)
+```
+
+A client calling the Mapbox geocoding API directly with a compiled-in key, where a server
+could call it instead. The fix deleted the constant, deleted `MapboxGeocodingApi.kt` and
+the Retrofit builder, and moved address lookup onto the `mapboxSearch` / `mapboxRetrieve`
+callables that hold the token as a Functions secret. It recorded that deleting the constant
+does not un-publish the key. Its checks: `compileDebugKotlin` clean, `testDebugUnitTest`
+1530 passed.
+
+The `MapView` screens never read that constant. `MapboxOptions`, `setAccessToken` and a
+`mapbox_access_token` string resource have never existed anywhere in this repository's
+Android history; the only `mapbox_access_token` occurrences at the initial commit are
+`defineSecret('MAPBOX_ACCESS_TOKEN')` in server-side `web/functions/index.js`.
+
+So the map has never been authenticated. The SDK is wired and the screens are written, and
+the credential was never provisioned. It is unfinished rather than regressed, and the July
+fix neither caused that nor touched it.
 
 **So the operator's live-tracking and route-viewer maps are almost certainly blank in
-production, and have been since 2026-07-25.** This is inference from source, not observed
+production, and always have been.** This is inference from source, not observed
 telemetry; a Sentry query for map-load errors timed out and is worth re-running. The
 screens subscribe to `subscribeMapLoadingError` under a stated fail-loud policy, so if the
 inference is right, those errors are already being logged.
@@ -69,8 +93,18 @@ These gate implementation and only the operator can do them.
 
 ## The security tradeoff, stated plainly
 
-This ships an extractable key in two APKs, which is the same shape as the 2026-07-25
-incident. It is a deliberate reversal of that decision, taken with the tradeoff visible.
+This ships an extractable key in two APKs. That resembles the 2026-07-25 incident and is
+worth being explicit about, but it is not a reversal of it, and an earlier draft of this
+spec was wrong to call it one.
+
+July's decision was: do not ship a key so a client can call an API the server can call for
+it. That stands here untouched. Address verification stays on the `mapboxSearch` /
+`mapboxRetrieve` callables, and no client regains a geocoding key.
+
+This is a different question, which July never asked. The Maps SDK fetches vector tiles on
+the device, so a token has to be on the device; there is no server-proxy alternative for a
+basemap the way there is for a geocoding request. The choice is a scoped client token or no
+map at all.
 
 What makes it defensible is not concealment, which is impossible on Android, but blast
 radius: a read-only token cannot write to the account, and a rotation schedule bounds what
