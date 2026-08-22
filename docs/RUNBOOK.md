@@ -653,15 +653,34 @@ already resolved — and it fails loudly (nonzero exit, every unresolved export
 named) if a future function's options object uses a shape the extractor
 hasn't been taught, rather than silently skipping it.
 
-**Then get the deployed shape.** Two ways, in order of preference:
+**Then get the deployed shape.** Three ways, in order of preference:
 
-1. From an agent session, the Firebase MCP `functions_list_functions` tool
-   works here (confirmed 2026-08-19, building this) and needs no operator
-   step at all — but it only ever reports `function`, `version`, `trigger`,
-   `location` and `memory`, never `cpu`/`minInstances`/`maxInstances`/
-   `timeoutSeconds`. Save its raw JSON result (the `{"functions":[...]}`
-   object) to a file.
-2. For the full six-field picture, the operator runs:
+1. **`firebase functions:list --json`** (#504). Run from `mytribe/`:
+
+   ```
+   npx firebase functions:list --json > /tmp/deployed.json
+   ```
+
+   No operator step, works from an agent session, and reports ALL SIX fields
+   flat on each row (`cpu`, `minInstances`, `maxInstances`, `timeoutSeconds`,
+   `availableMemoryMb`, `region`). It also carries
+   `source.storageSource.generation`, a GCS generation in microseconds since
+   the epoch, which decodes to **when that function last deployed**. That is
+   the field the diff's "Deployed source spans ..." line is computed from, and
+   it is what found the lost deploy batch in #503.
+
+   This entry used to say the six-field picture needed an operator running
+   gcloud. That was true of the MCP tool below and false of the CLI; nobody
+   had tried the CLI.
+
+2. The Firebase MCP `functions_list_functions` tool also works from an agent
+   session (confirmed 2026-08-19), but reports only `function`, `version`,
+   `trigger`, `location` and `memory` — never `cpu`/`minInstances`/
+   `maxInstances`/`timeoutSeconds`, and no deploy time. Save its raw JSON
+   result (the `{"functions":[...]}` object) to a file. Use it only when the
+   CLI is unavailable.
+
+3. The operator can also run:
 
    ```
    gcloud functions list --v2 --format=json > /tmp/deployed.json
@@ -669,10 +688,13 @@ hasn't been taught, rather than silently skipping it.
 
    (`gcloud` returns empty with exit 0 from an agent session — a false
    negative, not "no functions"; this step has to be run by a human, same as
-   every other `gcloud`/`firebase deploy` step in this file.) This dump's
+   every other `gcloud`/`firebase deploy` step in this file.) Its
    `serviceConfig.{availableMemory,availableCpu,timeoutSeconds,
-   minInstanceCount,maxInstanceCount}` fills in the four fields the MCP tool
-   can't.
+   minInstanceCount,maxInstanceCount}` carries the same six fields option 1
+   does, so this is now a fallback rather than the only complete answer.
+
+All three shapes are auto-detected; you do not tell the tool which one you
+handed it.
 
 **Then diff:**
 
@@ -681,8 +703,17 @@ npm --prefix mytribe/functions run runtime-options:diff -- /tmp/deployed.json
 ```
 
 Prints only the functions that disagree — not all ~250, which is why this has
-never been fixed by eyeballing a full list — plus two buckets worth reading
-even when the mismatch table is empty:
+never been fixed by eyeballing a full list — plus a deploy-window line and two
+buckets worth reading even when the mismatch table is empty.
+
+**Build `lib/` before you trust any of it.** `scripts/function-targets.js`, and
+anything else reading the built output, reads `mytribe/functions/lib`. A stale
+`lib/` under-reports the fleet by however many functions have landed since it
+was built: an eight-day-old one reported 235 of 253 and briefly made eighteen
+functions look invisible to the release. `npm --prefix mytribe/functions run
+build` first.
+
+The buckets:
 
 - **Declared in source but absent from the deployed dump.** Building this
   tool against the live fleet on 2026-08-19 found 17 (see issue #486, filed
