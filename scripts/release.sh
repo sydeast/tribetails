@@ -370,6 +370,77 @@ deploy_function_names() {
   done
 }
 
+# verify_deployed_fleet <names-file> <started-epoch-ms>: did the deploy deliver?
+#
+# ISSUE #503. On 2026-08-11 a hand-run deploy lost one 25-function batch and did
+# not stop. The 24 that already existed quietly kept serving their previous
+# revision, so nothing 404d and no screen broke; the run reported success and
+# nobody knew for eight days. The one mark it left was twilioVoice, which was new
+# that afternoon and inside the lost block, so it was simply never created, and
+# with it PR #349s P0 business-hours fix never reached production.
+#
+# The batch loop above already refuses when firebase TELLS it a batch failed.
+# This is the other half: checking the fleet itself rather than the deploy
+# tools account of it. It asks only about the names THIS run deployed, because a
+# narrowed release deploys a subset on purpose and the rest of the fleet is
+# legitimately older.
+#
+# It runs HERE, inside step 5, and not at the end. Step 5 is placed where it is
+# so the clients cannot ship ahead of the backend; a verify that ran after
+# hosting would defeat exactly that.
+#
+# WHEN IT CANNOT ANSWER the release still has to be possible, same as every other
+# gate in this file. Exit 2 from the checker means could not verify, not failed:
+# an empty or truncated fleet read is indistinguishable from a real zero
+# (ADR-0004), so it is reported and the release continues. Exit 1 means the fleet
+# was read and it disagrees, and that stops the run.
+verify_deployed_fleet() {
+  local names_file="$1" started_ms="$2" dump
+
+  if [ "$DRY_RUN" = "1" ]; then
+    ylw "DRY_RUN=1: skipping the fleet verify. Nothing deployed, so there is"
+    ylw "  nothing to find, and every name would read as missing."
+    return 0
+  fi
+  if [ "${RELEASE_SKIP_FLEET_VERIFY:-0}" = "1" ]; then
+    ylw "SKIPPED the fleet verify (RELEASE_SKIP_FLEET_VERIFY=1). The deploy tools"
+    ylw "  own account of what landed is the only evidence this run has."
+    return 0
+  fi
+
+  STEP="verifying the functions deploy actually delivered"
+  dump="$FN_WORK/fleet-after.json"
+  cyan ""
+  cyan "verifying the fleet, because a deploy that loses a batch says nothing (#503)"
+  if ! (cd "$ROOT/mytribe" && npx firebase functions:list --json) > "$dump" 2>/dev/null; then
+    ylw "could not read the deployed fleet back. NOT treating that as a failed"
+    ylw "  deploy: an unreadable answer is not evidence either way. Check by hand:"
+    ylw "    npm --prefix mytribe/functions run runtime-options:diff -- <dump>"
+    return 0
+  fi
+
+  set +e
+  npm --prefix "$ROOT/mytribe/functions" run --silent runtime-options:cli -- \
+    --verify-deploy --names "$names_file" --since "$started_ms" --deployed "$dump"
+  local rc=$?
+  set -e
+
+  case "$rc" in
+    0) grn "fleet verified: everything this run deployed is live and current." ;;
+    1)
+      red ""
+      red "REFUSED: the functions deploy reported success and the fleet disagrees."
+      red "  The rest of this release has NOT run, so the clients have not been"
+      red "  shipped ahead of a backend that is missing pieces. Redeploy the names"
+      red "  listed above, then run this again."
+      exit 1
+      ;;
+    *)
+      ylw "could not verify the fleet (see above). The deploy itself reported"
+      ylw "  success and this run continues; nothing here says it failed."
+      ;;
+  esac
+}
 # ---------------------------------------------------------------------------
 # 0. Preconditions.
 # ---------------------------------------------------------------------------
@@ -1337,9 +1408,15 @@ else
     fi
 
     STEP="deploying the mytribe functions in batches"
+    # deploy_function_names REWRITES its argument: the file is the pending list,
+    # and on success it is empty. Snapshot the names first, because the verify
+    # below needs to know what this run claimed to deploy.
+    cp "$FN_WORK/targets" "$FN_WORK/deployed-names"
+    FN_DEPLOY_STARTED_MS="$(( $(date +%s) * 1000 ))"
     if deploy_function_names "$FN_WORK/targets"; then
       grn "functions:mytribe: all $FN_COUNT deployed"
       FUNCTIONS_SHIPPED_DESC="$FN_COUNT of $FLEET_COUNT, batched in $FN_BATCH ($FN_SCOPE)"
+      verify_deployed_fleet "$FN_WORK/deployed-names" "$FN_DEPLOY_STARTED_MS"
     else
       red "REFUSED: $(awk 'NF{n++} END{print n+0}' "$FN_WORK/targets") function(s) did not deploy after $FN_ROUNDS round(s)."
       red "  These are STALE: production is still serving their previous revision."

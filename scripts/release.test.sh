@@ -968,6 +968,80 @@ else
   ok "--force is off unless asked for"
 fi
 
+# ---------------------------------------------------------------------------
+# 18. The fleet verify (#503). The batch loop refuses when firebase SAYS a batch
+# failed; this covers the case where it says nothing and the fleet disagrees.
+# ---------------------------------------------------------------------------
+
+# npm is stubbed to exit 0 everywhere else, so each case here overrides just the
+# verify-deploy invocation and leaves every other npm call alone.
+stub_npm_verify() {
+  local dir="$1" rc="$2"
+  cat > "$dir/stubs/npm" <<STUB
+#!/usr/bin/env bash
+echo "STUB npm \$*"
+case "\$*" in
+  *--verify-deploy*)
+    echo "STUB verify-deploy rc=$rc"
+    exit $rc ;;
+esac
+exit 0
+STUB
+  chmod +x "$dir/stubs/npm"
+}
+
+# A fleet read has to succeed for the checker to be consulted at all.
+stub_npx_fleet() {
+  printf '#!/usr/bin/env bash\necho "{\\"result\\":[]}"\nexit 0\n' > "$1/stubs/npx"
+  chmod +x "$1/stubs/npx"
+}
+
+D18="$(make_repo)"; write_stubs "$D18"; arm_ci "$D18"
+stub_npm_verify "$D18" 1
+stub_npx_fleet "$D18"
+RC18="$(run_release "$D18" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0)"
+if [ "$RC18" != "0" ]; then
+  ok "a fleet that disagrees with a successful deploy fails the release"
+else
+  bad "the release passed while the fleet verify refused"
+fi
+if grep -q "the fleet disagrees" "$D18/out"; then
+  ok "the refusal says the deploy reported success and the fleet disagrees"
+else
+  bad "the fleet-verify refusal was not explained"
+fi
+if [ ! -f "$D18/repo/.release-state" ] || \
+   [ "$(cat "$D18/repo/.release-state")" != "$(cd "$D18/repo" && git rev-parse HEAD)" ]; then
+  ok "a refused fleet verify does not record the commit as released"
+else
+  bad ".release-state recorded a release the fleet verify refused"
+fi
+
+# Could-not-verify is NOT could-not-deploy. An unreadable answer is not evidence.
+D19="$(make_repo)"; write_stubs "$D19"; arm_ci "$D19"
+stub_npm_verify "$D19" 2
+stub_npx_fleet "$D19"
+RC19="$(run_release "$D19" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0)"
+if [ "$RC19" = "0" ]; then
+  ok "a fleet the verify could not read does not fail the release"
+else
+  bad "could-not-verify was treated as a failed deploy"
+fi
+
+# And the escape hatch, for the same reason every other gate here has one.
+D20="$(make_repo)"; write_stubs "$D20"; arm_ci "$D20"
+stub_npm_verify "$D20" 1
+stub_npx_fleet "$D20"
+RC20="$(run_release "$D20" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 \
+  RELEASE_FUNCTIONS_BATCH=4 RELEASE_FUNCTIONS_SETTLE=0 \
+  RELEASE_SKIP_FLEET_VERIFY=1)"
+if [ "$RC20" = "0" ] && grep -q "RELEASE_SKIP_FLEET_VERIFY=1" "$D20/out"; then
+  ok "RELEASE_SKIP_FLEET_VERIFY=1 skips the verify and says so"
+else
+  bad "RELEASE_SKIP_FLEET_VERIFY=1 did not skip the fleet verify"
+fi
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

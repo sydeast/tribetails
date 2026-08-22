@@ -610,6 +610,7 @@ Knobs, all off by default:
 | `RELEASE_ANDROID_GROUPS=a,b` | App Distribution group aliases to distribute to |
 | `RELEASE_ANDROID_TESTERS=a@b,c@d` | Tester emails to distribute to. Neither this nor groups set means every tester on the project |
 | `RELEASE_SKIP_SECRET_CHECK=1` | Skip step 1b |
+| `RELEASE_SKIP_FLEET_VERIFY=1` | Skip the post-deploy fleet verify (#503). The deploy tool's own account of what landed becomes the only evidence the run has |
 | `RELEASE_SKIP_PRUNE=1` | Skip the step 8 retention prune. Revisions then accumulate until someone prunes by hand |
 | `RELEASE_PREDEPLOY_KEEP=N` | Prune to N per service before a **large** functions deploy (default 3, `0` disables). See the quota entry below |
 | `RELEASE_PREDEPLOY_MIN_TARGETS=N` | How many functions count as large (default 50). Below it the pre-deploy prune does not run |
@@ -621,6 +622,55 @@ Knobs, all off by default:
 | `RELEASE_FUNCTIONS_SETTLE=S` | Seconds between batches (default 30) |
 | `RELEASE_RETRY_KEEP=N` | Prune depth between retry rounds (default 2, `0` disables) |
 
+### The release checks that the deploy actually delivered
+
+Step 5 reads the fleet back after the functions deploy reports success, and
+refuses the release if what it deployed is not there (#503).
+
+This exists because a deploy can report success and lose functions. On
+2026-08-11 a hand-run deploy lost one 25-function batch and did not stop. The
+24 that already existed quietly kept serving their previous revision, so
+nothing 404'd, no screen broke, and the run looked fine. The only one that left
+a mark was `twilioVoice`, new that afternoon and inside the lost block, so it
+was never created at all, and with it PR #349's P0 business-hours fix never
+reached production. Nobody found out for eight days, and then only because an
+unrelated tool happened to look.
+
+The batch loop already refuses when firebase TELLS it a batch failed. This is
+the other half: checking the fleet itself rather than the deploy tool's account
+of it. Two verdicts, both refusals:
+
+- **missing** — the name is not in the fleet. It was never created.
+- **stale** — it is there, but its source predates this run, so the deploy
+  claimed it and the function is still running older code.
+
+It asks only about the names *this run* deployed. A narrowed release deploys a
+subset on purpose, so the rest of the fleet is legitimately older; judging the
+whole fleet would refuse every narrowed release. The fleet-wide question is the
+drift diff below, which is a human-run tool and not a gate.
+
+It runs inside step 5 rather than at the end, for step 5's own reason: the
+clients must not ship ahead of the backend, and a verify that ran after hosting
+would defeat that.
+
+**When it cannot answer, the release continues.** An unreadable or suspiciously
+small fleet read is reported as "could not verify" and does not fail the run,
+because an empty success is indistinguishable from a real zero (ADR-0004) and
+refusing a good release on a failed lookup is its own harm. Only a fleet that
+was read and disagrees stops the release. `RELEASE_SKIP_FLEET_VERIFY=1` turns
+it off; a dry run skips it, having deployed nothing to check.
+
+**What it does not cover.** The AuntieOS codebases behind
+`RELEASE_INCLUDE_ADMIN_FUNCTIONS=1` (`default`, `reconcile`) are deployed in
+step 5b and are not verified. Extending to them is worth doing and is not done.
+
+**Why there is no scheduled version.** A cron check would catch a hand-run
+deploy, which is what 2026-08-11 was and what this gate cannot see. It needs a
+Firebase credential in CI, and the repository has none: the only secret
+`ci.yml` uses is `MAPBOX_DOWNLOADS_TOKEN`. Adding a service-account secret with
+`cloudfunctions.viewer` would be enough, since listing functions is a read.
+Until then, running the drift check by hand after any deploy that did not go
+through `npm run deploy` is the whole of the coverage.
 ### Checking source and deployed runtime options agree
 
 ADR-0004 recorded that `memory` disagreed between source and the deployed

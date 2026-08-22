@@ -38,12 +38,13 @@
  * source-only functions, and nothing this tool failed to parse. A nonzero
  * exit is meant to be readable in CI/operator output, not just checked.
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import { loadDeployedFleetShape, loadDeployedTimestamps } from './deployedShape';
 import { diffFleet, GEN1_COMPARABLE_FIELDS } from './model';
 import { resolveAll } from './resolveAll';
 import { RUNTIME_KEYS, RuntimeKey } from './types';
+import { fleetLooksComplete, verifyDeployedNames } from './verifyDeploy';
 
 function formatValue(field: RuntimeKey, value: unknown): string {
   if (field === 'memory') return `${value}MiB`;
@@ -192,11 +193,128 @@ function printDiff(deployedPath: string, outPath: string | undefined): number {
   return matched.length === 0 && sourceOnly.length === 0 && errors.length === 0 ? 0 : 1;
 }
 
+/**
+ * `--verify-deploy --names <file> --since <epochMs> --deployed <dump>` (#503).
+ *
+ * The release calls this straight after its functions deploy reports success.
+ * It asks one narrow question, on purpose: of the names THIS run deployed, is
+ * every one present in the fleet, and is every one carrying source from this
+ * run? Anything wider would refuse a narrowed release, since deploying a
+ * subset leaves the rest of the fleet legitimately older than the run.
+ *
+ * Exit codes: 0 verified, 1 refuse (something missing or stale), 2 could not
+ * verify (bad arguments, unreadable dump, or a fetch too small to believe).
+ * The caller has to tell 1 from 2, because 'the deploy lost functions' and 'I
+ * could not find out' are different facts and only one of them is the deploy's
+ * fault.
+ */
+function printVerifyDeploy(
+  namesPath: string,
+  sinceMs: number,
+  deployedPath: string,
+): number {
+  let names: string[];
+  try {
+    names = readFileSync(namesPath, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+  } catch (err) {
+    console.error(`CANNOT VERIFY: could not read the deployed-name list at ${namesPath}.`);
+    console.error(`  ${(err as Error).message}`);
+    return 2;
+  }
+  if (names.length === 0) {
+    console.log('verify-deploy: the run deployed no functions, so there is nothing to verify.');
+    return 0;
+  }
+
+  let deployed: Record<string, unknown>;
+  let deployedAtMs: Record<string, number>;
+  try {
+    deployed = loadDeployedFleetShape(deployedPath);
+    deployedAtMs = loadDeployedTimestamps(deployedPath);
+  } catch (err) {
+    console.error(`CANNOT VERIFY: could not read the fleet dump at ${deployedPath}.`);
+    console.error(`  ${(err as Error).message}`);
+    return 2;
+  }
+
+  const fetchedCount = Object.keys(deployed).length;
+  if (!fleetLooksComplete(fetchedCount, names.length)) {
+    console.error(
+      `CANNOT VERIFY: the fleet dump reports ${fetchedCount} function(s), against ` +
+        `${names.length} this run deployed.`,
+    );
+    console.error('  That is too few to judge against, and an empty or truncated');
+    console.error('  answer is NOT evidence that the fleet is empty (ADR-0004).');
+    return 2;
+  }
+
+  const result = verifyDeployedNames({
+    names,
+    deployedNames: new Set(Object.keys(deployed)),
+    deployedAtMs,
+    sinceMs,
+  });
+
+  if (result.missing.length === 0 && result.stale.length === 0) {
+    const stamped = result.checked - result.unstamped.length;
+    console.log(
+      `verify-deploy: all ${result.checked} deployed function(s) are present, ` +
+        `${stamped} of them carrying source from this run.`,
+    );
+    if (result.unstamped.length > 0) {
+      console.log(
+        `  ${result.unstamped.length} reported no deploy time and were checked for ` +
+          'existence only: ' + result.unstamped.join(', '),
+      );
+    }
+    return 0;
+  }
+
+  console.error('REFUSED: the functions deploy reported success and did not deliver.');
+  console.error('');
+  if (result.missing.length > 0) {
+    console.error(`  ${result.missing.length} function(s) are NOT IN THE FLEET AT ALL:`);
+    for (const n of result.missing) console.error(`    ${n}`);
+    console.error('  These were never created. A new function inside a batch that did');
+    console.error('  not land looks exactly like this (#503, twilioVoice).');
+    console.error('');
+  }
+  if (result.stale.length > 0) {
+    console.error(`  ${result.stale.length} function(s) are STALE, still serving older source:`);
+    for (const n of result.stale) console.error(`    ${n}`);
+    console.error('  These exist, so nothing 404s and no screen breaks, which is why');
+    console.error('  a lost batch went unnoticed for eight days on 2026-08-11.');
+    console.error('');
+  }
+  console.error('  Redeploy exactly these, smaller and slower:');
+  const all = [...result.missing, ...result.stale];
+  console.error(`    RELEASE_FUNCTIONS_BATCH=5 RELEASE_FUNCTIONS_SETTLE=60 npm run deploy`);
+  console.error('  Or by name:');
+  console.error(
+    '    scripts/safe-deploy.sh mytribe -- firebase deploy --only \\\n      "' +
+      all.map((n) => `functions:mytribe:${n}`).join(',') + '"',
+  );
+  return 1;
+}
 function main(): number {
   const args = process.argv.slice(2);
   const deployedIndex = args.indexOf('--deployed');
   const outIndex = args.indexOf('--out');
   const outPath = outIndex >= 0 ? args[outIndex + 1] : undefined;
+
+  if (args.includes('--verify-deploy')) {
+    const namesPath = args[args.indexOf('--names') + 1];
+    const sinceRaw = args[args.indexOf('--since') + 1];
+    const deployedPath = args[deployedIndex + 1];
+    const sinceMs = Number(sinceRaw);
+    if (!namesPath || !deployedPath || !Number.isFinite(sinceMs)) {
+      console.error(
+        '--verify-deploy needs --names <file> --since <epochMs> --deployed <dump>.',
+      );
+      return 2;
+    }
+    return printVerifyDeploy(namesPath, sinceMs, deployedPath);
+  }
 
   if (deployedIndex === -1) {
     return printExpectedOnly();

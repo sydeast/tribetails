@@ -25,6 +25,7 @@
     "seeds:check": "ts-node --project scripts/tsconfig.json scripts/generateSeedCorpus.ts --check",
     "runtime-options:expected": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts",
     "runtime-options:diff": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts --deployed",
+    "runtime-options:cli": "ts-node --project scripts/tsconfig.json scripts/runtimeOptions/cli.ts",
     "backfill:invoice-state": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillInvoiceStateStamp.ts",
     "backfill:invoice-date": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillInvoiceDateIso.ts",
     "backfill:household-vet": "NODE_PATH=node_modules ts-node --project ../scripts/tsconfig.json ../scripts/backfillKinfolkVetToHousehold.ts",
