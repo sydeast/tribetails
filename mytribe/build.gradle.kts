@@ -168,7 +168,7 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.52.0")
+            implementation("io.sentry:sentry-android:8.53.0")
         }
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
