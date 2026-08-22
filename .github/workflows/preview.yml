@@ -12,8 +12,14 @@ name: PR preview
 # the kind of change most worth previewing. A preview channel is the same
 # platform as production, so what you look at behaves like the real thing.
 #
-# The channel is per pull request and expires on its own, so old previews do not
-# pile up against a site's channel limit.
+# The channel is per pull request. It carries a 7d expiry AND is deleted when the
+# pull request closes, because the expiry alone was not enough: this comment used
+# to claim old previews could not pile up against a site's channel limit, and on
+# 2026-08-22 `auntieos-ttpc` held 51 channels against a cap of 50 and every new
+# preview failed with `429 channel quota reached`. 45 of the 51 belonged to pull
+# requests that had already merged. At this repository's merge rate, PRs close far
+# faster than a 7d TTL retires their channels, so the TTL is the backstop and the
+# close-triggered delete below is the actual reclaim.
 #
 # BOTH APPS, since 2026-08-16. Until then this file deployed the admin only, so
 # a portal change could not be clicked before it merged: the one half of the
@@ -27,6 +33,9 @@ name: PR preview
 on:
   pull_request:
     branches: ['**']
+    # `closed` is added to GitHub's default opened/synchronize/reopened so the
+    # prune job below can fire. The deploy jobs each guard against it.
+    types: [opened, synchronize, reopened, closed]
     # The UNION of what the two jobs care about. The per-app split is the
     # `changes` job below; a workflow-level path filter cannot express it,
     # because `paths` gates the whole file.
@@ -105,7 +114,7 @@ jobs:
   preview:
     name: Deploy preview channel
     needs: changes
-    if: needs.changes.outputs.admin == 'true'
+    if: github.event.action != 'closed' && needs.changes.outputs.admin == 'true'
     # Sized against what this job costs AFTER the duplicate unit suite came out
     # of it, not before. Measured steps over 27 successful runs: checkout 4s,
     # setup-node 3s, npm ci 12s, typecheck 5s, build 7s, deploy 44s (max 69s),
@@ -203,7 +212,7 @@ jobs:
   preview-portal:
     name: Deploy portal preview channel
     needs: changes
-    if: needs.changes.outputs.portal == 'true'
+    if: github.event.action != 'closed' && needs.changes.outputs.portal == 'true'
     # Same shape as the admin job above: about 1.2 min once the duplicate unit
     # suite is gone (checkout 4s, npm ci 12s, build 4s, deploy 38s, max 52s).
     timeout-minutes: 10
@@ -276,3 +285,81 @@ jobs:
         run: |
           echo "::warning title=No portal preview deployed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so no preview URL was published. The build and tests above still ran."
           echo "Set it with: gh secret set FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC --repo sydeast/tribetails < service-account.json"
+
+  # ---------------------------------------------------------------------------
+  # Reclaim the channel when the pull request closes.
+  # ---------------------------------------------------------------------------
+  #
+  # WHY THIS EXISTS. Firebase Hosting caps preview channels at 50 per site. On
+  # 2026-08-22 `auntieos-ttpc` held 51 and every new preview failed with
+  # `429 ... channel quota reached`, which reads as a broken PR and is not one.
+  # 45 of those 51 belonged to pull requests that had already merged. The 7d
+  # expiry was doing its job; it was simply slower than the merge rate.
+  #
+  # It tries BOTH sites, because a PR touching `packages/**` deploys to both and
+  # a PR touching one app deploys to one. `--force` is required: there is no TTY
+  # here, and without it the command waits on a prompt until the job times out.
+  #
+  # IT NEVER FAILS THE RUN. The pull request is already closed and its outcome
+  # was decided by the jobs that ran before it; a housekeeping step that turns a
+  # merged PR red teaches people to ignore red. A channel that was never created
+  # (the PR touched no previewable path) 404s here, which is the ordinary case
+  # rather than a problem, so the step reports what it did and exits 0.
+  prune-preview-channels:
+    name: Reclaim preview channels
+    if: github.event.action == 'closed'
+    # Two small delete calls plus npm resolution. 5 is generous, and stops a
+    # hung prompt parking a runner.
+    timeout-minutes: 5
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # Same gate the deploy jobs use. Without the service account there is
+      # nothing to authenticate with, and saying so beats a confusing failure.
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          CRED: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$CRED" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Delete this PR's preview channels
+        if: steps.cred.outputs.present == 'true'
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # RUNNER_TEMP, not /tmp: on a self-hosted runner the disk persists
+          # between jobs, and RUNNER_TEMP is the path the runner clears itself.
+          sa="$RUNNER_TEMP/firebase-sa.json"
+          printf '%s' "$FIREBASE_SA" > "$sa"
+          export GOOGLE_APPLICATION_CREDENTIALS="$sa"
+          # The channel id FirebaseExtended/action-hosting-deploy generates:
+          # `pr<number>-<head ref>`, non-alphanumerics collapsed to `-`, then
+          # truncated to 26 characters. Derived here because the deploy action
+          # does not surface the id it chose.
+          slug="$(printf 'pr%s-%s' "$PR_NUMBER" "$HEAD_REF" | tr -c '[:alnum:]-' '-' | cut -c1-26)"
+          echo "Reclaiming channel: $slug"
+          for site in auntieos-ttpc kinfolk-portal; do
+            if npx --yes firebase-tools@15.18.0 hosting:channel:delete "$slug" \
+                 --site "$site" --project auntieos-ttpc --force 2>/dev/null; then
+              echo "  deleted from $site"
+            else
+              echo "  nothing to delete on $site (no channel, or already gone)"
+            fi
+          done
+          shred -u "$sa" 2>/dev/null || true
+
+      - name: Report no credential
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::warning title=Preview channel not reclaimed::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so this PR's preview channel was left in place and still counts against the 50-per-site cap."
