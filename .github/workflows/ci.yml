@@ -668,7 +668,7 @@ jobs:
             echo "scripts/workflow-budget.test.sh not present yet, skipping."
           fi
   mytribe-gradle:
-    name: Portal shared (jvm + android unit)
+    name: Portal shared (jvm + android unit + js)
     needs: changes
     if: needs.changes.outputs.mytribeGradle == 'true' || github.event_name == 'workflow_dispatch'
     # Raised from 15 with the testDebugUnitTest step below (issue #473), which
@@ -698,6 +698,14 @@ jobs:
       # point it was failing 143 of its 524 tests on a clean main. It passes
       # now, and it only stays passing if something runs it.
       - run: ./gradlew testDebugUnitTest --no-daemon
+      # The js target, which nothing had ever compiled (issue #507). It arrived
+      # in the 2026-07-20 subtree import and stopped compiling somewhere in the
+      # Kotlin 2.2.20 -> 2.4.10 dependabot bumps, because `org.w3c.fetch.fetch`
+      # lost the default for its `init` parameter and one GET in jsMain was
+      # relying on it. A month of gradle bumps landed green on top of a target
+      # none of them built. This is the cheapest task that would have caught it:
+      # there is no jsTest source set, so compiling IS the gate.
+      - run: ./gradlew compileKotlinJs --no-daemon
   # composeApp builds the wasm admin and the desktop (jvm) app, and per
   # auntieos-admin/CLAUDE.md both are off the delivery path by owner ruling:
   # the wasm admin is superseded by src/, and desktop parity is paused. No

@@ -20,7 +20,12 @@ private class JsShareLinkFetcher(private val base: String) : ShareLinkFetcher {
             append(base); append("/getShareLink/"); append(shareId)
             if (!passcode.isNullOrBlank()) append("?passcode=").append(passcode)
         }
-        val resp = window.fetch(url).await()
+        // RequestInit() is not decoration: `fetch` used to declare its `init`
+        // parameter with a default and no longer does, so the bare one-argument
+        // call this replaced stopped resolving under Kotlin 2.4 (#507). Every
+        // other fetch in jsMain already passes one; this GET was the only
+        // caller leaning on the default.
+        val resp = window.fetch(url, RequestInit()).await()
         val text = resp.text().await()
         return when (resp.status.toInt()) {
             200 -> GetShareLinkResult.Ok(json.parseToJsonElement(text) as JsonObject)
