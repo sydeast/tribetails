@@ -15,11 +15,17 @@
  *     `gcloud functions list --v2 --format=json` for the whole fleet, which
  *     the operator runs (agent sessions get an empty result with exit 0 from
  *     `gcloud`, a false negative rather than an answer — also ADR-0004).
- *     This is the one that can fill in `cpu`, `minInstances`,
- *     `maxInstances` and `timeoutSeconds` via `serviceConfig.*`.
+ *     This fills in `cpu`, `minInstances`, `maxInstances` and
+ *     `timeoutSeconds` via `serviceConfig.*`.
+ *   - `firebase functions:list --json`, added in #504 and now the preferred
+ *     path. It needs no operator step, it works from an agent session, and
+ *     it reports ALL SIX fields, which the comment above wrongly implied only
+ *     gcloud could. What the MCP tool cannot report was never a property of
+ *     Firebase tooling in general; it is a property of that one tool, and
+ *     nobody had tried the CLI.
  *
- * Both normalize into the same `DeployedFleetShape`, so `cli.ts` and the diff
- * don't need to know which one produced a given dump.
+ * All three normalize into the same `DeployedFleetShape`, so `cli.ts` and the
+ * diff don't need to know which one produced a given dump.
  */
 import { readFileSync } from 'node:fs';
 
@@ -64,6 +70,83 @@ export function fromFirebaseMcpDump(dump: FirebaseMcpDump): DeployedFleetShape {
   return result;
 }
 
+/**
+ * One row of `firebase functions:list --json`. Flat, unlike gcloud's nested
+ * `serviceConfig`, and it carries every field this tool diffs.
+ */
+interface FirebaseCliFunctionRow {
+  id: string;
+  platform?: string; // 'gcfv2' | 'gcfv1'
+  region?: string;
+  availableMemoryMb?: number;
+  cpu?: number | string;
+  minInstances?: number;
+  maxInstances?: number;
+  timeoutSeconds?: number;
+  /**
+   * The GCS generation of the uploaded source zip, as a decimal string of
+   * MICROSECONDS since the epoch. Divided by 1000 it is when this specific
+   * function last deployed, which makes the fleet a history rather than a
+   * single date. No other supported dump shape carries it, and it is what
+   * identified the lost deploy batch in #503: sorted by name, a partial
+   * deploy shows up as a contiguous alphabetical block of stale timestamps.
+   */
+  source?: { storageSource?: { generation?: string } };
+}
+
+interface FirebaseCliDump {
+  status?: string;
+  result: FirebaseCliFunctionRow[];
+}
+
+function isFirebaseCliDump(value: unknown): value is FirebaseCliDump {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { result?: unknown }).result) &&
+    (value as FirebaseCliDump).result.every(
+      (row) => typeof row === 'object' && row !== null && 'id' in row,
+    )
+  );
+}
+
+export function fromFirebaseCliDump(dump: FirebaseCliDump): DeployedFleetShape {
+  const result: DeployedFleetShape = {};
+  for (const row of dump.result) {
+    const shape: PartialRuntimeShape = {};
+    if (row.availableMemoryMb !== undefined) shape.memory = parseMemoryToMiB(row.availableMemoryMb);
+    if (row.cpu !== undefined) shape.cpu = parseCpu(row.cpu);
+    if (row.region !== undefined) shape.region = row.region;
+    if (row.timeoutSeconds !== undefined) shape.timeoutSeconds = row.timeoutSeconds;
+    if (row.minInstances !== undefined) shape.minInstances = row.minInstances;
+    if (row.maxInstances !== undefined) shape.maxInstances = row.maxInstances;
+    result[row.id] = shape;
+  }
+  return result;
+}
+
+/**
+ * When each function last deployed, in epoch millis, for the dumps that can
+ * say. Only `firebase functions:list --json` carries the generation this is
+ * decoded from, so every other shape answers `{}` rather than guessing.
+ *
+ * A function with no entry is not "never deployed": it is "this dump shape
+ * cannot tell you". The absent-from-the-dump bucket is what answers the other
+ * question.
+ */
+export function loadDeployedTimestamps(path: string): Record<string, number> {
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  if (!isFirebaseCliDump(parsed)) return {};
+  const out: Record<string, number> = {};
+  for (const row of parsed.result) {
+    const generation = row.source?.storageSource?.generation;
+    if (generation === undefined) continue;
+    const micros = Number(generation);
+    if (!Number.isFinite(micros) || micros <= 0) continue;
+    out[row.id] = Math.round(micros / 1000);
+  }
+  return out;
+}
 /** One row of `gcloud functions list --v2 --format=json` (Cloud Run `serviceConfig`). */
 interface GcloudFunctionRow {
   name: string; // "projects/<p>/locations/<region>/functions/<name>"
@@ -119,11 +202,14 @@ export function loadDeployedFleetShape(path: string): DeployedFleetShape {
   } catch (err) {
     throw new Error(`${path} is not valid JSON: ${(err as Error).message}`, { cause: err });
   }
+  if (isFirebaseCliDump(parsed)) return fromFirebaseCliDump(parsed);
   if (isFirebaseMcpDump(parsed)) return fromFirebaseMcpDump(parsed);
   if (isGcloudDump(parsed)) return fromGcloudDump(parsed);
   throw new Error(
-    `${path} matches neither known shape: a Firebase MCP functions_list_functions dump ` +
-      `({"functions":[{"function":...}]}) or a gcloud functions list --v2 --format=json array ` +
+    `${path} matches none of the known shapes: a firebase functions:list --json dump ` +
+      `({"status":"success","result":[{"id":...}]}), a Firebase MCP ` +
+      `functions_list_functions dump ({"functions":[{"function":...}]}), or a ` +
+      `gcloud functions list --v2 --format=json array ` +
       `([{"name":"projects/.../functions/..."}]).`,
   );
 }
