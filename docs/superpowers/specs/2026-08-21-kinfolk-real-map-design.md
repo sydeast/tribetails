@@ -83,10 +83,15 @@ These gate implementation and only the operator can do them.
    in the Mapbox console: it was in git history, so deleting the constant does not
    un-publish it." Nothing in the repository indicates that rotation happened. Until it
    does, assume the old key is live and billable. Revoke before provisioning anything new.
-2. **Create one new public token** (`pk.*`), read-only scopes only (styles, tiles, fonts;
-   no write scopes), URL-restricted to `kinfolk.tribetails.com` and `auntie.tribetails.com`.
-3. **Distribute it** to `~/.gradle/gradle.properties` (`MAPBOX_PUBLIC_TOKEN`), the web
-   build environment (`VITE_MAPBOX_PUBLIC_TOKEN`), and as a repository secret.
+2. **Create TWO public tokens**, both `pk.*` with exactly the scopes `styles:tiles`,
+   `styles:read` and `fonts:read` (not `datasets:read`, which nothing uses):
+   - `web-maps-public`, **URL-restricted** to `kinfolk.tribetails.com` and
+     `auntie.tribetails.com`.
+   - `mobile-maps-public`, **with no URL restriction at all**.
+3. **Distribute them.** The mobile token to `~/.gradle/gradle.properties` as
+   `MAPBOX_PUBLIC_TOKEN` and as the `MAPBOX_PUBLIC_TOKEN` repository secret; the web
+   token as the `VITE_MAPBOX_PUBLIC_TOKEN` repository secret and in the web build
+   environment.
 4. **Add `MAPBOX_DOWNLOADS_TOKEN` to each self-hosted runner's `.env`.** It exists as a
    repository secret but not on the runners, and the portal Android build will need it
    once the SDK is a dependency.
@@ -109,8 +114,8 @@ map at all.
 What makes it defensible is not concealment, which is impossible on Android, but blast
 radius: a read-only token cannot write to the account, and a rotation schedule bounds what
 an extracted one is worth. This is Mapbox's own intended posture for public tokens. Web
-gets URL restriction on top; Android cannot be referer-locked, so scope and rotation are
-the whole of its protection.
+gets URL restriction on top, on its own token; Android cannot be referer-locked at all,
+so scope and rotation are the whole of the mobile token's protection.
 
 The rejected alternative was server-minted temporary tokens, mirroring
 `mintVoiceAccessToken`. It was rejected because Mapbox temporary tokens cap at one hour
@@ -120,16 +125,32 @@ against the Unreachable-tolerance work in #494 and #502.
 
 ## Architecture
 
-One token, three surfaces, injected by each platform's existing config mechanism. No new
+Two tokens, three surfaces, injected by each platform's existing config mechanism. No new
 callable and no backend change: `gpsRoute` (`{lat, lng, t?}`) already ships on
 `getMyKinTales` and `getMyVisits`, and live breadcrumbs already stream to the portal.
 This is a rendering change with a credential behind it.
 
-| Surface | Injection | Mirrors |
-|---|---|---|
-| `mytribe/web` | `VITE_MAPBOX_PUBLIC_TOKEN` | existing `VITE_SENTRY_DSN` |
-| portal Android (`com.kinfolk.portal`) | gradle property -> `buildConfigField` -> `MapboxOptions.accessToken` at startup | `SENTRY_DSN` in `auntieos-admin/android/app/build.gradle.kts` |
-| AuntieOS Android (`com.tribetails.auntieos`) | same | same |
+### Why two tokens and not one
+
+An earlier draft of this spec said one token, URL-restricted, would serve all three
+surfaces. It would not, and the failure would have been a puzzling 403 rather than a
+clear error.
+
+Mapbox URL restrictions are validated from a browser `Referer`. Mapbox's own
+documentation states they do not support "requests from mobile applications built with
+the Mapbox Maps or Navigation SDKs", and such a request is answered `403 Forbidden`. A
+single restricted token would therefore have left both Android maps exactly as blank as
+they are now, with a new cause.
+
+So the web token carries the restriction and the mobile token cannot. That split is also
+worth having on its own terms: the extractable one is the mobile token, and it can be
+revoked and reissued without touching the web maps.
+
+| Surface | Token | Injection | Mirrors |
+|---|---|---|---|
+| `mytribe/web` | web (URL-restricted) | `VITE_MAPBOX_PUBLIC_TOKEN` | existing `VITE_SENTRY_DSN` |
+| portal Android (`com.kinfolk.portal`) | mobile (unrestricted) | gradle property -> `buildConfigField` -> `MapboxOptions.accessToken` at startup | `SENTRY_DSN` in `auntieos-admin/android/app/build.gradle.kts` |
+| AuntieOS Android (`com.tribetails.auntieos`) | mobile (unrestricted) | same | same |
 
 ### The fallback survives, deliberately
 
