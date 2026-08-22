@@ -19,9 +19,10 @@ with those, they win and this file is the bug.
 - **The live operator admin is `src/`** (React + Vite + TanStack). It serves
   auntie.tribetails.com and has since 2026-07-20. Admin features go here.
 - `web/composeApp/` is Kotlin Multiplatform: shared logic plus the desktop (jvm)
-  build. The wasm admin it also builds is SUPERSEDED by `src/`, and desktop is
-  PAUSED by owner ruling. Neither is a delivery target. It still compiles and is
-  not dead code, but nothing new goes in it.
+  build. Its wasm admin was superseded by `src/` and deleted in #481; desktop is
+  PAUSED by owner ruling, not withdrawn. Not a delivery target. It still
+  compiles, is where `:composeApp:jvmTest` runs, and is not dead code, but
+  nothing new goes in it.
 - The AuntieOS operator Android app is `android/` (`com.tribetails.auntieos`).
   A permanent surface.
 - `mytribe/` is a sibling PREFIX in this same repository, not a separate repo;

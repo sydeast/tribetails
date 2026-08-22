@@ -16,7 +16,7 @@ could not see the other.
 |---|---|
 | `src/` | **The React admin.** The live web surface at auntie.tribetails.com. |
 | `android/` | The operator Android app (`com.tribetails.auntieos`). A permanent surface, not a port target. Not the only Android app in the repo; see below. |
-| `web/composeApp/` | Kotlin Multiplatform: shared logic plus the desktop (jvm) app. The wasm admin it also builds is superseded by `src/`. |
+| `web/composeApp/` | Kotlin Multiplatform: shared logic plus the desktop (jvm) app. Its wasm admin was superseded by `src/` and deleted in #481. |
 | `web/functions/` | AuntieOS-owned Cloud Functions (Node). Firebase codebase `default`. |
 | `web/functions-python/` | The dossier and 411 reconcile pipeline. Firebase codebase `reconcile`. |
 | `docs/` | Specs, runbooks, reviews, punch lists, and the backlog. |

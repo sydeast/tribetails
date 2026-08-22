@@ -11,8 +11,9 @@ import kotlin.test.assertTrue
 
 /**
  * WARNING-41/42 regression guard: the defensive-decode pattern used in both
- * FirestoreInterop.wasmJs.kt (WARNING-41) and JvmFirestoreRest.kt (WARNING-42)
- * must satisfy three invariants:
+ * JvmFirestoreRest.kt (WARNING-42) must satisfy three invariants. WARNING-41 was
+ * the same pattern in FirestoreInterop.wasmJs.kt, deleted with the wasm admin in
+ * #481; the invariants below are what that pattern has to keep meaning:
  *
  *  1. One malformed document does NOT discard the rest of the list.
  *  2. The number of successfully decoded items is (total - dropped).

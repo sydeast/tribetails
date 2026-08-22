@@ -11,7 +11,8 @@ A feature is DONE only as a full vertical slice, delivered on EVERY platform:
   component + error handling + tests (unit, integration, e2e, happy + sad +
   negative + error)
   on the React admin (`src/`) AND ANDROID. Desktop parity is paused by owner
-  ruling, and the wasm admin is superseded, so neither is a delivery target.
+  ruling and the wasm admin was deleted in #481, so neither is a delivery
+  target.
 
 A missing callable means BUILD the callable. It is NEVER a reason to stop,
 defer, or ship frontend-only. There is NO "gate dark / Not-wired banner" option
@@ -148,8 +149,9 @@ that used to live under Documents/TribeTails_Docs/Communication/AuntieOS.
 - **The live web admin is `src/` (React + Vite + TanStack).** It serves
   auntie.tribetails.com. Build here, and drive this when verifying.
 - `web/composeApp/` is Kotlin Multiplatform: shared logic plus the desktop (jvm)
-  app. The wasm admin it also builds is SUPERSEDED by `src/` and is not where
-  admin features go.
+  app. It used to build a wasm admin too; that was superseded by `src/` and was
+  deleted in #481. Desktop is PAUSED, not withdrawn, and the jvm target is also
+  the host `:composeApp:jvmTest` runs on. Admin features do not go here.
 - AuntieOS Android app lives in `android/`. A permanent surface.
 - AuntieOS-owned Cloud Functions live in `web/functions/` (Node, Firebase
   codebase `default`) and `web/functions-python/` (codebase `reconcile`).

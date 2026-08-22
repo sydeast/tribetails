@@ -86,8 +86,11 @@ class PointerState {
 
 /**
  * Provided by the platform layer:
- *   - wasmJs:  hooks into window mouse events
  *   - android: hooks into rotation-vector sensor
+ *   - jvm:     no pointer source; the gradient stays static
+ *
+ * There was a wasmJs actual that hooked window mouse events; it went with the
+ * wasm admin in #481.
  */
 expect class PlatformPointerSource() {
     fun start(state: PointerState)
@@ -110,7 +113,7 @@ fun rememberMeshPointer(): PointerState {
  * static brand-tinted radial gradient via [meshFallback].
  *
  * Placeholder: actual RuntimeEffect plumbing lives in the platform layer
- * (ui/shaders/MeshGradient.android.kt and .wasmJs.kt) since Compose's shader
+ * (ui/shaders/MeshGradient.android.kt) since Compose's shader
  * API surface differs per target as of CMP 1.7.x.
  */
 expect fun Modifier.meshGradientBackground(
