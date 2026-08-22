@@ -349,14 +349,37 @@ jobs:
           # does not surface the id it chose.
           slug="$(printf 'pr%s-%s' "$PR_NUMBER" "$HEAD_REF" | tr -c '[:alnum:]-' '-' | cut -c1-26)"
           echo "Reclaiming channel: $slug"
+          # --config is REQUIRED and its absence is why the first version of
+          # this job was green and did nothing. `hosting:channel:delete` is a
+          # hosting command, so firebase-tools looks for a firebase.json in the
+          # working directory; at the repository root there is none, and it
+          # exits 1 with "Not in a Firebase app directory". The old code read
+          # that as "no channel to delete" and reported success. Any
+          # firebase.json in the repo resolves the project; --site is what
+          # actually selects which site to act on.
+          rc_any_error=0
           for site in auntieos-ttpc kinfolk-portal; do
+            err="$RUNNER_TEMP/delete-$site.err"
             if npx --yes firebase-tools@15.18.0 hosting:channel:delete "$slug" \
-                 --site "$site" --project auntieos-ttpc --force 2>/dev/null; then
+                 --site "$site" --project auntieos-ttpc \
+                 --config mytribe/firebase.json --force 2>"$err"; then
               echo "  deleted from $site"
+            elif grep -qiE 'not found|does not exist|404' "$err"; then
+              # The ordinary case: this PR touched no previewable path, so no
+              # channel was ever created on this site.
+              echo "  nothing to delete on $site (no channel)"
             else
-              echo "  nothing to delete on $site (no channel, or already gone)"
+              # Anything else is a real failure and must not read as success.
+              # It still does not fail the job (the PR is already closed), but
+              # it is surfaced so a silently-broken prune cannot recur.
+              echo "::warning title=Preview channel not reclaimed::Deleting $slug from $site failed for a reason other than the channel being absent. The channel may still be counting against the 50-per-site cap."
+              sed 's/^/    /' "$err" | head -5
+              rc_any_error=1
             fi
           done
+          if [ "$rc_any_error" = "1" ]; then
+            echo "One or more sites reported an unexpected error above."
+          fi
           shred -u "$sa" 2>/dev/null || true
 
       - name: Report no credential
