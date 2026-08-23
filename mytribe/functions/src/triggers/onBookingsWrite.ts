@@ -28,7 +28,23 @@ type BookingDoc = {
   notes?: string;
   endTime?: { toMillis?: () => number } | null;
   batchId?: string;
+  /**
+   * #533: stamped by admin/manageBookingSeries when a CANCEL is DECLINING a
+   * request that was never confirmed. Its presence is what tells this trigger
+   * the household is owed `kincare.request.declined` rather than
+   * `kincare.booking.cancel`.
+   */
+  requestDeclinedAt?: unknown;
 };
+
+/**
+ * True when this revision of the visit carries the decline stamp
+ * `admin/manageBookingSeries` writes when it turns down a request (#533).
+ * Exported for unit tests.
+ */
+export function declineStampedOn(doc: BookingDoc | undefined): boolean {
+  return Boolean(doc?.requestDeclinedAt);
+}
 
 const CHANGE_WATCH_FIELDS: Array<keyof BookingDoc> = [
   'serviceType',
@@ -268,7 +284,27 @@ export const onBookingsWrite = onDocumentWritten(
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
         await dispatch('kincare.booking.confirm');
       } else if (afterStatus === 'cancelled') {
-        await dispatch('kincare.booking.cancel');
+        // #533. A DECLINED request is not a cancelled visit. Those visits were
+        // never on the household's schedule, so "your visit was cancelled"
+        // reports an event that did not happen; the true message,
+        // `kincare.request.declined`, is dispatched once for the whole envelope
+        // by admin/manageBookingSeries.
+        //
+        // This is not the fail-loud rule being bent. That rule says do not
+        // silence a TRUE message to fix a wrong count (#532). Here the message
+        // itself is false.
+        //
+        // The test is the explicit `requestDeclinedAt` stamp, NOT the
+        // `requested -> cancelled` transition, because that transition has a
+        // second, opposite meaning: the portal lets a household ask to cancel a
+        // still-`requested` visit, and ACCEPTING that ask makes the identical
+        // status change while owing them a confirmation. Only the decline path
+        // writes this stamp.
+        if (!declineStampedOn(before) && declineStampedOn(after)) {
+          // Declined: the envelope-level key carries this news instead.
+        } else {
+          await dispatch('kincare.booking.cancel');
+        }
       } else if (afterStatus === 'unavailable') {
         await dispatch('kincare.unavailable');
       }

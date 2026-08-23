@@ -236,6 +236,30 @@ const CATALOG_LIST: NotificationDef[] = [
     description: 'Tribe Tails is keeping a visit the household asked to cancel.',
   },
   {
+    // #533: the answer to a booking request the office turned down. NOT
+    // `kincare.booking.cancel`: those visits were never confirmed, so nothing
+    // came off the household's schedule and "your visit was cancelled" would
+    // describe an event that never happened. Dispatched ONCE for the whole
+    // envelope by admin/manageBookingSeries, on the #532 grain.
+    key: 'kincare.request.declined',
+    label: 'Your care request was declined',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'visit',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: { email: true },
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: {
+      email: 'kincare.request.declined',
+      sms: 'kincare.request.declined',
+      push: 'kincare.request.declined',
+    },
+    description: 'Tribe Tails could not take a care request the household asked for.',
+  },
+  {
     // #399 item 2: the office hears when a kinfolk proposes a new time for a
     // visit. NOT a status change and NOT a move; requestBookingReschedule
     // stamps rescheduleRequestedAt on the kinCares doc and onBookingsWrite

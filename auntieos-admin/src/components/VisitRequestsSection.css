@@ -54,6 +54,14 @@
   color: var(--color-error);
   border-color: var(--color-error);
 }
+/* #533: a brand new request is the one row here that is not about an existing
+   visit, and nothing is booked until an operator answers it. It carries the
+   accent rather than the error colour: it is work waiting, not something
+   going wrong. */
+.visit-requests__row-kind[data-kind='newBooking'] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
 .visit-requests__row-title {
   font-weight: var(--type-label-md-weight);
   color: var(--color-text-primary);

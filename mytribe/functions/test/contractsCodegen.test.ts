@@ -327,10 +327,13 @@ describe('the committed booking Contracts module (ADR-0003 follow-up)', () => {
   // (resolveBookingRescheduleRequest, listRescheduleRequests), 14 since #438
   // gave the cancellation ask the same two ends (resolveBookingCancellation-
   // Request, listCancelRequests). The ask itself, requestBookingCancellation,
-  // was already here: it is the READ side that was missing.
-  it('covers all 14 booking callables, both directions where a schema exists', () => {
+  // was already here: it is the READ side that was missing. 15 since #533 added
+  // listPendingBookingRequests, the read side of a NEW booking request, which
+  // had no office-facing surface at all: the admin's Bookings list streams
+  // kin_care_sessions, and a `requested` envelope has no session yet.
+  it('covers all 15 booking callables, both directions where a schema exists', () => {
     const model = readModel(BOOKING_CONTRACT_REGISTRY);
-    expect(model.callables).toHaveLength(14);
+    expect(model.callables).toHaveLength(15);
     // getMyBookings is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

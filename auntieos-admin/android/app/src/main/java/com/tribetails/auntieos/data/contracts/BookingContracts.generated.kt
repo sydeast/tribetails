@@ -505,6 +505,8 @@ data class ManageBookingSeriesArgs(
     val action: String,
     val kinfolkId: String,
     val batchId: String,
+    /** Optional: omitted from the payload when null. */
+    val note: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -514,6 +516,7 @@ data class ManageBookingSeriesArgs(
         put("action", action)
         put("kinfolkId", kinfolkId)
         put("batchId", batchId)
+        if (note != null) put("note", note)
     }
 }
 
@@ -951,4 +954,70 @@ data class ListCancelRequestsResult(
 internal fun decodeListCancelRequestsResult(raw: Map<String, Any?>?): ListCancelRequestsResult =
     ListCancelRequestsResult(
         requests = (raw?.get("requests") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeCancelRequestDto(nested) } },
+    )
+
+// ---------- listPendingBookingRequests ----------
+
+/** Request payload for the `listPendingBookingRequests` callable. */
+data class ListPendingBookingRequestsArgs(
+    /** Optional: omitted from the payload when null. */
+    val limit: Long? = null,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        if (limit != null) put("limit", limit)
+    }
+}
+
+/** Nested in the `listPendingBookingRequests` contract. */
+data class ListPendingBookingRequestsResultRequest(
+    val kinfolkId: String,
+    val batchId: String,
+    val kinfolkName: String?,
+    val serviceType: String?,
+    val kinNames: List<String>,
+    val notes: String?,
+    val visitCount: Long,
+    val firstStartTimeMs: Long?,
+    val lastStartTimeMs: Long?,
+    val startTimeMsList: List<Long>,
+    val requestedAtMs: Long?,
+)
+
+/**
+ * Fail-soft decode of `ListPendingBookingRequestsResultRequest` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListPendingBookingRequestsResultRequest(raw: Map<String, Any?>?): ListPendingBookingRequestsResultRequest =
+    ListPendingBookingRequestsResultRequest(
+        kinfolkId = (raw?.get("kinfolkId") as? String).orEmpty(),
+        batchId = (raw?.get("batchId") as? String).orEmpty(),
+        kinfolkName = raw?.get("kinfolkName") as? String,
+        serviceType = raw?.get("serviceType") as? String,
+        kinNames = (raw?.get("kinNames") as? List<*>).orEmpty().mapNotNull { it as? String },
+        notes = raw?.get("notes") as? String,
+        visitCount = (raw?.get("visitCount") as? Number)?.toLong() ?: 0L,
+        firstStartTimeMs = (raw?.get("firstStartTimeMs") as? Number)?.toLong(),
+        lastStartTimeMs = (raw?.get("lastStartTimeMs") as? Number)?.toLong(),
+        startTimeMsList = (raw?.get("startTimeMsList") as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toLong() },
+        requestedAtMs = (raw?.get("requestedAtMs") as? Number)?.toLong(),
+    )
+
+/** Response from the `listPendingBookingRequests` callable. */
+data class ListPendingBookingRequestsResult(
+    val requests: List<ListPendingBookingRequestsResultRequest>,
+)
+
+/**
+ * Fail-soft decode of `ListPendingBookingRequestsResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeListPendingBookingRequestsResult(raw: Map<String, Any?>?): ListPendingBookingRequestsResult =
+    ListPendingBookingRequestsResult(
+        requests = (raw?.get("requests") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListPendingBookingRequestsResultRequest(nested) } },
     )

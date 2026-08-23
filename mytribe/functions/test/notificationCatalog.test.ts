@@ -163,6 +163,7 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     // #438: the answer to that ask, going the other way. Kinfolk-only; the
     // office made the decision and does not need a copy of its own reply.
     'kincare.cancel.declined': { kinfolk: true },
+    'kincare.request.declined': { kinfolk: true },
     // #399 item 2: the kinfolk reschedule ask. Business-only, same as the
     // cancellation ask it mirrors: the household already knows what it asked for.
     'kincare.reschedule.requested': { business: true },

@@ -10,6 +10,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { approveBookingSeriesCore } from './approveBookingSeriesCore';
 import { validateResponse } from '../lib/callableResponse';
+import { enqueueNotification } from '../notifications/dispatcher';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 
 /**
  * 1G (Decision 11): series-level approve/cancel on the parent booking envelope.
@@ -25,6 +27,13 @@ export const Args = z.object({
   action: z.enum(['APPROVE', 'CANCEL']),
   kinfolkId: z.string().min(1).max(120),
   batchId: z.string().min(1).max(120),
+  /**
+   * Why the office could not take a request, shown to the household beside the
+   * decision (#533). Only reaches them when CANCEL is DECLINING a request that
+   * was never confirmed; cancelling an already-approved series is a different
+   * event and carries no note.
+   */
+  note: z.string().trim().max(500).optional(),
 });
 
 export const Result = z
@@ -88,8 +97,21 @@ export async function manageBookingSeriesHandler(
     throw new HttpsError('not-found', `Booking series '${args.batchId}' not found.`);
   }
 
+  // CANCEL is dual-use, and the two uses owe the household DIFFERENT news.
+  // Declining a request that was never confirmed is not "your visits were
+  // cancelled" -- those visits were never on their schedule. Cancelling an
+  // already-approved series is. Read the envelope's status BEFORE the loop
+  // flips it, because afterwards both cases look identical.
+  const envelope = parentSnap.data() as Record<string, unknown> | undefined;
+  const isDecliningRequest = envelope?.['envelopeStatus'] === 'requested';
+
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
+  const declinedStartMs = childSnap.docs
+    .map((d) => (d.data() as Record<string, unknown>)['startTime'] as { toMillis?: () => number } | undefined)
+    .map((t) => t?.toMillis?.())
+    .filter((ms): ms is number => typeof ms === 'number')
+    .sort((a, b) => a - b);
 
   let failedVisits = 0;
   // Each visit is isolated in try/catch so one bad visit can't abort the series
@@ -99,7 +121,25 @@ export async function manageBookingSeriesHandler(
     const childRef = parentRef.collection('kinCares').doc(id);
     const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
     try {
-      await childRef.set({ status: 'cancelled', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      await childRef.set(
+        {
+          status: 'cancelled',
+          updatedAt: FieldValue.serverTimestamp(),
+          // #533: mark WHY this visit was cancelled, so onBookingsWrite can tell
+          // a declined request apart from a genuine cancellation. Inferring it
+          // from `requested -> cancelled` is not enough: a household may ask to
+          // cancel a still-requested visit (portal CANCELABLE admits
+          // `requested`), and ACCEPTING that ask makes the same transition while
+          // owing them the opposite message.
+          ...(isDecliningRequest
+            ? {
+                requestDeclinedAt: FieldValue.serverTimestamp(),
+                requestDeclineNote: args.note ?? null,
+              }
+            : {}),
+        },
+        { merge: true },
+      );
       const linked = await sessionRef.get();
       if (linked.exists) {
         await sessionRef.set({ status: 'CANCELLED', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
@@ -145,6 +185,50 @@ export async function manageBookingSeriesHandler(
     uid,
     extra: { batchId: args.batchId, affectedVisits: succeeded, failedVisits },
   });
+
+  // #533: the household hears the answer to their request. ONE dispatch for the
+  // whole envelope, on the #532 grain, and only when this CANCEL was a decline.
+  // Dispatched here rather than from a trigger because envelope-status writes
+  // come from this callable AND from onKinCareRollup, so a trigger would either
+  // double-fire or need a flag to tell the two apart. Both admin clients call
+  // this callable, so Android's deny path is covered by the same line.
+  if (isDecliningRequest) {
+    try {
+      const recipientUid = await resolveKinfolkUid(args.kinfolkId);
+      await enqueueNotification({
+        key: 'kincare.request.declined',
+        recipientUid: recipientUid ?? '',
+        data: {
+          kinfolkId: args.kinfolkId,
+          batchId: args.batchId,
+          bookingId: args.batchId,
+          serviceName: envelope?.['serviceName'] ?? null,
+          startTimeMs: declinedStartMs[0] ?? null,
+          startTimeMsList: declinedStartMs,
+          visitCount: declinedStartMs.length,
+          note: args.note ?? null,
+        },
+        targetType: 'booking',
+        targetId: args.batchId,
+      });
+    } catch (err) {
+      // The decision itself already succeeded and is audited. A failed
+      // notification must not roll that back, but it must not be silent either:
+      // a household left unanswered is the defect #533 exists to fix.
+      logEvent({
+        severity: 'warn',
+        function: 'manageBookingSeries',
+        event: 'notification.dispatch.failed',
+        uid,
+        extra: {
+          kinfolkId: args.kinfolkId,
+          batchId: args.batchId,
+          key: 'kincare.request.declined',
+          err: (err as Error)?.message,
+        },
+      });
+    }
+  }
 
   return validateResponse('manageBookingSeries', Result, {
     ok: true,

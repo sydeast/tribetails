@@ -250,6 +250,7 @@ export interface ManageBookingSeriesArgs {
   action: 'APPROVE' | 'CANCEL';
   kinfolkId: string;
   batchId: string;
+  note?: string;
 }
 
 /**
@@ -462,4 +463,37 @@ export interface ListCancelRequestsArgs {
  */
 export interface ListCancelRequestsResult {
   requests: CancelRequestDto[];
+}
+
+// ---------- listPendingBookingRequests ----------
+
+/**
+ * Request payload for the `listPendingBookingRequests` callable.
+ */
+export interface ListPendingBookingRequestsArgs {
+  limit?: number;
+}
+
+/**
+ * Nested in the `listPendingBookingRequests` contract.
+ */
+export interface ListPendingBookingRequestsResultRequest {
+  kinfolkId: string;
+  batchId: string;
+  kinfolkName: string | null;
+  serviceType: string | null;
+  kinNames: string[];
+  notes: string | null;
+  visitCount: number;
+  firstStartTimeMs: number | null;
+  lastStartTimeMs: number | null;
+  startTimeMsList: number[];
+  requestedAtMs: number | null;
+}
+
+/**
+ * Response from the `listPendingBookingRequests` callable.
+ */
+export interface ListPendingBookingRequestsResult {
+  requests: ListPendingBookingRequestsResultRequest[];
 }

@@ -1,0 +1,1 @@
+Care request declined. We couldn't take the {{serviceType}} for {{kinName}}, {{bookingDates}}. Tap for details.
