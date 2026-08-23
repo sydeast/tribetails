@@ -1,1 +1,1 @@
-Tribe Tails: new care request from {{kinfolkName}}, {{serviceType}} for {{kinName}} on {{bookingDate}}.
+Tribe Tails: new care request from {{kinfolkName}}, {{serviceType}} for {{kinName}}. {{bookingDates}}.

@@ -77,7 +77,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.note.auntie': ['kinName'],
   'kincare.note.kinfolk': ['kinName'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
-  'kincare.requested': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.requested': ['bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.reschedule.requested': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.unavailable': ['bookingDate', 'kinfolkName', 'serviceType'],
   'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
@@ -119,6 +119,7 @@ const ENRICHABLE: ReadonlySet<string> = new Set([
   'kinName',
   'serviceType',
   'bookingDate',
+  'bookingDates',
   'bookingTime',
   'invoiceNumber',
   'amount',
@@ -409,6 +410,41 @@ export async function enrichTemplateData(
       timeZone: tz,
     }).format(new Date(ms));
   }
+  /**
+   * A whole booking envelope's dates in one phrase (#532).
+   *
+   * One visit reads as the plain date, so a single-visit request says what it
+   * always said. More than one collapses to a COUNT AND A SPAN rather than the
+   * full list, which is what keeps a 30-visit standing request inside one SMS
+   * segment; the exact days are one tap away in the request itself.
+   *
+   *   []                           -> ''            (senders scrub the token)
+   *   [Sep 4]                      -> 'Thu, Sep 4'
+   *   [Sep 4, Sep 5, Sep 6, Sep 7] -> '4 visits, Sep 4 to Sep 7'
+   *
+   * A single visit keeps the weekday-led `formatDate` spelling every other
+   * booking template uses, so a one-visit request reads exactly as it always
+   * did. A span drops the weekday: "4 visits, Thu, Sep 4 to Sun, Sep 7" stacks
+   * three commas into one phrase, and on a span the count and the range are the
+   * information, not which day of the week each end lands on.
+   *
+   * Assumes the list is sorted oldest-first, which `visitStartMillis` in
+   * onBookingEnvelopeCreate guarantees.
+   */
+  function formatSpanDate(ms: number, tz: string): string {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      timeZone: tz,
+    }).format(new Date(ms));
+  }
+  function formatDateSpan(msList: number[], tz: string): string {
+    if (msList.length === 0) return '';
+    if (msList.length === 1) return formatDate(msList[0]!, tz);
+    const first = formatSpanDate(msList[0]!, tz);
+    const last = formatSpanDate(msList[msList.length - 1]!, tz);
+    return `${msList.length} visits, ${first} to ${last}`;
+  }
   // Invoice-style date ("Jun 15, 2026") — matches the pre-formatted `date`
   // strings AuntieOS writes on invoice docs, unlike the weekday-led booking
   // format above ("Mon, Jun 15").
@@ -436,6 +472,22 @@ export async function enrichTemplateData(
       v = str(b?.serviceType) || str(b?.serviceName) || str(b?.title);
     }
     fill('serviceType', v);
+  }
+
+  // #532: the whole envelope's dates, for the one notification that is about a
+  // REQUEST rather than a visit. Falls back to the single `startTimeMs` the
+  // emitter already sends so a dispatch that could not read its children still
+  // names a date instead of going blank.
+  if (want.has('bookingDates')) {
+    const raw = Array.isArray(data.startTimeMsList) ? data.startTimeMsList : [];
+    const msList = raw
+      .map((v) => num(v))
+      .filter((ms): ms is number => ms != null);
+    if (msList.length === 0) {
+      const single = num(data.startTimeMs);
+      if (single != null) msList.push(single);
+    }
+    if (msList.length > 0) fill('bookingDates', formatDateSpan(msList, await loadTimeZone()));
   }
 
   if (want.has('bookingDate') || want.has('bookingTime')) {

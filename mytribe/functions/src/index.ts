@@ -543,6 +543,7 @@ export { onInviteRequestCreate } from './triggers/onInviteRequestCreate';
 export { onClientsWrite } from './triggers/onClientsWrite';
 export { onBookingsWrite } from './triggers/onBookingsWrite';
 export { onKinCareRollup } from './triggers/onKinCareRollup';
+export { onBookingEnvelopeCreate } from './triggers/onBookingEnvelopeCreate';
 export { onFamilyKinWrite } from './triggers/onFamilyKinWrite';
 export { onFlatKinWrite } from './triggers/onFlatKinWrite';
 export { onFamilyProfileWrite } from './triggers/onFamilyProfileWrite';

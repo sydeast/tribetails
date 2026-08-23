@@ -141,6 +141,57 @@ describe('enrichTemplateData: bookings', () => {
   });
 });
 
+/**
+ * #532. `kincare.requested` is the one notification about a REQUEST rather than
+ * a visit, so its date token has to carry a whole envelope. Times are noon UTC
+ * so the America/New_York default zone cannot roll one onto the previous day.
+ */
+describe('enrichTemplateData: bookingDates spans a whole envelope (#532)', () => {
+  const noonUtc = (day: number) => Date.UTC(2026, 8, day, 16, 0);
+
+  async function requested(data: Record<string, unknown>) {
+    const ctx = buildDbMock({
+      docs: {
+        'staff/admin1': { displayName: 'Auntie Admin' },
+        'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' },
+      },
+      queryDocs: { kin: [{ id: 'k1', data: { kinfolkId: 'fam1', name: 'Rex', status: 'active' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    return enrichTemplateData('kincare.requested', 'admin1', { kinfolkId: 'fam1', ...data });
+  }
+
+  it('four visits read as a count and a range, not four dates', async () => {
+    const out = await requested({
+      startTimeMsList: [noonUtc(4), noonUtc(5), noonUtc(6), noonUtc(7)],
+    });
+    expect(out.bookingDates).toBe('4 visits, Sep 4 to Sep 7');
+  });
+
+  it('one visit keeps the weekday-led spelling the other booking templates use', async () => {
+    const out = await requested({ startTimeMsList: [noonUtc(4)] });
+    expect(out.bookingDates).toBe('Fri, Sep 4');
+  });
+
+  it('a thirty-visit standing request still fits one line', async () => {
+    const out = await requested({
+      startTimeMsList: Array.from({ length: 30 }, (_, i) => noonUtc(1 + i)),
+    });
+    expect(out.bookingDates).toBe('30 visits, Sep 1 to Sep 30');
+  });
+
+  it('falls back to the single startTimeMs when the list is missing', async () => {
+    // The dispatch that could not read its children still names a date.
+    const out = await requested({ startTimeMs: noonUtc(4) });
+    expect(out.bookingDates).toBe('Fri, Sep 4');
+  });
+
+  it('leaves the token blank when there is no date at all, for the senders to scrub', async () => {
+    const out = await requested({});
+    expect(out.bookingDates ?? '').toBe('');
+  });
+});
+
 describe('enrichTemplateData: pets + invoice variants', () => {
   it('pets.updated: kinName from families/{id}/kin/{kinId}.name (precise)', async () => {
     const ctx = buildDbMock({ docs: { 'families/fam1/kin/k9': { name: 'Mochi' } } });

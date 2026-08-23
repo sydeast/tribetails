@@ -99,9 +99,20 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   // ── Visits ──────────────────────────────────────────────────────────────
   'kincare.requested': [
     {
-      trigger: 'A household requests a new visit (a booking is created as "requested").',
-      source: 'src/triggers/onBookingsWrite.ts',
-      dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
+      // #532: ONE per request, not one per visit. The emitter moved from
+      // onBookingsWrite (registered per visit, so a four-day request sent four
+      // copies) up to the parent envelope doc.
+      trigger: 'A household requests care (a booking envelope is created as "requested").',
+      source: 'src/triggers/onBookingEnvelopeCreate.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'serviceName',
+        'startTimeMs',
+        'startTimeMsList',
+        'visitCount',
+      ],
     },
   ],
   'kincare.booking.confirm': [
