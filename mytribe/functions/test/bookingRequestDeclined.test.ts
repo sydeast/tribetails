@@ -46,6 +46,36 @@ function req(data: unknown): CallableRequest<unknown> {
 
 const PARENT = 'families/fam1/bookings/req_1';
 
+/**
+ * Wraps a buildDbMock() db so a doc write to one of `targetPaths` throws,
+ * simulating a per-visit failure inside the CANCEL loop's try/catch. Lifted from
+ * manageBookingSeries.test.ts: refs are created fresh on every
+ * `.collection(x).doc(y)`, so this has to intercept at the factory level.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function withThrowingSet(db: Record<string, any>, targetPaths: string[]): Record<string, any> {
+  function wrapRef(ref: any): any {
+    if (targetPaths.includes(ref.path)) {
+      return {
+        ...ref,
+        set: vi.fn(async () => {
+          throw new Error('simulated write failure');
+        }),
+      };
+    }
+    return { ...ref, collection: (sub: string) => wrapCollection(ref.collection(sub)) };
+  }
+  function wrapCollection(col: any): any {
+    return { ...col, doc: (id?: string) => wrapRef(col.doc(id)) };
+  }
+  return {
+    ...db,
+    collection: (path: string) => wrapCollection(db.collection(path)),
+    doc: (path: string) => wrapRef(db.doc(path)),
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 function dbFor(envelopeStatus: string) {
   return buildDbMock({
     docs: { [PARENT]: { envelopeStatus, serviceName: 'Dog Walk', visitCount: 2 } },
@@ -64,7 +94,12 @@ describe('manageBookingSeries CANCEL — declining a request (#533)', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
 
     await manageBookingSeriesHandler(
-      req({ action: 'CANCEL', kinfolkId: 'fam1', batchId: 'req_1', note: 'Fully booked that weekend.' }),
+      req({
+        action: 'CANCEL',
+        kinfolkId: 'fam1',
+        batchId: 'req_1',
+        note: 'Fully booked that weekend.',
+      }),
     );
 
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
@@ -88,6 +123,29 @@ describe('manageBookingSeries CANCEL — declining a request (#533)', () => {
       expect(w.data.status).toBe('cancelled');
       expect(w.data.requestDeclinedAt).toBe('__TS__');
     }
+  });
+
+  it('a PARTIAL failure sends nothing, so the retry does not decline them twice', async () => {
+    // The envelope deliberately stays `requested` after a partial failure so the
+    // admin can retry. Without the failedVisits gate, that retry reads as a
+    // second decline and the household hears the same no twice: #532's defect,
+    // on the deny path.
+    const ctx = dbFor('requested');
+    mocks.dbFn.mockReturnValue(withThrowingSet(ctx.db, [`${PARENT}/kinCares/v2`]));
+
+    const res = await manageBookingSeriesHandler(
+      req({ action: 'CANCEL', kinfolkId: 'fam1', batchId: 'req_1' }),
+    );
+
+    expect(res.failedVisits).toBe(1);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    // The retry succeeds, and THAT is the one that tells them.
+    mocks.dbFn.mockReturnValue(dbFor('requested').db);
+    await manageBookingSeriesHandler(req({ action: 'CANCEL', kinfolkId: 'fam1', batchId: 'req_1' }));
+
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue.mock.calls[0]![0].key).toBe('kincare.request.declined');
   });
 
   it('cancelling an ALREADY CONFIRMED series is a different event: no decline key, no stamp', async () => {

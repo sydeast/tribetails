@@ -192,7 +192,15 @@ export async function manageBookingSeriesHandler(
   // come from this callable AND from onKinCareRollup, so a trigger would either
   // double-fire or need a flag to tell the two apart. Both admin clients call
   // this callable, so Android's deny path is covered by the same line.
-  if (isDecliningRequest) {
+  //
+  // `failedVisits === 0` is what keeps this ONE notification rather than one per
+  // attempt. A partial failure deliberately leaves the envelope `requested` so
+  // the admin can retry (see the parent write above), which means the retry
+  // would read `isDecliningRequest` as true a second time and send a second
+  // decline. That is #532's defect on the deny path. It also stops us telling a
+  // household their request was declined while it is still sitting there
+  // retryable: the decision has not actually been carried out yet.
+  if (isDecliningRequest && failedVisits === 0) {
     try {
       const recipientUid = await resolveKinfolkUid(args.kinfolkId);
       await enqueueNotification({
