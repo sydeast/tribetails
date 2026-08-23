@@ -85,6 +85,24 @@ android {
         // syncGoogleCalendarBusyEvents Cloud Function via Application Default
         // Credentials, so no calendar id or service-account key ships in the APK.
         buildConfigField("String", "SENTRY_DSN", "\"${localProps.getProperty("SENTRY_DSN") ?: project.findProperty("SENTRY_DSN") ?: ""}\"")
+
+        // The Maps SDK authenticates its OWN tile requests on the device, so a
+        // public token has to reach the APK; there is no server-proxy option for
+        // a basemap the way there is for a geocoding lookup. This is the mobile
+        // token, which carries no URL restriction because Mapbox validates those
+        // from a browser Referer and answers 403 to Maps SDK requests. The web
+        // build gets a different, URL-restricted token.
+        //
+        // Injected the same way SENTRY_DSN is: local.properties first, then a
+        // gradle property (which covers ~/.gradle/gradle.properties and
+        // ORG_GRADLE_PROJECT_MAPBOX_PUBLIC_TOKEN), then empty. Empty is a valid
+        // build - the maps stay blank exactly as they are today, and nothing
+        // else in the app degrades.
+        //
+        // NOT the same token as MAPBOX_DOWNLOADS_TOKEN in settings.gradle.kts.
+        // That one is an `sk.` maven credential that downloads the SDK at build
+        // time and cannot authenticate a MapView.
+        buildConfigField("String", "MAPBOX_PUBLIC_TOKEN", "\"${localProps.getProperty("MAPBOX_PUBLIC_TOKEN") ?: project.findProperty("MAPBOX_PUBLIC_TOKEN") ?: ""}\"")
     }
 
     // Release signing, resolved LAZILY.
