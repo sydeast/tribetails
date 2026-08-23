@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.tribetails.auntieos.BuildConfig
+import com.tribetails.auntieos.config.MapboxConfig
 import com.tribetails.auntieos.data.api.RetrofitClient
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
@@ -130,6 +131,26 @@ class AuntieOSApp : Application() {
         // Install the on-disk uncaught handler BEFORE Sentry.init so even a
         // crash inside SentryAndroid.init() leaves a recoverable stacktrace.
         installDefensiveCrashHandler(applicationContext)
+
+        // The Maps SDK's access token, set here and nowhere else, because
+        // Application.onCreate is the only place that runs before every Activity
+        // and Composable - including the two screens that build a MapView.
+        //
+        // This is the fix for a screen that has been blank in production since it
+        // was written: LiveTrackingScreen and RouteViewerScreen were wired to the
+        // SDK, but nothing ever authenticated it, so every tile request they made
+        // was rejected. Not a regression from the July geocoding-key removal; that
+        // constant had one reader and it was not these screens.
+        //
+        // Deliberately NOT inside the isRobolectric guard below. Sentry and voice
+        // registration are skipped under test because they leak work across the
+        // shared JVM; this leaks nothing, and it is the thing the test observes.
+        // applyAccessToken swallows the UnsatisfiedLinkError the native SDK
+        // raises under Robolectric and records that startup did its part.
+        val mapboxToken = MapboxConfig.applyAccessToken(BuildConfig.MAPBOX_PUBLIC_TOKEN)
+        if (mapboxToken is MapboxConfig.TokenApplication.NoTokenConfigured) {
+            AuntieLog.w("No MAPBOX_PUBLIC_TOKEN in this build: maps will not draw")
+        }
 
         // Are we running inside the JVM unit-test suite? Two pieces of startup
         // below are skipped when we are: Sentry, because unit-test runs were
