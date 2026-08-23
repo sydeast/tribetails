@@ -161,8 +161,8 @@ export function assignmentDispatches(
 /**
  * Watches every per-visit write under
  * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`. Notifications
- * are keyed on the per-visit `status` (BookingStatus), unchanged from before:
- *   - create with status=requested              -> kincare.requested (business)
+ * are keyed on the per-visit `status` (BookingStatus):
+ *   - create with status=requested              -> NOTHING; see #532 below
  *   - any -> confirmed/approved                 -> kincare.booking.confirm (both)
  *   - any -> cancelled                          -> kincare.booking.cancel (both)
  *   - any -> unavailable                        -> kincare.unavailable (business)
@@ -170,6 +170,11 @@ export function assignmentDispatches(
  *
  * Envelope counter/status rollup lives in the SEPARATE onKinCareRollup trigger
  * on this same path; this handler only emits notifications.
+ *
+ * #532: `kincare.requested` is NOT one of them any more. This trigger fires once
+ * per VISIT, so a four-day request dispatched it four times. It now comes from
+ * onBookingEnvelopeCreate, on the parent `bookings/{batchId}` doc, once per
+ * request. Do not put a per-visit dispatch of it back here.
  */
 export const onBookingsWrite = onDocumentWritten(
   {
@@ -251,10 +256,13 @@ export const onBookingsWrite = onDocumentWritten(
         reason: after.rescheduleRequestReason ?? null,
       });
     }
-    if (isCreate && afterStatus === 'requested') {
-      await dispatch('kincare.requested');
-      return;
-    }
+    // #532: a visit create used to dispatch `kincare.requested` here. It does NOT
+    // any more. This trigger is registered per VISIT, so a four-day request sent
+    // the office four copies of one request. The key now comes from
+    // onBookingEnvelopeCreate, once per envelope. A bare create falls through
+    // every arm below (`beforeStatus` is null, so the transition arm matches
+    // nothing) and dispatches nothing, which is the invariant its test asserts.
+    if (isCreate && afterStatus === 'requested') return;
 
     if (beforeStatus !== afterStatus) {
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
