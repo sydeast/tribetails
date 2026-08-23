@@ -423,6 +423,7 @@ export { listRescheduleRequests, resolveBookingRescheduleRequest } from './admin
 // kinCares doc AND the flat kin_care_sessions row, for the same reason the
 // reschedule pair above writes both.
 export { listCancelRequests, resolveBookingCancellationRequest } from './admin/cancelRequests';
+export { listPendingBookingRequests } from './admin/pendingBookingRequests';
 // A3: the four operator status transitions on a flat kin_care_sessions row.
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.

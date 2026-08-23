@@ -91,6 +91,10 @@ import {
   ListResult as ListCancelRequestsResult,
   CancelRequestDto as CancelRequestDtoSchema,
 } from '../../src/admin/cancelRequests';
+import {
+  ListArgs as ListPendingBookingRequestsArgs,
+  ListResult as ListPendingBookingRequestsResult,
+} from '../../src/admin/pendingBookingRequests';
 
 /** One callable's request and response authority. */
 export interface CallableContract {
@@ -225,5 +229,10 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
       result: ResolveBookingCancellationRequestResult,
     },
     { name: 'listCancelRequests', args: ListCancelRequestsArgs, result: ListCancelRequestsResult },
+    {
+      name: 'listPendingBookingRequests',
+      args: ListPendingBookingRequestsArgs,
+      result: ListPendingBookingRequestsResult,
+    },
   ],
 };

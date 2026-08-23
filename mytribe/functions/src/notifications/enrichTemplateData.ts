@@ -78,6 +78,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.note.kinfolk': ['kinName'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
   'kincare.requested': ['bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.request.declined': ['bookingDates', 'kinfolkName', 'kinName', 'note', 'serviceType'],
   'kincare.reschedule.requested': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.unavailable': ['bookingDate', 'kinfolkName', 'serviceType'],
   'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],

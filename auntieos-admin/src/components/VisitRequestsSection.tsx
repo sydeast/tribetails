@@ -9,6 +9,12 @@ import {
   resolveBookingCancellationRequest,
   type CancelRequestDto,
 } from '../api/cancelRequests';
+import {
+  listPendingBookingRequests,
+  approveBookingRequest,
+  declineBookingRequest,
+  type PendingBookingRequestDto,
+} from '../api/bookingRequests';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { useOneShot } from '../lib/useOneShot';
 import { useToast } from './Toast';
@@ -47,7 +53,8 @@ import './VisitRequestsSection.css';
 /** One row, whichever kind of ask it is. */
 export type VisitRequest =
   | { kind: 'reschedule'; request: RescheduleRequestDto }
-  | { kind: 'cancel'; request: CancelRequestDto };
+  | { kind: 'cancel'; request: CancelRequestDto }
+  | { kind: 'newBooking'; request: PendingBookingRequestDto };
 
 interface QueueLoad {
   requests: VisitRequest[];
@@ -61,20 +68,30 @@ export function whenLabel(ms: number | null): string {
   return bookingWhenLabel(new Date(ms).toISOString());
 }
 
-/** The row's stable identity: a visit id is only unique inside its household, and two asks can sit on one visit. */
+/**
+ * The row's stable identity: a visit id is only unique inside its household, and
+ * two asks can sit on one visit.
+ *
+ * A `newBooking` row has NO visit id. It is a whole envelope, answered as one
+ * (#532/#533), so its identity ends at the batch.
+ */
 export function requestKey(row: VisitRequest): string {
-  const r = row.request;
-  return `${row.kind}/${r.kinfolkId}/${r.batchId}/${r.visitId}`;
+  if (row.kind === 'newBooking') {
+    return `newBooking/${row.request.kinfolkId}/${row.request.batchId}`;
+  }
+  return `${row.kind}/${row.request.kinfolkId}/${row.request.batchId}/${row.request.visitId}`;
 }
 
 /** Oldest first: the household that has been waiting longest is the one to answer. */
 export function mergeQueues(
   reschedule: RescheduleRequestDto[],
   cancel: CancelRequestDto[],
+  newBookings: PendingBookingRequestDto[] = [],
 ): VisitRequest[] {
   const rows: VisitRequest[] = [
     ...reschedule.map((request): VisitRequest => ({ kind: 'reschedule', request })),
     ...cancel.map((request): VisitRequest => ({ kind: 'cancel', request })),
+    ...newBookings.map((request): VisitRequest => ({ kind: 'newBooking', request })),
   ];
   // A row with no `requestedAtMs` sorts last rather than to 1970: an unknown
   // wait is not a long one, and putting it at the top would push a household
@@ -87,7 +104,13 @@ export function mergeQueues(
 }
 
 async function loadQueues(): Promise<QueueLoad> {
-  const [resched, cancel] = await Promise.allSettled([listRescheduleRequests(), listCancelRequests()]);
+  // Three independent reads, reported independently: one broken queue must not
+  // hide the other two, and a queue that failed must never read as empty.
+  const [resched, cancel, newBookings] = await Promise.allSettled([
+    listRescheduleRequests(),
+    listCancelRequests(),
+    listPendingBookingRequests(),
+  ]);
   const failures: string[] = [];
   if (resched.status === 'rejected') {
     failures.push(`Reschedule requests: ${reasonOf(resched.reason)}`);
@@ -95,10 +118,14 @@ async function loadQueues(): Promise<QueueLoad> {
   if (cancel.status === 'rejected') {
     failures.push(`Cancellation requests: ${reasonOf(cancel.reason)}`);
   }
+  if (newBookings.status === 'rejected') {
+    failures.push(`New booking requests: ${reasonOf(newBookings.reason)}`);
+  }
   return {
     requests: mergeQueues(
       resched.status === 'fulfilled' ? resched.value.requests : [],
       cancel.status === 'fulfilled' ? cancel.value.requests : [],
+      newBookings.status === 'fulfilled' ? newBookings.value.requests : [],
     ),
     failures,
   };
@@ -160,11 +187,9 @@ export function VisitRequestsSection() {
               <li key={requestKey(row)} className="visit-requests__row">
                 <div className="visit-requests__row-meta">
                   <span className="visit-requests__row-kind" data-kind={row.kind}>
-                    {row.kind === 'cancel' ? 'Cancel' : 'Reschedule'}
+                    {rowKindLabel(row.kind)}
                   </span>
-                  <span className="visit-requests__row-title">
-                    {row.request.title ?? row.request.serviceType ?? 'Visit'}
-                  </span>
+                  <span className="visit-requests__row-title">{rowTitle(row)}</span>
                   {row.request.kinNames.length > 0 && (
                     <>
                       <span className="visit-requests__row-dot" aria-hidden="true">
@@ -206,14 +231,44 @@ export function VisitRequestsSection() {
   );
 }
 
-/** A reschedule row shows both windows; a cancellation row shows the visit it would take off the books. */
-function rowWhen(row: VisitRequest): string {
+/**
+ * A reschedule row shows both windows; a cancellation row shows the visit it
+ * would take off the books; a new request shows the span it covers.
+ *
+ * A multi-visit request reads as a count and a range rather than a list of
+ * dates, matching the wording the household's own confirmation uses (#532), so
+ * the operator and the household are looking at the same phrase.
+ */
+export function rowWhen(row: VisitRequest): string {
+  if (row.kind === 'newBooking') {
+    const { visitCount, firstStartTimeMs, lastStartTimeMs } = row.request;
+    if (visitCount <= 1) return whenLabel(firstStartTimeMs);
+    return `${String(visitCount)} visits, ${whenLabel(firstStartTimeMs)} to ${whenLabel(lastStartTimeMs)}`;
+  }
   if (row.kind === 'cancel') return whenLabel(row.request.startTimeMs);
   return `${whenLabel(row.request.currentStartTimeMs)} → ${whenLabel(row.request.proposedStartTimeMs)}`;
 }
 
 function reasonOfRow(row: VisitRequest): string | null {
+  // A new request has no "reason" field. What it has is the household's own
+  // notes for the whole request, which is the thing an operator needs to read
+  // before answering it.
+  if (row.kind === 'newBooking') return row.request.notes;
   return row.request.reason;
+}
+
+/** What the row calls itself in the queue. */
+function rowKindLabel(kind: VisitRequest['kind']): string {
+  if (kind === 'newBooking') return 'New request';
+  return kind === 'cancel' ? 'Cancel' : 'Reschedule';
+}
+
+/** A new request has no `title`; it is named by its service and household. */
+function rowTitle(row: VisitRequest): string {
+  if (row.kind === 'newBooking') {
+    return row.request.serviceType ?? row.request.kinfolkName ?? 'Care request';
+  }
+  return row.request.title ?? row.request.serviceType ?? 'Visit';
 }
 
 interface DecisionDialogProps {
@@ -234,24 +289,23 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
   const [error, setError] = useState<string | null>(null);
   const declining = decision === 'decline';
   const cancelling = row.kind === 'cancel';
+  const isNewRequest = row.kind === 'newBooking';
   const noteMissing = declining && note.trim().length === 0;
-  const { kinfolkId, batchId, visitId } = row.request;
+  const { kinfolkId, batchId } = row.request;
 
   async function submit() {
     if (noteMissing) {
-      setError(
-        cancelling
-          ? 'Say why the visit is staying. The household sees this on their booking.'
-          : 'Say why the time does not work. The household sees this on their booking.',
-      );
+      setError(declineNoteMissingMessage(row.kind));
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const message = cancelling
-        ? await submitCancel(kinfolkId, batchId, visitId, decision, note)
-        : await submitReschedule(kinfolkId, batchId, visitId, decision, note);
+      const message = isNewRequest
+        ? await submitNewRequest(kinfolkId, batchId, decision, note)
+        : cancelling
+          ? await submitCancel(kinfolkId, batchId, row.request.visitId, decision, note)
+          : await submitReschedule(kinfolkId, batchId, row.request.visitId, decision, note);
       setBusy(false);
       onResolved(row, message);
     } catch (err) {
@@ -295,6 +349,34 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
   );
 }
 
+/**
+ * Approves or declines a whole booking request (#533).
+ *
+ * Both actions go through `manageBookingSeries`, which rules on the ENVELOPE in
+ * one transaction, so a four-day request is answered once rather than four
+ * times. Approving creates the `kin_care_sessions` rows, which is what makes the
+ * visits appear on the Bookings list and the schedule; declining books nothing
+ * and sends the household the operator's reason once.
+ */
+async function submitNewRequest(
+  kinfolkId: string,
+  batchId: string,
+  decision: 'accept' | 'decline',
+  note: string,
+): Promise<string> {
+  if (decision === 'decline') {
+    await declineBookingRequest(kinfolkId, batchId, note);
+    return 'Declined. Nothing was booked and the household gets your reason.';
+  }
+  const res = await approveBookingRequest(kinfolkId, batchId);
+  if (res.failedVisits > 0) {
+    return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through, so try again.`;
+  }
+  return res.affectedVisits === 1
+    ? 'Approved. The visit is on the schedule and the household has been told.'
+    : `Approved. All ${String(res.affectedVisits)} visits are on the schedule and the household has been told.`;
+}
+
 async function submitReschedule(
   kinfolkId: string,
   batchId: string,
@@ -326,6 +408,9 @@ async function submitCancel(
 }
 
 function dialogTitle(kind: VisitRequest['kind'], decision: 'accept' | 'decline'): string {
+  if (kind === 'newBooking') {
+    return decision === 'decline' ? 'Turn down this request' : 'Book this request';
+  }
   if (kind === 'cancel') {
     return decision === 'decline' ? 'Keep this visit' : 'Cancel this visit';
   }
@@ -334,14 +419,32 @@ function dialogTitle(kind: VisitRequest['kind'], decision: 'accept' | 'decline')
 
 function confirmLabel(kind: VisitRequest['kind'], decision: 'accept' | 'decline'): string {
   if (decision === 'decline') return 'Send the decline';
+  if (kind === 'newBooking') return 'Book it';
   return kind === 'cancel' ? 'Cancel it' : 'Move it';
 }
 
 function declineNoteLabel(kind: VisitRequest['kind']): string {
+  if (kind === 'newBooking') return 'Why you cannot take it';
   return kind === 'cancel' ? 'Why it is staying' : 'Why it does not work';
 }
 
+/** A decline with no reason is the same silence #533 is about, one step later. */
+function declineNoteMissingMessage(kind: VisitRequest['kind']): string {
+  if (kind === 'newBooking') {
+    return 'Say why you cannot take it. The household sees this on their request.';
+  }
+  return kind === 'cancel'
+    ? 'Say why the visit is staying. The household sees this on their booking.'
+    : 'Say why the time does not work. The household sees this on their booking.';
+}
+
 function dialogLine(row: VisitRequest, decision: 'accept' | 'decline'): string {
+  if (row.kind === 'newBooking') {
+    const when = rowWhen(row);
+    return decision === 'decline'
+      ? `${when} will not be booked. The household will be told why.`
+      : `${when} will go on the schedule and on the household's portal.`;
+  }
   if (row.kind === 'cancel') {
     const when = whenLabel(row.request.startTimeMs);
     return decision === 'decline'

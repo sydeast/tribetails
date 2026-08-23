@@ -7,6 +7,7 @@ import { ToastProvider } from './Toast';
 import type {
   CancelRequestDto,
   RescheduleRequestDto,
+  ListPendingBookingRequestsResultRequest,
 } from '../contracts/bookingContracts.generated';
 
 const { listRescheduleRequests, resolveBookingRescheduleRequest } = vi.hoisted(() => ({
@@ -25,6 +26,18 @@ const { listCancelRequests, resolveBookingCancellationRequest } = vi.hoisted(() 
 vi.mock('../api/cancelRequests', () => ({
   listCancelRequests,
   resolveBookingCancellationRequest,
+}));
+const { listPendingBookingRequests, approveBookingRequest, declineBookingRequest } = vi.hoisted(
+  () => ({
+    listPendingBookingRequests: vi.fn(),
+    approveBookingRequest: vi.fn(),
+    declineBookingRequest: vi.fn(),
+  }),
+);
+vi.mock('../api/bookingRequests', () => ({
+  listPendingBookingRequests,
+  approveBookingRequest,
+  declineBookingRequest,
 }));
 
 import { VisitRequestsSection, mergeQueues, requestKey, whenLabel } from './VisitRequestsSection';
@@ -73,19 +86,43 @@ function cancellation(overrides: Partial<CancelRequestDto> = {}): CancelRequestD
   };
 }
 
+/** A brand new booking request: an ENVELOPE, so it carries a batchId and no visitId (#533). */
+function newBooking(
+  overrides: Partial<ListPendingBookingRequestsResultRequest> = {},
+): ListPendingBookingRequestsResultRequest {
+  return {
+    kinfolkId: 'fam-3',
+    batchId: 'b3',
+    kinfolkName: 'The Rivera Home',
+    serviceType: 'Dog Walk',
+    kinNames: ['Rex'],
+    notes: 'Back door code 1234',
+    visitCount: 4,
+    firstStartTimeMs: CURRENT_MS,
+    lastStartTimeMs: CURRENT_MS + 3 * 24 * 60 * 60 * 1000,
+    startTimeMsList: [CURRENT_MS, CURRENT_MS + 24 * 60 * 60 * 1000],
+    requestedAtMs: CURRENT_MS - 5000,
+    ...overrides,
+  };
+}
 beforeEach(() => {
   listRescheduleRequests.mockReset();
   resolveBookingRescheduleRequest.mockReset();
   listCancelRequests.mockReset();
   resolveBookingCancellationRequest.mockReset();
+  listPendingBookingRequests.mockReset();
+  approveBookingRequest.mockReset();
+  declineBookingRequest.mockReset();
   listRescheduleRequests.mockResolvedValue({ requests: [] });
   listCancelRequests.mockResolvedValue({ requests: [] });
+  listPendingBookingRequests.mockResolvedValue({ requests: [] });
 });
 
 describe('VisitRequestsSection', () => {
   it('renders nothing while the queues are loading', () => {
     listRescheduleRequests.mockReturnValue(new Promise(() => {}));
     listCancelRequests.mockReturnValue(new Promise(() => {}));
+    listPendingBookingRequests.mockReturnValue(new Promise(() => {}));
     const { container } = render(<VisitRequestsSection />);
     expect(container.querySelector('.visit-requests')).toBeNull();
   });
@@ -310,5 +347,116 @@ describe('requestKey', () => {
 describe('whenLabel', () => {
   it('says "Not set" rather than rendering an epoch for a missing time', () => {
     expect(whenLabel(null)).toBe('Not set');
+  });
+});
+
+/**
+ * #533. Until this, a household could ask for care through the portal and no
+ * screen in the React admin ever showed the request: the Bookings list streams
+ * the flat `kin_care_sessions` collection and a `requested` envelope has no
+ * session yet. These cover the third kind of row and its two answers.
+ */
+describe('VisitRequestsSection: new booking requests (#533)', () => {
+  it('shows a pending request that no other queue would surface', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+
+    expect(await screen.findByText('New request')).toBeInTheDocument();
+    expect(screen.getByText('Dog Walk')).toBeInTheDocument();
+    // The household's own words for the request, which an operator needs before
+    // answering it.
+    expect(screen.getByText('Back door code 1234')).toBeInTheDocument();
+  });
+
+  it('reads a multi-visit request as a count and a span, not four rows', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+
+    expect(await screen.findByText(/4 visits,/)).toBeInTheDocument();
+    expect(screen.getAllByText('New request')).toHaveLength(1);
+  });
+
+  it('a one-visit request names its date plainly', async () => {
+    listPendingBookingRequests.mockResolvedValue({
+      requests: [newBooking({ visitCount: 1, lastStartTimeMs: CURRENT_MS })],
+    });
+    render(<VisitRequestsSection />);
+
+    await screen.findByText('New request');
+    expect(screen.queryByText(/1 visits/)).toBeNull();
+  });
+
+  it('approving books the whole envelope through one call', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockResolvedValue({ affectedVisits: 4, failedVisits: 0 });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3'));
+    expect(await screen.findByText(/All 4 visits are on the schedule/)).toBeInTheDocument();
+  });
+
+  it('refuses to decline without a reason, because a silent no is the same gap', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
+
+    expect(await screen.findByText(/Say why you cannot take it/)).toBeInTheDocument();
+    expect(declineBookingRequest).not.toHaveBeenCalled();
+  });
+
+  it('declining sends the reason to the household', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    declineBookingRequest.mockResolvedValue({ affectedVisits: 4, failedVisits: 0 });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    await userEvent.type(
+      screen.getByLabelText('Why you cannot take it'),
+      'Fully booked that weekend.',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Send the decline' }));
+
+    await waitFor(() =>
+      expect(declineBookingRequest).toHaveBeenCalledWith(
+        'fam-3',
+        'b3',
+        'Fully booked that weekend.',
+      ),
+    );
+    expect(await screen.findByText(/Nothing was booked/)).toBeInTheDocument();
+  });
+
+  it('a broken request queue is reported, never shown as an empty queue', async () => {
+    // An operator who believes nothing is waiting, when the read never landed,
+    // leaves a household waiting on an answer that is never coming.
+    listPendingBookingRequests.mockRejectedValue(new Error('permission-denied'));
+    render(<VisitRequestsSection />);
+
+    expect(await screen.findByText(/New booking requests: permission-denied/)).toBeInTheDocument();
+  });
+
+  it('all three queues share one list, oldest ask first', async () => {
+    listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+
+    await screen.findByText('New request');
+    const kinds = screen
+      .getAllByText(/^(New request|Cancel|Reschedule)$/)
+      .map((n) => n.textContent);
+    // newBooking asked at -5000, cancellation at -1000, reschedule at 0.
+    expect(kinds).toEqual(['New request', 'Cancel', 'Reschedule']);
+  });
+});
+
+describe('requestKey: envelope rows (#533)', () => {
+  it('keys a new request by its batch, since it has no visit id', () => {
+    expect(requestKey({ kind: 'newBooking', request: newBooking() })).toBe('newBooking/fam-3/b3');
   });
 });

@@ -182,6 +182,23 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       ],
     },
   ],
+  'kincare.request.declined': [
+    {
+      trigger:
+        'An operator turns down a booking request the household asked for, so nothing is booked (#533). ONE per request, not one per visit. Only fires when the envelope was still "requested": cancelling an already-approved series is a different event and still sends kincare.booking.cancel.',
+      source: 'src/admin/manageBookingSeries.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'serviceName',
+        'startTimeMs',
+        'startTimeMsList',
+        'visitCount',
+        'note',
+      ],
+    },
+  ],
   'kincare.cancel.declined': [
     {
       trigger:

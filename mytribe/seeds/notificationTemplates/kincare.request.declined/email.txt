@@ -1,0 +1,11 @@
+Subject: About your care request
+
+Hi {{kinfolkName}}, we couldn't take the {{serviceType}} for {{kinName}}.
+
+When you asked for: {{bookingDates}}
+
+{{note}}
+
+Nothing was booked, so nothing changes on your end. Send another request whenever you like, or message us and we'll find something that works.
+
+Tribe Tails Pet Care. Your Kin's Favorite Auntie.
