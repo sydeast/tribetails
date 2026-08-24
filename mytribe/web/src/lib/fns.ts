@@ -1,6 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
+import { reactToCallableError } from './revokedSession';
 
 /**
  * O-20: a callable that never gets a response (cold-start pathology, a
@@ -34,6 +35,13 @@ export async function call<TReq, TRes>(name: string, payload: TReq): Promise<TRe
     if (err instanceof FirebaseError && err.code === 'functions/deadline-exceeded') {
       throw new CallableTimeoutError(name);
     }
+    // #557: the backend now refuses a call made with a revoked session's ID
+    // token. This is the one place every callable passes through, so it is the
+    // one place that has to notice — otherwise the screen retries into a
+    // refusal that cannot ever succeed. Awaited so the sign-out is under way
+    // before the caller's own error handling paints anything, and it rethrows
+    // regardless: this reacts to the error, it does not consume it.
+    await reactToCallableError(err);
     throw err;
   }
 }

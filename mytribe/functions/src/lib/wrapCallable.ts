@@ -3,6 +3,7 @@ import { captureFunctionError, initSentry } from './sentry';
 import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { assertSessionNotRevoked, type RevocationCheck } from './sessionRevocation';
 import { randomUUID } from 'node:crypto';
 
 export type Handler<T, R> = (req: CallableRequest<T>) => Promise<R>;
@@ -31,7 +32,26 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
     const start = Date.now();
     const requestId = randomUUID();
     const clientErrorId = randomUUID();
+    let authCheck: RevocationCheck = { outcome: 'skipped', durationMs: 0 };
     try {
+      // #557: `onCall` verified this token's signature and expiry, not whether
+      // the session behind it was revoked. Inside the try on purpose — a
+      // refusal here should log and audit like any other `unauthenticated`,
+      // through the same path, rather than escaping the wrapper untracked.
+      // See sessionRevocation.ts for the policy and what it costs.
+      //
+      // The inner try exists only so the log line tells the truth: a refusal
+      // throws instead of returning, and without this the failure line would
+      // report `authCheck: 'skipped'` — the value that is supposed to mean
+      // "unauthenticated caller, no lookup done". That would quietly corrupt
+      // the very aggregation this telemetry was added for.
+      const checkStart = Date.now();
+      try {
+        authCheck = await assertSessionNotRevoked(req, name);
+      } catch (refusal) {
+        authCheck = { outcome: 'revoked', durationMs: Date.now() - checkStart };
+        throw refusal;
+      }
       const result = await handler(req);
       logEvent({
         severity: 'info',
@@ -40,6 +60,8 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         requestId,
         uid: req.auth?.uid,
         durationMs: Date.now() - start,
+        authCheck: authCheck.outcome,
+        authCheckMs: authCheck.durationMs,
         ...appCheckFields(req),
       });
       return result;
@@ -71,6 +93,8 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         errorCode: code,
         errorMessage: isHttpsError ? message : (err as Error).message,
         durationMs: Date.now() - start,
+        authCheck: authCheck.outcome,
+        authCheckMs: authCheck.durationMs,
         extra: { sentryId, clientErrorId },
         ...appCheckFields(req),
       });

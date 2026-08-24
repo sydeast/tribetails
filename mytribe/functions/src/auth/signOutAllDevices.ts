@@ -3,11 +3,17 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { auth } from '../lib/firestoreAdmin';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { forgetSession } from '../lib/sessionRevocation';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 export async function signOutAllDevicesHandler(req: CallableRequest<unknown>): Promise<{ ok: true }> {
   if (!req.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   await auth().revokeRefreshTokens(req.auth.uid);
+  // #557: this instance cached "not revoked" for this uid on the way in. Drop
+  // it, or the very instance that performed the revoke goes on serving its own
+  // stale answer for the rest of the TTL. Other warm instances are out of
+  // reach from here — the short TTL is what bounds them.
+  forgetSession(req.auth.uid);
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.AUTH_LOGOUT_ALL,

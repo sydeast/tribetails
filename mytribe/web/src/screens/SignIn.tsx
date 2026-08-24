@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { sendReset, signIn } from '../lib/auth';
 import { mapAuthError } from '../lib/authErrors';
+import { readAndClearSessionEndedNotice } from '../lib/revokedSession';
 
 type ResetToast =
   | { tone: 'ok'; title: string; sub: string }
@@ -21,6 +22,14 @@ export function SignIn() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetToast, setResetToast] = useState<ResetToast | null>(null);
+  /**
+   * #557: read ONCE, in the lazy initializer, and clear as we read. Landing
+   * here after an involuntary sign-out with no explanation is the failure this
+   * closes — "it logged me out and I don't know why" is the complaint. Reading
+   * in an effect instead would let the banner reappear on a remount, and
+   * reading on every render would fight the clear.
+   */
+  const [sessionEndedNotice] = useState<string | null>(readAndClearSessionEndedNotice);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,6 +97,13 @@ export function SignIn() {
             Welcome back to <span>Tribe!</span>
           </h2>
           <p className="subline">Jump back in!</p>
+
+          {sessionEndedNotice && (
+            <div className="validate" role="status" data-testid="session-ended-notice">
+              <span className="x">{'⚠'}</span>
+              <span>{sessionEndedNotice}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit}>
             <div className="field">
