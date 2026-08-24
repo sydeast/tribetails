@@ -375,8 +375,38 @@ function findDirectDeclaration(
           );
         }
       } else {
-        // scheduleOptsHandler: (schedule, handler) or (schedule, opts, handler)
-        optionsArg = init.arguments.length >= 3 ? init.arguments[1] : undefined;
+        // scheduleOptsHandler covers three real onSchedule call shapes:
+        //   (schedule: string, handler)                — no options object
+        //   (schedule: string, opts, handler)           — opts is the 2nd arg
+        //   (optsWithScheduleKey, handler)               — opts is the 1st arg;
+        //     this is the shape every real onSchedule call site in this
+        //     repo actually uses (schedule folded into the options object).
+        // Anything else is a shape this tool hasn't been taught — fail
+        // loudly rather than silently returning zero fragments (see file
+        // header): a launder here blinds the tool to all six runtime
+        // fields for that function.
+        const first = init.arguments[0];
+        if (init.arguments.length === 3) {
+          optionsArg = init.arguments[1];
+        } else if (
+          init.arguments.length === 2 &&
+          first &&
+          (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))
+        ) {
+          optionsArg = undefined;
+        } else if (
+          init.arguments.length === 2 &&
+          first &&
+          (ts.isObjectLiteralExpression(first) || ts.isIdentifier(first))
+        ) {
+          optionsArg = first;
+        } else {
+          throw new ExtractionError(
+            `onSchedule called with an unrecognized argument shape (${init.arguments.length} args` +
+              `${first ? `, first: ${first.getText().slice(0, 60)}` : ''})`,
+            context,
+          );
+        }
       }
 
       const fragments = optionsExpressionToFragments(optionsArg, sourceFile, context);
