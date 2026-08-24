@@ -376,6 +376,8 @@ export interface RescheduleBookingArgs {
   sessionId: string;
   startTime: string;
   endTime: string;
+  overrideBusyConflict?: boolean;
+  overrideVisitConflict?: boolean;
 }
 
 /**

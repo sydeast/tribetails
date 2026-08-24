@@ -7,6 +7,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -17,11 +18,42 @@ export const BlockTimeArgs = z
     startTime: z.string().regex(TIME_RE, 'startTime must be HH:mm'),
     endTime: z.string().regex(TIME_RE, 'endTime must be HH:mm'),
     notes: z.string().max(500).default(''),
+    /**
+     * The same window as `date`+`startTime`/`endTime`, as REAL INSTANTS, so the
+     * server can check it against the visits already on the books (#397 M11).
+     *
+     * WHY IT EXISTS AND WHY IT IS OPTIONAL. The three fields above are plain
+     * wall clock with no zone anywhere on this document — that is the stored
+     * shape, shared with the Google importer, and this task does not get to
+     * change it (`lib/scheduleFormat.ts` and `lib/bookingBusyConflict.ts` both
+     * carry the full write-up of that asymmetry). But `kin_care_sessions` holds
+     * real instants, so comparing a zoneless wall clock against them on the
+     * SERVER would misread the block by whatever the operator's UTC offset
+     * happens to be — precisely the mistake `bookingBusyConflict.ts`
+     * deliberately refused to make when it scoped INTERNAL_MANUAL rows out of
+     * its own check.
+     *
+     * The client is the one place that knows the operator's zone, so it sends
+     * the same window a second time as epoch ms and the server guards on THAT.
+     * Additive and optional because it has to be: the desktop admin's
+     * `BlockTimeDialog.kt` already calls this callable with the wall-clock
+     * fields alone and keeps working unchanged. A caller that omits these is
+     * simply not overlap-checked, which is exactly its behaviour today — never
+     * a silent downgrade for a caller that does send them.
+     */
+    startTimeMs: z.number().int().finite().optional(),
+    endTimeMs: z.number().int().finite().optional(),
+    /** Admin-only escape hatch: block the window even though a visit already occupies it. See `lib/visitOverlapConflict.ts` for why this guard has an override. */
+    overrideVisitConflict: z.boolean().optional(),
   })
   .refine((a) => a.startTime < a.endTime, {
     message: 'startTime must be before endTime',
     path: ['endTime'],
-  });
+  })
+  .refine(
+    (a) => a.startTimeMs === undefined || a.endTimeMs === undefined || a.startTimeMs < a.endTimeMs,
+    { message: 'startTimeMs must be before endTimeMs', path: ['endTimeMs'] },
+  );
 
 export interface CreateBlockedTimeSlotResult {
   ok: true;
@@ -99,6 +131,24 @@ export async function createBlockedTimeSlotHandler(
       });
     }
     throw err;
+  }
+
+  // #397 M11: blocking out a window that already has a promised visit in it is
+  // the operator saying two contradictory things at once, and until now nothing
+  // said so — the slot was written and the visit stayed on the calendar
+  // underneath it. Runs ONLY when the caller sent the epoch-ms twin of its wall
+  // clock (see `BlockTimeArgs.startTimeMs`): without a zone there is no honest
+  // comparison to make, so a caller that omits it is left exactly where it was.
+  if (args.startTimeMs !== undefined && args.endTimeMs !== undefined) {
+    await guardVisitOverlapConflict({
+      firestore: db(),
+      visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
+      actorUid: uid,
+      actorRole: 'AUNTIE',
+      override: args.overrideVisitConflict,
+      attempt: 'block_time',
+      auditContext: { date: args.date, startTime: args.startTime, endTime: args.endTime },
+    });
   }
 
   const ref = db().collection('booking_time_slots').doc();

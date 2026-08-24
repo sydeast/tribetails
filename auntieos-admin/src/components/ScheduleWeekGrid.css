@@ -1,0 +1,195 @@
+/**
+ * ScheduleWeekGrid styling. Scoped to this component and imported directly, the
+ * per-component convention every other dialog and panel here follows. Colours,
+ * radii and durations come from styles/tokens.css; the one literal is the
+ * drag lift's shadow, which has no token and follows the same neutral-alpha
+ * form Dialog.css and Toast.css already use for theirs.
+ *
+ * The two column templates below are the same track list on purpose — the head
+ * and the body have to line up to the pixel or the 9am label sits beside the
+ * 10am row. `56px` is the gutter width the mock and the desktop grid both use;
+ * it is a layout dimension, not a colour, so it is stated here rather than
+ * invented as a token nothing else would use.
+ */
+
+.schedule-grid {
+  margin: var(--space-4) 0;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.schedule-grid__head,
+.schedule-grid__body {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+}
+
+.schedule-grid__head {
+  border-bottom: var(--border-hairline) solid var(--color-border);
+}
+
+.schedule-grid__gutter-head {
+  border-right: var(--border-hairline) solid var(--color-border);
+}
+
+.schedule-grid__day-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
+  border: none;
+  border-right: var(--border-hairline) solid var(--color-border);
+  background: none;
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.schedule-grid__day-head:last-child {
+  border-right: none;
+}
+.schedule-grid__day-head--selected {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+.schedule-grid__day-head--today .schedule-grid__dnum {
+  background: var(--color-primary);
+  color: var(--color-background);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+}
+
+.schedule-grid__dow {
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.schedule-grid__dnum {
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+}
+
+.schedule-grid__body {
+  position: relative;
+}
+
+.schedule-grid__times {
+  display: flex;
+  flex-direction: column;
+  border-right: var(--border-hairline) solid var(--color-border);
+}
+.schedule-grid__time {
+  display: block;
+  text-align: right;
+  padding: 0 var(--space-2) 0 0;
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+
+.schedule-grid__day {
+  position: relative;
+  border-right: var(--border-hairline) solid var(--color-border);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 53px,
+    var(--color-border) 53px,
+    var(--color-border) 54px
+  );
+}
+.schedule-grid__day:last-child {
+  border-right: none;
+}
+.schedule-grid__day--today {
+  background-color: var(--color-surface-2);
+}
+
+/* Read-only overlay: `booking_time_slots` denies every client write, so this
+   is deliberately not interactive. See the component doc. */
+.schedule-grid__busy {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: var(--radius-card);
+  border: var(--border-hairline) dashed var(--color-border-soft);
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+  overflow: hidden;
+  padding: var(--space-1);
+}
+.schedule-grid__busy-label {
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.schedule-grid__block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  overflow: hidden;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-hairline) solid var(--color-primary);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  /* The gesture owns vertical panning inside a block; without this a touch drag
+     scrolls the page instead of moving the visit. */
+  touch-action: none;
+  transition: box-shadow var(--dur-base) var(--ease-standard);
+}
+.schedule-grid__block:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 1px;
+}
+.schedule-grid__block--dragging {
+  cursor: grabbing;
+  z-index: 2;
+  box-shadow: 0 12px 26px -12px rgb(0 0 0 / 45%);
+}
+.schedule-grid__block--pending {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.schedule-grid__block-time {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+.schedule-grid__block-name {
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.schedule-grid__note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--border-hairline) solid var(--color-border);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+@media (max-width: 900px) {
+  .schedule-grid {
+    overflow-x: auto;
+  }
+  .schedule-grid__head,
+  .schedule-grid__body {
+    grid-template-columns: 44px repeat(7, minmax(84px, 1fr));
+    min-width: 640px;
+  }
+}

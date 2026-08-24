@@ -140,14 +140,22 @@
   margin: 0 0 var(--space-3);
 }
 
-/* ── week strip / month grid (shared day-cell look) ─────────────────────── */
+/* ── header actions ───────────────────────────────────────────────────────
+   "New visit" and "Block time" (#397 M11/M12). Above the stat cards and outside
+   the AsyncRegion, because an operator must be able to add a visit on a day the
+   schedule is still loading, or has nothing on it yet. */
 
-.schedule__week {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: var(--space-2);
-  margin-bottom: var(--space-5);
+.schedule__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
+
+/* ── month grid (day-cell look) ───────────────────────────────────────────
+   The week STRIP that shared these rules is gone: #397 M13 replaced it with a
+   real time grid (`components/ScheduleWeekGrid.css`), which a drag can actually
+   be a drag on. The month grid keeps the day-cell look it always had. */
 
 .schedule__month {
   display: grid;
@@ -191,13 +199,6 @@
   opacity: 0.45;
 }
 
-.schedule__day-weekday {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  color: var(--color-text-faint);
-  text-transform: uppercase;
-}
 
 .schedule__day-number {
   font-family: var(--font-hanken);
@@ -214,15 +215,6 @@
   padding: 0.05rem 0.45rem;
 }
 
-.schedule__day-busy-dot {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-text-faint);
-}
 
 /* ── day agenda ──────────────────────────────────────────────────────────── */
 
@@ -364,12 +356,13 @@
    else. The time leads on desktop; below the breakpoint the household leads
    and the time sits under it, because a list of visits for ONE day is read by
    who, not by when.
-   Not touched here, and reported rather than fixed: the seven-day week strip
-   above (`.schedule__week`, `repeat(7, minmax(0, 1fr))`) is about 40px per day
-   at 390px. It fits and it does not overflow, but a cell that narrow can only
-   ever show a count. Making a phone default to the Day or Month view is a
-   change to what the screen IS, not to how it wraps, and belongs to whoever
-   owns the design rather than to a responsive repair. */
+   The seven-day WEEK view is no longer a strip of count badges: #397 M13 made
+   it a real time grid, which carries its own phone rule
+   (`ScheduleWeekGrid.css` scrolls it sideways below 900px rather than crushing
+   seven columns into 390px). The month grid below still shows a count per cell
+   at about 40px a day; it fits and does not overflow, and defaulting a phone to
+   the Day view would be a change to what the screen IS, which belongs to
+   whoever owns the design rather than to a responsive repair. */
 @media (max-width: 720px) {
   .schedule__row-main {
     grid-template-columns: minmax(0, 1fr) auto;
