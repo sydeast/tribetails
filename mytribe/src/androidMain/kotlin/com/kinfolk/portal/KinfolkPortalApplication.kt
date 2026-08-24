@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.kinfolk.portal.attestation.activateAppCheck
+import com.kinfolk.portal.config.MapboxPortalConfig
 import io.sentry.android.core.SentryAndroid
 
 class KinfolkPortalApplication : Application() {
@@ -22,6 +23,25 @@ class KinfolkPortalApplication : Application() {
         // crash inside Sentry.init() leaves a stacktrace on disk for the next
         // launch to recover.
         installDefensiveCrashHandler(applicationContext)
+
+        // The Maps SDK's access token, set here and nowhere else, because
+        // Application.onCreate is the only place that runs before every Activity
+        // and Composable - including RouteMap, the one screen element that
+        // builds a MapView. Issue #520: a kinfolk watching a KinCare visit has
+        // to see actual streets, and Maps SDK v11 cannot load a style without a
+        // credential.
+        //
+        // Deliberately NOT inside the isRobolectric guard below. Sentry is
+        // skipped under test because it leaks events into the production
+        // project; this leaks nothing, and it is the thing the test observes.
+        // applyAccessToken swallows the UnsatisfiedLinkError the native SDK
+        // raises under Robolectric and records that startup did its part.
+        val mapboxToken = MapboxPortalConfig.applyAccessToken(BuildConfig.MAPBOX_PUBLIC_TOKEN)
+        if (mapboxToken is MapboxPortalConfig.TokenApplication.NoTokenConfigured) {
+            // Not a crash and not a user-facing error: RouteMap draws the Canvas
+            // polyline instead, which is what shipped before #520.
+            Log.w(TAG, "No MAPBOX_PUBLIC_TOKEN in this build: routes draw without a basemap")
+        }
 
         // Skip Sentry under Robolectric so unit-test runs don't pollute the
         // production project (see AUNTIEOS-ADMIN-4 retrofit-404 incident:
