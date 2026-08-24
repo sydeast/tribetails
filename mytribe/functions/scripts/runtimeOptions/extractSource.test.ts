@@ -153,6 +153,38 @@ describe('extractFunctionDeclaration', () => {
     expect(decl.fragments).toEqual([]);
   });
 
+  it('resolves onSchedule with the options object as the first argument (schedule folded in) — the real shape every onSchedule call site in this repo uses', () => {
+    // The exact shape of src/scheduled/kincareReminderCron.ts:99 and every
+    // other scheduled function: `schedule` lives inside the options object
+    // itself, so the call is 2-arg (opts, handler), not 3-arg
+    // (schedule, opts, handler).
+    const src = sourceFile(`
+      export const kincareReminderCron = onSchedule(
+        { schedule: 'every 60 minutes', region: 'us-central1', ...FULL_CPU_SERIAL },
+        handler,
+      );
+    `);
+    const decl = extractFunctionDeclaration(src, 'kincareReminderCron', 'x.ts');
+    expect(decl.trigger).toBe('onSchedule');
+    expect(decl.fragments).toEqual([
+      { kind: 'prop', key: 'region', value: 'us-central1' },
+      { kind: 'spread', constant: 'FULL_CPU_SERIAL' },
+    ]);
+  });
+
+  it('throws (fails loudly) on an onSchedule call with an unrecognized argument shape', () => {
+    // Neither a string-first (schedule, handler) call nor an object/const
+    // first argument — e.g. a computed expression as the sole options
+    // source. This must never resolve to zero fragments silently.
+    const src = sourceFile(`
+      export const mystery = onSchedule(computeSchedule(), handler);
+    `);
+    expect(() => extractFunctionDeclaration(src, 'mystery', 'x.ts')).toThrow(ExtractionError);
+    expect(() => extractFunctionDeclaration(src, 'mystery', 'x.ts')).toThrow(
+      /unrecognized argument shape/,
+    );
+  });
+
   it('resolves the one v1 auth.user().onCreate trigger as gen1 with zero fragments', () => {
     const src = sourceFile(`
       export const onAuthUserCreate = auth.user().onCreate(

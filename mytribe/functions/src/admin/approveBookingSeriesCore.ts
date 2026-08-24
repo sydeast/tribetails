@@ -6,6 +6,15 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+import { enqueueNotification } from '../notifications/dispatcher';
+import {
+  buildVisitDateData,
+  formatBookingDate,
+  formatBookingTime,
+  loadBusinessTimeZone,
+  loadEnvelopeVisits,
+} from '../notifications/visitDates';
 
 /**
  * Shared APPROVE core for a booking series (parent envelope
@@ -28,6 +37,24 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
  * a closure AFTER a request was submitted but BEFORE it is approved, and this
  * is the moment a real `kin_care_sessions` doc -- the thing Auntie Time and
  * billing actually read -- gets created.
+ *
+ * #536: IT ALSO SENDS THE ANSWER, once for the whole request.
+ *
+ * `kincare.booking.confirm` used to come from `onBookingsWrite`, which is
+ * registered one level down on `.../kinCares/{visitId}`. A household asking for
+ * a long weekend writes four visits, so approving it sent four "your visit is
+ * confirmed" messages per channel -- and four more to every business admin, via
+ * the key's `secondaryResolver` -- for what the household experiences as one
+ * answer to one question. That is #532's defect on the approve side, and it
+ * predates the admin queue: `requestBooking`'s `maybeAutoConfirm` has always
+ * taken this path, so an auto-confirmed multi-visit request sent N copies too.
+ *
+ * The dispatch lives HERE rather than on a trigger over the envelope's
+ * `envelopeStatus`, for the reason `manageBookingSeries` records for the decline
+ * dispatch: envelope-status writes come from this function AND from
+ * `onKinCareRollup`, so a trigger would either double-fire or need a flag to
+ * tell them apart. Both admin clients and the portal's auto-confirm reach this
+ * one function, so all three surfaces are fixed by the one line.
  */
 
 /** kinCares stores start/end as Firestore Timestamps; kin_care_sessions stores
@@ -56,6 +83,26 @@ export interface ApproveBookingSeriesResult {
   envelopeStatus: 'confirmed' | 'requested';
   /** false when the parent envelope does not exist (nothing approved). */
   found: boolean;
+  /**
+   * Visits that were NOT already confirmed when this ran (#536).
+   *
+   * Zero means the operator approved something that was already booked, which is
+   * a real thing to do -- a stale queue row, a second click -- and the admin
+   * surfaces must not report it as "booked, and the household has been told".
+   * Nothing changed and nobody was told.
+   */
+  newlyConfirmed: number;
+  /**
+   * Whether the household's ONE confirmation actually went out (#536).
+   *
+   * The admin toast used to assert this rather than read it, and there are three
+   * ways it is false: a partial failure (deliberately silent, so the retry is not
+   * a second message), an approval whose confirmation another caller had already
+   * claimed, and a dispatch that threw. A request that is on the schedule while
+   * the household does not know about it is precisely the state an operator has
+   * to be told about, because the fix is to phone them.
+   */
+  householdNotified: boolean;
 }
 
 export async function approveBookingSeriesCore(opts: {
@@ -68,11 +115,33 @@ export async function approveBookingSeriesCore(opts: {
   const parentRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
   const parentSnap = await parentRef.get();
   if (!parentSnap.exists) {
-    return { affectedVisits: 0, sessionsCreated: 0, failedVisits: 0, envelopeStatus: 'requested', found: false };
+    return {
+      affectedVisits: 0,
+      sessionsCreated: 0,
+      failedVisits: 0,
+      envelopeStatus: 'requested',
+      found: false,
+      newlyConfirmed: 0,
+      householdNotified: false,
+    };
   }
+
+  const envelope = parentSnap.data() as Record<string, unknown> | undefined;
+  // Read BEFORE the loop flips anything: afterwards a re-approve of an already
+  // confirmed envelope is indistinguishable from a first approval. An envelope
+  // that was ALREADY confirmed is not a new answer to anybody, so it owes no
+  // notification even though re-running the core is otherwise harmless (the
+  // deterministic `vis_{visitId}` session id makes the writes idempotent).
+  const wasAlreadyConfirmed = envelope?.['envelopeStatus'] === 'confirmed';
 
   const childSnap = await parentRef.collection('kinCares').get();
   const childIds = childSnap.docs.map((d) => d.id);
+  // Counted from the PRE-FLIP snapshot, for the same reason `wasAlreadyConfirmed`
+  // is read before the loop: afterwards every child says `confirmed` and the
+  // question "did this approval change anything" can no longer be answered.
+  const newlyConfirmed = childSnap.docs.filter(
+    (d) => (d.data() as Record<string, unknown>)['status'] !== 'confirmed',
+  ).length;
 
   // Household display name for the created sessions (read once; sessions render it
   // on Auntie Time / Home). Best-effort: fall back to the id if absent.
@@ -171,7 +240,21 @@ export async function approveBookingSeriesCore(opts: {
         sessionsCreated += 1;
       }
       await childRef.set(
-        { status: 'confirmed', sessionId: sessionRef.id, sourceBookingId: id, updatedAt: FieldValue.serverTimestamp() },
+        {
+          status: 'confirmed',
+          sessionId: sessionRef.id,
+          sourceBookingId: id,
+          updatedAt: FieldValue.serverTimestamp(),
+          // #536: mark WHY this visit became confirmed, so `onBookingsWrite` can
+          // tell a series approval -- which is answered once, below -- from any
+          // other write that confirms a single visit. `batchUpdateBookings` and
+          // the Android write-back both flip `requested -> confirmed` on their
+          // own and still owe the household their per-visit message, so the test
+          // over there has to be this stamp and NOT the bare status transition.
+          // Same trap #533 found on the decline side, where `requested ->
+          // cancelled` had two opposite meanings.
+          seriesApprovedAt: FieldValue.serverTimestamp(),
+        },
         { merge: true },
       );
     } catch (err) {
@@ -221,5 +304,122 @@ export async function approveBookingSeriesCore(opts: {
     extra: { batchId, affectedVisits: succeeded, failedVisits, sessionsCreated, actorRole },
   });
 
-  return { affectedVisits: succeeded, sessionsCreated, failedVisits, envelopeStatus, found: true };
+  const householdNotified =
+    failedVisits === 0 && !wasAlreadyConfirmed
+      ? await dispatchSeriesConfirmation({ kinfolkId, batchId, parentRef, envelope, actorUid })
+      : false;
+
+  return {
+    affectedVisits: succeeded,
+    sessionsCreated,
+    failedVisits,
+    envelopeStatus,
+    found: true,
+    newlyConfirmed,
+    householdNotified,
+  };
+}
+
+/**
+ * The household's ONE answer to their request (#536), plus the office's copy via
+ * the key's `businessAdmins` secondary resolver.
+ *
+ * IDEMPOTENCY. `confirmNotifiedAtMs` is CLAIMED in a transaction on the envelope
+ * before anything is enqueued, and the claim is what decides who sends. Firestore
+ * serialises transactions on a document, so two concurrent approvals of the same
+ * batch -- a double-clicked button, a retried callable, an operator on web while
+ * another is on Android -- contend on that one write and exactly one of them
+ * wins. The loser sends nothing. A `wasAlreadyConfirmed` envelope never gets
+ * this far, which covers envelopes confirmed before this shipped and therefore
+ * carrying no claim field at all.
+ *
+ * A PARTIAL FAILURE SENDS NOTHING, deliberately, and the caller enforces that
+ * before calling. The envelope is left `requested` so the operator can retry,
+ * and the retry would otherwise be a second "your visits are confirmed" for the
+ * same request -- #532's defect one step later. It also stops us telling a
+ * household their request is booked while some of it is still sitting in the
+ * queue: the decision has not been fully carried out yet. Same reasoning
+ * `manageBookingSeries` records for the decline dispatch.
+ *
+ * A FAILED NOTIFICATION NEVER ROLLS BACK THE APPROVAL. The visits are booked and
+ * audited by the time this runs. It is not silent either: the failure is logged
+ * at `warn` with the key, because a household left unanswered is the defect this
+ * whole path exists to fix.
+ */
+async function dispatchSeriesConfirmation(args: {
+  kinfolkId: string;
+  batchId: string;
+  parentRef: FirebaseFirestore.DocumentReference;
+  envelope: Record<string, unknown> | undefined;
+  actorUid: string;
+}): Promise<boolean> {
+  const { kinfolkId, batchId, parentRef, envelope, actorUid } = args;
+  try {
+    const claimed = await db().runTransaction(async (tx) => {
+      const snap = await tx.get(parentRef);
+      const already = (snap.data() as Record<string, unknown> | undefined)?.['confirmNotifiedAtMs'];
+      if (typeof already === 'number') return false;
+      tx.set(parentRef, { confirmNotifiedAtMs: Date.now() }, { merge: true });
+      return true;
+    });
+    if (!claimed) {
+      logEvent({
+        severity: 'info',
+        function: 'approveBookingSeriesCore',
+        event: 'bookingSeries.confirm.alreadyNotified',
+        uid: actorUid,
+        extra: { kinfolkId, batchId },
+      });
+      return false;
+    }
+
+    // Read the live child set rather than reusing the pre-flip snapshot: the
+    // message names the days, and a visit cancelled between the request and the
+    // approval must not appear in it. See notifications/visitDates.ts.
+    const visits = await loadEnvelopeVisits(kinfolkId, batchId);
+    const tz = await loadBusinessTimeZone();
+    const dateData = buildVisitDateData(visits, tz);
+    const firstMs = visits[0]?.startTimeMs ?? null;
+    const recipientUid = await resolveKinfolkUid(kinfolkId);
+
+    await enqueueNotification({
+      key: 'kincare.booking.confirm',
+      recipientUid: recipientUid ?? '',
+      data: {
+        kinfolkId,
+        batchId,
+        // `bookingId` is the ENVELOPE here, not a visit: this message is about
+        // the whole request, the same grain `kincare.requested` moved to in #532.
+        bookingId: batchId,
+        serviceName: envelope?.['serviceName'] ?? null,
+        startTimeMs: firstMs,
+        ...dateData,
+        // Template back-compat, and the one reason these two are still sent.
+        // The seeds no longer reference them, but the Firestore documents in
+        // production do until the operator re-imports `kincare.booking.confirm`
+        // with it named in `overwriteIds`. Emitter-supplied values always win in
+        // `enrichTemplateData`, so the old template keeps naming the first day
+        // instead of rendering blanks in the gap between deploy and re-import.
+        bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
+        bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
+      },
+      targetType: 'booking',
+      targetId: batchId,
+    });
+    return true;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'approveBookingSeriesCore',
+      event: 'notification.dispatch.failed',
+      uid: actorUid,
+      extra: {
+        kinfolkId,
+        batchId,
+        key: 'kincare.booking.confirm',
+        err: (err as Error)?.message,
+      },
+    });
+    return false;
+  }
 }

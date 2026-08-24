@@ -1611,6 +1611,22 @@ All of these fail SILENTLY. No error, just wrong or empty results.
 **A query returns nothing, with no error.** Almost always the section above.
 Check the field type first.
 
+**Kinfolk are told "This app couldn't verify itself with our servers".** That is
+App Check refusing a request, and it has a switch that needs no deploy. In the
+Firestore console, set `business_settings/security.appCheckMode` to `log`. Every
+running instance picks it up within 60 seconds and stops refusing anything;
+`log` still records what it would have refused, so the incident stays
+measurable. The three values are `off`, `log` and `enforce`, and a missing or
+malformed field reads as `log`.
+
+Which callables the switch governs is a code list, `APP_CHECK_COHORT` in
+`mytribe/functions/src/lib/appCheckPolicy.ts`. Everything outside it is
+untouched in every mode. To read the traffic before flipping anything, filter
+Logs Explorer on `jsonPayload.appCheck`: `valid` is a verified token, `invalid`
+is a token that failed verification, `absent` is no token at all, and a
+`jsonPayload.event` ending in `appCheck.wouldReject` is what `enforce` would
+have turned away.
+
 **A callable works locally and 500s in production.** The secret is set but not
 DECLARED in that function's `secrets: [...]`. See above.
 

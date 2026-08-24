@@ -57,6 +57,13 @@ fun KinfolkProfileScreen(
     onOpenReport: (sessionId: String) -> Unit = {},
     /** B1: (kinfolkId, kinfolkName) -> the members and invites screen. */
     onNavigateToMembers: (String, String) -> Unit = { _, _ -> },
+    /**
+     * #552: the mock's hero primary, "New KinTale". Takes the household id and
+     * opens the visit picker scoped to it; the picker hands off to the composer.
+     * The profile cannot open the composer directly, because the composer is keyed
+     * by a VISIT and the profile knows only the household.
+     */
+    onNewKinTale: (kinfolkId: String) -> Unit = {},
 ) {
     val state by viewModel.profileState.collectAsState()
     // #14: portal invite state + Toast feedback on each outcome.
@@ -126,6 +133,13 @@ fun KinfolkProfileScreen(
                     item { ContactOverrideBanner(override, kinfolk.preferredContactMethod) }
                 }
                 item { QuickContactBar(kinfolk) }
+                // #552: the mock puts "New KinTale" in the hero as the PRIMARY,
+                // alongside Call and Text. It sits below the contact row here
+                // rather than inside it: the three contact actions are equal
+                // icon-and-label tiles and this one is not equal to them, so
+                // squeezing a fourth tile in would flatten exactly the emphasis
+                // the mock is asking for on a phone-width hero.
+                item { NewKinTaleAction(onClick = { onNewKinTale(kinfolk.id) }) }
                 item { ContactInfoCard(kinfolk, state.householdVet) }
                 if (hasDynamicFieldValues(state.kinfolkSchemas, kinfolk.formValues)) {
                     item { AdditionalInfoCard(state.kinfolkSchemas, kinfolk.formValues) }
@@ -498,6 +512,44 @@ private fun QuickContactBar(kinfolk: Kinfolk) {
                 }
             }
         )
+    }
+}
+
+/**
+ * #552: the hero's primary action. Filled rather than tinted, because the mock
+ * marks it `class="act primary"` while Call and Text are plain `act` tiles, and
+ * that difference is the point: writing the household their KinTale is the thing
+ * this screen is FOR, and the three contact actions are how you reach them about
+ * it.
+ */
+@Composable
+private fun NewKinTaleAction(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(AuntieTheme.colors.kinfolkOrange)
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Lucide.FileText,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = AuntieTheme.colors.background,
+            )
+            Text(
+                "New KinTale",
+                style = AuntieTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = AuntieTheme.colors.background,
+            )
+        }
     }
 }
 

@@ -8,7 +8,7 @@ import {
   redirect,
   useNavigate,
 } from '@tanstack/react-router';
-import { waitForAuthReady, useSignOut } from './lib/auth';
+import { getAuthState, subscribeAuthState, waitForAuthReady, useSignOut } from './lib/auth';
 import { clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 // O-26: every screen below is code-split via lazyRouteComponent (each
 // resolves to its own chunk at build time) instead of a static import here —
@@ -358,6 +358,43 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 export const router = createRouter({ routeTree });
+
+/**
+ * #539: make the route guards react to the session ending, instead of waiting
+ * to be asked.
+ *
+ * Every `beforeLoad` above is an authorization check, and until now all of them
+ * ran only when somebody navigated. A session that ended WITHOUT a navigation
+ * therefore reached no guard at all: the authenticated screen already on
+ * display simply stayed on display, and sign-out relied on a full page reload
+ * to sweep it away — a reload that is the last line of a function with network
+ * calls above it (see lib/auth.ts). Until it arrived, or if it never did, the
+ * previous kinfolk's household was still on screen and still one back button
+ * away. That is #539.
+ *
+ * `invalidate()` marks every committed match stale and re-runs it, guards
+ * included. For a signed-out session that means `requireSignedIn` throws its
+ * redirect, and TanStack commits redirects with `replace: true` — so the
+ * authenticated URL is not merely left behind, it is overwritten in the history
+ * entry it occupied, leaving nothing to come forward to either.
+ *
+ * The popstate path itself was already sound and is deliberately untouched:
+ * TanStack re-runs `beforeLoad` on every history entry it re-enters, which
+ * signOutSession.test.tsx measures rather than assumes. This closes the case
+ * that had no navigation in it.
+ *
+ * Only on the transition INTO signedOut. Invalidating on sign-in would re-run
+ * every guard underneath a screen the sign-in flow is already navigating away
+ * from, and the boot transition (loading -> signedIn) would pay for a second
+ * pass over guards that have not finished their first.
+ */
+let lastAuthStatus = getAuthState().status;
+subscribeAuthState(() => {
+  const status = getAuthState().status;
+  if (status === lastAuthStatus) return;
+  lastAuthStatus = status;
+  if (status === 'signedOut') void router.invalidate();
+});
 
 declare module '@tanstack/react-router' {
   interface Register {

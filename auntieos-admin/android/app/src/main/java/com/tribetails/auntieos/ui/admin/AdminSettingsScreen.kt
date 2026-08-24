@@ -1759,11 +1759,28 @@ private fun BookingBehaviorPanel(
                 description = "Visits align to quarter-hour slots when dragged on the schedule.",
                 leadingIcon = Lucide.CalendarClock,
                 iconTone = AuntieStatusTone.Orange,
-                showDivider = false,
+                showDivider = true,
                 trailing = {
                     AuntieToggle(
                         checked = settings.snapRescheduleTo15Min,
                         onCheckedChange = { next -> onSettingsChange(settings.copy(snapRescheduleTo15Min = next)) },
+                    )
+                },
+            )
+            // #517: parity with web. Writes enableConflictDetection, the field
+            // EnhancedSchedulingViewModel already gates its availability check on
+            // and that guardBookingBusyConflict now reads server-side before every
+            // booking write. Defaults ON, so the switch starts where the model does.
+            AuntieSettingRow(
+                title = "Block bookings during busy events",
+                description = "Refuse a new visit that lands on a busy block imported from Google Calendar.",
+                leadingIcon = Lucide.CalendarClock,
+                iconTone = AuntieStatusTone.Orange,
+                showDivider = false,
+                trailing = {
+                    AuntieToggle(
+                        checked = settings.enableConflictDetection,
+                        onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
                     )
                 },
             )

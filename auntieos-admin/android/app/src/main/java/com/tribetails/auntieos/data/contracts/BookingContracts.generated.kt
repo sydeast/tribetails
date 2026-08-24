@@ -529,6 +529,8 @@ data class ManageBookingSeriesResult(
     val affectedVisits: Long,
     val sessionsCreated: Long,
     val failedVisits: Long,
+    val householdNotified: Boolean,
+    val newlyConfirmed: Long,
 )
 
 /**
@@ -544,6 +546,8 @@ internal fun decodeManageBookingSeriesResult(raw: Map<String, Any?>?): ManageBoo
         affectedVisits = (raw?.get("affectedVisits") as? Number)?.toLong() ?: 0L,
         sessionsCreated = (raw?.get("sessionsCreated") as? Number)?.toLong() ?: 0L,
         failedVisits = (raw?.get("failedVisits") as? Number)?.toLong() ?: 0L,
+        householdNotified = raw?.get("householdNotified") as? Boolean ?: false,
+        newlyConfirmed = (raw?.get("newlyConfirmed") as? Number)?.toLong() ?: 0L,
     )
 
 // ---------- requestBooking ----------

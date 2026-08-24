@@ -78,6 +78,51 @@ class SettingsViewModelTest {
         )
     }
 
+    /**
+     * #517: the three Booking behavior toggles are the write `BookingBehaviorPanel`
+     * makes on every flip -- `vm.saveSettings(s.copy(field = next))` -- and each
+     * one has to arrive at the data source on its own, carrying the other two
+     * unchanged. Until this issue two of them were also drawn a second time as
+     * permanently disabled placeholder rows, and the third existed only as one.
+     */
+    @Test
+    fun `each booking-behavior toggle reaches the data source on its own`() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = buildViewModel(ds)
+        val loaded = BusinessSettings(_id = "business_settings", businessName = "TribeTails")
+        ds.emitBusinessSettings(FirestoreResult.Data(loaded))
+
+        vm.saveSettings(loaded.copy(autoConfirmRepeatKinfolk = true))
+        assertEquals(true, ds.lastSavedBusinessSettings?.autoConfirmRepeatKinfolk)
+        assertEquals(false, ds.lastSavedBusinessSettings?.snapRescheduleTo15Min)
+
+        vm.saveSettings(loaded.copy(snapRescheduleTo15Min = true))
+        assertEquals(true, ds.lastSavedBusinessSettings?.snapRescheduleTo15Min)
+
+        // The busy-block gate defaults ON, so OFF is the value that has to survive
+        // the trip: an off-switch that decoded back to `true` would leave the
+        // server refusing bookings the operator meant to allow.
+        vm.saveSettings(loaded.copy(enableConflictDetection = false))
+        assertEquals(
+            false,
+            ds.lastSavedBusinessSettings?.enableConflictDetection,
+            "enableConflictDetection must reach the data source as false, not as its default",
+        )
+        assertEquals("TribeTails", ds.lastSavedBusinessSettings?.businessName)
+    }
+
+    /** A doc that never mentioned the field reads back with the gate armed. */
+    @Test
+    fun `the busy-block gate defaults on`() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = buildViewModel(ds)
+        ds.emitBusinessSettings(FirestoreResult.Data(BusinessSettings(_id = "business_settings")))
+
+        val state = vm.uiState.value.settingsResult
+        assertIs<FirestoreResult.Data<BusinessSettings>>(state)
+        assertTrue(state.value.enableConflictDetection, "absent means on, never an open gate")
+    }
+
     @Test
     fun `save settings sets saveError when data source fails`() = runTest {
         val ds = FakeAuntieDataSource(saveShouldFail = true, saveFailMessage = "Write denied")

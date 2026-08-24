@@ -174,8 +174,12 @@ import kotlinx.coroutines.launch
  *    override can never turn it off in prod (ALWAYS_ON, see App.kt).
  *  - Integration "status" pills reflect STATIC config in source, not a live health
  *    check, so they are labelled accordingly (no fake "Connected" glow).
- *  - The Google Calendar sync is server-backed (syncGoogleCalendarBusyEvents); the
- *    extra scheduling toggles below it have no backend yet and stay read-only.
+ *  - The Google Calendar sync is server-backed (syncGoogleCalendarBusyEvents), and
+ *    so is every scheduling toggle beside it. #517 retired the read-only
+ *    placeholder rows that used to sit under it claiming otherwise: three of the
+ *    four already had backing, and the fourth
+ *    (enableConflictDetection / "Block bookings during busy events") now gates
+ *    guardBookingBusyConflict on the server. Booking behavior owns all three.
  *  - Save buttons disable until the business_settings doc has loaded.
  */
 @Composable
@@ -2575,151 +2579,13 @@ internal const val CALENDAR_SYNC_SA_EMAIL =
 internal fun calendarSyncIdDirty(loaded: BusinessSettings?, edited: String): Boolean =
     edited.trim() != (loaded?.calendarSyncId ?: "").trim()
 
-@Composable
-private fun SchedulingPanel(
-    settingsData: BusinessSettings?,
-    settingsLoaded: Boolean,
-    vm: SettingsViewModel,
-    scope: kotlinx.coroutines.CoroutineScope,
-    saveError: String?,
-) {
-    val c = AuntieTheme.colors
-    val client = remember { FirestoreClient() }
-
-    var syncing by remember { mutableStateOf(false) }
-    var syncError by remember { mutableStateOf<String?>(null) }
-    var importedCount by remember { mutableStateOf<Int?>(null) }
-
-    // Calendar id the admin types in (saved onto BusinessSettings.calendarSyncId,
-    // which the syncGoogleCalendarBusyEvents callable reads). Seeded from the loaded
-    // doc; re-seeds when the doc changes.
-    var calendarId by remember(settingsData) { mutableStateOf(settingsData?.calendarSyncId ?: "") }
-    var savingCalendarId by remember { mutableStateOf(false) }
-    val calendarIdDirty = calendarSyncIdDirty(settingsData, calendarId)
-
-    DenPanel(
-        title = "Scheduling",
-        subtitle = "Behavior for the calendar and Google Calendar sync.",
-        trailing = {
-            AuntieStatusPill(label = "Server sync", tone = AuntieStatusTone.Orange, mono = true)
-        },
-    ) {
-        Column {
-            // Real, server-backed action. The callable reads the shared Google
-            // Calendar via ADC (no key in the bundle) and imports Busy events
-            // as private BLOCKED slots. We surface the raw server message on
-            // failure so the not-shared / not-configured fix is unambiguous.
-            Text(
-                "Run a one-off import of your shared Google Calendar's busy events. They become private blocks on the booking schedule. Kinfolk only see unavailable time, never event details.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
-            Spacer(Modifier.height(14.dp))
-
-            // Google Calendar id (admin-entered). Persisted to
-            // BusinessSettings.calendarSyncId; the sync callable reads it.
-            BottomBorderField(
-                value = calendarId,
-                onValueChange = { calendarId = it },
-                label = "Google Calendar ID",
-                placeholder = "name@group.calendar.google.com",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Share the calendar with $CALENDAR_SYNC_SA_EMAIL at See only free/busy (hide details). The app imports busy blocks only, never event details.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
-            Spacer(Modifier.height(10.dp))
-            saveError?.let { msg ->
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-            AuntieSaveBar(
-                dirty = calendarIdDirty,
-                saveEnabled = calendarIdDirty && !savingCalendarId && settingsLoaded,
-                onCancel = { calendarId = settingsData?.calendarSyncId ?: "" },
-                onSave = {
-                    savingCalendarId = true
-                    scope.launch {
-                        vm.saveSettings(
-                            (settingsData ?: BusinessSettings()).copy(calendarSyncId = calendarId.trim()),
-                        )
-                        savingCalendarId = false
-                    }
-                },
-                dirtyLabel = "Unsaved Calendar ID",
-                savedLabel = "Calendar ID saved",
-            )
-            Spacer(Modifier.height(16.dp))
-
-            syncError?.let { msg ->
-                AuntieBanner(
-                    tone = AuntieBannerTone.Error,
-                    title = "Calendar sync failed",
-                    body = {
-                        Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-            importedCount?.let { n ->
-                Text(
-                    "Imported $n busy blocks.",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textPrimary,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-            PrimaryButton(
-                label = "Run Sync",
-                loading = syncing,
-                enabled = !syncing,
-                onClick = {
-                    syncing = true
-                    syncError = null
-                    importedCount = null
-                    scope.launch {
-                        when (val r = client.syncGoogleCalendarBusyEvents()) {
-                            is WriteResult.Ok -> importedCount = r.value
-                            is WriteResult.Err -> syncError = r.message
-                        }
-                        syncing = false
-                    }
-                },
-            )
-            Spacer(Modifier.height(14.dp))
-            SchedulingPlaceholderRow(
-                title = "Sync Google Calendar busy events",
-                description = "Show external commitments as read-only blocks on the schedule.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Block bookings during busy events",
-                description = "Stop new visits from landing on top of a Google Calendar block.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Snap drag-to-reschedule to 15 min",
-                description = "Visits align to quarter-hour slots when dragged.",
-                showDivider = true,
-            )
-            SchedulingPlaceholderRow(
-                title = "Auto-confirm repeat clients",
-                description = "Trusted kinfolk bookings skip manual approval.",
-                showDivider = false,
-            )
-        }
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// #7 restructure: the old "Scheduling" section is split. Google Calendar sync +
-// busy-block live under Business Hours (GcalSyncPanel); booking behavior
-// (auto-confirm + snap) lives under the Booking section (BookingBehaviorPanel).
+// #7 restructure: the old "Scheduling" section is split. Google Calendar sync
+// lives under Business Hours (GcalSyncPanel); booking behavior (auto-confirm,
+// snap, and #517's busy-block rule) lives under Booking (BookingBehaviorPanel).
+// The split's leftover SchedulingPanel -- unreachable, since SettingsSection has
+// no Scheduling member -- is deleted; it was the only caller of four of the five
+// dead placeholder rows #517 reported.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -2824,10 +2690,14 @@ private fun GcalSyncPanel(
                 },
             )
             Spacer(Modifier.height(14.dp))
-            SchedulingPlaceholderRow(
-                title = "Block bookings during busy events",
-                description = "Stop new visits from landing on top of a Google Calendar block.",
-                showDivider = false,
+            // #517: what an imported busy block DOES to a new booking is one
+            // switch, and it lives with the other two booking rules under
+            // Booking rather than being restated here. This panel is the import;
+            // that panel is the rule.
+            Text(
+                "Blocking new bookings on these imported blocks is a switch under Booking, in Booking behavior.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
             )
         }
     }
@@ -2868,11 +2738,30 @@ private fun BookingBehaviorPanel(
                 description = "Visits align to quarter-hour slots when dragged on the schedule.",
                 leadingIcon = Lucide.CalendarClock,
                 iconTone = AuntieStatusTone.Orange,
-                showDivider = false,
+                showDivider = true,
                 trailing = {
                     AuntieToggle(
                         checked = s?.snapRescheduleTo15Min == true,
                         onCheckedChange = { next -> if (s != null) scope.launch { vm.saveSettings(s.copy(snapRescheduleTo15Min = next)) } },
+                        enabled = settingsLoaded,
+                    )
+                },
+            )
+            // #517: was a permanently disabled placeholder row here and in the
+            // Google Calendar panel. It writes `enableConflictDetection`, which
+            // `guardBookingBusyConflict` reads server-side on every booking write
+            // path, so turning it off really does let a visit land on an imported
+            // block. Defaults ON, matching every model default.
+            AuntieSettingRow(
+                title = "Block bookings during busy events",
+                description = "Refuse a new visit that lands on a busy block imported from Google Calendar.",
+                leadingIcon = Lucide.CalendarClock,
+                iconTone = AuntieStatusTone.Orange,
+                showDivider = false,
+                trailing = {
+                    AuntieToggle(
+                        checked = s?.enableConflictDetection != false,
+                        onCheckedChange = { next -> if (s != null) scope.launch { vm.saveSettings(s.copy(enableConflictDetection = next)) } },
                         enabled = settingsLoaded,
                     )
                 },
@@ -3640,28 +3529,6 @@ private fun IntegrationRow(
                 glow = state == IntegrationHealthState.CHECKING,
                 mono = true,
             )
-        },
-    )
-}
-
-/**
- * Mockup-only Scheduling row. Read-only: the toggle is disabled because no backend
- * field exists yet (fail-loud, never faked).
- */
-@Composable
-private fun SchedulingPlaceholderRow(
-    title: String,
-    description: String,
-    showDivider: Boolean,
-) {
-    AuntieSettingRow(
-        title = title,
-        description = description,
-        leadingIcon = Lucide.CalendarClock,
-        iconTone = AuntieStatusTone.Muted,
-        showDivider = showDivider,
-        trailing = {
-            AuntieToggle(checked = false, onCheckedChange = {}, enabled = false)
         },
     )
 }

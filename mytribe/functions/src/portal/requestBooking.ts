@@ -591,6 +591,15 @@ export async function requestBookingHandler(
 }
 
 export const requestBooking = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    // AUNTIE_OPERATOR_UIDS: `maybeAutoConfirm` runs `approveBookingSeriesCore`,
+    // which since #536 dispatches `kincare.booking.confirm` to the household AND
+    // to `businessAdmins`. `lib/businessAdmins` self-heals an empty roster from
+    // this secret only inside a function that binds it. Same reason
+    // `manageBookingSeries` gained it.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+  },
   wrapCallable('requestBooking', requestBookingHandler),
 );

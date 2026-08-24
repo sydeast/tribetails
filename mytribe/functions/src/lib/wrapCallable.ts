@@ -4,25 +4,70 @@ import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { randomUUID } from 'node:crypto';
+import {
+  APP_CHECK_REJECT_MESSAGE,
+  appCheckDecision,
+  appCheckStatusOf,
+  currentAppCheckMode,
+  isAppCheckCohort,
+  type AppCheckStatus,
+} from './appCheckPolicy';
 
 export type Handler<T, R> = (req: CallableRequest<T>) => Promise<R>;
 
 /**
- * O-3 App Check L1 telemetry (docs/O3_APP_CHECK_RULING_2026-07-13.md, D2):
- * pure signal, no behavior change. `req.app` is populated by the platform
- * whenever the request carried a verified App Check token, even with
- * enforcement fully off — this is what lets the grace-period metric
- * (valid-token rate from portal/Android origins) be measured before
- * anything is ever rejected. `wrapAdminCallable` delegates to this wrapper
- * rather than logging separately, so this single call site covers every
- * onCall function that routes through either wrapper (all of them).
+ * O-3 App Check telemetry (docs/O3_APP_CHECK_RULING_2026-07-13.md, D2).
+ *
+ * `req.app` is populated by the platform whenever the request carried a
+ * VERIFIED App Check token, even with enforcement fully off — this is what
+ * lets the grace-period metric (valid-token rate from portal/Android origins)
+ * be measured before anything is ever rejected. `wrapAdminCallable` delegates
+ * to this wrapper rather than logging separately, so this single call site
+ * covers every onCall function that routes through either wrapper (all of
+ * them).
+ *
+ * L1 logged two states, `valid` and `absent`. Three are logged now: a token
+ * that arrived and failed verification is its own event, not a synonym for no
+ * token at all. See appCheckPolicy.ts.
  */
-function appCheckFields(req: CallableRequest<unknown>): { appCheck: 'valid' | 'absent'; origin?: string } {
+function appCheckFields(req: CallableRequest<unknown>): { appCheck: AppCheckStatus; origin?: string } {
   const origin = req.rawRequest?.headers?.origin;
   return {
-    appCheck: req.app ? 'valid' : 'absent',
+    appCheck: appCheckStatusOf(req),
     ...(typeof origin === 'string' ? { origin } : {}),
   };
+}
+
+/**
+ * O-3 L2: the gate that can actually refuse.
+ *
+ * Costs nothing for a function outside the enforced cohort — no Firestore
+ * read, no await — which is why it sits in front of ~230 callables without
+ * being on any of their critical paths. For a cohort member it reads the
+ * runtime mode (cached 60s, one read per instance per minute) and either
+ * serves, records a would-have-refused, or refuses.
+ *
+ * `unauthenticated` is the code, per D2. `wrapCallable`'s own error path
+ * already classifies that as user-fault, so a refusal logs and audits without
+ * filling Sentry with events that are working as designed.
+ */
+async function gateOnAppCheck(name: string, req: CallableRequest<unknown>, requestId: string): Promise<void> {
+  const inCohort = isAppCheckCohort(name);
+  if (!inCohort) return;
+  const status = appCheckStatusOf(req);
+  const mode = await currentAppCheckMode();
+  const decision = appCheckDecision({ mode, status, inCohort });
+  if (decision === 'allow') return;
+  logEvent({
+    severity: 'warn',
+    function: name,
+    event: `${name}.appCheck.${decision === 'reject' ? 'rejected' : 'wouldReject'}`,
+    requestId,
+    uid: req.auth?.uid,
+    ...appCheckFields(req),
+    extra: { appCheckMode: mode },
+  });
+  if (decision === 'reject') throw new HttpsError('unauthenticated', APP_CHECK_REJECT_MESSAGE);
 }
 
 export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handler<T, R> {
@@ -32,6 +77,9 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
     const requestId = randomUUID();
     const clientErrorId = randomUUID();
     try {
+      // Inside the try on purpose: a refusal is a failure like any other and
+      // belongs in the failure log and the audit trail.
+      await gateOnAppCheck(name, req, requestId);
       const result = await handler(req);
       logEvent({
         severity: 'info',

@@ -160,6 +160,14 @@ kotlin {
             // when callers pass Map<String, Any?> payloads. The native call()
             // accepts HashMap and returns HashMap, no serializer layer.
             implementation("com.google.firebase:firebase-functions:22.1.1")
+            // App Check (O-3 ruling D1). Play Integrity is the shipped provider;
+            // SafetyNet is decommissioned and is deliberately not a fallback. The
+            // debug artifact is here rather than in a debug-only configuration
+            // because the source set is shared — `activateAppCheck` picks the
+            // factory at runtime from FLAG_DEBUGGABLE, so a release build never
+            // reaches the debug provider. Versions come from the BOM above.
+            implementation("com.google.firebase:firebase-appcheck-playintegrity")
+            implementation("com.google.firebase:firebase-appcheck-debug")
             // Task.await() for native Functions call() result.
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.11.0")
             implementation("androidx.activity:activity-compose:1.13.0")

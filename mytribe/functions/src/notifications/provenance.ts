@@ -117,9 +117,51 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.booking.confirm': [
     {
-      trigger: 'A visit is confirmed or approved (its status changes to confirmed/approved).',
+      // #536: ONE per request, not one per visit, on the grain #532 established.
+      // Approving a four-day request used to send four copies from the per-visit
+      // trigger below; the whole-request answer now comes from the approve core,
+      // which is the code that knows the whole child set.
+      trigger:
+        'A whole booking request is approved, confirming every visit in it at once (admin APPROVE, or the portal auto-confirm).',
+      source: 'src/admin/approveBookingSeriesCore.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'removed',
+        'removedCount',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+      ],
+    },
+    {
+      // Still per visit, and still correct: batchUpdateBookings and the Android
+      // schedule screen confirm single visits without going through the core.
+      // Suppressed only when the visit carries the core's seriesApprovedAt stamp.
+      trigger: 'One visit is confirmed or approved on its own (status changes to confirmed/approved).',
       source: 'src/triggers/onBookingsWrite.ts',
-      dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'visitId',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'removed',
+        'removedCount',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+      ],
     },
   ],
   'kincare.booking.cancel': [

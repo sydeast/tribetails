@@ -11,7 +11,34 @@ import type {
 } from '../api/bookingApi';
 import type { RequestBookingArgs, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
-import { dateKey, MAX_RECURRING_VISITS, monthPickerDays } from '../lib/bookingWizardLogic';
+import { dateKey, MAX_RECURRING_VISITS, startOfDay } from '../lib/bookingWizardLogic';
+
+/**
+ * #544: the picker's lower bound is today, so a date fixture may never be
+ * pinned to "the 1st of the month" -- that is a past date on 30 days out of
+ * 31 and its cell is disabled. Everything below is derived from today
+ * instead. `TOMORROW` can land in the next month; `pickDay` pages forward
+ * when it does, so these hold on the last day of a month too.
+ */
+const TODAY = startOfDay(new Date());
+const TOMORROW = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 1);
+
+/** A day cell, addressed by its printed day-of-month (unique within a month). */
+function dayCell(d: Date) {
+  return screen.getByRole('button', { name: String(d.getDate()) });
+}
+
+/** Clicks `d`'s cell, paging to the next month first when `d` lives there. */
+async function pickDay(user: ReturnType<typeof userEvent.setup>, d: Date) {
+  if (d.getMonth() !== TODAY.getMonth()) {
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+  }
+  await user.click(dayCell(d));
+}
+
+function visitMs(d: Date, hour: number, minute: number) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute).getTime();
+}
 
 const getMyKin = vi.fn<() => Promise<GetMyKinResult>>();
 const getServiceCatalog = vi.fn<() => Promise<GetServiceCatalogResult>>();
@@ -93,7 +120,7 @@ function renderWizard(onComplete = vi.fn()) {
 async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText('Select Kin');
   await user.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByText('Choose Service');
+  await screen.findByText('Choose KinCare Duration');
 }
 
 async function selectServiceAndGoToStep3(user: ReturnType<typeof userEvent.setup>, serviceName: string) {
@@ -138,16 +165,129 @@ describe('BookingWizard: service catalog', () => {
   });
 });
 
+/**
+ * #540: step 1 used to sit next to a read-only "Booking for" card in the
+ * rail that listed the same Kin -- two boxes, one choice. The card is gone;
+ * these pin that it is gone AND that what only it used to show (each Kin's
+ * breed/species and age) survived the move into step 1.
+ */
+describe('BookingWizard: #540 one Kin box', () => {
+  it('has no second read-only Kin panel beside Select Kin', async () => {
+    renderWizard();
+    await screen.findByText('Select Kin');
+    expect(screen.queryByText('Booking for')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pick which Kin to include in step 1.')).not.toBeInTheDocument();
+  });
+
+  it('still names every Kin with its breed and age, once', async () => {
+    getMyKin.mockResolvedValue({
+      kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
+    });
+    renderWizard();
+    await screen.findByText('Select Kin');
+    expect(screen.getAllByText('Buddy')).toHaveLength(1);
+    expect(screen.getByText('LABRADOR RETRIEVER • 4 YRS')).toBeInTheDocument();
+  });
+
+  it('shows the same detail on the pickable rows once specific Kin are being chosen', async () => {
+    getMyKin.mockResolvedValue({
+      kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('button', { name: /Choose specific Kin/ }));
+    // Exactly one detail row per Kin: the read-only roster is not printed
+    // alongside the pickable list, which would rebuild the duplication #540
+    // is about.
+    expect(screen.getAllByText('LABRADOR RETRIEVER • 4 YRS')).toHaveLength(1);
+  });
+});
+
+/**
+ * #542: "my services are by time not activity". The kinfolk-facing word for
+ * step 2 is KinCare Duration everywhere it is printed. Backend field names
+ * (`serviceId`, `serviceName`, the `services` catalog) are untouched, and
+ * the payload assertions elsewhere in this file are what hold that line.
+ */
+describe('BookingWizard: #542 KinCare Duration wording', () => {
+  it('labels the step, the heading and the summary row as KinCare Duration', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    // Stepper label + summary rail row, before anything is chosen.
+    expect(screen.getAllByText('KinCare Duration').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('Service')).not.toBeInTheDocument();
+
+    await goToStep2(user);
+    expect(screen.getByRole('radiogroup', { name: 'KinCare Duration' })).toBeInTheDocument();
+    expect(screen.queryByText('Choose Service')).not.toBeInTheDocument();
+  });
+
+  it('carries the wording through step 3 and the review summary', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    expect(screen.getByText('KinCare Duration: Daily Visit')).toBeInTheDocument();
+
+    await pickDay(user, TODAY);
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Invoice Options');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    expect(screen.queryByText('Service')).not.toBeInTheDocument();
+    expect(screen.getAllByText('KinCare Duration').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('BookingWizard: individual pattern', () => {
+  /**
+   * #544: the picker was frozen on the current month with no way out, so
+   * "book ahead" was impossible -- late in a month a household had a handful
+   * of days left in the entire portal.
+   */
+  it('books a date in a future month', async () => {
+    const nextMonth = new Date(TODAY.getFullYear(), TODAY.getMonth() + 1, 10);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+    await user.click(dayCell(nextMonth));
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Invoice Options');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits).toHaveLength(1);
+    expect(dateKey(new Date(req.visits![0]!.startTimeMs))).toBe(dateKey(nextMonth));
+  });
+
+  it('will not offer a date before today', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    if (TODAY.getDate() > 1) {
+      const yesterday = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() - 1);
+      expect(dayCell(yesterday)).toBeDisabled();
+    }
+    expect(dayCell(TODAY)).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+  });
+
+
   it('submits exactly the tapped dates as visits, at the chosen time, for the chosen service', async () => {
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    // Individual is the default pattern; tap the 1st and 3rd offered days.
-    const dayButtons = screen.getAllByRole('button', { name: /^\d+$/ });
-    await user.click(dayButtons[0]!);
-    await user.click(dayButtons[2]!);
+    // Individual is the default pattern; tap today and tomorrow.
+    await pickDay(user, TODAY);
+    await pickDay(user, TOMORROW);
 
     const timeInput = screen.getByLabelText(/Visit Time/i);
     await user.clear(timeInput);
@@ -165,8 +305,7 @@ describe('BookingWizard: individual pattern', () => {
     expect(req.weeklyDays).toBeUndefined();
     expect(req.visits).toHaveLength(2);
 
-    const expectedDays = monthPickerDays(new Date());
-    const expected = [expectedDays[0]!, expectedDays[2]!].map((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 10, 15).getTime());
+    const expected = [visitMs(TODAY, 10, 15), visitMs(TOMORROW, 10, 15)];
     expect(req.visits!.map((v) => v.startTimeMs).sort()).toEqual(expected.sort());
     expect(req.visits!.every((v) => v.serviceId === 's1')).toBe(true);
   });
@@ -182,15 +321,13 @@ describe('BookingWizard: individual pattern', () => {
  * OFFERED a doomed date in the first place.
  */
 describe('BookingWizard: C1 company holidays', () => {
-  it('the first offered date is disabled and cannot be selected when it is a closure', async () => {
-    const closedDate = dateKey(monthPickerDays(new Date())[0]!);
-    getBusinessClosures.mockResolvedValue({ closures: [{ date: closedDate, name: 'Owner away' }] });
+  it('a bookable date is disabled and cannot be selected when it is a closure', async () => {
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: dateKey(TODAY), name: 'Owner away' }] });
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    const dayButtons = await screen.findAllByRole('button', { name: /^\d+$/ });
-    const closedButton = dayButtons[0]!;
+    const closedButton = dayCell(TODAY);
     await vi.waitFor(() => expect(closedButton).toBeDisabled());
 
     await user.click(closedButton).catch(() => undefined); // userEvent refuses a disabled target; ignore
@@ -199,17 +336,43 @@ describe('BookingWizard: C1 company holidays', () => {
   });
 
   it('an open date next to a closed one is still selectable', async () => {
-    const days = monthPickerDays(new Date());
-    getBusinessClosures.mockResolvedValue({ closures: [{ date: dateKey(days[0]!), name: 'Owner away' }] });
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: dateKey(TODAY), name: 'Owner away' }] });
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    const dayButtons = await screen.findAllByRole('button', { name: /^\d+$/ });
-    await vi.waitFor(() => expect(dayButtons[0]).toBeDisabled());
-    await user.click(dayButtons[1]!);
-    expect(dayButtons[1]).toHaveAttribute('aria-pressed', 'true');
+    await vi.waitFor(() => expect(dayCell(TODAY)).toBeDisabled());
+    await pickDay(user, TOMORROW);
+    expect(dayCell(TOMORROW)).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+
+  /**
+   * #544 + C1 together: the single closure window the wizard resolves spans
+   * the whole horizon, so a closure three months out is already marked the
+   * moment that month is paged to -- no second read, no unmarked month.
+   */
+  it('marks a closure in a month reached by paging forward', async () => {
+    const twoMonthsOut = new Date(TODAY.getFullYear(), TODAY.getMonth() + 2, 15);
+    getBusinessClosures.mockResolvedValue({ closures: [{ date: dateKey(twoMonthsOut), name: 'Staff retreat' }] });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+    await user.click(screen.getByRole('button', { name: 'Next month' }));
+    await vi.waitFor(() => expect(dayCell(twoMonthsOut)).toBeDisabled());
+    expect(dayCell(twoMonthsOut)).toHaveAttribute('title', 'Closed: Staff retreat');
+  });
+
+  it('asks the server for a window wide enough to answer every reachable month', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await vi.waitFor(() => expect(getBusinessClosures).toHaveBeenCalled());
+    const { fromDate, toDate } = getBusinessClosures.mock.calls[0]![0];
+    expect(fromDate).toBe(dateKey(TODAY));
+    expect(toDate).toBe(dateKey(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 120)));
   });
 
   it('a weekly-generated visit landing on a closure is refused, naming the date, before Next is allowed', async () => {
@@ -321,8 +484,7 @@ describe('BookingWizard: submit error handling', () => {
     renderWizard(onComplete);
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    const dayButtons = screen.getAllByRole('button', { name: /^\d+$/ });
-    await user.click(dayButtons[0]!);
+    await pickDay(user, TODAY);
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Invoice Options');

@@ -85,7 +85,7 @@ describe('enrichTemplateData: invoice.new (the canonical gap)', () => {
 });
 
 describe('enrichTemplateData: bookings', () => {
-  it('kincare.booking.confirm: maps serviceName→serviceType, formats date/time, names from family + booking', async () => {
+  it('kincare.booking.confirm: maps serviceName→serviceType, names from family + booking, and leaves the emitter’s dates alone', async () => {
     // Jul 4 2026 18:30 UTC = 14:30 America/New_York (EDT, UTC-4).
     const startMs = Date.UTC(2026, 6, 4, 18, 30);
     const ctx = buildDbMock({
@@ -107,14 +107,44 @@ describe('enrichTemplateData: bookings', () => {
       bookingId: 'v1',
       serviceName: 'Dog Walk',
       startTimeMs: startMs,
+      // #536: the emitters format these two now. The seed no longer references
+      // them; they are carried only so the Firestore template document that is
+      // still live in production keeps rendering until the operator re-imports.
+      bookingDate: 'Sat, Jul 4',
+      bookingTime: '2:30 PM',
     });
 
     expect(out.serviceType).toBe('Dog Walk');
     expect(out.kinfolkName).toBe('The Rivera Home');
     expect(out.kinName).toBe('Rex, Bella');
-    expect(out.bookingDate).toMatch(/Jul/);
-    expect(out.bookingTime).toMatch(/2:30/);
-    expect(out.bookingTime).toMatch(/PM/i);
+    expect(out.bookingDate).toBe('Sat, Jul 4');
+    expect(out.bookingTime).toBe('2:30 PM');
+  });
+
+  it('kincare.booking.confirm: does NOT hydrate bookingDate/bookingTime any more (the emitter owns them)', async () => {
+    // The key's templates enumerate `visits` instead of naming one day, so the
+    // enricher has no business inventing a single date for them. A dispatch that
+    // omits them leaves them unset and the senders scrub the residual token:
+    // never a wrong day, and never a raw `{{bookingDate}}`.
+    const ctx = buildDbMock({
+      docs: {
+        'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' },
+        'business_settings/business_settings': { timeZone: 'America/New_York' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const out = await enrichTemplateData('kincare.booking.confirm', 'cli1', {
+      kinfolkId: 'fam1',
+      batchId: 'b1',
+      bookingId: 'b1',
+      serviceName: 'Dog Walk',
+      startTimeMs: Date.UTC(2026, 6, 4, 18, 30),
+    });
+
+    expect(out.bookingDate).toBeUndefined();
+    expect(out.bookingTime).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('{{');
   });
 
   it('kincare.requested (business audience): kinfolkName comes from the family, NOT the staff recipient', async () => {
@@ -311,15 +341,35 @@ describe('enrichTemplateData: no-op cases', () => {
 describe('TEMPLATE_FIELDS mirrors the on-disk seed tokens (drift guard)', () => {
   const seedsDir = join(__dirname, '..', '..', 'seeds', 'notificationTemplates');
 
+  /**
+   * Every name a template asks the CONTEXT for.
+   *
+   * Two shapes, because #536 gave `kincare.booking.confirm` the first block
+   * helpers in the corpus (`{{#each visits}}`, per the visit-date rendering
+   * spec):
+   *
+   *   - a plain `{{token}}` or `{{a.b}}` reference, as before; and
+   *   - the SUBJECT of a block helper, `{{#each visits}}` / `{{#if removed}}`,
+   *     which is just as much a context field as a plain token and would
+   *     otherwise be invisible to this guard.
+   *
+   * `{{this.x}}` inside a block is deliberately NOT counted. It names a field of
+   * the loop's current item, not of the context, so the enricher can never fill
+   * it and listing it in TEMPLATE_FIELDS would describe nothing.
+   */
   function tokensForKey(key: string): string[] {
     const dir = join(seedsDir, key);
     const files = readdirSync(dir);
     const found = new Set<string>();
     for (const f of files) {
       const raw = readFileSync(join(dir, f), 'utf8');
-      const re = /\{\{\s*([\w.]+)\s*\}\}/g;
+      const re = /\{\{\s*(?:#(?:each|if|unless|with)\s+)?([\w.]+)\s*\}\}/g;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(raw)) !== null) found.add(m[1]);
+      while ((m = re.exec(raw)) !== null) {
+        const token = m[1];
+        if (token === 'this' || token.startsWith('this.')) continue;
+        found.add(token);
+      }
     }
     return [...found].sort();
   }

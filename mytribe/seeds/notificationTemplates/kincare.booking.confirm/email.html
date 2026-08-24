@@ -10,13 +10,18 @@
         .footer { padding: 20px 40px; background-color: #11131f; color: #fbfbf9; font-size: 12px; text-align: center; }
         .button { display: inline-block; padding: 14px 28px; background: #df8431; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 20px 0; }
         .alert-box { background-color: #fff5f5; border-left: 4px solid #df8431; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
+        .visits { margin: 20px 0; padding: 0; list-style: none; }
+        .visits li { padding: 6px 0; border-bottom: 1px solid #efece4; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header"><h2>It's official, {{kinName}} is on my calendar</h2></div>
         <div class="content">
-            <p>Hi {{kinfolkName}}, I've got it locked in. Your {{serviceType}} for {{kinName}} is set for {{bookingDate}} at {{bookingTime}}.</p>
+            <p>Hi {{kinfolkName}}, I've got your {{serviceType}} for {{kinName}} locked in. Here are the days:</p>
+            <ul class="visits">{{#each visits}}
+                <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}
+            </ul>
             <p>I'll be there ready to go. If anything shifts on your end, just say the word and we'll work it out.</p>
             <p>With care,<br><strong>Auntie</strong></p>
         </div>

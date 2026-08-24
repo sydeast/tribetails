@@ -12,6 +12,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.ManageSeriesResult
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
@@ -321,6 +322,41 @@ class EnhancedSchedulingViewModel(
 
     /** Cancel a whole incoming series. */
     fun cancelSeries(series: IncomingSeries) = runSeriesAction(series, "CANCEL")
+    /**
+     * What the household actually heard about this decision (#536), for the
+     * SUCCESS message only. The partial-failure branch says its own thing.
+     *
+     * Approving a four-day request used to send one message per VISIT, and this
+     * screen said nothing about it either way. Both admin clients now report the
+     * server's own answer instead of assuming a clean result means a clean
+     * message: one message naming every date, or an honest account of why none
+     * went out.
+     *
+     * ONE CONSTRAINT ON THE CANCEL BRANCH. `cancelSeries` is fed only from the
+     * incoming-requests stream, which is `requested` visits, so a CANCEL from
+     * this screen is always a DECLINE and `householdNotified` really does report
+     * the one `kincare.request.declined`. Cancelling an ALREADY CONFIRMED series
+     * is a different event: the callable dispatches nothing and `onBookingsWrite`
+     * sends `kincare.booking.cancel` per visit instead, so `householdNotified`
+     * would be false while the household really had been told. Do not reuse this
+     * on a confirmed-series cancel without giving that case its own wording.
+     *
+     * Internal so the wording is unit-testable without standing up a ViewModel.
+     */
+    internal fun householdLine(action: String, res: ManageSeriesResult): String = when {
+        action == "APPROVE" && res.newlyConfirmed == 0 ->
+            "It was already booked, so nothing new was sent."
+        // A DECLINE gets its own line rather than borrowing the approve one.
+        // "with every date" is only true of the confirmation, which enumerates
+        // the days; `kincare.request.declined` still renders the #534 span until
+        // step 2 of the visit-date spec lands.
+        action == "CANCEL" && res.householdNotified ->
+            "The household has your answer and your reason."
+        res.householdNotified ->
+            "The household was told once, with every date."
+        else ->
+            "The message to the household did not go out, so tell them another way."
+    }
 
     private fun runSeriesAction(series: IncomingSeries, action: String) {
         if (_state.value.seriesActionBatchId != null) return
@@ -334,15 +370,20 @@ class EnhancedSchedulingViewModel(
                         // FAIL LOUD on a partial failure: the backend leaves the
                         // envelope 'requested' for the failed visits. Surface it as
                         // an error, not a clean success message.
+                        //
+                        // #536: it dispatches NOTHING in this case either, so the
+                        // household is still waiting. Say so. An operator who
+                        // reads a partial failure as "they were told about the
+                        // ones that worked" stops chasing it.
                         _state.value = _state.value.copy(
                             seriesActionBatchId = null,
                             seriesActionMessage = null,
-                            incomingError = "$verb $who: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. Retry after resolving.",
+                            incomingError = "$verb $who: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. The household has not been told. Retry after resolving.",
                         )
                     } else {
                         _state.value = _state.value.copy(
                             seriesActionBatchId = null,
-                            seriesActionMessage = "$verb $who: ${res.affectedVisits} visit(s).",
+                            seriesActionMessage = "$verb $who: ${res.affectedVisits} visit(s). ${householdLine(action, res)}",
                         )
                     }
                 }

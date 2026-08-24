@@ -46,6 +46,25 @@ export const Result = z
     sessionsCreated: z.number().int().nonnegative(),
     /** Visits whose write failed and were skipped (fail-loud; 0 = full success). */
     failedVisits: z.number().int().nonnegative(),
+    /**
+     * #536: whether the ONE envelope-level message to the household actually
+     * went out. On APPROVE that is `kincare.booking.confirm`; on a CANCEL that
+     * is DECLINING a request it is `kincare.request.declined`. False on a
+     * cancellation of an already-booked series, which is answered per visit by
+     * `onBookingsWrite` instead and has no envelope-level message at all.
+     *
+     * The admin surfaces used to assert this in their toast rather than read it,
+     * and a request sitting on the schedule with the household not knowing is
+     * exactly what an operator needs to be told, because the fix is to phone
+     * them.
+     */
+    householdNotified: z.boolean(),
+    /**
+     * #536: visits this call actually moved into `confirmed`. Zero on a
+     * re-approve of something already booked, so the toast can say "nothing
+     * changed" instead of claiming a fresh booking. Always 0 on CANCEL.
+     */
+    newlyConfirmed: z.number().int().nonnegative(),
   })
   .strict();
 
@@ -87,6 +106,8 @@ export async function manageBookingSeriesHandler(
       affectedVisits: r.affectedVisits,
       sessionsCreated: r.sessionsCreated,
       failedVisits: r.failedVisits,
+      householdNotified: r.householdNotified,
+      newlyConfirmed: r.newlyConfirmed,
     });
   }
 
@@ -162,6 +183,12 @@ export async function manageBookingSeriesHandler(
       cancelledCount: succeeded,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: uid,
+      // #536: release the confirmation claim. `approveBookingSeriesCore` sets
+      // `confirmNotifiedAtMs` so a retried or double-clicked approval cannot
+      // send twice, and that claim has to end when the series stops being
+      // confirmed. Approving a cancelled series again IS a new answer and the
+      // household is owed it; leaving the claim in place would swallow it.
+      confirmNotifiedAtMs: FieldValue.delete(),
     },
     { merge: true },
   );
@@ -200,6 +227,10 @@ export async function manageBookingSeriesHandler(
   // decline. That is #532's defect on the deny path. It also stops us telling a
   // household their request was declined while it is still sitting there
   // retryable: the decision has not actually been carried out yet.
+  // #536: reported back to the operator, not merely logged. Their toast used to
+  // assert the household had been told; a decline that never reached anybody is
+  // the same silence #533 exists to end, one step later.
+  let householdNotified = false;
   if (isDecliningRequest && failedVisits === 0) {
     try {
       const recipientUid = await resolveKinfolkUid(args.kinfolkId);
@@ -219,6 +250,7 @@ export async function manageBookingSeriesHandler(
         targetType: 'booking',
         targetId: args.batchId,
       });
+      householdNotified = true;
     } catch (err) {
       // The decision itself already succeeded and is audited. A failed
       // notification must not roll that back, but it must not be silent either:
@@ -245,10 +277,24 @@ export async function manageBookingSeriesHandler(
     affectedVisits: succeeded,
     sessionsCreated: 0,
     failedVisits,
+    householdNotified,
+    // A cancel confirms nothing, ever.
+    newlyConfirmed: 0,
   });
 }
 
 export const manageBookingSeries = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    // AUNTIE_OPERATOR_UIDS arrived with #536. The APPROVE path now dispatches
+    // `kincare.booking.confirm`, whose `secondaryResolver` is `businessAdmins`,
+    // and `lib/businessAdmins` can only self-heal an empty
+    // `businessSettings/admins` roster from this secret inside a function that
+    // BINDS it -- a function without the binding sees `undefined` and no error.
+    // It was bound on `onBookingsWrite`, which is exactly where that dispatch
+    // used to live, so moving the dispatch has to move the binding with it.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+  },
   wrapAdminCallable('manageBookingSeries', manageBookingSeriesHandler),
 );

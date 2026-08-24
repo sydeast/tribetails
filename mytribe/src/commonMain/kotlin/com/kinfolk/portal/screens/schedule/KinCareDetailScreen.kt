@@ -276,7 +276,7 @@ private fun KinCareDetailBody(
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 Text(kinCare.title ?: kinCare.serviceType ?: "Booking", style = type.heritageTitle)
                 Text(start?.let { relativeTime(it) } ?: "TBD", style = type.sansLabel)
-                ReviewRow("Service", kinCare.serviceType ?: "TBD")
+                ReviewRow("KinCare Duration", kinCare.serviceType ?: "TBD")
                 ReviewRow("Auntie", kinCare.auntieDisplayName ?: "Pending")
                 ReviewRow(
                     "Kin",

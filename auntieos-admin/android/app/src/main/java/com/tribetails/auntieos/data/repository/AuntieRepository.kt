@@ -3093,6 +3093,10 @@ class AuntieRepository(
             affectedVisits = result.affectedVisits.toInt(),
             failedVisits = result.failedVisits.toInt(),
             sessionsCreated = result.sessionsCreated.toInt(),
+            // #536: what the household actually heard, carried through rather
+            // than inferred from a clean result. See ManageSeriesResult.
+            householdNotified = result.householdNotified,
+            newlyConfirmed = result.newlyConfirmed.toInt(),
         )
     }.onFailure { AuntieLog.e("manageBookingSeries failed", it) }
 

@@ -438,6 +438,39 @@ describe('Settings — Booking behavior (instant-save toggles)', () => {
     );
   });
 
+  /**
+   * #517: this row used to be a permanently disabled placeholder on the wasm
+   * Settings screen, for a field (`enableConflictDetection`) that persisted on
+   * every model and that nothing on the server read. It is now the switch the
+   * booking guard reads, so it has to persist like the other two.
+   */
+  it('persists "Block bookings during busy events" and reads the new value back', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ enableConflictDetection: true }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Business profile');
+    const sw = within(panel).getByRole('switch', { name: /block bookings during busy events/i });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(sw);
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ enableConflictDetection: false });
+    expect(
+      await within(panel).findByRole('switch', { name: /block bookings during busy events/i }),
+    ).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('renders a stored OFF as off and flips it back on', async () => {
+    getBusinessSettings.mockResolvedValue(withOverrides({ enableConflictDetection: false }));
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Business profile');
+    const sw = within(panel).getByRole('switch', { name: /block bookings during busy events/i });
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(sw);
+    expect(saveBusinessSettings).toHaveBeenCalledWith({ enableConflictDetection: true });
+  });
+
   it('surfaces a fail-loud error and leaves the switch unchanged on a failed toggle', async () => {
     getBusinessSettings.mockResolvedValue(withOverrides({ snapRescheduleTo15Min: false }));
     saveBusinessSettings.mockRejectedValue(new Error('offline'));
@@ -475,6 +508,7 @@ describe('Settings — Business profile absorbed the two thin sections', () => {
     await within(panel).findByLabelText('Business name');
     expect(within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i })).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i })).toBeInTheDocument();
+    expect(within(panel).getByRole('switch', { name: /block bookings during busy events/i })).toBeInTheDocument();
     // One Save button, and it belongs to the text fields. The toggles write on
     // every flip, so a Save button beside them would be a lie about what is
     // already stored.

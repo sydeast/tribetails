@@ -78,6 +78,42 @@ class AuntieRepositoryManageBookingSeriesTest {
         assertEquals(3, result.getOrNull()?.affectedVisits)
         assertEquals(3, result.getOrNull()?.sessionsCreated)
     }
+    // #536: the household's answer is ONE message per request now, and the
+    // callable reports whether it actually went. The screen's copy turns on
+    // these two, so dropping them in the decode would quietly put it back to
+    // guessing.
+    @Test
+    fun `carries householdNotified and newlyConfirmed through the decode`() = runBlocking {
+        val functions = mockk<FirebaseFunctions>()
+        stub(
+            functions,
+            mapOf(
+                "ok" to true, "action" to "APPROVE", "batchId" to "batch1",
+                "affectedVisits" to 4, "sessionsCreated" to 4, "failedVisits" to 0,
+                "householdNotified" to true, "newlyConfirmed" to 4,
+            ),
+        )
+        val result = repoWith(functions).manageBookingSeries("APPROVE", "kf1", "batch1")
+        assertEquals(true, result.getOrNull()?.householdNotified)
+        assertEquals(4, result.getOrNull()?.newlyConfirmed)
+    }
+    @Test
+    fun `a response from a server predating the fields decodes them as not-told`() = runBlocking {
+        // Fail-soft in the SAFE direction: an older deployed function reports
+        // "not told", so the screen tells the operator to reach the household
+        // another way rather than claiming a message that may never have gone.
+        val functions = mockk<FirebaseFunctions>()
+        stub(
+            functions,
+            mapOf(
+                "ok" to true, "action" to "APPROVE", "batchId" to "batch1",
+                "affectedVisits" to 1, "sessionsCreated" to 1, "failedVisits" to 0,
+            ),
+        )
+        val result = repoWith(functions).manageBookingSeries("APPROVE", "kf1", "batch1")
+        assertEquals(false, result.getOrNull()?.householdNotified)
+        assertEquals(0, result.getOrNull()?.newlyConfirmed)
+    }
 
     @Test
     fun `DRIFT FIX - fails when the response decodes to ok false, instead of a silent success`() = runBlocking {

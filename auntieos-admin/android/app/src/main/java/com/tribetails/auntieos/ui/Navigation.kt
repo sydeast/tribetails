@@ -207,6 +207,29 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
         fun createRoute(reportId: String) = "kintale_report/$reportId"
     }
 
+    /**
+     * "New KinTale" WITH NO VISIT NAMED YET, which is the household profile's
+     * hero primary in `auntieos-admin/ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`.
+     *
+     * [KinTaleReport] above needs a session id, because a KinTale is the write-up
+     * of one visit and the composer is keyed by it. The profile knows the
+     * HOUSEHOLD and not the visit, so this route stands between the two: it picks
+     * the visit, then navigates on to [KinTaleReport]. Nothing composes here.
+     *
+     * `kinfolkId` is optional and narrows the picker to one household, matching
+     * `KinTaleComposeProps.kinfolkId` on the React composer. Omitted, the picker
+     * offers every household's eligible visits, which is what the KinTale log's
+     * own "New" has always meant.
+     *
+     * No AdminGate, matching the two KinTale routes above it: this reaches the
+     * same composer by a different key, and gating one entrance but not the others
+     * would be a difference nobody chose.
+     */
+    object NewKinTale : Screen("kintale_new?kinfolkId={kinfolkId}", "New KinTale", Lucide.Pencil) {
+        fun createRoute(kinfolkId: String? = null): String =
+            if (kinfolkId.isNullOrBlank()) "kintale_new" else "kintale_new?kinfolkId=$kinfolkId"
+    }
+
     object LiveTracking : Screen("live_tracking/{sessionId}/{kinfolkId}/{kinfolkName}", "Live Tracking", Lucide.LayoutDashboard) {
         fun createRoute(sessionId: String, kinfolkId: String, kinfolkName: String) =
             "live_tracking/$sessionId/$kinfolkId/${java.net.URLEncoder.encode(kinfolkName, "UTF-8")}"
@@ -808,6 +831,13 @@ private fun AuthenticatedNavHost(
                     onOpenReport = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },
+                    // #552: the mock's hero primary. A KinTale is always the recap
+                    // of a visit, so this opens the picker scoped to THIS
+                    // household rather than dropping the operator into every
+                    // household's visits.
+                    onNewKinTale = { kinfolkId ->
+                        navController.navigate(Screen.NewKinTale.createRoute(kinfolkId))
+                    },
                 )
             }
             composable(Screen.AddKinfolk.route) {
@@ -1185,6 +1215,29 @@ private fun AuthenticatedNavHost(
                 com.tribetails.auntieos.ui.kintales.KinTaleByReportScreen(
                     reportId = reportId,
                     onBack = { navController.popBackStack() }
+                )
+            }
+            // "New KinTale" from the household profile: pick the visit, then hand
+            // off to the composer above. No AdminGate, same as its two neighbours.
+            composable(
+                route = Screen.NewKinTale.route,
+                arguments = listOf(
+                    navArgument("kinfolkId") { type = NavType.StringType; nullable = true; defaultValue = null }
+                )
+            ) { backStackEntry ->
+                val kinfolkId = backStackEntry.arguments?.getString("kinfolkId").orEmpty()
+                com.tribetails.auntieos.ui.kintales.NewKinTaleScreen(
+                    kinfolkId = kinfolkId,
+                    onBack = { navController.popBackStack() },
+                    onPickSession = { sessionId ->
+                        // The picker takes itself off the stack on the way through.
+                        // Its whole job was choosing the visit, and Back out of the
+                        // composer belongs to the profile the operator came from,
+                        // not to a question they have already answered.
+                        navController.navigate(Screen.KinTaleReport.createRoute(sessionId)) {
+                            popUpTo(Screen.NewKinTale.route) { inclusive = true }
+                        }
+                    },
                 )
             }
             composable(Screen.KinTaleTemplates.route) {
