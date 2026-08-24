@@ -33,7 +33,17 @@ export default defineConfig({
         // through every kinfolk's service worker to support a tool only the
         // operator ever triggers. Measured: the precache went from 69 entries
         // and 1827 KiB to 70 and 2024 KiB before this line was added.
-        globIgnores: ['**/__recorder.js'],
+        //
+        // mapbox-*: RouteMap.tsx (#520) loads mapbox-gl through a dynamic
+        // import so it stays out of the initial download. Precaching it would
+        // hand that back: a service worker fetches its whole manifest on
+        // install, so every kinfolk would pull the map library up front for a
+        // screen many of them never open. Measured: precache goes from 73
+        // entries and 1861 KiB to 75 and 3686 KiB without these two patterns.
+        // The chunk is named for the package (mapbox-gl-<hash>.js, plus its
+        // stylesheet); it is fetched the first time a visit actually has a
+        // route, and the SVG polyline covers the case where that fetch fails.
+        globIgnores: ['**/__recorder.js', '**/mapbox-*.js', '**/mapbox-*.css'],
       },
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
