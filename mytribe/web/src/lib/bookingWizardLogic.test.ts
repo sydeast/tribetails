@@ -555,7 +555,7 @@ describe('findTimeBlock / timeBlockLabel', () => {
     expect(findTimeBlock([MIDDAY, EVENING], 'evening')).toBe(EVENING);
     expect(findTimeBlock([MIDDAY, EVENING], 'brunch')).toBeNull();
     expect(findTimeBlock([MIDDAY, EVENING], null)).toBeNull();
-    expect(timeBlockLabel(MIDDAY)).toBe('Midday (11:00 – 15:00)');
+    expect(timeBlockLabel(MIDDAY)).toBe('Midday (11:00-15:00)');
   });
 });
 
@@ -692,8 +692,8 @@ describe('renderPlannedVisits with blocks', () => {
   it('names the window instead of reporting a precision the household never gave', () => {
     const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
     const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
-    expect(rendered[0]!.timeBlockLabel).toBe('Midday (11:00 – 15:00)');
-    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4 · Midday (11:00 – 15:00)');
+    expect(rendered[0]!.timeBlockLabel).toBe('Midday (11:00-15:00)');
+    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4, Midday (11:00-15:00)');
   });
 
   it('still spells a clock-booked visit the way the spec does', () => {

@@ -509,7 +509,7 @@ export function assertVisitBookingMode(
     if (!policy.allowSpecificTimeBooking) {
       throw new HttpsError(
         'invalid-argument',
-        'This business takes bookings inside its named time blocks, not at a specific time. Choose a time block for every KinCare.',
+        'This business takes bookings inside its time blocks. Choose a time block for every KinCare.',
       );
     }
     return { timeBlockId: null, timeBlockLabel: null };
@@ -533,7 +533,7 @@ export function assertVisitBookingMode(
   if (visitMatchesBlock(visit.startTimeMs, block, timeZone) === 'outside') {
     throw new HttpsError(
       'invalid-argument',
-      `That visit time is outside the ${block.label} block (${block.startTime}–${block.endTime}). Pick the block again.`,
+      `That visit time is outside the ${block.label} block (${block.startTime}-${block.endTime}). Pick the block again.`,
     );
   }
 

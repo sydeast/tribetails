@@ -732,7 +732,7 @@ private fun Step3ScheduleDates(
         // business allows both — with one mode on offer there is nothing to
         // decide, and a disabled toggle would be a control that lies.
         if (canChooseMode) {
-            Text("How would you like to say when?", style = type.heritageSection)
+            Text("How do you want to set the time?", style = type.heritageSection)
             Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                 KinChip(
                     label = "Time Blocks",
@@ -754,7 +754,7 @@ private fun Step3ScheduleDates(
         Text(if (mode == BookingMode.TimeBlock) "Time Blocks" else "Visit Times", style = type.sansLabel)
         if (mode == BookingMode.TimeBlock) {
             Text(
-                "Your Auntie arrives sometime inside the block you choose, so she can travel between homes without rushing anyone.",
+                "Your Auntie arrives at some point during the block you pick. That leaves her room to get between homes without rushing anyone.",
                 style = type.sansMeta,
             )
         }

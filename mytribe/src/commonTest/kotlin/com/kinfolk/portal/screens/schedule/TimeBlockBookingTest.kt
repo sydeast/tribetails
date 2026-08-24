@@ -89,7 +89,7 @@ class TimeBlockBookingTest {
 
     @Test
     fun `a window is named with its hours`() {
-        assertEquals("Midday (11:00 – 15:00)", timeBlockLabel(midday))
+        assertEquals("Midday (11:00-15:00)", timeBlockLabel(midday))
         assertEquals(evening, findTimeBlock(listOf(midday, evening), "evening"))
         assertNull(findTimeBlock(listOf(midday, evening), "brunch"))
         assertNull(findTimeBlock(listOf(midday, evening), null))
@@ -242,8 +242,8 @@ class TimeBlockBookingTest {
     fun `names the window instead of reporting a precision the household never gave`() {
         val visits = buildVisits(listOf(LocalDate(2026, 9, 4)), listOf(blockSlot("30Minute", "midday")), catalog, utc, blockTiming)
         val rendered = renderPlannedVisits(visits, utc, listOf(midday, evening))
-        assertEquals("Midday (11:00 – 15:00)", rendered[0].timeBlockLabel)
-        assertEquals("Fri, Sep 4 · Midday (11:00 – 15:00)", plannedVisitLine(rendered[0]))
+        assertEquals("Midday (11:00-15:00)", rendered[0].timeBlockLabel)
+        assertEquals("Fri, Sep 4, Midday (11:00-15:00)", plannedVisitLine(rendered[0]))
     }
 
     @Test

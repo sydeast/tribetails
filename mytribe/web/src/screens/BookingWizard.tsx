@@ -911,7 +911,7 @@ function Step3ScheduleDates(props: {
       */}
       {canChooseMode && (
         <>
-          <h4 style={{ marginTop: 18 }}>How would you like to say when?</h4>
+          <h4 style={{ marginTop: 18 }}>How do you want to set the time?</h4>
           <div className="pattern-toggle" role="radiogroup" aria-label="Time selection">
             <button
               type="button"
@@ -944,7 +944,7 @@ function Step3ScheduleDates(props: {
       <h4 style={{ marginTop: 18 }}>{mode === 'TIME_BLOCK' ? 'Time Blocks' : 'Visit Times'}</h4>
       {mode === 'TIME_BLOCK' && (
         <p className="sub">
-          Your Auntie arrives sometime inside the block you choose, so she can travel between homes without rushing anyone.
+          Your Auntie arrives at some point during the block you pick. That leaves her room to get between homes without rushing anyone.
         </p>
       )}
       {slots.length === 0 ? (

@@ -807,8 +807,8 @@ describe('BookingWizard: time-block booking', () => {
 
     const select = (await screen.findByLabelText('1. Daily Visit')) as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual([
-      'Midday (11:00 – 15:00)',
-      'Evening (17:00 – 21:00)',
+      'Midday (11:00-15:00)',
+      'Evening (17:00-21:00)',
     ]);
     // A fresh KinCare lands in the first window rather than on "choose one".
     expect(select.value).toBe('midday');
@@ -843,7 +843,7 @@ describe('BookingWizard: time-block booking', () => {
     await pickDay(user, TOMORROW);
     await goToReview(user);
 
-    expect(screen.getByText(/· Midday \(11:00 – 15:00\)/)).toBeInTheDocument();
+    expect(screen.getByText(/, Midday \(11:00-15:00\)/)).toBeInTheDocument();
   });
 
   it('two KinCares in one block are two visits, not a duplicate', async () => {

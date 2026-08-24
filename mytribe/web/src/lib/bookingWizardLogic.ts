@@ -133,9 +133,9 @@ export function findTimeBlock(blocks: readonly TimeBlockDto[], id: string | null
   return blocks.find((b) => b.id === id) ?? null;
 }
 
-/** 'Midday (11:00 – 15:00)' — how a window is named wherever one is chosen or confirmed. */
+/** 'Midday (11:00-15:00)': how a window is named wherever one is chosen or confirmed. */
 export function timeBlockLabel(block: TimeBlockDto): string {
-  return `${block.label} (${block.startTime} – ${block.endTime})`;
+  return `${block.label} (${block.startTime}-${block.endTime})`;
 }
 
 /**
@@ -434,7 +434,7 @@ export interface RenderedPlannedVisit {
   /** '9:00 AM' */
   time: string;
   /**
-   * 'Midday (11:00 – 15:00)' when the visit was booked into a named window,
+   * 'Midday (11:00-15:00)' when the visit was booked into a named window,
    * null when it was booked on the clock. When set it REPLACES the time in
    * {@link plannedVisitLine}: the household chose a window, and printing
    * "11:00 AM" back at them would be reporting a precision they never gave.
@@ -489,12 +489,12 @@ export function renderPlannedVisits(
 
 /**
  * 'Thu, Sep 4 at 9:00 AM' — the spec's own one-line spelling of a visit — or
- * 'Thu, Sep 4 · Midday (11:00 – 15:00)' when the household picked a window
+ * 'Thu, Sep 4, Midday (11:00-15:00)' when the household picked a window
  * instead of a clock. The date half is unchanged in both: the enumeration rule
  * is about WHICH DAYS, and a block does not make a day any less specific.
  */
 export function plannedVisitLine(v: RenderedPlannedVisit): string {
-  if (v.timeBlockLabel !== null) return `${v.weekday}, ${v.date} · ${v.timeBlockLabel}`;
+  if (v.timeBlockLabel !== null) return `${v.weekday}, ${v.date}, ${v.timeBlockLabel}`;
   return `${v.weekday}, ${v.date} at ${v.time}`;
 }
 
