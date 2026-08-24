@@ -27,7 +27,7 @@ import com.kinfolk.portal.util.readInitialSecureResetParams
 import com.kinfolk.portal.util.readInitialShareToken
 import com.kinfolk.portal.launch.rememberLaunchDestination
 import com.kinfolk.portal.nav.AppNavHost
-import com.kinfolk.portal.nav.startRouteFor
+import com.kinfolk.portal.nav.shellStartRoute
 import com.kinfolk.portal.portal.MyHomeResult
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.theme.KinfolkPortalTheme
@@ -106,22 +106,20 @@ fun KinfolkPortalAppGuarded() {
     }
 
     // Resolve the NavHost start destination from the launch funnel. While null
-    // (auth / access / home in flight) we show the spinner and do not mount the
-    // NavHost yet, exactly like the old loading gates. A resolved kinfolk only
-    // opens the shell once getMyHome has landed so the chrome has a family name.
-    val homeReady = resolvedKinfolkId == null || home != null
-    val startRoute = if (homeReady) {
-        startRouteFor(
-            secureReset = initialSecureResetParams,
-            shareToken = initialShareToken,
-            claimId = claimInviteId,
-            dest = dest,
-            resolvedKinfolkId = resolvedKinfolkId,
-            cameFromPicker = cameFromPicker,
-        )
-    } else {
-        null
-    }
+    // (auth / access / home in flight, or a session being torn down) we show the
+    // spinner and do not mount the NavHost at all. The rule lives in
+    // nav/StartRoute.kt so it can be tested without a Compose runtime — see
+    // shellStartRoute's doc comment for why #539 makes it a security rule and
+    // not just a loading nicety.
+    val startRoute = shellStartRoute(
+        secureReset = initialSecureResetParams,
+        shareToken = initialShareToken,
+        claimId = claimInviteId,
+        dest = dest,
+        resolvedKinfolkId = resolvedKinfolkId,
+        cameFromPicker = cameFromPicker,
+        homeLoaded = home != null,
+    )
 
     KinfolkPortalTheme(themeId = home?.portal?.themeId ?: "default") {
         androidx.compose.runtime.CompositionLocalProvider(
@@ -215,9 +213,9 @@ fun KinfolkPortalAppGuarded() {
                                 // Synchronous, and deliberately not inside the coroutine:
                                 // this is what takes the authenticated screen down NOW,
                                 // rather than a frame after some network call answers.
-                                // startRouteFor sees no resolved kinfolk and no home, so
-                                // the NavHost unmounts entirely and its back stack goes
-                                // with it — there is no entry left to go back to.
+                                // shellStartRoute sees no loaded home, so it returns
+                                // null: the NavHost unmounts entirely and its back stack
+                                // goes with it, leaving no entry to go back to.
                                 pickedKinfolkId = null
                                 pickedFromDirectory = false
                                 home = null

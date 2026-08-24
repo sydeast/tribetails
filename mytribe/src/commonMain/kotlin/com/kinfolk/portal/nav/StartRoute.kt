@@ -36,6 +36,47 @@ fun startRouteFor(
 }
 
 /**
+ * The start destination the app shell may mount RIGHT NOW.
+ *
+ * [startRouteFor] answers "where does this account belong". This answers the
+ * narrower, time-sensitive question the caller actually asks on every
+ * recomposition, and it exists as its own function because #539 made it a
+ * security rule rather than a loading nicety.
+ *
+ * A resolved kinfolk with no [homeLoaded] payload yet means the shell is not
+ * allowed on screen. On first boot that is the familiar "wait for the family
+ * name before drawing the chrome". On sign-out it is what takes the
+ * authenticated screen DOWN, immediately and before any network call answers:
+ * KinfolkPortalAppGuarded clears `home` the moment Sign Out is pressed, so this
+ * returns null, the NavHost unmounts, and its whole back stack goes with it.
+ * There is no entry left for the system Back gesture to re-enter.
+ *
+ * The auth state has usually not flipped yet at that point — `dest` is still
+ * Home — which is exactly why the rule cannot be written in terms of auth.
+ *
+ * @param homeLoaded whether getMyHome has landed for [resolvedKinfolkId].
+ */
+fun shellStartRoute(
+    secureReset: SecureResetParams?,
+    shareToken: String?,
+    claimId: String?,
+    dest: LaunchDestination?,
+    resolvedKinfolkId: String?,
+    cameFromPicker: Boolean = false,
+    homeLoaded: Boolean,
+): Any? = if (resolvedKinfolkId != null && !homeLoaded) {
+    null
+} else {
+    startRouteFor(
+        secureReset = secureReset,
+        shareToken = shareToken,
+        claimId = claimId,
+        dest = dest,
+        resolvedKinfolkId = resolvedKinfolkId,
+        cameFromPicker = cameFromPicker,
+    )
+}
+/**
  * Stable identity for a route instance, used to detect when the reactive launch
  * funnel produced a different start destination and the NavHost must
  * re-navigate. Route types are @Serializable data classes / objects, so their
