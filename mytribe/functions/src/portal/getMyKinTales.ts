@@ -7,6 +7,7 @@ import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { TaleThumb, MAX_THUMBS_PER_TALE, mediaDocToThumb } from '../lib/kinTaleThumbs';
+import { isClientLocationSharingEnabled } from '../lib/locationSharing';
 
 interface GetMyKinTalesRequest {
   kinfolkId?: string;
@@ -110,6 +111,10 @@ export async function getMyKinTalesHandler(
   const { kinfolkId } = await resolveKinfolkAccess(uid, req.data?.kinfolkId, req.auth?.token?.admin === true, 'getMyKinTales');
 
   // Wasm/JS clients can serialize limit as a double (20.0); Firestore requires int.
+  // ISSUE #519: the operator's "Let kinfolk see visit locations" switch, read
+  // once per call so a `false` withholds the route from every tale in the page.
+  // Absent reads as ON; see `lib/locationSharing.ts`.
+  const shareLocations = await isClientLocationSharingEnabled(firestore);
   const limit = clamp(Math.trunc(Number(req.data?.limit ?? 20)) || 20, 1, 50);
   let q = firestore
     .collection('kin_care_reports')
@@ -208,8 +213,11 @@ export async function getMyKinTalesHandler(
       if (Object.keys(moods).length > 0) dto.petMoods = moods;
     }
 
+    // ISSUE #519: `gpsRoute` is the only coordinate-bearing field on a KinTale.
+    // The `gpsSummary` below carries distance and duration only, so it is not
+    // gated: the switch withholds WHERE a visit went, not that it happened.
     const route = data['gpsRoute'];
-    if (Array.isArray(route)) {
+    if (shareLocations && Array.isArray(route)) {
       dto.gpsRoute = (route as Array<Record<string, unknown>>)
         .filter((p) => typeof p['lat'] === 'number' && typeof p['lng'] === 'number')
         .map((p) => {

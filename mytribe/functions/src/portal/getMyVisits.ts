@@ -2,6 +2,7 @@ import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https
 import { db } from '../lib/firestoreAdmin';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { logEvent } from '../lib/logger';
+import { isClientLocationSharingEnabled, withoutCoordinates } from '../lib/locationSharing';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -63,6 +64,10 @@ export async function getMyVisitsHandler(
   // Wasm/JS clients can serialize limit as a double; Firestore requires an int.
   const limit = clamp(Math.trunc(Number(req.data?.limit ?? 10)) || 10, 1, 50);
 
+  // ISSUE #519: the operator's "Let kinfolk see visit locations" switch. Read
+  // once per call, before the projection, so a `false` withholds coordinates
+  // from every visit in the response rather than per row. Absent reads as ON.
+  const shareLocations = await isClientLocationSharingEnabled(db());
   const snap = await db()
     .collection('kin_care_sessions')
     .where('kinfolkId', '==', kinfolkId)
@@ -102,7 +107,11 @@ export async function getMyVisitsHandler(
             return r;
           });
       }
-      dto.gpsSummary = out;
+      // Coordinates are withheld when the operator has turned sharing off; the
+      // distance and duration stay, because "your Auntie walked 1.2 miles" is
+      // the fact of the visit and the switch is about WHERE, not whether.
+      const projected = shareLocations ? out : withoutCoordinates(out);
+      if (projected) dto.gpsSummary = projected;
     }
     return dto;
   });
