@@ -11,16 +11,27 @@ import {
   type User,
 } from 'firebase/auth';
 import { useSyncExternalStore } from 'react';
+import { decideAttestation } from './boot';
 import { auth } from './firebase';
 
 /**
  * Auth for the AuntieOS admin app. Structurally mirrors
  * MyTribe/web/src/lib/auth.ts (the onAuthStateChanged -> useSyncExternalStore
- * store + waitForAuthReady router hook), MINUS the reCAPTCHA/App Check bootstrap:
- * per firebase.ts, App Check is deliberately deferred to A8 (O-30 Phase 2), and
- * activating it here would re-introduce the Enterprise-loader collision that
- * silently stalls every callable. Do not add ensureRecaptcha here without
- * reading that ruling.
+ * store + waitForAuthReady router hook).
+ *
+ * APP CHECK IS WIRED NOW (#576). This comment used to say it was deferred to A8
+ * and warn the next reader off adding it; that was true until the backend policy
+ * layer landed in #562, and it is exactly the stale note the issue cites. What
+ * survives from it is the REASON for the shape: only one reCAPTCHA Enterprise
+ * loader may exist per page lifetime, so attestation is decided ONCE — in the
+ * listener below, from the first resolved auth state — rather than activated at
+ * module init. `lib/boot.ts` holds that decision and the whole argument for it.
+ * Do not move the call out of the listener without reading it.
+ *
+ * There is deliberately still no `ensureRecaptcha` here. The portal needs one
+ * because a tokenless sign-in is refused on its surfaces; this app has never
+ * needed the pre-warm, and adding it would start the auth loader on every boot —
+ * the shape that made App Check unreachable in the portal for months (#556).
  *
  * The admin GATE (is this signed-in user allowed into the app at all) lives in
  * access.ts, which reads the custom claims off the ID token. This module only
@@ -262,6 +273,13 @@ const listeners = new Set<() => void>();
 
 onAuthStateChanged(auth, (user) => {
   currentState = user ? { status: 'signedIn', user } : { status: 'signedOut' };
+  // #576: the attestation decision, taken from the first auth state Firebase
+  // resolves and BEFORE subscribers are notified. Order matters both ways: this
+  // is the earliest point at which "does this lifetime make callables or sign
+  // somebody in" is answerable, and a subscriber that fires a callable on the
+  // very next line already has (or already knows it lacks) a token. Idempotent,
+  // so the sign-in transition below cannot start a second reCAPTCHA loader.
+  decideAttestation(currentState.status === 'signedIn');
   for (const l of listeners) l();
 });
 

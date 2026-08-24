@@ -1,7 +1,13 @@
 import { initializeApp } from 'firebase/app';
+import {
+  getToken as getAppCheckToken,
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+} from 'firebase/app-check';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
+import { reportError } from './sentry';
 
 /**
  * AuntieOS admin Firebase config.
@@ -31,16 +37,213 @@ export const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 
+// ---------------------------------------------------------------------------
+// O-3 App Check, admin client half (#576). The backend policy layer shipped in
+// #562 (`MyTribe/functions/src/lib/appCheckPolicy.ts`): a cohort list in code, a
+// mode read from `business_settings/security.appCheckMode` (off | log | enforce,
+// default log, fails open), and telemetry that tells an INVALID attestation
+// apart from an ABSENT one. Until this file existed, every admin request was
+// `absent` — the admin had no attestation at all, and said so in a comment where
+// this code now is.
+// ---------------------------------------------------------------------------
+
 /**
- * No App Check here yet, deliberately.
+ * The reCAPTCHA Enterprise site key App Check attests with, for the AuntieOS
+ * WEB app (`1:153396971788:web:c2631409219d44727f2129`).
  *
- * MyTribe/web activates it (O-3 ruling). AuntieOS ships its own registration at
- * A8 (O-30 Phase 2), AFTER cutover. The reason is the collision documented in
- * MyTribe's auth.ts: whichever reCAPTCHA Enterprise script loads second executes
- * its key against the other's instance and its token promise pends SILENTLY,
- * which is how the claim screen came to hang forever. Do not add App Check here
- * without reading that ruling first and unifying the loaders.
+ * ---------------------------------------------------------------------------
+ * THIS IS THE ONE THING IN #576 A HUMAN HAS TO DO. Checked against the live
+ * project on 2026-08-24 rather than assumed:
+ *
+ *   - `recaptchaenterprise.googleapis.com/v1/projects/auntieos-ttpc/keys` lists
+ *     five keys. The only App Check one is `mytribe-appcheck-web`
+ *     (6LcqhVItAAAAAJtyUQuqtYQED9UVpHcoJMdCtsy9), and its `allowedDomains` are
+ *     `mytribe-kinfolk-beta.web.app` and `kinfolk.tribetails.com` — neither of
+ *     which is where this app is served. The admin's three origins
+ *     (auntie.tribetails.com, auntieos-ttpc.web.app,
+ *     auntieos-ttpc.firebaseapp.com) are on the two IDENTITY-PLATFORM keys
+ *     instead, and O-3 D1 already ruled that App Check must not share a key
+ *     with another assessment stream: App Check runs its own assessments, so
+ *     one key would pollute both metric streams and couple two unrelated
+ *     tuning knobs.
+ *   - `firebaseappcheck.googleapis.com/.../apps/<appId>/recaptchaEnterpriseConfig`
+ *     returns a `siteKey` for the MyTribe web app and NO `siteKey` for this
+ *     one. The AuntieOS web app is known to App Check and has no provider
+ *     registered against it.
+ *
+ * So the operator creates ONE new key and registers it. Exactly:
+ *
+ *   1. reCAPTCHA console (project auntieos-ttpc) > Create key
+ *      - display name: `auntieos-appcheck-web`
+ *      - platform: Website, score-based (no challenge)
+ *      - domains: auntie.tribetails.com, auntieos-ttpc.web.app,
+ *        auntieos-ttpc.firebaseapp.com  (leave localhost OFF; local dev uses
+ *        the debug token below)
+ *   2. Firebase console > App Check > Apps > "AuntieOS Web" > reCAPTCHA
+ *      Enterprise > register, pasting that key.
+ *   3. Put the key in [ADMIN_APP_CHECK_SITE_KEY] below (or set
+ *      `VITE_ADMIN_APPCHECK_SITE_KEY` in the build env, which wins).
+ *
+ * Everything else about App Check in this app is already built and tested.
+ * Until step 3 lands, [getAppCheckStatus] reports `unconfigured` and says so
+ * once, loudly, on every boot — the one thing #576 forbids is this being
+ * quiet. `unconfigured` is deliberately not `failed` and not `inactive`: it is
+ * neither a broken attestation nor a session that chose to skip one.
+ *
+ * A site key is a PUBLIC identifier, like the apiKey above. It belongs in the
+ * bundle and not in Secret Manager (checked: no reCAPTCHA key is in there).
  */
+export const ADMIN_APP_CHECK_SITE_KEY: string = (
+  (import.meta.env.VITE_ADMIN_APPCHECK_SITE_KEY as string | undefined) ?? ''
+).trim();
+
+if (import.meta.env.DEV) {
+  // Debug token for local dev only — dead code (tree-shaken) in production
+  // builds since `import.meta.env.DEV` is statically false there. Each operator
+  // registers their own token in the App Check console; never commit a real one
+  // to VITE_APPCHECK_DEBUG_TOKEN. `globalThis` (not `self` — undefined under
+  // Node/vitest, only a browser/worker global) so this doesn't crash test runs
+  // that import this module transitively.
+  (
+    globalThis as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: string | boolean }
+  ).FIREBASE_APPCHECK_DEBUG_TOKEN = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
+}
+
+/**
+ * What actually happened when we tried, as a value anything can read.
+ *
+ * - `inactive`     — never attempted. This page lifetime chose the auth
+ *                    reCAPTCHA loader instead (see `lib/boot.ts`), or it is an
+ *                    e2e run.
+ * - `unconfigured` — no site key is compiled in. See above; the operator step.
+ * - `unsupported`  — no DOM (Node/vitest). Not a failure, not attestation either.
+ * - `pending`      — activated, first token not back yet.
+ * - `active`       — a real App Check token was minted in this session.
+ * - `failed`       — activation threw, or the first token never arrived.
+ *
+ * The point of `failed` and `unconfigured` existing SEPARATELY from `inactive`
+ * is that a broken attestation must not read the same as a session that
+ * deliberately skipped one. The portal had no way to tell those apart before
+ * #556, which is a large part of why nobody noticed App Check had never once
+ * activated there; this app starts with the distinction rather than acquiring
+ * it after the same outage.
+ */
+export type AppCheckStatus =
+  | 'inactive'
+  | 'unconfigured'
+  | 'unsupported'
+  | 'pending'
+  | 'active'
+  | 'failed';
+
+let appCheckInstance: ReturnType<typeof initializeAppCheck> | null = null;
+let appCheckStatus: AppCheckStatus = 'inactive';
+
+/** Current App Check state for this page lifetime. */
+export function getAppCheckStatus(): AppCheckStatus {
+  return appCheckStatus;
+}
+
+/** Test seam: forget that activation was attempted in this module's lifetime. */
+export function resetAppCheckForTest(): void {
+  appCheckInstance = null;
+  appCheckStatus = 'inactive';
+}
+
+/**
+ * How long the first token may take before we call it a failure.
+ *
+ * Sized above `fns.ts`'s 20s callable timeout on purpose: the Functions SDK
+ * awaits the App Check token OUTSIDE its own timeout, so a token promise that
+ * pends forever presents as callables hanging with no error at all. 25s means
+ * the console line and the Sentry event land after the first callable has
+ * already given up, which is the order that makes the pair legible — a
+ * `CallableTimeoutError` next to an App Check failure is a different bug report
+ * from a `CallableTimeoutError` on its own.
+ */
+const APP_CHECK_PROBE_TIMEOUT_MS = 25_000;
+
+function appCheckFailed(reason: string, err: unknown): void {
+  appCheckStatus = 'failed';
+  // Loud in the console AND in Sentry. A silent pass here is the whole defect
+  // class #556/#576 are about.
+  console.error(`[AppCheck] ${reason}. Callables from this session are unattested.`, err);
+  reportError(err, 'appCheck');
+}
+
+/**
+ * Fetch one token, so activation means something.
+ *
+ * `initializeAppCheck` returning is not evidence of anything: it constructs a
+ * provider and returns synchronously, and every real failure (unregistered app,
+ * wrong site key, a domain the key does not allow, a blocked reCAPTCHA script,
+ * a token promise that pends because the auth loader already owns `grecaptcha`)
+ * shows up later, inside a token fetch nobody was watching.
+ */
+async function probeAppCheck(instance: ReturnType<typeof initializeAppCheck>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      getAppCheckToken(instance),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(`App Check token did not arrive within ${APP_CHECK_PROBE_TIMEOUT_MS}ms`),
+            ),
+          APP_CHECK_PROBE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    appCheckStatus = 'active';
+    console.log('[AppCheck] attestation active');
+  } catch (err) {
+    appCheckFailed('attestation failed', err);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Turn attestation on for this page lifetime. Idempotent; `lib/boot.ts` owns
+ * WHETHER it is called, this owns what happens when it is.
+ */
+export function activateAppCheck(): void {
+  if (appCheckInstance !== null || appCheckStatus === 'failed') return;
+  if (typeof document === 'undefined') {
+    appCheckStatus = 'unsupported';
+    return;
+  }
+  // Declared further down this file, and read here only at CALL time — which is
+  // always after module evaluation, so the const is initialized by then.
+  if (E2E_EMULATOR_HOST !== '') {
+    // An e2e run talks to emulators on localhost and must not reach out to
+    // Google for a real attestation: the key does not allow localhost, the
+    // request would leave the machine, and `e2e/no-production-egress.spec.ts`
+    // exists to fail on exactly that.
+    appCheckStatus = 'inactive';
+    return;
+  }
+  if (ADMIN_APP_CHECK_SITE_KEY === '') {
+    appCheckStatus = 'unconfigured';
+    console.error(
+      '[AppCheck] no site key compiled in, so this session is unattested. ' +
+        'Create the reCAPTCHA Enterprise key and register it — see ADMIN_APP_CHECK_SITE_KEY in lib/firebase.ts.',
+    );
+    return;
+  }
+  try {
+    appCheckInstance = initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(ADMIN_APP_CHECK_SITE_KEY),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (err) {
+    appCheckFailed('initializeAppCheck threw', err);
+    return;
+  }
+  appCheckStatus = 'pending';
+  void probeAppCheck(appCheckInstance);
+}
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
