@@ -19,6 +19,7 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { SignedImageUpload } from '../components/SignedImageUpload';
+import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
@@ -511,7 +512,12 @@ export function Account() {
                 roster.map((k, i) => (
                   <Link className={`kinrow ${kinVariant(i)}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
                     <div className="pic">
-                      {k.photoUrl ? <img src={k.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : speciesEmoji(k.species)}
+                      <FallbackImage
+                        src={k.photoUrl}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        fallback={speciesEmoji(k.species)}
+                      />
                     </div>
                     <div>
                       <b>{k.name ?? 'Unnamed Kin'}</b>

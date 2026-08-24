@@ -5,6 +5,7 @@ import { getMyTribeProfile } from '../api/tribeApi';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { relativeDay, speciesEmoji } from '../lib/portalFormat';
 
@@ -87,7 +88,12 @@ export function TribeHub() {
               roster.map((k, i) => (
                 <Link className={`kinrow ${KIN_VARIANTS[i % KIN_VARIANTS.length]}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
                   <div className="pic">
-                    {k.photoUrl ? <img src={k.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : speciesEmoji(k.species)}
+                    <FallbackImage
+                      src={k.photoUrl}
+                      alt=""
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      fallback={speciesEmoji(k.species)}
+                    />
                   </div>
                   <div>
                     <b>{k.name ?? 'Unnamed Kin'}</b>
@@ -106,7 +112,7 @@ export function TribeHub() {
               <div className="gallery-row">
                 {gallery.map((k) => (
                   <div className="gallery-thumb" key={k.id} title={k.name ?? undefined}>
-                    <img src={k.photoUrl ?? ''} alt="" />
+                    <FallbackImage src={k.photoUrl} alt="" fallback={speciesEmoji(k.species)} />
                   </div>
                 ))}
               </div>

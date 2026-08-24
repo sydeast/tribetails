@@ -26,6 +26,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { isoTime } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
+import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { RouteMap } from '../components/RouteMap';
 
@@ -226,7 +227,12 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
             {media.data!.media.map((m, i) => (
               <div className={`shot ${GALLERY_VARIANTS[i % GALLERY_VARIANTS.length]}`} key={m.id}>
                 {isImageThumb(m.contentType) ? (
-                  <img src={m.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <FallbackImage
+                    src={m.url}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    fallback={PHOTO_UNAVAILABLE_GLYPH}
+                  />
                 ) : (
                   '\u{1F4F7}'
                 )}
@@ -249,7 +255,12 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
       {thumbs.slice(0, STRIP_MAX_TILES).map((thumb, i) => (
         <div className={`sm ${STRIP_VARIANTS[i % STRIP_VARIANTS.length]}`} key={thumb.id}>
           {isImageThumb(thumb.contentType) ? (
-            <img src={thumb.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <FallbackImage
+              src={thumb.url}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              fallback={PHOTO_UNAVAILABLE_GLYPH}
+            />
           ) : (
             PLAY_GLYPH
           )}
@@ -311,7 +322,12 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
           <div className="byline">
             <div className="bav">
               {featuredPhoto ? (
-                <img src={featuredPhoto.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <FallbackImage
+                  src={featuredPhoto.url}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  fallback={'\u{1F43E}'}
+                />
               ) : (
                 '\u{1F43E}'
               )}

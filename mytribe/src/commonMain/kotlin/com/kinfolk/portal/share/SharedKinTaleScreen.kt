@@ -26,14 +26,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
+import com.kinfolk.portal.components.KinfolkRemoteImage
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkGradients
 import com.kinfolk.portal.theme.KinfolkShapes
@@ -366,6 +365,15 @@ private fun GuestCommentForm(shareToken: String, taleId: String, fetcher: ShareL
     }
 }
 
+// This is a share link's own guest-facing page (issue #397, item S9): whoever
+// opens it is not signed in and cannot be told anything went wrong, the same
+// reasoning BrandLogo.tsx's doc comment gives for the web portal's header
+// logo. A bare AsyncImage with no `error` slot renders an empty box on a
+// load failure on Compose (there is no OS-level broken-image glyph the way a
+// browser's <img> has one) -- silent, but still a guest looking at a blank
+// tile where a memory was supposed to be. KinfolkRemoteImage is the same
+// Coil error-slot pattern every other portal photo surface already uses
+// (RemoteImage.kt), so a dead url shows the broken-image icon instead.
 @Composable
 private fun PhotoTile(url: String) {
     val c = KinfolkTheme.colors
@@ -373,14 +381,13 @@ private fun PhotoTile(url: String) {
         modifier = Modifier
             .size(140.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(c.glassSurface)
             .border(1.dp, c.glassBorder, RoundedCornerShape(10.dp)),
     ) {
-        AsyncImage(
-            model = url,
+        KinfolkRemoteImage(
+            url = url,
             contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+            modifier = Modifier.fillMaxSize(),
+            cornerRadius = 10.dp,
         )
     }
 }

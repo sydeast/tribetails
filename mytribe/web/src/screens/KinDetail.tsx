@@ -5,6 +5,7 @@ import { archiveKin, getMyKin } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { speciesEmoji } from '../lib/portalFormat';
 
@@ -93,11 +94,12 @@ export function KinDetail() {
 
         <section className="glass kinhero">
           <div className="bigpic">
-            {found.photoUrl ? (
-              <img src={found.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              speciesEmoji(found.species)
-            )}
+            <FallbackImage
+              src={found.photoUrl}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              fallback={speciesEmoji(found.species)}
+            />
           </div>
           <div className="htext">
             <h1>{found.name ?? 'Unnamed Kin'}</h1>

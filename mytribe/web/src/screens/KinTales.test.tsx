@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinTales } from './KinTales';
@@ -211,6 +211,33 @@ describe('KinTales: photo-first cards', () => {
     const strip = container.querySelector('.tcstrip')!;
     expect(strip.querySelectorAll('img')).toHaveLength(0);
     expect(within(strip as HTMLElement).getByText('\u{25B6}\u{FE0F}')).toBeInTheDocument();
+  });
+
+  it('replaces a strip thumb with the photo-unavailable glyph when it fails to load (S9), distinct from the video glyph', async () => {
+    const thumbs = [thumb({ id: 'broken', url: 'https://cdn.example/broken.jpg' })];
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({ id: 'featured', title: 'Featured Card', body: 'Featured, no photos.' }),
+        tale({ id: 't2', title: 'Broken Card', body: 'A photo that fails to load.', mediaIds: ['broken'], thumbs }),
+      ],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A photo that fails to load.');
+    const strip = container.querySelector('.tcstrip')!;
+    const img = strip.querySelector('img');
+    expect(img).not.toBeNull();
+
+    // See FallbackImage.test.tsx for why fireEvent.error genuinely exercises
+    // the onError handler rather than passing vacuously in jsdom.
+    fireEvent.error(img!);
+
+    expect(strip.querySelectorAll('img')).toHaveLength(0);
+    // Never the play glyph: a load failure is not a video, and the comment on
+    // PLAY_GLYPH above is explicit that the two must not be conflated.
+    expect(within(strip as HTMLElement).queryByText('\u{25B6}\u{FE0F}')).toBeNull();
+    expect(within(strip as HTMLElement).getByText('\u{1F5BC}\u{FE0F}')).toBeInTheDocument();
   });
 
   it('a tale with no media renders no .tcstrip element at all, and still renders its title, body and footer', async () => {

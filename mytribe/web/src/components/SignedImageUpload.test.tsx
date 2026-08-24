@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SignedImageUpload } from './SignedImageUpload';
 import type { SignedUploadParams } from './SignedImageUpload';
@@ -254,5 +254,30 @@ describe('SignedImageUpload', () => {
 
     await waitFor(() => expect(validate).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(sign).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the caller-supplied fallback, not a dead glyph, when the current imageUrl fails to load (S9)', () => {
+    const validate = vi.fn().mockReturnValue(null);
+    const sign = vi.fn().mockResolvedValue(SIGNED);
+    const onUploaded = vi.fn();
+
+    const { container, getByText } = render(
+      <SignedImageUpload
+        sign={sign}
+        validate={validate}
+        onUploaded={onUploaded}
+        imageUrl="https://res.cloudinary.com/demo/image/upload/v1/gone.jpg"
+        fallback="M"
+      />,
+    );
+    const img = container.querySelector('img.siu-img');
+    expect(img).not.toBeNull();
+
+    // See FallbackImage.test.tsx for why fireEvent.error is a genuine
+    // exercise of the onError handler in jsdom, not a vacuous pass.
+    fireEvent.error(img!);
+
+    expect(container.querySelector('img')).toBeNull();
+    expect(getByText('M')).toBeTruthy();
   });
 });
