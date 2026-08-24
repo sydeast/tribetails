@@ -229,7 +229,10 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
 
 // ── Booking behavior ─────────────────────────────────────────────────────────
 
-type BookingToggleKey = 'autoConfirmRepeatKinfolk' | 'snapRescheduleTo15Min';
+type BookingToggleKey =
+  | 'autoConfirmRepeatKinfolk'
+  | 'snapRescheduleTo15Min'
+  | 'enableConflictDetection';
 
 interface BookingBehaviorSectionProps {
   data: BusinessSettings;
@@ -237,13 +240,21 @@ interface BookingBehaviorSectionProps {
 }
 
 /**
- * Two instant-save toggles, no separate Save button, matching the wasm
+ * Three instant-save toggles, no separate Save button, matching the wasm
  * `BookingBehaviorPanel`'s `AuntieToggle(checked = s?.field == true, onCheckedChange
  * = { vm.saveSettings(s.copy(field = next)) })`: the switch reads straight off the
  * loaded doc and saves on every flip, rather than staging a draft. `data` (not a
  * local optimistic copy) drives `checked`, so a failed save leaves the switch
  * exactly where it was (the fail-loud error banner explains why) instead of
  * showing a flip that never actually persisted.
+ *
+ * The third, "Block bookings during busy events" (#517), is the one whose
+ * default is ON: it writes `enableConflictDetection`, which
+ * `mytribe/functions/src/lib/bookingBusyConflict.ts` reads before every booking
+ * write, so turning it off really does let a visit land on a Google-imported
+ * busy block. It reads `!== false` rather than `=== true` for the same reason
+ * the server does: a settings doc written before the field existed must decode
+ * as ON, not as an open gate.
  */
 export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionProps) {
   const [savingKey, setSavingKey] = useState<BookingToggleKey | null>(null);
@@ -289,6 +300,15 @@ export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionP
             checked={data.snapRescheduleTo15Min}
             disabled={savingKey !== null}
             onChange={(next) => void toggle('snapRescheduleTo15Min', next)}
+          />
+        </li>
+        <li className="settingsEdit__toggleRow">
+          <span className="settingsEdit__toggleLabel">Block bookings during busy events</span>
+          <Toggle
+            label="Toggle block bookings during busy events"
+            checked={data.enableConflictDetection !== false}
+            disabled={savingKey !== null}
+            onChange={(next) => void toggle('enableConflictDetection', next)}
           />
         </li>
       </ul>

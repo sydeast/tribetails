@@ -2,6 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { logEvent } from './logger';
 import type { ActorRole } from './schema';
 
 /**
@@ -16,6 +17,11 @@ import type { ActorRole } from './schema';
  * created on time the operator's own calendar says is taken. This module is
  * that check, called from every server callable that creates a visit or a
  * booking REQUEST that will become one, before the write.
+ *
+ * WHETHER IT REFUSES IS THE OPERATOR'S CALL: the check runs on every write
+ * path, but `business_settings.enableConflictDetection` ("Block bookings during
+ * busy events") decides whether a found conflict refuses the write or is only
+ * logged. See `isBusyConflictBlockingEnabled` below for why absent means ON.
  *
  * SCOPE: `source === 'GOOGLE_BUSY_IMPORT'` rows only
  * (`syncGoogleCalendarBusyEvents.ts`). `INTERNAL_MANUAL` blocks
@@ -56,6 +62,37 @@ export const BOOKING_BUSY_CONFLICT_CODE = 'booking_busy_conflict';
 
 const BOOKING_TIME_SLOTS_COLLECTION = 'booking_time_slots';
 const GOOGLE_BUSY_SOURCE = 'GOOGLE_BUSY_IMPORT';
+
+/** The unified settings doc every client writes (`business_settings/business_settings`). */
+const BUSINESS_SETTINGS_DOC = 'business_settings/business_settings';
+
+/**
+ * Issue #517: the operator's "Block bookings during busy events" switch, which
+ * is `business_settings.enableConflictDetection` on every model
+ * (`auntieos-admin` web/React/Android all default it TRUE).
+ *
+ * Until now this guard refused a busy-block collision unconditionally, and the
+ * field had no server-side consumer at all: it was persisted by three clients,
+ * read by one of them for its own local availability check, and honoured by
+ * nothing that could actually stop a write. Reading it here is what makes the
+ * switch real, and it gates all five call sites (`requestBooking` x2,
+ * `createMultiDateBookingRequest`, `createKinCareSession`,
+ * `approveBookingSeriesCore`) from one place.
+ *
+ * ABSENT MEANS ON. Every existing `business_settings` doc predates the field, so
+ * a missing value has to decode the way the models already decode it (`true`),
+ * or turning the switch into a real one would silently open the gate on every
+ * deployment that has not written it yet. Only an explicit `false` -- an
+ * operator who went and turned it off -- lets a booking through.
+ *
+ * This matches what the flag already means on the client: Android's
+ * `EnhancedSchedulingViewModel` gates its `evaluateAvailability` conflict check
+ * on the same field, and that check reads the same `booking_time_slots` rows.
+ */
+export async function isBusyConflictBlockingEnabled(firestore: Firestore): Promise<boolean> {
+  const snap = await firestore.doc(BUSINESS_SETTINGS_DOC).get();
+  return snap.data()?.enableConflictDetection !== false;
+}
 
 /**
  * Cap on how many `booking_time_slots` rows one guard call reads. Mirrors the
@@ -285,11 +322,19 @@ export interface GuardBookingBusyConflictOptions {
  * The one call every write path makes. Loads the relevant busy slots, checks
  * for a conflict, and either:
  *   - no conflict: returns, silently.
+ *   - a conflict, but the operator turned "Block bookings during busy events"
+ *     off (`enableConflictDetection === false`): logs the collision it is
+ *     letting through and returns. No audit entry: nothing was overridden by a
+ *     person, the gate is simply not armed.
  *   - a conflict, not overridden: throws `failed-precondition` naming every
  *     conflicting visit and the busy window it lands on.
  *   - a conflict, overridden: writes an audit entry recording exactly what was
  *     overridden, then returns. The write proceeds; auditing is not optional
  *     the way it would be if this were folded into a silent no-op.
+ *
+ * The settings read happens ONLY after a real conflict is found, so the common
+ * path (no busy blocks, or none that overlap) still costs exactly the one
+ * `booking_time_slots` query it always did.
  */
 export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOptions): Promise<void> {
   const busySlots = await loadGoogleBusySlots(opts.firestore, opts.visits);
@@ -297,6 +342,20 @@ export async function guardBookingBusyConflict(opts: GuardBookingBusyConflictOpt
 
   const conflicts = findBookingBusyConflicts(opts.visits, busySlots);
   if (conflicts.length === 0) return;
+
+  if (!(await isBusyConflictBlockingEnabled(opts.firestore))) {
+    logEvent({
+      severity: 'info',
+      function: 'guardBookingBusyConflict',
+      event: 'booking.busyConflict.detectionDisabled',
+      uid: opts.actorUid,
+      extra: {
+        ...opts.auditContext,
+        conflicts: conflicts.map((c) => ({ visitIndex: c.visitIndex, slotDocId: c.slot.docId })),
+      },
+    });
+    return;
+  }
 
   if (!opts.override) {
     throw new HttpsError('failed-precondition', formatBookingBusyConflictMessage(conflicts), {
