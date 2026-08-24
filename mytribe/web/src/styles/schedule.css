@@ -47,6 +47,13 @@
 
 /* ── GPS route replay (RouteMap.tsx) ── */
 .routemap { display: flex; flex-direction: column; gap: 12px; }
+/* The two renderers share one 180px frame: the Mapbox canvas underneath, the
+   SVG polyline stacked over it until tiles are up (and permanently, when
+   there is no token). Stacking rather than swapping means mapbox-gl always
+   builds into a container that already has its final size. */
+.routemap-stage { position: relative; width: 100%; height: 180px; }
+.routemap-map { position: absolute; inset: 0; border-radius: 8px; overflow: hidden; background: var(--glass-dim); }
+.routemap-stage > .routemap-canvas { position: absolute; inset: 0; height: 100%; }
 .routemap-canvas { width: 100%; height: 180px; border-radius: 8px; background: var(--glass-dim); display: block; }
 .routemap-stats { display: flex; gap: 24px; }
 .routemap-stat { display: flex; flex-direction: column; gap: 2px; }
