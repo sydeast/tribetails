@@ -16,6 +16,13 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
 import { mapServiceRates } from './getServiceCatalog';
+import {
+  businessTimeZone,
+  findTimeBlock,
+  resolveBookingPolicy,
+  visitMatchesBlock,
+  type BookingPolicy,
+} from '../lib/bookingTimeBlocks';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -83,6 +90,22 @@ const VisitArgs = z.object({
   serviceId: z.string().min(1),
   serviceName: z.string().min(1).max(120),
   priceCents: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Time-block booking (operator requirement 2026-08-24): the NAMED window this
+   * visit was asked for, from `business_settings.timeBlocks`.
+   *
+   * It is the mode marker as well as the value: present means "this visit was
+   * chosen by block", absent means "this visit was chosen by clock", and
+   * `assertVisitBookingMode` below decides whether this business allows the one
+   * that was used. The id is never trusted — it is looked up in the resolved
+   * policy, and a visit whose start does not fall inside that window is
+   * refused, so a client cannot send an arbitrary time under a block's name.
+   *
+   * Optional rather than nullable here so a client built before this field
+   * existed parses unchanged. See `ExportedVisitArgs` for why the GENERATED
+   * shape spells it the other way round.
+   */
+  timeBlockId: z.string().min(1).max(80).optional(),
 });
 
 /**
@@ -174,9 +197,9 @@ const MultiArgs = z.object({
  * branch here is a patch -- this is a create, so "omitted" and "sent null"
  * already mean the same thing to the handler -- so narrowing the GENERATED
  * shape to one of the two costs nothing real:
- *   - `visits[].endTimeMs` / `priceCents`: always-present, nullable (the
- *     generated client always sends the key, `null` when there is no value),
- *     never omitted.
+ *   - `visits[].endTimeMs` / `priceCents` / `timeBlockId`: always-present,
+ *     nullable (the generated client always sends the key, `null` when there is
+ *     no value), never omitted.
  *   - the legacy flat `endTimeMs`: optional, never asserted `null` (a
  *     generated legacy caller either has an end time or leaves the key out).
  */
@@ -187,6 +210,8 @@ const ExportedVisitArgs = z
     serviceId: z.string().min(1),
     serviceName: z.string().min(1).max(120),
     priceCents: z.number().int().nonnegative().nullable(),
+    /** The named window this visit was booked in, or null when it was booked by clock. */
+    timeBlockId: z.string().min(1).max(80).nullable(),
   })
   .strict();
 
@@ -252,6 +277,20 @@ export interface NormalizedVisit {
   serviceName: string | null;
   priceCents: number | null;
   title: string | null;
+  /**
+   * Time-block booking: the window this visit was asked for, resolved and
+   * verified server-side, or null when it was booked by clock.
+   *
+   * OPTIONAL ON THIS INTERFACE, not on the stored document. `writeEnvelope` has
+   * a second caller — `admin/createMultiDateBookingRequest.ts`, where an
+   * operator is picking real times on the office's own calendar and there is no
+   * block to name — and making these required would have forced a field into a
+   * builder that has no value for it. `writeEnvelope` persists an explicit
+   * `null` either way, so a reader never has to tell "absent" from "by clock".
+   */
+  timeBlockId?: string | null;
+  /** The block's label AS IT WAS WHEN BOOKED, so an admin sees the name the household picked even if it is later renamed. */
+  timeBlockLabel?: string | null;
 }
 
 /** One catalog entry as the write path needs it: the canonical label and the price it carries. */
@@ -371,15 +410,134 @@ export async function resolveService(
  * cannot be wrong.
  */
 export function duplicateVisitKey(
-  visits: ReadonlyArray<{ startTimeMs: number; serviceId: string }>,
+  visits: ReadonlyArray<{ startTimeMs: number; serviceId: string; timeBlockId?: string | null | undefined }>,
 ): string | null {
   const seen = new Set<string>();
   for (const v of visits) {
-    const key = `${v.serviceId}@${v.startTimeMs}`;
+    // Time-block booking: in block mode EVERY visit in a block starts at that
+    // block's first minute, so keying on the instant would refuse "a 30 minute
+    // and a 60 minute, both in the Midday block" — which is exactly the
+    // several-KinCares-a-day case #541/#543 built. Worse, the message would
+    // tell a household to "change one of the times" next to a picker that has
+    // no times in it. So in block mode the identity of a visit is
+    // (KinCare, block), and what is refused is the SAME KinCare in the SAME
+    // block twice, which is still one visit asked for twice.
+    const when = v.timeBlockId != null && v.timeBlockId.length > 0 ? `block:${v.timeBlockId}` : `${v.startTimeMs}`;
+    const key = `${v.serviceId}@${when}`;
     if (seen.has(key)) return key;
     seen.add(key);
   }
   return null;
+}
+
+/** Which duplicate rule tripped, so the refusal can name a control the household actually has. */
+function duplicateVisitMessage(key: string): string {
+  return key.includes('@block:')
+    ? 'Two KinCares in this request are the same duration in the same time block. Remove one, or move it to another block.'
+    : 'Two KinCares in this request have the same duration at the same time. Change one of the times.';
+}
+
+/**
+ * Time-block booking: the policy this request is judged against, plus the zone
+ * its windows are stated in.
+ *
+ * Read through `resolveBookingPolicy` — the SAME decoder `getBookingPolicy`
+ * serves the portal from — so the wizard cannot be offered a control this
+ * validator refuses. Validating against the raw `business_settings` fields
+ * instead is the one bug this design can produce by accident, so the raw fields
+ * are never read here at all.
+ *
+ * A failed settings read falls back to the resolver's own defaults (specific
+ * time allowed, no blocks), which is the pre-time-block behaviour exactly: a
+ * Firestore blip must not start refusing every booking in the business.
+ */
+export async function loadBookingPolicy(): Promise<{ policy: BookingPolicy; timeZone: string }> {
+  let raw: unknown = {};
+  try {
+    const snap = await db().collection('business_settings').doc('business_settings').get();
+    raw = snap.data() ?? {};
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'requestBooking',
+      event: 'bookingPolicy.read.failed',
+      errorMessage: (err as Error)?.message,
+    });
+  }
+  return { policy: resolveBookingPolicy(raw).policy, timeZone: businessTimeZone(raw) };
+}
+
+/** What the server decided one visit's WHEN actually is. Persisted on the visit. */
+export interface ResolvedVisitBlock {
+  timeBlockId: string | null;
+  timeBlockLabel: string | null;
+}
+
+/**
+ * Is this visit's WHEN something this business allows, and is the block real?
+ *
+ * Throws `invalid-argument` and returns the verified block otherwise. THIS IS
+ * THE REFUSAL PATH the whole feature turns on: a client that sends an arbitrary
+ * clock time while the business only allows block booking is refused, not
+ * trusted, and so is a client that names a block that does not exist, is not
+ * active, or does not contain the time it sent.
+ *
+ * Four rules, in the order a reader should think about them:
+ *
+ *  1. NO BLOCK NAMED + specific-time not allowed -> refused. This is the
+ *     operator's requirement enforced: "kinfolk book within time blocks, not at
+ *     a specific set time".
+ *  2. BLOCK NAMED + block booking not allowed -> refused. Symmetry matters:
+ *     an operator who turned blocks off should not keep receiving them from a
+ *     stale client.
+ *  3. BLOCK NAMED but unknown to the policy -> refused. `findTimeBlock` searches
+ *     the RESOLVED list, which already dropped inactive and unreadable rows, so
+ *     "not active" and "not a block" refuse identically and for one reason.
+ *  4. BLOCK NAMED and real, but `startTimeMs` falls outside its window ->
+ *     refused. Containment is checked on the BUSINESS's wall clock; when the
+ *     stored zone is unusable the check is skipped (see `visitMatchesBlock`)
+ *     rather than guessed at, and rules 1-3 still stand.
+ */
+export function assertVisitBookingMode(
+  visit: { startTimeMs: number; timeBlockId?: string | null | undefined },
+  policy: BookingPolicy,
+  timeZone: string,
+): ResolvedVisitBlock {
+  const namedId = typeof visit.timeBlockId === 'string' ? visit.timeBlockId.trim() : '';
+
+  if (namedId.length === 0) {
+    if (!policy.allowSpecificTimeBooking) {
+      throw new HttpsError(
+        'invalid-argument',
+        'This business takes bookings inside its named time blocks, not at a specific time. Choose a time block for every KinCare.',
+      );
+    }
+    return { timeBlockId: null, timeBlockLabel: null };
+  }
+
+  if (!policy.allowTimeBlockBooking) {
+    throw new HttpsError(
+      'invalid-argument',
+      'This business is not taking time-block bookings right now. Choose a specific time for every KinCare.',
+    );
+  }
+
+  const block = findTimeBlock(policy, namedId);
+  if (block === null) {
+    throw new HttpsError(
+      'invalid-argument',
+      'That time block is no longer available. Reload the booking wizard and pick one of the current blocks.',
+    );
+  }
+
+  if (visitMatchesBlock(visit.startTimeMs, block, timeZone) === 'outside') {
+    throw new HttpsError(
+      'invalid-argument',
+      `That visit time is outside the ${block.label} block (${block.startTime}–${block.endTime}). Pick the block again.`,
+    );
+  }
+
+  return { timeBlockId: block.id, timeBlockLabel: block.label };
 }
 
 /**
@@ -489,6 +647,17 @@ export async function writeEnvelope(opts: {
         serviceName: v.serviceName,
         serviceType: v.serviceName,
         priceCents: v.priceCents,
+        // Time-block booking: WHICH named window this visit was asked for, so
+        // the admin side reads the household's actual choice rather than
+        // inferring it. AuntieOS already labels a session by containment
+        // (`resolveTimeBlock(startTime, timeBlocks)`), and that still works —
+        // this is the household's stated answer, which survives an operator
+        // later moving or renaming the window.
+        //
+        // Always written, `null` for a by-the-clock visit, so no reader has to
+        // tell "this predates blocks" from "this was booked by clock".
+        timeBlockId: v.timeBlockId ?? null,
+        timeBlockLabel: v.timeBlockLabel ?? null,
         // No `location`. A visit happens at the household's address, which is
         // read live off the household doc by everything that needs it
         // (`optimizeRoute.ts`, the address chips, `BookingDetailModal.tsx`).
@@ -565,12 +734,17 @@ export async function requestBookingHandler(
         throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
       }
     });
+    // Time-block booking: resolved BEFORE the duplicate check, because in block
+    // mode the duplicate rule keys on the block rather than the instant, and
+    // before the busy/holiday guards, because a refusal a household can act on
+    // ("pick a block") should not be reached through one it cannot.
+    const { policy, timeZone } = await loadBookingPolicy();
+    const resolvedBlocks = args.visits.map((v) => assertVisitBookingMode(v, policy, timeZone));
+
     // #543: several KinCares in one day are fine; the SAME one twice is not.
-    if (duplicateVisitKey(args.visits) !== null) {
-      throw new HttpsError(
-        'invalid-argument',
-        'Two KinCares in this request have the same duration at the same time. Change one of the times.',
-      );
+    const dupKey = duplicateVisitKey(args.visits);
+    if (dupKey !== null) {
+      throw new HttpsError('invalid-argument', duplicateVisitMessage(dupKey));
     }
     // Kinfolk have no override: a busy-import conflict always refuses the request.
     await guardBookingBusyConflict({ firestore, visits: args.visits, actorUid: uid, actorRole: 'PRIMARY' });
@@ -586,8 +760,16 @@ export async function requestBookingHandler(
     // KinCares (#541) and used to cost one catalog read per visit.
     const priceBook = await loadServicePriceBook();
     const normalized: NormalizedVisit[] = await Promise.all(
-      args.visits.map(async (v) => {
+      args.visits.map(async (v, idx) => {
+        // Time-block booking does NOT touch pricing. A block says WHEN; the
+        // KinCare (`serviceId`) still says how long and how much, and it is
+        // still resolved here through `resolveService` against the same
+        // `serviceRates`-first price book #546 fixed. A block-booked visit
+        // therefore reaches `priceCents` by the identical path a clock-booked
+        // one does, which is the whole reason the block is a separate field
+        // rather than a replacement for the service.
         const resolved = await resolveService(v.serviceId, v.serviceName, priceBook);
+        const block = resolvedBlocks[idx] ?? { timeBlockId: null, timeBlockLabel: null };
         return {
           startTimeMs: v.startTimeMs,
           endTimeMs: v.endTimeMs ?? null,
@@ -595,6 +777,8 @@ export async function requestBookingHandler(
           serviceName: resolved.serviceName,
           priceCents: resolved.priceCents,
           title: resolved.serviceName ?? v.serviceName,
+          timeBlockId: block.timeBlockId,
+          timeBlockLabel: block.timeBlockLabel,
         };
       }),
     );
@@ -616,7 +800,13 @@ export async function requestBookingHandler(
     logEvent({
       severity: 'info', function: 'requestBooking',
       event: 'portal.booking.requested.multi', uid,
-      extra: { kinfolkId, batchId, count: normalized.length, pattern },
+      extra: {
+        kinfolkId,
+        batchId,
+        count: normalized.length,
+        pattern,
+        blockVisits: normalized.filter((v) => v.timeBlockId !== null).length,
+      },
     });
     await writeAuditEntry({
       status: 'SUCCESS',
@@ -649,6 +839,13 @@ export async function requestBookingHandler(
   if (args.startTimeMs < Date.now() - 60_000) {
     throw new HttpsError('invalid-argument', 'startTime must be in the future.');
   }
+  // Time-block booking: the legacy shape carries NO `timeBlockId` and never
+  // will, so under a block-only policy every request through it is an arbitrary
+  // clock time and is refused here. Without this line the refusal above would
+  // be bypassable by sending the older payload — a guard on one branch of a
+  // two-branch handler is not a guard.
+  const legacyPolicy = await loadBookingPolicy();
+  assertVisitBookingMode({ startTimeMs: args.startTimeMs }, legacyPolicy.policy, legacyPolicy.timeZone);
   // Kinfolk have no override: a busy-import conflict always refuses the request.
   await guardBookingBusyConflict({
     firestore,
