@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -44,9 +45,17 @@ data class RoutePoint(
 )
 
 /**
- * Replay-only route renderer for past visits. Mirrors the AuntieOS-side
- * `RouteMap` composable but simpler — no live pulse, no breadcrumb reads.
- * Pure Compose Canvas, no map SDK, no public access token shipped.
+ * Route renderer for a KinCare visit, live or replayed. Frame, map surface and
+ * the distance / duration / pings row.
+ *
+ * The surface inside the frame is [RouteMapSurface], which is `expect`/`actual`
+ * per issue #520: on Android it is a real Mapbox basemap, so a kinfolk sees the
+ * streets their Kin walked instead of a line floating in empty space. Every
+ * other target, and every Android failure path, renders [RouteCanvas], which is
+ * the polyline this component drew everywhere until #520 and is unchanged.
+ *
+ * Signature and call sites are untouched: ScheduleScreen (live and per-visit)
+ * and KinTalesScreen (recorded) pass the same arguments they always did.
  */
 @Composable
 fun RouteMap(
@@ -56,7 +65,6 @@ fun RouteMap(
     modifier: Modifier = Modifier,
 ) {
     if (route.isEmpty()) return
-    val type = LocalKinfolkTypography.current
 
     Column(
         modifier = modifier
@@ -74,56 +82,7 @@ fun RouteMap(
                 .clip(RoundedCornerShape(8.dp))
                 .background(KinfolkBrand.GlassSurfaceDim),
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val padPx = 16f
-                val w = size.width  - padPx * 2
-                val h = size.height - padPx * 2
-                if (w <= 0 || h <= 0) return@Canvas
-
-                var minLat = route.first().lat; var maxLat = minLat
-                var minLng = route.first().lng; var maxLng = minLng
-                for (p in route) {
-                    minLat = min(minLat, p.lat); maxLat = max(maxLat, p.lat)
-                    minLng = min(minLng, p.lng); maxLng = max(maxLng, p.lng)
-                }
-                val dLat = (maxLat - minLat).coerceAtLeast(1e-6)
-                val dLng = (maxLng - minLng).coerceAtLeast(1e-6)
-                val midLat = (minLat + maxLat) / 2.0
-                val lngScale = cos(midLat * PI / 180.0)
-                val effDLng = dLng * lngScale
-                val scale = min(w / effDLng, h / dLat).toFloat()
-                val drawnW = (effDLng * scale).toFloat()
-                val drawnH = (dLat * scale).toFloat()
-                val xOff = padPx + (w - drawnW) / 2f
-                val yOff = padPx + (h - drawnH) / 2f
-
-                fun project(p: RoutePoint): Offset {
-                    val x = ((p.lng - minLng) * lngScale * scale).toFloat() + xOff
-                    val y = drawnH - ((p.lat - minLat) * scale).toFloat() + yOff
-                    return Offset(x, y)
-                }
-
-                if (route.size >= 2) {
-                    val path = Path()
-                    val first = project(route.first())
-                    path.moveTo(first.x, first.y)
-                    for (i in 1 until route.size) {
-                        val q = project(route[i])
-                        path.lineTo(q.x, q.y)
-                    }
-                    drawPath(path = path, color = KinfolkBrand.KinTeal, style = Stroke(width = 4f))
-                }
-
-                val start = project(route.first())
-                drawCircle(color = KinfolkBrand.KinfolkOrange, radius = 6f, center = start)
-                drawCircle(color = Color.White, radius = 2f, center = start)
-
-                if (route.size >= 2) {
-                    val last = project(route.last())
-                    drawCircle(color = KinfolkBrand.PackPink, radius = 6f, center = last)
-                    drawCircle(color = Color.White, radius = 2f, center = last)
-                }
-            }
+            RouteMapSurface(route = route, modifier = Modifier.fillMaxSize())
         }
 
         val computedDistance = distanceMeters ?: totalDistanceMeters(route)
@@ -135,6 +94,106 @@ fun RouteMap(
             Stat("Distance", formatDistance(computedDistance))
             Stat("Duration", formatDuration(computedDuration))
             Stat("Pings",    route.size.toString())
+        }
+    }
+}
+
+/**
+ * Marks the polyline fallback, so a test can tell "drew the route the old way"
+ * apart from "drew nothing at all". The two look identical from outside
+ * [RouteMap], and only one of them is acceptable.
+ */
+internal const val ROUTE_CANVAS_TAG = "route-canvas"
+
+/**
+ * What fills the map rectangle inside [RouteMap], per target.
+ *
+ * `androidMain` builds a Mapbox `MapView` when, and only when, startup actually
+ * handed the SDK an access token; `jvmMain` and `jsMain` render [RouteCanvas]
+ * permanently, because no Mapbox SDK exists for either.
+ *
+ * The contract every actual owes: it always draws the route somehow. There is no
+ * arrangement of missing token, refused tiles or absent SDK that leaves a kinfolk
+ * looking at an empty rectangle, because the floor is the polyline they already
+ * had. That is the whole safety story of the #520 design.
+ */
+@Composable
+internal expect fun RouteMapSurface(
+    route: List<RoutePoint>,
+    modifier: Modifier = Modifier,
+)
+
+/**
+ * The polyline renderer, moved here verbatim from [RouteMap] and NOT retired.
+ *
+ * It is the `jvm` and `js` surface permanently, and on Android it is the
+ * fallback for a build with no `MAPBOX_PUBLIC_TOKEN` and for a basemap that
+ * refuses to load. Deleting it would turn both of those into a blank box, which
+ * is the failure issue #520 exists to fix rather than to introduce.
+ *
+ * Equirectangular projection with a cos(lat) correction, scaled to fit and
+ * centred. Good enough for a 180dp thumbnail of a walk around a neighbourhood;
+ * it is not a map projection and does not pretend to be one.
+ *
+ * Carries [ROUTE_CANVAS_TAG] because a `Canvas` draws nothing a test can read
+ * back: without it a fallback that silently rendered an empty box would still
+ * pass every assertion about the frame and the statistics row around it, which
+ * is the exact failure this component exists to prevent.
+ */
+@Composable
+internal fun RouteCanvas(
+    route: List<RoutePoint>,
+    modifier: Modifier = Modifier,
+) {
+    if (route.isEmpty()) return
+    Canvas(modifier = modifier.testTag(ROUTE_CANVAS_TAG)) {
+        val padPx = 16f
+        val w = size.width  - padPx * 2
+        val h = size.height - padPx * 2
+        if (w <= 0 || h <= 0) return@Canvas
+
+        var minLat = route.first().lat; var maxLat = minLat
+        var minLng = route.first().lng; var maxLng = minLng
+        for (p in route) {
+            minLat = min(minLat, p.lat); maxLat = max(maxLat, p.lat)
+            minLng = min(minLng, p.lng); maxLng = max(maxLng, p.lng)
+        }
+        val dLat = (maxLat - minLat).coerceAtLeast(1e-6)
+        val dLng = (maxLng - minLng).coerceAtLeast(1e-6)
+        val midLat = (minLat + maxLat) / 2.0
+        val lngScale = cos(midLat * PI / 180.0)
+        val effDLng = dLng * lngScale
+        val scale = min(w / effDLng, h / dLat).toFloat()
+        val drawnW = (effDLng * scale).toFloat()
+        val drawnH = (dLat * scale).toFloat()
+        val xOff = padPx + (w - drawnW) / 2f
+        val yOff = padPx + (h - drawnH) / 2f
+
+        fun project(p: RoutePoint): Offset {
+            val x = ((p.lng - minLng) * lngScale * scale).toFloat() + xOff
+            val y = drawnH - ((p.lat - minLat) * scale).toFloat() + yOff
+            return Offset(x, y)
+        }
+
+        if (route.size >= 2) {
+            val path = Path()
+            val first = project(route.first())
+            path.moveTo(first.x, first.y)
+            for (i in 1 until route.size) {
+                val q = project(route[i])
+                path.lineTo(q.x, q.y)
+            }
+            drawPath(path = path, color = KinfolkBrand.KinTeal, style = Stroke(width = 4f))
+        }
+
+        val start = project(route.first())
+        drawCircle(color = KinfolkBrand.KinfolkOrange, radius = 6f, center = start)
+        drawCircle(color = Color.White, radius = 2f, center = start)
+
+        if (route.size >= 2) {
+            val last = project(route.last())
+            drawCircle(color = KinfolkBrand.PackPink, radius = 6f, center = last)
+            drawCircle(color = Color.White, radius = 2f, center = last)
         }
     }
 }

@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -20,6 +21,13 @@ plugins {
 
 group = "com.kinfolk"
 version = "0.2.0"
+
+// Mirrors auntieos-admin/android/app/build.gradle.kts:41. local.properties is
+// gitignored and holds sdk.dir plus whatever a machine's own credentials are.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
 
 kotlin {
     @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -177,6 +185,34 @@ kotlin {
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
             implementation("io.sentry:sentry-android:8.53.0")
+            // Mapbox Maps SDK, android only. It is what puts streets and
+            // landmarks under the KinCare route instead of the bare polyline a
+            // kinfolk sees today (issue #520). Same 11.10.0 as
+            // auntieos-admin/android so the two apps cannot drift onto
+            // different SDK behaviour.
+            //
+            // Resolved from the Mapbox maven repository declared in
+            // settings.gradle.kts, which needs MAPBOX_DOWNLOADS_TOKEN. Without
+            // it this dependency does not resolve and Android tasks fail
+            // loudly; jvm and js are untouched and keep the Canvas renderer.
+            implementation("com.mapbox.maps:android:11.10.0")
+        }
+        // The Android unit-test variant's own source set (layout v2, see
+        // gradle.properties). It exists so MapboxTokenStartupTest can assert
+        // that KinfolkPortalApplication.onCreate hands the SDK its token before
+        // any Composable - and therefore any MapView - can exist. That needs a
+        // real Application instance, which is Robolectric's job and cannot be
+        // done from commonTest.
+        //
+        // NOT a way around the #473 Compose-UI-test wall: nothing here launches
+        // an Activity. See mytribe/CLAUDE.md; Compose UI tests still belong in
+        // src/composeUiTest and still run only under :jvmTest.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("junit:junit:4.13.2")
+                implementation("org.robolectric:robolectric:4.16.1")
+            }
         }
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
@@ -215,6 +251,29 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "0.2.0"
+
+        // The Maps SDK authenticates its OWN tile requests on the device, so a
+        // public token has to reach the APK; there is no server-proxy option for
+        // a basemap the way there is for a geocoding lookup. This is the mobile
+        // token, which carries no URL restriction because Mapbox validates those
+        // from a browser Referer and answers 403 to Maps SDK requests. The web
+        // portal gets a different, URL-restricted token.
+        //
+        // Injected exactly the way auntieos-admin/android does it: local
+        // .properties first, then a gradle property (which covers
+        // ~/.gradle/gradle.properties and ORG_GRADLE_PROJECT_MAPBOX_PUBLIC_TOKEN),
+        // then empty. Empty is a VALID build: RouteMap then renders the Canvas
+        // polyline, which is exactly what every kinfolk sees today, and no other
+        // screen degrades.
+        //
+        // NOT the same token as MAPBOX_DOWNLOADS_TOKEN in settings.gradle.kts.
+        // That one is an `sk.` maven credential that downloads the SDK at build
+        // time and cannot authenticate a MapView.
+        buildConfigField(
+            "String",
+            "MAPBOX_PUBLIC_TOKEN",
+            "\"${localProps.getProperty("MAPBOX_PUBLIC_TOKEN") ?: project.findProperty("MAPBOX_PUBLIC_TOKEN") ?: ""}\"",
+        )
     }
 
     signingConfigs {
@@ -244,6 +303,19 @@ android {
 
     buildFeatures {
         compose = true
+        // Off by default in AGP 8+, and this module had no buildConfigField
+        // until the Mapbox token above needed one. Without it BuildConfig is
+        // never generated and MapboxPortalConfig cannot read the token.
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged resources and the manifest to build
+            // an Application. Mirrors auntieos-admin/android:163.
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = true
+        }
     }
 
     lint {

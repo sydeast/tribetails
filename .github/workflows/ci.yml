@@ -200,6 +200,11 @@ jobs:
             mytribeGradle:
               - 'mytribe/build.gradle.kts'
               - 'mytribe/settings.gradle.kts'
+              # Added with the Mapbox work in #520, which put credential
+              # documentation and AGP flags in the same file. A change to it can
+              # decide whether the android target resolves at all, so it has to
+              # be able to trigger the job on its own.
+              - 'mytribe/gradle.properties'
               - 'mytribe/src/**'
               - 'mytribe/gradle/**'
               - '.github/workflows/ci.yml'
@@ -694,10 +699,43 @@ jobs:
       # The authoritative task for mytribe/src: it runs commonTest and the
       # Compose UI tests in composeUiTest. See mytribe/CLAUDE.md.
       - run: ./gradlew :jvmTest --no-daemon
+      # From issue #520 the portal's androidTarget depends on the Mapbox Maps
+      # SDK, which comes from Mapbox's private Maven repo behind a downloads
+      # token. That is an EXTERNAL secret only the operator can issue, so the
+      # android step reports honestly instead of failing every PR without it.
+      # A green "skipped" here means the Android variant was NOT tested, which is
+      # why it says so loudly rather than quietly passing.
+      #
+      # Only THIS step is gated. :jvmTest above and compileKotlinJs below need no
+      # Mapbox anything - those targets render the Canvas polyline permanently -
+      # and mytribe/settings.gradle.kts is written so a missing token leaves them
+      # working. :jvmTest is the authoritative task for this module and must not
+      # be skippable by a credential it does not use.
+      - name: Check for Mapbox token
+        id: mapbox
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -n "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # The Android unit-test variant. Nothing ran it until issue #473, by which
       # point it was failing 143 of its 524 tests on a clean main. It passes
       # now, and it only stays passing if something runs it.
-      - run: ./gradlew testDebugUnitTest --no-daemon
+      - name: Portal Android unit tests
+        if: steps.mapbox.outputs.present == 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Report skipped
+        if: steps.mapbox.outputs.present != 'true'
+        run: |
+          echo "::warning title=Portal Android tests skipped::MAPBOX_DOWNLOADS_TOKEN is not set, so the Mapbox SDK cannot be resolved and testDebugUnitTest did NOT run. jvmTest and compileKotlinJs in this job DID run."
+          echo "Set it with: gh secret set MAPBOX_DOWNLOADS_TOKEN --repo sydeast/tribetails"
       # The js target, which nothing had ever compiled (issue #507). It arrived
       # in the 2026-07-20 subtree import and stopped compiling somewhere in the
       # Kotlin 2.2.20 -> 2.4.10 dependabot bumps, because `org.w3c.fetch.fetch`
