@@ -456,6 +456,40 @@ class SchedulingSettingsSaveTest {
             assertTrue("nothing to save is the same outcome as saved", vm.state.value.calendarSyncIdSaved)
         }
 
+    // ── ISSUE #519: the calendar opens on the view the operator chose ──────────
+    //
+    // `defaultCalendarView` was decoded and defaulted by all three admin models,
+    // editable on none of them, and read by none of them either. Without the seed
+    // the screen always opened on `EnhancedSchedulingUiState`'s own default, WEEK,
+    // which does not even agree with the MONTH every model states.
+    //
+    // DAY, not WEEK, is the value asserted below for exactly that reason: WEEK is
+    // what the unfixed screen shows anyway, so a WEEK case would pass against the
+    // defect it is supposed to catch.
+    @Test
+    fun `the scheduling calendar opens on the stored defaultCalendarView`() =
+        runTest(testDispatcher) {
+            coEvery { auntieRepo.getBusinessSettings() } returns
+                Result.success(stored.copy(defaultCalendarView = "DAY"))
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            assertEquals(
+                com.tribetails.auntieos.ui.admin.scheduling.CalendarViewMode.DAY,
+                vm.state.value.viewMode,
+            )
+        }
+    @Test
+    fun `an unreadable stored view falls back to MONTH rather than throwing`() =
+        runTest(testDispatcher) {
+            coEvery { auntieRepo.getBusinessSettings() } returns
+                Result.success(stored.copy(defaultCalendarView = "GANTT"))
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            assertEquals(
+                com.tribetails.auntieos.ui.admin.scheduling.CalendarViewMode.MONTH,
+                vm.state.value.viewMode,
+            )
+        }
     @Test
     fun `the in-place settings updater writes only what its lambda changed`() =
         runTest(testDispatcher) {
