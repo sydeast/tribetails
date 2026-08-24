@@ -6,6 +6,12 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
+import {
+  ARRIVAL_VERIFICATION_CODE,
+  arrivalVerificationMessage,
+  isArrivalVerificationRequired,
+  missingVisitSteps,
+} from '../lib/arrivalVerification';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -158,7 +164,9 @@ export async function transitionBookingStatusHandler(
     throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
   }
 
-  const prev = snap.data() as { status?: unknown; notes?: unknown } | undefined;
+  const prev = snap.data() as
+    | { status?: unknown; notes?: unknown; arrivedAt?: unknown; departedAt?: unknown }
+    | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
 
   if (decision.kind === 'unknown-status') {
@@ -240,6 +248,30 @@ export async function transitionBookingStatusHandler(
     });
   }
 
+  // ISSUE #519: the operator's "Verify arrival and departure" switch. Checked
+  // AFTER the transition machine has ruled the move legal, so an illegal
+  // COMPLETE still reports the illegal transition rather than this, and only for
+  // COMPLETE, which is the one transition the server owns and the one that
+  // decides whether a visit happened. Absent reads as OFF; see
+  // `lib/arrivalVerification.ts` for why this gate reads that way round.
+  if (args.action === 'COMPLETE' && (await isArrivalVerificationRequired(db()))) {
+    const missing = missingVisitSteps(prev ?? {});
+    if (missing.length > 0) {
+      await auditRefusal({
+        uid,
+        sessionId: args.sessionId,
+        action: args.action,
+        code: ARRIVAL_VERIFICATION_CODE,
+        from: decision.from,
+        description: `COMPLETE refused: session '${args.sessionId}' has no ${missing.join(' or ')} recorded`,
+      });
+      throw new HttpsError('failed-precondition', arrivalVerificationMessage(missing), {
+        code: ARRIVAL_VERIFICATION_CODE,
+        sessionId: args.sessionId,
+        missing,
+      });
+    }
+  }
   const patch: Record<string, unknown> = {
     status: decision.to,
     updatedAt: FieldValue.serverTimestamp(),

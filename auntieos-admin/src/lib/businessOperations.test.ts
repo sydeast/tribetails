@@ -15,6 +15,8 @@ import {
   timeBlockDraft,
   timeZoneOptions,
   validateTimeBlocks,
+  firstActiveOverlap,
+  compareBlocksByStart,
   type TimeBlockDraft,
 } from './businessOperations';
 
@@ -177,6 +179,41 @@ describe('validateTimeBlocks', () => {
     });
   });
 
+  /**
+   * `resolveTimeBlock` picks with `firstOrNull` over the ACTIVE rows, so two
+   * overlapping live blocks make a visit's displayed name a function of array
+   * order rather than of the block a kinfolk chose.
+   */
+  it('refuses two ACTIVE blocks that overlap, naming both', () => {
+    const out = validateTimeBlocks([
+      block({ id: 'morning', label: 'Morning', startTime: '09:00', endTime: '13:00' }),
+      block({ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }),
+    ]);
+    expect('error' in out && out.error).toContain('"Morning" and "Midday" overlap');
+  });
+  it('allows blocks that merely touch, because the range is half open', () => {
+    const out = validateTimeBlocks([
+      block({ id: 'morning', label: 'Morning', startTime: '09:00', endTime: '11:00' }),
+      block({ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }),
+    ]);
+    expect('value' in out).toBe(true);
+  });
+  /** A parked seasonal block is not a conflict until it is switched on. */
+  it('allows an INACTIVE block to overlap a live one', () => {
+    const out = validateTimeBlocks([
+      block({ id: 'morning', label: 'Morning', startTime: '09:00', endTime: '13:00', active: false }),
+      block({ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }),
+    ]);
+    expect('value' in out).toBe(true);
+  });
+  it('stores rows sorted by start time, whatever order they were typed in', () => {
+    const out = validateTimeBlocks([
+      block({ id: 'evening', label: 'Evening', startTime: '17:00', endTime: '20:00' }),
+      block({ id: 'dawn', label: 'Dawn', startTime: '06:00', endTime: '08:00' }),
+      block({ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }),
+    ]);
+    expect('value' in out && out.value.map((b) => b.id)).toEqual(['dawn', 'midday', 'evening']);
+  });
   it('refuses more blocks than the cap', () => {
     const many = Array.from({ length: MAX_TIME_BLOCKS + 1 }, (_, i) =>
       block({ id: `b${i}`, label: `Block ${i}` }),
@@ -238,5 +275,24 @@ describe('isUsableTimeZone', () => {
   it('refuses a blank and a made-up one', () => {
     expect(isUsableTimeZone('   ')).toBe(false);
     expect(isUsableTimeZone('Mars/Olympus')).toBe(false);
+  });
+});
+
+describe('firstActiveOverlap / compareBlocksByStart', () => {
+  const b = (id: string, startTime: string, endTime: string, active = true) => ({
+    id, label: id, startTime, endTime, active,
+  });
+  it('finds nothing wrong with a start-ordered, non-overlapping set', () => {
+    expect(firstActiveOverlap([b('a', '09:00', '11:00'), b('b', '11:00', '13:00')])).toBeNull();
+  });
+  it('names the overlapping pair', () => {
+    expect(firstActiveOverlap([b('a', '09:00', '12:00'), b('b', '11:00', '13:00')])).toEqual(['a', 'b']);
+  });
+  it('ignores inactive rows entirely', () => {
+    expect(firstActiveOverlap([b('a', '09:00', '12:00', false), b('b', '11:00', '13:00')])).toBeNull();
+  });
+  it('orders by start, then end, then label', () => {
+    const rows = [b('z', '11:00', '15:00'), b('a', '09:00', '10:00'), b('m', '11:00', '12:00')];
+    expect([...rows].sort(compareBlocksByStart).map((r) => r.id)).toEqual(['a', 'm', 'z']);
   });
 });

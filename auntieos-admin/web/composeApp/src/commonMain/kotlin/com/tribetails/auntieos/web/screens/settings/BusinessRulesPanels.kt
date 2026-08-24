@@ -575,15 +575,15 @@ internal fun BookingRulesPanel(
 /**
  * The GPS block and the two visit defaults, with their option lists.
  *
- * WHAT IS ENFORCED AND WHAT IS ONLY STORED is said on the panel rather than only
- * in this comment. The master switch, auto-start and accuracy all change what the
- * phone's `LocationTrackingService` does, and the ETA default and its choices
- * drive the On My Way sheet. Photo tagging, arrival verification, kinfolk
- * location sharing and the two retention periods persist and read back with
- * nothing acting on them: wiring those means building features (an EXIF gate, a
- * verification step, a portal gate, two purge jobs that DELETE records), each of
- * which needs its own ruling. Saying so is the difference between a setting and
- * a promise.
+ * EVERY FIELD HERE HAS A CONSUMER, per the operator's 2026-08-24 ruling that a
+ * control must turn on a working feature. The master switch, auto-start and
+ * accuracy change what the phone's `LocationTrackingService` does; the ETA
+ * default and its choices drive the On My Way sheet; photo tagging stamps a
+ * KinTale photo with where the visit was; arrival verification stops
+ * `transitionBookingStatus` completing a visit nobody arrived at; kinfolk
+ * location sharing withholds coordinates from the portal callables and the live
+ * breadcrumb read; and the two retention periods are applied nightly by
+ * `purgeOldVisitRoutes` and `purgeOldDrafts`.
  */
 @Composable
 internal fun VisitsTrackingPanel(
@@ -681,7 +681,7 @@ internal fun VisitsTrackingPanel(
             AuntieFieldLabel(text = "Records and sharing")
             AuntieSettingRow(
                 title = "Tag visit photos with where they were taken",
-                description = "Saved, not enforced yet: nothing reads this while a photo is uploaded.",
+                description = "A KinTale photo is stamped with where the visit was when you added it.",
                 leadingIcon = Lucide.MapPin,
                 iconTone = AuntieStatusTone.Teal,
                 showDivider = true,
@@ -691,7 +691,7 @@ internal fun VisitsTrackingPanel(
             )
             AuntieSettingRow(
                 title = "Verify arrival and departure by location",
-                description = "Saved, not enforced yet: arriving and leaving are not location-checked.",
+                description = "A visit cannot be marked complete until it has been arrived at and departed from.",
                 leadingIcon = Lucide.MapPin,
                 iconTone = AuntieStatusTone.Teal,
                 showDivider = true,
@@ -701,7 +701,7 @@ internal fun VisitsTrackingPanel(
             )
             AuntieSettingRow(
                 title = "Let kinfolk see visit locations",
-                description = "Saved, not enforced yet: the portal does not read this.",
+                description = "Off withholds route coordinates from the portal and the live map.",
                 leadingIcon = Lucide.MapPin,
                 iconTone = AuntieStatusTone.Teal,
                 showDivider = false,
@@ -717,7 +717,7 @@ internal fun VisitsTrackingPanel(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Saved, not enforced yet: no job clears old routes or old drafts. These are the retention periods you intend, not ones being applied.",
+                "Route pings and unsent drafts older than these windows are deleted nightly. Visits, their summary maps and anything already sent stay.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

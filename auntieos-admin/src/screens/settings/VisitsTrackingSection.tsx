@@ -316,9 +316,9 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
             </span>
           </div>
         </div>
-        <p className="settingsEdit__hint settingsEdit__hint--warn">
-          Saved, but nothing clears old drafts yet. Until a purge job exists this is the retention
-          you intend, not one being applied.
+        <p className="settingsEdit__hint">
+          Unsent drafts older than this are deleted nightly. A draft you edited stays for this long
+          from the edit, not from when you started it. Nothing that has been sent is ever touched.
         </p>
       </div>
 
@@ -368,9 +368,9 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
             </label>
           </div>
         </div>
-        <p className="settingsEdit__hint settingsEdit__hint--warn">
-          These four save and read back, and nothing acts on them yet. They are the policy you have
-          set down, not one the apps are enforcing.
+        <p className="settingsEdit__hint">
+          Route pings older than this are deleted nightly; the visit and its summary map stay.
+          Photo tagging and the arrival check apply on the phone, where visits are worked.
         </p>
       </div>
 

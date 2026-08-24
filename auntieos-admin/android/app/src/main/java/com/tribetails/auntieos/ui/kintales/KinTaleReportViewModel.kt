@@ -9,6 +9,7 @@ import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
+import com.tribetails.auntieos.media.PhotoLocationTagging
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
@@ -627,12 +628,27 @@ class KinTaleReportViewModel(
         val sessionId = _uiState.value.session?.id ?: return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploading = true)
+            // ISSUE #519: stamp where the visit was, but only if the operator
+            // asked for it. Resolved BEFORE the upload so a slow settings or
+            // breadcrumb read cannot leave a half-tagged record, and failing
+            // soft: a photo that cannot be located is still worth uploading, so
+            // an unreadable setting or an empty trail stamps nothing rather than
+            // refusing the attachment.
+            val photoLocation = runCatching {
+                val settings = repository.getBusinessSettings().getOrNull() ?: return@runCatching null
+                if (!settings.enableGPSTrackingForAllVisits || !settings.enablePhotoLocationTagging) {
+                    return@runCatching null
+                }
+                val crumbs = kinCareRepository.getBreadcrumbs(sessionId).getOrNull().orEmpty()
+                PhotoLocationTagging.locationFor(settings, PhotoLocationTagging.latestPing(crumbs))
+            }.getOrNull()
             mediaUploader.uploadMedia(
                 uri = uri,
                 entityId = sessionId,
                 entityType = MediaEntityType.VISIT_LOG,
                 description = "KinTale media",
-                tags = listOf("kintale")
+                tags = listOf("kintale"),
+                location = photoLocation
             ).fold(
                 onSuccess = { media ->
                     val newIds = _uiState.value.report.mediaFileIds + media.id

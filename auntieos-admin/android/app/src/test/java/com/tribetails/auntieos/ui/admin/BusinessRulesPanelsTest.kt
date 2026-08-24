@@ -154,6 +154,56 @@ class BusinessRulesPanelsTest {
         assertEquals("23:59", defaultBlockEnd("nope", 4))
     }
 
+
+    // ── ISSUE #519 (block manager): overlap and ordering ────────────────────
+    @Test
+    fun `two ACTIVE blocks that overlap are refused, naming both`() {
+        val err = timeBlockError(listOf(
+            row(id = "morning", label = "Morning", start = "09:00", end = "13:00"),
+            row(id = "midday", label = "Midday", start = "11:00", end = "15:00"),
+        ))
+        assertNotNull(err)
+        assertTrue(err!!.contains("\"Morning\" and \"Midday\" overlap"))
+    }
+    @Test
+    fun `blocks that merely touch are allowed, because the range is half open`() {
+        assertNull(timeBlockError(listOf(
+            row(id = "morning", label = "Morning", start = "09:00", end = "11:00"),
+            row(id = "midday", label = "Midday", start = "11:00", end = "15:00"),
+        )))
+    }
+    /** A parked seasonal block is not a conflict until it is switched on. */
+    @Test
+    fun `an INACTIVE block may overlap a live one`() {
+        assertNull(timeBlockError(listOf(
+            row(id = "morning", label = "Morning", start = "09:00", end = "13:00", active = false),
+            row(id = "midday", label = "Midday", start = "11:00", end = "15:00"),
+        )))
+    }
+    @Test
+    fun `blocks are stored start-ordered whatever order they were typed in`() {
+        val defs = listOf(
+            row(id = "evening", label = "Evening", start = "17:00", end = "20:00"),
+            row(id = "dawn", label = "Dawn", start = "06:00", end = "08:00"),
+            row(id = "midday", label = "Midday", start = "11:00", end = "15:00"),
+        ).toDefinitions()
+        assertEquals(listOf("dawn", "midday", "evening"), defs.map { it.id })
+    }
+    @Test
+    fun `firstActiveOverlap ignores inactive rows and names the live pair`() {
+        assertNull(firstActiveOverlap(listOf(
+            row(id = "a", label = "A", start = "09:00", end = "12:00", active = false),
+            row(id = "b", label = "B", start = "11:00", end = "13:00"),
+        )))
+        assertEquals(
+            "A" to "B",
+            firstActiveOverlap(listOf(
+                row(id = "a", label = "A", start = "09:00", end = "12:00"),
+                row(id = "b", label = "B", start = "11:00", end = "13:00"),
+            )),
+        )
+    }
+
     // ── the panel-level rules ───────────────────────────────────────────────
 
     private fun bookingError(

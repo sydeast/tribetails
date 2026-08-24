@@ -254,12 +254,17 @@ describe('VisitsTrackingSection', () => {
     expect(screen.getByLabelText('Tracking accuracy')).toBeDisabled();
   });
 
-  it('says out loud that the four unenforced settings are not enforced', () => {
+  /**
+   * The panel used to carry two "saved but nothing acts on this" warnings. The
+   * operator's 2026-08-24 ruling closed that: every field here has a consumer,
+   * so the copy now says what happens instead of apologising for what does not.
+   */
+  it('describes what each retention window actually does, with no unenforced warning left', () => {
     render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
-    expect(
-      screen.getByText(/These four save and read back, and nothing acts on them yet/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/nothing clears old drafts yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Unsent drafts older than this are deleted nightly/)).toBeInTheDocument();
+    expect(screen.getByText(/Route pings older than this are deleted nightly/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing acts on them yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/nothing clears old drafts yet/)).not.toBeInTheDocument();
   });
 
   it('refuses an empty options list and says so', async () => {
