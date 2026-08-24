@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, machineWhen, type FsTime } from './time';
+import { kinTaleState } from './kinTaleFormat';
 import type { KinTaleComment } from '../api/kinTaleDetail';
 
 /**
@@ -118,4 +119,123 @@ export function kinTaleMediaKindOf(contentType: string | null): KinTaleMediaKind
   if (ct.startsWith('image/')) return 'image';
   if (ct.startsWith('video/')) return 'video';
   return 'other';
+}
+
+// ── comment threading (issue #397 S6) ────────────────────────────────────
+
+/** One flattened thread row: the comment, plus whether it renders indented under a parent. */
+export interface CommentRow {
+  comment: KinTaleComment;
+  isReply: boolean;
+}
+
+/**
+ * Groups a flat comment list into a ONE-level thread: each top-level comment
+ * (blank/absent `parentCommentId`) followed by its own direct replies, each
+ * group in `createdAtMs` order.
+ *
+ * Ported from the two shipped implementations of the same grouping,
+ * `KinTaleCommentsRepository.kt#buildCommentThread` (Android) and
+ * `KinTaleReportViewModel.kt#buildCommentThread` (wasm admin), including their
+ * orphan rule: a reply whose parent is NOT in the list (a deleted parent, or a
+ * deeper nesting an older client wrote) surfaces as its own top-level row
+ * rather than being silently dropped. A dropped row would read as "the kinfolk
+ * never said that", which is the one thing a comment thread must never do.
+ *
+ * A `null` `createdAtMs` sorts as 0, the same "oldest first, undated first"
+ * treatment both reference implementations use; it is never replaced with
+ * `Date.now()`.
+ */
+export function buildCommentThread(comments: readonly KinTaleComment[]): CommentRow[] {
+  const byTime = (a: KinTaleComment, b: KinTaleComment) => (a.createdAtMs ?? 0) - (b.createdAtMs ?? 0);
+  const ordered = [...comments].sort(byTime);
+  const knownIds = new Set(ordered.map((c) => c.id));
+  const parentIdOf = (c: KinTaleComment) => (c.parentCommentId ?? '').trim();
+
+  const repliesByParent = new Map<string, KinTaleComment[]>();
+  for (const c of ordered) {
+    const parent = parentIdOf(c);
+    if (parent === '') continue;
+    const bucket = repliesByParent.get(parent);
+    if (bucket) bucket.push(c);
+    else repliesByParent.set(parent, [c]);
+  }
+
+  const rows: CommentRow[] = [];
+  for (const parent of ordered.filter((c) => parentIdOf(c) === '')) {
+    rows.push({ comment: parent, isReply: false });
+    for (const reply of repliesByParent.get(parent.id) ?? []) {
+      rows.push({ comment: reply, isReply: true });
+    }
+  }
+  for (const c of ordered) {
+    const parent = parentIdOf(c);
+    if (parent !== '' && !knownIds.has(parent)) rows.push({ comment: c, isReply: false });
+  }
+  return rows;
+}
+
+// ── share link preflight (issue #397 S4) ─────────────────────────────────
+
+/** The report fields `shareLinkPreflightError` reads, in the order it reads them. */
+export interface ShareLinkPreflightInput {
+  id: string;
+  status: string;
+  kinfolkId: string;
+}
+
+/**
+ * Why this KinTale cannot be shared, or `null` when it can. Ported from the
+ * wasm admin's own `shareLinkPreflightError` (`KinTaleReportViewModel.kt`),
+ * which is the same three checks Android's `requestShareLink` makes inline.
+ *
+ * Every reason maps to a way `createShareLink` would fail server-side: a draft
+ * has nothing a kinfolk should read yet, an unsaved report has no
+ * `kin_care_reports` doc to point the link at, and a blank `kinfolkId` fails
+ * the server's own tale-belongs-to-family check. Checking here means the
+ * operator reads a sentence instead of a callable error code.
+ */
+export function shareLinkPreflightError(report: ShareLinkPreflightInput): string | null {
+  if (kinTaleState(report.status) !== 'sent') return 'Send this KinTale first. Only a sent KinTale can be shared.';
+  if (report.id.trim() === '') return 'Cannot share: this KinTale has not been saved yet.';
+  if (report.kinfolkId.trim() === '') return 'Cannot share: this KinTale has no kinfolk to route the link to.';
+  return null;
+}
+
+// ── view-as-kinfolk preview (issue #397 S5) ──────────────────────────────
+
+/**
+ * The fields the kinfolk preview reads. Deliberately narrow: a dossier or a
+ * 411 note is ADMIN-ONLY and a kinfolk never sees either, so the preview's
+ * input type cannot even name them (`share/createShareLink.ts` scrubs the
+ * shared payload down to the same three things: author, body, photos).
+ */
+export interface KinfolkPreviewInput {
+  title: string;
+  bodyCopy: string;
+  authorDisplayName: string;
+  kinfolkName: string;
+}
+
+/**
+ * The headline a kinfolk reads. Prefers the authored title; when the report has
+ * none (89 of the 92 live `kin_care_reports` rows carry no `title`) it falls
+ * back to the "From {author} for {recipient}" cover line rather than rendering
+ * an empty heading. Ported from Android's `kinfolkPreviewHeadline`.
+ */
+export function kinfolkPreviewHeadline(report: KinfolkPreviewInput): string {
+  const title = report.title.trim();
+  if (title !== '') return title;
+  const author = report.authorDisplayName.trim() || 'Auntie';
+  const recipient = report.kinfolkName.trim() || 'your kinfolk';
+  return `From ${author} for ${recipient}`;
+}
+
+/**
+ * The narrative a kinfolk reads, or an honest placeholder when nothing was
+ * written. Ported from Android's `kinfolkPreviewBody`; the placeholder is the
+ * fact ("nothing was written"), never invented prose.
+ */
+export function kinfolkPreviewBody(report: Pick<KinfolkPreviewInput, 'bodyCopy'>): string {
+  return report.bodyCopy.trim() === '' ? 'No narrative was written for this visit.' : report.bodyCopy;
 }
