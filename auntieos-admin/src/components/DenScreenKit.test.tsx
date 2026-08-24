@@ -326,6 +326,29 @@ describe('DenPanel', () => {
     expect(screen.getByText('Ranger, 9:00a')).toBeInTheDocument();
   });
 
+  /**
+   * The mocks' `.ct`: a count or a total on the right of the panel header. It is
+   * its own slot rather than something a screen concatenates into `title`,
+   * because the heading is the section's accessible NAME and "Kin · 2" makes a
+   * screen reader announce a number as part of it.
+   */
+  it('renders a header meta note beside the title without joining the heading', () => {
+    render(
+      <DenPanel title="Kin" meta="2 kin">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByRole('heading', { name: 'Kin' })).toBeInTheDocument();
+    expect(screen.getByText('2 kin')).toBeInTheDocument();
+  });
+  it('renders no meta element at all for a blank note', () => {
+    const { container } = render(
+      <DenPanel title="Kin" meta="   ">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(container.querySelector('.den-panel-meta')).toBeNull();
+  });
   it('is not a disclosure unless asked to be', () => {
     render(
       <DenPanel title="Today's Pack">

@@ -302,6 +302,17 @@ interface DenPanelProps {
   collapsible?: boolean;
   initiallyExpanded?: boolean;
   hoverLift?: boolean;
+  /**
+   * The mocks' `.ct`: a short, right-aligned mono note on the panel header, for
+   * a count or a total ("2 pets", "12 total", "$0 outstanding").
+   *
+   * Distinct from `trailing`, which holds CONTROLS. This is a statement about
+   * the panel's contents, so it is text and it is never interactive, and it
+   * exists as its own prop because the alternative screens kept reaching for was
+   * concatenating the number into `title` ("Kin · 2"), which puts a number
+   * inside the heading a screen reader announces as the section's name.
+   */
+  meta?: string;
   trailing?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -326,6 +337,7 @@ export function DenPanel({
   collapsible = false,
   initiallyExpanded = true,
   hoverLift = false,
+  meta,
   trailing,
   children,
   className,
@@ -371,6 +383,7 @@ export function DenPanel({
         ) : (
           heading
         )}
+        {meta !== undefined && meta.trim() !== '' && <span className="den-panel-meta">{meta}</span>}
         {trailing !== undefined && <div className="den-panel-trailing">{trailing}</div>}
       </div>
       {showContent && (

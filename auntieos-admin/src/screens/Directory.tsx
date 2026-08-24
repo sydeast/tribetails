@@ -368,6 +368,23 @@ export function Directory({
       ? kinState.data.filter((k) => k.status !== 'archived').length
       : null;
 
+  // KIN DETAIL WINS OVER THE PROFILE, and the order matters. A kin row on the
+  // household profile opens this view, and the profile is still mounted under
+  // it (its `openKinfolkId` comes from the route, which has not changed), so
+  // checking the profile first would swallow the drill-down. Closing this view
+  // therefore lands back on whichever screen opened it: the profile, or the
+  // Directory's own Kin tab.
+  if (openKinId !== null) {
+    return (
+      <KinView
+        kinId={openKinId.id}
+        kinName={openKinId.name}
+        {...(openKinId.household ? { household: openKinId.household } : {})}
+        onBack={() => setOpenKinId(null)}
+      />
+    );
+  }
+
   // Household profile takes over the screen when a card is opened (propless mount).
   // The kin come from the KIN_QUERY stream this screen already holds (no second read).
   if (openKinfolkId !== null) {
@@ -378,6 +395,21 @@ export function Directory({
         kinfolkId={openKinfolkId}
         kinfolkName={kf ? kinfolkDisplayName(kf) : ''}
         kin={kinByKinfolk.get(openKinfolkId) ?? []}
+        // Told apart from "this household has no pets", so the profile does not
+        // stamp "0 kin" on a read that has not landed.
+        kinPending={kinPending}
+        // The mock draws every kin row on the profile as a chevroned row that
+        // opens the pet. This screen already owns that swap for its own Kin tab,
+        // so the profile's rows go through the same one rather than inventing a
+        // second way in.
+        onOpenKin={(k) => {
+          const household = householdOf(k);
+          setOpenKinId({
+            id: k._id,
+            name: str(k.name),
+            ...(household ? { household } : {}),
+          });
+        }}
         onBack={() => {
           // Closing is a navigation too. `onProfileClose` is what the route
           // passes; propless (never reached today, the profile only mounts
@@ -386,17 +418,6 @@ export function Directory({
           if (onProfileClose) onProfileClose();
           else void navigate({ to: '/directory' });
         }}
-      />
-    );
-  }
-
-  if (openKinId !== null) {
-    return (
-      <KinView
-        kinId={openKinId.id}
-        kinName={openKinId.name}
-        {...(openKinId.household ? { household: openKinId.household } : {})}
-        onBack={() => setOpenKinId(null)}
       />
     );
   }

@@ -47,21 +47,55 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({
     to,
     params,
+    search,
     className,
     children,
   }: {
     to: string;
     params?: Record<string, string>;
+    search?: Record<string, string>;
     className?: string;
     children: ReactNode;
-  }) => (
-    <a
-      href={Object.entries(params ?? {}).reduce((path, [k, v]) => path.replace(`$${k}`, v), to)}
-      className={className}
-    >
-      {children}
-    </a>
+  }) => {
+    const path = Object.entries(params ?? {}).reduce((p, [k, v]) => p.replace(`$${k}`, v), to);
+    const q = new URLSearchParams(search ?? {}).toString();
+    return (
+      <a href={q === '' ? path : `${path}?${q}`} className={className}>
+        {children}
+      </a>
+    );
+  },
+}));
+// The KinTale composer is a screen of its own with its own suite. This asserts
+// the profile's hero primary opens it, not that it works.
+vi.mock('./KinTaleCompose', () => ({
+  KinTaleCompose: ({ kinfolkId, onClose }: { kinfolkId?: string; onClose: () => void }) => (
+    <div>
+      <p>STUB KinTaleCompose for {kinfolkId}</p>
+      <button type="button" onClick={onClose}>
+        stub close
+      </button>
+    </div>
   ),
+}));
+// The 411 (per-kin) and the dossier (per-household) are ADMIN-ONLY point reads.
+// Both are stubbed so no spec here touches Firestore.
+const { getKin411, getDossier } = vi.hoisted(() => ({
+  getKin411: vi.fn(),
+  getDossier: vi.fn(),
+}));
+vi.mock('../api/recipientContext', async (orig) => ({
+  ...(await orig<typeof import('../api/recipientContext')>()),
+  getKin411,
+  getDossier,
+}));
+// The three feed cards and the vet panels each open a live collection. Held at
+// `loading` by default so a spec that is not about them renders nothing from
+// them; the feed specs below set a ready state per call.
+const useCollection = vi.fn();
+vi.mock('../lib/firestore', async (orig) => ({
+  ...(await orig<typeof import('../lib/firestore')>()),
+  useCollection: (spec: unknown) => useCollection(spec) ?? { status: 'loading' },
 }));
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
@@ -87,6 +121,12 @@ beforeEach(() => {
   saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
   updateKinfolkTags.mockReset();
   updateKinfolkTags.mockResolvedValue(undefined);
+  getKin411.mockReset();
+  getKin411.mockResolvedValue(null);
+  getDossier.mockReset();
+  getDossier.mockResolvedValue(null);
+  useCollection.mockReset();
+  useCollection.mockReturnValue({ status: 'loading' });
 });
 
 describe('mergeKinfolkProfile (pure)', () => {
@@ -302,5 +342,182 @@ describe('KinfolkProfile: breadcrumbs', () => {
       'href',
       '/directory',
     );
+  });
+});
+/**
+ * MOCK PARITY (issue #407). Everything below is a difference between
+ * `ui-ideas/auntieos-kinfolk-profile-2026-05-27.html` and what this screen
+ * shipped, pinned so it cannot drift back.
+ */
+describe('KinfolkProfile: the mock', () => {
+  it('names the household ONCE, in the hero, instead of heading it and then repeating it in a panel', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('512-555-1000');
+    expect(screen.getByRole('heading', { level: 1, name: 'Jamie Halbrook' })).toBeInTheDocument();
+    // The old duplicate: a panel headed "Household" carrying the same avatar and
+    // the same name a second time.
+    expect(screen.queryByRole('heading', { name: 'Household' })).toBeNull();
+  });
+  it('offers Call and Text on the real number, and neither when there is none', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ phoneNumber: '512-555-1000' }));
+    const { unmount } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    expect(await screen.findByRole('link', { name: 'Call' })).toHaveAttribute('href', 'tel:512-555-1000');
+    expect(screen.getByRole('link', { name: 'Text' })).toHaveAttribute('href', 'sms:512-555-1000');
+    unmount();
+    getKinfolkProfile.mockResolvedValue(profile({ phoneNumber: '' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'Jamie' });
+    expect(screen.queryByRole('link', { name: 'Call' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Text' })).toBeNull();
+  });
+  it('chips the status and the tenure, and claims no tenure it cannot read', async () => {
+    const joined = new Date();
+    joined.setMonth(joined.getMonth() - 14);
+    const iso = `${joined.getFullYear()}-${String(joined.getMonth() + 1).padStart(2, '0')}-${String(joined.getDate()).padStart(2, '0')}`;
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: iso }));
+    const { unmount } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    expect(await screen.findByText('14 months')).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
+    unmount();
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: '07/24/2026' }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    await screen.findByText('Joined 07/24/2026');
+    expect(container.textContent).not.toMatch(/\d+ months/);
+  });
+  it('walks Directory / Kinfolk / household, and the Kinfolk step goes back to the list', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    const onBack = vi.fn();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={onBack} />);
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getAllByRole('listitem')).toHaveLength(3);
+    await userEvent.click(within(nav).getByRole('button', { name: 'Kinfolk' }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+  it('counts the kin in the panel meta rather than inside the panel heading', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie"
+        kin={[kin(), kin({ _id: 'p2', name: 'Bramble' })]}
+        onBack={vi.fn()}
+      />,
+    );
+    // The heading is the section's name, full stop. The count sits beside it.
+    expect(await screen.findByRole('heading', { name: 'Kin' })).toBeInTheDocument();
+    expect(screen.getByText('2 kin')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Kin · 2/ })).toBeNull();
+  });
+  it('claims no kin count and no empty state while the kin stream is still loading', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} kinPending onBack={vi.fn()} />,
+    );
+    await screen.findByRole('heading', { name: 'Kin' });
+    expect(container.textContent).not.toContain('0 kin');
+    expect(screen.queryByText('No kin on file for this household.')).toBeNull();
+    expect(screen.getByText('Loading kin…')).toBeInTheDocument();
+  });
+  it('opens a kin from its row, and renders a plain row when nothing can open it', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    const onOpenKin = vi.fn();
+    const { unmount } = render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie"
+        kin={[kin()]}
+        onBack={vi.fn()}
+        onOpenKin={onOpenKin}
+      />,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /Willow/ }));
+    expect(onOpenKin).toHaveBeenCalledWith(expect.objectContaining({ _id: 'p1' }));
+    unmount();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />);
+    await screen.findByText('Willow');
+    expect(screen.queryByRole('button', { name: /Willow/ })).toBeNull();
+  });
+  it("carries the pet's own line from its 411, and says so when a 411 cannot be read", async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    getKin411.mockResolvedValue({
+      tldr: 'Loves sticks, hates the mailman.',
+      rawSummary: '',
+      breed: '',
+      personality: '',
+      quirksAndPreferences: '',
+      medicalNotes: '',
+      dietaryDetails: '',
+    });
+    const { unmount } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />,
+    );
+    expect(await screen.findByText('Loves sticks, hates the mailman.')).toBeInTheDocument();
+    unmount();
+    // Negative: the row still renders, and the gap is announced rather than
+    // silently looking like a pet nobody has written about.
+    getKin411.mockRejectedValue(new Error('permission-denied'));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />);
+    expect(await screen.findByText(/Some kin notes couldn’t be read/i)).toBeInTheDocument();
+    expect(screen.getByText('Willow')).toBeInTheDocument();
+  });
+  /**
+   * THE PANEL UNDER THE OPERATOR'S CURSOR AT THE MARK. It used to disappear
+   * whole when a household had no address and no codes on file, so the screen
+   * gave no sign a service address was even a thing this household could have.
+   */
+  it('keeps Home & access on screen with an empty hint when nothing is on file', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Home & access' })).toBeInTheDocument();
+    expect(screen.getByText('No address or entry details on file.')).toBeInTheDocument();
+  });
+  it('shows the admin-only dossier band, headed as admin only', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockResolvedValue({
+      tldr: 'Text when on the way.',
+      rawSummary: '',
+      communicationStyle: 'Short and warm.',
+      householdNotes: 'Treats in the blue tin.',
+      relationshipWithAuntie: '',
+    });
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('Text when on the way.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Auntie’s notes/ })).toBeInTheDocument();
+    expect(screen.getByText('admin only')).toBeInTheDocument();
+    expect(screen.getByText('Treats in the blue tin.')).toBeInTheDocument();
+    expect(screen.getByText('Short and warm.')).toBeInTheDocument();
+  });
+  it('opens the KinTale composer scoped to this household from the hero primary', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('button', { name: /new kintale/i }));
+    expect(screen.getByText('STUB KinTaleCompose for k1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /stub close/i }));
+    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+  });
+  it('carries the three feed cards that make up the mock\u2019s right column', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Upcoming visits' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+  });
+  it('scopes every feed read to this household rather than filtering the whole collection in memory', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'Invoices' });
+    const specs = useCollection.mock.calls.map(([spec]) => spec as { path: string; filters?: unknown });
+    for (const path of ['kin_care_reports', 'kin_care_sessions', 'invoices']) {
+      const spec = specs.find((s) => s.path === path);
+      expect(spec, `no read of ${path}`).toBeDefined();
+      expect(spec?.filters).toEqual([['kinfolkId', '==', 'k1']]);
+    }
   });
 });

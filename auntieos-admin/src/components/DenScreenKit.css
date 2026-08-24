@@ -313,6 +313,14 @@
   width: 100%;
 }
 
+.den-panel-meta {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
 .den-panel-toggle {
   display: flex;
   align-items: center;

@@ -179,6 +179,31 @@ export const SESSIONS_QUERY: CollectionSpec = {
   order: ['startTime', 'desc'],
   max: 300,
 };
+/** The cap on the household profile's sessions read; `feedCountMeta` needs it by name. */
+export const SESSIONS_PROFILE_MAX = 300;
+/**
+ * Every Kin Care session for ONE household, for the household profile's
+ * "Upcoming visits" card.
+ *
+ * DESCENDING, then reversed in memory by `upcomingVisitsFor`, which is not an
+ * oversight: the deployed pair is `kin_care_sessions (kinfolkId ASC, startTime
+ * DESC)` and flipping the direction here would need an index that is not
+ * deployed (the same constraint `sessionsPageQuery` documents). The card shows
+ * five rows out of a 300-row cap, so the ordering work is trivial and the index
+ * stays the one that exists.
+ *
+ * The `orderBy('startTime')` caveat from `SESSIONS_QUERY` still applies: a doc
+ * missing `startTime` is dropped by the sort, and such a doc could not be shown
+ * as an upcoming visit anyway.
+ */
+export function sessionsForKinfolkQuery(kinfolkId: string): CollectionSpec {
+  return {
+    path: 'kin_care_sessions',
+    order: ['startTime', 'desc'],
+    max: SESSIONS_PROFILE_MAX,
+    filters: [['kinfolkId', '==', kinfolkId]],
+  };
+}
 
 /**
  * THE AUNTIE TIME LIST'S OWN QUERY (operator issue #17).

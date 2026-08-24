@@ -35,6 +35,59 @@ class KinfolkProfileFeedsTest {
     }
 
     @Test
+    fun `the upcoming window honours a far edge when one is given`() {
+        val sessions = listOf(
+            KinCareSession(id = "inside", kinfolkId = "k1", status = "scheduled", startTime = "2026-06-09T09:00:00Z"),
+            KinCareSession(id = "beyond", kinfolkId = "k1", status = "scheduled", startTime = "2026-07-30T09:00:00Z"),
+        )
+        val now = java.time.Instant.parse("2026-06-07T00:00:00Z")
+        val through = horizonIso(now)
+        assertEquals(
+            listOf("inside"),
+            upcomingVisitsFor(sessions, "k1", nowIso = now.toString(), throughIso = through).map { it.id },
+        )
+        // Null means no far edge, which is what this function always did.
+        assertEquals(
+            listOf("inside", "beyond"),
+            upcomingVisitsFor(sessions, "k1", nowIso = now.toString(), throughIso = null).map { it.id },
+        )
+    }
+    @Test
+    fun `the horizon lands the requested number of days out`() {
+        assertEquals(
+            "2026-06-14",
+            horizonIso(java.time.Instant.parse("2026-06-07T00:00:00Z")).take(10),
+        )
+    }
+    @Test
+    fun `a feed count says total under the cap and refuses to under a capped read`() {
+        assertEquals("3 total", feedCountMeta(3, 3, capped = false))
+        assertEquals("5 of 12 total", feedCountMeta(5, 12, capped = false))
+        // The subset trap: the card counts a subset, the cap applies to the raw
+        // read, so cappedness cannot be inferred from the count shown.
+        assertEquals("5 of 150+ loaded", feedCountMeta(5, 150, capped = true))
+    }
+    // ── The hero's tenure chip ────────────────────────────────────────────────
+    @Test
+    fun `tenure counts whole months and does not credit one that has not completed`() {
+        val today = java.time.LocalDate.of(2026, 8, 17)
+        assertEquals("14 months", tenureLabel("2025-06-17", today))
+        assertEquals("13 months", tenureLabel("2025-06-18", today))
+        assertEquals("1 month", tenureLabel("2026-07-17", today))
+        assertEquals("new", tenureLabel("2026-08-01", today))
+        assertEquals("3 years", tenureLabel("2023-01-17", today))
+        assertEquals("14 months", tenureLabel("2025-06-17T12:34:56.789Z", today))
+    }
+    @Test
+    fun `tenure claims nothing it cannot read, and nothing about a future join date`() {
+        val today = java.time.LocalDate.of(2026, 8, 17)
+        assertEquals(null, tenureLabel("", today))
+        assertEquals(null, tenureLabel("07/24/2026", today))
+        assertEquals(null, tenureLabel("2026-02-30", today))
+        assertEquals(null, tenureLabel("sometime in 2025", today))
+        assertEquals(null, tenureLabel("2027-01-01", today))
+    }
+    @Test
     fun recentTales_sentOnlyForKinfolk_newestFirst() {
         val reports = listOf(
             KinCareReport(id = "r1", kinfolkId = "k1", status = "SENT", sentAt = "2026-06-05T10:00:00Z"),

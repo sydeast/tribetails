@@ -1,0 +1,34 @@
+/* The mock's `.notebox`: a dashed, quiet, italic block holding the dossier
+   summary, with the structured notes listed under it. */
+.auntie-notes__box {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  font-size: var(--type-body-sm-size);
+  font-style: italic;
+  color: var(--color-text-dim);
+  line-height: 1.55;
+}
+.auntie-notes__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.auntie-notes__note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auntie-notes__note-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+.auntie-notes__note-value {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}

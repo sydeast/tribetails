@@ -19,6 +19,7 @@ import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.SubmitVetClinicResult
 import com.tribetails.auntieos.data.model.VetClinicsSnapshot
+import com.tribetails.auntieos.domain.horizonIso
 import com.tribetails.auntieos.domain.recentTalesFor
 import com.tribetails.auntieos.domain.upcomingVisitsFor
 import com.tribetails.auntieos.domain.invoicesForKinfolk
@@ -58,10 +59,23 @@ data class ProfileUiState(
     val dossier: Dossier? = null,
     val kinList: List<Kin> = emptyList(),
     val kin411Map: Map<String, Kin411> = emptyMap(),
-    // Profile feeds (parity with web): real per-kinfolk joins.
+    // Profile feeds: real per-kinfolk joins, shared with the React admin through
+    // `domain/KinfolkProfileFeeds.kt` and its web twin.
     val recentTales: List<KinCareReport> = emptyList(),
     val upcomingVisits: List<KinCareSession> = emptyList(),
     val kinfolkInvoices: List<Invoice> = emptyList(),
+    /**
+     * How many rows each feed HAS, before the five its card shows.
+     *
+     * Kept beside the truncated lists so a card can head itself "5 of 12 total"
+     * instead of implying that five is all there is. These reads are unbounded
+     * `.get()`s scoped to one household, so the count is a real total and
+     * `feedCountMeta` is called with `capped = false`; if a limit is ever put on
+     * those queries, this is the pair that has to learn about it.
+     */
+    val sentTaleCount: Int = 0,
+    val upcomingVisitCount: Int = 0,
+    val invoiceCount: Int = 0,
     // Phase 2 household-notes migration: the structured HouseholdData backing the
     // gap list on the dossier migration box. null while still loading.
     val householdData: HouseholdData? = null,
@@ -503,11 +517,26 @@ class DirectoryViewModel(
                     async { repository.get411ForKin(kin.id).getOrNull()?.let { kin411Map[kin.id] = it } }
                 }.forEach { it.await() }
 
-                // Profile feeds (parity with web): real joins via the pure helpers.
-                val nowIso = java.time.Instant.now().toString()
-                val recentTales = recentTalesFor(reportsDef.await().getOrDefault(emptyList()), kinfolkId)
-                val upcomingVisits = upcomingVisitsFor(sessionsDef.await().getOrDefault(emptyList()), kinfolkId, nowIso)
-                val kinfolkInvoices = invoicesForKinfolk(invoicesDef.await().getOrDefault(emptyList()), kinfolkId)
+                // Profile feeds: real joins via the pure helpers, which the React
+                // admin calls by the same names with the same arguments.
+                val now = java.time.Instant.now()
+                val nowIso = now.toString()
+                // The mock heads UPCOMING VISITS "next 7 days", so the window has
+                // a far edge and both surfaces use the same one.
+                val throughIso = horizonIso(now)
+                val allReports = reportsDef.await().getOrDefault(emptyList())
+                val allSessions = sessionsDef.await().getOrDefault(emptyList())
+                val allInvoices = invoicesDef.await().getOrDefault(emptyList())
+                val recentTales = recentTalesFor(allReports, kinfolkId)
+                val upcomingVisits = upcomingVisitsFor(allSessions, kinfolkId, nowIso, throughIso)
+                val kinfolkInvoices = invoicesForKinfolk(allInvoices, kinfolkId)
+                // Counted BEFORE the take(5), so a card can say how many it is
+                // showing out of how many there are. Uncapped reads, so these are
+                // real totals rather than "at least this many".
+                val sentTaleCount = recentTalesFor(allReports, kinfolkId, limit = Int.MAX_VALUE).size
+                val upcomingVisitCount =
+                    upcomingVisitsFor(allSessions, kinfolkId, nowIso, throughIso, limit = Int.MAX_VALUE).size
+                val invoiceCount = invoicesForKinfolk(allInvoices, kinfolkId, limit = Int.MAX_VALUE).size
                 val householdData = householdDef.await().getOrNull()
 
                 AuntieLog.d("Profile loaded successfully for $kinfolkId")
@@ -519,6 +548,9 @@ class DirectoryViewModel(
                     recentTales = recentTales,
                     upcomingVisits = upcomingVisits,
                     kinfolkInvoices = kinfolkInvoices,
+                    sentTaleCount = sentTaleCount,
+                    upcomingVisitCount = upcomingVisitCount,
+                    invoiceCount = invoiceCount,
                     householdData = householdData,
                     householdVet = resolveHouseholdVet(
                         householdData,
