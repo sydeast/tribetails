@@ -22,6 +22,16 @@ vi.mock('../components/PortalNav', () => ({
   PortalNav: () => null,
 }));
 
+// #538: the avatar in PortalNav no longer signs anyone out, it links to this
+// screen instead, and Sign Out lives here on the sticky save bar. Real
+// `lib/auth.ts` reaches Firebase and a live callable, which is #555's
+// territory and no part of what this suite pins down; a spy in its place
+// proves the button IS wired to sign-out without exercising that network path.
+const signOutSpy = vi.fn();
+vi.mock('../lib/auth', () => ({
+  useSignOut: () => ({ signOut: signOutSpy, signingOut: false }),
+}));
+
 // `to` is carried into href, because a test that cannot see a link's
 // destination cannot tell a working link from the inert span it replaced.
 vi.mock('@tanstack/react-router', () => ({
@@ -166,6 +176,7 @@ function getFileInput(container: HTMLElement): HTMLInputElement {
 beforeEach(() => {
   FakeXHR.instances = [];
   signKinfolkAvatar.mockReset();
+  signOutSpy.mockReset();
   vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
 });
 
@@ -382,5 +393,41 @@ describe('Account billing management', () => {
     expect(queryByRole('button', { name: 'Manage' })).toBeNull();
     expect(getByText('Manage').className).toContain('navlink-inert');
     expect(accountApi.getMyPaymentMethod).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #538, the other half of the fix. PortalNav's avatar no longer signs
+ * anyone out; it links here instead. These specs are what makes that a safe
+ * trade rather than a regression: Sign Out has to still be reachable, and
+ * still work, from the screen the avatar now points at.
+ */
+describe('Account: Sign Out', () => {
+  it('offers Sign Out on the save bar', async () => {
+    const { getByRole } = await renderAccount();
+    expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
+  });
+
+  it('asks for confirmation before signing out', async () => {
+    const { getByRole, findByText } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await findByText('Sign out of MyTribe?');
+    expect(signOutSpy).not.toHaveBeenCalled();
+  });
+
+  it('signs out on confirmation', async () => {
+    const { getByRole } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Yes, Sign Out' }));
+    expect(signOutSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('backs out of the confirmation on Cancel, without signing out', async () => {
+    const { getByRole, queryByText } = await renderAccount();
+    await userEvent.click(getByRole('button', { name: 'Sign Out' }));
+    await userEvent.click(getByRole('button', { name: 'Cancel' }));
+    expect(queryByText('Sign out of MyTribe?')).toBeNull();
+    expect(getByRole('button', { name: 'Sign Out' })).toBeTruthy();
+    expect(signOutSpy).not.toHaveBeenCalled();
   });
 });
