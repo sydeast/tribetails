@@ -546,7 +546,20 @@ internal actual suspend fun platformAddKinTaleComment(
     }
 }
 
-internal actual suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String> {
+/**
+ * Issue #573: every desktop callable goes through here, so this is where the app
+ * notices that the backend has ended this session.
+ *
+ * The decorator wraps the RAW invoke below rather than being folded into it, for
+ * two reasons. The reaction needs state that outlives one call (the burst guard,
+ * and the re-arm that keeps it from becoming a once-per-process latch), so it
+ * has to be one object shared by every call site. And keeping the raw function
+ * separate is what lets `commonTest` drive the same class with its own delegate
+ * and its own sign-out, instead of asserting against real REST.
+ */
+private val revocationAwareCallables = RevocationAwareCallables(::rawInvokeCallable)
+
+private suspend fun rawInvokeCallable(name: String, payloadJson: String): WriteResult<String> {
     // NOTE-53: capture for test assertions (no-op cost in prod since object fields
     // are cheap writes; the live path (else branch) still hits real REST).
     JvmFirestoreFixtures.lastCallableName = name
@@ -554,6 +567,9 @@ internal actual suspend fun platformInvokeCallable(name: String, payloadJson: St
     return JvmFirestoreFixtures.callableResponses[name]?.let { WriteResult.Ok(it) }
         ?: JvmFirestoreRest.callable(name, payloadJson)
 }
+
+internal actual suspend fun platformInvokeCallable(name: String, payloadJson: String): WriteResult<String> =
+    revocationAwareCallables.invoke(name, payloadJson)
 
 internal actual suspend fun platformUpdateInvoiceSessionIds(invoiceId: String, sessionIds: List<String>): WriteResult<Unit> =
     if (JvmFirestoreRest.patchFields("invoices", invoiceId, mapOf("sessionIds" to kotlinx.serialization.json.JsonArray(sessionIds.map { JsonPrimitive(it) })))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
