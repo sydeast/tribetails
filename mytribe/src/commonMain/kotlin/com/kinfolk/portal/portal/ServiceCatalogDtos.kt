@@ -44,3 +44,13 @@ data class BookingVisit(
     val serviceName: String,
     val priceCents: Long?,
 )
+
+/**
+ * C1 / #544: one resolved closed date, from `getBusinessClosures`. [date] is
+ * `YYYY-MM-DD`; [name] is what the operator called the closure ("Closed"
+ * when they left it blank).
+ */
+data class BusinessClosure(
+    val date: String,
+    val name: String,
+)

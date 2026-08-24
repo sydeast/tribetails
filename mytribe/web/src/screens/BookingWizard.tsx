@@ -8,10 +8,13 @@ import { getMyKin } from '../api/portal';
 import type { KinDto } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
+import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { BookingMonthPicker } from '../components/BookingMonthPicker';
 import { LaunchError } from './LaunchError';
 import {
+  BOOKING_HORIZON_DAYS,
+  bookingHorizonEnd,
   buildVisits,
   buildWeeklyVisits,
   dateKey,
@@ -24,18 +27,27 @@ import {
 import '../styles/booking.css';
 
 /**
- * C1: the lookahead window `getBusinessClosures` is asked to resolve, once
- * per wizard session. 120 days is the server's own cap
- * (`getBusinessClosures.ts`'s `MAX_RANGE_DAYS`) and comfortably covers both
- * surfaces that read it here: the Individual-pattern month picker (28 days
- * from the 1st of the current month) and the Weekly pattern's longest offered
- * run (8 weeks = 56 days, `WEEK_COUNT_OPTIONS`).
+ * C1 / #544: the lookahead window `getBusinessClosures` is asked to resolve,
+ * once per wizard session. It is deliberately the SAME constant the picker
+ * bounds itself by (`BOOKING_HORIZON_DAYS`, itself the server's own
+ * `MAX_RANGE_DAYS`), so every month a household can page to has already had
+ * its closures answered by that one read -- paging months never fires
+ * another call, and never shows a month whose closed days are unknown. It
+ * also covers the Weekly pattern's longest offered run (8 weeks = 56 days,
+ * `WEEK_COUNT_OPTIONS`).
  */
-const CLOSURE_LOOKAHEAD_DAYS = 120;
+const CLOSURE_LOOKAHEAD_DAYS = BOOKING_HORIZON_DAYS;
 
 type Pattern = 'individual' | 'weekly';
 
-const STEP_LABELS = ['Kin', 'Service', 'Schedule Dates', 'Extra Love & Context', 'Review & Confirm'];
+/**
+ * #542: step 2 is "KinCare Duration", not "Service". The catalog this
+ * business sells is priced by length of visit (30/45/60 Minute), so the
+ * kinfolk-facing word for it is a duration. Only the copy moved -- the
+ * catalog, its `services` wire shape and every backend field keep their
+ * names.
+ */
+const STEP_LABELS = ['Kin', 'KinCare Duration', 'Schedule Dates', 'Extra Love & Context', 'Review & Confirm'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEK_COUNT_OPTIONS = [2, 4, 6, 8];
 const SERVICE_ICON_EMOJI: Record<string, string> = {
@@ -61,7 +73,7 @@ function groupServicesByCategory(services: ServiceDto[]): Array<[string, Service
   const order: string[] = [];
   const byCategory = new Map<string, ServiceDto[]>();
   for (const s of services) {
-    const cat = s.category ?? 'Services';
+    const cat = s.category ?? 'KinCare Durations';
     let bucket = byCategory.get(cat);
     if (!bucket) {
       bucket = [];
@@ -133,10 +145,10 @@ export interface BookingWizardBodyProps extends BookingWizardProps {
  * hooks). Behavior ported from
  * src/commonMain/kotlin/com/kinfolk/portal/screens/schedule/BookingWizardScreen.kt
  * + RecurringBooking.kt (see lib/bookingWizardLogic.ts); desktop layout
- * (stepper, 3-col service grid, persistent summary/price rail) from
+ * (stepper, 3-col duration grid, persistent summary/price rail) from
  * ui-ideas/mytribe-booking-wizard-2026-05-31.html. Step order follows the
- * Kotlin reference (Kin -> Service -> Dates -> Invoice -> Review), not the
- * mockup's single static screen (which only shows step 1 = Choose Service).
+ * Kotlin reference (Kin -> KinCare Duration -> Dates -> Invoice -> Review),
+ * not the mockup's single static screen (which only shows step 1).
  *
  * `weeklyPreview` below is the single source of truth for the weekly-
  * pattern visit list: computed once per (pattern, weeklyDays, weekCount,
@@ -174,7 +186,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     queryFn: () => {
       const today = new Date();
       const from = dateKey(today);
-      const to = dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + CLOSURE_LOOKAHEAD_DAYS));
+      const to = dateKey(bookingHorizonEnd(today, CLOSURE_LOOKAHEAD_DAYS));
       return getBusinessClosures({ fromDate: from, toDate: to });
     },
   });
@@ -255,7 +267,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!selectedService) throw new Error('Choose a service first.');
+      if (!selectedService) throw new Error('Choose a KinCare Duration first.');
       const visits = pattern === 'weekly' ? weeklyPreview : buildVisits([...selectedDates.values()], visitTime, selectedService);
       if (visits.length === 0) throw new Error('No visits to book. Check the days and weeks.');
       return requestBooking({
@@ -368,7 +380,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   onWeekCountChange={setWeekCount}
                   visitTime={visitTime}
                   onVisitTimeChange={setVisitTime}
-                  serviceLabel={selectedService?.name ?? 'Service'}
+                  serviceLabel={selectedService?.name ?? 'Not chosen yet'}
                   weeklyEmitted={weeklyPreview.length}
                   weeklyCapped={weeklyCapped}
                   weeklyBlocker={weeklyBlocker}
@@ -425,7 +437,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
               <div className="sectlabel">Booking summary</div>
 
               <div className="sum-row">
-                <div className="sk">Service</div>
+                <div className="sk">KinCare Duration</div>
                 {selectedService ? (
                   <div className="sv">
                     {selectedService.name}
@@ -466,26 +478,6 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                 Your estimate updates as you add Kin and dates. Your Auntie confirms the final price before the booking starts.
               </p>
             </section>
-
-            <section className="glass card d4">
-              <div className="sectlabel">Booking for</div>
-              {activeKin.length === 0 ? (
-                <p className="sub">No Kin on file yet.</p>
-              ) : (
-                activeKin.map((k) => (
-                  <div className="kinrow" key={k.id}>
-                    <div className="pic">{'\u{1F43E}'}</div>
-                    <div>
-                      <b>{k.name ?? 'Unnamed Kin'}</b>
-                      <small>{kinSubtitle(k).toUpperCase()}</small>
-                    </div>
-                  </div>
-                ))
-              )}
-              <p className="sub" style={{ margin: '8px 2px 0' }}>
-                Pick which Kin to include in step 1.
-              </p>
-            </section>
           </div>
         </div>
 
@@ -506,6 +498,18 @@ function SelectedIndicator() {
   );
 }
 
+/**
+ * #540: step 1 owns the whole "who is this booking for" story now.
+ *
+ * The rail used to carry a second, read-only "Booking for" card listing the
+ * same Kin next to this one -- two boxes for one choice, and the operator
+ * called it: only one of them did anything. The card is gone; what it alone
+ * used to show (each Kin's photo ring, breed/species and age, and the
+ * "no Kin on file yet" state) moved in here, under the All-Kin option, so
+ * nothing was lost with it. The roster renders in All-Kin mode only: in
+ * specific-pick mode the pickable rows already say the same thing, and
+ * printing both would rebuild the exact duplication being removed.
+ */
 function Step1KinSelect(props: {
   kin: KinDto[];
   allKinMode: boolean;
@@ -529,10 +533,28 @@ function Step1KinSelect(props: {
           <button type="button" className="kinopt" style={{ marginTop: 14 }} onClick={() => onToggleAllMode(true)}>
             <div>
               <div className="kt">All Kin in this home</div>
-              <span className="ks">{kin.map((k) => k.name).filter(Boolean).join(', ')}</span>
+              {/* The roster below this button is the subtitle when it is shown;
+                  printing the names here as well would be the duplication #540
+                  is about. In specific-pick mode the roster is hidden, so the
+                  names line comes back. */}
+              {!allKinMode && <span className="ks">{kin.map((k) => k.name).filter(Boolean).join(', ')}</span>}
             </div>
             {allKinMode && <SelectedIndicator />}
           </button>
+
+          {allKinMode && (
+            <div className="kinroster">
+              {kin.map((k, i) => (
+                <div className={`kinrow ${kinVariant(i)}`} key={k.id}>
+                  <div className="pic">{speciesEmoji(k.species)}</div>
+                  <div>
+                    <b>{k.name ?? 'Unnamed Kin'}</b>
+                    {kinSubtitle(k) && <small>{kinSubtitle(k).toUpperCase()}</small>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <button type="button" className="btn ghost block" style={{ marginTop: 12 }} onClick={() => onToggleAllMode(!allKinMode)}>
             {allKinMode ? 'Choose specific Kin' : 'Use All Kin instead'}
@@ -540,13 +562,16 @@ function Step1KinSelect(props: {
 
           {!allKinMode && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
-              {kin.map((k) => {
+              {kin.map((k, i) => {
                 const selected = selectedIds.has(k.id);
                 return (
                   <button type="button" key={k.id} className="kinopt" onClick={() => onToggle(k.id)}>
-                    <div>
-                      <div className="kt">{k.name ?? 'Unnamed Kin'}</div>
-                      {kinSubtitle(k) && <span className="ks">{kinSubtitle(k)}</span>}
+                    <div className={`kinrow ${kinVariant(i)} is-static`}>
+                      <div className="pic">{speciesEmoji(k.species)}</div>
+                      <div>
+                        <b>{k.name ?? 'Unnamed Kin'}</b>
+                        {kinSubtitle(k) && <small>{kinSubtitle(k).toUpperCase()}</small>}
+                      </div>
                     </div>
                     {selected && <SelectedIndicator />}
                   </button>
@@ -564,12 +589,12 @@ function Step2ServiceSelect(props: { services: ServiceDto[]; selectedId: string 
   const groups = groupServicesByCategory(props.services);
   return (
     <>
-      <h3 className="title">Choose Service</h3>
-      <p className="sub">Choose the service you&rsquo;d like for this booking.</p>
+      <h3 className="title">Choose KinCare Duration</h3>
+      <p className="sub">How long should each visit run?</p>
       {groups.map(([category, list]) => (
         <div key={category}>
           <div className="svc-category">{category}</div>
-          <div className="svc-grid" role="radiogroup" aria-label="Service">
+          <div className="svc-grid" role="radiogroup" aria-label="KinCare Duration">
             {list.map((s) => {
               const selected = s.id === props.selectedId;
               return (
@@ -698,7 +723,7 @@ function Step3ScheduleDates(props: {
         />
       </div>
       <p className="sub" style={{ marginTop: 8 }}>
-        Service: {props.serviceLabel}
+        KinCare Duration: {props.serviceLabel}
       </p>
 
       {pattern === 'weekly' ? (
@@ -726,7 +751,7 @@ function Step3ScheduleDates(props: {
           {closedDatesInPlan.length === 1
             ? `${closedDatesInPlan[0]} is closed`
             : `${closedDatesInPlan.length} of these dates are closed (${closedDatesInPlan.join(', ')})`}
-          . Remove {closedDatesInPlan.length === 1 ? 'it' : 'them'} to continue -- a closed date can&rsquo;t be booked.
+          . Remove {closedDatesInPlan.length === 1 ? 'it' : 'them'} to continue. A closed date can&rsquo;t be booked.
         </p>
       )}
     </>
@@ -767,7 +792,7 @@ function Step5Review(props: {
           <div className="sv">{props.kinNames.join(', ') || '—'}</div>
         </div>
         <div className="sum-row">
-          <div className="sk">Service</div>
+          <div className="sk">KinCare Duration</div>
           <div className="sv">{service?.name ?? '—'}</div>
         </div>
         <div className="sum-row">

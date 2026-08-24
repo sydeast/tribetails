@@ -52,6 +52,15 @@
 .kinopt .ks { display: block; font-size: 12.5px; color: var(--navy-muted); margin-top: 3px; }
 .selected-indicator { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--teal); white-space: nowrap; }
 
+/* #540: the Kin roster that used to be a second "Booking for" card in the
+   rail, folded into step 1 under the All-Kin option. It reuses base.css's
+   .kinrow for the photo ring + breed/age line, but is not a link here, so
+   that rule's pointer + hover lift are cancelled. */
+.kinroster { margin-top: 10px; }
+.kinroster .kinrow, .kinopt .kinrow { cursor: inherit; padding-left: 0; padding-right: 0; }
+.kinroster .kinrow:hover, .kinopt .kinrow:hover { background: transparent; transform: none; }
+.kinopt .kinrow { flex: 1; min-width: 0; padding-top: 0; padding-bottom: 0; }
+
 /* pattern toggle (Individual Dates / Repeating Schedule) */
 .pattern-toggle { display: flex; gap: 10px; }
 .pattern-btn { padding: 11px 18px; border-radius: 13px; border: 1px solid var(--glass-border); background: transparent;
@@ -68,7 +77,13 @@
 
 /* month picker (individual dates) */
 .monthpicker { margin-top: 4px; }
-.mp-head { font-family: var(--serif); font-size: 16px; margin-bottom: 10px; }
+/* #544: month header is now a control strip — back / month + year / forward. */
+.mp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.mp-month { font-family: var(--serif); font-size: 16px; }
+.mp-nav { width: 34px; height: 34px; border-radius: 11px; border: 1px solid var(--hairline); background: var(--glass-dim);
+  color: var(--navy); font-size: 18px; line-height: 1; cursor: pointer; transition: .2s var(--ease); display: grid; place-items: center; }
+.mp-nav:hover:not(:disabled) { background: rgba(255, 255, 255, .6); }
+.mp-nav:disabled { opacity: .3; cursor: not-allowed; }
 .mp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .mp-weekdays { margin-bottom: 6px; }
 .mp-weekdays span { text-align: center; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--navy-muted); }
@@ -81,6 +96,10 @@
 .mp-day.is-closed { cursor: not-allowed; opacity: .4; text-decoration: line-through;
   background: repeating-linear-gradient(135deg, transparent, transparent 4px, var(--glass-dim) 4px, var(--glass-dim) 8px); }
 .mp-day.is-closed:hover { background: repeating-linear-gradient(135deg, transparent, transparent 4px, var(--glass-dim) 4px, var(--glass-dim) 8px); }
+/* #544: in range of the shown month but outside the bookable window (before
+   today, or past the horizon). Still drawn, so the month reads as a month. */
+.mp-day.is-unavailable { cursor: not-allowed; opacity: .32; }
+.mp-day.is-unavailable:hover { background: var(--glass-dim); }
 
 /* summary panel */
 .sum-row { display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--hairline); }

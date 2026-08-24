@@ -136,16 +136,67 @@ export function buildVisits(
 }
 
 /**
- * The 28 calendar days offered by the Individual-pattern month picker,
- * starting from the 1st of `today`'s month. Mirrors `SimpleMonthPicker`'s
- * `daysToShow` (always exactly 4 weeks from the 1st, not clipped to the
- * month's real length and not aligned to the 1st's weekday. Ported as-is
- * for date-set parity; the web grid weekday-aligns the *display* of these
- * same 28 dates, it does not change which dates are offered).
+ * #544: how far ahead the Individual-pattern picker lets a household book.
+ *
+ * There is NO booking-horizon field on the `business_settings` doc (checked
+ * the whole `BusinessSettings` model in AuntieOS's FirestoreClient.kt: it
+ * carries hours, holidays, time blocks, travel buffer, ETA and retention
+ * windows, and nothing horizon-shaped), so rather than invent an operator
+ * setting nobody can see or edit, the bound is the one real limit the server
+ * already imposes on this flow: `getBusinessClosures`'s `MAX_RANGE_DAYS`
+ * (120). That is the furthest out the portal can find out whether a date is
+ * closed, and offering a date whose closure status we cannot resolve is
+ * exactly the "picker that looks authoritative about a day it cannot book"
+ * that callable exists to prevent. When a real horizon setting is added,
+ * this constant is the single place the picker reads it from.
  */
-export function monthPickerDays(today: Date): Date[] {
-  const first = new Date(today.getFullYear(), today.getMonth(), 1);
-  return Array.from({ length: 28 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
+export const BOOKING_HORIZON_DAYS = 120;
+
+/** Midnight-local copy of `d`, so day comparisons ignore the time of day. */
+export function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** The last (inclusive) date a booking may be placed on, counting from `today`. */
+export function bookingHorizonEnd(today: Date, horizonDays: number = BOOKING_HORIZON_DAYS): Date {
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate() + horizonDays);
+}
+
+/** Months-since-year-0 ordinal, so two dates' months compare with `<`/`>`. */
+export function monthIndex(d: Date): number {
+  return d.getFullYear() * 12 + d.getMonth();
+}
+
+/** The 1st of the month `delta` months away from `anchor` (negative goes back). */
+export function shiftMonth(anchor: Date, delta: number): Date {
+  return new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+}
+
+/**
+ * Every real calendar day in `anchor`'s month — 28, 29, 30 or 31 of them.
+ *
+ * #544: this used to hand back a flat 28 days counted from the 1st, ported
+ * from the Kotlin `SimpleMonthPicker`'s `daysToShow` for date-set parity.
+ * With the picker pinned to the current month that quietly ate the 29th
+ * through 31st of every long month; once the picker can page forward it is
+ * simply wrong. Both platforms moved to real months together — the Kotlin
+ * side now reads its days from `bookingMonthDays` in BookingCalendar.kt.
+ */
+export function monthPickerDays(anchor: Date): Date[] {
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  // Day 0 of the next month is the last day of this one.
+  const length = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length }, (_, i) => new Date(year, month, i + 1));
+}
+
+/**
+ * Whether `day` may be booked: today or later (a past date is refused by
+ * `requestBooking` server-side anyway) and no later than the horizon.
+ */
+export function isBookableDay(day: Date, today: Date, horizonEnd: Date): boolean {
+  const d = startOfDay(day).getTime();
+  return d >= startOfDay(today).getTime() && d <= startOfDay(horizonEnd).getTime();
 }
 
 /** Stable "YYYY-MM-DD" key for a local calendar date, used for Set membership + React keys. */
