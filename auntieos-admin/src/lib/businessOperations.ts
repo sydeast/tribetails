@@ -223,13 +223,38 @@ export function slugifyBlockId(label: string, taken: readonly string[]): string 
 }
 
 /**
- * The rows as `TimeBlockDefinition[]`, or the first thing wrong with them.
+ * THE AVAILABILITY MODEL, not one more setting.
  *
- * `startTime < endTime` is required rather than wrapped around midnight:
- * `resolveTimeBlock` on both Kotlin surfaces compares a visit's start against
- * `startTime`/`endTime` as a plain same-day range, so a block written
- * "22:00-02:00" would match nothing at all. Refusing it here is the difference
- * between the operator seeing why and the block silently never applying.
+ * `business_settings.timeBlocks` is the set of named windows a kinfolk books
+ * INTO. Operator, 2026-08-24: "kinfolk book within time blocks, not at a
+ * specific set time. I need to be able to create these time blocks and those
+ * are what the kinfolk should be able to select from when booking." So a row
+ * here is a product decision, and every rule below exists because a kinfolk is
+ * going to be shown the result.
+ *
+ * NOT `booking_time_slots`. That collection is block-OUT time, written by
+ * `createBlockedTimeSlot` and the Google busy importer, and it says when NOT to
+ * book. These say when a booking may land. The two are never merged.
+ *
+ * TWO ACTIVE BLOCKS MAY NOT OVERLAP, and this is the rule with a consequence
+ * behind it rather than a tidiness preference. `resolveTimeBlock`
+ * (`domain/TimeBlockResolver.kt:15`) resolves a stored visit back to its block
+ * with `firstOrNull` over the ACTIVE rows, so under an overlap the name a visit
+ * is displayed with is decided by array order, not by the block the kinfolk
+ * actually chose. A kinfolk books "Morning" and the schedule calls it "Midday".
+ * INACTIVE rows are exempt because the resolver skips them and nothing can be
+ * booked into them: an operator parking a seasonal block that overlaps a live
+ * one is not a conflict until they switch it on.
+ *
+ * ROWS COME BACK SORTED BY START TIME. `firstOrNull` makes the stored order
+ * load-bearing, so leaving it as "whatever order they were typed in" would make
+ * the resolver's answer depend on edit history. Sorted, it depends on the clock.
+ *
+ * `startTime < endTime` is required rather than wrapped around midnight: the
+ * resolver compares against the pair as a plain same-day range, so a block
+ * written "22:00-02:00" would match nothing at all. Refusing it here is the
+ * difference between the operator seeing why and the block silently never
+ * applying.
  */
 export function validateTimeBlocks(
   drafts: readonly TimeBlockDraft[],
@@ -257,7 +282,41 @@ export function validateTimeBlocks(
     ids.add(id);
     out.push({ id, label, startTime: draft.startTime, endTime: draft.endTime, active: draft.active });
   }
+  out.sort(compareBlocksByStart);
+  const clash = firstActiveOverlap(out);
+  if (clash) {
+    return {
+      error: `"${clash[0]}" and "${clash[1]}" overlap. Two blocks a kinfolk can book at the same moment cannot both be on, because a visit in the overlap would be labelled with whichever came first.`,
+    };
+  }
   return { value: out };
+}
+/** Start time first, then end, then label, so the order is a fact about the clock and not about edit history. */
+export function compareBlocksByStart(a: TimeBlockDefinition, b: TimeBlockDefinition): number {
+  const byStart = (a.startTime ?? '').localeCompare(b.startTime ?? '');
+  if (byStart !== 0) return byStart;
+  const byEnd = (a.endTime ?? '').localeCompare(b.endTime ?? '');
+  if (byEnd !== 0) return byEnd;
+  return (a.label ?? '').localeCompare(b.label ?? '');
+}
+/**
+ * The first pair of ACTIVE blocks whose windows intersect, by label, or null.
+ *
+ * Touching ends do NOT overlap: the resolver's range is `start until end`, half
+ * open, so a visit at exactly 15:00 belongs to the block starting at 15:00 and
+ * not to the one ending there. `sorted` must already be start-ordered, which is
+ * what lets one pass over adjacent pairs find every intersection.
+ */
+export function firstActiveOverlap(sorted: readonly TimeBlockDefinition[]): [string, string] | null {
+  const active = sorted.filter((b) => b.active);
+  for (let i = 1; i < active.length; i += 1) {
+    const prev = active[i - 1]!;
+    const next = active[i]!;
+    if ((next.startTime ?? '') < (prev.endTime ?? '')) {
+      return [prev.label ?? prev.id ?? 'a block', next.label ?? next.id ?? 'a block'];
+    }
+  }
+  return null;
 }
 
 /** The end time a NEW block gets: `startTime` plus the operator's default block length, capped at 23:59. */

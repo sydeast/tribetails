@@ -194,12 +194,32 @@ internal fun defaultBlockEnd(startTime: String, durationHours: Int): String {
 }
 
 /**
- * The first thing wrong with these rows, or null when they are all saveable.
+ * THE AVAILABILITY MODEL, not one more setting.
  *
- * `startTime < endTime` is required rather than wrapped past midnight:
- * `resolveTimeBlock` compares a visit's start against the pair as a plain
- * same-day range on both Kotlin surfaces, so a "22:00-02:00" block would match
- * nothing at all and the operator would never be told why.
+ * `business_settings.timeBlocks` is the set of named windows a kinfolk books
+ * INTO. Operator, 2026-08-24: "kinfolk book within time blocks, not at a
+ * specific set time. I need to be able to create these time blocks and those are
+ * what the kinfolk should be able to select from when booking."
+ *
+ * NOT `booking_time_slots`. That collection is block-OUT time, written by
+ * `createBlockedTimeSlot` and the Google busy importer, and it says when NOT to
+ * book. These say when a booking may land. The two are never merged.
+ *
+ * TWO ACTIVE BLOCKS MAY NOT OVERLAP. `resolveTimeBlock`
+ * (`domain/TimeBlockResolver.kt:15`) resolves a stored visit back to its block
+ * with `firstOrNull` over the ACTIVE rows, so under an overlap the name a visit
+ * is displayed with is decided by array order rather than by the block the
+ * kinfolk chose. INACTIVE rows are exempt: the resolver skips them and nothing
+ * can be booked into them, so a parked seasonal block that overlaps a live one
+ * is not a conflict until it is switched on.
+ *
+ * ROWS ARE STORED SORTED BY START TIME, because `firstOrNull` makes the stored
+ * order load-bearing and "the order they were typed in" would make the
+ * resolver's answer depend on edit history.
+ *
+ * `startTime < endTime` is required rather than wrapped past midnight: the
+ * resolver compares the pair as a plain same-day range, so a "22:00-02:00" block
+ * would match nothing at all and the operator would never be told why.
  */
 internal fun timeBlockError(rows: List<TimeBlockRow>): String? {
     if (rows.size > MAX_TIME_BLOCKS) return "That is more than $MAX_TIME_BLOCKS blocks. Remove some first."
@@ -217,10 +237,44 @@ internal fun timeBlockError(rows: List<TimeBlockRow>): String? {
         if (row.id.isBlank()) return "\"$label\" lost its id. Remove the row and add it again."
         if (!ids.add(row.id)) return "Two blocks share the id \"${row.id}\"."
     }
+    firstActiveOverlap(rows.sortedWith(::compareBlocksByStart))?.let { (first, second) ->
+        return "\"$first\" and \"$second\" overlap. Two blocks a kinfolk can book at the same " +
+            "moment cannot both be on, because a visit in the overlap would be labelled with " +
+            "whichever came first."
+    }
     return null
 }
 
-internal fun List<TimeBlockRow>.toDefinitions(): List<TimeBlockDefinition> = map {
+/** Start time first, then end, then label: an order that is a fact about the clock, not about edit history. */
+internal fun compareBlocksByStart(a: TimeBlockRow, b: TimeBlockRow): Int {
+    val byStart = a.startTime.compareTo(b.startTime)
+    if (byStart != 0) return byStart
+    val byEnd = a.endTime.compareTo(b.endTime)
+    if (byEnd != 0) return byEnd
+    return a.label.compareTo(b.label)
+}
+/**
+ * The first pair of ACTIVE rows whose windows intersect, or null.
+ *
+ * Touching ends do NOT overlap: the resolver's range is `start until end`, half
+ * open, so a visit at exactly 15:00 belongs to the block starting at 15:00 and
+ * not to the one ending there. [rows] must already be start-ordered, which is
+ * what lets one pass over adjacent pairs find every intersection.
+ */
+internal fun firstActiveOverlap(rows: List<TimeBlockRow>): Pair<String, String>? {
+    val active = rows.filter { it.active }
+    for (i in 1 until active.size) {
+        val prev = active[i - 1]
+        val next = active[i]
+        if (next.startTime < prev.endTime) {
+            return (prev.label.ifBlank { prev.id }) to (next.label.ifBlank { next.id })
+        }
+    }
+    return null
+}
+
+/** Stored start-ordered, because `resolveTimeBlock`'s `firstOrNull` makes the stored order load-bearing. */
+internal fun List<TimeBlockRow>.toDefinitions(): List<TimeBlockDefinition> = sortedWith(::compareBlocksByStart).map {
     TimeBlockDefinition(
         id = it.id,
         label = it.label.trim(),
@@ -321,7 +375,12 @@ internal fun BookingRulesPanel(
     var reminder by remember(settings) { mutableStateOf(settings.enableAutoReminder24h) }
     var blockHours by remember(settings) { mutableStateOf(settings.defaultTimeBlockDurationHours.toString()) }
     var travelBuffer by remember(settings) { mutableStateOf(settings.travelBufferMinutes.toString()) }
-    var blocks by remember(settings) { mutableStateOf(settings.timeBlocks.map { it.toRow() }) }
+    // Sorted on the way in, matching how they are stored. Rows are NOT re-sorted
+    // while the operator types: moving a row out from under a cursor because a
+    // start time is momentarily "0" is worse than a list briefly out of order.
+    var blocks by remember(settings) {
+        mutableStateOf(settings.timeBlocks.map { it.toRow() }.sortedWith(::compareBlocksByStart))
+    }
 
     val problem = bookingRulesError(mode, allowSpecific, allowBlock, blockHours, travelBuffer, blocks, timeZone)
 
@@ -418,6 +477,11 @@ internal fun BookingRulesPanel(
 
             Spacer(Modifier.height(dims.space2))
             AuntieFieldLabel(text = "Time blocks")
+            Text(
+                "The windows kinfolk book into. They pick one of these by name rather than typing a clock time, so this list is what is on offer. Turn a block off to stop offering it without losing its hours. Two blocks that are both on cannot overlap.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
             if (blocks.isEmpty()) {
                 Text(
                     "No blocks yet. Add one below.",

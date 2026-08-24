@@ -165,6 +165,20 @@ export const AUDIT_EVENTS = {
   // the Cloudinary asset outlives the document (see deleteMediaFile.ts), and
   // that URL is the only route back to it afterwards.
   MEDIA_FILE_DELETED: 'MEDIA_FILE_DELETED',
+  // ISSUE #519: the two retention purges, one entry per RUN rather than per
+  // deleted document. A run that clears three thousand route points would
+  // otherwise write three thousand chained audit entries and drown the trail it
+  // exists to keep readable; the entry carries the count, the cutoff, and which
+  // retention setting produced it, which is what an operator asking "what
+  // happened to my routes" actually needs. A run that deletes nothing still
+  // writes one, because "the job ran and found nothing" and "the job did not
+  // run" are different answers.
+  RETENTION_ROUTES_PURGED: 'RETENTION_ROUTES_PURGED',
+  RETENTION_DRAFTS_PURGED: 'RETENTION_DRAFTS_PURGED',
+  // A run that refused: the window was unreadable, zero, negative or absurd, so
+  // nothing was deleted. Recorded at `warn` because a purge silently not running
+  // is how an archive quietly grows forever.
+  RETENTION_PURGE_SKIPPED: 'RETENTION_PURGE_SKIPPED',
 
   // formSchema admin authoring callables (saveFormSchema / deleteFormSchema).
   // Already SCREAMING_SNAKE per memory project_orphan_triage_shipped, kept

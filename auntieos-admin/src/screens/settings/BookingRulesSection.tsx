@@ -8,6 +8,7 @@ import {
   BOOKING_MODES,
   CALENDAR_VIEWS,
   NUMBER_FIELDS,
+  compareBlocksByStart,
   defaultBlockEnd,
   optionsIncluding,
   parseWholeNumber,
@@ -82,7 +83,11 @@ function seed(data: BusinessSettings): Draft {
     // Absent reads as ON, matching the server gate. See `enableAutoReminder24h`
     // in `api/settings.ts` and `mytribe/functions/src/lib/autoReminder.ts`.
     enableAutoReminder24h: data.enableAutoReminder24h !== false,
-    blocks: data.timeBlocks.map(timeBlockDraft),
+    // Sorted on the way in, matching how they are stored. Rows are NOT re-sorted
+    // while the operator types: moving a row out from under a cursor because a
+    // start time is momentarily "0" is worse than a list briefly out of order.
+    // The save sorts again, so what is stored is always start-ordered.
+    blocks: [...data.timeBlocks].sort(compareBlocksByStart).map(timeBlockDraft),
   };
 }
 
@@ -349,8 +354,9 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
       <div className="settingsEdit__subsection">
         <span className="settingsEdit__fieldLabel">Time blocks</span>
         <p className="settingsEdit__hint">
-          The named windows a block booking lands in. A visit inside one is shown by its block name
-          on the schedule.
+          The windows kinfolk book into. They pick one of these by name rather than typing a clock
+          time, so this list is what is on offer. Turn a block off to stop offering it without
+          losing its hours. Two blocks that are both on cannot overlap.
         </p>
         {draft.blocks.length === 0 ? (
           <p className="settingsEdit__hint">No blocks yet. Add one below.</p>
