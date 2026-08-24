@@ -35,7 +35,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
@@ -60,6 +63,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
@@ -78,6 +82,18 @@ fun BookingWizardScreen(
     var kin by remember { mutableStateOf<List<Kin>?>(null) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * C1 / #544: date key -> closure name for the whole booking horizon, so
+     * the month picker can refuse a company holiday in ANY month it can page
+     * to without a second read. Empty means "nothing known closed" — a failed
+     * or still-running read degrades to the pre-C1 behavior (every day
+     * offered) rather than blocking the wizard on a secondary call, because
+     * `requestBooking` refuses a closed date server-side either way.
+     */
+    var closedDates by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val today = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date }
+    val horizonEnd = remember(today) { bookingHorizonEnd(today) }
 
     /** "All Kin in this home" is default; flip via Choose-specific to multi-pick. */
     var allKinMode by remember { mutableStateOf(true) }
@@ -99,6 +115,15 @@ fun BookingWizardScreen(
             services = portalApi.getServiceCatalog().services
         } catch (t: Throwable) {
             loadError = t.message ?: "Could not load wizard"
+        }
+        // Deliberately AFTER, and in its own try: closures are a secondary
+        // read. Losing them must not take the whole wizard down with it.
+        try {
+            closedDates = portalApi
+                .getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd))
+                .associate { it.date to it.name }
+        } catch (_: Throwable) {
+            closedDates = emptyMap()
         }
     }
 
@@ -128,10 +153,31 @@ fun BookingWizardScreen(
     // True when the cap (or the future-only filter) dropped requested occurrences.
     val weeklyCapped = pattern == BookingPattern.Weekly && weeklyPreview.isNotEmpty() && weeklyPotential > weeklyPreview.size
 
+    /**
+     * C1: every date in the plan that [closedDates] says is closed. The
+     * Individual picker already refuses to let one be tapped, so this mainly
+     * catches the Weekly pattern, which has no per-date control to disable —
+     * a generated weekly date can land on a closure with nothing short of
+     * this telling the household before the whole request comes back refused.
+     */
+    val closedDatesInPlan: List<String> = remember(pattern, selectedDates, weeklyPreview, closedDates) {
+        if (closedDates.isEmpty()) {
+            emptyList()
+        } else if (pattern == BookingPattern.Individual) {
+            selectedDates.map { bookingDateKey(it) }.filter { closedDates.containsKey(it) }
+        } else {
+            val tz = TimeZone.currentSystemDefault()
+            weeklyPreview
+                .map { bookingDateKey(Instant.fromEpochMilliseconds(it.startTimeMs).toLocalDateTime(tz).date) }
+                .filter { closedDates.containsKey(it) }
+                .distinct()
+        }
+    }
+
     val canAdvance = when (step) {
         1 -> if (allKinMode) (kin?.isNotEmpty() == true) else selectedKinIds.isNotEmpty()
         2 -> selectedServiceId != null
-        3 -> when (pattern) {
+        3 -> closedDatesInPlan.isEmpty() && when (pattern) {
             BookingPattern.Individual -> selectedDates.isNotEmpty() && parseHourMinute(visitTime) != null
             BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, visitTime) == null
         }
@@ -188,9 +234,13 @@ fun BookingWizardScreen(
                 onWeekCountChange = { weekCount = it },
                 visitTime = visitTime,
                 onVisitTimeChange = { visitTime = it },
-                serviceLabel = selectedService?.name ?: "Service",
+                serviceLabel = selectedService?.name ?: "Not chosen yet",
                 weeklyEmitted = weeklyPreview.size,
                 weeklyCapped = weeklyCapped,
+                today = today,
+                horizonEnd = horizonEnd,
+                closedDates = closedDates,
+                closedDatesInPlan = closedDatesInPlan,
             )
             4 -> Step4InvoiceOptions()
             5 -> Step5Review(
@@ -260,7 +310,7 @@ fun BookingWizardScreen(
                                 }
                             }
                         },
-                        enabled = !submitting && selectedService != null && when (pattern) {
+                        enabled = !submitting && selectedService != null && closedDatesInPlan.isEmpty() && when (pattern) {
                             BookingPattern.Individual -> selectedDates.isNotEmpty() && parseHourMinute(visitTime) != null
                             BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, visitTime) == null
                         },
@@ -296,7 +346,7 @@ private fun SelectedIndicator() {
 private fun WizardStepIndicator(current: Int) {
     val type = LocalKinfolkTypography.current
     // Indicator labels are intentionally short — step section headings render the long form.
-    val labels = listOf("Pets", "Service", "Dates", "Invoice", "Review")
+    val labels = listOf("Pets", "KinCare Duration", "Dates", "Invoice", "Review")
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -422,9 +472,9 @@ private fun Step2ServiceSelect(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
-        Text("Choose Service", style = type.heritageTitle)
-        Text("Choose the service you'd like for this booking.", style = type.sansBody)
-        services.groupBy { it.category ?: "Services" }.forEach { (cat, list) ->
+        Text("Choose KinCare Duration", style = type.heritageTitle)
+        Text("How long should each visit run?", style = type.sansBody)
+        services.groupBy { it.category ?: "KinCare Durations" }.forEach { (cat, list) ->
             Spacer(Modifier.height(KinfolkSpacing.xs))
             Text(cat, style = type.sansLabel)
             list.forEach { s ->
@@ -467,6 +517,14 @@ private fun Step3ScheduleDates(
     serviceLabel: String,
     weeklyEmitted: Int = 0,
     weeklyCapped: Boolean = false,
+    /** #544: lower bound of the pickable window; also the earliest month reachable. */
+    today: LocalDate,
+    /** #544: upper bound of the pickable window; also the latest month reachable. */
+    horizonEnd: LocalDate,
+    /** C1: date key -> closure name, from `getBusinessClosures`. */
+    closedDates: Map<String, String> = emptyMap(),
+    /** C1: dates already in the plan that land on one of [closedDates]. */
+    closedDatesInPlan: List<String> = emptyList(),
 ) {
     val type = LocalKinfolkTypography.current
     Column(
@@ -515,10 +573,13 @@ private fun Step3ScheduleDates(
             }
         } else {
             Text("Choose Individual Dates", style = type.heritageSection)
-            Text("Tap dates to add or remove from the booking.", style = type.sansBody)
+            Text("Tap dates to add or remove from the booking. Closed dates can't be selected.", style = type.sansBody)
             SimpleMonthPicker(
                 selectedDates = selectedDates,
                 onToggle = onToggleDate,
+                today = today,
+                horizonEnd = horizonEnd,
+                closedDates = closedDates,
             )
         }
 
@@ -530,7 +591,7 @@ private fun Step3ScheduleDates(
             label = "Time (HH:MM)",
             modifier = Modifier.fillMaxWidth(),
         )
-        Text("Service: $serviceLabel", style = type.sansBody)
+        Text("KinCare Duration: $serviceLabel", style = type.sansBody)
         if (pattern == BookingPattern.Weekly) {
             val blocker = weeklyVisitsBlocker(weeklyDays, weekCount, visitTime)
             Text(
@@ -548,6 +609,22 @@ private fun Step3ScheduleDates(
             Text("No dates selected yet.", style = type.sansMeta)
         } else {
             Text("${selectedDates.size} ${if (selectedDates.size == 1) "date" else "dates"} selected", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
+        }
+
+        // C1: a closed date already in the plan. The picker cannot produce one,
+        // but a weekly rule can, and nothing else would say so before the whole
+        // request came back refused.
+        if (closedDatesInPlan.isNotEmpty()) {
+            val which = if (closedDatesInPlan.size == 1) {
+                "${closedDatesInPlan.first()} is closed"
+            } else {
+                "${closedDatesInPlan.size} of these dates are closed (${closedDatesInPlan.joinToString(", ")})"
+            }
+            val them = if (closedDatesInPlan.size == 1) "it" else "them"
+            Text(
+                "$which. Remove $them to continue. A closed date can't be booked.",
+                style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+            )
         }
     }
 }
@@ -596,7 +673,7 @@ private fun Step5Review(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 ReviewRow("Kin", kinNames.joinToString(", ").ifBlank { "—" })
-                ReviewRow("Service", service?.name ?: "—")
+                ReviewRow("KinCare Duration", service?.name ?: "—")
                 ReviewRow("Pattern", if (pattern == BookingPattern.Individual) "Individual Dates" else "Repeating Schedule")
                 ReviewRow("Visits", if (visitCount == 1) "1 visit" else "$visitCount visits")
                 ReviewRow("Time", visitTime)
@@ -641,22 +718,78 @@ private fun Step5Review(
 
 // ReviewRow moved to `screens/schedule/util/ReviewRow.kt` for reuse by BookingDetailsScreen.
 
+/** Month names for the picker header, indexed by `Month.ordinal` (0 = January). */
+private val MONTH_NAMES = listOf(
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+private val WEEKDAY_HEADERS = listOf("S", "M", "T", "W", "T", "F", "S")
+
+/**
+ * #544: a real, pageable calendar month.
+ *
+ * It used to be a flat 28-day block anchored to the 1st of the current month
+ * with no way to leave that month, so a household could not book ahead at
+ * all — and the 29th through 31st of every long month were never offered.
+ * Now: real month lengths, weekday-aligned, back bounded at [today]'s month
+ * and forward at [horizonEnd]'s (see BookingCalendar.kt, whose web mirror is
+ * lib/bookingWizardLogic.ts). A day outside the bookable window, or one
+ * [closedDates] says is a company holiday, still renders — dimmed and inert —
+ * so the grid reads as a calendar rather than growing holes.
+ */
 @Composable
 private fun SimpleMonthPicker(
     selectedDates: List<LocalDate>,
     onToggle: (LocalDate) -> Unit,
+    today: LocalDate,
+    horizonEnd: LocalDate,
+    closedDates: Map<String, String>,
 ) {
-    val today = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date }
     val type = LocalKinfolkTypography.current
-    val daysToShow = remember(today) {
-        val firstEpoch = LocalDate(today.year, today.month, 1).toEpochDays()
-        (0 until 28L).map { i -> LocalDate.fromEpochDays(firstEpoch + i) }
-    }
+    var anchor by remember(today) { mutableStateOf(LocalDate(today.year, today.month, 1)) }
+    val daysToShow = remember(anchor) { bookingMonthDays(anchor) }
+    // dayOfWeek.isoDayNumber is 1=Mon..7=Sun; the grid starts on Sunday.
+    val leadingBlanks = daysToShow.first().dayOfWeek.isoDayNumber % 7
+    val cells: List<LocalDate?> = List(leadingBlanks) { null } + daysToShow
+
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        daysToShow.chunked(7).forEach { week ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MonthNavButton(
+                label = "‹",
+                contentDescription = "Previous month",
+                enabled = canPageBack(anchor, today),
+                onClick = { anchor = shiftMonth(anchor, -1) },
+            )
+            Text("${MONTH_NAMES[anchor.month.ordinal]} ${anchor.year}", style = type.heritageSection)
+            MonthNavButton(
+                label = "›",
+                contentDescription = "Next month",
+                enabled = canPageForward(anchor, horizonEnd),
+                onClick = { anchor = shiftMonth(anchor, 1) },
+            )
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            WEEKDAY_HEADERS.forEach { w ->
+                Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    Text(w, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted), textAlign = TextAlign.Center)
+                }
+            }
+        }
+        cells.chunked(7).forEach { week ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 week.forEach { d ->
+                    if (d == null) {
+                        Spacer(Modifier.size(40.dp))
+                        return@forEach
+                    }
                     val sel = selectedDates.contains(d)
+                    val closed = closedDates.containsKey(bookingDateKey(d))
+                    val pickable = !closed && isBookableDay(d, today, horizonEnd)
                     Box(
                         modifier = Modifier
                             .size(40.dp)
@@ -664,17 +797,50 @@ private fun SimpleMonthPicker(
                                 color = if (sel) KinfolkBrand.KinTeal else KinfolkBrand.GlassSurfaceDim,
                                 shape = CircleShape,
                             )
-                            .clickable { onToggle(d) },
+                            .then(if (pickable) Modifier.clickable { onToggle(d) } else Modifier),
                         contentAlignment = Alignment.Center,
                     ) {
+                        val color = when {
+                            sel -> Color.White
+                            pickable -> KinfolkBrand.Navy
+                            else -> KinfolkBrand.NavyMuted
+                        }
                         Text(
-                            d.dayOfMonth.toString(),
-                            style = type.sansMeta.copy(color = if (sel) Color.White else KinfolkBrand.Navy),
+                            d.day.toString(),
+                            style = type.sansMeta.copy(
+                                color = color,
+                                textDecoration = if (closed) TextDecoration.LineThrough else null,
+                            ),
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** Small circular ‹ / › control for the month header. Inert (and dimmed) at a bound. */
+@Composable
+private fun MonthNavButton(
+    label: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val type = LocalKinfolkTypography.current
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .background(color = KinfolkBrand.GlassSurfaceDim, shape = CircleShape)
+            .then(if (enabled) Modifier.clickable(onClickLabel = contentDescription) { onClick() } else Modifier)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = type.heritageSection.copy(color = if (enabled) KinfolkBrand.Navy else KinfolkBrand.NavyMuted),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

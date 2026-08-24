@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BOOKING_HORIZON_DAYS,
   MAX_RECURRING_VISITS,
+  bookingHorizonEnd,
   buildVisits,
   buildWeeklyVisits,
   dateKey,
+  isBookableDay,
+  monthIndex,
   monthPickerDays,
   parseHourMinute,
   priceLabel,
+  shiftMonth,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from './bookingWizardLogic';
@@ -184,15 +189,64 @@ describe('buildVisits (individual pattern)', () => {
 });
 
 describe('monthPickerDays', () => {
-  it('returns exactly 28 consecutive days starting from the 1st of the month', () => {
+  it('returns every real day of the anchor month, in order', () => {
     const days = monthPickerDays(new Date(2026, 6, 15));
-    expect(days).toHaveLength(28);
+    expect(days).toHaveLength(31); // July
     expect(days[0]!.getDate()).toBe(1);
     expect(days[0]!.getMonth()).toBe(6);
+    expect(days.at(-1)!.getDate()).toBe(31);
     // Consecutive.
     for (let i = 1; i < days.length; i++) {
       expect(days[i]!.getTime() - days[i - 1]!.getTime()).toBe(86_400_000);
     }
+  });
+
+  /**
+   * #544 regression. This used to hand back a flat 28 days from the 1st,
+   * which silently dropped the 29th-31st of every long month: on the walk
+   * that filed the issue, August 2026 offered up to the 28th and stopped.
+   */
+  it('does not clip a 30- or 31-day month to 28, and handles February', () => {
+    expect(monthPickerDays(new Date(2026, 7, 1))).toHaveLength(31); // August
+    expect(monthPickerDays(new Date(2026, 8, 1))).toHaveLength(30); // September
+    expect(monthPickerDays(new Date(2026, 1, 1))).toHaveLength(28); // Feb 2026
+    expect(monthPickerDays(new Date(2028, 1, 1))).toHaveLength(29); // Feb 2028, leap
+  });
+});
+
+/** #544: the bounds month navigation is allowed to move between. */
+describe('booking horizon', () => {
+  it('BOOKING_HORIZON_DAYS matches getBusinessClosures MAX_RANGE_DAYS', () => {
+    // There is no booking-horizon setting on business_settings, so the bound
+    // is the server's own closure-resolution cap. If that cap ever moves,
+    // this is the assertion that says so.
+    expect(BOOKING_HORIZON_DAYS).toBe(120);
+  });
+
+  it('bookingHorizonEnd lands exactly horizonDays after today', () => {
+    const today = new Date(2026, 7, 23);
+    expect(dateKey(bookingHorizonEnd(today, 120))).toBe('2026-12-21');
+    expect(dateKey(bookingHorizonEnd(today, 1))).toBe('2026-08-24');
+  });
+
+  it('shiftMonth rolls across a year boundary in both directions', () => {
+    expect(dateKey(shiftMonth(new Date(2026, 11, 15), 1))).toBe('2027-01-01');
+    expect(dateKey(shiftMonth(new Date(2026, 0, 15), -1))).toBe('2025-12-01');
+  });
+
+  it('monthIndex orders months across years', () => {
+    expect(monthIndex(new Date(2026, 11, 1))).toBeLessThan(monthIndex(new Date(2027, 0, 1)));
+    expect(monthIndex(new Date(2026, 7, 1))).toBe(monthIndex(new Date(2026, 7, 31)));
+  });
+
+  it('isBookableDay accepts today through the horizon and refuses either side', () => {
+    const today = new Date(2026, 7, 23, 14, 30);
+    const end = bookingHorizonEnd(today, 120);
+    expect(isBookableDay(new Date(2026, 7, 22), today, end)).toBe(false); // yesterday
+    expect(isBookableDay(new Date(2026, 7, 23, 0, 1), today, end)).toBe(true); // today, inclusive
+    expect(isBookableDay(new Date(2026, 10, 4), today, end)).toBe(true); // mid-window
+    expect(isBookableDay(new Date(2026, 11, 21), today, end)).toBe(true); // horizon day, inclusive
+    expect(isBookableDay(new Date(2026, 11, 22), today, end)).toBe(false); // one past
   });
 });
 
