@@ -8,7 +8,12 @@ import {
   commentAuthorLabel,
   loveSummaryLabel,
   kinTaleMediaKindOf,
+  buildCommentThread,
+  shareLinkPreflightError,
+  kinfolkPreviewHeadline,
+  kinfolkPreviewBody,
 } from './kinTaleDetailFormat';
+import type { KinTaleComment } from '../api/kinTaleDetail';
 
 // TZ pinned to a west-of-UTC zone so the AO-18 (local, never UTC-slice)
 // assertions below are meaningful on any CI runner, the identical rationale
@@ -136,5 +141,126 @@ describe('kinTaleMediaKindOf (positive enumeration, no negation)', () => {
   it('buckets null/other MIME types as "other", never guessing a preview', () => {
     expect(kinTaleMediaKindOf(null)).toBe('other');
     expect(kinTaleMediaKindOf('application/pdf')).toBe('other');
+  });
+});
+
+// ── issue #397 S6: reply-to-a-comment threading ───────────────────────────
+
+function comment(over: Partial<KinTaleComment> & { id: string }): KinTaleComment {
+  return {
+    authorRole: 'kinfolk',
+    authorUid: 'kf-uid',
+    guestName: null,
+    body: 'body',
+    parentCommentId: null,
+    createdAtMs: 1_000,
+    ...over,
+  };
+}
+
+describe('buildCommentThread', () => {
+  it('puts each reply directly under its own parent, in time order', () => {
+    const rows = buildCommentThread([
+      comment({ id: 'b', createdAtMs: 2_000 }),
+      comment({ id: 'a', createdAtMs: 1_000 }),
+      comment({ id: 'a2', parentCommentId: 'a', createdAtMs: 3_000 }),
+      comment({ id: 'a1', parentCommentId: 'a', createdAtMs: 1_500 }),
+    ]);
+    expect(rows.map((r) => r.comment.id)).toEqual(['a', 'a1', 'a2', 'b']);
+    expect(rows.map((r) => r.isReply)).toEqual([false, true, true, false]);
+  });
+
+  it('promotes an orphan reply to its own row rather than dropping it, so no comment ever disappears', () => {
+    const rows = buildCommentThread([
+      comment({ id: 'a', createdAtMs: 1_000 }),
+      comment({ id: 'orphan', parentCommentId: 'deleted', createdAtMs: 2_000 }),
+    ]);
+    expect(rows.map((r) => r.comment.id)).toEqual(['a', 'orphan']);
+    expect(rows.every((r) => !r.isReply)).toBe(true);
+  });
+
+  it('treats a blank parentCommentId as top-level, not as an orphan', () => {
+    const rows = buildCommentThread([comment({ id: 'a', parentCommentId: '  ' })]);
+    expect(rows).toEqual([{ comment: expect.objectContaining({ id: 'a' }), isReply: false }]);
+  });
+
+  it('sorts an undated comment first rather than inventing a timestamp for it', () => {
+    const rows = buildCommentThread([
+      comment({ id: 'dated', createdAtMs: 5_000 }),
+      comment({ id: 'undated', createdAtMs: null }),
+    ]);
+    expect(rows.map((r) => r.comment.id)).toEqual(['undated', 'dated']);
+  });
+
+  it('returns nothing for an empty thread', () => {
+    expect(buildCommentThread([])).toEqual([]);
+  });
+
+  it('does not mutate the caller list', () => {
+    const input = [comment({ id: 'b', createdAtMs: 2_000 }), comment({ id: 'a', createdAtMs: 1_000 })];
+    buildCommentThread(input);
+    expect(input.map((c) => c.id)).toEqual(['b', 'a']);
+  });
+});
+
+// ── issue #397 S4: share-link preflight ───────────────────────────────────
+
+describe('shareLinkPreflightError', () => {
+  it('passes a saved, sent report that names its household', () => {
+    expect(shareLinkPreflightError({ id: 'tale1', status: 'SENT', kinfolkId: 'kf1' })).toBeNull();
+  });
+
+  it('accepts the status case-insensitively, the way every other status read on this collection does', () => {
+    expect(shareLinkPreflightError({ id: 'tale1', status: 'sent', kinfolkId: 'kf1' })).toBeNull();
+  });
+
+  it('refuses a draft, naming what to do about it', () => {
+    expect(shareLinkPreflightError({ id: 'tale1', status: 'DRAFT', kinfolkId: 'kf1' })).toBe(
+      'Send this KinTale first. Only a sent KinTale can be shared.',
+    );
+  });
+
+  it('refuses an unsaved report', () => {
+    expect(shareLinkPreflightError({ id: '', status: 'SENT', kinfolkId: 'kf1' })).toBe(
+      'Cannot share: this KinTale has not been saved yet.',
+    );
+  });
+
+  it('refuses a report with no household to route the link to', () => {
+    expect(shareLinkPreflightError({ id: 'tale1', status: 'SENT', kinfolkId: '  ' })).toBe(
+      'Cannot share: this KinTale has no kinfolk to route the link to.',
+    );
+  });
+});
+
+// ── issue #397 S5: view-as-kinfolk preview ────────────────────────────────
+
+describe('kinfolkPreviewHeadline', () => {
+  const base = { title: '', bodyCopy: '', authorDisplayName: 'Auntie Jo', kinfolkName: 'The Whitfields' };
+
+  it('prefers the authored title', () => {
+    expect(kinfolkPreviewHeadline({ ...base, title: 'A great day at the park' })).toBe('A great day at the park');
+  });
+
+  it('falls back to the cover line when the report has no title', () => {
+    expect(kinfolkPreviewHeadline(base)).toBe('From Auntie Jo for The Whitfields');
+  });
+
+  it('names neither party falsely when the report records neither', () => {
+    expect(kinfolkPreviewHeadline({ title: '  ', bodyCopy: '', authorDisplayName: '', kinfolkName: '' })).toBe(
+      'From Auntie for your kinfolk',
+    );
+  });
+});
+
+describe('kinfolkPreviewBody', () => {
+  it('shows the narrative verbatim, whitespace and all', () => {
+    expect(kinfolkPreviewBody({ bodyCopy: 'Biscuit had a wonderful time.\n\nHe napped after.' })).toBe(
+      'Biscuit had a wonderful time.\n\nHe napped after.',
+    );
+  });
+
+  it('states that nothing was written rather than inventing prose', () => {
+    expect(kinfolkPreviewBody({ bodyCopy: '   ' })).toBe('No narrative was written for this visit.');
   });
 });

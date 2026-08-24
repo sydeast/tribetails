@@ -14,6 +14,7 @@ import {
   getKinTaleReaction,
   toggleKinTaleLove,
   getMyKinTaleMedia,
+  createShareLink,
   type KinTaleComment,
   type KinTaleReaction,
   type KinTaleMediaItem,
@@ -24,6 +25,10 @@ import {
   commentMachineTime,
   loveSummaryLabel,
   kinTaleMediaKindOf,
+  buildCommentThread,
+  shareLinkPreflightError,
+  kinfolkPreviewHeadline,
+  kinfolkPreviewBody,
 } from '../lib/kinTaleDetailFormat';
 import { useCollection } from '../lib/firestore';
 import { type Async } from '../lib/async';
@@ -39,21 +44,24 @@ import './KinTaleDetail.css';
  * `KinTaleReportScreen.kt` as "the not-yet-built single-report detail"); this
  * is that screen.
  *
- * IN SCOPE, per the wasm `KinTaleReportScreen.kt` reference: the recap body
- * (title/bodyCopy), the household/kin/session context it belongs to, photo
- * thumbnails (`getMyKinTaleMedia`), status/sent info, the comment thread
- * (`getKinTaleComments`/`addKinTaleComment`), and the love/react toggle
- * (`getKinTaleReaction`/`toggleKinTaleLove`).
+ * WHAT THIS SCREEN RENDERS, matching the Android
+ * (`android/.../ui/kintales/KinTaleReportScreen.kt`) and wasm
+ * (`web/composeApp/.../screens/kintales/KinTaleReportScreen.kt`) admins field
+ * for field: the recap body (title/bodyCopy), the household/kin/session context
+ * it belongs to, photo thumbnails (`getMyKinTaleMedia`), status/sent info, the
+ * love/react toggle (`getKinTaleReaction`/`toggleKinTaleLove`), the threaded
+ * comment thread with a per-comment Reply
+ * (`getKinTaleComments`/`addKinTaleComment`), and the "Share with kinfolk"
+ * panel: a read-only view-as-kinfolk preview plus a `createShareLink` action
+ * (issue #397 items S4, S5 and S6, which closed the last three gaps between
+ * this screen and the other two admins).
  *
- * OUT OF SCOPE, flagged rather than silently dropped:
- *  - The share-link affordance (`KinTaleReportScreen.kt`'s "copy share link").
- *    No such callable exists in MyTribe/functions/src today; building one is a
- *    separate backend + wiring slice, not a UI-only gap.
- *  - "View as kinfolk" preview mode. A separate, not-yet-built surface.
- *  - Per-comment reply-to threading UI. `addKinTaleComment` accepts a
- *    `parentCommentId` end-to-end (see `api/kinTaleDetail.ts`), but this
- *    screen's own add-comment form only composes ROOT-level comments; a
- *    "Reply" affordance on an individual comment row is a separate surface.
+ * THE PREVIEW IS DELIBERATELY NARROW. It renders the headline, the narrative
+ * and the photos, and nothing else, because that is the whole of what a kinfolk
+ * can see. Dossiers and 411 notes are ADMIN-ONLY (standing ruling) and never
+ * appear here; nor does this screen read them at all. The same three fields are
+ * what `share/createShareLink.ts` puts in its own scrubbed share payload, so
+ * the preview and the shared page agree by construction.
  *
  * READ PATH: the report itself is NOT re-fetched here. It reuses the same
  * bounded `KINTALES_QUERY` stream `KinTales.tsx`/`KinTaleCompose.tsx` already
@@ -172,6 +180,11 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
   const [commentBody, setCommentBody] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [commentBanner, setCommentBanner] = useState<DetailBanner | null>(null);
+  // Id of the comment this draft answers, or null for a root-level comment.
+  // Same single piece of state Android (`replyTargetId`) and the wasm admin
+  // (`KinTaleReportViewModel.replyTargetId`) each carry: one compose box that
+  // changes what it is answering, not a second inline form per row.
+  const [replyTargetId, setReplyTargetId] = useState<string | null>(null);
 
   async function handlePostComment() {
     const body = commentBody.trim();
@@ -179,9 +192,14 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
     setIsPosting(true);
     setCommentBanner(null);
     try {
-      await addKinTaleComment({ taleId: entry._id, body });
+      await addKinTaleComment({
+        taleId: entry._id,
+        body,
+        ...(replyTargetId !== null ? { parentCommentId: replyTargetId } : {}),
+      });
       setCommentBody('');
-      setCommentBanner({ tone: 'success', text: 'Comment posted.' });
+      setReplyTargetId(null);
+      setCommentBanner({ tone: 'success', text: replyTargetId !== null ? 'Reply posted.' : 'Comment posted.' });
       // Re-reads the thread for the authoritative new row (this callable's
       // own response carries only the new commentId, never a fabricated
       // local comment, see api/kinTaleDetail.ts#addKinTaleComment).
@@ -270,6 +288,67 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
   }, [entry._id, kinfolkId, mediaCount]);
   useEffect(() => loadMedia(), [loadMedia]);
 
+  // ── share with kinfolk: preview + share link ─────────────────────────
+  const [viewAsKinfolk, setViewAsKinfolk] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  async function handleShare() {
+    if (isSharing) return;
+    // The same three preflight refusals Android and the wasm admin each make
+    // before calling out: a draft, an unsaved report, or a report with no
+    // household to route the link to. Each maps to a real server-side refusal;
+    // catching them here means a sentence instead of a callable error code.
+    const problem = shareLinkPreflightError({ id: entry._id, status: entry.status ?? '', kinfolkId });
+    if (problem !== null) {
+      setShareError(problem);
+      setShareUrl(null);
+      return;
+    }
+    setIsSharing(true);
+    setShareError(null);
+    setShareUrl(null);
+    setShareCopied(false);
+    try {
+      // includePhotos: the wasm admin and the kinfolk portal's own share dialog
+      // both send true. Photos are the point of sharing a recap, and the server
+      // resolves them into the scrubbed payload itself.
+      const result = await createShareLink(entry._id, kinfolkId, true);
+      setShareUrl(result.shareUrl);
+    } catch (err) {
+      setShareError(`Couldn't create a share link: ${err instanceof Error ? err.message : 'unknown error'}`);
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
+  // Who the open reply answers. Resolved off the loaded thread so the compose
+  // box names a real author; an id that no longer resolves (the thread reloaded
+  // without it) degrades to the neutral line rather than naming the wrong
+  // person. Clearing the target is always one click away either way.
+  const replyTarget =
+    replyTargetId !== null && comments.status === 'ready'
+      ? comments.data.find((c) => c.id === replyTargetId)
+      : undefined;
+  const replyTargetLine =
+    replyTarget !== undefined ? `Replying to ${commentAuthorLabel(replyTarget)}.` : 'Replying to a comment.';
+
+  async function handleCopyShareUrl() {
+    if (shareUrl === null) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+    } catch {
+      // Clipboard access can be denied (permissions, an insecure context). The
+      // url stays on screen and selectable, so this is a lost convenience, not
+      // a failed action worth its own error banner. Same call the kinfolk
+      // portal's ShareKinTaleDialog makes.
+      setShareCopied(false);
+    }
+  }
+
   return (
     <>
       <DenPanel
@@ -290,6 +369,74 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
         )}
         {title.trim() !== '' && <h2 className="kintale-detail__title">{title}</h2>}
         <p className="kintale-detail__body">{bodyCopy.trim() !== '' ? bodyCopy : '(empty body)'}</p>
+      </DenPanel>
+
+      <DenPanel
+        title="Share with kinfolk"
+        subtitle="Preview how the kinfolk reads this update, or create a link to share it."
+      >
+        <div className="kintale-detail__share-actions">
+          <GhostButton
+            label={viewAsKinfolk ? 'Hide kinfolk view' : 'View as kinfolk'}
+            onClick={() => setViewAsKinfolk((on) => !on)}
+          />
+          <PrimaryButton
+            label={isSharing ? 'Creating…' : 'Share link'}
+            onClick={() => void handleShare()}
+            disabled={isSharing}
+            busy={isSharing}
+          />
+        </div>
+
+        {shareError && <Banner tone="error">{shareError}</Banner>}
+
+        {shareUrl !== null && (
+          <div className="kintale-detail__share-result">
+            <span className="kintale-detail__label">Share link</span>
+            {/* Readonly rather than plain text: the url stays selectable and
+                copyable by hand when the clipboard API is unavailable. */}
+            <input
+              className="kintale-detail__share-url"
+              type="text"
+              readOnly
+              value={shareUrl}
+              aria-label="Share link"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="kintale-detail__share-copy">
+              <GhostButton label={shareCopied ? 'Copied' : 'Copy link'} onClick={() => void handleCopyShareUrl()} />
+            </div>
+          </div>
+        )}
+
+        {viewAsKinfolk && (
+          // The kinfolk-facing read of this recap: headline, narrative, photos.
+          // No Edit, no Send, no reaction control, and no admin-only record of
+          // any kind. Dossiers and 411 notes are admin-only, and are neither
+          // read nor rendered anywhere on this screen.
+          <section className="kintale-detail__preview" aria-label="Kinfolk view">
+            <p className="kintale-detail__preview-eyebrow">KINFOLK VIEW</p>
+            <h3 className="kintale-detail__preview-headline">
+              {kinfolkPreviewHeadline({ title, bodyCopy, authorDisplayName, kinfolkName: entry.kinfolkName ?? '' })}
+            </h3>
+            <p className="kintale-detail__preview-body">{kinfolkPreviewBody({ bodyCopy })}</p>
+            {media.status === 'ready' && media.data.length > 0 && (
+              <ul className="kintale-detail__media-grid">
+                {media.data.map((item) => (
+                  <li key={item.id} className="kintale-detail__media-tile">
+                    {kinTaleMediaKindOf(item.contentType) === 'image' ? (
+                      <img src={item.url} alt="KinTale attachment" loading="lazy" className="kintale-detail__media-img" />
+                    ) : (
+                      <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
+                        View attachment
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
       </DenPanel>
 
       <DenPanel title="Who this covers" subtitle="Household, session, and kin this recap belongs to.">
@@ -404,13 +551,27 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
         >
           {(data) => (
             <ul className="kintale-detail__comment-list">
-              {data.map((c) => (
-                <li key={c.id} className="kintale-detail__comment-row">
+              {/* One level of nesting, the depth both other admins render and
+                  the only depth their Reply affordance can create. */}
+              {buildCommentThread(data).map(({ comment: c, isReply }) => (
+                <li
+                  key={c.id}
+                  className={`kintale-detail__comment-row${isReply ? ' kintale-detail__comment-row--reply' : ''}`}
+                  data-reply={isReply ? 'true' : 'false'}
+                  data-reply-target={replyTargetId === c.id ? 'true' : 'false'}
+                >
                   <span className="kintale-detail__comment-head">
                     <span className="kintale-detail__comment-author">{commentAuthorLabel(c)}</span>
                     <time className="kintale-detail__comment-when" dateTime={commentMachineTime(c.createdAtMs)}>
                       {commentWhen(c.createdAtMs)}
                     </time>
+                    <span className="kintale-detail__comment-reply">
+                      <GhostButton
+                        label={replyTargetId === c.id ? 'Replying' : 'Reply'}
+                        onClick={() => setReplyTargetId(c.id)}
+                        disabled={isPosting}
+                      />
+                    </span>
                   </span>
                   <p className="kintale-detail__comment-body">{c.body}</p>
                 </li>
@@ -419,9 +580,15 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
           )}
         </AsyncRegion>
 
-        <div className="kintale-detail__add-comment">
+        <div className="kintale-detail__add-comment" data-replying-to={replyTargetId ?? ''}>
+          {replyTargetId !== null && (
+            <div className="kintale-detail__reply-target">
+              <span>{replyTargetLine}</span>
+              <GhostButton label="Cancel reply" onClick={() => setReplyTargetId(null)} disabled={isPosting} />
+            </div>
+          )}
           <label className="kintale-detail__field">
-            <span className="kintale-detail__label">Add a comment</span>
+            <span className="kintale-detail__label">{replyTargetId !== null ? 'Your reply' : 'Add a comment'}</span>
             <textarea
               value={commentBody}
               onChange={(e) => setCommentBody(e.target.value)}
@@ -434,7 +601,7 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
           {commentBanner && <Banner tone={commentBanner.tone}>{commentBanner.text}</Banner>}
           <div className="kintale-detail__add-comment-actions">
             <PrimaryButton
-              label={isPosting ? 'Posting…' : 'Post comment'}
+              label={isPosting ? 'Posting…' : replyTargetId !== null ? 'Post reply' : 'Post comment'}
               onClick={() => void handlePostComment()}
               disabled={commentBody.trim() === '' || isPosting}
               busy={isPosting}

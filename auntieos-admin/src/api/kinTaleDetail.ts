@@ -2,7 +2,8 @@ import { call } from '../lib/fns';
 
 /**
  * The KinTale DETAIL surface's callable client: comments, the love/react
- * toggle, and media resolution for one `kin_care_reports` doc. The report
+ * toggle, media resolution, and the kinfolk-facing share link for one
+ * `kin_care_reports` doc. The report
  * itself is NOT read here, `screens/KinTaleDetail.tsx` reuses the same bounded
  * `KINTALES_QUERY` stream `KinTales.tsx`/`KinTaleCompose.tsx` already open (the
  * "opens no second listener class" convention `KinTaleCompose.tsx`'s own doc
@@ -42,6 +43,15 @@ import { call } from '../lib/fns';
  *    ITSELF (RULING O-6, Q2), so they take no `kinfolkId` argument from this
  *    client at all, an admin's own uid already carries a valid staff claim for
  *    any tale it can see.
+ *  - `createShareLink({ familyId, kinTaleId, includePhotos })` -> `{ shareId,
+ *    shareUrl }`. Registered in `functions/src/index.ts` and implemented in
+ *    `functions/src/share/createShareLink.ts`: it writes a
+ *    `sharedKinTales/{shareId}` doc holding a SCRUBBED payload (author display
+ *    name, body copy, and the resolved photo urls, nothing else), arrayUnions
+ *    the new id onto the tale, writes an audit row, and returns the public url.
+ *    `familyId` here is the tale's OWN `kinfolkId`: the server re-reads the
+ *    tale and refuses (`not-found`) when the two disagree, so it is an
+ *    authorization anchor, not a routing convenience.
  *
  * `kinfolkId` on the four tale-scoped callables is accepted server-side only
  * for old-client equality-check compat (see `resolveKinTaleAccess`'s doc
@@ -82,11 +92,10 @@ export interface AddKinTaleCommentInput {
   taleId: string;
   body: string;
   /**
-   * Reply-to-a-specific-comment. Accepted end-to-end by the backend, but this
-   * port's own compose form (`screens/KinTaleDetail.tsx`) only composes
-   * ROOT-level comments; a per-comment "Reply" affordance is a separate,
-   * not-yet-built surface, the same "build only what this screen renders"
-   * boundary `KinTaleCompose.tsx`'s own doc comment draws around its scope.
+   * Reply-to-a-specific-comment. `screens/KinTaleDetail.tsx` sets this from its
+   * per-row "Reply" affordance (issue #397 S6); omitted, the comment posts at
+   * the root of the thread. The server validates that the parent already
+   * exists, so a stale id fails loud rather than silently orphaning a reply.
    */
   parentCommentId?: string;
 }
@@ -141,4 +150,42 @@ export async function getMyKinTaleMedia(taleId: string, kinfolkId: string): Prom
     { taleId, kinfolkId },
   );
   return res.media ?? [];
+}
+
+// ── share link ───────────────────────────────────────────────────────────
+
+export interface CreateShareLinkResult {
+  shareId: string;
+  /** The full public url the server built from `SHARE_LINK_BASE_URL`. Never assembled client-side. */
+  shareUrl: string;
+}
+
+/**
+ * Mints a public, read-only share link for one KinTale.
+ *
+ * `familyId` is the tale's own `kinfolkId` and is REQUIRED: unlike the four
+ * tale-scoped callables above there is no `resolveKinTaleAccess` derivation to
+ * fall back on, the server compares it against the tale doc and answers
+ * `not-found` when they disagree.
+ *
+ * The server's own zod schema also accepts `expiresInDays` (1..90) and a
+ * `passcode` (4..8 chars). Neither is sent here, and neither is surfaced in the
+ * admin UI: the two reference implementations for THIS screen (Android
+ * `ui/kintales/KinTaleReportScreen.kt` and the wasm admin's
+ * `KinTaleReportViewModel.kt#createShareLink`) send neither, so the link takes
+ * the server's own `SHARE_DEFAULT_TTL_DAYS` default and carries no passcode.
+ * The kinfolk portal's `mytribe/web/src/components/ShareKinTaleDialog.tsx` is
+ * the shipped precedent for an expiry/passcode/revoke form if an admin-side one
+ * is ever wanted; it is a distinct surface, not part of this parity slice.
+ *
+ * Fail loud: a callable rejection propagates (`lib/fns.ts#call` passthrough).
+ * No url is ever fabricated locally.
+ */
+export async function createShareLink(
+  taleId: string,
+  kinfolkId: string,
+  includePhotos = true,
+): Promise<CreateShareLinkResult> {
+  const payload = { familyId: kinfolkId, kinTaleId: taleId, includePhotos };
+  return call<typeof payload, CreateShareLinkResult>('createShareLink', payload);
 }

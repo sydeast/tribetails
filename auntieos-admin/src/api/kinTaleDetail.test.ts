@@ -9,6 +9,7 @@ import {
   getKinTaleReaction,
   toggleKinTaleLove,
   getMyKinTaleMedia,
+  createShareLink,
   type KinTaleComment,
 } from './kinTaleDetail';
 
@@ -108,5 +109,40 @@ describe('getMyKinTaleMedia', () => {
   it('propagates a rejected call rather than swallowing it (fail loud)', async () => {
     call.mockRejectedValueOnce(new Error('failed-precondition'));
     await expect(getMyKinTaleMedia('tale1', 'kf1')).rejects.toThrow('failed-precondition');
+  });
+});
+
+describe('createShareLink', () => {
+  it('sends the tale id as kinTaleId and the household as familyId (the server compares the two)', async () => {
+    call.mockResolvedValue({ shareId: 's1', shareUrl: 'https://share.example/s1' });
+    const result = await createShareLink('tale1', 'kf1');
+    expect(call).toHaveBeenCalledWith('createShareLink', {
+      familyId: 'kf1',
+      kinTaleId: 'tale1',
+      includePhotos: true,
+    });
+    expect(result).toEqual({ shareId: 's1', shareUrl: 'https://share.example/s1' });
+  });
+
+  it('carries includePhotos through when the caller opts out', async () => {
+    call.mockResolvedValue({ shareId: 's1', shareUrl: 'https://share.example/s1' });
+    await createShareLink('tale1', 'kf1', false);
+    expect(call).toHaveBeenCalledWith('createShareLink', {
+      familyId: 'kf1',
+      kinTaleId: 'tale1',
+      includePhotos: false,
+    });
+  });
+
+  it('sends no expiresInDays or passcode: the server owns the default TTL, and this surface has no passcode field', async () => {
+    call.mockResolvedValue({ shareId: 's1', shareUrl: 'https://share.example/s1' });
+    await createShareLink('tale1', 'kf1');
+    const payload = call.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(['familyId', 'includePhotos', 'kinTaleId']);
+  });
+
+  it('propagates a rejected call rather than fabricating a url (fail loud)', async () => {
+    call.mockRejectedValueOnce(new Error('not-found'));
+    await expect(createShareLink('tale1', 'kf1')).rejects.toThrow('not-found');
   });
 });
