@@ -249,16 +249,28 @@ export async function batchUpdateBookings(
  * chars server-side, the same opaque-string convention `BookingEntry.startTime`
  * already documents), not a Timestamp. Throws (via lib/fns.call) on `not-found`
  * / `invalid-argument` / auth errors; the caller surfaces the message fail-loud.
+ *
+ * IT NOW REFUSES TWO THINGS IT USED TO ALLOW (#397 M13). The server checks the
+ * NEW window against Google Calendar busy imports and against the visits already
+ * on the books before it writes — two gaps that only became reachable by a
+ * gesture when the Schedule grid gained drag-to-reschedule. Both refuse with
+ * `failed-precondition` and a machine `details.code`, and both are overridable
+ * by an operator who has been shown the clash; the company-closure refusal
+ * beside them is not. `overrides` is omitted entirely on a first attempt, so the
+ * wire shape is unchanged for every existing caller.
  */
 export async function rescheduleBooking(
   sessionId: string,
   startTime: string,
   endTime: string,
+  overrides: { visit?: boolean; busy?: boolean } = {},
 ): Promise<RescheduleBookingResult> {
   return call<RescheduleBookingArgs, RescheduleBookingResult>('rescheduleBooking', {
     sessionId,
     startTime,
     endTime,
+    ...(overrides.visit === true && { overrideVisitConflict: true }),
+    ...(overrides.busy === true && { overrideBusyConflict: true }),
   });
 }
 

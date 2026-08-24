@@ -9,6 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
+import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { validateResponse } from '../lib/callableResponse';
 
 /**
@@ -19,17 +21,31 @@ import { validateResponse } from '../lib/callableResponse';
  *
  * C1: a reschedule is a fresh slot request onto the NEW window just as much as
  * a create is, so it is guarded the same way (`guardCompanyHolidayConflict`,
- * no override) before the write lands. Not guarded against
- * `guardBookingBusyConflict` here -- that was a pre-existing gap left open by
- * PR #183 (drag-to-reschedule was not one of the write paths it closed) and is
- * a separate decision from this task's scope; the company-holiday guard is
- * new with this task and closing it for reschedule from the start avoids
- * introducing a matching gap on day one.
+ * no override) before the write lands.
+ *
+ * THE GAP C1 DOCUMENTED IS CLOSED, AND SO IS THE ONE IT DID NOT NAME (#397
+ * M13). This header used to say `guardBookingBusyConflict` was "a separate
+ * decision from this task's scope" — a hole left open by PR #183, which did not
+ * count drag-to-reschedule among the write paths it closed. Making the drag
+ * real on the admin Schedule grid is what turned that hole from a form nobody
+ * used into a gesture, so it is closed here. With it goes a second one nobody
+ * had written down: NOTHING compared the new window against the visits already
+ * on the books, so a visit could be dropped straight on top of another.
+ *
+ * A reschedule is now guarded exactly as `createKinCareSession` is, plus the
+ * one thing only a move needs: `excludeSessionId`, so a visit is never found
+ * conflicting with the window it is being moved OUT of (without it, any nudge
+ * shorter than the visit's own length would refuse itself). Both new guards are
+ * overridable and the closure guard still is not; each module's header says why.
  */
 export const Args = z.object({
   sessionId: z.string().min(1).max(120),
   startTime: z.string().min(1).max(40),
   endTime: z.string().min(1).max(40),
+  /** Admin-only escape hatch for a Google Calendar busy import. Same flag and same meaning as on `createKinCareSession`. */
+  overrideBusyConflict: z.boolean().optional(),
+  /** Admin-only escape hatch for a visit already on the books. See `lib/visitOverlapConflict.ts`. */
+  overrideVisitConflict: z.boolean().optional(),
 });
 
 export const Result = z
@@ -63,9 +79,28 @@ export async function rescheduleBookingHandler(
   if (!snap.exists) throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
   const prev = snap.data() as { startTime?: string; endTime?: string } | undefined;
 
-  await guardCompanyHolidayConflict({
+  const candidate = [
+    { startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) },
+  ];
+  await guardCompanyHolidayConflict({ firestore: db(), visits: candidate });
+  await guardBookingBusyConflict({
     firestore: db(),
-    visits: [{ startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) }],
+    visits: candidate,
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    override: args.overrideBusyConflict,
+    auditContext: { sessionId: args.sessionId, attempt: 'reschedule' },
+  });
+  await guardVisitOverlapConflict({
+    firestore: db(),
+    visits: candidate,
+    actorUid: uid,
+    actorRole: 'AUNTIE',
+    // The visit being moved must not collide with where it currently is.
+    excludeSessionId: args.sessionId,
+    override: args.overrideVisitConflict,
+    attempt: 'reschedule',
+    auditContext: { sessionId: args.sessionId },
   });
 
   await ref.set(
