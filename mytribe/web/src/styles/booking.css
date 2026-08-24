@@ -115,6 +115,21 @@
 .price-box .pv { font-family: var(--serif); font-size: 26px; color: var(--navy); }
 .price-box .pv small { font-family: var(--mono); font-size: 12px; color: var(--navy-muted); }
 
+/* #541/#543: the KinCares chosen for each day (step 2) and their times (step 3) */
+.slotlist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.slotrow { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 14px;
+  border: 1px solid var(--hairline); background: rgba(255, 255, 255, .45); }
+.slotrow .slotname { font-size: 14px; font-weight: 600; color: var(--navy); flex: 1; }
+.slotrow .slotprice { font-family: var(--mono); font-size: 12px; color: var(--navy-muted); }
+.slottimes { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+
+/* #547: the enumerated visits on Review */
+.visitlist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.visitlist li { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+.visitlist li:last-child { border-bottom: none; }
+.visitlist b { font-size: 14px; color: var(--navy); }
+.visitlist small { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--navy-muted); }
+
 /* warning / cap text */
 .wiz-warn { color: var(--coral); font-size: 12.5px; }
 .wiz-ok { color: var(--teal); font-size: 12.5px; }

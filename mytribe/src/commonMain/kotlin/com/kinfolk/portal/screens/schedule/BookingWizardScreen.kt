@@ -98,13 +98,15 @@ fun BookingWizardScreen(
     /** "All Kin in this home" is default; flip via Choose-specific to multi-pick. */
     var allKinMode by remember { mutableStateOf(true) }
     var selectedKinIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var selectedServiceId by remember { mutableStateOf<String?>(null) }
+    // #541 / #543: a LIST of KinCares, each with its own time of day, not one
+    // service and one clock. See KinCareSlot in RecurringBooking.kt.
+    var slots by remember { mutableStateOf<List<KinCareSlot>>(emptyList()) }
+    var slotSeq by remember { mutableStateOf(0) }
     var pattern by remember { mutableStateOf(if (startWeekly) BookingPattern.Weekly else BookingPattern.Individual) }
     var selectedDates by remember { mutableStateOf<List<LocalDate>>(emptyList()) }
     // 16.3 weekly recurrence: which weekdays (0=Sun..6=Sat) + how many weeks.
     var weeklyDays by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var weekCount by remember { mutableStateOf(4) }
-    var visitTime by remember { mutableStateOf("09:00") }
     var notes by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
@@ -127,31 +129,40 @@ fun BookingWizardScreen(
         }
     }
 
-    val selectedService = services?.firstOrNull { it.id == selectedServiceId }
+    val catalog: List<Service> = services ?: emptyList()
     val resolvedKinIds: List<String> = if (allKinMode) {
         kin?.map { it.id } ?: emptyList()
     } else {
         selectedKinIds.toList()
     }
-    // Single source of truth for the weekly series: the SAME expanded list is used
-    // by the Step 3 count, the Step 5 review, and submit (so the number the kinfolk
-    // confirms is exactly what is sent). Recomputed only when the rule changes.
-    val weeklyPreview: List<BookingVisit> = remember(pattern, weeklyDays, weekCount, visitTime, selectedServiceId) {
-        val svc = selectedService
-        val t = parseHourMinute(visitTime)
-        if (pattern == BookingPattern.Weekly && svc != null && t != null && weeklyDays.isNotEmpty() && weekCount >= 1) {
+    /**
+     * Single source of truth for the visit list, BOTH patterns: the SAME
+     * expanded list is used by the Step 3 count, the estimate, the Step 5
+     * review's enumerated dates, and submit — so the plan a kinfolk confirms is
+     * exactly what is sent. The Individual pattern used to be the exception,
+     * building its visits only inside the submit handler, which is how #546 and
+     * #547 happened: nothing on screen had a visit list to price, so it priced
+     * the catalog entry instead and never moved. Recomputed only when the plan
+     * changes (deliberately NOT on a ticking clock).
+     */
+    val plannedVisits: List<BookingVisit> = remember(pattern, selectedDates, weeklyDays, weekCount, slots, catalog) {
+        if (pattern == BookingPattern.Weekly) {
             buildWeeklyVisits(
                 nowMs = Clock.System.now().toEpochMilliseconds(),
-                weeklyDays = weeklyDays, weeks = weekCount, time = t,
-                serviceId = svc.id, serviceName = svc.name, priceCents = svc.priceCents ?: svc.priceMinCents,
+                weeklyDays = weeklyDays,
+                weeks = weekCount,
+                slots = slots,
+                services = catalog,
             )
         } else {
-            emptyList()
+            buildVisits(selectedDates, slots, catalog)
         }
     }
-    val weeklyPotential = weeklyPotentialCount(weeklyDays, weekCount)
+    /** #546: the running estimate, derived from the plan above and from nothing else. */
+    val estimate = remember(plannedVisits, catalog) { estimateBookingTotal(plannedVisits, catalog) }
+    val weeklyPotential = weeklyPotentialCount(weeklyDays, weekCount, slots.size)
     // True when the cap (or the future-only filter) dropped requested occurrences.
-    val weeklyCapped = pattern == BookingPattern.Weekly && weeklyPreview.isNotEmpty() && weeklyPotential > weeklyPreview.size
+    val weeklyCapped = pattern == BookingPattern.Weekly && plannedVisits.isNotEmpty() && weeklyPotential > plannedVisits.size
 
     /**
      * C1: every date in the plan that [closedDates] says is closed. The
@@ -160,27 +171,31 @@ fun BookingWizardScreen(
      * a generated weekly date can land on a closure with nothing short of
      * this telling the household before the whole request comes back refused.
      */
-    val closedDatesInPlan: List<String> = remember(pattern, selectedDates, weeklyPreview, closedDates) {
+    val closedDatesInPlan: List<String> = remember(pattern, selectedDates, plannedVisits, closedDates) {
         if (closedDates.isEmpty()) {
             emptyList()
         } else if (pattern == BookingPattern.Individual) {
             selectedDates.map { bookingDateKey(it) }.filter { closedDates.containsKey(it) }
         } else {
             val tz = TimeZone.currentSystemDefault()
-            weeklyPreview
+            plannedVisits
                 .map { bookingDateKey(Instant.fromEpochMilliseconds(it.startTimeMs).toLocalDateTime(tz).date) }
                 .filter { closedDates.containsKey(it) }
                 .distinct()
         }
     }
 
+    val individualBlocker: String? =
+        if (selectedDates.isEmpty()) "Tap at least one date." else slotsBlocker(slots)
+    val scheduleReady = closedDatesInPlan.isEmpty() && when (pattern) {
+        BookingPattern.Individual -> individualBlocker == null
+        BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, slots) == null
+    }
+
     val canAdvance = when (step) {
         1 -> if (allKinMode) (kin?.isNotEmpty() == true) else selectedKinIds.isNotEmpty()
-        2 -> selectedServiceId != null
-        3 -> closedDatesInPlan.isEmpty() && when (pattern) {
-            BookingPattern.Individual -> selectedDates.isNotEmpty() && parseHourMinute(visitTime) != null
-            BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, visitTime) == null
-        }
+        2 -> slots.isNotEmpty()
+        3 -> scheduleReady
         4 -> true
         else -> true
     }
@@ -214,10 +229,14 @@ fun BookingWizardScreen(
                     selectedKinIds = if (selectedKinIds.contains(id)) selectedKinIds - id else selectedKinIds + id
                 },
             )
-            2 -> Step2ServiceSelect(
+            2 -> Step2KinCareSelect(
                 services = services!!,
-                selectedId = selectedServiceId,
-                onSelect = { selectedServiceId = it },
+                slots = slots,
+                onAdd = { id ->
+                    slotSeq += 1
+                    slots = slots + KinCareSlot(slotId = "slot-$slotSeq", serviceId = id, time = DEFAULT_VISIT_TIME)
+                },
+                onRemove = { slotId -> slots = slots.filterNot { it.slotId == slotId } },
             )
             3 -> Step3ScheduleDates(
                 pattern = pattern,
@@ -232,27 +251,29 @@ fun BookingWizardScreen(
                 },
                 weekCount = weekCount,
                 onWeekCountChange = { weekCount = it },
-                visitTime = visitTime,
-                onVisitTimeChange = { visitTime = it },
-                serviceLabel = selectedService?.name ?: "Not chosen yet",
-                weeklyEmitted = weeklyPreview.size,
+                slots = slots,
+                services = catalog,
+                onSlotTimeChange = { slotId, t ->
+                    slots = slots.map { if (it.slotId == slotId) it.copy(time = t) else it }
+                },
+                individualBlocker = individualBlocker,
+                visitCount = plannedVisits.size,
+                weeklyEmitted = plannedVisits.size,
                 weeklyCapped = weeklyCapped,
                 today = today,
                 horizonEnd = horizonEnd,
                 closedDates = closedDates,
                 closedDatesInPlan = closedDatesInPlan,
             )
-            4 -> Step4InvoiceOptions()
+            4 -> Step4ExtraLoveAndContext(notes = notes, onNotesChange = { notes = it })
             5 -> Step5Review(
                 kinNames = if (allKinMode) listOf("All Kin in this home")
                 else kin!!.filter { it.id in selectedKinIds }.mapNotNull { it.name },
-                service = selectedService,
-                dates = selectedDates,
-                visitTime = visitTime,
+                kinCareSummary = summariseSlots(slots, catalog),
                 notes = notes,
-                onNotesChange = { notes = it },
                 pattern = pattern,
-                visitCount = if (pattern == BookingPattern.Weekly) weeklyPreview.size else selectedDates.size,
+                visits = plannedVisits,
+                estimateLabel = formatEstimate(estimate),
                 capped = weeklyCapped,
                 submitting = submitting,
                 error = submitError,
@@ -283,14 +304,9 @@ fun BookingWizardScreen(
                             submitError = null
                             scope.launch {
                                 try {
-                                    val svc = selectedService ?: error("no service")
-                                    // Individual = tapped dates; Weekly (16.3) = the same
-                                    // expanded preview shown in Step 3 + Review (one source of truth).
-                                    val visits = if (pattern == BookingPattern.Weekly) {
-                                        weeklyPreview
-                                    } else {
-                                        buildVisits(selectedDates, visitTime, svc)
-                                    }
+                                    if (slots.isEmpty()) error("Choose a KinCare Duration first.")
+                                    // The SAME array step 3 and Review have been showing.
+                                    val visits = plannedVisits
                                     if (visits.isEmpty()) error("No visits to book. Check the days and weeks.")
                                     // The wizard groups its visits into one envelope; the
                                     // returned batchId is not used for nav, so just reload.
@@ -310,10 +326,7 @@ fun BookingWizardScreen(
                                 }
                             }
                         },
-                        enabled = !submitting && selectedService != null && closedDatesInPlan.isEmpty() && when (pattern) {
-                            BookingPattern.Individual -> selectedDates.isNotEmpty() && parseHourMinute(visitTime) != null
-                            BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, visitTime) == null
-                        },
+                        enabled = !submitting && slots.isNotEmpty() && plannedVisits.isNotEmpty() && scheduleReady,
                     )
                 }
             }
@@ -346,7 +359,9 @@ private fun SelectedIndicator() {
 private fun WizardStepIndicator(current: Int) {
     val type = LocalKinfolkTypography.current
     // Indicator labels are intentionally short — step section headings render the long form.
-    val labels = listOf("Pets", "KinCare Duration", "Dates", "Invoice", "Review")
+    // #545: step 4 is Extra Love & Context. It was labelled "Invoice" for a step
+    // that showed kinfolk an invoice-policy note and asked them for nothing.
+    val labels = listOf("Pets", "KinCare Duration", "Dates", "Extra Love", "Review")
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -462,10 +477,23 @@ private fun Step1KinSelect(
 }
 
 @Composable
-private fun Step2ServiceSelect(
+/**
+ * #541 + #543: step 2 builds the day's KinCare LIST, not a single choice.
+ *
+ * Tapping a card used to REPLACE the choice, so a second duration silently
+ * unpicked the first (#541) and two KinCares in one day were unreachable
+ * (#543). A card is now an ADD control — tap it again for a second one of the
+ * same duration, which is how the morning-and-evening walk gets asked for — and
+ * the list below is where a KinCare is taken back out. Adding on the card and
+ * removing in the list keeps one control from having to mean both.
+ *
+ * Each KinCare's time of day is set on step 3, next to the dates.
+ */
+private fun Step2KinCareSelect(
     services: List<Service>,
-    selectedId: String?,
-    onSelect: (String) -> Unit,
+    slots: List<KinCareSlot>,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     Column(
@@ -473,14 +501,17 @@ private fun Step2ServiceSelect(
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
         Text("Choose KinCare Duration", style = type.heritageTitle)
-        Text("How long should each visit run?", style = type.sansBody)
+        Text(
+            "How long should each visit run? Add as many as this booking needs. Tap a duration twice for two of them in the same day.",
+            style = type.sansBody,
+        )
         services.groupBy { it.category ?: "KinCare Durations" }.forEach { (cat, list) ->
             Spacer(Modifier.height(KinfolkSpacing.xs))
             Text(cat, style = type.sansLabel)
             list.forEach { s ->
-                val sel = s.id == selectedId
+                val count = slots.count { it.serviceId == s.id }
                 GlassCard(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelect(s.id) },
+                    modifier = Modifier.fillMaxWidth().clickable(onClickLabel = "Add ${s.name}") { onAdd(s.id) },
                     shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(KinfolkSpacing.l),
                 ) {
@@ -494,7 +525,35 @@ private fun Step2ServiceSelect(
                             val priceStr = priceLabel(s)
                             Text(priceStr, style = type.sansLabel)
                         }
-                        if (sel) SelectedIndicator()
+                        when {
+                            count > 1 -> Text("×$count", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
+                            count == 1 -> SelectedIndicator()
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(KinfolkSpacing.xs))
+        Text("KinCare in each day", style = type.sansLabel)
+        if (slots.isEmpty()) {
+            Text("Nothing added yet. Tap a duration above.", style = type.sansMeta)
+        } else {
+            slots.forEachIndexed { idx, slot ->
+                val service = services.firstOrNull { it.id == slot.serviceId }
+                val name = service?.name ?: slot.serviceId
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(KinfolkSpacing.m),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("${idx + 1}. $name", style = type.sansBody)
+                        TextButton(onClick = { onRemove(slot.slotId) }) { Text("Remove $name") }
                     }
                 }
             }
@@ -512,9 +571,14 @@ private fun Step3ScheduleDates(
     onToggleWeekday: (Int) -> Unit,
     weekCount: Int,
     onWeekCountChange: (Int) -> Unit,
-    visitTime: String,
-    onVisitTimeChange: (String) -> Unit,
-    serviceLabel: String,
+    /** #541/#543: the day's KinCare list. One time field is rendered per entry. */
+    slots: List<KinCareSlot>,
+    services: List<Service>,
+    onSlotTimeChange: (String, String) -> Unit,
+    /** First reason the Individual pattern is not sendable, or null. */
+    individualBlocker: String? = null,
+    /** Visits the whole plan currently expands to (dates x KinCares). */
+    visitCount: Int = 0,
     weeklyEmitted: Int = 0,
     weeklyCapped: Boolean = false,
     /** #544: lower bound of the pickable window; also the earliest month reachable. */
@@ -584,16 +648,24 @@ private fun Step3ScheduleDates(
         }
 
         Spacer(Modifier.height(KinfolkSpacing.s))
-        Text("Daily Visit", style = type.sansLabel)
-        KinField(
-            value = visitTime,
-            onValueChange = onVisitTimeChange,
-            label = "Time (HH:MM)",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text("KinCare Duration: $serviceLabel", style = type.sansBody)
+        // #543: one time field PER KinCare, not one for the booking. Two KinCares
+        // of the same duration in a day are only two things because their times differ.
+        Text("Visit Times", style = type.sansLabel)
+        if (slots.isEmpty()) {
+            Text("No KinCare chosen yet. Go back a step to add one.", style = type.sansMeta)
+        } else {
+            slots.forEachIndexed { idx, slot ->
+                val name = services.firstOrNull { it.id == slot.serviceId }?.name ?: slot.serviceId
+                KinField(
+                    value = slot.time,
+                    onValueChange = { onSlotTimeChange(slot.slotId, it) },
+                    label = "${idx + 1}. $name time (HH:MM)",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         if (pattern == BookingPattern.Weekly) {
-            val blocker = weeklyVisitsBlocker(weeklyDays, weekCount, visitTime)
+            val blocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots)
             Text(
                 blocker ?: "$weeklyEmitted visit(s) over $weekCount weeks. Your Auntie confirms each visit.",
                 style = type.sansMeta.copy(color = if (blocker == null) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral),
@@ -605,10 +677,21 @@ private fun Step3ScheduleDates(
                     style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
                 )
             }
-        } else if (selectedDates.isEmpty()) {
-            Text("No dates selected yet.", style = type.sansMeta)
+        } else if (individualBlocker != null) {
+            Text(
+                individualBlocker,
+                style = if (selectedDates.isEmpty()) {
+                    type.sansMeta
+                } else {
+                    type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral)
+                },
+            )
         } else {
-            Text("${selectedDates.size} ${if (selectedDates.size == 1) "date" else "dates"} selected", style = type.sansLabel.copy(color = KinfolkBrand.KinTeal))
+            Text(
+                "${selectedDates.size} ${if (selectedDates.size == 1) "date" else "dates"} selected, " +
+                    "$visitCount ${if (visitCount == 1) "visit" else "visits"}",
+                style = type.sansLabel.copy(color = KinfolkBrand.KinTeal),
+            )
         }
 
         // C1: a closed date already in the plan. The picker cannot produce one,
@@ -632,17 +715,41 @@ private fun Step3ScheduleDates(
 /** Weekday chip labels indexed 0=Sun..6=Sat (matches weeklyDays / weekdayIndex). */
 private val WEEKDAY_LABELS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
+/** What a freshly added KinCare's time starts at. The household changes it in step 3. */
+private const val DEFAULT_VISIT_TIME = "09:00"
+
+/**
+ * #545: step 4 is what the step indicator has always called it.
+ *
+ * What used to sit here was headed "Invoice Options" and offered no option: it
+ * told kinfolk an Auntie raises the invoice after she confirms, and gave them a
+ * Next button. Kinfolk do not choose how they are billed, so nothing belonged
+ * on this step but the note the indicator already promised — which was stranded
+ * at the bottom of Review. It lives here now, and the invoice card is deleted
+ * rather than hidden: no composable remains to reach.
+ *
+ * The note is submitted with the booking request, and stays editable on
+ * BookingDetailsScreen until 3hr before the visit starts.
+ */
 @Composable
-private fun Step4InvoiceOptions() {
+private fun Step4ExtraLoveAndContext(notes: String, onNotesChange: (String) -> Unit) {
     val type = LocalKinfolkTypography.current
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
-        Text("Invoice Options", style = type.heritageTitle)
+        Text("Extra Love & Context", style = type.heritageTitle)
+        Text("Anything your Auntie should know before she arrives? Optional.", style = type.sansBody)
+        KinField(
+            value = notes,
+            onValueChange = onNotesChange,
+            label = "e.g. She's a bit shy today, or the gate is tricky to open…",
+            singleLine = false,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Text(
-            "Auntie creates and sends the invoice once she confirms. You'll be able to add any extra context for Auntie in the next step.",
-            style = type.sansBody,
+            "This note will be highlighted for Auntie during the visit.",
+            style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
         )
     }
 }
@@ -650,18 +757,17 @@ private fun Step4InvoiceOptions() {
 @Composable
 private fun Step5Review(
     kinNames: List<String>,
-    service: Service?,
-    dates: List<LocalDate>,
-    visitTime: String,
+    kinCareSummary: String,
     notes: String,
-    onNotesChange: (String) -> Unit,
     pattern: BookingPattern,
-    visitCount: Int,
+    visits: List<BookingVisit>,
+    estimateLabel: String,
     capped: Boolean,
     submitting: Boolean,
     error: String?,
 ) {
     val type = LocalKinfolkTypography.current
+    val rendered = renderPlannedVisits(visits)
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
@@ -673,11 +779,10 @@ private fun Step5Review(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 ReviewRow("Kin", kinNames.joinToString(", ").ifBlank { "—" })
-                ReviewRow("KinCare Duration", service?.name ?: "—")
+                ReviewRow("KinCare", kinCareSummary.ifBlank { "—" })
                 ReviewRow("Pattern", if (pattern == BookingPattern.Individual) "Individual Dates" else "Repeating Schedule")
-                ReviewRow("Visits", if (visitCount == 1) "1 visit" else "$visitCount visits")
-                ReviewRow("Time", visitTime)
-                if (service != null) ReviewRow("Estimated Price", priceLabel(service))
+                ReviewRow("Estimated Price", estimateLabel)
+                ReviewRow("Extra Love & Context", notes.ifBlank { "None added" })
                 if (capped) {
                     Text(
                         "Capped at $MAX_RECURRING_VISITS visits. Reduce days or weeks to request fewer.",
@@ -686,25 +791,33 @@ private fun Step5Review(
                 }
             }
         }
-        // Extra Love & Context — editable kinfolk-facing note. Submitted with the
-        // booking request; later editable on BookingDetailsScreen until 3hr before start.
+        // #547: "Pattern = Dates. Actually display those dates." Review used to
+        // print "3 visits" and leave the household to remember which three. Every
+        // visit is enumerated, spelled the way
+        // docs/superpowers/specs/2026-08-23-visit-date-rendering-design.md spells
+        // one ("Thu, Sep 4 at 9:00 AM").
         GlassCard(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(KinfolkSpacing.l),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
-                Text("Extra Love & Context", style = type.heritageTitle)
-                KinField(
-                    value = notes,
-                    onValueChange = onNotesChange,
-                    label = "e.g. She's a bit shy today, or the gate is tricky to open…",
-                    singleLine = false,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
                 Text(
-                    "This note will be highlighted for Auntie during the visit.",
-                    style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                    if (rendered.size == 1) "1 visit" else "${rendered.size} visits",
+                    style = type.heritageSection,
                 )
+                if (rendered.isEmpty()) {
+                    Text("No visits in this booking yet.", style = type.sansMeta)
+                } else {
+                    rendered.forEach { v ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(plannedVisitLine(v), style = type.sansBody)
+                            Text(v.serviceName, style = type.sansMeta)
+                        }
+                    }
+                }
             }
         }
         if (error != null) {
@@ -844,11 +957,6 @@ private fun MonthNavButton(
     }
 }
 
-private fun parseHourMinute(s: String): LocalTime? = try {
-    val parts = s.split(":")
-    if (parts.size != 2) null else LocalTime(parts[0].toInt(), parts[1].toInt())
-} catch (_: Throwable) { null }
-
 private fun priceLabel(s: Service): String {
     val p = s.priceCents
     val min = s.priceMinCents
@@ -861,18 +969,7 @@ private fun priceLabel(s: Service): String {
     }
 }
 
-private fun buildVisits(dates: List<LocalDate>, time: String, service: Service): List<BookingVisit> {
-    val tz = TimeZone.currentSystemDefault()
-    val t = parseHourMinute(time) ?: error("invalid time")
-    return dates.map { d ->
-        val dt = LocalDateTime(d.year, d.month, d.dayOfMonth, t.hour, t.minute)
-        val instant: Instant = dt.toInstant(tz)
-        BookingVisit(
-            startTimeMs = instant.toEpochMilliseconds(),
-            endTimeMs = null,
-            serviceId = service.id,
-            serviceName = service.name,
-            priceCents = service.priceCents ?: service.priceMinCents,
-        )
-    }
-}
+// `buildVisits` and the local `parseHourMinute` moved to RecurringBooking.kt when
+// #541/#543 made them slot-shaped: both patterns expand through the same two pure
+// functions there, and the web mirror (lib/bookingWizardLogic.ts) matches them
+// function for function.

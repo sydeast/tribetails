@@ -6,17 +6,35 @@ import {
   buildVisits,
   buildWeeklyVisits,
   dateKey,
+  estimateBookingTotal,
+  formatEstimate,
   isBookableDay,
   monthIndex,
   monthPickerDays,
   parseHourMinute,
+  plannedVisitLine,
   priceLabel,
+  renderPlannedVisits,
   shiftMonth,
+  slotsBlocker,
+  summariseSlots,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from './bookingWizardLogic';
+import type { KinCareSlot, WizardService } from './bookingWizardLogic';
 
-const SERVICE = { id: 's1', name: "Auntie's In", priceCents: 1500 as number | null, priceMinCents: null as number | null };
+const SERVICE: WizardService = { id: 's1', name: "Auntie's In", priceCents: 1500, priceMinCents: null };
+/** The catalog entry the #546 worked example is priced against: 30 Minute at $25.00. */
+const THIRTY_MINUTE: WizardService = { id: '30Minute', name: '30 Minute', priceCents: 2500, priceMinCents: null };
+const SIXTY_MINUTE: WizardService = { id: '60Minute', name: '60 Minute', priceCents: 4500, priceMinCents: null };
+const RANGED: WizardService = { id: 'ranged', name: 'Ranged', priceCents: null, priceMinCents: 800 };
+const UNPRICED: WizardService = { id: 'unpriced', name: 'Unpriced', priceCents: null, priceMinCents: null };
+const CATALOG: WizardService[] = [SERVICE, THIRTY_MINUTE, SIXTY_MINUTE, RANGED, UNPRICED];
+
+/** One KinCare of `serviceId` at `time`. */
+function slot(serviceId: string, time: string, n = 1): KinCareSlot {
+  return { slotId: `${serviceId}-${n}`, serviceId, time };
+}
 
 describe('parseHourMinute', () => {
   it('parses a valid HH:MM', () => {
@@ -42,31 +60,62 @@ describe('parseHourMinute', () => {
   });
 });
 
+/** #541 + #543: the KinCare list is what a booking day is made of. */
+describe('slotsBlocker', () => {
+  it('requires at least one KinCare', () => {
+    expect(slotsBlocker([])).toBe('Add at least one KinCare Duration.');
+  });
+
+  it('requires every KinCare time to parse', () => {
+    expect(slotsBlocker([slot('s1', '09:00'), slot('s1', 'bad', 2)])).toBe('Enter every KinCare time as HH:MM.');
+  });
+
+  /** #541: two DIFFERENT durations in one day is the whole point, not an error. */
+  it('accepts two different durations at the same time', () => {
+    expect(slotsBlocker([slot('30Minute', '09:00'), slot('60Minute', '09:00')])).toBeNull();
+  });
+
+  /** #543: the same duration twice in a day is fine as long as the times differ. */
+  it('accepts the same duration twice at different times', () => {
+    expect(slotsBlocker([slot('30Minute', '09:00'), slot('30Minute', '17:00', 2)])).toBeNull();
+  });
+
+  it('refuses the same duration at the same time, which is one KinCare asked for twice', () => {
+    expect(slotsBlocker([slot('30Minute', '09:00'), slot('30Minute', '09:00', 2)])).toBe(
+      'Two KinCares have the same duration at the same time. Change one of the times.',
+    );
+  });
+});
+
 describe('weeklyPotentialCount', () => {
-  it('is days x weeks', () => {
-    expect(weeklyPotentialCount(new Set([1, 3, 5]), 4)).toBe(12);
+  it('is days x weeks x KinCares', () => {
+    expect(weeklyPotentialCount(new Set([1, 3, 5]), 4, 1)).toBe(12);
+    expect(weeklyPotentialCount(new Set([1, 3, 5]), 4, 2)).toBe(24);
   });
 
   it('is 0 for weeks < 1', () => {
-    expect(weeklyPotentialCount(new Set([1]), 0)).toBe(0);
+    expect(weeklyPotentialCount(new Set([1]), 0, 3)).toBe(0);
   });
 });
 
 describe('weeklyVisitsBlocker', () => {
+  const ok = [slot('s1', '09:00')];
+
   it('requires at least one weekday', () => {
-    expect(weeklyVisitsBlocker(new Set(), 4, '09:00')).toBe('Pick at least one day of the week.');
+    expect(weeklyVisitsBlocker(new Set(), 4, ok)).toBe('Pick at least one day of the week.');
   });
 
   it('requires weeks >= 1', () => {
-    expect(weeklyVisitsBlocker(new Set([1]), 0, '09:00')).toBe('Choose how many weeks.');
+    expect(weeklyVisitsBlocker(new Set([1]), 0, ok)).toBe('Choose how many weeks.');
   });
 
-  it('requires a valid time', () => {
-    expect(weeklyVisitsBlocker(new Set([1]), 4, 'bad')).toBe('Enter a valid time as HH:MM.');
+  it('defers the KinCare rules to slotsBlocker', () => {
+    expect(weeklyVisitsBlocker(new Set([1]), 4, [])).toBe('Add at least one KinCare Duration.');
+    expect(weeklyVisitsBlocker(new Set([1]), 4, [slot('s1', 'bad')])).toBe('Enter every KinCare time as HH:MM.');
   });
 
   it('is null once all three are satisfied', () => {
-    expect(weeklyVisitsBlocker(new Set([1]), 4, '09:00')).toBeNull();
+    expect(weeklyVisitsBlocker(new Set([1]), 4, ok)).toBeNull();
   });
 });
 
@@ -82,10 +131,8 @@ describe('buildWeeklyVisits', () => {
       nowMs: NOW,
       weeklyDays: new Set([1, 3]),
       weeks: 2,
-      time: { hour: 9, minute: 0 },
-      serviceId: SERVICE.id,
-      serviceName: SERVICE.name,
-      priceCents: SERVICE.priceCents,
+      slots: [slot('s1', '09:00')],
+      services: CATALOG,
     });
     // Wed Jul15, Mon Jul20, Wed Jul22, Mon Jul27 = 4 visits.
     expect(visits).toHaveLength(4);
@@ -97,16 +144,33 @@ describe('buildWeeklyVisits', () => {
     }
   });
 
+  /** #541 + #543 on the weekly pattern: every KinCare repeats on every chosen day. */
+  it('emits one visit PER KinCare on each matching weekday, in time order within the day', () => {
+    const visits = buildWeeklyVisits({
+      nowMs: NOW,
+      weeklyDays: new Set([1, 3]),
+      weeks: 2,
+      slots: [slot('60Minute', '17:00'), slot('30Minute', '09:00')],
+      services: CATALOG,
+    });
+    // 4 days x 2 KinCares.
+    expect(visits).toHaveLength(8);
+    // Within Wed Jul 15 the 09:00 comes before the 17:00, even though the
+    // slots were handed over the other way round.
+    expect(visits.slice(0, 2).map((v) => v.serviceId)).toEqual(['30Minute', '60Minute']);
+    for (let i = 1; i < visits.length; i++) {
+      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+    }
+  });
+
   it('drops a same-day occurrence whose time has already passed today', () => {
     // Today is Wed(3); ask for 07:00 which is before "now" (08:00).
     const visits = buildWeeklyVisits({
       nowMs: NOW,
       weeklyDays: new Set([3]),
       weeks: 1,
-      time: { hour: 7, minute: 0 },
-      serviceId: SERVICE.id,
-      serviceName: SERVICE.name,
-      priceCents: SERVICE.priceCents,
+      slots: [slot('s1', '07:00')],
+      services: CATALOG,
     });
     // Only next Wed's occurrence should survive out of the 1-week window... but
     // a 1-week window from today only contains today's Wed, which is in the
@@ -114,9 +178,23 @@ describe('buildWeeklyVisits', () => {
     expect(visits).toHaveLength(0);
   });
 
-  it('is empty when weeklyDays is empty or weeks < 1', () => {
-    expect(buildWeeklyVisits({ nowMs: NOW, weeklyDays: new Set(), weeks: 4, time: { hour: 9, minute: 0 }, serviceId: 's1', serviceName: 'x', priceCents: null })).toEqual([]);
-    expect(buildWeeklyVisits({ nowMs: NOW, weeklyDays: new Set([1]), weeks: 0, time: { hour: 9, minute: 0 }, serviceId: 's1', serviceName: 'x', priceCents: null })).toEqual([]);
+  it('is empty when weeklyDays is empty, weeks < 1, or no KinCare is chosen', () => {
+    const slots = [slot('s1', '09:00')];
+    expect(buildWeeklyVisits({ nowMs: NOW, weeklyDays: new Set(), weeks: 4, slots, services: CATALOG })).toEqual([]);
+    expect(buildWeeklyVisits({ nowMs: NOW, weeklyDays: new Set([1]), weeks: 0, slots, services: CATALOG })).toEqual([]);
+    expect(buildWeeklyVisits({ nowMs: NOW, weeklyDays: new Set([1]), weeks: 4, slots: [], services: CATALOG })).toEqual([]);
+  });
+
+  it('skips a KinCare whose service has left the catalog rather than inventing one', () => {
+    const visits = buildWeeklyVisits({
+      nowMs: NOW,
+      weeklyDays: new Set([1, 3]),
+      weeks: 2,
+      slots: [slot('s1', '09:00'), slot('deleted-service', '11:00')],
+      services: CATALOG,
+    });
+    expect(visits).toHaveLength(4);
+    expect(visits.every((v) => v.serviceId === 's1')).toBe(true);
   });
 
   // F35/F36 regression: the wizard must show the kinfolk on Step 3/Review
@@ -127,19 +205,17 @@ describe('buildWeeklyVisits', () => {
       nowMs: NOW,
       weeklyDays: new Set([0, 2, 4]),
       weeks: 6,
-      time: { hour: 9, minute: 0 },
-      serviceId: 's1',
-      serviceName: 'Daily Visit',
-      priceCents: 4200,
+      slots: [slot('s1', '09:00')],
+      services: CATALOG,
     };
     const first = buildWeeklyVisits(params);
     const second = buildWeeklyVisits(params);
     expect(second).toEqual(first);
-    // This is the invariant the wizard leans on: compute weeklyPreview ONCE
-    // per (pattern, weeklyDays, weekCount, visitTime, serviceId) and reuse
-    // the same array for the Step 3 count, the Review count, and the
+    // This is the invariant the wizard leans on: compute plannedVisits ONCE
+    // per (pattern, dates, weeklyDays, weekCount, slots) and reuse the same
+    // array for the Step 3 count, the estimate, the Review list, and the
     // requestBooking payload, rather than recomputing at each site.
-    expect(first.length).toBe(weeklyPotentialCount(params.weeklyDays, params.weeks));
+    expect(first.length).toBe(weeklyPotentialCount(params.weeklyDays, params.weeks, params.slots.length));
   });
 
   it('caps at MAX_RECURRING_VISITS instead of silently returning everything requested', () => {
@@ -150,17 +226,27 @@ describe('buildWeeklyVisits', () => {
       nowMs: NOW,
       weeklyDays,
       weeks,
-      time: { hour: 9, minute: 0 },
-      serviceId: 's1',
-      serviceName: 'Daily Visit',
-      priceCents: 4200,
+      slots: [slot('s1', '09:00')],
+      services: CATALOG,
     });
     expect(visits.length).toBeLessThanOrEqual(MAX_RECURRING_VISITS);
     expect(visits.length).toBe(MAX_RECURRING_VISITS);
     // The potential count is knowably larger, so a caller can detect + warn
     // about truncation instead of it being silent.
-    const potential = weeklyPotentialCount(weeklyDays, weeks);
+    const potential = weeklyPotentialCount(weeklyDays, weeks, 1);
     expect(potential).toBeGreaterThan(visits.length);
+  });
+
+  /** The cap counts VISITS, so more KinCares per day means fewer days survive it. */
+  it('applies the cap to visits, not days, and keeps the chronologically earliest run', () => {
+    const weeklyDays = new Set([0, 1, 2, 3, 4, 5, 6]);
+    const slots = [slot('30Minute', '09:00'), slot('60Minute', '17:00')];
+    const visits = buildWeeklyVisits({ nowMs: NOW, weeklyDays, weeks: 10, slots, services: CATALOG });
+    expect(visits).toHaveLength(MAX_RECURRING_VISITS);
+    expect(weeklyPotentialCount(weeklyDays, 10, slots.length)).toBe(140);
+    for (let i = 1; i < visits.length; i++) {
+      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+    }
   });
 
   it('MAX_RECURRING_VISITS is 26 (Kotlin RecurringBooking.kt source of truth)', () => {
@@ -169,22 +255,157 @@ describe('buildWeeklyVisits', () => {
 });
 
 describe('buildVisits (individual pattern)', () => {
-  it('maps each tapped date to a visit at the chosen time', () => {
+  it('maps each tapped date to a visit at the KinCare time', () => {
     const dates = [new Date(2026, 6, 20), new Date(2026, 6, 22)];
-    const visits = buildVisits(dates, '10:30', SERVICE);
+    const visits = buildVisits(dates, [slot('s1', '10:30')], CATALOG);
     expect(visits).toHaveLength(2);
     expect(new Date(visits[0]!.startTimeMs).getHours()).toBe(10);
     expect(new Date(visits[0]!.startTimeMs).getMinutes()).toBe(30);
     expect(visits[0]!.priceCents).toBe(1500);
   });
 
+  /**
+   * #541: two different durations. The dates are the same; what a household
+   * asked for on each of them is a 30 Minute AND a 60 Minute.
+   */
+  it('emits one visit per date PER KinCare when the durations differ', () => {
+    const dates = [new Date(2026, 6, 20), new Date(2026, 6, 22)];
+    const visits = buildVisits(dates, [slot('30Minute', '09:00'), slot('60Minute', '17:00')], CATALOG);
+    expect(visits).toHaveLength(4);
+    expect(visits.map((v) => v.serviceName)).toEqual(['30 Minute', '60 Minute', '30 Minute', '60 Minute']);
+  });
+
+  /** #543: the same duration twice in one day, which is the midday and the evening walk. */
+  it('emits two visits on one day for the same duration at two times', () => {
+    const visits = buildVisits([new Date(2026, 6, 20)], [slot('30Minute', '09:00'), slot('30Minute', '17:00', 2)], CATALOG);
+    expect(visits).toHaveLength(2);
+    expect(visits.map((v) => new Date(v.startTimeMs).getHours())).toEqual([9, 17]);
+    expect(new Set(visits.map((v) => dateKey(new Date(v.startTimeMs)))).size).toBe(1);
+  });
+
+  it('returns visits sorted by start time whatever order the dates and KinCares arrive in', () => {
+    const dates = [new Date(2026, 6, 22), new Date(2026, 6, 20)];
+    const visits = buildVisits(dates, [slot('60Minute', '17:00'), slot('30Minute', '09:00')], CATALOG);
+    for (let i = 1; i < visits.length; i++) {
+      expect(visits[i]!.startTimeMs).toBeGreaterThan(visits[i - 1]!.startTimeMs);
+    }
+  });
+
   it('falls back to priceMinCents when priceCents is null', () => {
-    const visits = buildVisits([new Date(2026, 6, 20)], '09:00', { id: 's2', name: 'Ranged', priceCents: null, priceMinCents: 800 });
+    const visits = buildVisits([new Date(2026, 6, 20)], [slot('ranged', '09:00')], CATALOG);
     expect(visits[0]!.priceCents).toBe(800);
   });
 
-  it('throws on an invalid time (callers must gate on parseHourMinute first)', () => {
-    expect(() => buildVisits([new Date(2026, 6, 20)], 'bad', SERVICE)).toThrow('invalid time');
+  it('skips a KinCare with an unparseable time rather than throwing mid-plan', () => {
+    // The wizard gates Next on slotsBlocker, so this only happens transiently
+    // while a time field is being typed into. Dropping the entry keeps the
+    // estimate honest for the rest of the plan instead of blanking the screen.
+    const visits = buildVisits([new Date(2026, 6, 20)], [slot('s1', 'bad'), slot('30Minute', '09:00')], CATALOG);
+    expect(visits).toHaveLength(1);
+    expect(visits[0]!.serviceId).toBe('30Minute');
+  });
+});
+
+/**
+ * #546 / #547. The defect both issues describe is one number that never moved:
+ * three visits, still $25.00.
+ */
+describe('estimateBookingTotal', () => {
+  const dates = [new Date(2026, 7, 26), new Date(2026, 7, 27), new Date(2026, 7, 28)];
+
+  /** The worked example straight off the walk that filed #546. */
+  it('3 visits of a $25.00 KinCare estimate at $75.00', () => {
+    const visits = buildVisits(dates, [slot('30Minute', '09:00')], CATALOG);
+    expect(visits).toHaveLength(3);
+    const e = estimateBookingTotal(visits, CATALOG);
+    expect(e).toEqual({ totalCents: 7500, exactVisits: 3, floorVisits: 0, unpricedVisits: 0 });
+    expect(formatEstimate(e)).toBe('$75.00');
+  });
+
+  it('grows as dates are added and shrinks as they are taken away', () => {
+    const one = estimateBookingTotal(buildVisits(dates.slice(0, 1), [slot('30Minute', '09:00')], CATALOG), CATALOG);
+    const two = estimateBookingTotal(buildVisits(dates.slice(0, 2), [slot('30Minute', '09:00')], CATALOG), CATALOG);
+    expect(formatEstimate(one)).toBe('$25.00');
+    expect(formatEstimate(two)).toBe('$50.00');
+  });
+
+  /** #541 + #543 priced: 3 days x (one $25.00 and one $45.00) = $210.00. */
+  it('adds up a mixed day: two different KinCares across three dates', () => {
+    const visits = buildVisits(dates, [slot('30Minute', '09:00'), slot('60Minute', '17:00')], CATALOG);
+    expect(visits).toHaveLength(6);
+    expect(formatEstimate(estimateBookingTotal(visits, CATALOG))).toBe('$210.00');
+  });
+
+  it('adds up the same KinCare twice in a day', () => {
+    const visits = buildVisits(dates, [slot('30Minute', '09:00'), slot('30Minute', '17:00', 2)], CATALOG);
+    expect(formatEstimate(estimateBookingTotal(visits, CATALOG))).toBe('$150.00');
+  });
+
+  it('is an em dash for an empty plan, not $0.00', () => {
+    expect(formatEstimate(estimateBookingTotal([], CATALOG))).toBe('—');
+  });
+
+  it('says "from" when part of the plan can only be bounded below', () => {
+    const visits = buildVisits(dates.slice(0, 1), [slot('30Minute', '09:00'), slot('ranged', '17:00')], CATALOG);
+    const e = estimateBookingTotal(visits, CATALOG);
+    expect(e.floorVisits).toBe(1);
+    expect(formatEstimate(e)).toBe('from $33.00');
+  });
+
+  it('says Pending when nothing in the plan carries a price, rather than $0.00', () => {
+    const visits = buildVisits(dates, [slot('unpriced', '09:00')], CATALOG);
+    const e = estimateBookingTotal(visits, CATALOG);
+    expect(e).toEqual({ totalCents: 0, exactVisits: 0, floorVisits: 0, unpricedVisits: 3 });
+    expect(formatEstimate(e)).toBe('Pending');
+  });
+});
+
+/**
+ * #547: "Actually display those dates."
+ * The spelling is the one in
+ * docs/superpowers/specs/2026-08-23-visit-date-rendering-design.md — enumerate,
+ * never summarise, with each visit as weekday / date / time.
+ */
+describe('renderPlannedVisits', () => {
+  it('renders each visit as the spec spells it, oldest first', () => {
+    const visits = buildVisits(
+      [new Date(2026, 8, 6), new Date(2026, 8, 4)],
+      [slot('30Minute', '09:00')],
+      CATALOG,
+    );
+    const rendered = renderPlannedVisits(visits);
+    expect(rendered.map(plannedVisitLine)).toEqual(['Fri, Sep 4 at 9:00 AM', 'Sun, Sep 6 at 9:00 AM']);
+    expect(rendered[0]).toMatchObject({ weekday: 'Fri', date: 'Sep 4', time: '9:00 AM', serviceName: '30 Minute' });
+  });
+
+  it('enumerates every visit of a two-KinCare day instead of collapsing it to a count', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00'), slot('60Minute', '17:30')], CATALOG);
+    expect(renderPlannedVisits(visits).map(plannedVisitLine)).toEqual([
+      'Fri, Sep 4 at 9:00 AM',
+      'Fri, Sep 4 at 5:30 PM',
+    ]);
+  });
+
+  it('gives each visit of a day a distinct key', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00'), slot('30Minute', '17:00', 2)], CATALOG);
+    const keys = renderPlannedVisits(visits).map((v) => v.key);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it('renders midnight as 12:00 AM and noon as 12:00 PM', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '00:00'), slot('60Minute', '12:00')], CATALOG);
+    expect(renderPlannedVisits(visits).map((v) => v.time)).toEqual(['12:00 AM', '12:00 PM']);
+  });
+});
+
+describe('summariseSlots', () => {
+  it('counts repeats rather than repeating the name', () => {
+    const slots = [slot('30Minute', '09:00'), slot('30Minute', '17:00', 2), slot('60Minute', '12:00')];
+    expect(summariseSlots(slots, CATALOG)).toBe('2 × 30 Minute, 60 Minute');
+  });
+
+  it('is empty for an empty list', () => {
+    expect(summariseSlots([], CATALOG)).toBe('');
   });
 });
 

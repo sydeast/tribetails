@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickGuardRedirect } from './router';
+import { bookingWizardSearch, pickGuardRedirect } from './router';
 import type { AccessState } from './lib/activeTribe';
 
 function access(overrides: Partial<AccessState>): AccessState {
@@ -40,5 +40,28 @@ describe('pickGuardRedirect (guard for the /pick route)', () => {
 
   it('stays when access failed to load (unrelated to this gate)', () => {
     expect(pickGuardRedirect(access({ error: 'boom' }))).toBeNull();
+  });
+});
+
+/**
+ * #545: kinfolk should never see the invoice options screen — and "never" has
+ * to include a typed URL, not only a stepper that stopped offering it. The
+ * step the wizard is on is component state with no URL representation, and
+ * this validator is where that is enforced: it returns a fresh object with one
+ * key, so a hand-written `?step=4` (or anything else) is dropped rather than
+ * passed through to the screen.
+ */
+describe('bookingWizardSearch (/schedule/book search validation)', () => {
+  it('reads the one parameter the route has', () => {
+    expect(bookingWizardSearch({ weekly: '1' })).toEqual({ weekly: true });
+    expect(bookingWizardSearch({ weekly: true })).toEqual({ weekly: true });
+    expect(bookingWizardSearch({})).toEqual({ weekly: false });
+    expect(bookingWizardSearch({ weekly: '0' })).toEqual({ weekly: false });
+  });
+
+  it('drops any other search parameter, so no URL can select a wizard step', () => {
+    expect(bookingWizardSearch({ step: 4 })).toEqual({ weekly: false });
+    expect(bookingWizardSearch({ step: '4', invoice: '1', weekly: '1' })).toEqual({ weekly: true });
+    expect(Object.keys(bookingWizardSearch({ step: 4, anything: 'else' }))).toEqual(['weekly']);
   });
 });
