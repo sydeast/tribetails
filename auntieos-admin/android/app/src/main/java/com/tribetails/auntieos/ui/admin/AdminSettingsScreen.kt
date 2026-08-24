@@ -934,12 +934,15 @@ private fun BusinessOperationsPanel(
 
             AuntieFieldLabel(text = "KinTale Draft Retention")
             Text(
-                // ISSUE #519: this used to read "Unsent drafts auto-purge after
-                // this many days." Nothing purges them — no scheduled function in
-                // `mytribe/functions` reads the field — so the sentence promised
-                // a job that does not exist. The value is real and saved; the
-                // enforcement is not, and the copy now says which.
-                "How long to keep an unsent draft. Saved, but nothing clears old drafts yet.",
+                // ISSUE #519. This line has now been wrong in both directions, so
+                // it is worth writing down which one it is. It first read "Unsent
+                // drafts auto-purge after this many days" while nothing purged
+                // anything; it was corrected to say so; and then `purgeOldDrafts`
+                // was built, which made the correction false in the more dangerous
+                // direction, telling an operator their drafts were safe while a
+                // nightly cron deleted them. It now describes the job that exists.
+                "How long to keep an unsent draft. Drafts older than this are deleted nightly, " +
+                    "counted from your last edit. Anything already sent is never touched.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
                 modifier = Modifier.padding(bottom = dims.space2),

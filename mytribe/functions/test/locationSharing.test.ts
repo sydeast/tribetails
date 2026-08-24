@@ -24,6 +24,7 @@ vi.mock('../src/lib/resolveKinfolkAccess', () => ({ resolveKinfolkAccess: mocks.
 
 import { isClientLocationSharingEnabled, withoutCoordinates } from '../src/lib/locationSharing';
 import { getMyVisitsHandler } from '../src/portal/getMyVisits';
+import { getMyKinTalesHandler } from '../src/portal/getMyKinTales';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -139,5 +140,72 @@ describe('getMyVisits honours the switch', () => {
     expect(wire).not.toContain('30.1');
     expect(wire).not.toContain('-97.7');
     expect(wire).not.toContain('lat');
+  });
+});
+
+// ── getMyKinTales, the callable a kinfolk's KinTale feed reads ──────────────
+const TALE_ROUTE = [
+  { lat: 30.1, lng: -97.7, t: 1 },
+  { lat: 30.2, lng: -97.8, t: 2 },
+];
+/**
+ * `gpsRoute` is the only coordinate-bearing field on a tale; the `gpsSummary`
+ * this callable projects carries distance and duration only, which is why the
+ * switch gates the route and leaves the summary alone.
+ */
+function talesDb(settings: Record<string, unknown>) {
+  const query: Record<string, unknown> = {};
+  Object.assign(query, {
+    where: vi.fn(() => query),
+    orderBy: vi.fn(() => query),
+    limit: vi.fn(() => query),
+    startAfter: vi.fn(() => query),
+    get: vi.fn(async () => ({
+      docs: [
+        {
+          id: 't1',
+          data: () => ({
+            kinfolkId: 'kf1',
+            title: 'Rufus had a great walk',
+            sentAt: '2026-08-20T12:00:00.000Z',
+            thumbs: [],
+            gpsRoute: TALE_ROUTE,
+            gpsSummary: { distanceMeters: 1900, durationSeconds: 1500 },
+          }),
+        },
+      ],
+    })),
+  });
+  return {
+    collection: vi.fn(() => query),
+    doc: vi.fn(() => ({ get: vi.fn(async () => ({ data: () => settings })) })),
+  };
+}
+describe('getMyKinTales honours the switch', () => {
+  it('serves the route when sharing is on', async () => {
+    mocks.dbFn.mockReturnValue(talesDb({ allowClientLocationSharing: true }));
+    const res = await getMyKinTalesHandler(REQ);
+    expect(res.tales[0]?.gpsRoute).toHaveLength(2);
+  });
+  it('serves the route when the key is absent', async () => {
+    mocks.dbFn.mockReturnValue(talesDb({}));
+    const res = await getMyKinTalesHandler(REQ);
+    expect(res.tales[0]?.gpsRoute).toHaveLength(2);
+  });
+  it('WITHHOLDS the route when sharing is off, and still serves the tale', async () => {
+    mocks.dbFn.mockReturnValue(talesDb({ allowClientLocationSharing: false }));
+    const res = await getMyKinTalesHandler(REQ);
+    expect(res.tales[0]?.gpsRoute).toBeUndefined();
+    // The tale, and the fact of the walk, survive: the switch is about WHERE.
+    expect(res.tales[0]?.id).toBe('t1');
+    expect(res.tales[0]?.title).toBe('Rufus had a great walk');
+    expect(res.tales[0]?.gpsSummary).toMatchObject({ distanceMeters: 1900, durationSeconds: 1500 });
+  });
+  it('serialises no coordinate anywhere in the response when sharing is off', async () => {
+    mocks.dbFn.mockReturnValue(talesDb({ allowClientLocationSharing: false }));
+    const wire = JSON.stringify(await getMyKinTalesHandler(REQ));
+    expect(wire).not.toContain('30.1');
+    expect(wire).not.toContain('-97.7');
+    expect(wire).not.toContain('gpsRoute');
   });
 });

@@ -183,7 +183,9 @@ data class BusinessSettings(
     // "On My Way" defaults - surfaced as a dropdown on the visit card
     var defaultEtaMinutes: Int = 15,
     var etaMinuteOptions: List<Int> = listOf(5, 10, 15, 20, 30, 45, 60),
-    // KinTale draft retention - auto-purge unsent drafts older than this
+    // KinTale draft retention. Unsent drafts older than this are deleted nightly by
+    // `purgeOldDrafts` (mytribe/functions), dated from `updatedAt`. #519 built that job;
+    // before it, this comment described an auto-purge that did not exist.
     var draftRetentionDays: Int = 30,
     var draftRetentionOptions: List<Int> = listOf(30, 60, 90),
     // Time Off - observed US federal holidays + custom company holidays.
