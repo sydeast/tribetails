@@ -201,6 +201,13 @@ internal enum class SettingsSection(
 ) {
     Branding("Branding", "Logo, app name, and home greeting", Lucide.Pencil),
     Navigation("Navigation", "Rename and reorder your nav sections", Lucide.LayoutGrid),
+    // ISSUE #519: the booking-configuration block, the business time zone and the
+    // bookable time blocks had no control on any admin surface. They are their own
+    // section rather than more rows on Business operations, because they answer a
+    // different question: this is what a booking is ALLOWED to be, Business
+    // operations is what happens once you are out on the visit. Panels live in
+    // `BusinessRulesPanels.kt`.
+    BookingRules("Booking rules", "Time zone, booking modes, and bookable blocks", Lucide.CalendarClock),
     BusinessOperations("Business operations", "Booking modes, tracking, retention", Lucide.Building2),
     Payments("Payments", "Handles clients pay you through", Lucide.Wallet),
     WeatherArea("Weather area", "Coverage area for the weather widgets", Lucide.CloudSun),
@@ -466,11 +473,29 @@ fun AdminSettingsScreen(
                             onSave = { viewModel.saveNavConfig(it) },
                         )
 
-                        SettingsSection.BusinessOperations -> BusinessOperationsPanel(
+                        SettingsSection.BookingRules -> BookingRulesPanel(
                             settings = uiState.businessSettings,
                             isLoading = uiState.isLoading,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
+                        // ISSUE #519 added the second panel: the four GPS/records
+                        // fields with no control anywhere, plus the two option
+                        // LISTS behind the dropdowns in the first one. Two panels
+                        // rather than one longer one, because they save separately.
+                        SettingsSection.BusinessOperations -> Column(
+                            verticalArrangement = Arrangement.spacedBy(dims.space4),
+                        ) {
+                            BusinessOperationsPanel(
+                                settings = uiState.businessSettings,
+                                isLoading = uiState.isLoading,
+                                onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            )
+                            VisitRecordsPanel(
+                                settings = uiState.businessSettings,
+                                isLoading = uiState.isLoading,
+                                onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            )
+                        }
 
                         // A8 Payments: the peer-to-peer handles clients pay through;
                         // they render on the invoice "How to pay" section + the PDF.
@@ -909,7 +934,12 @@ private fun BusinessOperationsPanel(
 
             AuntieFieldLabel(text = "KinTale Draft Retention")
             Text(
-                "Unsent drafts auto-purge after this many days.",
+                // ISSUE #519: this used to read "Unsent drafts auto-purge after
+                // this many days." Nothing purges them — no scheduled function in
+                // `mytribe/functions` reads the field — so the sentence promised
+                // a job that does not exist. The value is real and saved; the
+                // enforcement is not, and the copy now says which.
+                "How long to keep an unsent draft. Saved, but nothing clears old drafts yet.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
                 modifier = Modifier.padding(bottom = dims.space2),

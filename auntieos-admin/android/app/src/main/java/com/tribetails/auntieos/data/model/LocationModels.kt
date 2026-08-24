@@ -206,7 +206,13 @@ data class BusinessSettings(
     var allowTimeBlockBooking: Boolean = true,
     var allowSpecificTimeBooking: Boolean = true,
     var enableConflictDetection: Boolean = true,
-    var enableAutoReminder24h: Boolean = false,
+    // ISSUE #519 flipped this from `false`. `kincareReminderCron` has always
+    // enqueued the 24-hour `kincare.upcoming.reminder` for every confirmed
+    // booking, unconditionally, so `false` never described what the product
+    // did. The cron reads the field now (mytribe/functions/src/lib/
+    // autoReminder.ts) and treats an absent key as ON, which is what this
+    // default now says out loud.
+    var enableAutoReminder24h: Boolean = true,
     var defaultTimeBlockDurationHours: Int = 4, // Default 4-hour blocks
     var travelBufferMinutes: Int = 30,
     // timeBlocks: booking time-block definitions. Element key `active` matches prod

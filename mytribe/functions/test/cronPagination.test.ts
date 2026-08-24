@@ -46,8 +46,14 @@ type Row = { id: string; data: Record<string, unknown> };
  * Builds a collectionGroup mock whose pages honour `.limit(pageSize)` +
  * `.startAfter(lastDoc)` so the runner's pagination is genuinely exercised.
  * Records every `set()` write so we can assert the notified stamp on each doc.
+ *
+ * `settings` backs the single `doc('business_settings/business_settings')` read
+ * `runKincareReminderScan` makes before it drains anything (#519's
+ * `enableAutoReminder24h` gate). It defaults to `{}` — a document with no such
+ * key, which is every document in production — so every pre-existing case in
+ * this file keeps asserting the reminders it always asserted.
  */
-function pagedDbMock(rows: Row[]) {
+function pagedDbMock(rows: Row[], settings: Record<string, unknown> = {}) {
   const writes: Array<{ id: string; data: Record<string, unknown> }> = [];
 
   function makeDocSnap(row: Row) {
@@ -85,6 +91,7 @@ function pagedDbMock(rows: Row[]) {
 
   const db = {
     collectionGroup: vi.fn(() => makeQuery(null, null)),
+    doc: vi.fn(() => ({ get: vi.fn(async () => ({ data: () => settings })) })),
   };
   return { db, writes };
 }
