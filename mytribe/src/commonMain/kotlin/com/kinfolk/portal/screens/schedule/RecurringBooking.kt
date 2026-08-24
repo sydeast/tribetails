@@ -1,7 +1,10 @@
 package com.kinfolk.portal.screens.schedule
 
+import com.kinfolk.portal.portal.BookingMode
+import com.kinfolk.portal.portal.BookingPolicy
 import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.Service
+import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.util.formatUsd
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -54,13 +57,86 @@ fun parseHourMinuteOrNull(s: String): LocalTime? = try {
 data class KinCareSlot(
     val slotId: String,
     val serviceId: String,
-    /** "HH:MM", local to the household. */
+    /** "HH:MM", local to the household. Read in [BookingMode.SpecificTime]. */
     val time: String,
+    /**
+     * Time-block booking: the named window this KinCare was asked for. Read in
+     * [BookingMode.TimeBlock]; null there means the household has not chosen
+     * one yet.
+     *
+     * BOTH fields live on the slot at once, deliberately. The MODE is a
+     * booking-level choice (see [BookingTiming]) — the operator asked for
+     * blocks instead of clocks, not for a per-KinCare mixture — so switching
+     * mode must not discard what was already typed on the other control. What
+     * is SENT is decided by the mode, never by which field happens to be set.
+     */
+    val timeBlockId: String? = null,
 )
 
+/**
+ * Time-block booking, client half. Operator requirement 2026-08-24: "kinfolk
+ * book within time blocks, not at a specific set time."
+ *
+ * The MODE is booking-level and the WINDOW is per-KinCare, which is the shape
+ * the requirement actually has: a day may hold several KinCares (#541/#543), so
+ * a household may want the 30-minute one in Midday and the 60-minute one in
+ * Evening, or two different KinCares in the same window. What it never wants is
+ * one KinCare on the clock and the next one in a window.
+ *
+ * The web mirror is `BookingTiming` in mytribe/web/src/lib/bookingWizardLogic.ts.
+ */
+data class BookingTiming(
+    val mode: BookingMode,
+    /** Empty in SpecificTime mode, and never empty in TimeBlock mode. */
+    val blocks: List<TimeBlock> = emptyList(),
+) {
+    companion object {
+        /** The pre-time-block world: clock times, no windows. The default every existing caller gets. */
+        val SpecificTimeOnly = BookingTiming(BookingMode.SpecificTime, emptyList())
+    }
+}
+
+/**
+ * Which mode the wizard opens on, and which the household may switch to.
+ *
+ * Reads the SERVER-NORMALIZED policy and nothing else: `getBookingPolicy`
+ * already resolved "block booking on but no usable window" down to block
+ * booking off, and "neither mode allowed" down to specific time, so there is no
+ * combination left here that renders an empty screen.
+ */
+fun initialBookingMode(policy: BookingPolicy): BookingMode = when {
+    !policy.allowTimeBlockBooking -> BookingMode.SpecificTime
+    !policy.allowSpecificTimeBooking -> BookingMode.TimeBlock
+    else -> policy.defaultBookingMode
+}
+
+/** The window with this id, or null. */
+fun findTimeBlock(blocks: List<TimeBlock>, id: String?): TimeBlock? =
+    if (id == null) null else blocks.firstOrNull { it.id == id }
+
+/** "Midday (11:00 – 15:00)" — how a window is named wherever one is chosen or confirmed. */
+fun timeBlockLabel(block: TimeBlock): String = "${block.label} (${block.startTime} – ${block.endTime})"
+
+/**
+ * The "HH:MM" a slot actually starts at under [timing], or null when it has
+ * nothing usable yet.
+ *
+ * In TimeBlock mode a visit starts at its window's FIRST MINUTE. That is not a
+ * pretence that the Auntie arrives at 11:00 sharp — it is the only instant the
+ * whole window is derivable from, it is what AuntieOS's own containment
+ * resolver labels back as "Midday block", and the block id travels beside it so
+ * the office reads the household's answer rather than inferring it.
+ */
+private fun slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): String? =
+    if (timing.mode == BookingMode.TimeBlock) {
+        findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime
+    } else {
+        if (parseHourMinuteOrNull(slot.time) == null) null else slot.time
+    }
+
 /** Chronological, so the plan a household reads runs down the day. Ties broken by service for determinism. */
-private fun slotOrder(slots: List<KinCareSlot>): List<KinCareSlot> =
-    slots.sortedWith(compareBy({ it.time }, { it.serviceId }))
+private fun slotOrder(slots: List<KinCareSlot>, timing: BookingTiming): List<KinCareSlot> =
+    slots.sortedWith(compareBy({ slotStartHHmm(it, timing) ?: "" }, { it.serviceId }))
 
 /**
  * First blocking reason for the KinCare list, or null when it is sendable. Pure.
@@ -70,8 +146,30 @@ private fun slotOrder(slots: List<KinCareSlot>): List<KinCareSlot> =
  * KinCare asked for twice, and `requestBooking` refuses them. Saying so here
  * means a household finds out while they can still fix it.
  */
-fun slotsBlocker(slots: List<KinCareSlot>): String? {
+fun slotsBlocker(
+    slots: List<KinCareSlot>,
+    timing: BookingTiming = BookingTiming.SpecificTimeOnly,
+): String? {
     if (slots.isEmpty()) return "Add at least one KinCare Duration."
+    if (timing.mode == BookingMode.TimeBlock) {
+        if (slots.any { findTimeBlock(timing.blocks, it.timeBlockId) == null }) {
+            return "Choose a time block for every KinCare."
+        }
+        val seenBlocks = HashSet<String>()
+        for (s in slots) {
+            // The duplicate rule, in block words. In block mode every KinCare
+            // in a window starts at the same instant, so "same duration at the
+            // same time" would refuse the perfectly good "a 30 minute AND a 60
+            // minute, both in Midday" — and would say so next to a picker that
+            // has no times in it. What is actually one KinCare asked for twice
+            // is the same duration in the same window, and that is what both
+            // this and `requestBooking`'s server-side guard refuse.
+            if (!seenBlocks.add("${s.serviceId}@block:${s.timeBlockId}")) {
+                return "Two KinCares are the same duration in the same time block. Remove one, or move it to another block."
+            }
+        }
+        return null
+    }
     if (slots.any { parseHourMinuteOrNull(it.time) == null }) return "Enter every KinCare time as HH:MM."
     val seen = HashSet<String>()
     for (s in slots) {
@@ -91,16 +189,35 @@ fun weeklyPotentialCount(weeklyDays: Set<Int>, weeks: Int, slotCount: Int): Int 
     if (weeks < 1) 0 else weeklyDays.size * weeks * slotCount
 
 /** First blocking reason for a weekly rule, or null when it is sendable. Pure. */
-fun weeklyVisitsBlocker(weeklyDays: Set<Int>, weeks: Int, slots: List<KinCareSlot>): String? {
+fun weeklyVisitsBlocker(
+    weeklyDays: Set<Int>,
+    weeks: Int,
+    slots: List<KinCareSlot>,
+    timing: BookingTiming = BookingTiming.SpecificTimeOnly,
+): String? {
     if (weeklyDays.isEmpty()) return "Pick at least one day of the week."
     if (weeks < 1) return "Choose how many weeks."
-    return slotsBlocker(slots)
+    return slotsBlocker(slots, timing)
 }
 
-/** One visit for [slot] on calendar day [d], or null when the slot's service left the catalog. */
-private fun slotVisitOn(d: LocalDate, slot: KinCareSlot, services: List<Service>, tz: TimeZone): BookingVisit? {
+/**
+ * One visit for [slot] on calendar day [d], or null when the slot's service
+ * left the catalog or it has no usable start yet.
+ *
+ * `priceCents` still comes from the SERVICE, in both modes. A block says WHEN a
+ * visit happens; the KinCare says how long it runs and what it costs, and the
+ * server re-resolves the price from the same catalog either way. Nothing about
+ * time-block booking touches the money.
+ */
+private fun slotVisitOn(
+    d: LocalDate,
+    slot: KinCareSlot,
+    services: List<Service>,
+    tz: TimeZone,
+    timing: BookingTiming,
+): BookingVisit? {
     val service = services.firstOrNull { it.id == slot.serviceId } ?: return null
-    val t = parseHourMinuteOrNull(slot.time) ?: return null
+    val t = parseHourMinuteOrNull(slotStartHHmm(slot, timing) ?: return null) ?: return null
     val dt = LocalDateTime(d.year, d.month, d.dayOfMonth, t.hour, t.minute)
     return BookingVisit(
         startTimeMs = dt.toInstant(tz).toEpochMilliseconds(),
@@ -108,6 +225,7 @@ private fun slotVisitOn(d: LocalDate, slot: KinCareSlot, services: List<Service>
         serviceId = service.id,
         serviceName = service.name,
         priceCents = service.priceCents ?: service.priceMinCents,
+        timeBlockId = if (timing.mode == BookingMode.TimeBlock) slot.timeBlockId else null,
     )
 }
 
@@ -131,9 +249,10 @@ fun buildWeeklyVisits(
     slots: List<KinCareSlot>,
     services: List<Service>,
     tz: TimeZone = TimeZone.currentSystemDefault(),
+    timing: BookingTiming = BookingTiming.SpecificTimeOnly,
 ): List<BookingVisit> {
     if (weeklyDays.isEmpty() || weeks < 1 || slots.isEmpty()) return emptyList()
-    val ordered = slotOrder(slots)
+    val ordered = slotOrder(slots, timing)
     val today = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(tz).date
     val out = ArrayList<BookingVisit>()
     val totalDays = weeks * 7
@@ -143,7 +262,7 @@ fun buildWeeklyVisits(
         if (weekdayIndex(d) in weeklyDays) {
             for (slot in ordered) {
                 if (out.size >= MAX_RECURRING_VISITS) break
-                val visit = slotVisitOn(d, slot, services, tz)
+                val visit = slotVisitOn(d, slot, services, tz, timing)
                 if (visit != null && visit.startTimeMs > nowMs) out.add(visit)
             }
         }
@@ -163,15 +282,32 @@ fun buildVisits(
     slots: List<KinCareSlot>,
     services: List<Service>,
     tz: TimeZone = TimeZone.currentSystemDefault(),
+    timing: BookingTiming = BookingTiming.SpecificTimeOnly,
 ): List<BookingVisit> {
     val out = ArrayList<BookingVisit>()
     for (d in dates) {
         for (slot in slots) {
-            slotVisitOn(d, slot, services, tz)?.let { out.add(it) }
+            slotVisitOn(d, slot, services, tz, timing)?.let { out.add(it) }
         }
     }
     return out.sortedWith(compareBy({ it.startTimeMs }, { it.serviceId }))
 }
+
+/**
+ * Visits in the plan whose start has ALREADY PASSED.
+ *
+ * `requestBooking` refuses any visit starting more than a minute ago, and the
+ * Individual pattern has never filtered for it (only the weekly expansion
+ * does) — so a household that taps today and leaves the time at 09:00 in the
+ * afternoon gets the whole request refused at Create Booking with no earlier
+ * warning. Time blocks make that a certainty rather than a mistake: a window
+ * offers ONE start time, so once today's Midday window has opened, every
+ * Midday visit placed on today is in the past by construction and the
+ * household has no control to nudge. So the plan says so while it can still be
+ * fixed, in both modes. Pure ([nowMs] injected).
+ */
+fun pastPlannedVisits(visits: List<BookingVisit>, nowMs: Long): List<BookingVisit> =
+    visits.filter { it.startTimeMs <= nowMs }
 
 /**
  * #546 / #547: what a booking is estimated to cost, computed from the ACTUAL
@@ -240,6 +376,13 @@ data class RenderedPlannedVisit(
     val time: String,
     val serviceName: String,
     val key: String,
+    /**
+     * "Midday (11:00 – 15:00)" when the visit was booked into a named window,
+     * null when it was booked on the clock. When set it REPLACES the time in
+     * [plannedVisitLine]: the household chose a window, and printing
+     * "11:00 AM" back at them would be reporting a precision they never gave.
+     */
+    val timeBlockLabel: String? = null,
 )
 
 /**
@@ -262,6 +405,7 @@ data class RenderedPlannedVisit(
 fun renderPlannedVisits(
     visits: List<BookingVisit>,
     tz: TimeZone = TimeZone.currentSystemDefault(),
+    blocks: List<TimeBlock> = emptyList(),
 ): List<RenderedPlannedVisit> = visits.sortedBy { it.startTimeMs }.map { v ->
     val dt = Instant.fromEpochMilliseconds(v.startTimeMs).toLocalDateTime(tz)
     val hour12 = when (val h = dt.hour % 12) {
@@ -269,17 +413,31 @@ fun renderPlannedVisits(
         else -> h
     }
     val minute = if (dt.minute < 10) "0${dt.minute}" else dt.minute.toString()
+    val block = findTimeBlock(blocks, v.timeBlockId)
     RenderedPlannedVisit(
         weekday = WEEKDAY_ABBR[dt.date.dayOfWeek.ordinal],
         date = "${MONTH_ABBR[dt.date.month.ordinal]} ${dt.date.day}",
         time = "$hour12:$minute ${if (dt.hour < 12) "AM" else "PM"}",
         serviceName = v.serviceName,
-        key = "${v.startTimeMs}-${v.serviceId}",
+        // Two KinCares of one duration in one day are told apart by the time in
+        // clock mode and by the window in block mode, where every start is equal.
+        key = "${v.startTimeMs}-${v.serviceId}-${v.timeBlockId ?: ""}",
+        timeBlockLabel = block?.let { timeBlockLabel(it) },
     )
 }
 
-/** "Thu, Sep 4 at 9:00 AM" — the spec's own one-line spelling of a visit. */
-fun plannedVisitLine(v: RenderedPlannedVisit): String = "${v.weekday}, ${v.date} at ${v.time}"
+/**
+ * "Thu, Sep 4 at 9:00 AM" — the spec's own one-line spelling of a visit — or
+ * "Thu, Sep 4 · Midday (11:00 – 15:00)" when the household picked a window
+ * instead of a clock. The date half is unchanged in both: the enumeration rule
+ * is about WHICH DAYS, and a block does not make a day any less specific.
+ */
+fun plannedVisitLine(v: RenderedPlannedVisit): String =
+    if (v.timeBlockLabel != null) {
+        "${v.weekday}, ${v.date} · ${v.timeBlockLabel}"
+    } else {
+        "${v.weekday}, ${v.date} at ${v.time}"
+    }
 
 /**
  * The KinCare list as the summary says it: "2 × 30 Minute, 1 × 60 Minute",

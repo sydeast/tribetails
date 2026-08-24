@@ -46,8 +46,11 @@ import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.ScreenHeader
+import com.kinfolk.portal.portal.BookingMode
 import com.kinfolk.portal.portal.BookingPattern
+import com.kinfolk.portal.portal.BookingPolicy
 import com.kinfolk.portal.portal.BookingVisit
+import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.PortalApi
@@ -111,6 +114,18 @@ fun BookingWizardScreen(
     var submitting by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
 
+    /**
+     * Time-block booking (operator requirement 2026-08-24): what this business
+     * lets a household choose. A failed or still-running read leaves
+     * [BookingPolicy.CLOCK_ONLY] in place — the pre-time-block behaviour, and
+     * the exact shape `getBookingPolicy` itself falls back to when its own
+     * settings read fails. A secondary read must not decide whether the wizard
+     * opens, and the server refuses whatever it will not accept regardless.
+     */
+    var policy by remember { mutableStateOf(BookingPolicy.CLOCK_ONLY) }
+    /** null means "whatever this business opens on"; set once the household uses the toggle. */
+    var modeChoice by remember { mutableStateOf<BookingMode?>(null) }
+
     LaunchedEffect(kinfolkId) {
         try {
             kin = portalApi.getMyKin(kinfolkId).kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
@@ -127,7 +142,33 @@ fun BookingWizardScreen(
         } catch (_: Throwable) {
             closedDates = emptyMap()
         }
+        // Same posture again: the booking policy is a secondary read, and
+        // losing it leaves the wizard on clock times rather than dead.
+        try {
+            policy = portalApi.getBookingPolicy()
+        } catch (_: Throwable) {
+            policy = BookingPolicy.CLOCK_ONLY
+        }
     }
+
+    /**
+     * The mode in force. Derived rather than stored, so it can never be a mode
+     * the business does not allow — including in the moment between the wizard
+     * opening and the policy arriving.
+     */
+    val mode: BookingMode = run {
+        val preferred = modeChoice ?: initialBookingMode(policy)
+        when {
+            preferred == BookingMode.TimeBlock && !policy.allowTimeBlockBooking -> BookingMode.SpecificTime
+            preferred == BookingMode.SpecificTime && !policy.allowSpecificTimeBooking -> BookingMode.TimeBlock
+            else -> preferred
+        }
+    }
+    val timing = remember(mode, policy) {
+        BookingTiming(mode, if (mode == BookingMode.TimeBlock) policy.timeBlocks else emptyList())
+    }
+    /** Both modes on offer: the only case where the household has a choice to make. */
+    val canChooseMode = policy.allowTimeBlockBooking && policy.allowSpecificTimeBooking
 
     val catalog: List<Service> = services ?: emptyList()
     val resolvedKinIds: List<String> = if (allKinMode) {
@@ -145,7 +186,7 @@ fun BookingWizardScreen(
      * the catalog entry instead and never moved. Recomputed only when the plan
      * changes (deliberately NOT on a ticking clock).
      */
-    val plannedVisits: List<BookingVisit> = remember(pattern, selectedDates, weeklyDays, weekCount, slots, catalog) {
+    val plannedVisits: List<BookingVisit> = remember(pattern, selectedDates, weeklyDays, weekCount, slots, catalog, timing) {
         if (pattern == BookingPattern.Weekly) {
             buildWeeklyVisits(
                 nowMs = Clock.System.now().toEpochMilliseconds(),
@@ -153,10 +194,20 @@ fun BookingWizardScreen(
                 weeks = weekCount,
                 slots = slots,
                 services = catalog,
+                timing = timing,
             )
         } else {
-            buildVisits(selectedDates, slots, catalog)
+            buildVisits(selectedDates, slots, catalog, timing = timing)
         }
+    }
+    /**
+     * Visits the plan already puts in the PAST — the server refuses every one
+     * of them. See [pastPlannedVisits]: a window offers ONE start time, so
+     * today's Midday visits are past from the moment it opens and there is no
+     * control left to nudge.
+     */
+    val pastVisits = remember(plannedVisits) {
+        pastPlannedVisits(plannedVisits, Clock.System.now().toEpochMilliseconds())
     }
     /** #546: the running estimate, derived from the plan above and from nothing else. */
     val estimate = remember(plannedVisits, catalog) { estimateBookingTotal(plannedVisits, catalog) }
@@ -186,10 +237,10 @@ fun BookingWizardScreen(
     }
 
     val individualBlocker: String? =
-        if (selectedDates.isEmpty()) "Tap at least one date." else slotsBlocker(slots)
-    val scheduleReady = closedDatesInPlan.isEmpty() && when (pattern) {
+        if (selectedDates.isEmpty()) "Tap at least one date." else slotsBlocker(slots, timing)
+    val scheduleReady = closedDatesInPlan.isEmpty() && pastVisits.isEmpty() && when (pattern) {
         BookingPattern.Individual -> individualBlocker == null
-        BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, slots) == null
+        BookingPattern.Weekly -> weeklyVisitsBlocker(weeklyDays, weekCount, slots, timing) == null
     }
 
     val canAdvance = when (step) {
@@ -234,7 +285,16 @@ fun BookingWizardScreen(
                 slots = slots,
                 onAdd = { id ->
                     slotSeq += 1
-                    slots = slots + KinCareSlot(slotId = "slot-$slotSeq", serviceId = id, time = DEFAULT_VISIT_TIME)
+                    slots = slots + KinCareSlot(
+                        slotId = "slot-$slotSeq",
+                        serviceId = id,
+                        time = DEFAULT_VISIT_TIME,
+                        // In block mode a fresh KinCare lands in the FIRST
+                        // window rather than on "choose one": a picker whose
+                        // every row starts unset is a blocker dressed as a
+                        // control, and it moves in one tap.
+                        timeBlockId = if (mode == BookingMode.TimeBlock) policy.timeBlocks.firstOrNull()?.id else null,
+                    )
                 },
                 onRemove = { slotId -> slots = slots.filterNot { it.slotId == slotId } },
             )
@@ -256,6 +316,14 @@ fun BookingWizardScreen(
                 onSlotTimeChange = { slotId, t ->
                     slots = slots.map { if (it.slotId == slotId) it.copy(time = t) else it }
                 },
+                onSlotBlockChange = { slotId, blockId ->
+                    slots = slots.map { if (it.slotId == slotId) it.copy(timeBlockId = blockId) else it }
+                },
+                mode = mode,
+                canChooseMode = canChooseMode,
+                onModeChange = { modeChoice = it },
+                timeBlocks = policy.timeBlocks,
+                pastVisitCount = pastVisits.size,
                 individualBlocker = individualBlocker,
                 visitCount = plannedVisits.size,
                 weeklyEmitted = plannedVisits.size,
@@ -273,6 +341,7 @@ fun BookingWizardScreen(
                 notes = notes,
                 pattern = pattern,
                 visits = plannedVisits,
+                timeBlocks = policy.timeBlocks,
                 estimateLabel = formatEstimate(estimate),
                 capped = weeklyCapped,
                 submitting = submitting,
@@ -575,6 +644,15 @@ private fun Step3ScheduleDates(
     slots: List<KinCareSlot>,
     services: List<Service>,
     onSlotTimeChange: (String, String) -> Unit,
+    /** Time-block booking: which named window this KinCare goes in. */
+    onSlotBlockChange: (String, String) -> Unit = { _, _ -> },
+    mode: BookingMode = BookingMode.SpecificTime,
+    /** True only when the business allows BOTH, which is the only case with a choice to render. */
+    canChooseMode: Boolean = false,
+    onModeChange: (BookingMode) -> Unit = {},
+    timeBlocks: List<TimeBlock> = emptyList(),
+    /** Visits the plan already puts in the past; the server refuses every one of them. */
+    pastVisitCount: Int = 0,
     /** First reason the Individual pattern is not sendable, or null. */
     individualBlocker: String? = null,
     /** Visits the whole plan currently expands to (dates x KinCares). */
@@ -648,20 +726,62 @@ private fun Step3ScheduleDates(
         }
 
         Spacer(Modifier.height(KinfolkSpacing.s))
-        // #543: one time field PER KinCare, not one for the booking. Two KinCares
-        // of the same duration in a day are only two things because their times differ.
-        Text("Visit Times", style = type.sansLabel)
+        // Time-block booking (operator requirement 2026-08-24). The mode is a
+        // BOOKING-level choice, not a per-KinCare one: the operator asked for
+        // blocks instead of clocks, not for a mixture. Rendered only when the
+        // business allows both — with one mode on offer there is nothing to
+        // decide, and a disabled toggle would be a control that lies.
+        if (canChooseMode) {
+            Text("How would you like to say when?", style = type.heritageSection)
+            Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+                KinChip(
+                    label = "Time Blocks",
+                    selected = mode == BookingMode.TimeBlock,
+                    onClick = { onModeChange(BookingMode.TimeBlock) },
+                )
+                KinChip(
+                    label = "A Specific Time",
+                    selected = mode == BookingMode.SpecificTime,
+                    onClick = { onModeChange(BookingMode.SpecificTime) },
+                )
+            }
+        }
+
+        // #543: one control PER KinCare, not one for the booking. Two KinCares
+        // of the same duration in a day are only two things at all because they
+        // differ here — by the clock in specific-time mode, by the window in
+        // block mode.
+        Text(if (mode == BookingMode.TimeBlock) "Time Blocks" else "Visit Times", style = type.sansLabel)
+        if (mode == BookingMode.TimeBlock) {
+            Text(
+                "Your Auntie arrives sometime inside the block you choose, so she can travel between homes without rushing anyone.",
+                style = type.sansMeta,
+            )
+        }
         if (slots.isEmpty()) {
             Text("No KinCare chosen yet. Go back a step to add one.", style = type.sansMeta)
         } else {
             slots.forEachIndexed { idx, slot ->
                 val name = services.firstOrNull { it.id == slot.serviceId }?.name ?: slot.serviceId
-                KinField(
-                    value = slot.time,
-                    onValueChange = { onSlotTimeChange(slot.slotId, it) },
-                    label = "${idx + 1}. $name time (HH:MM)",
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (mode == BookingMode.TimeBlock) {
+                    Text("${idx + 1}. $name", style = type.sansBody)
+                    Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+                        timeBlocks.forEach { block ->
+                            KinChip(
+                                label = timeBlockLabel(block),
+                                selected = slot.timeBlockId == block.id,
+                                onClick = { onSlotBlockChange(slot.slotId, block.id) },
+                            )
+                        }
+                    }
+                } else {
+                    KinField(
+                        value = slot.time,
+                        onValueChange = { onSlotTimeChange(slot.slotId, it) },
+                        label = "${idx + 1}. $name time (HH:MM)",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
         if (pattern == BookingPattern.Weekly) {
@@ -706,6 +826,18 @@ private fun Step3ScheduleDates(
             val them = if (closedDatesInPlan.size == 1) "it" else "them"
             Text(
                 "$which. Remove $them to continue. A closed date can't be booked.",
+                style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+            )
+        }
+
+        // A block offers ONE start time, so once today's window has opened
+        // there is no control left for the household to nudge. Say so here
+        // rather than let the whole request come back refused.
+        if (pastVisitCount > 0) {
+            val howMany = if (pastVisitCount == 1) "1 visit in this plan has" else "$pastVisitCount visits in this plan have"
+            val fix = if (mode == BookingMode.TimeBlock) "Pick a later block" else "Pick a later time"
+            Text(
+                "$howMany already started. $fix, or drop today from the dates.",
                 style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
             )
         }
@@ -761,13 +893,15 @@ private fun Step5Review(
     notes: String,
     pattern: BookingPattern,
     visits: List<BookingVisit>,
+    /** Time-block booking: needed to NAME the window each visit was booked into. */
+    timeBlocks: List<TimeBlock> = emptyList(),
     estimateLabel: String,
     capped: Boolean,
     submitting: Boolean,
     error: String?,
 ) {
     val type = LocalKinfolkTypography.current
-    val rendered = renderPlannedVisits(visits)
+    val rendered = renderPlannedVisits(visits, blocks = timeBlocks)
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
