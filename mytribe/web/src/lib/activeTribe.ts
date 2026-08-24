@@ -234,6 +234,27 @@ function reportActiveTribeError(err: unknown): void {
   activeTribeErrorSink?.(err);
 }
 
+/**
+ * Forgets the tribe pick persisted for [uid] (#539, sign-out).
+ *
+ * Deliberately NOT folded into `clearAccess` below. `clearAccess` means "drop
+ * the resolved access so it gets fetched again", and its other callers — the
+ * /error screen's Retry, and the router's own recovery path — want the
+ * persisted pick to survive. Only sign-out wants it gone, and only sign-out
+ * knows whose it was: `auth.currentUser` is already null by the time the caches
+ * are purged, which is why the uid is passed in rather than read here.
+ *
+ * try/catch because sessionStorage throws outright in a browser with site data
+ * blocked, and a storage refusal must not be what stops somebody signing out.
+ */
+export function clearActiveTribeSession(uid: string): void {
+  try {
+    sessionStorage.removeItem(sessionKeyFor(uid));
+  } catch {
+    // Storage unavailable; nothing was persisted to begin with.
+  }
+}
+
 /** Clears the resolved access (call on sign-out) so the next sign-in re-resolves. */
 export function clearAccess(): void {
   state = null;
