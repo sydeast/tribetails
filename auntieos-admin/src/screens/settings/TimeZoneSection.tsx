@@ -26,7 +26,7 @@ import '../SettingsEdit.css';
  * read about before saving, not after a caller reaches a closed line.
  *
  * BOOKINGS STILL DO NOT CONVERT THROUGH IT, and that stays a decision rather
- * than a gap — `lib/bookingAvailability.ts`'s header states it: the booking wire
+ * than a gap. `lib/bookingAvailability.ts`'s header states it: the booking wire
  * contract is the operator's device wall clock on BOTH admin clients, and
  * `booking_time_slots` carries no zone at all, so there is no offset to convert
  * from. Making this field editable does not change that; what it changes is that

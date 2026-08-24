@@ -20,7 +20,7 @@ import '../SettingsEdit.css';
 import './BookingRulesSection.css';
 
 /**
- * ISSUE #519: the booking configuration block — seven fields the three admin
+ * ISSUE #519: the booking configuration block. Seven fields the three admin
  * clients decoded and defaulted, and that no React or desktop surface offered a
  * control for.
  *

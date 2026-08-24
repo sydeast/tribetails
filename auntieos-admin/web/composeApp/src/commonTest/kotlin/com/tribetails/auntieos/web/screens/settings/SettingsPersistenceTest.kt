@@ -76,9 +76,6 @@ class SettingsPersistenceTest {
     private val loaded = BusinessSettings(
         _id = "biz",
         businessHours = mapOf("monday" to "08:00-17:00"),
-        notificationEmail = true,
-        notificationSms = true,
-        notificationPush = true,
     )
 
     @Test fun `not dirty when edits equal loaded`() {
@@ -99,8 +96,10 @@ class SettingsPersistenceTest {
         val base = loaded.copy(businessName = "TribeTails", serviceRates = mapOf("Walk" to "25"))
         val edited = editedBusinessSettings(base, hours = mapOf("tuesday" to "10:00-14:00"))
         assertEquals(mapOf("tuesday" to "10:00-14:00"), edited.businessHours)
-        // The coarse notification fields are no longer edited here; copy() preserves them.
-        assertTrue(edited.notificationEmail)
+        // A field this helper does not touch survives the overlay. It used to be
+        // asserted on `notificationEmail`, which #519 deleted from the model
+        // (nothing read it); `businessName` makes the same point about a field
+        // that is real.
         assertEquals("TribeTails", edited.businessName)
         assertEquals(mapOf("Walk" to "25"), edited.serviceRates)
     }

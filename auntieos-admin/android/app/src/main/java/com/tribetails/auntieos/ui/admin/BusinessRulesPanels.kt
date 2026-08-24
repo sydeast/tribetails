@@ -46,9 +46,9 @@ import java.time.ZoneId
  * The phone had editors for five of the twenty (the GPS master switch,
  * auto-start, accuracy, the ETA default and the draft-retention default, all in
  * `BusinessOperationsPanel`), which was five more than either web surface had.
- * The rest — the whole booking-configuration block, the time zone, the two
- * option LISTS behind the two dropdowns, and four of the seven GPS fields — had
- * no control anywhere. This file is the phone's half of closing that.
+ * The rest had no control anywhere: the whole booking-configuration block,
+ * the time zone, the two option LISTS behind the two dropdowns, and four of the
+ * seven GPS fields. This file is the phone's half of closing that.
  *
  * KEPT OUT OF `AdminSettingsScreen.kt` on purpose. That file is 3,300 lines and
  * two other in-flight changes are editing it; a new section here costs it one
@@ -56,8 +56,8 @@ import java.time.ZoneId
  *
  * SAVES GO THROUGH `AdminSettingsViewModel.updateBusinessSettings`, which diffs
  * against the copy Firestore handed over (`BusinessSettingsDiff.kt`) and writes
- * only what changed. Every panel below hands it `settings.copy(...)` — the
- * loaded model with this panel's fields overlaid — never a freshly constructed
+ * only what changed. Every panel below hands it `settings.copy(...)`, the
+ * loaded model with this panel's fields overlaid, never a freshly constructed
  * `BusinessSettings(...)`, which is what would silently reset every field the
  * panel has no control for.
  */

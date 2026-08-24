@@ -519,6 +519,13 @@ private enum class SettingsSection(val label: String, val icon: ImageVector) {
     Notifications("Notifications", Lucide.Bell),
     Integrations("Integrations", Lucide.LayoutGrid),
     KinCareTypes("Booking", Lucide.SlidersHorizontal),
+    // ISSUE #519: two sections for the twenty `business_settings` fields the
+    // three admin clients decoded and none of them edited. Two rather than one,
+    // because they answer different questions: BookingRules is what a booking is
+    // allowed to be, VisitsTracking is what happens once you are out on it.
+    // Panels live in `BusinessRulesPanels.kt`.
+    BookingRules("Booking rules", Lucide.CalendarClock),
+    VisitsTracking("Visits and tracking", Lucide.MapPin),
     Payments("Payments", Lucide.Wallet),
     Tags("Tags", Lucide.Tags),
     VetClinics("Vet clinics", Lucide.Stethoscope),
@@ -631,6 +638,12 @@ private fun SectionPanel(
                 authUser = authUser, client = client, vm = vm, uiState = uiState,
                 settingsData = settingsData, settingsLoaded = settingsLoaded, scope = scope,
             )
+            // ISSUE #519: `timeZone` had no editor on any admin surface while five
+            // server behaviors read it. It sits with the business's own identity,
+            // following the issue's grouping.
+            TimeZonePanel(
+                settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm, scope = scope,
+            )
         }
         SettingsSection.BusinessHours -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             BusinessHoursPanel(
@@ -674,6 +687,12 @@ private fun SectionPanel(
             // #7: booking behavior (auto-confirm + snap) now lives under Booking.
             BookingBehaviorPanel(settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm)
         }
+        SettingsSection.BookingRules -> BookingRulesPanel(
+            settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm, scope = scope,
+        )
+        SettingsSection.VisitsTracking -> VisitsTrackingPanel(
+            settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm, scope = scope,
+        )
         SettingsSection.Payments -> PaymentOptionsPanel(
             authUser = authUser, client = client, vm = vm, uiState = uiState,
             settingsData = settingsData, settingsLoaded = settingsLoaded, scope = scope,

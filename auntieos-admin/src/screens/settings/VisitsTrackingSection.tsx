@@ -38,13 +38,13 @@ import '../SettingsEdit.css';
  *         the "On My Way" sheet.
  *  STORED `enablePhotoLocationTagging`, `requireArrivalDepartureVerification`,
  *         `saveRoutesForDays`, `allowClientLocationSharing`,
- *         `draftRetentionDays` + `draftRetentionOptions` — persisted and read
+ *         `draftRetentionDays` + `draftRetentionOptions`: persisted and read
  *         back, with no behavior behind them yet. Each is called out on the
  *         panel so nobody mistakes a saved value for an enforced one. Building
  *         those consumers (a route-retention purge, a draft purge, a photo
  *         EXIF gate, an arrival-verification step, a portal location gate)
  *         means building features, not wiring a switch, and each needs its own
- *         ruling — this issue is the editors.
+ *         ruling. This issue is the editors.
  */
 
 interface VisitsTrackingSectionProps {

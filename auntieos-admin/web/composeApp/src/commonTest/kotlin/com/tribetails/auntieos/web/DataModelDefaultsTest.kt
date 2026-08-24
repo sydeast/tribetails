@@ -184,8 +184,9 @@ class DataModelDefaultsTest {
         val s = BusinessSettings()
         // profile
         assertEquals("America/New_York", s.timeZone)
-        // notifications
-        assertTrue(s.notificationEmail && s.notificationSms && s.notificationPush)
+        // notifications: the three coarse channel booleans were deleted from
+        // this model by #519. Nothing ever read them; the real gate lives on
+        // `businessSettings/notifications` via `resolveChannels`.
         // holidays
         assertFalse(s.observeUsHolidays)
         // booking config (migrated from admin_settings)
@@ -194,7 +195,9 @@ class DataModelDefaultsTest {
         assertTrue(s.allowTimeBlockBooking)
         assertTrue(s.allowSpecificTimeBooking)
         assertTrue(s.enableConflictDetection)
-        assertFalse(s.enableAutoReminder24h)
+        // #519: was `false` while `kincareReminderCron` sent the reminder
+        // unconditionally. The default states the shipped behavior now.
+        assertTrue(s.enableAutoReminder24h)
         assertEquals(4, s.defaultTimeBlockDurationHours)
         assertEquals(30, s.travelBufferMinutes)
         // default timeBlock = midday 11:00-15:00 active
@@ -232,9 +235,6 @@ class DataModelDefaultsTest {
             timeZone = "America/Chicago",
             serviceRates = mapOf("Dog Walking" to "25.00"),
             businessHours = mapOf("monday" to "09:00-17:00"),
-            notificationEmail = false,
-            notificationSms = false,
-            notificationPush = false,
             observedUsHolidays = listOf("thanksgiving"),
             companyHolidays = listOf("2026-12-24|Eve"),
             specialHours = listOf("2026-07-04|closed"),

@@ -43,9 +43,9 @@ export const CALENDAR_VIEWS: readonly OptionSpec[] = [
 ];
 
 export const TRACKING_ACCURACIES: readonly OptionSpec[] = [
-  { value: 'HIGH', label: 'High — most precise, heaviest on battery' },
-  { value: 'MEDIUM', label: 'Medium — balanced' },
-  { value: 'LOW', label: 'Low — lightest on battery, least precise' },
+  { value: 'HIGH', label: 'High (most precise, heaviest on battery)' },
+  { value: 'MEDIUM', label: 'Medium (balanced)' },
+  { value: 'LOW', label: 'Low (lightest on battery, least precise)' },
 ];
 
 /**
@@ -142,7 +142,7 @@ export function formatOptionList(values: readonly number[]): string {
  * The default to save alongside a freshly edited option list.
  *
  * A default that is not one of its own options is a dropdown showing a value it
- * cannot offer — the state you get by deleting the currently-selected entry.
+ * cannot offer: the state you get by deleting the currently-selected entry.
  * Rather than blocking the save on it, the default follows the list to its
  * nearest surviving option (ties going to the smaller, so nobody is silently
  * given a LONGER wait or a LONGER retention than they had). Returns the input

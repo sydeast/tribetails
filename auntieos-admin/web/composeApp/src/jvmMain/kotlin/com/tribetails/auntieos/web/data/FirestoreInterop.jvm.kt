@@ -224,11 +224,27 @@ internal actual fun platformBookingTimeSlotsStream(): Flow<FirestoreResult<List<
 
 // Canonical settings doc: business_settings/business_settings (2026-06-05
 // unification). Read the SPECIFIC doc id, not first() of the collection.
+/**
+ * ISSUE #519: the settings document exactly as this console last read it, and
+ * the only thing a save is allowed to diff against.
+ *
+ * NULL UNTIL A READ LANDS, which is load-bearing rather than tidy: with no
+ * baseline there is nothing to compare, and the save falls back to the
+ * whole-object merge it has always done rather than guessing that the shipped
+ * Kotlin defaults are what the server holds.
+ *
+ * It advances on every poll AND after every write this console makes, so a
+ * second save does not re-send the first save's fields.
+ */
+@Volatile
+private var lastLoadedBusinessSettings: BusinessSettings? = null
 internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> =
     JvmFirestoreFixtures.businessSettings?.let { flowOf(FirestoreResult.Data(it)) }
         ?: JvmFirestoreRest.pollingScalar {
-            JvmFirestoreRest.getDoc<BusinessSettings>("business_settings", BUSINESS_SETTINGS_DOC_ID)
+            val loaded = JvmFirestoreRest.getDoc<BusinessSettings>("business_settings", BUSINESS_SETTINGS_DOC_ID)
                 ?: BusinessSettings()
+            lastLoadedBusinessSettings = loaded
+            loaded
         }
 
 internal actual fun platformBookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> =
@@ -404,15 +420,48 @@ internal actual suspend fun platformDeleteKinTaleTemplate(templateId: String): W
     if (JvmFirestoreRest.patchFields("kintale_templates", templateId, mapOf("deleted" to JsonPrimitive(true)))) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
 internal actual suspend fun platformRecordPayment(payment: Payment): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("payments", jsonOut.encodeToString(payment))) }.getOrElse { WriteResult.Err(it.message ?: "record failed") }
-// Always write the canonical doc id business_settings; MERGE so sibling fields a
-// given screen does not edit are never clobbered (2026-06-05 unification).
+/**
+ * Always write the canonical doc id `business_settings`, and write ONLY the
+ * fields that changed since this console read the document.
+ *
+ * ISSUE #519. This used to serialise the whole model and merge it. `merge`
+ * protects fields OUTSIDE the written map and does nothing about stale fields
+ * INSIDE it, and every field of the model was inside it — so a panel saving one
+ * toggle wrote all ~50 back at whatever this console had last polled, reverting
+ * anything the React admin or the phone had changed since. Both of those
+ * surfaces have written diffs for a while; this was the last whole-object
+ * writer, and #519's three new panels multiply how often it saves.
+ *
+ * The stamp rides along with the changes, and ONLY with changes: an empty diff
+ * writes nothing at all, because `updatedAt` says when the document last changed
+ * and moving it for a save that changed nothing makes it lie. The caller still
+ * gets `Ok` — "saved" and "nothing to save" are the same outcome to an operator.
+ *
+ * With no baseline (no read has landed yet) it falls back to the whole-object
+ * merge rather than diffing against Kotlin defaults, which would write every
+ * field at its shipped value.
+ */
 internal actual suspend fun platformSaveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> =
     runCatching {
-        val stamped = settings.copy(
-            _id = BUSINESS_SETTINGS_DOC_ID,
-            updatedAt = com.tribetails.auntieos.web.util.nowIso(),
+        val baseline = lastLoadedBusinessSettings
+        val stampedAt = com.tribetails.auntieos.web.util.nowIso()
+        if (baseline == null) {
+            val stamped = settings.copy(_id = BUSINESS_SETTINGS_DOC_ID, updatedAt = stampedAt)
+            JvmFirestoreRest.mergeDoc("business_settings", BUSINESS_SETTINGS_DOC_ID, jsonOut.encodeToString(stamped))
+            return@runCatching WriteResult.Ok(Unit)
+        }
+        val changes = businessSettingsChangedFields(baseline, settings, jsonOut)
+        if (changes.isEmpty()) return@runCatching WriteResult.Ok(Unit)
+        val ok = JvmFirestoreRest.patchFields(
+            "business_settings",
+            BUSINESS_SETTINGS_DOC_ID,
+            changes + mapOf("updatedAt" to JsonPrimitive(stampedAt)),
         )
-        JvmFirestoreRest.mergeDoc("business_settings", BUSINESS_SETTINGS_DOC_ID, jsonOut.encodeToString(stamped))
+        if (!ok) error("Firestore write failed")
+        // The baseline moves to what the server now holds. Without this a second
+        // save re-sends the first save's fields, which is the same clobber one
+        // step later.
+        lastLoadedBusinessSettings = settings
         WriteResult.Ok(Unit)
     }.getOrElse { WriteResult.Err(it.message ?: "save failed") }
 internal actual suspend fun platformApproveBooking(bookingId: String): WriteResult<Unit> =

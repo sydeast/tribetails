@@ -182,9 +182,71 @@ service cloud.firestore {
  // AuntieOS Android HomeViewModel.load() fans out getBusinessSettings on Home,
  // and dropping that branch would put a false permission banner on the sandbox
  // Home screen (pinned by testAdminSandbox.test.ts).
+ // ISSUE #519: `business_settings` is written directly by the clients — there is
+ // no callable in front of it — so these rules are the ONLY server-side check
+ // anything gets. Until now the write was a bare role gate, which meant an
+ // operator-facing configuration document that five Cloud Functions read
+ // (`resolveBusinessOpen` for the phone line, quote expiry, visit-date
+ // formatting, notification tokens, the booking busy-conflict guard) could take
+ // any shape at all from a buggy client.
+ //
+ // CHECKED ONLY WHEN PRESENT. Three surfaces write this document three
+ // different ways: the React admin sends a per-section partial patch, Android
+ // sends an arbitrary changed-field subset, and the desktop console sends a
+ // changed-field subset too. Requiring a key would break all three; each rule
+ // below therefore reads "if this key is in the write, it has to be sane", and
+ // says nothing about a key the write does not name.
+ //
+ // TYPE AND RANGE, NOT POLICY. The bounds bracket a real answer generously.
+ // The point is to refuse a shape no reader can act on — a `timeZone` written as
+ // a number, a negative retention period, a `travelBufferMinutes` of 10^9 — not
+ // to encode what a business may choose. The clients validate the same values
+ // where the operator can see it happening; this is the floor under them.
+    function bsHas(field) {
+      return request.resource.data.keys().hasAny([field]);
+    }
+    function bsBool(field) {
+      return !bsHas(field) || request.resource.data[field] is bool;
+    }
+    function bsString(field) {
+      return !bsHas(field) || request.resource.data[field] is string;
+    }
+    function bsInt(field, lo, hi) {
+      return !bsHas(field)
+             || (request.resource.data[field] is int
+                 && request.resource.data[field] >= lo
+                 && request.resource.data[field] <= hi);
+    }
+    function bsList(field, maxLen) {
+      return !bsHas(field)
+             || (request.resource.data[field] is list && request.resource.data[field].size() <= maxLen);
+    }
+    function validBusinessSettings() {
+      return bsString('timeZone')
+             && bsString('defaultBookingMode')
+             && bsString('defaultCalendarView')
+             && bsString('trackingAccuracy')
+             && bsBool('allowTimeBlockBooking')
+             && bsBool('allowSpecificTimeBooking')
+             && bsBool('enableConflictDetection')
+             && bsBool('enableAutoReminder24h')
+             && bsBool('enableGPSTrackingForAllVisits')
+             && bsBool('enablePhotoLocationTagging')
+             && bsBool('requireArrivalDepartureVerification')
+             && bsBool('autoStartTrackingOnVisitStart')
+             && bsBool('allowClientLocationSharing')
+             && bsInt('defaultTimeBlockDurationHours', 1, 24)
+             && bsInt('travelBufferMinutes', 0, 480)
+             && bsInt('saveRoutesForDays', 1, 3650)
+             && bsInt('defaultEtaMinutes', 1, 1440)
+             && bsInt('draftRetentionDays', 1, 3650)
+             && bsList('timeBlocks', 12)
+             && bsList('etaMinuteOptions', 12)
+             && bsList('draftRetentionOptions', 12);
+    }
     match /business_settings/{docId} {
       allow read: if isAuntie() || isTestAdmin();
-      allow write: if isAuntie();
+      allow write: if isAuntie() && validBusinessSettings();
     }
 
  // Coverage Package Builder config (the admin's visit menu + coverage rules).
