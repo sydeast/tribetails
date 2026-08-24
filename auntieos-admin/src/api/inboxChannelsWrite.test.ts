@@ -31,6 +31,16 @@ describe('markVoicemail', () => {
     expect(patch).toEqual({ replyStatus: 'read', repliedAt: '', replyLogId: '' });
   });
 
+  it('writes dismissed as its own state, and stamps no reply timestamp for it', async () => {
+    await markVoicemail({ voicemailId: 'vm7', status: 'dismissed' });
+    const [ref, patch] = updateDocMock.mock.calls[0] as [{ _path: string }, Record<string, string>];
+    expect(ref._path).toBe('voicemails/vm7');
+    // Not folded into `read`. A dismissed voicemail is one nobody needs to
+    // answer; collapsing the two would make `read` mean two different things
+    // and leave the operator unable to tell them apart afterwards.
+    expect(patch).toEqual({ replyStatus: 'dismissed', repliedAt: '', replyLogId: '' });
+  });
+
   it('writes a blank replyLogId rather than inventing a link the send never returned', async () => {
     await markVoicemail({ voicemailId: 'vm3', status: 'replied', replyLogId: null });
     const [, patch] = updateDocMock.mock.calls[0] as [unknown, Record<string, string>];

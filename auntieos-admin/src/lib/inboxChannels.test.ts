@@ -173,10 +173,26 @@ describe('voicemailEntry', () => {
     expect(voicemailEntry({ _id: 'vm3', kinfolkId: null }).kinfolkId).toBe('');
   });
 
-  it('flags replied and unread distinctly, and neither for a read voicemail', () => {
+  it('flags replied, unread and dismissed distinctly, and none of them for a read voicemail', () => {
     expect(voicemailEntry({ _id: 'a', replyStatus: 'replied' }).statusHint).toBe('replied');
     expect(voicemailEntry({ _id: 'b', replyStatus: 'read' }).statusHint).toBe('');
     expect(voicemailEntry({ _id: 'c' }).statusHint).toBe('');
+    // Carried, not flattened: a dismissed voicemail nobody can distinguish from
+    // a read one is indistinguishable from one nobody has touched, and this is
+    // also what gates the Dismiss action off in ThreadActionsCard.
+    expect(voicemailEntry({ _id: 'd', replyStatus: 'dismissed' }).statusHint).toBe('dismissed');
+    expect(voicemailEntry({ _id: 'e', replyStatus: 'DISMISSED' }).statusHint).toBe('dismissed');
+  });
+
+  it('leaves a dismissed voicemail out of the waiting-on-a-reply count', () => {
+    // The whole point of the state: it is a way OFF the operator's queue that
+    // does not have to pretend somebody listened.
+    expect(
+      awaitingReplyCount([
+        { _id: 'a', replyStatus: 'unread' },
+        { _id: 'b', replyStatus: 'dismissed' },
+      ]),
+    ).toBe(1);
   });
 
   it('truncates an over-long transcript with an ellipsis', () => {
