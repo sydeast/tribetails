@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth, useSignOut } from '../lib/auth';
+import { useAuth } from '../lib/auth';
 import { useAccessState, getActiveKinfolkId } from '../lib/activeTribe';
 import { getMyHome } from '../api/portal';
 import { BrandLogo } from './BrandLogo';
@@ -45,7 +45,6 @@ const TAB_ITEMS: (NavItem & { icon: string })[] = [
 export function PortalNav(props: { active: PortalNavTab; displayName?: string }) {
   const authState = useAuth();
   const access = useAccessState();
-  const { signOut, signingOut } = useSignOut();
 
   // Operator branding, off the EXISTING `getMyHome` payload rather than a new
   // callable. That payload already carried `businessLogoUrl` (the portal logo)
@@ -109,17 +108,16 @@ export function PortalNav(props: { active: PortalNavTab; displayName?: string })
             <Link className="iconbtn" to="/account/notifications" aria-label="Notification settings">
               {'\u{1F514}'}
             </Link>
-            {/* A div, so `disabled` does nothing — useSignOut's ref guard is what
-                actually swallows the second tap; this only makes the wait visible. */}
-            <div
-              className="avatar"
-              title={signingOut ? 'Signing out…' : 'Sign out'}
-              aria-busy={signingOut}
-              style={signingOut ? { opacity: 0.5, pointerEvents: 'none' } : undefined}
-              onClick={signOut}
-            >
+            {/* #538: this used to be a bare div wired straight to signOut, so the
+                one control a kinfolk would reach for to find their profile
+                signed them out instead. Per the account mockup's own nav
+                (mytribe-account-2026-05-31.html, the only mock that renders
+                this element on its own active screen) the avatar's job is to
+                open Account, aria-label="Account" and all; Sign Out lives on
+                that screen's sticky save bar, not up here. */}
+            <Link className="avatar" to="/account" aria-label="Account" title="Account">
               {initial}
-            </div>
+            </Link>
           </div>
         </div>
       </nav>
