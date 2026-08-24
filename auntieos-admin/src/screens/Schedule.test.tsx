@@ -649,13 +649,35 @@ describe('Schedule write surfaces', () => {
       new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0).toISOString();
     expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', at(10, 0), at(11, 30), {});
   });
-  it('a drop back onto the visit’s own start writes nothing at all', async () => {
+  /**
+   * A drop that resolves back to the visit's own start writes nothing: no
+   * callable, no audit entry, no "rescheduled" event for a move nobody made.
+   *
+   * Run with the operator's 15-minute snap ON, and that is the point rather
+   * than an incidental setting. At minute precision any travel that clears the
+   * 5px click threshold is already six minutes or more, so it always lands on a
+   * different minute; the quarter-hour snap is what makes a real drag resolve
+   * back to where it started, and therefore the only case this guard bites.
+   */
+  it('a drag that snaps back onto the visit’s own start writes nothing at all', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceDurations: {},
+      serviceRates: {},
+      snapRescheduleTo15Min: true,
+    });
     mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
     render(<Schedule />);
-    // Past the 5px click threshold, but less than the 1-minute snap the default
-    // setting uses, so it resolves to the same minute it started on.
-    dragBy(gridBlock(), 0.4);
+    await act(async () => {}); // let the one-shot settings read land before dragging
+
+    // 6px is 6.7 minutes down from 9:00, so the drop resolves to 9:07 and then
+    // floors back to the same 9:00 quarter-hour the visit already sits on.
+    dragBy(gridBlock(), 6);
     await waitFor(() => expect(rescheduleBooking).not.toHaveBeenCalled());
+
+    // The same gesture DOES write once the travel clears that quarter-hour, so
+    // the assertion above is about the no-op guard and not about a dead drag.
+    dragBy(gridBlock(), 15);
+    await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
   });
   it('a refusal is surfaced with the server’s own sentence, and offers the override', async () => {
     rescheduleBooking.mockRejectedValueOnce(
