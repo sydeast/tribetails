@@ -54,6 +54,16 @@ export interface KinTaleComposeProps {
   kinTaleId?: string;
   /** Start a brand-new draft scaffolded from this Kin Care session. */
   sessionId?: string;
+  /**
+   * NARROW THE SESSION PICKER TO ONE HOUSEHOLD.
+   *
+   * The household profile's "New KinTale" (the mock's hero primary) opens this
+   * screen already knowing whose KinTale it is, but not which visit it recaps.
+   * Without this the operator would land on every household's eligible sessions
+   * and have to find theirs. Absent means every household, which is what the
+   * KinTales list's own "New" still passes.
+   */
+  kinfolkId?: string;
   onClose: () => void;
 }
 
@@ -126,7 +136,7 @@ export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
 
 type Banner_ = { tone: 'error' | 'success' | 'info'; text: string };
 
-export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleComposeProps) {
+export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: KinTaleComposeProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const sessions = useCollection<SessionEntry>(SESSIONS_QUERY);
 
@@ -342,7 +352,11 @@ export function KinTaleCompose({ kinTaleId, sessionId, onClose }: KinTaleCompose
   return (
     <div className="screen kintale-compose">
       {heading}
-      <SessionPicker sessions={sessions} onPick={setPickedSessionId} />
+      <SessionPicker
+        sessions={sessions}
+        {...(kinfolkId !== undefined && kinfolkId !== '' ? { kinfolkId } : {})}
+        onPick={setPickedSessionId}
+      />
     </div>
   );
 }

@@ -693,6 +693,32 @@ export const INVOICES_QUERY: CollectionSpec = {
   order: ['createdAt', 'desc'],
   max: 200,
 };
+/** The cap on the household profile's invoices read; `feedCountMeta` needs it by name. */
+export const INVOICES_PROFILE_MAX = 200;
+/**
+ * Every invoice for ONE household, newest first, for the household profile's
+ * Invoices card.
+ *
+ * ORDERED BY `date`, NOT `createdAt`, and that is deliberate. `invoices.date` is
+ * the billing day an operator recognises, and it is the field the deployed
+ * `invoices (kinfolkId ASC, date DESC)` index pairs with `kinfolkId` (see
+ * `invoicesPageQuery`'s note). `createdAt` on this collection is a real
+ * Firestore Timestamp with no such pair deployed, so ordering by it here would
+ * need an index that does not exist.
+ *
+ * `date` is FREE TEXT (PR #241), so the sort is lexical and a row whose date was
+ * typed in some other shape sorts where that string falls. The card labels each
+ * row with the stored value through `kinfolkInvoiceFeedLabel`, so what an
+ * operator reads is what is stored, never a guess.
+ */
+export function invoicesForKinfolkQuery(kinfolkId: string): CollectionSpec {
+  return {
+    path: 'invoices',
+    order: ['date', 'desc'],
+    max: INVOICES_PROFILE_MAX,
+    filters: [['kinfolkId', '==', kinfolkId]],
+  };
+}
 
 /** Rows per "Load more" on the Invoices list. Same reasoning as `KINTALES_PAGE_SIZE`. */
 export const INVOICES_PAGE_SIZE = 25;

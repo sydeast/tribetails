@@ -157,6 +157,29 @@ export const KINTALES_QUERY: CollectionSpec = {
   order: ['createdAt', 'desc'],
   max: 200,
 };
+/** The cap on the household profile's KinTales read; `feedCountMeta` needs it by name. */
+export const KINTALES_PROFILE_MAX = 200;
+/**
+ * Every KinTale for ONE household, newest first, for the household profile's
+ * "Recent KinTales" card.
+ *
+ * A separate spec rather than `KINTALES_QUERY` filtered in memory: the profile
+ * must not stream 200 rows of every household's recaps to show three of one
+ * household's. Covered by the deployed `kin_care_reports (kinfolkId ASC,
+ * createdAt DESC)` index, the same pair `kinTalesPageQuery` relies on.
+ *
+ * The `orderBy('createdAt')` caveat this whole collection carries still applies:
+ * a doc missing `createdAt` is dropped by the sort. Every real write path stamps
+ * it, so that is a legacy-row risk, not a routine one.
+ */
+export function kinTalesForKinfolkQuery(kinfolkId: string): CollectionSpec {
+  return {
+    path: 'kin_care_reports',
+    order: ['createdAt', 'desc'],
+    max: KINTALES_PROFILE_MAX,
+    filters: [['kinfolkId', '==', kinfolkId]],
+  };
+}
 
 /**
  * Rows per "Load more" on the KinTales LIST screen (Phase 4).

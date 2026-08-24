@@ -3,34 +3,83 @@
   color: var(--color-text-dim);
 }
 
-.kprofile__head {
+/* THE HERO. The mock's identity block: avatar, name, where they stand, then the
+   actions. It replaces the old page-heading-plus-"Household"-panel pair, which
+   printed the household's name twice. */
+.kprofile__hero {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
 }
-
-.kprofile__head-text {
+.kprofile__hero-text {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
 }
-
-.kprofile__name {
-  font-size: var(--type-title-md-size);
-  font-weight: 600;
+.kprofile__hero-name {
+  margin: 0;
+  font-family: var(--type-display-md-family);
+  font-size: var(--type-display-md-size);
+  font-weight: var(--type-display-md-weight);
+  letter-spacing: var(--type-display-md-tracking);
   color: var(--color-text-primary);
 }
-
-.kprofile__status {
-  font-size: var(--type-label-sm-size);
+.kprofile__hero-where {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
-
-.kprofile__since {
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+.kprofile__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
-
+.kprofile__chip {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+}
+.kprofile__chip[data-tone='active'] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.kprofile__chip--tenure {
+  border-color: var(--color-tertiary);
+  color: var(--color-tertiary);
+}
+/* TWO COLUMNS, at the mock's own 860px breakpoint and in its own 1 : 1.2
+   proportion. Below it the columns stack, which is what the mock's own media
+   query does and what the Android profile already is. */
+.kprofile__cols {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+@media (min-width: 861px) {
+  .kprofile__cols {
+    grid-template-columns: 1fr 1.2fr;
+  }
+}
+.kprofile__col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
 .kprofile__facts {
   display: grid;
   grid-template-columns: minmax(8rem, max-content) 1fr;
@@ -71,6 +120,34 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  text-align: left;
+  color: inherit;
+}
+/* A kin row that opens the pet is a real button, so it gets the affordance: a
+   border on hover and a chevron saying there is somewhere to go. */
+.kprofile__kin-row--open {
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.kprofile__kin-row--open:hover,
+.kprofile__kin-row--open:focus-visible {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-soft);
+}
+.kprofile__kin-chev {
+  margin-left: auto;
+  color: var(--color-text-faint);
+}
+.kprofile__kin-note {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  font-style: italic;
 }
 
 .kprofile__kin-text {
@@ -87,10 +164,12 @@
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
-/* Heading action cluster: household record, edit, and back. */
+/* The hero's action cluster: quick contact, the household's other surfaces,
+   edit, back, and the New KinTale primary. */
 .kinfolk-profile__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
+  margin-left: auto;
 }

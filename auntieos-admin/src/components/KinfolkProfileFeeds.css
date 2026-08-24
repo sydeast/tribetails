@@ -1,0 +1,74 @@
+/* The household profile's feed cards (Recent KinTales, Upcoming visits,
+   Invoices). One row shape serves all three: a full-width anchor that fills the
+   panel, so the whole row is the hit target rather than the few words inside it,
+   which is what the mock draws. */
+.kfeed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.kfeed__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.16s ease, border-color 0.16s ease;
+}
+.kfeed__row:hover,
+.kfeed__row:focus-visible {
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+}
+.kfeed__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.kfeed__title {
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.kfeed__sub {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  overflow-wrap: anywhere;
+}
+.kfeed__when {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-faint);
+}
+.kfeed__when--lead {
+  color: var(--color-text-primary);
+}
+/* The visit and invoice rows are two-part: lead on the left, stamp on the
+   right, with the gap between them doing the aligning. */
+.kfeed__row--visit .den-pill,
+.kfeed__money {
+  margin-left: auto;
+}
+.kfeed__no {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kfeed__money {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
