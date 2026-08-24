@@ -42,7 +42,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 // keep the per-entry reply / mark path and no bulk control.
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum class Channel(val label: String, val icon: ImageVector) {
+internal enum class Channel(val label: String, val icon: ImageVector) {
     All       ("All",        Lucide.Inbox),
     Voicemail ("Voicemails", Lucide.Voicemail),
     Call      ("Calls",      Lucide.Phone),
@@ -50,7 +50,7 @@ private enum class Channel(val label: String, val icon: ImageVector) {
     Email     ("Emails",     Lucide.Mail),
 }
 
-private data class InboxEntry(
+internal data class InboxEntry(
     val id: String,
     val channel: Channel,
     val timestamp: String,
@@ -277,10 +277,13 @@ fun InboxScreen(
                 // fit a phone, and because the React sheet puts the same pair in
                 // its body. Each is rendered only when it would CHANGE the
                 // record — Mark read only from `unread`, Dismiss on anything not
-                // already dismissed — so neither is ever a no-op round-trip. The
-                // live observeVoicemails listener carries the new state back and
-                // the row restyles itself, which is why both close the modal
-                // rather than waiting on a result here.
+                // already dismissed or already replied (issue #581: see
+                // `canDismissVoicemail` below) — so neither is ever a no-op
+                // round-trip, and neither invites a tap the Firestore rule on
+                // `voicemails/{id}` is going to refuse anyway. The live
+                // observeVoicemails listener carries the new state back and the
+                // row restyles itself, which is why both close the modal rather
+                // than waiting on a result here.
                 if (entry.channel == Channel.Voicemail && entry.voicemailId.isNotBlank()) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (entry.statusHint == "unread") {
@@ -293,7 +296,7 @@ fun InboxScreen(
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        if (entry.statusHint != "dismissed") {
+                        if (canDismissVoicemail(entry.statusHint)) {
                             GhostButton(
                                 label = "Dismiss",
                                 onClick = {
@@ -477,7 +480,18 @@ private fun EmptyState(filter: Channel) {
 
 // ---------- mappers ----------
 
-private fun VoicemailLog.toEntry() = InboxEntry(
+/**
+ * Issue #581: Dismiss is offered only while the voicemail is neither already
+ * dismissed (pressing it again would write the state it is already in) nor
+ * already replied (pressing it would overwrite `repliedAt`/`replyLogId` with
+ * no way back). `internal` so a JVM unit test can pin the truth table without
+ * standing up a Compose test harness - the same reason `toEntry()` below is
+ * `internal` rather than `private`.
+ */
+internal fun canDismissVoicemail(statusHint: String): Boolean =
+    statusHint != "dismissed" && statusHint != "replied"
+
+internal fun VoicemailLog.toEntry() = InboxEntry(
     id          = id,
     channel     = Channel.Voicemail,
     timestamp   = timestamp,
@@ -485,15 +499,24 @@ private fun VoicemailLog.toEntry() = InboxEntry(
     counterpart = callerNumber,
     preview     = transcript.take(120),
     direction   = "",
-    // Both states are carried rather than collapsed to "". `dismissed` has to
+    // Three states are carried rather than collapsed to "". `dismissed` has to
     // reach the row (so the list can say somebody closed this out, as opposed
     // to nobody having looked) and the modal (so Dismiss gates itself off when
-    // it would write the state the document is already in). Lower-cased on the
-    // way in because casing on this field is unenforced — the Twilio webhooks,
-    // both admin clients and the python reconcile pipeline all write it, which
-    // is why the React reader normalizes it too.
+    // it would write the state the document is already in). `replied` is
+    // carried for the same modal-gating reason (issue #581): before this, a
+    // replied voicemail fell into the same "" bucket as a merely-read one, so
+    // neither Mark read's `== "unread"` check nor Dismiss's `!= "dismissed"`
+    // check could tell a replied voicemail apart from one nobody had answered,
+    // and Dismiss rendered on it — a stray tap then blanked repliedAt /
+    // replyLogId. `replied` matches none of the pip checks in `MetaRow` below,
+    // so this carries no visual change; it only gives the modal something to
+    // gate on. Lower-cased on the way in because casing on this field is
+    // unenforced — the Twilio webhooks, both admin clients and the python
+    // reconcile pipeline all write it, which is why the React reader
+    // normalizes it too.
     statusHint  = when (replyStatus.trim().lowercase()) {
         "unread"    -> "unread"
+        "replied"   -> "replied"
         "dismissed" -> "dismissed"
         else        -> ""
     },

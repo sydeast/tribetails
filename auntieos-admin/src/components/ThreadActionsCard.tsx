@@ -113,14 +113,29 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
   const busy = sending || marking !== null;
   const isVoicemail = entry.voicemailId !== '';
   /**
-   * Dismiss is offered only while the voicemail is not ALREADY dismissed, the
-   * way Android gates Mark read on `statusHint == "unread"`: pressing it again
-   * would write the state it is already in, and a control whose only effect is
-   * a redundant network round-trip is the dead control `components/Buttons.tsx`
-   * exists to make inexpressible. The live listener re-renders this card with
-   * the new `statusHint`, so the button disappears once the write lands.
+   * Neither action is offered once a voicemail is `replied` (issue #581).
+   * Before this gate, a stray Mark read or Dismiss tap on an already-answered
+   * voicemail silently rewrote `replyStatus` back to `read`/`dismissed` and
+   * blanked `repliedAt`/`replyLogId` - the only record of who answered and
+   * when - with no confirmation and no way back. The Firestore rule on
+   * `voicemails/{id}` now refuses that write outright regardless of this
+   * gate (so Android and desktop, which write the same three keys through
+   * the same rule, are covered too), but the button should not invite a tap
+   * that is going to fail: hiding it here is the honest UI for a write the
+   * data layer will not allow.
    */
-  const canDismiss = isVoicemail && entry.statusHint !== 'dismissed' && marked !== 'dismissed';
+  const canMarkRead = isVoicemail && entry.statusHint !== 'replied';
+  /**
+   * Dismiss is additionally offered only while the voicemail is not ALREADY
+   * dismissed, the way Android gates Mark read on `statusHint == "unread"`:
+   * pressing it again would write the state it is already in, and a control
+   * whose only effect is a redundant network round-trip is the dead control
+   * `components/Buttons.tsx` exists to make inexpressible. The live listener
+   * re-renders this card with the new `statusHint`, so the button disappears
+   * once the write lands.
+   */
+  const canDismiss =
+    isVoicemail && entry.statusHint !== 'dismissed' && entry.statusHint !== 'replied' && marked !== 'dismissed';
 
   async function handleSend() {
     if (busy) return;
@@ -316,11 +331,13 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
             having somewhere to reply to. */}
         {isVoicemail && (
           <div className="thread-actions__actions">
-            <GhostButton
-              label={marking === 'read' ? 'Marking…' : 'Mark read'}
-              onClick={() => void handleMark('read')}
-              disabled={busy}
-            />
+            {canMarkRead && (
+              <GhostButton
+                label={marking === 'read' ? 'Marking…' : 'Mark read'}
+                onClick={() => void handleMark('read')}
+                disabled={busy}
+              />
+            )}
             {canDismiss && (
               <GhostButton
                 label={marking === 'dismissed' ? 'Dismissing…' : 'Dismiss'}
