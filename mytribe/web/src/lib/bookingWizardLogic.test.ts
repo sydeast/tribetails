@@ -7,21 +7,26 @@ import {
   buildWeeklyVisits,
   dateKey,
   estimateBookingTotal,
+  findTimeBlock,
   formatEstimate,
+  initialBookingMode,
   isBookableDay,
   monthIndex,
   monthPickerDays,
   parseHourMinute,
+  pastPlannedVisits,
   plannedVisitLine,
   priceLabel,
   renderPlannedVisits,
   shiftMonth,
   slotsBlocker,
   summariseSlots,
+  timeBlockLabel,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from './bookingWizardLogic';
-import type { KinCareSlot, WizardService } from './bookingWizardLogic';
+import type { BookingTiming, KinCareSlot, WizardService } from './bookingWizardLogic';
+import type { TimeBlockDto } from '../api/bookingApi';
 
 const SERVICE: WizardService = { id: 's1', name: "Auntie's In", priceCents: 1500, priceMinCents: null };
 /** The catalog entry the #546 worked example is priced against: 30 Minute at $25.00. */
@@ -31,10 +36,19 @@ const RANGED: WizardService = { id: 'ranged', name: 'Ranged', priceCents: null, 
 const UNPRICED: WizardService = { id: 'unpriced', name: 'Unpriced', priceCents: null, priceMinCents: null };
 const CATALOG: WizardService[] = [SERVICE, THIRTY_MINUTE, SIXTY_MINUTE, RANGED, UNPRICED];
 
-/** One KinCare of `serviceId` at `time`. */
+/** One KinCare of `serviceId` at `time`, booked on the clock. */
 function slot(serviceId: string, time: string, n = 1): KinCareSlot {
-  return { slotId: `${serviceId}-${n}`, serviceId, time };
+  return { slotId: `${serviceId}-${n}`, serviceId, time, timeBlockId: null };
 }
+
+/** One KinCare of `serviceId` in the named window. Its `time` is deliberately junk: block mode must never read it. */
+function blockSlot(serviceId: string, timeBlockId: string, n = 1): KinCareSlot {
+  return { slotId: `${serviceId}-${timeBlockId}-${n}`, serviceId, time: 'nonsense', timeBlockId };
+}
+
+const MIDDAY: TimeBlockDto = { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', durationMinutes: 240 };
+const EVENING: TimeBlockDto = { id: 'evening', label: 'Evening', startTime: '17:00', endTime: '21:00', durationMinutes: 240 };
+const BLOCK_TIMING: BookingTiming = { mode: 'TIME_BLOCK', blocks: [MIDDAY, EVENING] };
 
 describe('parseHourMinute', () => {
   it('parses a valid HH:MM', () => {
@@ -502,5 +516,201 @@ describe('priceLabel', () => {
 
   it('renders empty string when no price fields are set', () => {
     expect(priceLabel({ priceCents: null, priceMinCents: null, priceMaxCents: null, isOvernight: false })).toBe('');
+  });
+});
+
+/**
+ * Time-block booking, client half. Operator requirement 2026-08-24: "kinfolk
+ * book within time blocks, not at a specific set time."
+ *
+ * The mode is booking-level and the window is per-KinCare, so these pin the two
+ * things that follow from that: a visit's start comes from its window (never
+ * from the clock field, which block mode must not read at all), and the
+ * duplicate rule counts a visit as (KinCare, block) rather than
+ * (KinCare, instant) — otherwise two durations in one window, which is exactly
+ * what #541/#543 built, would look like one KinCare asked for twice.
+ */
+describe('initialBookingMode', () => {
+  it('opens on the business default when both modes are allowed', () => {
+    expect(
+      initialBookingMode({ allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'TIME_BLOCK' }),
+    ).toBe('TIME_BLOCK');
+    expect(
+      initialBookingMode({ allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' }),
+    ).toBe('SPECIFIC_TIME');
+  });
+
+  it('opens on the only allowed mode, whatever the stored default says', () => {
+    expect(
+      initialBookingMode({ allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'SPECIFIC_TIME' }),
+    ).toBe('TIME_BLOCK');
+    expect(
+      initialBookingMode({ allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'TIME_BLOCK' }),
+    ).toBe('SPECIFIC_TIME');
+  });
+});
+
+describe('findTimeBlock / timeBlockLabel', () => {
+  it('finds a window by id and names it with its hours', () => {
+    expect(findTimeBlock([MIDDAY, EVENING], 'evening')).toBe(EVENING);
+    expect(findTimeBlock([MIDDAY, EVENING], 'brunch')).toBeNull();
+    expect(findTimeBlock([MIDDAY, EVENING], null)).toBeNull();
+    expect(timeBlockLabel(MIDDAY)).toBe('Midday (11:00 – 15:00)');
+  });
+});
+
+describe('slotsBlocker in block mode', () => {
+  it('asks for a window when a KinCare has none', () => {
+    expect(slotsBlocker([{ slotId: 'a', serviceId: '30Minute', time: '09:00', timeBlockId: null }], BLOCK_TIMING)).toBe(
+      'Choose a time block for every KinCare.',
+    );
+  });
+
+  it('asks for a window when the one on the slot is gone from the catalog', () => {
+    expect(slotsBlocker([blockSlot('30Minute', 'brunch')], BLOCK_TIMING)).toBe('Choose a time block for every KinCare.');
+  });
+
+  it('accepts two DIFFERENT durations in the same window', () => {
+    expect(slotsBlocker([blockSlot('30Minute', 'midday'), blockSlot('60Minute', 'midday')], BLOCK_TIMING)).toBeNull();
+  });
+
+  it('accepts the same duration in two different windows', () => {
+    expect(slotsBlocker([blockSlot('30Minute', 'midday'), blockSlot('30Minute', 'evening')], BLOCK_TIMING)).toBeNull();
+  });
+
+  it('refuses the same duration in the same window twice, in block words', () => {
+    expect(slotsBlocker([blockSlot('30Minute', 'midday'), blockSlot('30Minute', 'midday', 2)], BLOCK_TIMING)).toBe(
+      'Two KinCares are the same duration in the same time block. Remove one, or move it to another block.',
+    );
+  });
+
+  it('never reads the clock field in block mode', () => {
+    // Both slots carry the junk time `blockSlot` sets, which would fail the
+    // HH:MM check that governs specific-time mode.
+    expect(slotsBlocker([blockSlot('30Minute', 'midday')], BLOCK_TIMING)).toBeNull();
+    expect(slotsBlocker([blockSlot('30Minute', 'midday')])).toBe('Enter every KinCare time as HH:MM.');
+  });
+});
+
+describe('buildVisits in block mode', () => {
+  it('starts each visit at its window and stamps the block id on it', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
+    expect(visits).toHaveLength(1);
+    expect(new Date(visits[0]!.startTimeMs).getHours()).toBe(11);
+    expect(new Date(visits[0]!.startTimeMs).getMinutes()).toBe(0);
+    expect(visits[0]!.timeBlockId).toBe('midday');
+  });
+
+  it('prices a block-booked visit from the KinCare, exactly as a clock-booked one', () => {
+    const [blockVisit] = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
+    const [clockVisit] = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '11:00')], CATALOG);
+    expect(blockVisit!.priceCents).toBe(2500);
+    expect(blockVisit!.priceCents).toBe(clockVisit!.priceCents);
+    expect(estimateBookingTotal([blockVisit!], CATALOG)).toEqual(
+      estimateBookingTotal([clockVisit!], CATALOG),
+    );
+  });
+
+  it('emits two visits for two durations in one window, both at the same instant', () => {
+    const visits = buildVisits(
+      [new Date(2026, 8, 4)],
+      [blockSlot('30Minute', 'midday'), blockSlot('60Minute', 'midday')],
+      CATALOG,
+      BLOCK_TIMING,
+    );
+    expect(visits).toHaveLength(2);
+    expect(new Set(visits.map((v) => v.startTimeMs)).size).toBe(1);
+    expect(visits.map((v) => v.serviceId)).toEqual(['30Minute', '60Minute']);
+  });
+
+  it('drops a KinCare whose window is gone rather than inventing a time for it', () => {
+    expect(buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'brunch')], CATALOG, BLOCK_TIMING)).toEqual([]);
+  });
+
+  it('leaves timeBlockId null on every clock-booked visit', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00')], CATALOG);
+    expect(visits[0]!.timeBlockId).toBeNull();
+  });
+});
+
+describe('buildWeeklyVisits in block mode', () => {
+  it('expands a weekly rule onto the window start, block id intact', () => {
+    // A Friday, 08:00 local, so the same day's 11:00 window is still ahead.
+    const nowMs = new Date(2026, 8, 4, 8, 0).getTime();
+    const visits = buildWeeklyVisits({
+      nowMs,
+      weeklyDays: new Set([5]),
+      weeks: 2,
+      slots: [blockSlot('30Minute', 'midday')],
+      services: CATALOG,
+      timing: BLOCK_TIMING,
+    });
+    expect(visits).toHaveLength(2);
+    expect(visits.every((v) => v.timeBlockId === 'midday')).toBe(true);
+    expect(visits.every((v) => new Date(v.startTimeMs).getHours() === 11)).toBe(true);
+  });
+
+  it('still drops an occurrence whose window has already opened today', () => {
+    // 14:00 on the Friday: today's Midday visit is in the past, next week's is not.
+    const nowMs = new Date(2026, 8, 4, 14, 0).getTime();
+    const visits = buildWeeklyVisits({
+      nowMs,
+      weeklyDays: new Set([5]),
+      weeks: 2,
+      slots: [blockSlot('30Minute', 'midday')],
+      services: CATALOG,
+      timing: BLOCK_TIMING,
+    });
+    expect(visits).toHaveLength(1);
+    expect(dateKey(new Date(visits[0]!.startTimeMs))).toBe('2026-09-11');
+  });
+});
+
+describe('pastPlannedVisits', () => {
+  it('names the visits the server would refuse for starting in the past', () => {
+    const nowMs = new Date(2026, 8, 4, 14, 0).getTime();
+    const visits = buildVisits(
+      [new Date(2026, 8, 4)],
+      [blockSlot('30Minute', 'midday'), blockSlot('60Minute', 'evening')],
+      CATALOG,
+      BLOCK_TIMING,
+    );
+    // Midday opened at 11:00 and it is 14:00; Evening opens at 17:00.
+    const past = pastPlannedVisits(visits, nowMs);
+    expect(past).toHaveLength(1);
+    expect(past[0]!.timeBlockId).toBe('midday');
+  });
+
+  it('is empty for a plan entirely in the future', () => {
+    const nowMs = new Date(2026, 8, 4, 8, 0).getTime();
+    const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
+    expect(pastPlannedVisits(visits, nowMs)).toEqual([]);
+  });
+});
+
+describe('renderPlannedVisits with blocks', () => {
+  it('names the window instead of reporting a precision the household never gave', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'midday')], CATALOG, BLOCK_TIMING);
+    const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
+    expect(rendered[0]!.timeBlockLabel).toBe('Midday (11:00 – 15:00)');
+    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4 · Midday (11:00 – 15:00)');
+  });
+
+  it('still spells a clock-booked visit the way the spec does', () => {
+    const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00')], CATALOG);
+    const rendered = renderPlannedVisits(visits, [MIDDAY, EVENING]);
+    expect(rendered[0]!.timeBlockLabel).toBeNull();
+    expect(plannedVisitLine(rendered[0]!)).toBe('Fri, Sep 4 at 9:00 AM');
+  });
+
+  it('gives two durations in one window distinct keys, though their instants are equal', () => {
+    const visits = buildVisits(
+      [new Date(2026, 8, 4)],
+      [blockSlot('30Minute', 'midday'), blockSlot('60Minute', 'midday')],
+      CATALOG,
+      BLOCK_TIMING,
+    );
+    const keys = renderPlannedVisits(visits, [MIDDAY]).map((v) => v.key);
+    expect(new Set(keys).size).toBe(2);
   });
 });

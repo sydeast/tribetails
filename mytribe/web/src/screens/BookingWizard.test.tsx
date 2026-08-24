@@ -5,9 +5,11 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookingWizardBody } from './BookingWizard';
 import type {
+  GetBookingPolicyResult,
   GetBusinessClosuresRequest,
   GetBusinessClosuresResult,
   GetServiceCatalogResult,
+  TimeBlockDto,
 } from '../api/bookingApi';
 import type { RequestBookingArgs, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
@@ -22,6 +24,37 @@ import { dateKey, MAX_RECURRING_VISITS, startOfDay } from '../lib/bookingWizardL
  */
 const TODAY = startOfDay(new Date());
 const TOMORROW = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 1);
+/**
+ * Time-block booking added `pastPlannedVisits`: a plan whose visit has already
+ * STARTED now blocks the wizard, because `requestBooking` refuses every one of
+ * those anyway and a household should hear it while they can still fix it.
+ * That makes a fixture pinned to TODAY pass or fail by the hour the suite runs
+ * at, so anywhere a test only needed "a pickable date" it uses a future one.
+ */
+const DAY_AFTER = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 2);
+
+/** Time-block booking fixtures. */
+const MIDDAY: TimeBlockDto = { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', durationMinutes: 240 };
+const EVENING: TimeBlockDto = { id: 'evening', label: 'Evening', startTime: '17:00', endTime: '21:00', durationMinutes: 240 };
+/** The pre-time-block world, and what `getBookingPolicy` itself falls back to. */
+const CLOCK_ONLY_POLICY: GetBookingPolicyResult = {
+  allowTimeBlockBooking: false,
+  allowSpecificTimeBooking: true,
+  defaultBookingMode: 'SPECIFIC_TIME',
+  timeBlocks: [],
+};
+const BLOCK_ONLY_POLICY: GetBookingPolicyResult = {
+  allowTimeBlockBooking: true,
+  allowSpecificTimeBooking: false,
+  defaultBookingMode: 'TIME_BLOCK',
+  timeBlocks: [MIDDAY, EVENING],
+};
+const BOTH_MODES_POLICY: GetBookingPolicyResult = {
+  allowTimeBlockBooking: true,
+  allowSpecificTimeBooking: true,
+  defaultBookingMode: 'TIME_BLOCK',
+  timeBlocks: [MIDDAY, EVENING],
+};
 
 /** A day cell, addressed by its printed day-of-month (unique within a month). */
 function dayCell(d: Date) {
@@ -44,6 +77,7 @@ const getMyKin = vi.fn<() => Promise<GetMyKinResult>>();
 const getServiceCatalog = vi.fn<() => Promise<GetServiceCatalogResult>>();
 const requestBooking = vi.fn<(req: RequestBookingArgs) => Promise<RequestBookingResult>>();
 const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<GetBusinessClosuresResult>>();
+const getBookingPolicy = vi.fn<() => Promise<GetBookingPolicyResult>>();
 
 vi.mock('../api/portal', () => ({
   getMyKin: () => getMyKin(),
@@ -55,6 +89,7 @@ vi.mock('../api/bookingApi', async () => {
     getServiceCatalog: () => getServiceCatalog(),
     requestBooking: (req: RequestBookingArgs) => requestBooking(req),
     getBusinessClosures: (req: GetBusinessClosuresRequest) => getBusinessClosures(req),
+    getBookingPolicy: () => getBookingPolicy(),
   };
 });
 vi.mock('../lib/activeTribe', () => ({
@@ -164,6 +199,10 @@ beforeEach(() => {
   getServiceCatalog.mockReset();
   requestBooking.mockReset();
   getBusinessClosures.mockReset();
+  getBookingPolicy.mockReset();
+  // Default: the pre-time-block world. Every existing test picks clock times
+  // exactly as it did before, and the tests that care set their own policy.
+  getBookingPolicy.mockResolvedValue(CLOCK_ONLY_POLICY);
   getMyKin.mockResolvedValue({ kin: [kin({ id: 'k1', name: 'Buddy' }), kin({ id: 'k2', name: 'Willow', species: 'cat' })] });
   getServiceCatalog.mockResolvedValue({ services: [SERVICE_A, SERVICE_B] });
   requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1' });
@@ -486,7 +525,7 @@ describe('BookingWizard: #542 KinCare Duration wording', () => {
     await selectServiceAndGoToStep3(user, 'Daily Visit');
     expect(screen.getByText('1. Daily Visit')).toBeInTheDocument();
 
-    await pickDay(user, TODAY);
+    await pickDay(user, TOMORROW);
     await goToReview(user);
     expect(screen.queryByText('Service')).not.toBeInTheDocument();
     expect(screen.getAllByText('KinCare').length).toBeGreaterThanOrEqual(1);
@@ -535,9 +574,9 @@ describe('BookingWizard: individual pattern', () => {
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    // Individual is the default pattern; tap today and tomorrow.
-    await pickDay(user, TODAY);
+    // Individual is the default pattern; tap two future days.
     await pickDay(user, TOMORROW);
+    await pickDay(user, DAY_AFTER);
 
     await setKinCareTime(user, 1, 'Daily Visit', '10:15');
 
@@ -550,7 +589,7 @@ describe('BookingWizard: individual pattern', () => {
     expect(req.weeklyDays).toBeUndefined();
     expect(req.visits).toHaveLength(2);
 
-    const expected = [visitMs(TODAY, 10, 15), visitMs(TOMORROW, 10, 15)];
+    const expected = [visitMs(TOMORROW, 10, 15), visitMs(DAY_AFTER, 10, 15)];
     expect(req.visits!.map((v) => v.startTimeMs).sort()).toEqual(expected.sort());
     expect(req.visits!.every((v) => v.serviceId === 's1')).toBe(true);
   });
@@ -724,12 +763,205 @@ describe('BookingWizard: submit error handling', () => {
     renderWizard(onComplete);
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    await pickDay(user, TODAY);
+    await pickDay(user, TOMORROW);
 
     await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
 
     await screen.findByText('Could not create booking. Try again.');
     expect(onComplete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Time-block booking in the wizard. Operator requirement 2026-08-24: "kinfolk
+ * book within time blocks, not at a specific set time. I need to be able to
+ * create these time blocks and those are what the kinfolk should be able to
+ * select from when booking."
+ *
+ * The three switches on `business_settings` decide what step 3 offers, and
+ * every one of the four combinations is pinned here — including the one where
+ * a household must never see a free time field at all.
+ */
+describe('BookingWizard: time-block booking', () => {
+  it('block only: the KinCare gets a block picker and no time field anywhere', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const control = await screen.findByLabelText('1. Daily Visit');
+    expect(control.tagName).toBe('SELECT');
+    // No free time picker survives anywhere on the step.
+    expect(document.querySelectorAll('input[type="time"]')).toHaveLength(0);
+    // And no mode toggle: there is nothing to choose between.
+    expect(screen.queryByRole('radio', { name: 'A Specific Time' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Time Blocks' })).toBeInTheDocument();
+  });
+
+  it('offers the business blocks by name and hours, and defaults to the first', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const select = (await screen.findByLabelText('1. Daily Visit')) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      'Midday (11:00 – 15:00)',
+      'Evening (17:00 – 21:00)',
+    ]);
+    // A fresh KinCare lands in the first window rather than on "choose one".
+    expect(select.value).toBe('midday');
+  });
+
+  it('sends the chosen block and its start time to requestBooking', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await user.selectOptions(await screen.findByLabelText('1. Daily Visit'), 'evening');
+
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits).toHaveLength(1);
+    expect(req.visits![0]!.timeBlockId).toBe('evening');
+    expect(req.visits![0]!.startTimeMs).toBe(visitMs(TOMORROW, 17, 0));
+    // The block says WHEN. The KinCare still says what it costs.
+    expect(req.visits![0]!.serviceId).toBe('s1');
+    expect(req.visits![0]!.priceCents).toBe(4200);
+  });
+
+  it('names the block on Review instead of a clock time the household never gave', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await goToReview(user);
+
+    expect(screen.getByText(/· Midday \(11:00 – 15:00\)/)).toBeInTheDocument();
+  });
+
+  it('two KinCares in one block are two visits, not a duplicate', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Overnight Stays');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    await pickDay(user, TOMORROW);
+
+    // Both default into Midday, and both are sendable.
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits).toHaveLength(2);
+    expect(req.visits!.every((v) => v.timeBlockId === 'midday')).toBe(true);
+  });
+
+  it('refuses the SAME KinCare in the same block twice, in block words', async () => {
+    getBookingPolicy.mockResolvedValue(BLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    await pickDay(user, TOMORROW);
+
+    expect(
+      await screen.findByText(
+        'Two KinCares are the same duration in the same time block. Remove one, or move it to another block.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    // Moving one to the other window is what unblocks it.
+    await user.selectOptions(screen.getByLabelText('2. Daily Visit'), 'evening');
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+  });
+
+  it('both modes: opens on defaultBookingMode and the household can switch', async () => {
+    getBookingPolicy.mockResolvedValue(BOTH_MODES_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    // defaultBookingMode is TIME_BLOCK.
+    expect(((await screen.findByLabelText('1. Daily Visit')) as HTMLElement).tagName).toBe('SELECT');
+    await user.click(screen.getByRole('radio', { name: 'A Specific Time' }));
+    await vi.waitFor(() => expect(screen.getByLabelText('1. Daily Visit')).toHaveAttribute('type', 'time'));
+    await user.click(screen.getByRole('radio', { name: 'Time Blocks' }));
+    await vi.waitFor(() => expect(screen.getByLabelText('1. Daily Visit').tagName).toBe('SELECT'));
+  });
+
+  it('both modes: switching back to specific time sends a clock visit with no block', async () => {
+    getBookingPolicy.mockResolvedValue(BOTH_MODES_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await user.click(screen.getByRole('radio', { name: 'A Specific Time' }));
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '10:15');
+
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits![0]!.timeBlockId).toBeNull();
+    expect(req.visits![0]!.startTimeMs).toBe(visitMs(TOMORROW, 10, 15));
+  });
+
+  it('specific only: today’s behaviour, no block picker and no mode toggle', async () => {
+    getBookingPolicy.mockResolvedValue(CLOCK_ONLY_POLICY);
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    expect(await screen.findByLabelText('1. Daily Visit')).toHaveAttribute('type', 'time');
+    expect(screen.queryByRole('radio', { name: 'Time Blocks' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Visit Times' })).toBeInTheDocument();
+  });
+
+  it('a failed policy read leaves the wizard usable on clock times', async () => {
+    getBookingPolicy.mockRejectedValue(new Error('offline'));
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    expect(await screen.findByLabelText('1. Daily Visit')).toHaveAttribute('type', 'time');
+    await pickDay(user, TOMORROW);
+    await goToReview(user);
+    expect(screen.getByRole('button', { name: 'Create Booking' })).toBeEnabled();
+  });
+
+  /**
+   * A block offers ONE start time, so once today's window has opened there is
+   * no control left for the household to nudge — the wizard has to say so
+   * rather than let the whole request come back refused.
+   */
+  it('blocks a plan whose visit has already started, and says which control to use', async () => {
+    getBookingPolicy.mockResolvedValue({
+      ...BLOCK_ONLY_POLICY,
+      // A window that opened at the very start of today, so this holds at any
+      // hour the suite runs at.
+      timeBlocks: [{ id: 'early', label: 'Early', startTime: '00:00', endTime: '23:59', durationMinutes: 1439 }],
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TODAY);
+
+    expect(await screen.findByText(/has\s+already\s+started/)).toBeInTheDocument();
+    expect(screen.getByText(/Pick a later block/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });
 });
