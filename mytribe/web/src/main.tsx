@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import { RouterProvider } from '@tanstack/react-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 
 // Self-hosted fonts (no font CDN at runtime).
 import '@fontsource/young-serif/400.css';
@@ -31,6 +31,7 @@ import './styles/breedfield.css';
 import './lib/firebase'; // initialize Firebase before anything else touches auth
 import { ensureRecaptcha } from './lib/auth';
 import { initSentry } from './lib/sentry';
+import { queryClient } from './lib/queryClient';
 import { router } from './router';
 
 // Start crash reporting before the app renders, so an error during first paint
@@ -107,11 +108,6 @@ if (claimMatch) {
   window.history.replaceState(null, '', hash.slice(1) + window.location.search);
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: 1, refetchOnWindowFocus: false },
-  },
-});
 
 /**
  * Fail-loud fallback for an uncaught render error: never a white screen. Inline

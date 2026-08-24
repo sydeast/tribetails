@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.collectAsState
 import com.kinfolk.portal.auth.AuthRepository
 import com.kinfolk.portal.auth.AuthState
+import com.kinfolk.portal.auth.tearDownSession
 import com.kinfolk.portal.firebase.FunctionsClient
 import com.kinfolk.portal.push.PushRegistrationCoordinator
 import com.kinfolk.portal.firebase.platformAuthBackend
@@ -184,20 +185,43 @@ fun KinfolkPortalAppGuarded() {
                                 }
                             },
                             onSignOut = {
-                                // Unregister the push token BEFORE auth teardown —
-                                // unregisterFcmToken is an authed callable.
+                                // #539. The two calls below need the ID token that is
+                                // about to be thrown away, so they go first — but they
+                                // go first on a clock. Before this, a stalled
+                                // unregisterFcmToken meant repo.signOut() never ran at
+                                // all: the kinfolk sat on the spinner these state
+                                // resets produce, still signed in, and closing and
+                                // reopening the app put them straight back into their
+                                // household. tearDownSession is what guarantees the
+                                // sign-out happens either way.
                                 scope.launch {
-                                    // Best-effort: token unregister must never block sign-out.
-                                    try {
-                                        pushCoordinator.onSignOut()
-                                    } catch (t: Throwable) {
-                                        println("[Auth] push unregister failed (ignored): ${'$'}{t.message}")
-                                    }
-                                    repo.signOut()
+                                    tearDownSession(
+                                        cleanUp = {
+                                            pushCoordinator.onSignOut()
+                                            // Local sign-out only drops this device's
+                                            // refresh token; the token stays valid
+                                            // server-side until revoked. See
+                                            // PortalApi.signOutAllDevices.
+                                            portalApi.signOutAllDevices()
+                                        },
+                                        signOut = { repo.signOut() },
+                                        // The sign-out itself refusing is the one case
+                                        // where the kinfolk really is still signed in.
+                                        // Re-resolve rather than strand them on the
+                                        // spinner the resets below just produced.
+                                        onFailure = { scope.launch { repo.refresh() } },
+                                    )
                                 }
+                                // Synchronous, and deliberately not inside the coroutine:
+                                // this is what takes the authenticated screen down NOW,
+                                // rather than a frame after some network call answers.
+                                // startRouteFor sees no resolved kinfolk and no home, so
+                                // the NavHost unmounts entirely and its back stack goes
+                                // with it — there is no entry left to go back to.
                                 pickedKinfolkId = null
                                 pickedFromDirectory = false
                                 home = null
+                                homeError = null
                                 claimInviteId = null
                             },
                             onBackToDirectory = {
