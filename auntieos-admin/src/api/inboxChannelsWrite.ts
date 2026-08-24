@@ -32,9 +32,22 @@ import { db } from '../lib/firebase';
 
 const VOICEMAILS_COLLECTION = 'voicemails';
 
-/** The states this client may set. `unread` is the server's initial value and
- *  `dismissed` has no UI, so neither is offered here. */
-export type VoicemailReplyWrite = 'read' | 'replied';
+/**
+ * The states this client may set.
+ *
+ * `unread` is left out on purpose. It is the server's initial value —
+ * `twilioInboundVoicemail` seeds it once and deliberately never restates it —
+ * so a client that could write it back would be able to push a voicemail
+ * somebody already handled into somebody else's queue.
+ *
+ * `dismissed` IS here. It is the answer for a voicemail that wants nothing from
+ * anyone: a robocall, a wrong number, thirty seconds of road noise. `read` says
+ * the operator listened and might still write back; `dismissed` says this one is
+ * finished. Neither is counted by `awaitingReplyCount` (`lib/inboxChannels.ts`),
+ * so what actually differs is the word the row shows the next person who
+ * scrolls past it, and whether Reply is still the obvious next move.
+ */
+export type VoicemailReplyWrite = 'read' | 'replied' | 'dismissed';
 
 export interface MarkVoicemailArgs {
   voicemailId: string;
@@ -55,9 +68,9 @@ export class MarkVoicemailError extends Error {}
  * with the same ISO-string `repliedAt`, so a voicemail marked on one client
  * reads identically on the other.
  *
- * `repliedAt` is stamped only for `replied`. Marking a voicemail read is not a
- * reply, and putting a reply timestamp on it would make the field a lie for
- * every row the operator merely listened to.
+ * `repliedAt` is stamped only for `replied`. Neither listening to a voicemail
+ * nor dismissing one is a reply, and a reply timestamp on either would make the
+ * field a lie for every row nobody ever wrote back to.
  */
 export async function markVoicemail(args: MarkVoicemailArgs): Promise<void> {
   const id = args.voicemailId.trim();

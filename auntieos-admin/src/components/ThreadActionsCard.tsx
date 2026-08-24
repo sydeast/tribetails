@@ -8,7 +8,7 @@ import {
 } from '../lib/inboxChannels';
 import { externalSendBlocker, externalSendErrorText } from '../lib/externalSend';
 import { sendExternalMessage, type MirrorSkippedReason } from '../api/externalSend';
-import { markVoicemail } from '../api/inboxChannelsWrite';
+import { markVoicemail, type VoicemailReplyWrite } from '../api/inboxChannelsWrite';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -26,9 +26,17 @@ export interface ThreadActionsCardProps {
  * email them, play the voicemail, or write a reply here and now.
  *
  * Ports the Android modal (`ui/inbox/InboxScreen.kt`, the `selectedEntry`
- * branch) and adds the two things it lacks: a Mark read action for a voicemail
- * the operator listened to but is not replying to, and native `tel:` / `mailto:`
- * launchers, which a browser can offer and Compose handled with an intent.
+ * branch), plus the native `tel:` / `mailto:` launchers a browser can offer and
+ * Compose handled with an intent.
+ *
+ * ── THREE ENDINGS FOR A VOICEMAIL, NOT ONE ─────────────────────────────────
+ * Reply, Mark read and Dismiss are the three honest ways a voicemail stops
+ * being work. Reply writes `replied` as a side effect of the text going out.
+ * Mark read says somebody listened. Dismiss says this one never needed an
+ * answer — a robocall, a misdial, ten seconds of somebody's pocket. All three
+ * exist because the alternative for the third case was marking a robocall
+ * "read", which quietly turns that word into "seen and ignored" for every other
+ * row too.
  *
  * ── THE REPLY IS AN SMS, AND ONLY WHERE AN SMS CAN GO ───────────────────────
  * The composer appears only for a row carrying a phone number, which is every
@@ -82,7 +90,8 @@ export function mirrorDisclosure(mirrored: boolean, reason: MirrorSkippedReason 
 export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
-  const [marking, setMarking] = useState(false);
+  /** Which state write is in flight, so the two buttons report separately. */
+  const [marking, setMarking] = useState<Exclude<VoicemailReplyWrite, 'replied'> | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [sent, setSent] = useState<{
     redacted: string;
@@ -90,12 +99,28 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
     mirrored: boolean;
     mirrorSkippedReason: MirrorSkippedReason | null;
   } | null>(null);
-  const [markedRead, setMarkedRead] = useState(false);
+  /**
+   * The state this card last WROTE, or null. One field for both actions rather
+   * than a boolean each, because they are mutually exclusive outcomes of the
+   * same document and two booleans could go true together and confirm two
+   * contradictory things at once.
+   */
+  const [marked, setMarked] = useState<Exclude<VoicemailReplyWrite, 'replied'> | null>(null);
 
   const bodyId = useId();
   const launchers = entryLaunchers(entry);
   const canReply = entry.replyPhone !== '';
-  const busy = sending || marking;
+  const busy = sending || marking !== null;
+  const isVoicemail = entry.voicemailId !== '';
+  /**
+   * Dismiss is offered only while the voicemail is not ALREADY dismissed, the
+   * way Android gates Mark read on `statusHint == "unread"`: pressing it again
+   * would write the state it is already in, and a control whose only effect is
+   * a redundant network round-trip is the dead control `components/Buttons.tsx`
+   * exists to make inexpressible. The live listener re-renders this card with
+   * the new `statusHint`, so the button disappears once the write lands.
+   */
+  const canDismiss = isVoicemail && entry.statusHint !== 'dismissed' && marked !== 'dismissed';
 
   async function handleSend() {
     if (busy) return;
@@ -152,19 +177,33 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
     }
   }
 
-  async function handleMarkRead() {
+  /**
+   * Both no-reply outcomes go through here: the operator listened (`read`), or
+   * the voicemail wants nothing from anyone (`dismissed`).
+   *
+   * The confirmation is set only AFTER the write resolves. Nothing is shown
+   * optimistically, because the only thing this card could optimistically show
+   * is a sentence claiming the record changed, and Firestore is where that
+   * claim is either true or not. The list row behind the sheet, and the sheet's
+   * own gating, both restyle off the live `voicemails` listener the moment the
+   * write lands, so there is no lag worth lying to cover.
+   */
+  async function handleMark(status: Exclude<VoicemailReplyWrite, 'replied'>) {
     if (busy) return;
     setErrorText(null);
-    setMarking(true);
+    setMarking(status);
     try {
-      await markVoicemail({ voicemailId: entry.voicemailId, status: 'read' });
-      setMarkedRead(true);
+      await markVoicemail({ voicemailId: entry.voicemailId, status });
+      setMarked(status);
     } catch (err) {
+      const reason = err instanceof Error ? err.message : 'write failed';
       setErrorText(
-        `Could not mark this voicemail read: ${err instanceof Error ? err.message : 'write failed'}`,
+        status === 'read'
+          ? `Could not mark this voicemail read: ${reason}`
+          : `Could not dismiss this voicemail: ${reason}`,
       );
     } finally {
-      setMarking(false);
+      setMarking(null);
     }
   }
 
@@ -230,9 +269,16 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
           </Banner>
         )}
 
-        {markedRead && (
+        {marked === 'read' && (
           <Banner tone="success" title="Marked read">
             This voicemail is marked read. Nobody has written back to it yet.
+          </Banner>
+        )}
+
+        {marked === 'dismissed' && (
+          <Banner tone="success" title="Dismissed">
+            This voicemail is marked dismissed. It stays in the list and no longer counts as waiting on a
+            reply.
           </Banner>
         )}
 
@@ -253,13 +299,6 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
             </label>
             <div className="thread-actions__actions">
               <PrimaryButton label="Send text" onClick={() => void handleSend()} busy={sending} disabled={busy} />
-              {entry.voicemailId !== '' && (
-                <GhostButton
-                  label={marking ? 'Marking…' : 'Mark read'}
-                  onClick={() => void handleMarkRead()}
-                  disabled={busy}
-                />
-              )}
             </div>
           </div>
         ) : (
@@ -267,6 +306,29 @@ export function ThreadActionsCard({ entry, onClose }: ThreadActionsCardProps) {
             This row carries no phone number, so there is nothing to text. Use the email launcher above to
             answer it.
           </p>
+        )}
+
+        {/* Outside the composer, not inside it. A voicemail from a withheld or
+            unparseable number has no `replyPhone`, so it falls into the hint
+            branch above — and that is exactly the voicemail an operator most
+            wants to close out, since there is nobody to text back. Nesting
+            these two under `canReply` put the only way off `unread` behind
+            having somewhere to reply to. */}
+        {isVoicemail && (
+          <div className="thread-actions__actions">
+            <GhostButton
+              label={marking === 'read' ? 'Marking…' : 'Mark read'}
+              onClick={() => void handleMark('read')}
+              disabled={busy}
+            />
+            {canDismiss && (
+              <GhostButton
+                label={marking === 'dismissed' ? 'Dismissing…' : 'Dismiss'}
+                onClick={() => void handleMark('dismissed')}
+                disabled={busy}
+              />
+            )}
+          </div>
         )}
       </div>
     </Dialog>

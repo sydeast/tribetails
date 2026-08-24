@@ -2200,6 +2200,33 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to mark voicemail read $voicemailId", it) }
 
+    /**
+     * Marks a voicemail DISMISSED: it never needed an answer from anyone. A
+     * robocall, a misdial, ten seconds of somebody's pocket.
+     *
+     * `dismissed` has been in `VoicemailLog.replyStatus` and in every reader on
+     * both clients since launch, and until now no client could write it, so the
+     * only way to clear one of these off the waiting count was to call it
+     * `read` — which quietly redefines that word as "seen and ignored" for
+     * every other row too. Same three keys as `markVoicemailRead`, and the same
+     * blank `repliedAt`: dismissing is not replying either.
+     *
+     * Parity with the web admin's `markVoicemail({ status: 'dismissed' })`
+     * (React `src/api/inboxChannelsWrite.ts`) and the wasm admin's
+     * `FirestoreClient.markVoicemailDismissed`.
+     */
+    suspend fun markVoicemailDismissed(voicemailId: String): Result<Unit> = runCatching {
+        authGate.ensureAuthenticated()
+        firestore.collection("voicemails").document(voicemailId).update(
+            mapOf(
+                "replyStatus" to "dismissed",
+                "repliedAt" to "",
+                "replyLogId" to ""
+            )
+        ).await()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to dismiss voicemail $voicemailId", it) }
+
     suspend fun markVoicemailReplied(voicemailId: String, replyLogId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         firestore.collection("voicemails").document(voicemailId).update(

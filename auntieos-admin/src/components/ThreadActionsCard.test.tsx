@@ -219,7 +219,61 @@ describe('ThreadActionsCard', () => {
   it('offers no Mark read on a call or text row, which carry no reply state', () => {
     render(<ThreadActionsCard entry={entry({ channel: 'sms', voicemailId: '' })} onClose={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Send text' })).toBeInTheDocument();
+  });
+
+  /**
+   * S8. Before this, `dismissed` existed on the model, on the Firestore rules
+   * and in every reader, and no client could ever write it — so a robocall's
+   * only exit from the waiting count was to lie and call it "read".
+   */
+  it('dismisses a voicemail without sending anything', async () => {
+    render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(markVoicemail).toHaveBeenCalledWith({ voicemailId: 'vm1', status: 'dismissed' });
+    expect(sendExternalMessage).not.toHaveBeenCalled();
+    expect(await screen.findByText(/no longer counts as waiting on a reply/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a dismiss failure rather than showing a false confirmation', async () => {
+    markVoicemail.mockRejectedValueOnce(new Error('permission-denied'));
+    render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(await screen.findByText(/Could not dismiss this voicemail/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer counts as waiting/i)).toBeNull();
+    // The button stays, because the write did not land and the state is
+    // unchanged. Hiding it on a failure would strand the voicemail.
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('does not offer Dismiss on a voicemail that is already dismissed', () => {
+    render(<ThreadActionsCard entry={entry({ statusHint: 'dismissed' })} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    // Mark read stays: dismissing is reversible, and this is how it reverses.
+    expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
+  });
+
+  it('withdraws Dismiss once the write lands, so it cannot be pressed twice', async () => {
+    render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByText('Dismissed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(markVoicemail).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A voicemail from a withheld number has no `replyPhone`, so it falls into
+   * the "nothing to text" branch. That is precisely the voicemail an operator
+   * most needs to close out, so both state actions have to survive out there.
+   */
+  it('still offers Mark read and Dismiss on a voicemail with no callback number', () => {
+    render(<ThreadActionsCard entry={entry({ replyPhone: '', counterpart: '' })} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Send text' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
   });
 
   it('closes on demand', async () => {

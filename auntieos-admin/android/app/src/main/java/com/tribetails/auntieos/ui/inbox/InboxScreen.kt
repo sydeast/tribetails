@@ -247,19 +247,6 @@ fun InboxScreen(
                 ) { Text("Send Reply") }
             },
             dismissButton = {
-                // Mark read, for a voicemail the operator listened to and does
-                // not need to answer. Without it the only way off `unread` was
-                // to send a text, so a voicemail needing no reply stayed in the
-                // waiting count forever. Rendered only while it IS unread, so
-                // the control is never a no-op.
-                if (entry.channel == Channel.Voicemail && entry.statusHint == "unread") {
-                    AuntieTextBtn(
-                        onClick = {
-                            viewModel.markVoicemailRead(entry.voicemailId)
-                            selectedEntry = null
-                        }
-                    ) { Text("Mark read") }
-                }
                 AuntieTextBtn(onClick = { selectedEntry = null }) { Text("Close") }
             }
         ) {
@@ -273,6 +260,50 @@ fun InboxScreen(
                         onClick = { openExternalUrl(context, entry.playbackUrl) },
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+
+                // ── the two no-reply endings, in the BODY not the button bar ──
+                //
+                // Mark read says somebody listened. Dismiss says this one never
+                // needed an answer at all: a robocall, a misdial, ten seconds of
+                // somebody's pocket. `dismissed` has been on VoicemailLog and in
+                // every reader since launch with no client able to write it, so
+                // until now the only way to clear one of those off the waiting
+                // count was to call it "read" — which quietly turns that word
+                // into "seen and ignored" for every other row too.
+                //
+                // They moved out of `dismissButton` because a fourth control in
+                // that bar (Send Reply / Mark read / Dismiss / Close) does not
+                // fit a phone, and because the React sheet puts the same pair in
+                // its body. Each is rendered only when it would CHANGE the
+                // record — Mark read only from `unread`, Dismiss on anything not
+                // already dismissed — so neither is ever a no-op round-trip. The
+                // live observeVoicemails listener carries the new state back and
+                // the row restyles itself, which is why both close the modal
+                // rather than waiting on a result here.
+                if (entry.channel == Channel.Voicemail && entry.voicemailId.isNotBlank()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (entry.statusHint == "unread") {
+                            GhostButton(
+                                label = "Mark read",
+                                onClick = {
+                                    viewModel.markVoicemailRead(entry.voicemailId)
+                                    selectedEntry = null
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (entry.statusHint != "dismissed") {
+                            GhostButton(
+                                label = "Dismiss",
+                                onClick = {
+                                    viewModel.markVoicemailDismissed(entry.voicemailId)
+                                    selectedEntry = null
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                 }
 
                 if (canReply) {
@@ -401,6 +432,11 @@ private fun MetaRow(entry: InboxEntry) {
         }
         if (entry.statusHint == "missed") add(Triple(Lucide.PhoneMissed, "missed", AuntieStatusTone.Error))
         if (entry.statusHint == "unread") add(Triple(Lucide.Voicemail, "unread", AuntieStatusTone.Warning))
+        // Muted, and the row stays in the list. Dismissing marks a voicemail;
+        // it does not delete it from the operator's view, and this pip is how
+        // the next person scrolling past can tell a closed-out row from an
+        // untouched one.
+        if (entry.statusHint == "dismissed") add(Triple(Lucide.CircleSlash, "dismissed", AuntieStatusTone.Muted))
         if (entry.mediaCount > 0)         add(Triple(Lucide.Paperclip, "${entry.mediaCount}", AuntieStatusTone.Muted))
     }
     if (pips.isEmpty()) return
@@ -449,7 +485,18 @@ private fun VoicemailLog.toEntry() = InboxEntry(
     counterpart = callerNumber,
     preview     = transcript.take(120),
     direction   = "",
-    statusHint  = if (replyStatus == "unread") "unread" else "",
+    // Both states are carried rather than collapsed to "". `dismissed` has to
+    // reach the row (so the list can say somebody closed this out, as opposed
+    // to nobody having looked) and the modal (so Dismiss gates itself off when
+    // it would write the state the document is already in). Lower-cased on the
+    // way in because casing on this field is unenforced — the Twilio webhooks,
+    // both admin clients and the python reconcile pipeline all write it, which
+    // is why the React reader normalizes it too.
+    statusHint  = when (replyStatus.trim().lowercase()) {
+        "unread"    -> "unread"
+        "dismissed" -> "dismissed"
+        else        -> ""
+    },
     mediaCount  = 0,
     replyPhone  = callerNumber,
     kinfolkId   = kinfolkId,

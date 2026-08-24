@@ -628,6 +628,20 @@ class FirestoreClient {
     suspend fun markVoicemailRead(voicemailId: String): WriteResult<Unit> =
         platformMarkVoicemailRead(voicemailId)
 
+    /**
+     * Marks a voicemail DISMISSED: it never needed an answer from anyone.
+     *
+     * `dismissed` has been a documented value of `VoicemailLog.replyStatus`
+     * since launch and no client could write it, so the only way to clear a
+     * robocall off the operator's waiting count was to call it `read`. Parity
+     * with the React admin's `markVoicemail({ status: 'dismissed' })` and the
+     * Android admin's `AuntieRepository.markVoicemailDismissed`; all three
+     * write the same three keys with the same blank `repliedAt`, because
+     * dismissing is not replying.
+     */
+    suspend fun markVoicemailDismissed(voicemailId: String): WriteResult<Unit> =
+        platformMarkVoicemailDismissed(voicemailId)
+
     // ---- KinTale templates + reports ----
     fun templatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>> = platformTemplatesStream()
 
@@ -1781,6 +1795,7 @@ internal expect suspend fun platformMarkVoicemailReplied(
     replyLogId: String,
 ): WriteResult<Unit>
 internal expect suspend fun platformMarkVoicemailRead(voicemailId: String): WriteResult<Unit>
+internal expect suspend fun platformMarkVoicemailDismissed(voicemailId: String): WriteResult<Unit>
 
 internal expect fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>>
 internal expect suspend fun platformCreateKinTaleReport(report: KinCareReport): WriteResult<String>

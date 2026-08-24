@@ -498,7 +498,19 @@ export function Inbox({ onSelectThread }: InboxProps) {
  */
 function ChannelsPanel() {
   const [filter, setFilter] = useState<ChannelFilterKey>('all');
-  const [openEntry, setOpenEntry] = useState<InboxEntry | null>(null);
+  /**
+   * The open sheet is held by KEY, not by value, and re-read out of the live
+   * merge below on every render.
+   *
+   * Holding the `InboxEntry` object froze it at the moment of the click, so a
+   * voicemail whose state the sheet itself had just written kept describing the
+   * state it was in before — the row behind the sheet restyled itself off the
+   * listener and the sheet did not. Any action gated on that state (Dismiss)
+   * would have had to guess from local booleans instead of reading the record.
+   * The key is `channel:id` because the four collections are independent and
+   * their document ids are only unique within one.
+   */
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
   // Four bounded, server-ordered listeners. Sandbox suppression, the `_id`
   // stamp and the error-with-retry contract all come from `useCollection`.
@@ -523,6 +535,12 @@ function ChannelsPanel() {
   const pending = streams.filter((s) => s.state.status === 'loading');
   const merged = mergeChannelEntries(streams.map((s) => s.entries));
   const visible = filterChannelEntries(merged, filter);
+
+  // Resolved against the WHOLE merge, not the filtered view, so changing the
+  // channel filter with a sheet open does not yank the sheet out from under the
+  // operator. A row that genuinely disappeared (deleted underneath us) closes
+  // the sheet rather than leaving a card describing a record that is gone.
+  const openEntry = openKey === null ? null : (merged.find((e) => entryKey(e) === openKey) ?? null);
 
   // "Waiting on a reply", deliberately NOT "unread": see lib/inboxChannels.ts.
   // Null while the voicemail read is unresolved, because a count is a claim.
@@ -592,14 +610,16 @@ function ChannelsPanel() {
       ) : (
         <ul className="inbox__list inbox__list--flat">
           {visible.map((entry) => (
-            <ChannelRow key={`${entry.channel}:${entry.id}`} entry={entry} onOpen={setOpenEntry} />
+            <ChannelRow
+              key={entryKey(entry)}
+              entry={entry}
+              onOpen={(e) => setOpenKey(entryKey(e))}
+            />
           ))}
         </ul>
       )}
 
-      {openEntry !== null && (
-        <ThreadActionsCard entry={openEntry} onClose={() => setOpenEntry(null)} />
-      )}
+      {openEntry !== null && <ThreadActionsCard entry={openEntry} onClose={() => setOpenKey(null)} />}
     </DenPanel>
   );
 }
@@ -615,11 +635,25 @@ function mapWhenReady<T>(state: Async<T[]>, toEntry: (row: T) => InboxEntry): In
   return state.status === 'ready' ? state.data.map(toEntry) : [];
 }
 
+/**
+ * The one identity a channel row has across renders: its React key, and the
+ * handle the open sheet is held by. Four independent collections mean a
+ * document id alone is not unique across the merged list.
+ */
+function entryKey(entry: InboxEntry): string {
+  return `${entry.channel}:${entry.id}`;
+}
+
 function ChannelRow({ entry, onOpen }: { entry: InboxEntry; onOpen: (entry: InboxEntry) => void }) {
   const pills = [
     entry.statusHint === 'missed' ? { key: 'missed', label: 'missed', tone: 'error' } : null,
     entry.statusHint === 'unread' ? { key: 'unread', label: 'waiting on a reply', tone: 'warning' } : null,
     entry.statusHint === 'replied' ? { key: 'replied', label: 'replied', tone: 'success' } : null,
+    // Muted, not hidden. The merge in `lib/inboxChannels.ts` shows everything
+    // that came in, so dismissing a voicemail marks it rather than deleting it
+    // from the operator's view; the pill is how the next person reading the
+    // list can tell "somebody closed this" from "nobody has looked".
+    entry.statusHint === 'dismissed' ? { key: 'dismissed', label: 'dismissed', tone: 'muted' } : null,
     entry.direction === 'outbound' ? { key: 'direction', label: 'sent', tone: 'muted' } : null,
     entry.mediaCount > 0
       ? { key: 'media', label: `${entry.mediaCount} attached`, tone: 'muted' }

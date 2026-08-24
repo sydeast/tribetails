@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ArrowDownLeft
 import com.composables.icons.lucide.ArrowUpRight
+import com.composables.icons.lucide.CircleSlash
 import com.composables.icons.lucide.Images
 import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Lucide
@@ -80,7 +81,11 @@ import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.openUrl
 import kotlinx.coroutines.launch
 
-private enum class Channel(val label: String, val icon: ImageVector) {
+// `internal`, not `private`: `VoicemailLog.toEntry()` below returns an
+// `InboxEntry` carrying a `Channel`, and a Kotlin function's visibility can
+// never exceed its return type's — the mapper couldn't be opened for testing
+// without opening these two as well.
+internal enum class Channel(val label: String, val icon: ImageVector) {
     All       ("All",        Lucide.Inbox),
     Voicemail ("Voicemails", Lucide.Voicemail),
     Call      ("Calls",      Lucide.Phone),
@@ -88,7 +93,7 @@ private enum class Channel(val label: String, val icon: ImageVector) {
     Email     ("Emails",     Lucide.Mail),
 }
 
-private data class InboxEntry(
+internal data class InboxEntry(
     val id: String,
     val channel: Channel,
     val timestamp: String,
@@ -336,6 +341,21 @@ fun InboxScreen() {
                                                     showToast("Reply failed: ${t.message ?: "unknown error"}", ToastKind.Error)
                                                 } finally {
                                                     isSendingReply = false
+                                                }
+                                            }
+                                        },
+                                        onDismissVoicemail = {
+                                            scope.launch {
+                                                when (val r = client.markVoicemailDismissed(entry.id)) {
+                                                    is WriteResult.Ok -> showToast("Voicemail dismissed.", ToastKind.Success)
+                                                    // Never a silent failure: a voicemail the
+                                                    // operator believes they closed and that is
+                                                    // really still open is worse than one they
+                                                    // know the app could not write.
+                                                    is WriteResult.Err -> showToast(
+                                                        "Couldn't dismiss voicemail: ${r.message}",
+                                                        ToastKind.Error,
+                                                    )
                                                 }
                                             }
                                         },
@@ -694,6 +714,7 @@ private fun ThreadActionsCard(
     onReplyBodyChange: (String) -> Unit,
     onPlayVoicemail: () -> Unit,
     onSendReply: () -> Unit,
+    onDismissVoicemail: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     Column(
@@ -741,12 +762,38 @@ private fun ThreadActionsCard(
         }
 
         if (entry.channel == Channel.Voicemail) {
-            GhostButton(
-                label = "Play voicemail",
-                onClick = onPlayVoicemail,
-                enabled = entry.voicemailAudioUrl.isNotBlank(),
-                leading = { GhostGlyph(Lucide.Play) },
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GhostButton(
+                    label = "Play voicemail",
+                    onClick = onPlayVoicemail,
+                    enabled = entry.voicemailAudioUrl.isNotBlank(),
+                    leading = { GhostGlyph(Lucide.Play) },
+                    modifier = Modifier.weight(1f),
+                )
+                // Dismiss: this voicemail never needed an answer — a robocall, a
+                // misdial, ten seconds of somebody's pocket. `dismissed` has
+                // been a documented `replyStatus` value since launch with no
+                // client able to write it, so the only way to clear one of those
+                // off the operator's queue was to call it "read", which quietly
+                // turns that word into "seen and ignored" for every other row.
+                //
+                // Opening a thread here already auto-marks an unread voicemail
+                // read, so there is no Mark read button to sit beside; Dismiss
+                // is offered on anything not ALREADY dismissed, so it is never a
+                // round-trip that changes nothing. The live voicemail stream
+                // carries the new state back and the row's pip updates itself.
+                if (entry.statusHint != "dismissed") {
+                    GhostButton(
+                        label = "Dismiss",
+                        onClick = onDismissVoicemail,
+                        leading = { GhostGlyph(Lucide.CircleSlash) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
 
         if (entry.canReply) {
@@ -800,6 +847,12 @@ private fun MetaRow(entry: InboxEntry) {
         if (entry.statusHint == "unread") {
             add(Lucide.Voicemail to "unread")
         }
+        // Marked, never removed. This list shows everything that came in, so a
+        // row that vanished when an operator closed it out would look identical
+        // to one the stream never delivered.
+        if (entry.statusHint == "dismissed") {
+            add(Lucide.CircleSlash to "dismissed")
+        }
         if (entry.mediaCount > 0) {
             add(Lucide.Images to "${entry.mediaCount}")
         }
@@ -846,7 +899,15 @@ private fun EmptyState(filter: Channel) {
 
 // ---------- mappers ----------
 
-private fun VoicemailLog.toEntry() = InboxEntry(
+/**
+ * `internal`, not `private`: the other three `toEntry()`s below stay private
+ * because nothing about their status mapping is worth a unit test on its own,
+ * but this one carries the S8 `dismissed` branch and the lower-casing that
+ * normalizes it against every writer of `replyStatus`, so it gets the same
+ * seam Android's `bulkReadMessage` uses for the identical reason: testable
+ * without standing up a Compose test harness. See `VoicemailToEntryTest.kt`.
+ */
+internal fun VoicemailLog.toEntry() = InboxEntry(
     id          = _id,
     channel     = Channel.Voicemail,
     timestamp   = timestamp,
@@ -859,7 +920,17 @@ private fun VoicemailLog.toEntry() = InboxEntry(
     voicemailAudioUrl = audioUrl,
     canReply = callerNumber.isNotBlank(),
     direction   = "",
-    statusHint  = if (replyStatus == "unread") "unread" else "",
+    // `dismissed` is carried, not flattened: the row has to be able to say
+    // somebody closed this out (as opposed to nobody having looked), and it is
+    // what gates the Dismiss button off when pressing it would write the state
+    // the document is already in. Lower-cased because casing on this field is
+    // unenforced across the Twilio webhooks, both admin clients and the python
+    // reconcile pipeline.
+    statusHint  = when (replyStatus.trim().lowercase()) {
+        "unread"    -> "unread"
+        "dismissed" -> "dismissed"
+        else        -> ""
+    },
     mediaCount  = 0,
 )
 
