@@ -1,8 +1,9 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
+import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
+import { reportError } from './sentry';
 
 /**
  * Firebase web app config, copied from the Kotlin app's init
@@ -62,18 +63,109 @@ if (import.meta.env.DEV) {
  * enforcement must unify both streams onto one loader before flipping any
  * enforcement switch; see docs/DEVELOPMENT_PLAN_2026-07-10.md S7 entry.
  *
+ * `lib/boot.ts` is what decides which loader this page lifetime gets, and
+ * before issue #556 that decision was never actually made: `main.tsx` warmed
+ * the auth loader up on every boot, so the guard in front of this function was
+ * true forever and App Check activated in no session at all.
+ *
  * Guarded on `document` so importing this module never crashes a plain
  * Node/vitest context (most `*Api.test.ts` files import `lib/fns.ts`, which
  * imports this module, without mocking it). Idempotent by construction.
  */
 let appCheckInstance: ReturnType<typeof initializeAppCheck> | null = null;
 
+/**
+ * What actually happened when we tried, as a value anything can read.
+ *
+ * - `inactive`   — never attempted. This session chose the auth loader.
+ * - `unsupported`— no DOM (Node/vitest). Not a failure, not attestation either.
+ * - `pending`    — activated, first token not back yet.
+ * - `active`     — a real App Check token was minted in this session.
+ * - `failed`     — activation threw, or the first token never arrived.
+ *
+ * The point of `failed` existing separately from `inactive` is that a broken
+ * attestation must not read the same as a session that deliberately skipped
+ * it. Before #556 the portal had no way to tell those apart, which is a large
+ * part of why nobody noticed App Check had never once activated.
+ */
+export type AppCheckStatus = 'inactive' | 'unsupported' | 'pending' | 'active' | 'failed';
+
+let appCheckStatus: AppCheckStatus = 'inactive';
+
+/** Current App Check state for this page lifetime. */
+export function getAppCheckStatus(): AppCheckStatus {
+  return appCheckStatus;
+}
+
+/**
+ * How long the first token may take before we call it a failure.
+ *
+ * Sized above `fns.ts`'s 20s callable timeout on purpose: the Functions SDK
+ * awaits the App Check token OUTSIDE its own timeout, so a token promise that
+ * pends forever presents as callables hanging with no error at all — the
+ * "Accepting your invite…" hang. 25s means the console line and the Sentry
+ * event land after the first callable has already given up, which is the
+ * order that makes the pair legible: a `CallableTimeoutError` next to an
+ * App Check failure is a different bug report from a `CallableTimeoutError`
+ * on its own.
+ */
+const APP_CHECK_PROBE_TIMEOUT_MS = 25_000;
+
+function appCheckFailed(reason: string, err: unknown): void {
+  appCheckStatus = 'failed';
+  // Loud in the console AND in Sentry. A silent pass here is the whole defect
+  // class this issue is about.
+  console.error(`[AppCheck] ${reason}. Callables from this session are unattested.`, err);
+  reportError(err, 'appCheck');
+}
+
+/**
+ * Fetch one token, so activation means something.
+ *
+ * `initializeAppCheck` returning is not evidence of anything: it constructs a
+ * provider and returns synchronously, and every real failure (unregistered
+ * app, wrong site key, blocked recaptcha script, a token promise that pends
+ * because the auth loader already owns `grecaptcha`) shows up later, inside a
+ * token fetch nobody was watching.
+ */
+async function probeAppCheck(instance: ReturnType<typeof initializeAppCheck>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      getAppCheckToken(instance),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`App Check token did not arrive within ${APP_CHECK_PROBE_TIMEOUT_MS}ms`)),
+          APP_CHECK_PROBE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    appCheckStatus = 'active';
+    console.log('[AppCheck] attestation active');
+  } catch (err) {
+    appCheckFailed('attestation failed', err);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export function activateAppCheck(): void {
-  if (appCheckInstance !== null || typeof document === 'undefined') return;
-  appCheckInstance = initializeAppCheck(app, {
-    provider: new ReCaptchaEnterpriseProvider('6LcqhVItAAAAAJtyUQuqtYQED9UVpHcoJMdCtsy9'),
-    isTokenAutoRefreshEnabled: true,
-  });
+  if (appCheckInstance !== null || appCheckStatus === 'failed') return;
+  if (typeof document === 'undefined') {
+    appCheckStatus = 'unsupported';
+    return;
+  }
+  try {
+    appCheckInstance = initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider('6LcqhVItAAAAAJtyUQuqtYQED9UVpHcoJMdCtsy9'),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (err) {
+    appCheckFailed('initializeAppCheck threw', err);
+    return;
+  }
+  appCheckStatus = 'pending';
+  void probeAppCheck(appCheckInstance);
 }
 
 export const auth = getAuth(app);
