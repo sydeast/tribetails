@@ -158,11 +158,63 @@ describe('sendPushChannel', () => {
     ).rejects.toThrow(/no registered fcm tokens/);
   });
 
-  it('throws when template missing required fields', async () => {
+  it('sends GENERIC wording when the template has no body, rather than throwing', async () => {
     const ctx = buildPushDbMock({ template: { title: 't' }, tokens: ['t1'] });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(
-      sendPushChannel({ def: def(), recipientUid: 'u1', data: {} }),
-    ).rejects.toThrow(/requires title \+ body/);
+    mocks.multicast.mockResolvedValue({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'm1' }],
+    });
+    const res = await sendPushChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBe(true);
+    expect(res.fallbackReason).toBe('pushTemplates/t.k');
+    expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({
+      title: 'An update about your care',
+      body: 'Tap to see it.',
+    });
+  });
+  it('sends GENERIC wording when the template document does not exist', async () => {
+    // The whole point: a new catalog key must not be dead in prod until someone
+    // writes public-facing copy, and mass-deleting the template set must not
+    // take the notification system down.
+    const ctx = buildPushDbMock({ template: null, tokens: ['t1'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.multicast.mockResolvedValue({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'm1' }],
+    });
+    const res = await sendPushChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBe(true);
+    expect(mocks.multicast.mock.calls[0]![0].notification.title).toBe('An update about your care');
+  });
+  it('points an office-facing key at AuntieOS, not the household portal', async () => {
+    const ctx = buildPushDbMock({ template: null, tokens: ['t1'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.multicast.mockResolvedValue({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'm1' }],
+    });
+    const res = await sendPushChannel({
+      def: def({ audience: 'business', audiences: { business: true }, kinfolkFacing: false }),
+      recipientUid: 'u1',
+      data: {},
+    });
+    expect(res.usedFallback).toBe(true);
+    expect(mocks.multicast.mock.calls[0]![0].notification.title).toBe('An update in AuntieOS');
+  });
+  it('does NOT flag a fallback when the template is fully authored', async () => {
+    const ctx = buildPushDbMock({ template: { title: 'Hi', body: 'there' }, tokens: ['t1'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.multicast.mockResolvedValue({
+      successCount: 1,
+      failureCount: 0,
+      responses: [{ success: true, messageId: 'm1' }],
+    });
+    const res = await sendPushChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBeUndefined();
+    expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({ title: 'Hi', body: 'there' });
   });
 });

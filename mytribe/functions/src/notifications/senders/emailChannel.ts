@@ -1,5 +1,8 @@
 import { db } from '../../lib/firestoreAdmin';
-import { sendFromTemplate } from '../../lib/sendFromTemplate';
+import { loadEmailTemplate } from '../../lib/sendFromTemplate';
+import { sendTemplatedEmail } from '../../lib/email';
+import { logEvent } from '../../lib/logger';
+import { fallbackEmail } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
@@ -8,8 +11,17 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  * via SendGrid (existing sendFromTemplate wrapper).
  *
  * Throws if:
- *   - template missing
- *   - SendGrid send fails
+ *   - the catalog row has no email template id (a misconfigured row, which no
+ *     operator action can fix)
+ *   - the send itself fails
+ * Falls back to GENERIC wording (returns { usedFallback }) if:
+ *   - `emailTemplates/{id}` does not exist. That means the operator has not
+ *     authored the copy yet, which is a content gap on their schedule, not a
+ *     fault. Throwing made a new notification key dead in prod until someone
+ *     wrote public-facing text, and would have taken the whole system down the
+ *     day the template set is mass-deleted and re-authored. Logged at `error`
+ *     and stamped on the channel subdoc so it is disclosed, never silent.
+ *     See notifications/fallbackTemplate.ts.
  * Soft-skips (returns { skipped } instead of throwing) if:
  *   - recipient has no email on file — a PERMANENT, undeliverable condition, not
  *     an infrastructure error. Throwing here would Sentry-capture + retry an
@@ -31,10 +43,37 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
     return { skipped: true, skipReason: 'recipient_no_email' };
   }
 
-  const providerMessageId = await sendFromTemplate(templateId, email, {
-    ...data,
-    recipientUid,
-    notificationKey: def.key,
+  const renderData = { ...data, recipientUid, notificationKey: def.key };
+  const tpl = await loadEmailTemplate(templateId);
+
+  if (!tpl) {
+    const generic = fallbackEmail(def);
+    logEvent({
+      severity: 'error',
+      function: 'emailChannel',
+      event: 'notification.template.missing',
+      extra: {
+        key: def.key,
+        channel: 'email',
+        templateId,
+        action: 'sent generic wording; author this template in the Template Bank',
+      },
+    });
+    const providerMessageId = await sendTemplatedEmail({
+      to: email,
+      subjectTemplate: generic.subject,
+      bodyTemplate: generic.body,
+      data: renderData,
+    });
+    return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };
+  }
+
+  const providerMessageId = await sendTemplatedEmail({
+    to: email,
+    subjectTemplate: tpl.subject,
+    bodyTemplate: tpl.body,
+    data: renderData,
+    htmlTemplate: tpl.html ?? undefined,
   });
   return { providerMessageId };
 }

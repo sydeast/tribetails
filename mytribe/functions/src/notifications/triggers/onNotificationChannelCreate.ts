@@ -107,6 +107,14 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
           status: 'sent',
           providerMessageId: result.providerMessageId ?? null,
           sentAt: FieldValue.serverTimestamp(),
+          // It DID send, but with the generic wording, because the template
+          // document does not exist yet. Stamped so the admin surface can badge
+          // the row and so "why did the household get that vague email" is
+          // answerable from the record rather than from the logs. This is what
+          // makes the fallback disclosed rather than silent; the sender has
+          // already logged it at `error`.
+          usedFallback: result.usedFallback === true,
+          fallbackReason: result.fallbackReason ?? null,
         },
         { merge: true },
       );

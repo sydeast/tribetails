@@ -1,6 +1,8 @@
 import Handlebars from 'handlebars';
 import { getAdmin, db } from '../../lib/firestoreAdmin';
+import { logEvent } from '../../lib/logger';
 import { stripUnresolvedTokens } from '../templateParsers';
+import { fallbackPush } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 interface PushTemplate {
@@ -29,13 +31,33 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   }
 
   const tplSnap = await db().doc(`pushTemplates/${templateId}`).get();
-  if (!tplSnap.exists) {
-    throw new Error(`pushChannel(${def.key}): pushTemplates/${templateId} missing`);
+  const stored = tplSnap.exists ? (tplSnap.data() as PushTemplate) : null;
+
+  // A missing document, or one whose title/body was never filled in, means the
+  // operator has not authored this copy yet. Push is a doorbell rather than the
+  // message even when the template DOES exist, so generic wording costs almost
+  // nothing here: tapping it lands on the real thing either way. Logged at
+  // `error` and stamped on the result, so it is disclosed and never silent.
+  // See notifications/fallbackTemplate.ts for why this is not a throw.
+  const missingCopy = !stored?.title || !stored.body;
+  if (missingCopy) {
+    logEvent({
+      severity: 'error',
+      function: 'pushChannel',
+      event: 'notification.template.missing',
+      extra: {
+        key: def.key,
+        channel: 'push',
+        templateId,
+        reason: tplSnap.exists ? 'title/body empty' : 'document missing',
+        action: 'sent generic wording; author this template in the Template Bank',
+      },
+    });
   }
-  const tpl = tplSnap.data() as PushTemplate;
-  if (!tpl.title || !tpl.body) {
-    throw new Error(`pushChannel(${def.key}): pushTemplates/${templateId} requires title + body`);
-  }
+  const generic = fallbackPush(def);
+  const tpl: PushTemplate = missingCopy
+    ? { title: generic.title, body: generic.body, dataRoute: stored?.dataRoute }
+    : stored;
 
   const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', recipientUid).get();
   const tokens = tokensSnap.docs.map((d) => d.id);
@@ -87,5 +109,11 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
     );
   }
 
-  return { providerMessageId: firstSuccessId };
+  return missingCopy
+    ? {
+        providerMessageId: firstSuccessId,
+        usedFallback: true,
+        fallbackReason: `pushTemplates/${templateId}`,
+      }
+    : { providerMessageId: firstSuccessId };
 }

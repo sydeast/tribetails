@@ -60,15 +60,36 @@ export async function readTemplateBindings(): Promise<TemplateBindings> {
   }
   return { boundKeys, activeBindings };
 }
+/** One `emailTemplates/{id}` document, as the senders consume it. */
+export interface EmailTemplateDoc {
+  subject: string;
+  body: string;
+  html?: string | null;
+}
+
+/**
+ * Resolves a catalog key to its email template document, or NULL when that
+ * document does not exist.
+ *
+ * Split out of `sendFromTemplate` so a caller can tell "the operator has not
+ * authored this yet" apart from "the send failed", WITHOUT matching on an error
+ * message and without paying a second read to pre-check. `emailChannel` uses it
+ * to fall back to generic wording; see `notifications/fallbackTemplate.ts`.
+ */
+export async function loadEmailTemplate(key: string): Promise<EmailTemplateDoc | null> {
+  const templateId = await resolveTemplateId(key);
+  const snap = await db().doc(`emailTemplates/${templateId}`).get();
+  if (!snap.exists) return null;
+  return snap.data() as EmailTemplateDoc;
+}
+
 export async function sendFromTemplate(
   key: string,
   to: string,
   data: Record<string, unknown>,
 ): Promise<string> {
-  const templateId = await resolveTemplateId(key);
-  const snap = await db().doc(`emailTemplates/${templateId}`).get();
-  if (!snap.exists) throw new Error(`email template missing: ${templateId} (resolved from ${key})`);
-  const tpl = snap.data() as { subject: string; body: string; html?: string | null };
+  const tpl = await loadEmailTemplate(key);
+  if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   return sendTemplatedEmail({
     to,
     subjectTemplate: tpl.subject,
