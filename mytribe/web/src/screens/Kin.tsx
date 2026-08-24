@@ -4,6 +4,7 @@ import { getMyKin } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
+import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { speciesEmoji } from '../lib/portalFormat';
 
@@ -65,7 +66,12 @@ export function Kin() {
                     </span>
                   )}
                   <div className="pphoto">
-                    {k.photoUrl ? <img src={k.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : speciesEmoji(k.species)}
+                    <FallbackImage
+                      src={k.photoUrl}
+                      alt=""
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      fallback={speciesEmoji(k.species)}
+                    />
                   </div>
                   <div className="pname">{k.name ?? 'Unnamed Kin'}</div>
                   <div className="pbreed">{k.breed ?? k.species ?? ''}</div>

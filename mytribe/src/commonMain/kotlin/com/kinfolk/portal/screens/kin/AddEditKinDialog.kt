@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
@@ -29,7 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
+import coil3.compose.SubcomposeAsyncImage
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
@@ -132,11 +135,25 @@ fun AddEditKinDialog(
                                 .background(KinfolkBrand.GlassSurface),
                             contentAlignment = Alignment.Center,
                         ) {
-                            AsyncImage(
+                            // A freshly-picked file rarely fails to decode, but "rarely"
+                            // is not "never" (a corrupt file, a format Coil can't read),
+                            // and a plain AsyncImage with no error slot renders an empty
+                            // box on that failure -- Compose has no OS-level broken-image
+                            // glyph the way a browser <img> does. SubcomposeAsyncImage's
+                            // error slot is the same pattern RemoteImage.kt already
+                            // established for every other portal photo surface (S9).
+                            SubcomposeAsyncImage(
                                 model = picked.bytes,
                                 contentDescription = "New photo for ${name.ifBlank { "this Kin" }}",
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop,
+                                error = {
+                                    Icon(
+                                        imageVector = Icons.Filled.BrokenImage,
+                                        contentDescription = "New photo for ${name.ifBlank { "this Kin" }}",
+                                        tint = KinfolkBrand.NavyMuted,
+                                    )
+                                },
                             )
                         }
                     } else {

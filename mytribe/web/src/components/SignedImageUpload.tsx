@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
+import { FallbackImage } from './FallbackImage';
 import '../styles/signedImageUpload.css';
 
 /**
@@ -241,11 +242,12 @@ export function SignedImageUpload({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {imageUrl ? (
-            <img src={imageUrl} alt="" className="siu-img" />
-          ) : (
-            <span className="siu-fallback">{fallback}</span>
-          )}
+          <FallbackImage
+            src={imageUrl}
+            alt=""
+            className="siu-img"
+            fallback={<span className="siu-fallback">{fallback}</span>}
+          />
           {busy && (
             <div className="siu-overlay">
               <span className="siu-spinner" aria-hidden="true" />

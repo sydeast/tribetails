@@ -5,6 +5,7 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { relativeDay } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
+import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import '../styles/gallery.css';
 
@@ -88,8 +89,12 @@ export function Gallery() {
                     params={{ kinId: p.kinId }}
                     key={p.kinId}
                     title={p.kinName}
+                    // The fallback glyph carries no text of its own, so the link's
+                    // name has to come from here instead of a descendant img's alt
+                    // once that img stops being the thing that's rendered.
+                    aria-label={p.kinName}
                   >
-                    <img src={p.url} alt={p.kinName} />
+                    <FallbackImage src={p.url} alt={p.kinName} fallback={<span aria-hidden="true">{'\u{1F43E}'}</span>} />
                   </Link>
                 ))}
               </div>
@@ -147,7 +152,20 @@ function GalleryTile({ photo, variant }: { photo: KinPhotoDto; variant: string }
     // get wrong on a screen whose job is showing pictures.
     <Link className={`gallery-tile ${variant}`} to="/kintales" title={caption}>
       {isImage(photo.contentType) ? (
-        <img src={photo.url} alt={caption} loading="lazy" />
+        <FallbackImage
+          src={photo.url}
+          alt={caption}
+          loading="lazy"
+          // The always-visible caption span below already names this tile, so a
+          // decorative, aria-hidden glyph here loses nothing — same treatment as
+          // the video glyph in the other branch, distinguishable from it so a
+          // dead photo never reads as "this was a video all along".
+          fallback={
+            <span className="gallery-tile__broken" aria-hidden="true">
+              {PHOTO_UNAVAILABLE_GLYPH}
+            </span>
+          }
+        />
       ) : (
         // A video, drawn as a video. An <img> pointed at an mp4 renders as a
         // broken-image glyph, which reads as a photo that failed to load.

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TribeHub } from './TribeHub';
 
@@ -76,5 +76,35 @@ describe('TribeHub gallery card', () => {
 
     await screen.findByText('Biscuit');
     expect(screen.queryByText('All photos')).toBeNull();
+  });
+
+  it('shows the species emoji, not a dead glyph, when a roster photo fails to load (S9)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
+    renderScreen();
+
+    const row = (await screen.findByText('Biscuit')).closest('a');
+    const img = row?.querySelector('img');
+    expect(img).toBeTruthy();
+
+    fireEvent.error(img!);
+
+    expect(row?.querySelector('img')).toBeNull();
+    expect(row?.textContent).toContain('\u{1F436}');
+  });
+
+  it('shows the species emoji, not a dead glyph, when a gallery thumb photo fails to load (S9)', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [KIN_WITH_PHOTO] });
+    renderScreen();
+
+    const link = await screen.findByText('All photos');
+    const card = link.closest('section');
+    const thumb = card?.querySelector('.gallery-thumb');
+    const img = thumb?.querySelector('img');
+    expect(img).toBeTruthy();
+
+    fireEvent.error(img!);
+
+    expect(thumb?.querySelector('img')).toBeNull();
+    expect(thumb?.textContent).toContain('\u{1F436}');
   });
 });
