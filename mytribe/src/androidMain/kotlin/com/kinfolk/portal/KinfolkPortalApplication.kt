@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.kinfolk.portal.attestation.activateAppCheck
 import io.sentry.android.core.SentryAndroid
 
 class KinfolkPortalApplication : Application() {
@@ -45,6 +46,19 @@ class KinfolkPortalApplication : Application() {
             } catch (t: Throwable) {
                 Log.e(TAG, "Sentry init failed", t)
             }
+        }
+
+        // App Check (O-3 ruling D1, Phase 2). After Sentry, so a failed
+        // attestation has somewhere to be reported; before any screen can make
+        // a callable, which is what an Application.onCreate is for.
+        //
+        // Skipped under Robolectric for the same reason Sentry is: there is no
+        // FirebaseApp in a unit-test JVM, so this would report a failure that
+        // says nothing about the shipped app.
+        if (!isRobolectric) {
+            val debuggable =
+                (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            activateAppCheck(useDebugProvider = debuggable)
         }
     }
 
