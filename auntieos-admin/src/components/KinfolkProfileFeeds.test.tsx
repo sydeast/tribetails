@@ -74,6 +74,22 @@ describe('RecentKinTalesPanel', () => {
     expect(screen.getByText('1 total')).toBeInTheDocument();
   });
 
+  /**
+   * The subset trap: the card counts SENT tales, the cap applies to the raw
+   * read. A read that came back holding every row it was allowed is truncated
+   * however few of them were sent, so the meta must not call itself a total.
+   */
+  it('refuses to call a capped read a total, even when few of its rows are sent', () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      _id: `r${i}`,
+      kinfolkId: 'k1',
+      status: i < 150 ? 'SENT' : 'DRAFT',
+      sentAt: `2026-08-01T00:00:${String(i % 60).padStart(2, '0')}Z`,
+    }));
+    useCollection.mockReturnValue(ready(rows));
+    render(<RecentKinTalesPanel kinfolkId="k1" />);
+    expect(screen.getByText('5 of 150+ loaded')).toBeInTheDocument();
+  });
   it('says nothing about a count while the read is still in flight', () => {
     useCollection.mockReturnValue({ status: 'loading' });
     const { container } = render(<RecentKinTalesPanel kinfolkId="k1" />);

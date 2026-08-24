@@ -395,6 +395,9 @@ export function Directory({
         kinfolkId={openKinfolkId}
         kinfolkName={kf ? kinfolkDisplayName(kf) : ''}
         kin={kinByKinfolk.get(openKinfolkId) ?? []}
+        // Told apart from "this household has no pets", so the profile does not
+        // stamp "0 kin" on a read that has not landed.
+        kinPending={kinPending}
         // The mock draws every kin row on the profile as a chevroned row that
         // opens the pet. This screen already owns that swap for its own Kin tab,
         // so the profile's rows go through the same one rather than inventing a

@@ -33,6 +33,15 @@ interface KinfolkProfileProps {
   kinfolkName: string;
   /** The household's active kin, already streamed by the Directory (no second read). */
   kin: Kin[];
+  /**
+   * True while that stream is still in flight.
+   *
+   * `kin` is `[]` both when the household has no pets and when the Directory has
+   * not read them yet, and the two must not render the same: "No kin on file"
+   * and a "0 kin" count are CLAIMS, and this app does not make a claim out of a
+   * read that has not landed (the `StatCard` rule).
+   */
+  kinPending?: boolean;
   onBack: () => void;
   /**
    * Open one kin's own detail view. The mock draws every kin row as a chevroned,
@@ -109,7 +118,14 @@ function firstNonBlank(...values: string[]): string {
  */
 type ProfileView = 'profile' | 'edit' | 'household' | 'kintale';
 
-export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack, onOpenKin }: KinfolkProfileProps) {
+export function KinfolkProfile({
+  kinfolkId,
+  kinfolkName,
+  kin,
+  kinPending = false,
+  onBack,
+  onOpenKin,
+}: KinfolkProfileProps) {
   const [view, setView] = useState<ProfileView>('profile');
   const [profile, setProfile] = useState<Async<Profile>>({ status: 'loading' });
 
@@ -313,10 +329,14 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack, onOpenKin 
               the heading text, so the section is still called "Kin". */}
           <DenPanel
             title="Kin"
-            meta={kin.length === 1 ? '1 kin' : `${kin.length} kin`}
+            {...(kinPending ? {} : { meta: kin.length === 1 ? '1 kin' : `${kin.length} kin` })}
             subtitle="Kin in this household."
           >
-            {kin.length === 0 ? (
+            {kinPending ? (
+              <div role="status" aria-live="polite">
+                <p className="kprofile__hint">Loading kin…</p>
+              </div>
+            ) : kin.length === 0 ? (
               <EmptyHint>No kin on file for this household.</EmptyHint>
             ) : (
               <ul className="kprofile__kin">
@@ -375,8 +395,8 @@ export function KinfolkProfile({ kinfolkId, kinfolkName, kin, onBack, onOpenKin 
                 missing, and the operator is told which half is unknown. */}
             {kinNotesFailed && (
               <p className="kprofile__hint" role="status">
-                Some kin notes could not be read, so a row may be missing its line
-                about the pet.
+                Some kin notes couldn&rsquo;t be read, so a row may be missing its
+                line about the pet.
               </p>
             )}
           </DenPanel>

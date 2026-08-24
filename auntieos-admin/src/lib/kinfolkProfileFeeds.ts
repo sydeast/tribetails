@@ -161,9 +161,15 @@ export function outstandingTotal(invoices: readonly InvoiceEntry[]): number {
  * is why `StatCard` refuses a plain `value: string` (see its note about the
  * permission-denied read that rendered as "0" in production on 2026-07-15).
  * At the cap the label says "N+ loaded", which is exactly what is known.
+ *
+ * [capped] IS A FACT ABOUT THE RAW READ, not about [loaded], and that is why it
+ * is a separate argument rather than a `loaded >= cap` compare inside here. A
+ * card that counts a SUBSET of what it read (KinTales counts only the sent ones)
+ * has a `loaded` below the cap on a read that was capped all the same, and the
+ * compare would then confidently call a truncated collection a total.
  */
-export function feedCountMeta(shown: number, loaded: number, cap: number): string {
-  const total = loaded >= cap ? `${loaded}+ loaded` : `${loaded} total`;
+export function feedCountMeta(shown: number, loaded: number, capped: boolean): string {
+  const total = capped ? `${loaded}+ loaded` : `${loaded} total`;
   return shown < loaded ? `${shown} of ${total}` : total;
 }
 

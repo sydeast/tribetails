@@ -56,14 +56,16 @@ import './KinfolkProfileFeeds.css';
 export function RecentKinTalesPanel({ kinfolkId }: { kinfolkId: string }) {
   const state = useCollection<KinTaleEntry>(kinTalesForKinfolkQuery(kinfolkId));
   const loaded = state.status === 'ready' ? state.data.filter(isSent).length : null;
+  // Cappedness is a fact about the RAW read, not about the sent subset counted
+  // above: 150 sent rows out of a read that came back holding all 200 it was
+  // allowed is still a truncated collection. See `feedCountMeta`.
+  const capped = state.status === 'ready' && state.data.length >= KINTALES_PROFILE_MAX;
   const rows = state.status === 'ready' ? recentTalesFor(state.data, kinfolkId) : [];
 
   return (
     <DenPanel
       title="Recent KinTales"
-      {...(loaded !== null
-        ? { meta: feedCountMeta(rows.length, loaded, KINTALES_PROFILE_MAX) }
-        : {})}
+      {...(loaded !== null ? { meta: feedCountMeta(rows.length, loaded, capped) } : {})}
     >
       <AsyncRegion
         state={state}

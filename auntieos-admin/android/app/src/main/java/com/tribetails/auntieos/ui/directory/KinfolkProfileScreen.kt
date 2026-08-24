@@ -31,7 +31,11 @@ import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.domain.UPCOMING_HORIZON_DAYS
+import com.tribetails.auntieos.domain.feedCountMeta
+import com.tribetails.auntieos.domain.freeTextDateLabel
 import com.tribetails.auntieos.domain.kinfolkInvoiceFeedLabel
+import com.tribetails.auntieos.domain.tenureLabel
 import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
@@ -233,7 +237,20 @@ fun KinfolkProfileScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("KIN (PETS)", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                        // The count sits BESIDE the section name, not inside it,
+                        // the same shape the React admin's DenPanel meta slot
+                        // gives this panel. Absent while the read is in flight:
+                        // "0 kin" on a load that has not landed is a claim.
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("KIN (PETS)", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                            if (!state.isLoading) {
+                                Text(
+                                    if (state.kinList.size == 1) "1 kin" else "${state.kinList.size} kin",
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
+                        }
                         PrimaryButton(
                             label   = "+ Add Kin",
                             onClick = { onAddKin(kinfolk.id, kinfolk.displayName) },
@@ -270,6 +287,7 @@ fun KinfolkProfileScreen(
                 item {
                     ProfileFeedSection(
                         title = "RECENT KINTALES",
+                        meta = feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false),
                         emptyMsg = "No KinTales sent to this kinfolk yet.",
                         lines = state.recentTales.map { r ->
                             (r.title.ifBlank { r.serviceType.ifBlank { "KinTale" } }) to
@@ -286,7 +304,11 @@ fun KinfolkProfileScreen(
                 item {
                     ProfileFeedSection(
                         title = "UPCOMING VISITS",
-                        emptyMsg = "No upcoming visits scheduled.",
+                        // The window has a far edge now (the mock's own header),
+                        // so the card says what it is rather than implying it
+                        // shows everything ahead.
+                        meta = "next $UPCOMING_HORIZON_DAYS days",
+                        emptyMsg = "No visits booked in the next $UPCOMING_HORIZON_DAYS days.",
                         lines = state.upcomingVisits.map { s ->
                             (s.serviceType.ifBlank { "Visit" }) to s.startTime.take(16).replace('T', ' ')
                         },
@@ -295,6 +317,7 @@ fun KinfolkProfileScreen(
                 item {
                     ProfileFeedSection(
                         title = "INVOICES",
+                        meta = feedCountMeta(state.kinfolkInvoices.size, state.invoiceCount, capped = false),
                         emptyMsg = "No invoices for this kinfolk yet.",
                         lines = state.kinfolkInvoices.map { inv ->
                             // `invoices.date` is free text (PR #241 confirmed it in
@@ -314,6 +337,8 @@ fun KinfolkProfileScreen(
 private fun ProfileFeedSection(
     title: String,
     emptyMsg: String,
+    /** The mock's `.ct`: a count or a window, beside the title and never inside it. */
+    meta: String? = null,
     lines: List<Pair<String, String>>,
     // K1 (A8): when set, each row is tappable — index maps back to the source list so the
     // caller can open the underlying record (e.g. a recent KinTale's report).
@@ -323,7 +348,16 @@ private fun ProfileFeedSection(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(title, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+            if (meta != null) {
+                Text(meta, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+            }
+        }
         AuntieCard(modifier = Modifier.fillMaxWidth(), containerColor = AuntieTheme.colors.surface2) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -376,15 +410,52 @@ private fun ProfileHeader(kinfolk: Kinfolk) {
         Spacer(Modifier.height(12.dp))
         Text(kinfolk.displayName, style = AuntieTheme.typography.headlineSmall, color = AuntieTheme.colors.textPrimary)
 
+        // WHEN THEY JOINED, spelled for the operator rather than left as stored.
+        // `freeTextDateLabel` formats what it can read and prints the rest exactly
+        // as stored, so a legacy free-text join date never renders as an error and
+        // never becomes a different date.
+        val joined = freeTextDateLabel(kinfolk.joinDate)
+        if (joined.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Joined $joined",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+        }
         val statusColor = if (kinfolk.status == "active") AuntieTheme.colors.success else AuntieTheme.colors.textDim
-        Box(
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(statusColor.copy(alpha = 0.15f))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+        // The mock's two hero chips: the status, and how long they have been a
+        // client. The tenure chip is ABSENT when the stored join date is not one
+        // anybody can read, rather than a fabricated "0 months". Same rule, same
+        // branches, as the React admin's hero.
+        val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
+        Row(
+            modifier = Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(kinfolk.status.uppercase(), style = AuntieTheme.typography.labelSmall, color = statusColor)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(statusColor.copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(kinfolk.status.uppercase(), style = AuntieTheme.typography.labelSmall, color = statusColor)
+            }
+            if (tenure != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(AuntieTheme.colors.familyPurple.copy(alpha = 0.15f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        tenure.uppercase(),
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.familyPurple,
+                    )
+                }
+            }
         }
     }
 }

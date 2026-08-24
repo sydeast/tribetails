@@ -215,15 +215,25 @@ describe('invoice money', () => {
 
 describe('feedCountMeta', () => {
   it('says "total" while the read is under its cap', () => {
-    expect(feedCountMeta(3, 3, 200)).toBe('3 total');
+    expect(feedCountMeta(3, 3, false)).toBe('3 total');
   });
 
   it('says how many of the total are shown when the card is truncated', () => {
-    expect(feedCountMeta(5, 12, 200)).toBe('5 of 12 total');
+    expect(feedCountMeta(5, 12, false)).toBe('5 of 12 total');
   });
 
   it('refuses to call a capped read a total', () => {
-    expect(feedCountMeta(5, 200, 200)).toBe('5 of 200+ loaded');
+    expect(feedCountMeta(5, 200, true)).toBe('5 of 200+ loaded');
+  });
+  /**
+   * The count a card shows is often a SUBSET of what it read: the KinTales card
+   * counts the sent ones out of every report on the household. So cappedness has
+   * to come from the raw read, or 150 sent rows out of a read capped at 200 would
+   * announce themselves as the household's total.
+   */
+  it('trusts the caller about cappedness rather than inferring it from the subset', () => {
+    expect(feedCountMeta(5, 150, true)).toBe('5 of 150+ loaded');
+    expect(feedCountMeta(5, 150, false)).toBe('5 of 150 total');
   });
 });
 

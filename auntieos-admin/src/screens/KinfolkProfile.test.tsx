@@ -415,6 +415,16 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.getByText('2 kin')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Kin · 2/ })).toBeNull();
   });
+  it('claims no kin count and no empty state while the kin stream is still loading', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} kinPending onBack={vi.fn()} />,
+    );
+    await screen.findByRole('heading', { name: 'Kin' });
+    expect(container.textContent).not.toContain('0 kin');
+    expect(screen.queryByText('No kin on file for this household.')).toBeNull();
+    expect(screen.getByText('Loading kin…')).toBeInTheDocument();
+  });
   it('opens a kin from its row, and renders a plain row when nothing can open it', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     const onOpenKin = vi.fn();
@@ -454,7 +464,7 @@ describe('KinfolkProfile: the mock', () => {
     // silently looking like a pet nobody has written about.
     getKin411.mockRejectedValue(new Error('permission-denied'));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />);
-    expect(await screen.findByText(/Some kin notes could not be read/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Some kin notes couldn’t be read/i)).toBeInTheDocument();
     expect(screen.getByText('Willow')).toBeInTheDocument();
   });
   /**
