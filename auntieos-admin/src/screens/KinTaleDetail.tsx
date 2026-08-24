@@ -371,73 +371,81 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
         <p className="kintale-detail__body">{bodyCopy.trim() !== '' ? bodyCopy : '(empty body)'}</p>
       </DenPanel>
 
-      <DenPanel
-        title="Share with kinfolk"
-        subtitle="Preview how the kinfolk reads this update, or create a link to share it."
-      >
-        <div className="kintale-detail__share-actions">
-          <GhostButton
-            label={viewAsKinfolk ? 'Hide kinfolk view' : 'View as kinfolk'}
-            onClick={() => setViewAsKinfolk((on) => !on)}
-          />
-          <PrimaryButton
-            label={isSharing ? 'Creating…' : 'Share link'}
-            onClick={() => void handleShare()}
-            disabled={isSharing}
-            busy={isSharing}
-          />
-        </div>
-
-        {shareError && <Banner tone="error">{shareError}</Banner>}
-
-        {shareUrl !== null && (
-          <div className="kintale-detail__share-result">
-            <span className="kintale-detail__label">Share link</span>
-            {/* Readonly rather than plain text: the url stays selectable and
-                copyable by hand when the clipboard API is unavailable. */}
-            <input
-              className="kintale-detail__share-url"
-              type="text"
-              readOnly
-              value={shareUrl}
-              aria-label="Share link"
-              onFocus={(e) => e.currentTarget.select()}
+      {/* Only a SENT report has anything a kinfolk should read, so the whole
+          panel is absent on a draft rather than offering a control whose only
+          possible outcome is a refusal (the Buttons.tsx ControlShell rule this
+          screen already applies to Edit: no live no-op). Both other admins gate
+          the same way: Android's ShareSection call site and the wasm's
+          ViewAsKinfolkBar each render only in the SENT view. */}
+      {state === 'sent' && (
+        <DenPanel
+          title="Share with kinfolk"
+          subtitle="Preview how the kinfolk reads this update, or create a link to share it."
+        >
+          <div className="kintale-detail__share-actions">
+            <GhostButton
+              label={viewAsKinfolk ? 'Hide kinfolk view' : 'View as kinfolk'}
+              onClick={() => setViewAsKinfolk((on) => !on)}
             />
-            <div className="kintale-detail__share-copy">
-              <GhostButton label={shareCopied ? 'Copied' : 'Copy link'} onClick={() => void handleCopyShareUrl()} />
-            </div>
+            <PrimaryButton
+              label={isSharing ? 'Creating…' : 'Share link'}
+              onClick={() => void handleShare()}
+              disabled={isSharing}
+              busy={isSharing}
+            />
           </div>
-        )}
 
-        {viewAsKinfolk && (
-          // The kinfolk-facing read of this recap: headline, narrative, photos.
-          // No Edit, no Send, no reaction control, and no admin-only record of
-          // any kind. Dossiers and 411 notes are admin-only, and are neither
-          // read nor rendered anywhere on this screen.
-          <section className="kintale-detail__preview" aria-label="Kinfolk view">
-            <p className="kintale-detail__preview-eyebrow">KINFOLK VIEW</p>
-            <h3 className="kintale-detail__preview-headline">
-              {kinfolkPreviewHeadline({ title, bodyCopy, authorDisplayName, kinfolkName: entry.kinfolkName ?? '' })}
-            </h3>
-            <p className="kintale-detail__preview-body">{kinfolkPreviewBody({ bodyCopy })}</p>
-            {media.status === 'ready' && media.data.length > 0 && (
-              <ul className="kintale-detail__media-grid">
-                {media.data.map((item) => (
-                  <li key={item.id} className="kintale-detail__media-tile">
-                    {kinTaleMediaKindOf(item.contentType) === 'image' ? (
-                      <img src={item.url} alt="KinTale attachment" loading="lazy" className="kintale-detail__media-img" />
-                    ) : (
-                      <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
-                        View attachment
-                      </a>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
-      </DenPanel>
+          {shareError && <Banner tone="error">{shareError}</Banner>}
+
+          {shareUrl !== null && (
+            <div className="kintale-detail__share-result">
+              <span className="kintale-detail__label">Share link</span>
+              {/* Readonly rather than plain text: the url stays selectable and
+                  copyable by hand when the clipboard API is unavailable. */}
+              <input
+                className="kintale-detail__share-url"
+                type="text"
+                readOnly
+                value={shareUrl}
+                aria-label="Share link"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <div className="kintale-detail__share-copy">
+                <GhostButton label={shareCopied ? 'Copied' : 'Copy link'} onClick={() => void handleCopyShareUrl()} />
+              </div>
+            </div>
+          )}
+
+          {viewAsKinfolk && (
+            // The kinfolk-facing read of this recap: headline, narrative, photos.
+            // No Edit, no Send, no reaction control, and no admin-only record of
+            // any kind. Dossiers and 411 notes are admin-only, and are neither
+            // read nor rendered anywhere on this screen.
+            <section className="kintale-detail__preview" aria-label="Kinfolk view">
+              <p className="kintale-detail__preview-eyebrow">KINFOLK VIEW</p>
+              <h3 className="kintale-detail__preview-headline">
+                {kinfolkPreviewHeadline({ title, bodyCopy, authorDisplayName, kinfolkName: entry.kinfolkName ?? '' })}
+              </h3>
+              <p className="kintale-detail__preview-body">{kinfolkPreviewBody({ bodyCopy })}</p>
+              {media.status === 'ready' && media.data.length > 0 && (
+                <ul className="kintale-detail__media-grid">
+                  {media.data.map((item) => (
+                    <li key={item.id} className="kintale-detail__media-tile">
+                      {kinTaleMediaKindOf(item.contentType) === 'image' ? (
+                        <img src={item.url} alt="KinTale attachment" loading="lazy" className="kintale-detail__media-img" />
+                      ) : (
+                        <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
+                          View attachment
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </DenPanel>
+      )}
 
       <DenPanel title="Who this covers" subtitle="Household, session, and kin this recap belongs to.">
         <dl className="kintale-detail__who">

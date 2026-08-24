@@ -312,13 +312,14 @@ describe('KinTaleDetail: share link', () => {
     expect(screen.getByRole('button', { name: /^copy link$/i })).toBeInTheDocument();
   });
 
-  it('refuses a draft before calling out, and says what to do about it', async () => {
+  it('offers no share or preview control at all on a draft, rather than a control that can only refuse', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ status: 'DRAFT', sentVia: '' })] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await user.click(await screen.findByRole('button', { name: /share link/i }));
+    await screen.findByText('A great day at the park');
+    expect(screen.queryByText('Share with kinfolk')).toBeNull();
+    expect(screen.queryByRole('button', { name: /share link/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /view as kinfolk/i })).toBeNull();
     expect(createShareLink).not.toHaveBeenCalled();
-    expect(await screen.findByText(/send this kintale first/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText('Share link')).toBeNull();
   });
 
   it('refuses a report with no household to route the link to', async () => {

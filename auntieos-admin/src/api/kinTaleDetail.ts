@@ -9,10 +9,11 @@ import { call } from '../lib/fns';
  * "opens no second listener class" convention `KinTaleCompose.tsx`'s own doc
  * comment states for its own EDIT-mode hydration).
  *
- * Every callable below is confirmed live in
- * `MyTribe/functions/src/portal/{getKinTaleComments,kinTaleEngagement,getMyKinTaleMedia}.ts`
- * (all five re-exported from `functions/src/index.ts`), not assumed from the
- * wasm `KinTaleReportScreen.kt` reference alone:
+ * Every callable below is confirmed live, not assumed from the wasm
+ * `KinTaleReportScreen.kt` reference alone. Each is re-exported from
+ * `MyTribe/functions/src/index.ts`: the tale-scoped reads and writes from
+ * `functions/src/portal/{getKinTaleComments,kinTaleEngagement,getMyKinTaleMedia}.ts`,
+ * and `createShareLink` from `functions/src/share/createShareLink.ts`.
  *
  *  - `getKinTaleComments({ taleId })` -> `{ comments: [...] }`. Reads
  *    `kin_care_reports/{taleId}/comments` ordered `createdAtMs asc` (oldest
