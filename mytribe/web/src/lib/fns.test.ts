@@ -56,6 +56,28 @@ describe('call', () => {
     expect(firebaseSignOut).toHaveBeenCalledTimes(1);
   });
 
+  // The guard in revokedSession.ts collapses ONE burst; it must not latch. A
+  // page that survived a teardown without navigating (assign refused) would
+  // otherwise go deaf to the next revocation.
+  it('signs out again after a successful call has proven a new session', async () => {
+    const revoked = new FirebaseError(
+      'functions/unauthenticated',
+      'Your session was ended (session-revoked). Sign in again.',
+    );
+    (revoked as FirebaseError & { details?: unknown }).details = { reason: 'session-revoked' };
+
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(revoked) as never);
+    await expect(call('getMyHome', {})).rejects.toBe(revoked);
+    expect(firebaseSignOut).toHaveBeenCalledTimes(1);
+
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({ data: { ok: true } }) as never);
+    await call('getMyHome', {});
+
+    vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(revoked) as never);
+    await expect(call('getMyHome', {})).rejects.toBe(revoked);
+    expect(firebaseSignOut).toHaveBeenCalledTimes(2);
+  });
+
   it('does NOT sign the kinfolk out for an untagged unauthenticated refusal', async () => {
     const notSignedIn = new FirebaseError('functions/unauthenticated', 'Sign in required.');
     vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(notSignedIn) as never);

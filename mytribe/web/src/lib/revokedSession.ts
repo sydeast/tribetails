@@ -109,9 +109,24 @@ export function readAndClearSessionEndedNotice(): string | null {
 let tearingDown = false;
 
 /**
- * Test seam: forget that a teardown already ran. Production never needs it —
- * the page is on its way to /signin by then.
+ * Re-arms the guard below. Called from `fns.ts` whenever a callable SUCCEEDS,
+ * because a call that succeeded is proof the current session works.
+ *
+ * The guard is a burst collapser, not a once-per-page latch. It normally does
+ * not matter here, because the teardown ends in a document navigation and this
+ * module's state dies with the page. It matters when that navigation does not
+ * happen: `window.location.assign` is wrapped in a try/catch (jsdom, and any
+ * embedding that refuses it), and without this a page that survived one
+ * teardown would sit there with the guard closed, deaf to the next revocation.
+ * The Android client had the same shape and no reload to hide it, so both are
+ * fixed the same way. It cannot re-open the burst it collapses: during a burst
+ * of refusals there are no successes.
  */
+export function noteSessionAlive(): void {
+  tearingDown = false;
+}
+
+/** Test seam: forget that a teardown already ran. */
 export function resetRevokedSessionForTest(): void {
   tearingDown = false;
 }

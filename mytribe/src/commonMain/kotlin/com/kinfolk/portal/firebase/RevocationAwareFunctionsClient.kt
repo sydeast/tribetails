@@ -41,7 +41,22 @@ class RevocationAwareFunctionsClient(
 
     override suspend fun call(name: String, payload: JsonObject?): JsonObject {
         try {
-            return delegate.call(name, payload)
+            val result = delegate.call(name, payload)
+            // RE-ARM. The flag below is a burst collapser, not a once-per-app
+            // latch, and on Android it would have been the latter: this client
+            // is `remember`ed for the life of the process, so after one revoked
+            // session the guard stayed closed and a SECOND revocation (a
+            // password change, a sign-out on another device, weeks later, on
+            // the same install) would have been ignored — leaving the kinfolk
+            // looping on refused calls, which is the exact failure this class
+            // exists to prevent. The web portal hid it behind its document
+            // reload; Android has no reload.
+            //
+            // A call that succeeded is proof the CURRENT session works, so this
+            // cannot re-open the burst it is meant to collapse: during a burst
+            // of refusals there are no successes to reset it.
+            if (ended) gate.withLock { ended = false }
+            return result
         } catch (c: CancellationException) {
             // The caller's scope went away. Not a statement about the session,
             // and swallowing it here would break every timeout above us.

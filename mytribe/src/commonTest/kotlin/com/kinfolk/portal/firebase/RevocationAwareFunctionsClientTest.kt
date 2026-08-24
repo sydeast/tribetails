@@ -91,6 +91,35 @@ class RevocationAwareFunctionsClientTest {
         assertEquals(1, signOut.count)
     }
 
+    /**
+     * The guard collapses ONE burst, it does not latch for the life of the
+     * process. This client is remembered for as long as the app is composed, so
+     * a latch would mean: revoked once, signed back in, revoked again weeks
+     * later, and nothing happens the second time. That is the failure this
+     * class exists to prevent, arriving through the fix for it.
+     */
+    @Test
+    fun a_second_revocation_after_signing_back_in_still_signs_out() = runTest {
+        val fake = FakeFunctionsClient()
+        val signOut = RecordingSignOut()
+        val client = RevocationAwareFunctionsClient(fake, signOut.block)
+
+        fake.stubError("getMyHome", revoked)
+        assertFailsWith<RuntimeException> { client.call("getMyHome", null) }
+        assertEquals(1, signOut.count)
+
+        // Signed back in on the same install: calls work again.
+        fake.stub("getMyHome", buildJsonObject { put("displayName", "The Ruiz Tribe") })
+        client.call("getMyHome", null)
+
+        // And that session is revoked too.
+        fake.stubError("getMyHome", revoked)
+        assertFailsWith<RuntimeException> { client.call("getMyHome", null) }
+
+        assertEquals(2, signOut.count)
+        assertNotNull(SessionEndedNotice.consume())
+    }
+
     @Test
     fun permission_denied_does_not_sign_anyone_out() = runTest {
         val fake = FakeFunctionsClient()

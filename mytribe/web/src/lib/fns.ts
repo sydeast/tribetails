@@ -1,7 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
-import { reactToCallableError } from './revokedSession';
+import { noteSessionAlive, reactToCallableError } from './revokedSession';
 
 /**
  * O-20: a callable that never gets a response (cold-start pathology, a
@@ -30,6 +30,10 @@ export async function call<TReq, TRes>(name: string, payload: TReq): Promise<TRe
   const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
   try {
     const result = await fn(payload);
+    // #557: a call that succeeded proves the current session works, which
+    // re-arms the teardown guard. See noteSessionAlive's header for why a guard
+    // that never re-arms goes deaf to the SECOND revocation.
+    noteSessionAlive();
     return result.data;
   } catch (err) {
     if (err instanceof FirebaseError && err.code === 'functions/deadline-exceeded') {
