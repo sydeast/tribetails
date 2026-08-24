@@ -38,6 +38,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -80,6 +81,14 @@ fun SignInScreen(
     var inFlight by remember { mutableStateOf(false) }
     var resetting by remember { mutableStateOf(false) }
     var resetSuccess by remember { mutableStateOf(false) }
+    /**
+     * #557: read ONCE, and clear as we read. Landing back here after an
+     * involuntary sign-out with no explanation is its own defect — "it logged
+     * me out and I don't know why" reads worse than the hour-long window this
+     * closes. [SessionEndedNotice.consume] clears, so a recomposition cannot
+     * resurrect the banner and a later ordinary visit does not inherit it.
+     */
+    val sessionEndedNotice = remember { SessionEndedNotice.consume() }
     val state by repo.state.collectAsState()
 
     LaunchedEffect(state) {
@@ -155,6 +164,16 @@ fun SignInScreen(
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center,
                     )
+                    // #557: why they are looking at this screen, when they did
+                    // not ask to be.
+                    sessionEndedNotice?.let { notice ->
+                        Text(
+                            text = notice,
+                            style = type.sansMeta.copy(color = c.primary),
+                            modifier = Modifier.fillMaxWidth().testTag("session-ended-notice"),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                     KinField(
                         value = email,
                         onValueChange = { email = it },

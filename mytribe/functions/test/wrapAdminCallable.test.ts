@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../src/lib/sentry', () => ({ captureFunctionError: vi.fn().mockReturnValue('s1'), initSentry: () => {} }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('a1') }));
+// #557: wrapAdminCallable delegates to wrapCallable, which now checks session
+// revocation. Stub it out — see test/_helpers/mockSessionRevocation.ts.
+vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
 
 beforeEach(() => {
   process.env.AUNTIE_OPERATOR_UIDS = 'uid-auntie';

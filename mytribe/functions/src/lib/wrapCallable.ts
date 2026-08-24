@@ -3,6 +3,7 @@ import { captureFunctionError, initSentry } from './sentry';
 import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
+import { assertSessionNotRevoked, type RevocationCheck } from './sessionRevocation';
 import { randomUUID } from 'node:crypto';
 import {
   APP_CHECK_REJECT_MESSAGE,
@@ -76,10 +77,54 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
     const start = Date.now();
     const requestId = randomUUID();
     const clientErrorId = randomUUID();
+    // #557: 'not-run' until the revocation gate is actually reached. It is a
+    // distinct value from 'skipped' on purpose: 'skipped' means the caller was
+    // unauthenticated so there was nothing to look up, whereas this means an
+    // EARLIER gate refused first. Collapsing the two would let an App Check
+    // refusal masquerade in the logs as an ordinary anonymous call.
+    let authCheck: RevocationCheck = { outcome: 'not-run', durationMs: 0 };
     try {
-      // Inside the try on purpose: a refusal is a failure like any other and
-      // belongs in the failure log and the audit trail.
+      // ORDER: App Check (O-3 L2, #556) first, session revocation (#557)
+      // second. Both refuse with `unauthenticated`, both sit ahead of the
+      // handler, and they answer different questions, so the order is a
+      // decision rather than an accident:
+      //
+      //  - App Check asks "is this request from a client build we trust". It
+      //    costs nothing outside the enforced cohort (a synchronous array
+      //    lookup and an early return), so putting it first adds no latency to
+      //    the ~230 callables it does not police.
+      //  - Revocation asks "is the person behind this token still in a live
+      //    session". That one costs an Identity Toolkit lookup. Running it
+      //    second means a request we are about to refuse for failing
+      //    attestation never spends that lookup, or the quota behind it.
+      //  - Ordering it this way also keeps the App Check grace-period metric
+      //    honest: every cohort request reaches the App Check decision, rather
+      //    than some of them being pre-empted by an auth refusal and never
+      //    showing up in the valid-token rate D2 gates L3 on.
+      //
+      // Neither gate masks the other. They stay distinguishable to the caller
+      // (an App Check refusal carries no `details`; a revocation refusal
+      // carries `details.reason`, which is exactly what the portal and Android
+      // clients branch on before signing anybody out) and in the logs
+      // (`appCheck` / the `.appCheck.rejected` line vs `authCheck: 'revoked'`).
+      //
+      // Inside the try on purpose, both of them: a refusal is a failure like
+      // any other and belongs in the failure log and the audit trail.
       await gateOnAppCheck(name, req, requestId);
+      // #557: `onCall` verified this token's signature and expiry, not whether
+      // the session behind it was revoked. See sessionRevocation.ts for the
+      // policy and what it costs.
+      //
+      // The inner try exists only so the log line tells the truth: a refusal
+      // throws instead of returning, and without it the failure line would
+      // report the pre-gate value instead of naming the refusal.
+      const checkStart = Date.now();
+      try {
+        authCheck = await assertSessionNotRevoked(req, name);
+      } catch (refusal) {
+        authCheck = { outcome: 'revoked', durationMs: Date.now() - checkStart };
+        throw refusal;
+      }
       const result = await handler(req);
       logEvent({
         severity: 'info',
@@ -88,6 +133,8 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         requestId,
         uid: req.auth?.uid,
         durationMs: Date.now() - start,
+        authCheck: authCheck.outcome,
+        authCheckMs: authCheck.durationMs,
         ...appCheckFields(req),
       });
       return result;
@@ -119,6 +166,8 @@ export function wrapCallable<T, R>(name: string, handler: Handler<T, R>): Handle
         errorCode: code,
         errorMessage: isHttpsError ? message : (err as Error).message,
         durationMs: Date.now() - start,
+        authCheck: authCheck.outcome,
+        authCheckMs: authCheck.durationMs,
         extra: { sentryId, clientErrorId },
         ...appCheckFields(req),
       });

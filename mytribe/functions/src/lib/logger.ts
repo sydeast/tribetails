@@ -25,6 +25,18 @@ export interface LogFields {
    */
   appCheck?: 'valid' | 'invalid' | 'absent';
   origin?: string;
+  /**
+   * #557 session-revocation check, top-level for the same reason `appCheck` is:
+   * enforcing it fleet-wide was a cost decision, and the cost is a Logs
+   * Explorer aggregation over `jsonPayload.authCheck` / `jsonPayload.authCheckMs`
+   * — not a number anyone could honestly guess up front. 'skipped' =
+   * unauthenticated call, 'hit'/'miss' = the per-instance TTL cache, 'error' =
+   * the Identity Toolkit lookup failed and the call was let through, 'revoked'
+   * = the call was refused because the session was over, 'not-run' = the App
+   * Check gate above it (#556) refused first, so no lookup was reached.
+   */
+  authCheck?: 'not-run' | 'skipped' | 'hit' | 'miss' | 'error' | 'revoked';
+  authCheckMs?: number;
   extra?: Record<string, unknown>;
 }
 
