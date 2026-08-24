@@ -241,6 +241,7 @@ fun KinTaleReportScreen(
                     if (state.template.visitNotesEnabled) {
                         NarrativeSection(
                             bodyCopy = state.report.bodyCopy,
+                            bodyError = state.bodyError,
                             onChange = viewModel::updateBodyCopy,
                             onBlur = viewModel::persistDraft,
                             isGenerating = state.isGenerating,
@@ -402,10 +403,24 @@ fun KinTaleReportScreen(
                     label = if (state.isSending) "Sending..." else kinTaleSendLabel(state.session?.kinfolkName.orEmpty()),
                     onClick = { viewModel.send() },
                     modifier = Modifier.weight(1f),
-                    enabled = !state.isSending && !isSent,
+                    // #552: Save stays live while a rule is broken, Send does not.
+                    // A draft with a dash in it is still a draft; what it is not is
+                    // something the kinfolk should receive.
+                    enabled = !state.isSending && !isSent && state.sendBlocker == null,
                     loading = state.isSending,
                     leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(18.dp)) }
                 )
+            }
+            // Why Send is off, next to the button that is off. A disabled primary
+            // with no reason beside it is the operator's problem to guess.
+            if (!isSent) {
+                state.sendBlocker?.let { blocker ->
+                    Text(
+                        blocker,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.error,
+                    )
+                }
             }
             }
         }
@@ -469,6 +484,17 @@ private fun ReportCover(
                     .fillMaxWidth()
                     .onFocusChanged { focus -> if (!focus.isFocused) onTitleBlur() },
             )
+            // #552: said WHILE the operator is typing, not after they hit Send.
+            // The dash rule is about a character they are putting in right now,
+            // and telling them at the send boundary means retyping a headline
+            // they had already finished.
+            state.titleError?.let { message ->
+                Text(
+                    message,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.background,
+                )
+            }
             Text(
                 "From $author for $recipient",
                 style = if (hasTitle) {
@@ -487,6 +513,8 @@ private fun ReportCover(
 @Composable
 private fun NarrativeSection(
     bodyCopy: String,
+    /** #552: the body's rule break, shown live under the field. Null when clean. */
+    bodyError: String?,
     onChange: (String) -> Unit,
     onBlur: () -> Unit,
     isGenerating: Boolean,
@@ -507,6 +535,14 @@ private fun NarrativeSection(
                 .heightIn(min = 160.dp)
                 .onFocusChanged { focus -> if (!focus.isFocused) onBlur() },
         )
+        bodyError?.let { message ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                message,
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.error,
+            )
+        }
         Spacer(Modifier.height(8.dp))
         GhostButton(
             label = if (isGenerating) "Auntie's writing…" else "Generate draft",

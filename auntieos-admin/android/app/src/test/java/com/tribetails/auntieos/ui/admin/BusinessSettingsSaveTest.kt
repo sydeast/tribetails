@@ -103,6 +103,65 @@ class AdminSettingsBusinessSettingsSaveTest {
     }
 
     /**
+     * #517: the three Booking behavior toggles, through the exact call the panel
+     * makes (`viewModel.updateBusinessSettings(settings.copy(field = next))`).
+     *
+     * Two of these already shipped as working switches here while the wasm admin
+     * drew them a second time as permanently disabled placeholders; the third,
+     * "Block bookings during busy events", was a placeholder and nothing else.
+     * All three now exist once per surface, so all three are pinned to the write.
+     *
+     * The busy-block one is flipped OFF-ward on purpose: `enableConflictDetection`
+     * defaults to `true`, so switching it on from the loaded default would
+     * produce an empty diff and prove nothing.
+     */
+    @Test
+    fun `each booking-behavior toggle writes its own field and nothing else`() = runTest(testDispatcher) {
+        val autoConfirm = captureChanges()
+        val vmA = loadedViewModel()
+        vmA.updateBusinessSettings(vmA.uiState.value.businessSettings.copy(autoConfirmRepeatKinfolk = true))
+        advanceUntilIdle()
+        assertEquals(mapOf<String, Any?>("autoConfirmRepeatKinfolk" to true), autoConfirm.captured)
+
+        val snap = captureChanges()
+        val vmB = loadedViewModel()
+        vmB.updateBusinessSettings(vmB.uiState.value.businessSettings.copy(snapRescheduleTo15Min = true))
+        advanceUntilIdle()
+        assertEquals(mapOf<String, Any?>("snapRescheduleTo15Min" to true), snap.captured)
+
+        val busyBlock = captureChanges()
+        val vmC = loadedViewModel()
+        vmC.updateBusinessSettings(vmC.uiState.value.businessSettings.copy(enableConflictDetection = false))
+        advanceUntilIdle()
+        assertEquals(mapOf<String, Any?>("enableConflictDetection" to false), busyBlock.captured)
+    }
+
+    /**
+     * #517: and it reads back. A switch whose new value is not what the screen
+     * shows after the save is the same defect the placeholder rows were, one
+     * step later.
+     */
+    @Test
+    fun `the busy-block switch reads back at its saved value`() = runTest(testDispatcher) {
+        captureChanges()
+        val vm = loadedViewModel()
+        assertTrue(
+            "the model default arms the gate",
+            vm.uiState.value.businessSettings.enableConflictDetection,
+        )
+
+        vm.updateBusinessSettings(vm.uiState.value.businessSettings.copy(enableConflictDetection = false))
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.businessSettings.enableConflictDetection)
+
+        // A fresh load off a document that now stores `false` shows it off.
+        coEvery { repo.getBusinessSettings() } returns
+            Result.success(stored.copy(enableConflictDetection = false))
+        val reloaded = loadedViewModel()
+        assertFalse(reloaded.uiState.value.businessSettings.enableConflictDetection)
+    }
+
+    /**
      * THE CONCURRENT-EDIT CASE, and the reason this fix exists.
      *
      * An operator opens Settings on the phone. While it sits there, someone

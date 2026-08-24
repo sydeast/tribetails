@@ -67,6 +67,31 @@ class BusinessSettingsDiffTest {
         )
     }
 
+    /**
+     * #517: "Block bookings during busy events" is now a real row on the admin
+     * Settings screen (`AdminSettingsScreen`'s BookingBehaviorPanel), and the
+     * server reads the field it writes before every booking. Turning it OFF is
+     * the edit that matters -- the model default is `true`, so an off-switch that
+     * did not reach the diff would leave the gate armed while the UI said it was
+     * not.
+     */
+    @Test
+    fun `turning the busy-block gate off is a real write, and so is turning it back on`() {
+        val off = loaded.copy(enableConflictDetection = false)
+        assertEquals(
+            mapOf<String, Any?>("enableConflictDetection" to false),
+            businessSettingsFieldChanges(loaded, off),
+        )
+        assertEquals(
+            mapOf<String, Any?>("enableConflictDetection" to true),
+            businessSettingsFieldChanges(off, off.copy(enableConflictDetection = true)),
+        )
+        assertEquals(
+            emptyMap<String, Any?>(),
+            businessSettingsFieldChanges(off, off.copy()),
+        )
+    }
+
     /** The enum goes out as its NAME, which is what the old whole-object write produced. */
     @Test
     fun `tracking accuracy is written as the enum name`() {

@@ -11,6 +11,7 @@ import {
   utcDateRangeForVisits,
   loadGoogleBusySlots,
   guardBookingBusyConflict,
+  isBusyConflictBlockingEnabled,
   BOOKING_BUSY_CONFLICT_CODE,
   type DecodedBusySlot,
 } from '../src/lib/bookingBusyConflict';
@@ -376,5 +377,110 @@ describe('guardBookingBusyConflict', () => {
       override: true,
     });
     expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+});
+
+// ── "Block bookings during busy events" (issue #517) ────────────────────────
+
+/**
+ * The differential pair the issue's acceptance asks for: ONE conflict fixture,
+ * checked with the operator's switch on and again with it off. The first case
+ * is what the switch buys; the second is the proof it is a real switch and not
+ * a stored boolean nothing reads. Flip `enableConflictDetection` and the first
+ * test fails, which is the point of writing them as a pair.
+ */
+describe('guardBookingBusyConflict — enableConflictDetection gates the refusal', () => {
+  /** One visit landing squarely inside one imported Google busy block. */
+  function conflictingCall(settings: Record<string, unknown> | null) {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': settings },
+      queryDocs: {
+        booking_time_slots: [
+          { id: 'gbi-1', data: { date: '2026-08-07', startTime: '14:00', endTime: '15:00', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    return guardBookingBusyConflict({
+      firestore: ctx.db as any,
+      visits: [{ startTimeMs: Date.parse('2026-08-07T14:15:00.000Z'), endTimeMs: Date.parse('2026-08-07T14:45:00.000Z') }],
+      actorUid: 'u1',
+      actorRole: 'PRIMARY',
+    });
+  }
+
+  it('ON: refuses the booking that lands on the imported busy block', async () => {
+    await expect(conflictingCall({ enableConflictDetection: true })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: BOOKING_BUSY_CONFLICT_CODE },
+    });
+  });
+
+  it('OFF: admits the SAME booking on the SAME busy block', async () => {
+    await expect(conflictingCall({ enableConflictDetection: false })).resolves.toBeUndefined();
+  });
+
+  it('OFF does not audit: nothing was overridden by a person, the gate is just not armed', async () => {
+    await conflictingCall({ enableConflictDetection: false });
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+
+  it('absent field means ON, so a settings doc written before the field still refuses', async () => {
+    await expect(conflictingCall({ businessName: 'TribeTails' })).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+  });
+
+  it('a missing settings doc means ON, never a silently open gate', async () => {
+    await expect(conflictingCall(null)).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('reads settings only when a conflict was actually found', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { enableConflictDetection: false } },
+      queryDocs: {
+        booking_time_slots: [
+          { id: 'gbi-1', data: { date: '2026-08-07', startTime: '09:00', endTime: '10:00', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    await guardBookingBusyConflict({
+      firestore: ctx.db as any,
+      visits: [{ startTimeMs: Date.parse('2026-08-07T14:00:00.000Z'), endTimeMs: Date.parse('2026-08-07T15:00:00.000Z') }],
+      actorUid: 'u1',
+      actorRole: 'PRIMARY',
+    });
+    expect(ctx.db.doc('business_settings/business_settings').get).not.toHaveBeenCalled();
+  });
+
+  it('OFF still admits when the caller also passed override (no double refusal path)', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { enableConflictDetection: false } },
+      queryDocs: {
+        booking_time_slots: [
+          { id: 'gbi-1', data: { date: '2026-08-07', startTime: '14:00', endTime: '15:00', source: 'GOOGLE_BUSY_IMPORT' } },
+        ],
+      },
+    });
+    await guardBookingBusyConflict({
+      firestore: ctx.db as any,
+      visits: [{ startTimeMs: Date.parse('2026-08-07T14:15:00.000Z'), endTimeMs: Date.parse('2026-08-07T14:45:00.000Z') }],
+      actorUid: 'admin1',
+      actorRole: 'AUNTIE',
+      override: true,
+    });
+    expect(mocks.writeAuditEntryFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('isBusyConflictBlockingEnabled', () => {
+  it('decodes only an explicit false as off', async () => {
+    const on = buildDbMock({ docs: { 'business_settings/business_settings': { enableConflictDetection: true } } });
+    const off = buildDbMock({ docs: { 'business_settings/business_settings': { enableConflictDetection: false } } });
+    const absent = buildDbMock({ docs: { 'business_settings/business_settings': {} } });
+    const missing = buildDbMock({});
+    expect(await isBusyConflictBlockingEnabled(on.db as any)).toBe(true);
+    expect(await isBusyConflictBlockingEnabled(off.db as any)).toBe(false);
+    expect(await isBusyConflictBlockingEnabled(absent.db as any)).toBe(true);
+    expect(await isBusyConflictBlockingEnabled(missing.db as any)).toBe(true);
   });
 });

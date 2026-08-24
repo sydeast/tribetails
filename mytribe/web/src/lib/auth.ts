@@ -14,8 +14,10 @@ import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 // neither side touches an uninitialized binding during module evaluation. The
 // old dynamic import here never split a chunk anyway — activeTribe is
 // statically imported by the router and most screens.
-import { clearAccess } from './activeTribe';
+import { signOutAllDevices } from '../api/authApi';
+import { clearAccess, clearActiveTribeSession } from './activeTribe';
 import { auth, activateAppCheck } from './firebase';
+import { queryClient } from './queryClient';
 
 /**
  * reCAPTCHA Enterprise bootstrap.
@@ -116,27 +118,118 @@ export async function resendVerificationEmail(): Promise<void> {
   await sendEmailVerification(user);
 }
 
-export async function signOut(): Promise<void> {
-  // Best-effort, before the auth state that authorizes unregisterFcmToken's
-  // caller-owns-this-token check disappears. Lazy import: push.ts pulls in
-  // firebase/messaging, no need to load it on every module init.
-  const { unregisterForPush } = await import('./push');
-  await unregisterForPush();
+/**
+ * How long sign-out waits on the two calls that have to happen while the
+ * session is still valid, before it stops waiting and ends the session anyway.
+ *
+ * Four seconds because both are ordinary callables (`lib/fns.ts` gives them a
+ * 20s deadline of their own) and neither is worth more than a moment of a
+ * kinfolk's patience. What the number must NOT be is "however long they take":
+ * see #539 below.
+ */
+export const SIGN_OUT_CLEANUP_TIMEOUT_MS = 4_000;
 
-  await firebaseSignOut(auth);
-  clearAccess();
+/** Resolves when `work` settles or the timeout elapses, whichever comes first. Never rejects. */
+async function bestEffort(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * End the session.
+ *
+ * #539 — "clicking the signout does not honor logout. users can click browser
+ * back or forward to regain access without logging in again." The shape of that
+ * defect was an ordering one, and it is worth naming because the old code reads
+ * perfectly reasonably:
+ *
+ *   1. it AWAITED push cleanup — a dynamic `import()` plus a network round trip
+ *      — before touching the auth session at all. A rejected chunk fetch or a
+ *      stalled callable therefore meant `firebaseSignOut` never ran. Nothing
+ *      surfaced: `useSignOut`'s catch quietly re-enabled the button, and the
+ *      kinfolk stayed signed in on a device they believed they had left.
+ *   2. every other part of teardown — the route guards, the React Query cache,
+ *      the persisted tribe pick — was delegated to `window.location.reload()`,
+ *      which is the last line of a function whose first line could hang.
+ *
+ * So the fix is an order, not a trick. Everything that needs a live session is
+ * time-boxed and best-effort; the session teardown itself is unconditional; the
+ * caches are purged explicitly rather than by reloading over them; and the
+ * reload stays as the final flourish rather than the load-bearing step.
+ *
+ * Rejects only if Firebase itself refuses to sign out, which is the one case
+ * where the kinfolk really is still signed in and the button should come back.
+ */
+export async function signOut(): Promise<void> {
+  // Read BEFORE the sign-out; `auth.currentUser` is null afterwards and the
+  // persisted tribe pick is keyed by uid.
+  const uid = auth.currentUser?.uid ?? null;
+
+  // Both of these need the ID token that is about to go away, so they go first
+  // — but they go first with a clock on them. Lazy import for push.ts, which
+  // pulls in firebase/messaging; no need to load that on every module init.
+  await bestEffort(
+    Promise.all([
+      import('./push').then(({ unregisterForPush }) => unregisterForPush()),
+      // Ends the session server-side. Local sign-out only drops this browser's
+      // copy of the refresh token; the token itself stays valid until revoked.
+      // See api/authApi.ts for exactly what this does and does not cover.
+      signOutAllDevices(),
+    ]),
+    SIGN_OUT_CLEANUP_TIMEOUT_MS,
+  );
+
+  try {
+    await firebaseSignOut(auth);
+  } finally {
+    // Even a failed sign-out leaves nothing of this account cached: the caches
+    // are worthless to a session that is on its way out either way, and a purge
+    // that only runs on the happy path is not a purge.
+    purgeSessionCaches(uid);
+  }
 
   // S7-BLOCKER-1: if App Check activated during this session, its Enterprise
   // api.js still owns `grecaptcha`, and an in-SPA hop to /signin (or the
   // claim screen's "Sign out and continue") would hit the collision on the
   // next sign-in. A full reload gives the signed-out page a clean slate and
   // preserves the current URL (claim links keep their ?invite= param).
-  // try/catch: jsdom throws "Not implemented: navigation" on reload.
+  //
+  // No longer load-bearing, and that is the point of #539: by the time this
+  // runs the auth store has already flipped, router.tsx has already re-run
+  // every guard on the mounted route, and the caches above are already empty.
+  // If the reload never happens — jsdom throws "Not implemented: navigation",
+  // a browser may refuse it mid-unload — the session is still over.
   try {
     window.location.reload();
   } catch {
     // Test environment; the auth listener above already flipped state.
   }
+}
+
+/**
+ * Everything this browser still holds about the account that just left.
+ *
+ * The Firebase SDK clears its own persisted user. It knows nothing about the
+ * three caches this app keeps on top of that, and any one of them left behind
+ * is the previous kinfolk's household sitting in memory, ready to paint the
+ * moment an authenticated route mounts again.
+ */
+function purgeSessionCaches(uid: string | null): void {
+  clearAccess();
+  // Every screen's data, keyed by kinfolk id. `clear()` and not
+  // `removeQueries()`: there is no query in here that a signed-out visitor
+  // should keep.
+  queryClient.clear();
+  if (uid !== null) clearActiveTribeSession(uid);
 }
 
 /**
@@ -208,6 +301,19 @@ export function useAuth(): AuthState {
 /** Non-reactive read for router guards. */
 export function getAuthState(): AuthState {
   return currentState;
+}
+
+/**
+ * Subscribe to auth-state transitions outside React (#539).
+ *
+ * `useAuth` covers components. The router is not a component: its guards run
+ * on navigation and on nothing else, so a session that ends while a screen is
+ * already mounted reaches no guard at all — the authenticated screen simply
+ * stays up until something else moves. router.tsx subscribes here so the end of
+ * a session counts as a reason to re-run them. Returns an unsubscribe.
+ */
+export function subscribeAuthState(listener: () => void): () => void {
+  return subscribe(listener);
 }
 
 /** Resolves once the initial auth state is known (signedIn or signedOut). */

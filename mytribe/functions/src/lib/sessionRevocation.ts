@@ -83,8 +83,11 @@ import { captureFunctionError } from './sentry';
  * for an exact check at full cost; there is no env var that disables the check.
  *
  * `wrapCallable` logs `authCheckMs` and `authCheck` (`hit` / `miss` / `error` /
- * `skipped` / `revoked`) on every invocation, which is how the real cost gets
- * measured in production instead of guessed at here.
+ * `skipped` / `revoked` / `not-run`) on every invocation, which is how the real
+ * cost gets measured in production instead of guessed at here. `not-run` is the
+ * App Check gate (#556) having refused before this one was reached; it is kept
+ * apart from `skipped` so one gate's refusals cannot be read as the other's
+ * anonymous traffic.
  */
 
 /** Machine-readable `details.reason` the clients branch on. */
@@ -170,7 +173,13 @@ export function resetSessionRevocationCacheForTest(): void {
   cache.clear();
 }
 
-export type AuthCheckOutcome = 'skipped' | 'hit' | 'miss' | 'error' | 'revoked';
+export type AuthCheckOutcome =
+  | 'not-run'
+  | 'skipped'
+  | 'hit'
+  | 'miss'
+  | 'error'
+  | 'revoked';
 
 export interface RevocationCheck {
   outcome: AuthCheckOutcome;

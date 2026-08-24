@@ -19,14 +19,29 @@ vi.mock('../src/lib/sessionRevocation', () => ({
 }));
 const writeAuditEntryMock = mocks.writeAuditEntryMock;
 const assertSessionNotRevokedMock = mocks.assertSessionNotRevokedMock;
+const securityDocGet = vi.fn().mockResolvedValue({ data: () => ({ appCheckMode: 'off' }) });
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: () => ({ collection: () => ({ doc: () => ({ get: securityDocGet }) }) }),
+}));
+
+/** The one callable in cohort 1 — see src/lib/appCheckPolicy.ts. */
+const COHORT_FN = 'getBusinessClosures';
+
+async function setMode(mode: 'off' | 'log' | 'enforce'): Promise<void> {
+  securityDocGet.mockResolvedValue({ data: () => ({ appCheckMode: mode }) });
+  const { resetAppCheckModeCache } = await import('../src/lib/appCheckPolicy');
+  resetAppCheckModeCache();
+}
 
 describe('wrapCallable', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     logEventMock.mockClear();
     writeAuditEntryMock.mockClear();
     captureMock.mockClear();
     assertSessionNotRevokedMock.mockReset();
     assertSessionNotRevokedMock.mockResolvedValue({ outcome: 'miss', durationMs: 7 });
+    securityDocGet.mockClear();
+    await setMode('off');
   });
 
   it('O-3 L1 telemetry: logs appCheck="absent" + no origin field when req.app/origin are missing', async () => {
@@ -202,5 +217,193 @@ describe('wrapCallable', () => {
     expect(logEventMock).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'getMyHome.failure', authCheck: 'error', authCheckMs: 42 }),
     );
+  });
+
+  /**
+   * Issue #556, backend half. Before this, `enforceAppCheck` appeared nowhere
+   * in the codebase and no wrapper consulted `req.app` for anything but a log
+   * line, so an unattested request was served exactly like an attested one on
+   * every one of the ~230 callables. These pin the L2 gate: what it refuses,
+   * what it merely records, and what it must never touch.
+   */
+  describe('O-3 L2 enforcement', () => {
+    it('refuses a cohort callable with no App Check token when the mode is enforce', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const handler = vi.fn().mockResolvedValue({ ok: true });
+      const wrapped = wrapCallable(COHORT_FN, handler);
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
+        code: 'unauthenticated',
+      });
+      // Refused BEFORE the handler, which is the point: an unattested request
+      // must not reach the work.
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('refuses a cohort callable whose token failed verification', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(
+        wrapped({
+          auth: { uid: 'u1' },
+          rawRequest: { headers: { 'x-firebase-appcheck': 'forged' } },
+        } as any),
+      ).rejects.toMatchObject({ code: 'unauthenticated' });
+    });
+
+    it('serves a cohort callable that carries a verified token', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(
+        wrapped({ auth: { uid: 'u1' }, app: { appId: 'app-1' } } as any),
+      ).resolves.toEqual({ ok: true });
+    });
+
+    it('serves an unattested cohort callable in log mode, and says it would not have', async () => {
+      await setMode('log');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).resolves.toEqual({ ok: true });
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: `${COHORT_FN}.appCheck.wouldReject`,
+          appCheck: 'absent',
+          extra: { appCheckMode: 'log' },
+        }),
+      );
+    });
+
+    it('leaves every callable outside the cohort alone, even in enforce mode', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable('getMyHome', async () => ({ ok: true }));
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).resolves.toEqual({ ok: true });
+      // And it does not even read the settings doc: the gate is free for the
+      // ~230 callables it does not govern.
+      expect(securityDocGet).not.toHaveBeenCalled();
+    });
+
+    it('logs a refusal as a failure and audits it', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toBeTruthy();
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: `${COHORT_FN}.appCheck.rejected` }),
+      );
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: `${COHORT_FN}.failure`, errorCode: 'unauthenticated' }),
+      );
+      expect(writeAuditEntryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'FAILURE', event: 'ERROR_FUNCTION_FAILURE' }),
+      );
+      // 'unauthenticated' is user-fault: refusing a request that is working as
+      // designed must not fill Sentry.
+      expect(captureMock).not.toHaveBeenCalled();
+    });
+
+    it('logs appCheck="invalid" for a rejected token instead of calling it absent', async () => {
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable('getMyHome', async () => ({ ok: true }));
+
+      await wrapped({
+        auth: { uid: 'u1' },
+        rawRequest: { headers: { 'x-firebase-appcheck': 'expired.token' } },
+      } as any);
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'getMyHome.success', appCheck: 'invalid' }),
+      );
+    });
+  });
+
+  /**
+   * The two pre-handler gates, together. #556's App Check gate and #557's
+   * revocation gate landed independently and both refuse with
+   * `unauthenticated`, so the thing worth pinning is that they stay TOLD
+   * APART: by the caller, which branches on `details.reason` before signing
+   * anybody out, and in the logs, where the cost aggregation must not read
+   * one gate's refusals as the other's free traffic.
+   */
+  describe('App Check (#556) and session revocation (#557) together', () => {
+    it('runs App Check first, so a refused request never pays for the revocation lookup', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({
+        code: 'unauthenticated',
+      });
+
+      expect(assertSessionNotRevokedMock).not.toHaveBeenCalled();
+    });
+
+    it('logs an App Check refusal as authCheck="not-run", never as "skipped"', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toBeTruthy();
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: `${COHORT_FN}.failure`, authCheck: 'not-run' }),
+      );
+    });
+
+    it('does not tag an App Check refusal with a session reason, so no client signs out over it', async () => {
+      await setMode('enforce');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      const refusal = await wrapped({ auth: { uid: 'u1' } } as any).catch((e: unknown) => e);
+
+      expect((refusal as { details?: unknown }).details).toBeUndefined();
+      expect((refusal as Error).message).not.toContain('session-revoked');
+    });
+
+    it('still refuses a revoked session on a cohort callable that DID attest', async () => {
+      const { HttpsError } = await import('firebase-functions/v2/https');
+      await setMode('enforce');
+      assertSessionNotRevokedMock.mockRejectedValue(
+        new HttpsError('unauthenticated', 'ended (session-revoked)', { reason: 'session-revoked' }),
+      );
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      // A verified App Check token: the platform populates req.app.
+      await expect(
+        wrapped({ auth: { uid: 'u1' }, app: { appId: 'app-1' } } as any),
+      ).rejects.toMatchObject({ details: { reason: 'session-revoked' } });
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: `${COHORT_FN}.failure`,
+          authCheck: 'revoked',
+          appCheck: 'valid',
+        }),
+      );
+    });
+
+    it('log mode does not short-circuit the revocation gate', async () => {
+      await setMode('log');
+      const { wrapCallable } = await import('../src/lib/wrapCallable');
+      const wrapped = wrapCallable(COHORT_FN, async () => ({ ok: true }));
+
+      await wrapped({ auth: { uid: 'u1' } } as any);
+
+      expect(assertSessionNotRevokedMock).toHaveBeenCalledTimes(1);
+      expect(logEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({ event: `${COHORT_FN}.appCheck.wouldReject` }),
+      );
+    });
   });
 });

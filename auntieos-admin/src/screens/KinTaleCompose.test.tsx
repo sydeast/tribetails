@@ -41,6 +41,7 @@ import {
   kinTaleSendLabel,
   scaffoldKinTaleDraft,
   draftFromKinTaleEntry,
+  pickableSessions,
 } from './KinTaleCompose';
 
 function report(over: Partial<KinTaleEntry> = {}): KinTaleEntry {
@@ -179,6 +180,84 @@ describe('KinTaleCompose: session picker (no kinTaleId/sessionId given)', () => 
     render(<KinTaleCompose onClose={vi.fn()} />);
     await user.click(await screen.findByText('The Alvarez Household'));
     expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The household profile's "New KinTale" (#552).
+ *
+ * `kinfolkId` was declared on the props and spread into `SessionPicker`, which
+ * never took it, so the narrowing this prop exists for did nothing and no test
+ * noticed. `pickableSessions` is the filter itself; the rendered cases pin that
+ * the screen actually calls it.
+ */
+describe('pickableSessions (pure): the household narrowing', () => {
+  it('keeps only the named household when one is given', () => {
+    const picked = pickableSessions(
+      [
+        session({ _id: 'a', kinfolkId: 'kf1' }),
+        session({ _id: 'b', kinfolkId: 'kf2' }),
+        session({ _id: 'c', kinfolkId: 'kf1' }),
+      ],
+      'kf1',
+    );
+    expect(picked.map((s) => s._id)).toEqual(['a', 'c']);
+  });
+
+  it('still drops a session of the right household that has not happened yet', () => {
+    const picked = pickableSessions(
+      [
+        session({ _id: 'a', kinfolkId: 'kf1', status: 'SCHEDULED' }),
+        session({ _id: 'b', kinfolkId: 'kf1', status: 'COMPLETED' }),
+      ],
+      'kf1',
+    );
+    expect(picked.map((s) => s._id)).toEqual(['b']);
+  });
+
+  it('a session with no kinfolkId at all belongs to no household, so a scoped picker never offers it', () => {
+    const orphan = session({ _id: 'a' });
+    delete (orphan as { kinfolkId?: string }).kinfolkId;
+    expect(pickableSessions([orphan], 'kf1')).toEqual([]);
+    // Unscoped it is still a real departed visit, and still offered.
+    expect(pickableSessions([orphan]).map((s) => s._id)).toEqual(['a']);
+  });
+
+  it('an absent or blank household means every household, which is what the KinTales list passes', () => {
+    const data = [session({ _id: 'a', kinfolkId: 'kf1' }), session({ _id: 'b', kinfolkId: 'kf2' })];
+    expect(pickableSessions(data).map((s) => s._id)).toEqual(['a', 'b']);
+    expect(pickableSessions(data, '').map((s) => s._id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('KinTaleCompose: session picker scoped to one household', () => {
+  it('offers only this household s visits when opened from a profile', async () => {
+    mockStreams({
+      sessions: {
+        status: 'ready',
+        data: [
+          session({ _id: 'a', kinfolkId: 'kf1', kinfolkName: 'The Whitfields' }),
+          session({ _id: 'b', kinfolkId: 'kf2', kinfolkName: 'The Alvarez Household' }),
+        ],
+      },
+    });
+    render(<KinTaleCompose kinfolkId="kf1" onClose={vi.fn()} />);
+    expect(await screen.findByText('The Whitfields')).toBeInTheDocument();
+    expect(screen.queryByText('The Alvarez Household')).toBeNull();
+  });
+
+  it('says the household has no visits rather than showing another household s', async () => {
+    mockStreams({
+      sessions: {
+        status: 'ready',
+        data: [session({ _id: 'b', kinfolkId: 'kf2', kinfolkName: 'The Alvarez Household' })],
+      },
+    });
+    render(<KinTaleCompose kinfolkId="kf1" onClose={vi.fn()} />);
+    expect(
+      await screen.findByText(/no departed or completed visits for this household yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('The Alvarez Household')).toBeNull();
   });
 });
 

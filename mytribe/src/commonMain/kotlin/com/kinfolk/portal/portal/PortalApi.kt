@@ -314,6 +314,36 @@ class PortalApi(private val fns: FunctionsClient) {
         return ServiceCatalog(services = list)
     }
 
+    /**
+     * C1 / #544: which dates inside `[fromDate, toDate]` the business is
+     * closed on, so the booking wizard's month picker never offers a date
+     * `requestBooking` will refuse anyway.
+     *
+     * `business_settings` (where `companyHolidays` lives) is admin-only in
+     * firestore.rules, so this callable is the only seam a household has on
+     * it; it resolves the same yearly-recurrence math the server's own
+     * booking guard uses, so what the picker marks and what the server will
+     * refuse cannot drift. Both dates are `YYYY-MM-DD`, inclusive, and the
+     * server caps the span at `MAX_RANGE_DAYS` (120) — the same number as
+     * `BOOKING_HORIZON_DAYS`, which is why one call answers every month the
+     * picker can page to.
+     */
+    suspend fun getBusinessClosures(fromDate: String, toDate: String): List<BusinessClosure> {
+        val raw = fns.call(
+            "getBusinessClosures",
+            buildJsonObject {
+                put("fromDate", fromDate)
+                put("toDate", toDate)
+            },
+        )
+        return (raw["closures"] as? JsonArray)?.mapNotNull { el ->
+            val o = el.jsonObject
+            val date = o["date"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: "Closed"
+            BusinessClosure(date = date, name = name)
+        }.orEmpty()
+    }
+
     // -- Mapbox autocomplete (Function-proxied; secret access token never ships in the bundle) --
     suspend fun mapboxSearch(query: String, sessionToken: String, limit: Int = 5, country: String? = null): List<MapboxSuggestion> {
         if (query.length < 2) return emptyList()
@@ -1065,6 +1095,30 @@ class PortalApi(private val fns: FunctionsClient) {
 
     suspend fun unregisterFcmToken(token: String) {
         fns.call("unregisterFcmToken", buildJsonObject { put("token", token) })
+    }
+    // -- Session lifetime --
+    /**
+     * Revokes every refresh token issued to the signed-in account (#539).
+     *
+     * WHAT THIS BUYS. The client-side sign-out is purely local: it drops this
+     * device's persisted session and nothing else. The refresh token it discards
+     * stays valid server-side, so a copy of it lifted from storage keeps minting
+     * fresh ID tokens indefinitely. This is what actually ends the session.
+     *
+     * WHAT IT DOES NOT BUY, said plainly so nobody over-trusts it. ID tokens
+     * already minted stay valid until they expire (up to an hour): `onCall` checks
+     * signature and expiry, not revocation. This stops the session being RENEWED.
+     *
+     * IT IS ALL DEVICES. Firebase Auth has no per-device revoke — the operation is
+     * uid-scoped — so signing out on the phone ends the browser's session too. For
+     * a shared-device sign-out that is the safer default, but it is a real
+     * behaviour rather than an implementation detail.
+     *
+     * Best effort at the call site, always: a kinfolk with no signal still has to
+     * be able to get out of their account. See KinfolkPortalAppGuarded's onSignOut.
+     */
+    suspend fun signOutAllDevices() {
+        fns.call("signOutAllDevices", buildJsonObject { })
     }
 
     // -- Booking notes (kinfolk-facing subcollection) --

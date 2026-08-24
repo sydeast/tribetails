@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import { RouterProvider } from '@tanstack/react-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 
 // Self-hosted fonts (no font CDN at runtime).
 import '@fontsource/young-serif/400.css';
@@ -29,8 +29,9 @@ import './styles/signedImageUpload.css';
 import './styles/breedfield.css';
 
 import './lib/firebase'; // initialize Firebase before anything else touches auth
-import { ensureRecaptcha } from './lib/auth';
+import { bootAttestation } from './lib/boot';
 import { initSentry } from './lib/sentry';
+import { queryClient } from './lib/queryClient';
 import { router } from './router';
 
 // Start crash reporting before the app renders, so an error during first paint
@@ -92,9 +93,11 @@ if (new URLSearchParams(window.location.search).has('__record')) {
 }
 
 
-// Kick off the reCAPTCHA interceptor install immediately (the Kotlin app had
-// a race where sign-in could beat it; every auth call also awaits it).
-void ensureRecaptcha();
+// Pick this page lifetime's ONE reCAPTCHA Enterprise loader: the auth
+// interceptor on a signed-out boot, App Check on a signed-in one. See
+// lib/boot.ts — the unconditional `ensureRecaptcha()` that used to sit here is
+// what made App Check unreachable for the whole life of the portal (#556).
+void bootAttestation();
 
 // Legacy hash deep links (#/claim/<id>) predate history routing. Rewrite them
 // to real URLs BEFORE the router binds; the old app had a hash-strip-before-
@@ -107,11 +110,6 @@ if (claimMatch) {
   window.history.replaceState(null, '', hash.slice(1) + window.location.search);
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: 1, refetchOnWindowFocus: false },
-  },
-});
 
 /**
  * Fail-loud fallback for an uncaught render error: never a white screen. Inline

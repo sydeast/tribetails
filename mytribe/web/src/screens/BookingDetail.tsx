@@ -227,7 +227,9 @@ export function BookingDetail() {
                 <div className="bk-field f1">
                   <div className="ic">{'\u{1F4CD}'}</div>
                   <div>
-                    <div className="lab">Service</div>
+                    {/* #542: same kinfolk-facing concept as the wizard's step 2 — this
+                        business sells by length of visit, so the word is a duration. */}
+                    <div className="lab">KinCare Duration</div>
                     <div className="val">
                       {found.serviceType ?? 'Visit'}
                       <small>{found.startTimeMs !== null ? weekdayTime(found.startTimeMs) : 'Time to be confirmed'}</small>
