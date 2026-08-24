@@ -4,7 +4,7 @@ Work-list for Stage 1 item 1A (Kin photo pipeline) + Phase 17.2 (branding). Gene
 
 ## Plumbing reality
 - Cloudinary upload + Firestore `MediaFile` metadata work on **web-wasm** (`platformUploadMedia`, `jsPickAndUpload`) and **android** (`MediaUploadManager`).
-- **Desktop (JVM) is stubbed for ALL media** (`platformUploadMedia` + picker return "mobile-only"). Every surface is dark on desktop until a JVM picker + Cloudinary upload lands.
+- **Corrected 2026-08-24 (#518):** desktop (JVM) single-file upload (`platformUploadMedia` -> `JvmMediaUpload.upload`, used by the admin/operator profile photo below) is REAL: JFileChooser -> sign-upload -> Cloudinary -> `media_files`. Only the BULK pickers (`platformPickAndUploadMedia`, `platformPickAndUploadKinTaleMedia` - rows #7/#8 below) still return the "mobile-only" stub.
 - Backend target enum already exists: `MediaEntityType = KINFOLK, KIN, HOUSEHOLD, VISIT_LOG, INVOICE, TRAINING, USER`.
 
 ## Surfaces
@@ -13,7 +13,7 @@ Work-list for Stage 1 item 1A (Kin photo pipeline) + Phase 17.2 (branding). Gene
 |---|---------|----------|---------|---------|-------------|
 | 1 | Login-screen logo | none | none | none | static; editable-logo = Phase 17.2 |
 | 2 | Shell upper-left logo (`BrandHeader`/`ShellTopBar`) | hard-coded paw | hard-coded | hard-coded | Decision 6 / 17.2 |
-| 3 | Admin/operator profile photo | STUB (badge not clickable, flag `settingsProfilePicUpload`) | STUB | REAL (`uploadAvatar`, USER) | web is the gap |
+| 3 | Admin/operator profile photo | wasm removed (#481); N/A | **Corrected 2026-08-24 (#518):** REAL: `JvmMediaUpload.upload` (JFileChooser -> sign-upload -> Cloudinary -> `media_files` + `setMediaProfilePhoto`); the avatar/camera-badge and the "Edit photo" button both trigger it | REAL (`uploadAvatar`, USER) | parity reached on both remaining clients; flag `settingsProfilePicUpload` is ALWAYS_ON on both |
 | 4 | Kinfolk (primary) profile photo | no affordance | no affordance | no affordance | `Kinfolk.profilePictureUrl` exists both sides, no upload UI anywhere |
 | 5 | Secondary kinfolk photo | none | none | none | household member = MyTribe (Decision 8) |
 | 6 | Kin (pet) photo | field exists, no upload UI | field exists, no upload UI | field exists, no upload UI | **Corrected 2026-08-04:** the field DOES exist on both sides, `auntieos-admin/src/api/directory.ts:164` and `Models.kt:248` ("Kin (pet) photo; parity with web"). Only the upload UI is missing |

@@ -105,6 +105,7 @@ import com.tribetails.auntieos.web.data.toggledStreamChannelLock
 import com.tribetails.auntieos.web.data.toggledStreamEnabledLock
 import com.tribetails.auntieos.web.data.withStreamGate
 import com.tribetails.auntieos.web.data.NotificationMatrix
+import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.NotificationOverride
 import com.tribetails.auntieos.web.data.UserProfile
 import com.tribetails.auntieos.web.data.WriteResult
@@ -165,9 +166,12 @@ import kotlinx.coroutines.launch
  * of those sections.
  *
  * Fail-loud notes:
- *  - Profile-picture upload ships dark (flags.settingsProfilePicUpload): no file picker
- *    exists, so the control stays disabled with a Not-wired banner instead of
- *    silently uploading an empty file.
+ *  - Profile-picture upload is LIVE (flags.settingsProfilePicUpload, ALWAYS_ON):
+ *    the avatar (with its camera badge) and the separate "Edit photo" button
+ *    both trigger the same pick -> upload-to-Cloudinary -> stamp pipeline (see
+ *    ProfilePanel/ProfileAvatar below). The flag can only disable it if a
+ *    caller constructs FeatureFlags directly (e.g. a test); a remote Firestore
+ *    override can never turn it off in prod (ALWAYS_ON, see App.kt).
  *  - Integration "status" pills reflect STATIC config in source, not a live health
  *    check, so they are labelled accordingly (no fake "Connected" glow).
  *  - The Google Calendar sync is server-backed (syncGoogleCalendarBusyEvents); the
@@ -726,9 +730,40 @@ internal fun ProfilePanel(
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val flags = LocalFeatureFlags.current
-    // Tracks the in-flight avatar upload so the Edit-photo button shows progress
+    // Tracks the in-flight avatar upload so the Edit-photo button (and the
+    // avatar/camera-badge, which triggers the same pipeline) show progress
     // and cannot be double-fired. Reset on Ok or Err (fail loud, never fake).
     var uploadingAvatar by remember { mutableStateOf(false) }
+
+    // Single upload trigger shared by the avatar/camera-badge and the "Edit
+    // photo" button below: pick a file -> upload to Cloudinary -> stamp
+    // users/{uid}.photoUrl. The actual two-step fail-loud logic lives in
+    // [runAvatarUploadPipeline] (extracted so a jvmTest can drive it with fake
+    // upload/stamp lambdas, with no live FirestoreClient/network required).
+    val triggerAvatarUpload: () -> Unit = {
+        uploadingAvatar = true
+        scope.launch {
+            runAvatarUploadPipeline(
+                upload = { client.uploadMedia(authUser.uid, "USER", byteArrayOf(), "image/jpeg") },
+                stamp  = { mediaId -> client.setMediaProfilePhoto(mediaId, "USER", authUser.uid) },
+                onPhotoUrl = onPhotoUrl,
+                onToast = onProfileToast,
+                onAuditSuccess = {
+                    AuditLog.fire(
+                        scope            = scope,
+                        client           = client,
+                        actorId          = authUser.uid,
+                        actionType       = "UPDATE_PROFILE_PHOTO",
+                        description      = "Updated profile photo",
+                        targetId         = authUser.uid,
+                        targetCollection = "users",
+                    )
+                },
+            )
+            uploadingAvatar = false
+        }
+    }
+
     DenPanel(title = "Profile", subtitle = "Who the kinfolk see on your KinTales and replies.") {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -743,6 +778,9 @@ internal fun ProfilePanel(
                     lastName    = lastName,
                     email       = authUser.email ?: "",
                 ).initials,
+                uploadEnabled = flags.settingsProfilePicUpload,
+                uploading = uploadingAvatar,
+                onUpload = triggerAvatarUpload,
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
@@ -774,51 +812,14 @@ internal fun ProfilePanel(
         // uploads to Cloudinary, and writes a media_files doc; setMediaProfilePhoto
         // then stamps users/{uid}.photoUrl + flips isProfilePhoto in one atomic admin
         // batch. Two-step is fail-loud: an upload Ok followed by a stamp Err surfaces
-        // "photo uploaded but profile save failed", never a fake success.
+        // "photo uploaded but profile save failed", never a fake success. This button
+        // and the avatar/camera-badge above both call [triggerAvatarUpload] - one
+        // pipeline, two entry points.
         if (flags.settingsProfilePicUpload) {
             GhostButton(
                 label   = if (uploadingAvatar) "Uploading photo" else "Edit photo",
                 enabled = !uploadingAvatar,
-                onClick = {
-                    uploadingAvatar = true
-                    scope.launch {
-                        when (val up = client.uploadMedia(authUser.uid, "USER", byteArrayOf(), "image/jpeg")) {
-                            is WriteResult.Err -> {
-                                onProfileToast("Photo upload failed: ${up.message}" to ToastKind.Error)
-                                uploadingAvatar = false
-                            }
-                            is WriteResult.Ok -> {
-                                val media = up.value
-                                if (media._id.isBlank() || media.storageUrl.isBlank()) {
-                                    // Cancelled picker / no asset: do not fake a success.
-                                    onProfileToast("No photo selected" to ToastKind.Error)
-                                    uploadingAvatar = false
-                                } else when (val stamp = client.setMediaProfilePhoto(media._id, "USER", authUser.uid)) {
-                                    is WriteResult.Ok -> {
-                                        onPhotoUrl(media.storageUrl)
-                                        AuditLog.fire(
-                                            scope            = scope,
-                                            client           = client,
-                                            actorId          = authUser.uid,
-                                            actionType       = "UPDATE_PROFILE_PHOTO",
-                                            description      = "Updated profile photo",
-                                            targetId         = authUser.uid,
-                                            targetCollection = "users",
-                                        )
-                                        onProfileToast("Profile photo updated" to ToastKind.Success)
-                                        uploadingAvatar = false
-                                    }
-                                    is WriteResult.Err -> {
-                                        onProfileToast(
-                                            "Photo uploaded but profile save failed: ${stamp.message}" to ToastKind.Error,
-                                        )
-                                        uploadingAvatar = false
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
+                onClick = triggerAvatarUpload,
             )
         } else {
             // Kill-switch OFF: photo upload is built + live by default (the if-branch
@@ -944,6 +945,46 @@ internal fun ProfilePanel(
 
         profileToast?.let { (msg, kind) ->
             StatusToast(visible = true, message = msg, kind = kind, onDismiss = { onProfileToast(null) })
+        }
+    }
+}
+
+/**
+ * #518: the testable core of [ProfilePanel]'s avatar-upload pipeline, pulled out of
+ * the composable so a jvmTest can drive it with fake [upload]/[stamp] lambdas - no
+ * live FirestoreClient, no network, no Cloudinary account required (the real call
+ * site passes `client::uploadMedia` / `client::setMediaProfilePhoto`, closing over
+ * the signed-in uid).
+ *
+ * Fail-loud, two-step: an upload [WriteResult.Ok] followed by a stamp
+ * [WriteResult.Err] surfaces "photo uploaded but profile save failed", never a fake
+ * success, and a cancelled/empty picker result (blank `_id`/`storageUrl`) is
+ * likewise never faked as a save.
+ */
+internal suspend fun runAvatarUploadPipeline(
+    upload: suspend () -> WriteResult<MediaFile>,
+    stamp: suspend (mediaId: String) -> WriteResult<Unit>,
+    onPhotoUrl: (String) -> Unit,
+    onToast: (Pair<String, ToastKind>) -> Unit,
+    onAuditSuccess: () -> Unit,
+) {
+    when (val up = upload()) {
+        is WriteResult.Err -> onToast("Photo upload failed: ${up.message}" to ToastKind.Error)
+        is WriteResult.Ok -> {
+            val media = up.value
+            if (media._id.isBlank() || media.storageUrl.isBlank()) {
+                // Cancelled picker / no asset: do not fake a success.
+                onToast("No photo selected" to ToastKind.Error)
+            } else when (val stamp2 = stamp(media._id)) {
+                is WriteResult.Ok -> {
+                    onPhotoUrl(media.storageUrl)
+                    onAuditSuccess()
+                    onToast("Profile photo updated" to ToastKind.Success)
+                }
+                is WriteResult.Err -> onToast(
+                    "Photo uploaded but profile save failed: ${stamp2.message}" to ToastKind.Error,
+                )
+            }
         }
     }
 }
@@ -3626,17 +3667,28 @@ private fun SchedulingPlaceholderRow(
 }
 
 /**
- * Profile avatar. Read-only until a real upload pipeline lands (flags.settingsProfilePicUpload).
- * The camera badge is a non-interactive hint, not a working upload button.
+ * Profile avatar. When [uploadEnabled] (flags.settingsProfilePicUpload, ALWAYS_ON
+ * in prod - see the module doc above), the whole avatar and its camera badge are
+ * a real upload affordance: tapping either calls [onUpload], the same
+ * pick -> upload-to-Cloudinary -> stamp pipeline the "Edit photo" button in
+ * [ProfilePanel] triggers (parity with Android's ProfilePanel, which makes the
+ * same avatar circle clickable). When the flag is off, the badge is inert and
+ * says so honestly rather than claiming an upload happened.
  */
 @Composable
-private fun ProfileAvatar(
+internal fun ProfileAvatar(
     photoUrl: String,
     initials: String,
+    uploadEnabled: Boolean,
+    uploading: Boolean,
+    onUpload: () -> Unit,
 ) {
     val c = AuntieTheme.colors
+    val clickable = uploadEnabled && !uploading
     Box(
-        modifier = Modifier.size(88.dp),
+        modifier = Modifier
+            .size(88.dp)
+            .let { if (clickable) it.clickable(onClick = onUpload) else it },
         contentAlignment = Alignment.Center,
     ) {
         AuntieAvatar(
@@ -3645,7 +3697,8 @@ private fun ProfileAvatar(
             glyph = if (initials.isBlank()) Lucide.User else null,
             size = 88.dp,
         )
-        // Camera badge: visual affordance only (upload is gated, see ProfilePanel banner).
+        // Camera badge: the same tap target as the avatar above it (both call
+        // onUpload); its label always matches what tapping it actually does.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -3656,7 +3709,11 @@ private fun ProfileAvatar(
         ) {
             Icon(
                 imageVector = Lucide.Camera,
-                contentDescription = "Picture upload not available",
+                contentDescription = when {
+                    !uploadEnabled -> "Profile photo upload disabled"
+                    uploading -> "Uploading profile photo"
+                    else -> "Upload profile photo"
+                },
                 tint = c.textFaint,
                 modifier = Modifier.size(14.dp),
             )

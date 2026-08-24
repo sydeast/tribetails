@@ -75,6 +75,12 @@ class AdminSettingsViewModel(
     // same shape BookingRepository / InvoiceRepository have. Default-constructed
     // so existing call sites are unchanged; JVM tests pass a mock.
     private val integrationsRepository: IntegrationsRepository = IntegrationsRepository(),
+    // #518: MediaUploadManager needs a real android.content.Context, which a plain
+    // JVM unit test cannot construct. Real call sites never pass this (it defaults
+    // to the production constructor); tests inject a mockk<MediaUploadManager>() so
+    // uploadAvatar/uploadLogo's success/failure branches are exercised without
+    // touching ContentResolver/OkHttp.
+    private val mediaUploadManagerFactory: (Context) -> MediaUploadManager = { ctx -> MediaUploadManager(ctx, repository) },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AdminSettingsUiState())
@@ -345,7 +351,7 @@ class AdminSettingsViewModel(
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploadingAvatar = true, error = null)
-            val manager = MediaUploadManager(context, repository)
+            val manager = mediaUploadManagerFactory(context)
             manager.uploadMedia(
                 uri = uri,
                 entityId = user.uid,
@@ -392,7 +398,7 @@ class AdminSettingsViewModel(
     fun uploadLogo(context: Context, uri: Uri) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isUploadingLogo = true, error = null)
-            val manager = MediaUploadManager(context, repository)
+            val manager = mediaUploadManagerFactory(context)
             manager.uploadMedia(
                 uri = uri,
                 entityId = "business_settings",

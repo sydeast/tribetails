@@ -47,7 +47,14 @@ internal object JvmMediaUpload {
     private val codec = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
     private val http = HttpClient(Java)
 
+    // Also doubles as the file-type gate for the picker branch below: the dialog
+    // itself only lets the user select one of these extensions
+    // (isAcceptAllFileFilterUsed = false), so [guessMime] can never resolve to
+    // anything outside this set for a picker-driven upload.
     private val IMAGE_EXTENSIONS = arrayOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic")
+
+    /** Parity with Android's `CloudinaryConfig.MAX_FILE_SIZE`. */
+    const val MAX_FILE_SIZE_BYTES: Long = 50L * 1024 * 1024
 
     suspend fun upload(
         entityId: String,
@@ -65,7 +72,13 @@ internal object JvmMediaUpload {
             Triple(picked.readBytes(), picked.name, guessMime(picked))
         }
         if (fileBytes.isEmpty()) return WriteResult.Err("Selected file is empty")
-
+        // Size validation: the JFileChooser filter (picker branch) restricts extension,
+        // not bytes, and the direct-bytes branch has no OS-level gate at all - so this is
+        // the one place both branches are checked. Fail-loud with the same wording
+        // pattern Android's MediaUploadManager uses (parity, #518).
+        if (fileBytes.size > MAX_FILE_SIZE_BYTES) {
+            return WriteResult.Err("Selected media exceeds the ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB limit")
+        }
         return try {
             // 2. Fetch a signed-upload grant from the same backend the web/Android apps use.
             val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Admin sign-in required before media upload")
