@@ -92,3 +92,18 @@
   border-radius: var(--radius-card);
   font-size: var(--type-body-md-size);
 }
+
+/* The stated (not asked) destination, shown when the route already settles it
+   (#397 S1). Reads as a sentence rather than a disabled form control: there is
+   nothing here to interact with, and a greyed-out select would invite a click
+   that can never do anything. */
+.media-upload__fixed-target {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-md-size);
+}
+
+.media-upload__fixed-target strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}

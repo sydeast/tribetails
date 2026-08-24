@@ -1,5 +1,6 @@
 import { useCallback, useId, useState } from 'react';
 import { uploadMediaFile, BUSINESS_ENTITY_ID, type UploadEntityType, type UploadStage } from '../api/mediaUpload';
+import { uploadFileError, MAX_UPLOAD_BYTES, formatMegabytes } from '../lib/mediaUploadLimits';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import './MediaUploadDialog.css';
@@ -9,11 +10,37 @@ export interface KinfolkOption {
   label: string;
 }
 
+/**
+ * A target the CALLER already knows, so the dialog does not ask (#397 S1).
+ *
+ * `screens/Media.tsx` is opened at `#/media/{type}/{id}`: the entity is the
+ * whole reason that screen exists, and asking "which household?" on a screen
+ * already titled with one is a question with exactly one right answer and
+ * several wrong ones an operator can pick by accident. The global Gallery spans
+ * every entity and has no such answer, so it keeps the picker.
+ *
+ * `entityType` is the UPLOAD enum (`KIN` / `KINFOLK`), which the caller derives
+ * from its route. It is neither the route's own `{type}` segment (`kin` /
+ * `household`) nor a stored row's `entityType`.
+ */
+export interface FixedUploadTarget {
+  entityType: UploadEntityType;
+  entityId: string;
+  /** What to call this target on screen, e.g. "Kin" or "Household". */
+  label: string;
+}
+
 interface MediaUploadDialogProps {
-  /** The household roster, for the KINFOLK target's picker (already streamed by Gallery.tsx; no separate fetch here). */
-  kinfolkOptions: KinfolkOption[];
+  /**
+   * The household roster, for the KINFOLK target's picker (already streamed by
+   * Gallery.tsx; no separate fetch here). Safely omitted when `fixedTarget` is
+   * set: there is nothing left to pick.
+   */
+  kinfolkOptions?: KinfolkOption[];
+  /** Uploads straight to this entity, with no target picker at all. See {@link FixedUploadTarget}. */
+  fixedTarget?: FixedUploadTarget;
   onClose: () => void;
-  /** Called once the doc actually lands in `media_files`. Gallery's own `useCollection` listener picks up the new row live; this only closes the dialog. */
+  /** Called once the doc actually lands in `media_files`. The caller's own `useCollection` listener picks up the new row live; this only closes the dialog. */
   onUploaded: () => void;
 }
 
@@ -51,6 +78,15 @@ function stageLabel(stage: UploadStage): string {
  *             media). `writeMediaFileDoc` omits `kinfolkId` entirely for this
  *             target, never stamps it blank.
  *
+ * With a `fixedTarget` (#397 S1, `screens/Media.tsx`) none of those three
+ * choices is offered: the entity comes from the route and the dialog states it
+ * instead of asking. The picker branches above stay for the global Gallery,
+ * which genuinely has a choice to make.
+ *
+ * FILE VALIDATION happens at PICK time (`lib/mediaUploadLimits.ts`), matching
+ * the caps Android has enforced all along: image/* or video/*, non-empty, at
+ * most 50MB. A refused file is not held at all, so "Upload" cannot send it.
+ *
  * Fail-loud + disabled-while-busy: the fieldset locks during the upload, the
  * Dialog cannot be dismissed mid-upload, and a rejected upload at ANY of the
  * three pipeline stages (sign / Cloudinary / Firestore write) replaces
@@ -58,11 +94,24 @@ function stageLabel(stage: UploadStage): string {
  * exactly as the operator left it, mirroring `EditProfileDialog`'s
  * `saveError` convention.
  */
-export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: MediaUploadDialogProps) {
-  const [entityType, setEntityType] = useState<UploadEntityType>('KINFOLK');
+export function MediaUploadDialog({
+  kinfolkOptions = [],
+  fixedTarget,
+  onClose,
+  onUploaded,
+}: MediaUploadDialogProps) {
+  const [pickedType, setPickedType] = useState<UploadEntityType>('KINFOLK');
   const [kinfolkId, setKinfolkId] = useState(kinfolkOptions[0]?.id ?? '');
   const [kinId, setKinId] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  /**
+   * Why the rejected file's own message is kept in state rather than recomputed
+   * from `file`: a refused file is NOT held (`file` stays null, so no accidental
+   * upload of it is possible), and without this the operator would see the
+   * generic "Choose a photo or video" hint and no explanation of what was wrong
+   * with the one they just chose.
+   */
+  const [rejectedFileError, setRejectedFileError] = useState<string | null>(null);
 
   const [stage, setStage] = useState<UploadStage | null>(null);
   const [touched, setTouched] = useState(false);
@@ -70,11 +119,43 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
 
   const busy = stage !== null;
 
-  const entityId =
-    entityType === 'KINFOLK' ? kinfolkId.trim() : entityType === 'KIN' ? kinId.trim() : BUSINESS_ENTITY_ID;
+  const entityType = fixedTarget?.entityType ?? pickedType;
+  const entityId = fixedTarget
+    ? fixedTarget.entityId.trim()
+    : entityType === 'KINFOLK'
+      ? kinfolkId.trim()
+      : entityType === 'KIN'
+        ? kinId.trim()
+        : BUSINESS_ENTITY_ID;
 
   const entityIdError = touched && entityId === '' ? 'Choose a target before uploading.' : null;
-  const fileError = touched && file === null ? 'Choose a photo or video to upload.' : null;
+  const fileError =
+    rejectedFileError ?? (touched && file === null ? 'Choose a photo or video to upload.' : null);
+
+  /**
+   * Validates at PICK time, not at upload time, so a 400MB file is refused
+   * instantly instead of after a sign round-trip and however long the browser
+   * spends pushing it at Cloudinary. `accept` on the input is only a picker
+   * hint, "All files" and drag-and-drop both walk straight past it, so this
+   * is the real gate. See `lib/mediaUploadLimits.ts` for the Android limits it
+   * mirrors.
+   */
+  function chooseFile(next: File | null) {
+    setUploadError(null);
+    if (next === null) {
+      setFile(null);
+      setRejectedFileError(null);
+      return;
+    }
+    const problem = uploadFileError(next);
+    if (problem !== null) {
+      setFile(null);
+      setRejectedFileError(problem);
+      return;
+    }
+    setFile(next);
+    setRejectedFileError(null);
+  }
 
   const fileInputId = useId();
   const entityTypeId = useId();
@@ -120,23 +201,36 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
       <fieldset className="media-upload__fields" disabled={busy}>
         <legend className="media-upload__legend">Upload target</legend>
 
-        <div className="media-upload__field">
-          <label className="media-upload__label" htmlFor={entityTypeId}>
-            Target type
-          </label>
-          <select
-            id={entityTypeId}
-            className="media-upload__select"
-            value={entityType}
-            onChange={(e) => setEntityType(e.target.value as UploadEntityType)}
-          >
-            <option value="KINFOLK">Household (Kinfolk)</option>
-            <option value="KIN">Kin (pet)</option>
-            <option value="BUSINESS">Company (no household)</option>
-          </select>
-        </div>
+        {fixedTarget !== undefined ? (
+          /*
+            The target is settled by the route, so it is STATED, not asked. Kept
+            visible rather than dropped entirely: an operator about to send a
+            file somewhere should be able to read where it is going, and a
+            silently-assumed destination is how media ends up on the wrong
+            household with nothing on screen to have caught it.
+          */
+          <p className="media-upload__fixed-target">
+            Uploading to <strong>{fixedTarget.label}</strong>
+          </p>
+        ) : (
+          <div className="media-upload__field">
+            <label className="media-upload__label" htmlFor={entityTypeId}>
+              Target type
+            </label>
+            <select
+              id={entityTypeId}
+              className="media-upload__select"
+              value={entityType}
+              onChange={(e) => setPickedType(e.target.value as UploadEntityType)}
+            >
+              <option value="KINFOLK">Household (Kinfolk)</option>
+              <option value="KIN">Kin (pet)</option>
+              <option value="BUSINESS">Company (no household)</option>
+            </select>
+          </div>
+        )}
 
-        {entityType === 'KINFOLK' && (
+        {fixedTarget === undefined && entityType === 'KINFOLK' && (
           <div className="media-upload__field">
             <label className="media-upload__label" htmlFor={kinfolkSelectId}>
               Household
@@ -163,7 +257,7 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
           </div>
         )}
 
-        {entityType === 'KIN' && (
+        {fixedTarget === undefined && entityType === 'KIN' && (
           <div className="media-upload__field">
             <label className="media-upload__label" htmlFor={kinIdInputId}>
               Kin ID
@@ -181,7 +275,7 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
           </div>
         )}
 
-        {entityType === 'BUSINESS' && (
+        {fixedTarget === undefined && entityType === 'BUSINESS' && (
           <div className="media-upload__field">
             <label className="media-upload__label" htmlFor={businessIdInputId}>
               Target ID
@@ -214,8 +308,11 @@ export function MediaUploadDialog({ kinfolkOptions, onClose, onUploaded }: Media
             className="media-upload__input"
             accept="image/*,video/*"
             aria-invalid={fileError !== null}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => chooseFile(e.target.files?.[0] ?? null)}
           />
+          <p className="media-upload__hint">
+            Photos and videos up to {formatMegabytes(MAX_UPLOAD_BYTES)}.
+          </p>
           {file !== null && <p className="media-upload__hint">{file.name}</p>}
           {fileError !== null && (
             <span className="media-upload__error" role="alert">

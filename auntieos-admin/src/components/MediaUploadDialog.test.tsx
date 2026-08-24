@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BUSINESS_ENTITY_ID } from '../api/mediaUpload';
 
@@ -170,3 +170,102 @@ describe('MediaUploadDialog', () => {
     expect(uploadMediaFile).not.toHaveBeenCalled();
   });
 });
+/**
+ * #397 S1. The two things web had and Android did not have to think about: a
+ * target settled by the route, and a file that never should have been sent.
+ */
+describe('MediaUploadDialog, fixed target (#397 S1)', () => {
+  const TARGET = { entityType: 'KIN' as const, entityId: 'pet_abc123', label: 'Kin' };
+  it('asks NOTHING about the target: no type select, no household picker, no id field', () => {
+    render(<MediaUploadDialog fixedTarget={TARGET} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    expect(screen.queryByLabelText('Target type')).toBeNull();
+    expect(screen.queryByLabelText('Household')).toBeNull();
+    expect(screen.queryByLabelText('Kin ID')).toBeNull();
+  });
+  it('STATES where the file is going, rather than silently assuming it', () => {
+    render(<MediaUploadDialog fixedTarget={TARGET} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    expect(document.querySelector('.media-upload__fixed-target')).toHaveTextContent('Uploading to Kin');
+  });
+  it('uploads to the fixed entity, with the route-derived type', async () => {
+    uploadMediaFile.mockResolvedValue('new-doc-1');
+    const onUploaded = vi.fn();
+    render(<MediaUploadDialog fixedTarget={TARGET} onClose={vi.fn()} onUploaded={onUploaded} />);
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await waitFor(() => expect(onUploaded).toHaveBeenCalled());
+    expect(uploadMediaFile).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'KIN', entityId: 'pet_abc123' }),
+    );
+  });
+  it('needs no kinfolkOptions at all, and does not claim the roster is empty', () => {
+    render(<MediaUploadDialog fixedTarget={TARGET} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    expect(screen.queryByText(/no households on file/i)).toBeNull();
+  });
+});
+describe('MediaUploadDialog, file validation (#397 S1)', () => {
+  /** `accept` is a picker hint only; these are files that reach the input anyway. */
+  function fileOf(name: string, type: string, size: number): File {
+    const f = new File(['x'], name, { type });
+    Object.defineProperty(f, 'size', { value: size });
+    return f;
+  }
+  it('refuses a file over 50MB at PICK time, before any sign or upload', async () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.upload(
+      screen.getByLabelText('Photo or video'),
+      fileOf('huge.mp4', 'video/mp4', 50 * 1024 * 1024 + 1),
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/huge\.mp4/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/50MB/);
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+  });
+  it('does not HOLD a refused file, so pressing Upload cannot send it anyway', async () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.upload(
+      screen.getByLabelText('Photo or video'),
+      fileOf('huge.mp4', 'video/mp4', 50 * 1024 * 1024 + 1),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+  });
+  /**
+   * `userEvent.upload` HONOURS the input's `accept` attribute and silently drops
+   * a non-matching file, so it cannot reproduce the case this check exists for.
+   * Real browsers do not offer that protection: the picker's "All files" option
+   * and every drag-and-drop path hand the input whatever was chosen. `fireEvent`
+   * is what puts the test on the same footing as the operator.
+   */
+  function dropFileOnInput(input: HTMLElement, f: File) {
+    fireEvent.change(input, { target: { files: [f] } });
+  }
+  it('refuses a non-media file that walked past the `accept` hint', () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    dropFileOnInput(screen.getByLabelText('Photo or video'), fileOf('invoice.pdf', 'application/pdf', 900));
+    expect(screen.getByRole('alert')).toHaveTextContent(/not a photo or a video/i);
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+  });
+  it('refuses a zero-byte file rather than sending it to Cloudinary to fail there', () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    dropFileOnInput(screen.getByLabelText('Photo or video'), fileOf('still-syncing.jpg', 'image/jpeg', 0));
+    expect(screen.getByRole('alert')).toHaveTextContent(/empty/i);
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+  });
+  it('clears the refusal once an acceptable file is chosen', async () => {
+    uploadMediaFile.mockResolvedValue('new-doc-1');
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    const input = screen.getByLabelText('Photo or video');
+    dropFileOnInput(input, fileOf('invoice.pdf', 'application/pdf', 900));
+    expect(screen.getByRole('alert')).toHaveTextContent(/not a photo or a video/i);
+    // Same channel as the refused pick above: once fireEvent has replaced the
+    // input's FileList, userEvent.upload no longer drives this element.
+    dropFileOnInput(input, photoFile());
+    expect(screen.queryByText(/not a photo or a video/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalled());
+  });
+  it('states the cap up front, so the limit is not learned by hitting it', () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    expect(screen.getByText(/Photos and videos up to 50MB/i)).toBeInTheDocument();
+  });
+});
+

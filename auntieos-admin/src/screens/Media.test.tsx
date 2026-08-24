@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type MediaFile } from '../api/gallery';
@@ -8,6 +8,22 @@ import { NO_TARGET_ENTITY_ID_SENTINEL } from '../api/media';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #397 S1/S2. Mocked at the api seam, so these tests cover THIS screen's wiring
+// (which id and entity it sends, what it does with a refusal) rather than the
+// callable clients `api/mediaWrite.test.ts` already covers.
+const { deleteMediaFile, setMediaProfilePhoto } = vi.hoisted(() => ({
+  deleteMediaFile: vi.fn(),
+  setMediaProfilePhoto: vi.fn(),
+}));
+vi.mock('../api/mediaWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/mediaWrite')>('../api/mediaWrite');
+  return { ...actual, deleteMediaFile, setMediaProfilePhoto };
+});
+const { uploadMediaFile } = vi.hoisted(() => ({ uploadMediaFile: vi.fn() }));
+vi.mock('../api/mediaUpload', async () => {
+  const actual = await vi.importActual<typeof import('../api/mediaUpload')>('../api/mediaUpload');
+  return { ...actual, uploadMediaFile };
+});
 
 import { Media } from './Media';
 
@@ -50,6 +66,20 @@ beforeEach(() => {
     lastSpec = spec;
     return mediaAsync;
   });
+  deleteMediaFile.mockReset().mockResolvedValue({
+    ok: true,
+    mediaFileId: 'm1',
+    entityType: 'KINFOLK',
+    entityId: 'fam1',
+    clearedProfilePhoto: false,
+  });
+  setMediaProfilePhoto.mockReset().mockResolvedValue({
+    ok: true,
+    mediaFileId: 'm1',
+    entityId: 'fam1',
+    photoUrl: 'https://cdn/full.jpg',
+  });
+  uploadMediaFile.mockReset();
 });
 
 /**
@@ -220,7 +250,7 @@ describe('Media screen, media viewer (#388: tapping a photo did nothing)', () =>
     };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button'));
+    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button', { name: /open biscuit/i }));
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAccessibleName('Biscuit napping');
@@ -231,7 +261,7 @@ describe('Media screen, media viewer (#388: tapping a photo did nothing)', () =>
     mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    const tileButton = within(tileFor('Rufus')).getByRole('button');
+    const tileButton = within(tileFor('Rufus')).getByRole('button', { name: /open rufus/i });
     tileButton.focus();
     await userEvent.keyboard('{Enter}');
 
@@ -242,7 +272,7 @@ describe('Media screen, media viewer (#388: tapping a photo did nothing)', () =>
     mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    const tileButton = within(tileFor('Rufus')).getByRole('button');
+    const tileButton = within(tileFor('Rufus')).getByRole('button', { name: /open rufus/i });
     await userEvent.click(tileButton);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
@@ -260,7 +290,7 @@ describe('Media screen, media viewer (#388: tapping a photo did nothing)', () =>
     mediaAsync = { status: 'ready', data: [media({ _id: 'm1', description: 'Rufus' })] };
     render(<Media targetType="kin" targetId="kf1" />);
 
-    await userEvent.click(within(tileFor('Rufus')).getByRole('button'));
+    await userEvent.click(within(tileFor('Rufus')).getByRole('button', { name: /open rufus/i }));
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Tag kin' })).toBeNull();
@@ -456,3 +486,213 @@ describe('Media screen, hover caption strip', () => {
     expect(cell?.querySelector('.media__tile-caption-strip')).toBeNull();
   });
 });
+/**
+ * #397 S1/S2. Every argument these actions send must come off the ROW: the
+ * callables cross-check the caller's entity against the stored document, and
+ * this screen's route says `household` where the document says `KINFOLK`.
+ */
+function kinfolkRow(over: Partial<MediaFile> = {}): MediaFile {
+  return media({
+    _id: 'm1',
+    description: 'Rufus at the park',
+    entityId: 'fam1',
+    entityType: 'KINFOLK',
+    storageUrl: 'https://cdn/full.jpg',
+    ...over,
+  });
+}
+/** The tile's delete X, addressed by its accessible name rather than its position. */
+function deleteButton(caption: string): HTMLElement {
+  return screen.getByRole('button', { name: `Delete ${caption}` });
+}
+describe('Media screen, upload (#397 S1)', () => {
+  it('offers an upload action, which the read-only port never had', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(screen.getByRole('button', { name: 'Upload media' })).toBeInTheDocument();
+  });
+  it('offers it on an EMPTY gallery too: an empty screen is where an upload starts', () => {
+    mediaAsync = { status: 'ready', data: [] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(screen.getByRole('button', { name: 'Upload media' })).toBeInTheDocument();
+  });
+  it('does not offer it when no target is selected: there is nowhere to upload to', () => {
+    render(<Media targetType="household" targetId="" />);
+    expect(screen.queryByRole('button', { name: 'Upload media' })).toBeNull();
+  });
+  it('opens the dialog with the target FIXED, asking nothing about where the file goes', async () => {
+    mediaAsync = { status: 'ready', data: [] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Upload media' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Uploading to Household/i);
+    expect(screen.queryByLabelText('Target type')).toBeNull();
+    expect(screen.queryByLabelText('Household')).toBeNull();
+  });
+  it('maps the route\'s `household` segment to the KINFOLK upload target', async () => {
+    uploadMediaFile.mockResolvedValue('new-1');
+    mediaAsync = { status: 'ready', data: [] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Upload media' }));
+    await userEvent.upload(
+      screen.getByLabelText('Photo or video'),
+      new File(['x'], 'biscuit.jpg', { type: 'image/jpeg' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await waitFor(() =>
+      expect(uploadMediaFile).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'KINFOLK', entityId: 'fam1' }),
+      ),
+    );
+  });
+  it('maps the route\'s `kin` segment to the KIN upload target', async () => {
+    uploadMediaFile.mockResolvedValue('new-1');
+    mediaAsync = { status: 'ready', data: [] };
+    render(<Media targetType="kin" targetId="pet1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Upload media' }));
+    await userEvent.upload(
+      screen.getByLabelText('Photo or video'),
+      new File(['x'], 'biscuit.jpg', { type: 'image/jpeg' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await waitFor(() =>
+      expect(uploadMediaFile).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'KIN', entityId: 'pet1' }),
+      ),
+    );
+  });
+});
+describe('Media screen, delete (#397 S2)', () => {
+  it('puts a delete control on every tile', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(deleteButton('Rufus at the park')).toBeInTheDocument();
+  });
+  it('DOES NOT DELETE ON THE FIRST PRESS: the X opens a confirm, nothing else', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Delete Media');
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+  it("names the file's TYPE in the confirm, the way the mock and Android both do", async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ fileType: 'VIDEO', description: 'Zoomies' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Zoomies'));
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'Are you sure you want to delete this video?',
+    );
+  });
+  it('warns when the file being deleted is the current profile photo', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ isProfilePhoto: true })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/current profile photo/i);
+  });
+  it('Cancel closes the confirm and deletes nothing', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+  it('confirming sends the row id and the ROW\'s entityId, never the route segments', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7', entityId: 'fam1' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleteMediaFile).toHaveBeenCalledWith('m7', 'fam1'));
+  });
+  it('surfaces a refusal in a banner and leaves the grid standing', async () => {
+    deleteMediaFile.mockRejectedValue(new Error("Media file 'm7' belongs to a different entity"));
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/different entity/i));
+    // The tile is still there, because the document still is.
+    expect(captionedTiles('Rufus at the park')).toBe(1);
+  });
+  it('does not optimistically remove the tile on success: the listener owns the grid', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(deleteButton('Rufus at the park'));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Still rendered, because this test's `useCollection` still returns the row:
+    // a half-succeeded delete must look like what it is, not like a success.
+    expect(captionedTiles('Rufus at the park')).toBe(1);
+  });
+});
+describe('Media screen, set as profile photo (#397 S2)', () => {
+  function setProfileButton(caption: string): HTMLElement {
+    return screen.getByRole('button', { name: `Set ${caption} as the profile photo` });
+  }
+  it('offers the action on a non-profile image', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(setProfileButton('Rufus at the park')).toBeInTheDocument();
+  });
+  it('sends the ROW\'s entityType and entityId, not the route\'s `household`/id', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7', entityType: 'KINFOLK', entityId: 'fam1' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(setProfileButton('Rufus at the park'));
+    await waitFor(() => expect(setMediaProfilePhoto).toHaveBeenCalledWith('m7', 'KINFOLK', 'fam1'));
+  });
+  it('passes a lower-case stored entityType through untouched, since the server compares it', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7', entityType: 'kinfolk' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(setProfileButton('Rufus at the park'));
+    await waitFor(() => expect(setMediaProfilePhoto).toHaveBeenCalledWith('m7', 'kinfolk', 'fam1'));
+  });
+  it('does not offer it on the file that is ALREADY the profile photo', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ isProfilePhoto: true })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(screen.queryByRole('button', { name: /as the profile photo/ })).toBeNull();
+  });
+  it('does not offer it on a video: a clip cannot be an avatar', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ fileType: 'VIDEO' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(screen.queryByRole('button', { name: /as the profile photo/ })).toBeNull();
+  });
+  it('does not offer it on a row carrying no entity, which the callable would refuse', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ entityId: '', entityType: '' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    expect(screen.queryByRole('button', { name: /as the profile photo/ })).toBeNull();
+    // The delete control stays: deleting a row with no entity is still valid.
+    expect(deleteButton('Rufus at the park')).toBeInTheDocument();
+  });
+  it('surfaces a refusal rather than leaving the tile looking promoted', async () => {
+    setMediaProfilePhoto.mockRejectedValue(new Error("Media file 'm7' has no storageUrl."));
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(setProfileButton('Rufus at the park'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/no storageUrl/i));
+  });
+  it('never paints the Profile badge from a local guess: the badge follows the document', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow({ _id: 'm7' })] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(setProfileButton('Rufus at the park'));
+    await waitFor(() => expect(setMediaProfilePhoto).toHaveBeenCalled());
+    // `useCollection` still returns isProfilePhoto: false, so the badge stays off.
+    expect(screen.queryByText('Profile')).toBeNull();
+  });
+});
+describe('Media screen, tile structure (#397 S2)', () => {
+  it('keeps the actions OUTSIDE the open button: nested interactive content is invalid HTML', () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    const openButton = screen.getByRole('button', { name: 'Open Rufus at the park' });
+    expect(openButton.querySelector('button')).toBeNull();
+    expect(deleteButton('Rufus at the park').closest('button')).toBe(
+      deleteButton('Rufus at the park'),
+    );
+  });
+  it('still opens the viewer from the tile itself', async () => {
+    mediaAsync = { status: 'ready', data: [kinfolkRow()] };
+    render(<Media targetType="household" targetId="fam1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open Rufus at the park' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+

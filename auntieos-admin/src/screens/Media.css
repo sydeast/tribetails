@@ -99,6 +99,34 @@
 
 .media__cell {
   display: block;
+  /* The positioning context for the per-tile actions (#397 S2). They are
+     siblings of the open button rather than children of it (nesting one
+     interactive element inside another is invalid and unreliable), so the CELL
+     is what they anchor to. */
+  position: relative;
+}
+/* The mock's top-end delete X, plus the "set as profile" star Android puts at
+   the same anchor. Always painted, never hover-only: a touch device has no
+   hover, and an action nobody can summon is the same as an action that is not
+   there. */
+.media__tile-actions {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  display: flex;
+  gap: 0.15rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(6px);
+}
+/* Sits under the tile rather than over the thumbnail: it is a status line, and
+   covering the very photo being promoted is the one place it must not go. */
+.media__tile-busy {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
 }
 
 /* A real `<button>` now (#388), so this resets every default the browser
@@ -276,4 +304,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── actions + dialogs (#397 S1/S2) ─────────────────────────────────────── */
+/* The mock's `＋ Upload Media` action row, same shape Gallery.tsx uses. */
+.media__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
+}
+.media__dialog-body {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--type-body-md-size);
+}
+.media__dialog-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
 }

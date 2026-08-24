@@ -1420,11 +1420,58 @@ class AuntieRepository(
         docRef.id
     }.onFailure { AuntieLog.e("Failed to save media file", it) }
 
-    suspend fun deleteMediaFile(mediaFileId: String): Result<Unit> = runCatching {
+    /**
+     * #397 S2: server-bound delete, the destructive twin of setMediaProfilePhoto.
+     *
+     * This used to be a raw `document(mediaFileId).delete()`, and that left a
+     * DANGLING PROFILE PHOTO: setMediaProfilePhoto stamps kinfolk/kin
+     * .profilePictureUrl (or users/{uid}.photoUrl) with this doc's storageUrl,
+     * so dropping the row alone left the profile rendering a photo the gallery
+     * had forgotten, with nothing left in the app able to clear it. The callable
+     * deletes the row and clears that field in one atomic batch, and only when
+     * it actually points at this file. It also writes the audit entry a client
+     * delete never could, which matters more here than anywhere, because the
+     * deleted row is otherwise the only record that the file existed.
+     *
+     * The Cloudinary asset itself is deliberately left in place; see the
+     * function's own header for why.
+     */
+    suspend fun deleteMediaFile(mediaFileId: String, entityId: String = ""): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        firestore.collection("media_files").document(mediaFileId).delete().await()
+        val args = mutableMapOf<String, Any>("mediaFileId" to mediaFileId)
+        // Sent only when the caller is entity-scoped. Blank would fail the
+        // server's own min(1) validation, so it is omitted rather than padded.
+        if (entityId.isNotBlank()) args["entityId"] = entityId
+        functions.getHttpsCallable("deleteMediaFile").call(args).await()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete media file", it) }
+
+    /**
+     * #397 S3: rewrite one media file's caption.
+     *
+     * NEITHER CLIENT COULD DO THIS BEFORE. `description` was written once, at
+     * upload, and never again, so a typo or the wrong pet's name was permanent.
+     *
+     * A TARGETED SINGLE-FIELD UPDATE, never a `set(mediaFile)` rebuilt from
+     * screen state. That is the trap this codebase has hit repeatedly: an edit
+     * screen rebuilds the model from the fields it renders and silently blanks
+     * every field it has no control for. `media_files` docs carry width/height/
+     * cloudinaryPublicId/tags/taggedKinIds that no caption editor shows, and
+     * `taggedKinIds` is server-bound, so a whole-document write would be REFUSED
+     * by firestore.rules outright.
+     *
+     * No callable: the rules already allow an isAuntie() update on every key
+     * except taggedKinIds, and a caption has no cross-collection consequence
+     * (unlike delete and set-profile, which do, and therefore are callables).
+     * The web client writes the identical single-key update.
+     */
+    suspend fun updateMediaFileDescription(mediaFileId: String, description: String): Result<Unit> = runCatching {
+        authGate.ensureAuthenticated()
+        firestore.collection("media_files").document(mediaFileId)
+            .update("description", description.trim())
+            .await()
+        Unit
+    }.onFailure { AuntieLog.e("Failed to update media caption for $mediaFileId", it) }
 
     // --- Location Tracking Management ---
 

@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MediaType
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -129,6 +130,120 @@ class MediaGalleryViewModelTest {
         vm.setProfilePhoto(chosen)
         advanceUntilIdle()
 
+        assertNotNull(vm.uiState.value.error)
+        assertTrue(vm.uiState.value.error!!.contains("permission-denied"))
+    }
+    // ── #397 S2: delete goes through the server-bound callable ───────────────
+    @Test
+    fun `deleteMediaFile sends the row's own entityId as the scope cross-check`() = runTest(testDispatcher) {
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name, fileType = MediaType.IMAGE,
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.deleteMediaFile("m1", "kf1") } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.deleteMediaFile(row)
+        advanceUntilIdle()
+        // Only the exact ("m1", "kf1") stub above can satisfy this; a call that
+        // dropped the scope would have thrown on the un-stubbed overload.
+        coVerify { mockRepo.deleteMediaFile("m1", "kf1") }
+        assertTrue(vm.uiState.value.mediaFiles.none { it.id == "m1" })
+        assertNull(vm.uiState.value.error)
+    }
+    @Test
+    fun `deleteMediaFile refusal keeps the row on screen and surfaces the reason`() = runTest(testDispatcher) {
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name, fileType = MediaType.IMAGE,
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.deleteMediaFile(any(), any()) } returns
+            Result.failure(RuntimeException("belongs to a different entity"))
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.deleteMediaFile(row)
+        advanceUntilIdle()
+        // The document is still there, so the tile must be too.
+        assertEquals(1, vm.uiState.value.mediaFiles.size)
+        assertNotNull(vm.uiState.value.error)
+        assertTrue(vm.uiState.value.error!!.contains("different entity"))
+    }
+    // ── #397 S3: caption editing ─────────────────────────────────────────────
+    @Test
+    fun `updateCaption writes the new description and reflects it on the row`() = runTest(testDispatcher) {
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name,
+            fileType = MediaType.IMAGE, description = "wrong dog",
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.updateMediaFileDescription("m1", "Rufus at the park") } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.updateCaption("m1", "Rufus at the park")
+        advanceUntilIdle()
+        assertEquals("Rufus at the park", vm.uiState.value.mediaFiles.first { it.id == "m1" }.description)
+        assertNull(vm.uiState.value.error)
+    }
+    @Test
+    fun `updateCaption changes ONLY the description, never rebuilding the row`() = runTest(testDispatcher) {
+        // The Android trap this guards: an edit path that rebuilds the model from
+        // form state wipes every field the editor has no control for.
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name,
+            fileType = MediaType.IMAGE, description = "old",
+            storageUrl = "https://cdn/full.jpg", thumbnailUrl = "https://cdn/thumb.jpg",
+            originalFileName = "IMG_9.jpg", isProfilePhoto = true, fileSizeBytes = 4242,
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.updateMediaFileDescription(any(), any()) } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.updateCaption("m1", "new caption")
+        advanceUntilIdle()
+        val after = vm.uiState.value.mediaFiles.first { it.id == "m1" }
+        assertEquals(row.copy(description = "new caption"), after)
+    }
+    @Test
+    fun `updateCaption treats an empty caption as a real value that clears it`() = runTest(testDispatcher) {
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name,
+            fileType = MediaType.IMAGE, description = "wrong dog", originalFileName = "IMG_9.jpg",
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.updateMediaFileDescription("m1", "") } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.updateCaption("m1", "")
+        advanceUntilIdle()
+        assertEquals("", vm.uiState.value.mediaFiles.first { it.id == "m1" }.description)
+        assertNull(vm.uiState.value.error)
+    }
+    @Test
+    fun `updateCaption refusal leaves the stored caption on screen and fails loud`() = runTest(testDispatcher) {
+        val row = MediaFile(
+            id = "m1", entityId = "kf1", entityType = MediaEntityType.KINFOLK.name,
+            fileType = MediaType.IMAGE, description = "stored caption",
+        )
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(listOf(row))
+        coEvery { mockRepo.getMediaAlbums(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.updateMediaFileDescription(any(), any()) } returns
+            Result.failure(RuntimeException("permission-denied"))
+        val vm = buildViewModel()
+        vm.loadMedia("kf1", MediaEntityType.KINFOLK)
+        advanceUntilIdle()
+        vm.updateCaption("m1", "never stored")
+        advanceUntilIdle()
+        assertEquals("stored caption", vm.uiState.value.mediaFiles.first { it.id == "m1" }.description)
         assertNotNull(vm.uiState.value.error)
         assertTrue(vm.uiState.value.error!!.contains("permission-denied"))
     }

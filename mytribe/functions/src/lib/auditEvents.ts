@@ -159,6 +159,13 @@ export const AUDIT_EVENTS = {
   // an accidental clear is recoverable from the trail rather than gone.
   MEDIA_TAGS_UPDATED: 'MEDIA_TAGS_UPDATED',
 
+  // #397 S2: a `media_files` doc was destroyed (deleteMediaFile). The row is
+  // gone once this fires, so the trail is the only surviving record that the
+  // file existed and who removed it. The payload carries `storageUrl` because
+  // the Cloudinary asset outlives the document (see deleteMediaFile.ts), and
+  // that URL is the only route back to it afterwards.
+  MEDIA_FILE_DELETED: 'MEDIA_FILE_DELETED',
+
   // formSchema admin authoring callables (saveFormSchema / deleteFormSchema).
   // Already SCREAMING_SNAKE per memory project_orphan_triage_shipped, kept
   // unchanged.

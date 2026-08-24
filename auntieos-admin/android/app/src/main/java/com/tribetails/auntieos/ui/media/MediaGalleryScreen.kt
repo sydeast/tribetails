@@ -109,7 +109,10 @@ fun MediaGalleryScreen(
                         MediaThumbnail(
                             mediaFile = mediaFile,
                             onDelete = { viewModel.deleteMediaFile(it) },
-                            onSetProfile = { viewModel.setProfilePhoto(it) }
+                            onSetProfile = { viewModel.setProfilePhoto(it) },
+                            // #397 S3: the caption a file was uploaded with is no
+                            // longer permanent on either client.
+                            onSaveCaption = { id, caption -> viewModel.updateCaption(id, caption) },
                         )
                     }
                 }
@@ -180,11 +183,19 @@ private fun MediaTypeFilter(
 @Composable
 internal fun MediaThumbnail(
     mediaFile: MediaFile,
-    onDelete: (String) -> Unit,
+    // Takes the whole row, not an id: the delete callable cross-checks the
+    // caller's entityId against the stored document (#397 S2).
+    onDelete: (MediaFile) -> Unit,
     onSetProfile: (MediaFile) -> Unit = {},
+    /** (mediaFileId, newCaption). Default no-op keeps every existing preview/test call site valid. */
+    onSaveCaption: (String, String) -> Unit = { _, _ -> },
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showFullscreen by remember { mutableStateOf(false) }
+    // #397 S3. Keyed on the media id so a caption dialog opened for one file can
+    // never carry another file's draft after the grid re-composes.
+    var showCaptionDialog by remember(mediaFile.id) { mutableStateOf(false) }
+    var captionDraft by remember(mediaFile.id) { mutableStateOf(mediaFile.description) }
     val context = LocalContext.current
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -409,7 +420,7 @@ internal fun MediaThumbnail(
                 PrimaryButton(
                     label = "Delete",
                     onClick = {
-                        onDelete(mediaFile.id)
+                        onDelete(mediaFile)
                         showDeleteDialog = false
                     }
                 )
@@ -428,7 +439,54 @@ internal fun MediaThumbnail(
         FullscreenMediaViewer(
             mediaFile = mediaFile,
             onDismiss = { showFullscreen = false },
+            onEditCaption = {
+                // Seeded from the STORED description, never from the caption
+                // shown: that falls back to the file name, and pre-filling with
+                // "IMG_4821.jpg" would turn a fallback nobody typed into a real
+                // stored caption on the first save.
+                captionDraft = mediaFile.description
+                showFullscreen = false
+                showCaptionDialog = true
+            },
         )
+    }
+    // #397 S3: the caption editor. Lives beside the delete confirm rather than
+    // inside the fullscreen viewer, so the keyboard has room and the dialog is
+    // dismissible the same way every other AuntieModal is.
+    if (showCaptionDialog) {
+        AuntieModal(
+            onDismissRequest = { showCaptionDialog = false },
+            title = "Edit caption",
+            confirmButton = {
+                PrimaryButton(
+                    label = "Save caption",
+                    onClick = {
+                        onSaveCaption(mediaFile.id, captionDraft)
+                        showCaptionDialog = false
+                    },
+                )
+            },
+            dismissButton = {
+                AuntieTextBtn(onClick = { showCaptionDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AuntieField(
+                    value = captionDraft,
+                    onValueChange = { captionDraft = it },
+                    label = "Caption",
+                    singleLine = false,
+                    minLines = 3,
+                )
+                Text(
+                    text = "Leave it empty to go back to showing the file name.",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
+        }
     }
 }
 
@@ -448,6 +506,8 @@ internal fun MediaThumbnail(
 private fun FullscreenMediaViewer(
     mediaFile: MediaFile,
     onDismiss: () -> Unit,
+    /** Hands off to the caption editor (#397 S3). Default no-op for any caller that has none. */
+    onEditCaption: () -> Unit = {},
 ) {
     val context = LocalContext.current
     Dialog(
@@ -515,6 +575,33 @@ private fun FullscreenMediaViewer(
                 }
             }
 
+            // Edit caption, left of Close. Placed in the viewer for the same
+            // reason web puts it there: this is where the operator can actually
+            // see the photo they are describing, which a 3-column thumbnail is
+            // not.
+            AuntieIconBtn(
+                onClick  = onEditCaption,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 16.dp, end = 64.dp)
+                    .size(40.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(AuntieTheme.colors.background.copy(alpha = 0.85f))
+                        .border(0.5.dp, AuntieTheme.colors.border, RoundedCornerShape(50)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Lucide.Pencil,
+                        contentDescription = "Edit caption",
+                        tint     = AuntieTheme.colors.textPrimary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
             AuntieIconBtn(
                 onClick  = onDismiss,
                 modifier = Modifier

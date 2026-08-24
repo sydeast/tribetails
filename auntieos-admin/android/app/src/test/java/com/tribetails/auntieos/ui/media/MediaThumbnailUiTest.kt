@@ -9,11 +9,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performTextReplacement
 import com.tribetails.auntieos.data.model.MediaEntityType
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MediaType
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -124,5 +127,72 @@ class MediaThumbnailUiTest {
         composeRule.onNodeWithText("voicemail.m4a").performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("voicemail.m4a").assertCountEquals(2)
+    }
+    // ── #397 S3: the caption editor Android never had ────────────────────────
+    @Test
+    fun `the fullscreen viewer offers an edit-caption action, and saving reports the new text`() {
+        var saved: Pair<String, String>? = null
+        val file = image("m3", isProfile = false).copy(description = "wrong dog")
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(
+                    mediaFile = file,
+                    onDelete = {},
+                    onSaveCaption = { id, caption -> saved = id to caption },
+                )
+            }
+        }
+        // Open the fullscreen viewer the way the operator does: tap the tile.
+        composeRule.onNodeWithContentDescription("wrong dog").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Edit caption").performClick()
+        composeRule.waitForIdle()
+        // Matched by its SetText action, not by its content: the tile's own caption
+        // Text carries the same words, and "the field" is what this drives.
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("Rufus at the park")
+        composeRule.onNodeWithText("Save caption").performClick()
+        composeRule.waitForIdle()
+        assertEquals("m3" to "Rufus at the park", saved)
+    }
+    @Test
+    fun `cancelling the caption editor saves nothing`() {
+        var saved: Pair<String, String>? = null
+        val file = image("m4", isProfile = false).copy(description = "wrong dog")
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(
+                    mediaFile = file,
+                    onDelete = {},
+                    onSaveCaption = { id, caption -> saved = id to caption },
+                )
+            }
+        }
+        composeRule.onNodeWithContentDescription("wrong dog").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Edit caption").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("edited but abandoned")
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.waitForIdle()
+        assertNull(saved)
+    }
+    @Test
+    fun `the delete confirm hands back the whole row, so the callable can scope-check it`() {
+        var deleted: MediaFile? = null
+        val file = image("m5", isProfile = false)
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(mediaFile = file, onDelete = { deleted = it })
+            }
+        }
+        composeRule.onNodeWithContentDescription("Delete").performClick()
+        composeRule.waitForIdle()
+        // First press only opens the confirm; nothing is deleted yet.
+        assertNull(deleted)
+        composeRule.onNodeWithText("Delete Media").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.waitForIdle()
+        assertEquals("m5", deleted?.id)
+        assertEquals("kf1", deleted?.entityId)
     }
 }

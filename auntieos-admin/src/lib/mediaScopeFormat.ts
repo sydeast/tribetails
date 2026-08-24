@@ -72,6 +72,12 @@ export function withMediaDefaults(row: Partial<MediaFile> & { _id: string }): Me
   return {
     _id: row._id,
     kinfolkId: row.kinfolkId ?? '',
+    // #397 S2: the media callables cross-check these against the stored doc and
+    // refuse a mismatch, so a blank default is the honest value for a row that
+    // genuinely carries neither. A caller must treat blank as "this file has no
+    // entity", never substitute the route's own segments (see api/gallery.ts).
+    entityId: row.entityId ?? '',
+    entityType: row.entityType ?? '',
     fileType: row.fileType ?? 'IMAGE',
     storageUrl: row.storageUrl ?? '',
     thumbnailUrl: row.thumbnailUrl ?? '',
