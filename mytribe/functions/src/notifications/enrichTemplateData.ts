@@ -2,6 +2,11 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { getNotificationDef } from './catalog';
+import {
+  DEFAULT_TIME_ZONE,
+  formatBookingDate,
+  formatBookingTime,
+} from './visitDates';
 import type { Audience } from './types';
 
 /**
@@ -27,12 +32,13 @@ import type { Audience } from './types';
  */
 
 /**
- * Display timezone for booking date/time formatting. Sourced from the operator's
- * `business_settings/business_settings.timeZone` at runtime; this is the fallback
- * when that doc/field is absent. America/New_York is both the value the operator
- * currently has configured and the zone the schedulers already run in.
+ * Display timezone for booking date/time formatting is `DEFAULT_TIME_ZONE`,
+ * imported from `notifications/visitDates.ts` along with the two date/time
+ * spellings this module fills (`{{bookingDate}}` / `{{bookingTime}}`). They live
+ * there, not here, because #536's envelope-grained emitters format the same two
+ * tokens for template back-compat and a second copy of the rule is exactly what
+ * the visit-date rendering spec exists to prevent.
  */
-const DEFAULT_TIME_ZONE = 'America/New_York';
 
 /**
  * The exact `{{token}}` set each catalog key's templates reference, mirrored from
@@ -67,7 +73,24 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.auntie.departed': ['serviceType'],
   'kincare.auntie.on_my_way': ['serviceType'],
   'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.booking.confirm': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
+  // #536: the confirmation is about a REQUEST, not a visit, so it enumerates the
+  // whole envelope. `visits` / `visitCount` / `nextVisit.*` / `portalUrl` are
+  // emitter-supplied structured data (notifications/visitDates.ts), not tokens
+  // this enricher hydrates -- see the visit-date rendering spec. The old
+  // `bookingDate` / `bookingTime` pair left the seed along with the summarising
+  // wording it belonged to; both emitters still SEND them so the previously
+  // imported Firestore template keeps rendering until the operator re-imports.
+  'kincare.booking.confirm': [
+    'kinfolkName',
+    'kinName',
+    'nextVisit.date',
+    'nextVisit.time',
+    'nextVisit.weekday',
+    'portalUrl',
+    'serviceType',
+    'visitCount',
+    'visits',
+  ],
   'kincare.cancel.requested': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   // `note` is emitter-supplied, like the dispute fields above: it is the
   // operator's own words, carried on the dispatch, with no entity to hydrate
@@ -403,14 +426,11 @@ export async function enrichTemplateData(
     }
     return num(b.scheduledAtMs) ?? num(b.startTimeMs);
   }
-  function formatDate(ms: number, tz: string): string {
-    return new Intl.DateTimeFormat('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      timeZone: tz,
-    }).format(new Date(ms));
-  }
+  // `formatDate` / `formatTime` are `formatBookingDate` / `formatBookingTime`
+  // from `notifications/visitDates.ts`. One spelling of a booking date and time,
+  // shared with the #536 emitters, which is the whole point of that module.
+  const formatDate = formatBookingDate;
+  const formatTime = formatBookingTime;
   /**
    * A whole booking envelope's dates in one phrase (#532).
    *
@@ -454,13 +474,6 @@ export async function enrichTemplateData(
       month: 'short',
       day: 'numeric',
       year: 'numeric',
-      timeZone: tz,
-    }).format(new Date(ms));
-  }
-  function formatTime(ms: number, tz: string): string {
-    return new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
       timeZone: tz,
     }).format(new Date(ms));
   }
