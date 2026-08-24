@@ -123,11 +123,40 @@ async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText('Choose KinCare Duration');
 }
 
+/** #541/#543: a duration card ADDS a KinCare; tapping it twice asks for two. */
+async function addKinCare(user: ReturnType<typeof userEvent.setup>, serviceName: string) {
+  await user.click(screen.getByRole('button', { name: `Add ${serviceName}` }));
+}
+
 async function selectServiceAndGoToStep3(user: ReturnType<typeof userEvent.setup>, serviceName: string) {
   await goToStep2(user);
-  await user.click(screen.getByText(serviceName));
+  await addKinCare(user, serviceName);
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await screen.findByRole('heading', { name: 'Schedule Dates' });
+}
+
+/** Sets the time of the `n`-th KinCare (1-based), which is how step 3 labels them. */
+async function setKinCareTime(
+  user: ReturnType<typeof userEvent.setup>,
+  n: number,
+  serviceName: string,
+  time: string,
+) {
+  const input = screen.getByLabelText(`${n}. ${serviceName}`);
+  await user.clear(input);
+  await user.type(input, time);
+}
+
+/**
+ * Step 3 -> Review. #545: step 4 is Extra Love & Context; the Invoice Options
+ * card that used to sit here is deleted, and `hasInvoiceOptions` below is the
+ * assertion that keeps it deleted.
+ */
+async function goToReview(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 4
+  await screen.findByRole('heading', { name: 'Extra Love & Context' });
+  await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 5
+  await screen.findByRole('heading', { name: 'Review & Confirm' });
 }
 
 beforeEach(() => {
@@ -155,13 +184,237 @@ describe('BookingWizard: service catalog', () => {
     expect(screen.getByText('$150.00 / NIGHT')).toBeInTheDocument();
   });
 
-  it('requires a service before Next is enabled on step 2', async () => {
+  it('requires a KinCare before Next is enabled on step 2', async () => {
     const user = userEvent.setup();
     renderWizard();
     await goToStep2(user);
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
-    await user.click(screen.getByText('Daily Visit'));
+    await addKinCare(user, 'Daily Visit');
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+});
+
+/**
+ * #541 + #543. The grid used to be a radiogroup, so a second duration silently
+ * replaced the first, and two KinCares in one day were unreachable entirely.
+ */
+describe('BookingWizard: #541/#543 more than one KinCare', () => {
+  it('keeps both durations when two different ones are added', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Overnight Stays');
+    expect(screen.getByRole('button', { name: 'Remove Daily Visit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Overnight Stays' })).toBeInTheDocument();
+  });
+
+  it('adds a second KinCare of the same duration when its card is tapped twice', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Daily Visit');
+    expect(screen.getAllByRole('button', { name: 'Remove Daily Visit' })).toHaveLength(2);
+    expect(screen.getByText('1. Daily Visit')).toBeInTheDocument();
+    expect(screen.getByText('2. Daily Visit')).toBeInTheDocument();
+  });
+
+  it('removes only the KinCare that was removed, leaving its twin behind', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getAllByRole('button', { name: 'Remove Daily Visit' })[0]!);
+    expect(screen.getAllByRole('button', { name: 'Remove Daily Visit' })).toHaveLength(1);
+  });
+
+  /** #543: two KinCares on ONE day, submitted as two visits at two times. */
+  it('submits two visits on a single date, one per KinCare, at their own times', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '08:00');
+    await setKinCareTime(user, 2, 'Daily Visit', '17:30');
+
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits).toHaveLength(2);
+    expect(req.visits!.map((v) => v.startTimeMs)).toEqual([visitMs(TOMORROW, 8, 0), visitMs(TOMORROW, 17, 30)]);
+    expect(req.visits!.every((v) => v.serviceId === 's1')).toBe(true);
+  });
+
+  /** #541: two DIFFERENT durations, both submitted, on every chosen date. */
+  it('submits one visit per date per duration when two durations are chosen', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Overnight Stays');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await setKinCareTime(user, 2, 'Overnight Stays', '20:00');
+
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    const req = requestBooking.mock.calls[0]![0];
+    expect(req.visits).toHaveLength(2);
+    expect(req.visits!.map((v) => v.serviceId)).toEqual(['s1', 's2']);
+  });
+
+  it('refuses to advance when two KinCares share a duration AND a time, saying which fix is needed', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+
+    await pickDay(user, TOMORROW);
+    // Both default to 09:00, which is one KinCare asked for twice.
+    expect(
+      await screen.findByText('Two KinCares have the same duration at the same time. Change one of the times.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    await setKinCareTime(user, 2, 'Daily Visit', '17:00');
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+  });
+});
+
+/**
+ * #545: kinfolk should never see the invoice options screen.
+ *
+ * Deleted, not hidden: no step renders it, and the route exposes no step
+ * parameter for a URL to reach it with (see router.test.tsx).
+ */
+describe('BookingWizard: #545 no invoice options', () => {
+  it('never shows Invoice Options on any step of a full run', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    expect(screen.queryByText('Invoice Options')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByRole('heading', { name: 'Extra Love & Context' })).toBeInTheDocument();
+    expect(screen.queryByText('Invoice Options')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    expect(screen.queryByText('Invoice Options')).not.toBeInTheDocument();
+  });
+
+  it('takes the note on step 4 and submits it, so nothing was lost with the invoice card', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Extra Love & Context' });
+    await user.type(screen.getByLabelText('Extra Love & Context'), 'Gate sticks.');
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    // Review reads the note back rather than offering a second place to type it.
+    expect(screen.getByText('Gate sticks.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    expect(requestBooking.mock.calls[0]![0].notes).toBe('Gate sticks.');
+  });
+});
+
+/**
+ * #546 + #547: the estimate is derived from the plan, so it moves when the
+ * plan moves. On the walk that filed #546 it read $25.00 next to three visits.
+ */
+describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
+  it('multiplies by the dates: 3 visits of a $42.00 KinCare estimate at $126.00', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const day2 = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 2);
+    const day3 = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 3);
+    await pickDay(user, TOMORROW);
+    expect(await screen.findByText('$42.00')).toBeInTheDocument();
+    await pickDay(user, day2);
+    expect(await screen.findByText('$84.00')).toBeInTheDocument();
+    await pickDay(user, day3);
+    expect(await screen.findByText('$126.00')).toBeInTheDocument();
+    // ...and back down when a date is taken away again.
+    await pickDay(user, day3);
+    expect(await screen.findByText('$84.00')).toBeInTheDocument();
+  });
+
+  it('counts both KinCares of a two-KinCare day', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await goToStep2(user);
+    await addKinCare(user, 'Daily Visit');
+    await addKinCare(user, 'Overnight Stays');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 2, 'Overnight Stays', '20:00');
+    // $42.00 + $150.00 on one day.
+    expect(await screen.findByText('$192.00')).toBeInTheDocument();
+  });
+
+  it('shows an em dash, not a price, before any date is chosen', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.queryByText('$42.00')).not.toBeInTheDocument();
+  });
+
+  /** #547: "Pattern = Dates. Actually display those dates." */
+  it('enumerates the chosen dates on Review, in the spec spelling, and prices them', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await goToReview(user);
+
+    const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(TOMORROW);
+    const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(TOMORROW);
+    expect(screen.getByText(`${weekday}, ${date} at 9:00 AM`)).toBeInTheDocument();
+    expect(screen.getByText('$42.00')).toBeInTheDocument();
+  });
+
+  /**
+   * #547's third complaint: Review & Confirm and the Booking Summary rail were
+   * on screen together, saying the same things twice.
+   */
+  it('stands the summary rail down on Review, and shows it on every earlier step', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+    expect(screen.getByText('Booking summary')).toBeInTheDocument();
+    await pickDay(user, TOMORROW);
+    await goToReview(user);
+    expect(screen.queryByText('Booking summary')).not.toBeInTheDocument();
   });
 });
 
@@ -211,16 +464,19 @@ describe('BookingWizard: #540 one Kin box', () => {
  * the payload assertions elsewhere in this file are what hold that line.
  */
 describe('BookingWizard: #542 KinCare Duration wording', () => {
-  it('labels the step, the heading and the summary row as KinCare Duration', async () => {
+  it('labels the step and the heading as KinCare Duration', async () => {
     const user = userEvent.setup();
     renderWizard();
     await screen.findByText('Select Kin');
-    // Stepper label + summary rail row, before anything is chosen.
-    expect(screen.getAllByText('KinCare Duration').length).toBeGreaterThanOrEqual(2);
+    // Stepper label, before anything is chosen. (The summary rail's own row is
+    // "KinCare" since #541/#543 made it a list rather than one duration.)
+    expect(screen.getByText('KinCare Duration')).toBeInTheDocument();
     expect(screen.queryByText('Service')).not.toBeInTheDocument();
 
     await goToStep2(user);
-    expect(screen.getByRole('radiogroup', { name: 'KinCare Duration' })).toBeInTheDocument();
+    // A group, not a radiogroup: #541 made this a multi-add control.
+    expect(screen.getByRole('group', { name: 'KinCare Duration' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Choose KinCare Duration' })).toBeInTheDocument();
     expect(screen.queryByText('Choose Service')).not.toBeInTheDocument();
   });
 
@@ -228,15 +484,12 @@ describe('BookingWizard: #542 KinCare Duration wording', () => {
     const user = userEvent.setup();
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
-    expect(screen.getByText('KinCare Duration: Daily Visit')).toBeInTheDocument();
+    expect(screen.getByText('1. Daily Visit')).toBeInTheDocument();
 
     await pickDay(user, TODAY);
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await goToReview(user);
     expect(screen.queryByText('Service')).not.toBeInTheDocument();
-    expect(screen.getAllByText('KinCare Duration').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('KinCare').length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -255,10 +508,7 @@ describe('BookingWizard: individual pattern', () => {
     await user.click(screen.getByRole('button', { name: 'Next month' }));
     await user.click(dayCell(nextMonth));
 
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
 
     await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
@@ -289,14 +539,9 @@ describe('BookingWizard: individual pattern', () => {
     await pickDay(user, TODAY);
     await pickDay(user, TOMORROW);
 
-    const timeInput = screen.getByLabelText(/Visit Time/i);
-    await user.clear(timeInput);
-    await user.type(timeInput, '10:15');
+    await setKinCareTime(user, 1, 'Daily Visit', '10:15');
 
-    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 4
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 5
-    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
 
     await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
@@ -427,9 +672,7 @@ describe('BookingWizard: weekly pattern (F35/F36 regression)', () => {
     expect(Number.isNaN(shownCount)).toBe(false);
     expect(shownCount).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 4
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' })); // -> step 5
+    await goToReview(user);
 
     // Review must show the SAME count as Step 3's preview.
     const reviewVisitsRow = (await screen.findAllByText(/visits?$/)).find((el) => /^\d+ visits?$/.test(el.textContent ?? ''));
@@ -461,10 +704,7 @@ describe('BookingWizard: weekly pattern (F35/F36 regression)', () => {
     const warning = await screen.findByText(/more than we can book at once/);
     expect(warning.textContent).toContain(String(MAX_RECURRING_VISITS));
 
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await goToReview(user);
     expect(screen.getByText(new RegExp(`Capped at ${MAX_RECURRING_VISITS} visits`))).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
@@ -486,10 +726,7 @@ describe('BookingWizard: submit error handling', () => {
 
     await pickDay(user, TODAY);
 
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByText('Invoice Options');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await screen.findByRole('heading', { name: 'Review & Confirm' });
+    await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
 
     await screen.findByText('Could not create booking. Try again.');

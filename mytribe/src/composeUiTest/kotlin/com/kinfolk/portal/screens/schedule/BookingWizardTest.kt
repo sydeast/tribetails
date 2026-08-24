@@ -8,10 +8,13 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import kotlinx.datetime.toInstant
 import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
@@ -34,13 +37,24 @@ private fun monthHeading(d: LocalDate): String {
     return "${names[d.month.ordinal]} ${d.year}"
 }
 
-/** Step 1 (all Kin) -> step 2 (pick a duration) -> step 3 (the date picker). */
+/** Step 1 (all Kin) -> step 2 (add a KinCare) -> step 3 (the date picker). */
 private fun ComposeUiTest.goToStep3() {
     waitForIdle()
     onNodeWithText("Next").performClick()
     waitForIdle()
     onNodeWithText("Auntie's In").performClick()
     onNodeWithText("Next").performClick()
+    waitForIdle()
+}
+
+/**
+ * Taps the 10th of next month, which is always a bookable future date whatever
+ * today is. Day numbers 1-5 collide with the step indicator, hence the 10th.
+ */
+private fun ComposeUiTest.pickTenthOfNextMonth() {
+    onNodeWithContentDescription("Next month").performClick()
+    waitForIdle()
+    onNodeWithText("10").performClick()
     waitForIdle()
 }
 
@@ -232,6 +246,125 @@ class BookingWizardTest {
         waitForIdle()
         onNodeWithContentDescription("Previous month").assertHasClickAction()
         onNodeWithText(monthHeading(shiftMonth(today, 1))).assertIsDisplayed()
+    }
+
+    /**
+     * #541: a second duration used to REPLACE the first. Both must survive.
+     */
+    @Test
+    fun step2_keepsBothDurationsWhenTwoAreAdded() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Auntie's In").performClick()
+        onNodeWithText("Overnight Stays").performClick()
+        waitForIdle()
+        onNodeWithText("KinCare in each day").assertIsDisplayed()
+        onNodeWithText("1. Auntie's In").assertIsDisplayed()
+        onNodeWithText("2. Overnight Stays").assertIsDisplayed()
+    }
+
+    /**
+     * #543: two KinCares in ONE day. Tapping a duration card again asks for a
+     * second one of it, rather than toggling the first one off.
+     */
+    @Test
+    fun step2_addsASecondKinCareOfTheSameDurationAndRemovesOnlyOne() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Auntie's In").performClick()
+        onNodeWithText("Auntie's In").performClick()
+        waitForIdle()
+        onNodeWithText("1. Auntie's In").assertIsDisplayed()
+        onNodeWithText("2. Auntie's In").assertIsDisplayed()
+        // The card's own badge counts them.
+        onNodeWithText("×2").assertIsDisplayed()
+
+        onAllNodesWithText("Remove Auntie's In").onFirst().performClick()
+        waitForIdle()
+        onNodeWithText("1. Auntie's In").assertIsDisplayed()
+        onNodeWithText("2. Auntie's In").assertDoesNotExist()
+    }
+
+    /**
+     * #545: kinfolk should never see the invoice options screen. Step 4 is the
+     * Extra Love & Context note the step indicator has always named.
+     */
+    @Test
+    fun step4_isExtraLoveAndContextAndNeverInvoiceOptions() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        goToStep3()
+        onNodeWithText("Invoice Options").assertDoesNotExist()
+        pickTenthOfNextMonth()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Extra Love & Context").assertIsDisplayed()
+        onNodeWithText("Invoice Options").assertDoesNotExist()
+        onNodeWithText("Anything your Auntie should know before she arrives? Optional.").assertIsDisplayed()
+    }
+
+    /**
+     * #546 + #547: the estimate is derived from the visit list, so two dates of
+     * a $150.00 KinCare read $300.00 — and Review names both days rather than
+     * printing a count. Overnight Stays is the fixed-price entry in the stub;
+     * Auntie's In is range-priced and would only ever be a "from".
+     */
+    @Test
+    fun review_multipliesTheEstimateByTheVisitsAndNamesEveryDate() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        setThemedContent {
+            BookingWizardScreen(kinfolkId = "3", portalApi = PortalApi(fake), onClose = {}, onComplete = {})
+        }
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Overnight Stays").performClick()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+
+        onNodeWithContentDescription("Next month").performClick()
+        waitForIdle()
+        onNodeWithText("10").performClick()
+        onNodeWithText("11").performClick()
+        waitForIdle()
+
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+        onNodeWithText("Next").performClick()
+        waitForIdle()
+
+        onNodeWithText("Review & Confirm").assertIsDisplayed()
+        onNodeWithText("$300.00").assertIsDisplayed()
+        onNodeWithText("2 visits").assertIsDisplayed()
+        // Every date named, in the spec's spelling, not summarised to a count.
+        val nextMonth = shiftMonth(Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date, 1)
+        for (day in listOf(10, 11)) {
+            val visit = com.kinfolk.portal.portal.BookingVisit(
+                startTimeMs = kotlinx.datetime.LocalDateTime(nextMonth.year, nextMonth.month, day, 9, 0)
+                    .toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds(),
+                endTimeMs = null,
+                serviceId = "s2",
+                serviceName = "Overnight Stays",
+                priceCents = 15000L,
+            )
+            onNodeWithText(plannedVisitLine(renderPlannedVisits(listOf(visit)).single())).assertIsDisplayed()
+        }
     }
 
     @Test

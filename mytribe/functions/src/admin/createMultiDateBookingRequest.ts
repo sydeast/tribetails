@@ -8,7 +8,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveDefaultAssignee } from '../lib/defaultAssignee';
-import { writeEnvelope, resolveService, type NormalizedVisit } from '../portal/requestBooking';
+import { writeEnvelope, resolveService, loadServicePriceBook, type NormalizedVisit } from '../portal/requestBooking';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
@@ -180,12 +180,16 @@ export async function createMultiDateBookingRequestHandler(
   await guardCompanyHolidayConflict({ firestore: db(), visits: args.visits });
 
   const pattern = args.pattern ?? 'individual';
-  // resolveService: the base_services catalog wins for name + price; a client
-  // priceCents is never trusted (NOTE-56). An admin who omits serviceId gets a
-  // display-only serviceName and price resolved at invoice time.
+  // resolveService: the catalog wins for name + price; a client priceCents is
+  // never trusted (NOTE-56). An admin who omits serviceId gets a display-only
+  // serviceName and price resolved at invoice time. #546: the catalog is read
+  // once per request through the same price book the portal write path uses, so
+  // `serviceRates` — where this business's real prices live — resolves here too
+  // instead of missing into a null price.
+  const priceBook = await loadServicePriceBook();
   const normalized: NormalizedVisit[] = await Promise.all(
     args.visits.map(async (v) => {
-      const resolved = await resolveService(v.serviceId ?? null, v.serviceName);
+      const resolved = await resolveService(v.serviceId ?? null, v.serviceName, priceBook);
       return {
         startTimeMs: v.startTimeMs,
         endTimeMs: v.endTimeMs ?? null,

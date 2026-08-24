@@ -15,6 +15,7 @@ import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
+import { mapServiceRates } from './getServiceCatalog';
 
 /**
  * #9 (2026-06-08): Auto-confirm repeat kinfolk. When the operator turns on
@@ -253,24 +254,87 @@ export interface NormalizedVisit {
   title: string | null;
 }
 
+/** One catalog entry as the write path needs it: the canonical label and the price it carries. */
+export interface ServicePriceEntry {
+  name: string | null;
+  priceCents: number | null;
+}
+
+/** serviceId -> canonical name + price. Built once per request; see {@link loadServicePriceBook}. */
+export type ServicePriceBook = ReadonlyMap<string, ServicePriceEntry>;
+
+/**
+ * #546, server half: THE SAME CATALOG THE WIZARD PRICED FROM.
+ *
+ * `resolveService` used to read `base_services/{serviceId}` and nothing else.
+ * But `getServiceCatalog` — the callable the wizard's duration cards are built
+ * from — resolves `business_settings.serviceRates` FIRST and only falls back to
+ * `base_services`, and this business's real catalog lives in `serviceRates`
+ * (keys like `30Minute`, values "25"). So every booking a household made from
+ * the real catalog looked its serviceId up in a collection that has never held
+ * it, logged `service.resolve.miss`, and persisted `priceCents: null`.
+ *
+ * That is why fixing #546's estimate is not a client-only job: the number the
+ * wizard now shows would have had no persisted counterpart at all. This reader
+ * is `getServiceCatalog`'s FIRST source, resolved once for the whole request —
+ * `resolveService` still falls back to the `base_services` document when the
+ * rates map does not carry the id, which is `getServiceCatalog`'s second
+ * source and the behaviour every existing caller already had.
+ *
+ * Read once per request rather than once per visit: a booking may now name
+ * several different KinCares (#541), and each used to cost its own read.
+ */
+export async function loadServicePriceBook(): Promise<ServicePriceBook> {
+  const book = new Map<string, ServicePriceEntry>();
+  try {
+    const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
+    for (const s of mapServiceRates(settingsSnap.data()?.serviceRates)) {
+      book.set(s.id, { name: s.name, priceCents: s.priceCents });
+    }
+  } catch (err) {
+    // A settings read that fails must not take the booking down with it: the
+    // per-service `base_services` fallback below still resolves, exactly as it
+    // did before this book existed.
+    logEvent({
+      severity: 'warn',
+      function: 'requestBooking',
+      event: 'serviceRates.read.failed',
+      errorMessage: (err as Error)?.message,
+    });
+  }
+  return book;
+}
+
 /**
  * NOTE-56: resolve `serviceName` + `priceCents` SERVER-SIDE from the canonical
- * `base_services/{serviceId}` catalog. A kinfolk client must never be trusted
- * to supply its own price (it could send `priceCents: 0`) or an arbitrary
- * service label. When the serviceId resolves, the catalog value wins; the
- * client-supplied `priceCents` is ignored entirely.
+ * catalog. A kinfolk client must never be trusted to supply its own price (it
+ * could send `priceCents: 0`) or an arbitrary service label. When the serviceId
+ * resolves, the catalog value wins; the client-supplied `priceCents` is ignored
+ * entirely.
  *
- * When the serviceId is absent or not in the catalog we set `priceCents = null`
+ * Sources, in `getServiceCatalog`'s own order: the `serviceRates` book first
+ * (#546), then the `base_services/{serviceId}` document.
+ *
+ * When the serviceId is absent or in neither source we set `priceCents = null`
  * and let pricing be resolved downstream at invoice time, rather than persist a
  * client-asserted amount. The client `serviceName` is used only as a display
  * fallback label when the catalog has no entry.
+ *
+ * `book` is optional so a caller resolving ONE visit does not have to arrange
+ * the read itself; both live callers pass a book loaded once per request.
  */
 export async function resolveService(
   serviceId: string | null,
   clientServiceName: string | null,
+  book?: ServicePriceBook,
 ): Promise<{ serviceName: string | null; priceCents: number | null }> {
   if (!serviceId) {
     return { serviceName: clientServiceName, priceCents: null };
+  }
+  const fromRates = (book ?? (await loadServicePriceBook())).get(serviceId);
+  if (fromRates) {
+    const ratesName = fromRates.name !== null && fromRates.name.length > 0 ? fromRates.name : clientServiceName;
+    return { serviceName: ratesName, priceCents: fromRates.priceCents };
   }
   const snap = await db().collection('base_services').doc(serviceId).get();
   const data = snap.data() as Record<string, unknown> | undefined;
@@ -292,6 +356,41 @@ export async function resolveService(
     typeof rawPrice === 'number' && isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : null;
   return { serviceName: canonicalName, priceCents };
 }
+
+/**
+ * #541 / #543, server half: a booking day may carry SEVERAL KinCares, and two
+ * of them may share a duration. What it may never carry is the same duration at
+ * the same instant twice — that is not two visits, it is one visit asked for
+ * twice, and it would put two identical `kinCares` docs in front of an Auntie
+ * with nothing to tell them apart.
+ *
+ * Deliberately NOT an overlap rule. A 60-minute KinCare starting half an hour
+ * into a 30-minute one is a scheduling question for the human who vets the
+ * request (every envelope lands 'requested'), not something this callable gets
+ * to decide on their behalf. Exact duplicates are the only case where refusing
+ * cannot be wrong.
+ */
+export function duplicateVisitKey(
+  visits: ReadonlyArray<{ startTimeMs: number; serviceId: string }>,
+): string | null {
+  const seen = new Set<string>();
+  for (const v of visits) {
+    const key = `${v.serviceId}@${v.startTimeMs}`;
+    if (seen.has(key)) return key;
+    seen.add(key);
+  }
+  return null;
+}
+
+/**
+ * Sanity bound on one request. The wizard's own weekly cap is 26
+ * (MAX_RECURRING_VISITS) but the Individual pattern has no such ceiling —
+ * dates x KinCares can be arbitrarily large — and `writeEnvelope` puts every
+ * visit in ONE Firestore transaction, which has a hard 500-write limit. 200
+ * leaves generous room under it for the envelope doc and any future per-visit
+ * write, while being far more than a household plans by hand.
+ */
+export const MAX_VISITS_PER_REQUEST = 200;
 
 /**
  * Writes one parent envelope `families/{kinfolkId}/bookings/{batchId}` plus one
@@ -452,6 +551,12 @@ export async function requestBookingHandler(
     const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
     const now = Date.now();
+    if (args.visits.length > MAX_VISITS_PER_REQUEST) {
+      throw new HttpsError(
+        'invalid-argument',
+        `A booking request can carry at most ${MAX_VISITS_PER_REQUEST} visits. Send fewer dates or fewer KinCares per day.`,
+      );
+    }
     args.visits.forEach((v) => {
       if (v.startTimeMs < now - 60_000) {
         throw new HttpsError('invalid-argument', 'Visit startTime must be in the future.');
@@ -460,6 +565,13 @@ export async function requestBookingHandler(
         throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
       }
     });
+    // #543: several KinCares in one day are fine; the SAME one twice is not.
+    if (duplicateVisitKey(args.visits) !== null) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Two KinCares in this request have the same duration at the same time. Change one of the times.',
+      );
+    }
     // Kinfolk have no override: a busy-import conflict always refuses the request.
     await guardBookingBusyConflict({ firestore, visits: args.visits, actorUid: uid, actorRole: 'PRIMARY' });
     // A closed day always refuses the request too -- no override, for anyone.
@@ -469,10 +581,13 @@ export async function requestBookingHandler(
     const batchId = `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
     const pattern = args.pattern ?? 'individual';
     // NOTE-56: resolve serviceName + priceCents from the canonical catalog. The
-    // client-supplied `v.priceCents` is intentionally discarded here.
+    // client-supplied `v.priceCents` is intentionally discarded here. The book is
+    // read ONCE for the whole request; a booking may now name several different
+    // KinCares (#541) and used to cost one catalog read per visit.
+    const priceBook = await loadServicePriceBook();
     const normalized: NormalizedVisit[] = await Promise.all(
       args.visits.map(async (v) => {
-        const resolved = await resolveService(v.serviceId, v.serviceName);
+        const resolved = await resolveService(v.serviceId, v.serviceName, priceBook);
         return {
           startTimeMs: v.startTimeMs,
           endTimeMs: v.endTimeMs ?? null,

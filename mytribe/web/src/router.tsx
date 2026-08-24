@@ -217,16 +217,28 @@ const bookingDetailRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/BookingDetail'), 'BookingDetail'),
 });
 
+/**
+ * Everything /schedule/book reads out of the URL, which is one boolean.
+ *
+ * "Set up a recurring visit" (Schedule.tsx) starts the wizard pre-set to the
+ * Weekly pattern via `?weekly=1` (BookingWizardProps.startWeekly), rather than
+ * needing a second route for the same screen.
+ *
+ * #545: this is also the reason no URL can put a household on a wizard step
+ * they should not be on. The wizard's step is component state and is not
+ * addressable at all, and this validator returns a fresh object holding ONLY
+ * `weekly` — an unknown key such as `?step=4` is not passed through, it is
+ * dropped. Exported so router.test.ts can hold that line.
+ */
+export function bookingWizardSearch(search: Record<string, unknown>): { weekly: boolean } {
+  return { weekly: search['weekly'] === '1' || search['weekly'] === true };
+}
+
 const bookingWizardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule/book',
   beforeLoad: requireActiveTribe,
-  // "Set up a recurring visit" (Schedule.tsx) starts the wizard pre-set to
-  // the Weekly pattern via ?weekly=1 (BookingWizardProps.startWeekly), rather
-  // than needing a second route for the same screen.
-  validateSearch: (search: Record<string, unknown>): { weekly: boolean } => ({
-    weekly: search['weekly'] === '1' || search['weekly'] === true,
-  }),
+  validateSearch: bookingWizardSearch,
   // BookingWizardRoute (the search-aware wrapper) lives in screens/BookingWizard.tsx
   // itself, not inlined here, so this dynamic import pulls the whole chunk in one piece.
   component: lazyRouteComponent(() => import('./screens/BookingWizard'), 'BookingWizardRoute'),

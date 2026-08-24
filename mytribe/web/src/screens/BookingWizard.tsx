@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
@@ -18,12 +18,18 @@ import {
   buildVisits,
   buildWeeklyVisits,
   dateKey,
+  estimateBookingTotal,
+  formatEstimate,
   MAX_RECURRING_VISITS,
-  parseHourMinute,
+  plannedVisitLine,
   priceLabel,
+  renderPlannedVisits,
+  slotsBlocker,
+  summariseSlots,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from '../lib/bookingWizardLogic';
+import type { KinCareSlot } from '../lib/bookingWizardLogic';
 import '../styles/booking.css';
 
 /**
@@ -50,6 +56,8 @@ type Pattern = 'individual' | 'weekly';
 const STEP_LABELS = ['Kin', 'KinCare Duration', 'Schedule Dates', 'Extra Love & Context', 'Review & Confirm'];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEK_COUNT_OPTIONS = [2, 4, 6, 8];
+/** What a freshly added KinCare's time starts at. The household changes it in step 3. */
+const DEFAULT_VISIT_TIME = '09:00';
 const SERVICE_ICON_EMOJI: Record<string, string> = {
   sun: '\u{2600}\u{FE0F}',
   bell: '\u{1F514}',
@@ -146,17 +154,27 @@ export interface BookingWizardBodyProps extends BookingWizardProps {
  * src/commonMain/kotlin/com/kinfolk/portal/screens/schedule/BookingWizardScreen.kt
  * + RecurringBooking.kt (see lib/bookingWizardLogic.ts); desktop layout
  * (stepper, 3-col duration grid, persistent summary/price rail) from
- * ui-ideas/mytribe-booking-wizard-2026-05-31.html. Step order follows the
- * Kotlin reference (Kin -> KinCare Duration -> Dates -> Invoice -> Review),
- * not the mockup's single static screen (which only shows step 1).
+ * ui-ideas/mytribe-booking-wizard-2026-05-31.html.
  *
- * `weeklyPreview` below is the single source of truth for the weekly-
- * pattern visit list: computed once per (pattern, weeklyDays, weekCount,
- * visitTime, serviceId) via useMemo (same shape as the Kotlin
- * `remember(...)` block) and reused for the Step 3 count, the summary
- * panel, the Review step, AND the requestBooking payload. That is what
- * fixes F35/F36 by construction: the count a kinfolk confirms can never
- * drift from what actually gets submitted.
+ * #545: the steps are Kin -> KinCare Duration -> Dates -> Extra Love &
+ * Context -> Review, which is the mock's own list. What used to sit at step 4
+ * was an "Invoice Options" card that said an invoice arrives later and offered
+ * nothing to decide — a kinfolk-facing surface for a decision kinfolk do not
+ * make. It is deleted, not hidden: there is no component left to render, and
+ * the route's `validateSearch` exposes only `weekly`, so no URL selects a step
+ * at all. The Extra Love & Context note moved out of Review and into the step
+ * the stepper has always named for it.
+ *
+ * `plannedVisits` below is the single source of truth for the visit list, for
+ * BOTH patterns: computed once per (pattern, dates, weeklyDays, weekCount,
+ * slots) via useMemo (same shape as the Kotlin `remember(...)` block) and
+ * reused for the Step 3 count, the summary rail's count AND price, the Review
+ * step's enumerated dates and price, AND the requestBooking payload. The
+ * Individual pattern used to be the exception, building its visits only inside
+ * the submit mutation — which is exactly how #546/#547 happened: the rail and
+ * Review had no visit list to read a price off, so they read the catalog
+ * sticker price instead and never changed. Every number a kinfolk sees is now
+ * derived from the same array that gets submitted.
  */
 export function BookingWizardBody(props: BookingWizardBodyProps) {
   const queryClient = useQueryClient();
@@ -165,13 +183,25 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const [step, setStep] = useState(1);
   const [allKinMode, setAllKinMode] = useState(true);
   const [selectedKinIds, setSelectedKinIds] = useState<Set<string>>(new Set());
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+  // #541 / #543: a LIST of KinCares, each with its own time of day, not one
+  // service and one clock. See KinCareSlot in lib/bookingWizardLogic.ts.
+  const [slots, setSlots] = useState<KinCareSlot[]>([]);
   const [pattern, setPattern] = useState<Pattern>(props.startWeekly ? 'weekly' : 'individual');
   const [selectedDates, setSelectedDates] = useState<Map<string, Date>>(new Map());
   const [weeklyDays, setWeeklyDays] = useState<Set<number>>(new Set());
   const [weekCount, setWeekCount] = useState(4);
-  const [visitTime, setVisitTime] = useState('09:00');
   const [notes, setNotes] = useState('');
+
+  // Slot ids are local and never sent; they exist so two KinCares of the same
+  // duration stay distinguishable to React while one of their times is edited.
+  const slotSeq = useRef(0);
+  const addSlot = (serviceId: string) => {
+    slotSeq.current += 1;
+    setSlots((prev) => [...prev, { slotId: `slot-${slotSeq.current}`, serviceId, time: DEFAULT_VISIT_TIME }]);
+  };
+  const removeSlot = (slotId: string) => setSlots((prev) => prev.filter((s) => s.slotId !== slotId));
+  const setSlotTime = (slotId: string, time: string) =>
+    setSlots((prev) => prev.map((s) => (s.slotId === slotId ? { ...s, time } : s)));
 
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
   const servicesQuery = useQuery({ queryKey: ['serviceCatalog'], queryFn: () => getServiceCatalog() });
@@ -197,35 +227,26 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   }, [closuresQuery.data]);
 
   const activeKin = useMemo(() => (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active'), [kinQuery.data]);
-  const services = servicesQuery.data?.services ?? [];
-  const selectedService = services.find((s) => s.id === selectedServiceId) ?? null;
+  const services = useMemo(() => servicesQuery.data?.services ?? [], [servicesQuery.data]);
   const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
 
-  // Single source of truth for the weekly series; see the doc comment above.
-  const weeklyPreview: RequestBookingArgsVisit[] = useMemo(() => {
-    if (pattern !== 'weekly' || !selectedService) return [];
-    const t = parseHourMinute(visitTime);
-    if (t === null || weeklyDays.size === 0 || weekCount < 1) return [];
-    return buildWeeklyVisits({
-      nowMs: Date.now(),
-      weeklyDays,
-      weeks: weekCount,
-      time: t,
-      serviceId: selectedService.id,
-      serviceName: selectedService.name,
-      priceCents: selectedService.priceCents ?? selectedService.priceMinCents,
-    });
-    // Deliberately keyed on the same inputs as the Kotlin `remember(...)`
-    // block (pattern, weeklyDays, weekCount, visitTime, selectedServiceId).
-    // NOT on `services`/`selectedService` object identity, and NOT on a
-    // ticking clock, so this recomputes exactly when the rule changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pattern, weeklyDays, weekCount, visitTime, selectedServiceId]);
+  // Single source of truth for the visit list, BOTH patterns; see the doc
+  // comment above. Deliberately NOT keyed on a ticking clock, so it recomputes
+  // exactly when the plan changes.
+  const plannedVisits: RequestBookingArgsVisit[] = useMemo(() => {
+    if (pattern === 'weekly') {
+      return buildWeeklyVisits({ nowMs: Date.now(), weeklyDays, weeks: weekCount, slots, services });
+    }
+    return buildVisits([...selectedDates.values()], slots, services);
+  }, [pattern, weeklyDays, weekCount, slots, selectedDates, services]);
 
-  const weeklyPotential = weeklyPotentialCount(weeklyDays, weekCount);
-  const weeklyCapped = pattern === 'weekly' && weeklyPreview.length > 0 && weeklyPotential > weeklyPreview.length;
-  const weeklyBlocker = weeklyVisitsBlocker(weeklyDays, weekCount, visitTime);
-  const individualReady = selectedDates.size > 0 && parseHourMinute(visitTime) !== null;
+  /** #546: the running estimate, derived from the plan above and from nothing else. */
+  const estimate = useMemo(() => estimateBookingTotal(plannedVisits, services), [plannedVisits, services]);
+
+  const weeklyPotential = weeklyPotentialCount(weeklyDays, weekCount, slots.length);
+  const weeklyCapped = pattern === 'weekly' && plannedVisits.length > 0 && weeklyPotential > plannedVisits.length;
+  const weeklyBlocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots);
+  const individualBlocker = selectedDates.size === 0 ? 'Tap at least one date.' : slotsBlocker(slots);
 
   /**
    * C1: every date currently in the plan that `closedDates` says is closed.
@@ -241,23 +262,28 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       return [...selectedDates.keys()].filter((k) => closedDates.has(k));
     }
     const seen = new Set<string>();
-    for (const v of weeklyPreview) {
+    for (const v of plannedVisits) {
       const k = dateKey(new Date(v.startTimeMs));
       if (closedDates.has(k)) seen.add(k);
     }
     return [...seen];
-  }, [pattern, selectedDates, weeklyPreview, closedDates]);
+  }, [pattern, selectedDates, plannedVisits, closedDates]);
 
   const scheduleReady =
-    (pattern === 'individual' ? individualReady : weeklyBlocker === null) && closedDatesInPlan.length === 0;
-  const visitCount = pattern === 'weekly' ? weeklyPreview.length : selectedDates.size;
+    (pattern === 'individual' ? individualBlocker === null : weeklyBlocker === null) && closedDatesInPlan.length === 0;
+  const visitCount = plannedVisits.length;
+  /** How many calendar days the plan touches; with 2 KinCares a day that is not the visit count. */
+  const dayCount =
+    pattern === 'individual'
+      ? selectedDates.size
+      : new Set(plannedVisits.map((v) => dateKey(new Date(v.startTimeMs)))).size;
 
   const canAdvance = (() => {
     switch (step) {
       case 1:
         return allKinMode ? activeKin.length > 0 : selectedKinIds.size > 0;
       case 2:
-        return selectedServiceId !== null;
+        return slots.length > 0;
       case 3:
         return scheduleReady;
       default:
@@ -267,8 +293,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!selectedService) throw new Error('Choose a KinCare Duration first.');
-      const visits = pattern === 'weekly' ? weeklyPreview : buildVisits([...selectedDates.values()], visitTime, selectedService);
+      if (slots.length === 0) throw new Error('Choose a KinCare Duration first.');
+      // The SAME array the rail, step 3 and Review have been showing.
+      const visits = plannedVisits;
       if (visits.length === 0) throw new Error('No visits to book. Check the days and weeks.');
       return requestBooking({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
@@ -353,7 +380,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   }
                 />
               )}
-              {step === 2 && <Step2ServiceSelect services={services} selectedId={selectedServiceId} onSelect={setSelectedServiceId} />}
+              {step === 2 && <Step2KinCareSelect services={services} slots={slots} onAdd={addSlot} onRemove={removeSlot} />}
               {step === 3 && (
                 <Step3ScheduleDates
                   pattern={pattern}
@@ -378,26 +405,27 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   }
                   weekCount={weekCount}
                   onWeekCountChange={setWeekCount}
-                  visitTime={visitTime}
-                  onVisitTimeChange={setVisitTime}
-                  serviceLabel={selectedService?.name ?? 'Not chosen yet'}
-                  weeklyEmitted={weeklyPreview.length}
+                  slots={slots}
+                  services={services}
+                  onSlotTimeChange={setSlotTime}
+                  weeklyEmitted={plannedVisits.length}
                   weeklyCapped={weeklyCapped}
                   weeklyBlocker={weeklyBlocker}
+                  individualBlocker={individualBlocker}
+                  visitCount={visitCount}
                   closedDates={closedDates}
                   closedDatesInPlan={closedDatesInPlan}
                 />
               )}
-              {step === 4 && <Step4InvoiceOptions />}
+              {step === 4 && <Step4ExtraLoveAndContext notes={notes} onNotesChange={setNotes} />}
               {step === 5 && (
                 <Step5Review
                   kinNames={allKinMode ? ['All Kin in this home'] : activeKin.filter((k) => selectedKinIds.has(k.id)).map((k) => k.name ?? 'Unnamed Kin')}
-                  service={selectedService}
+                  kinCareSummary={summariseSlots(slots, services)}
                   pattern={pattern}
-                  visitCount={visitCount}
-                  visitTime={visitTime}
+                  visits={plannedVisits}
                   notes={notes}
-                  onNotesChange={setNotes}
+                  estimateLabel={formatEstimate(estimate)}
                   capped={weeklyCapped}
                   submitting={submit.isPending}
                   error={submitErrorMessage}
@@ -423,7 +451,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                 <button
                   type="button"
                   className="btn grad"
-                  disabled={submit.isPending || !selectedService || !scheduleReady}
+                  disabled={submit.isPending || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
                   onClick={() => submit.mutate()}
                 >
                   {submit.isPending ? 'Creating…' : 'Create Booking'}
@@ -432,53 +460,67 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
             </div>
           </div>
 
-          <div className="stack">
-            <section className="glass card d3">
-              <div className="sectlabel">Booking summary</div>
+          {/*
+            #547: the rail stands down on Review. The operator's words were
+            "why are we displaying review & confirm AND booking summary on the
+            same page" — and they are right, Review IS the summary, in more
+            detail, three inches to the left. Every earlier step still needs it,
+            because on those the summary is the only place the plan is visible.
+          */}
+          {step < 5 && (
+            <div className="stack">
+              <section className="glass card d3">
+                <div className="sectlabel">Booking summary</div>
 
-              <div className="sum-row">
-                <div className="sk">KinCare Duration</div>
-                {selectedService ? (
-                  <div className="sv">
-                    {selectedService.name}
-                    {selectedService.category && <small>{selectedService.category}</small>}
-                  </div>
-                ) : (
-                  <div className="sv muted">Not chosen yet</div>
-                )}
-              </div>
-
-              <div className="sum-row">
-                <div className="sk">Kin</div>
-                <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
-                  {allKinMode ? 'All Kin in this home' : selectedKinIds.size > 0 ? `${selectedKinIds.size} chosen` : 'Not chosen yet'}
+                <div className="sum-row">
+                  <div className="sk">KinCare</div>
+                  {slots.length > 0 ? (
+                    <div className="sv">{summariseSlots(slots, services)}</div>
+                  ) : (
+                    <div className="sv muted">Not chosen yet</div>
+                  )}
                 </div>
-              </div>
 
-              <div className="sum-row">
-                <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
-                {visitCount > 0 ? (
-                  <div className="sv">
-                    {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
-                    {pattern === 'weekly' && <small>over {weekCount} weeks</small>}
+                <div className="sum-row">
+                  <div className="sk">Kin</div>
+                  <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
+                    {allKinMode ? 'All Kin in this home' : selectedKinIds.size > 0 ? `${selectedKinIds.size} chosen` : 'Not chosen yet'}
                   </div>
-                ) : (
-                  <div className="sv muted">No dates selected yet.</div>
-                )}
-              </div>
+                </div>
 
-              <div className="price-box">
-                <span className="pl">Estimated Price</span>
-                <span className="pv">
-                  {selectedService ? priceLabel(selectedService) || '—' : '$0'}
-                  <small> {selectedService ? '' : '/ pending'}</small>
-                </span>
-              </div>
-              <p className="sub" style={{ marginTop: 12 }}>
-                Your estimate updates as you add Kin and dates. Your Auntie confirms the final price before the booking starts.
-              </p>
-            </section>
-          </div>
+                <div className="sum-row">
+                  <div className="sk">{pattern === 'weekly' ? 'Schedule' : 'Dates'}</div>
+                  {visitCount > 0 ? (
+                    <div className="sv">
+                      {visitCount} {visitCount === 1 ? 'visit' : 'visits'}
+                      <small>
+                        {pattern === 'weekly'
+                          ? `over ${weekCount} weeks`
+                          : `across ${dayCount} ${dayCount === 1 ? 'day' : 'days'}`}
+                      </small>
+                    </div>
+                  ) : (
+                    <div className="sv muted">No dates selected yet.</div>
+                  )}
+                </div>
+
+                <div className="price-box">
+                  <span className="pl">Estimated Price</span>
+                  <span className="pv">{formatEstimate(estimate)}</span>
+                </div>
+                <p className="sub" style={{ marginTop: 12 }}>
+                  {/*
+                    The old line here promised the estimate updates "as you add
+                    Kin and dates". Kin have never moved the price — the catalog
+                    is priced per visit, not per animal — so half of that
+                    sentence was describing something the app does not do.
+                  */}
+                  Your estimate updates as you add KinCare and dates. Your Auntie confirms the final price before the booking
+                  starts.
+                </p>
+              </section>
+            </div>
+          )}
         </div>
 
         <p className="footnote">
@@ -585,28 +627,50 @@ function Step1KinSelect(props: {
   );
 }
 
-function Step2ServiceSelect(props: { services: ServiceDto[]; selectedId: string | null; onSelect: (id: string) => void }) {
+/**
+ * #541 + #543: step 2 builds the day's KinCare LIST, not a single choice.
+ *
+ * The grid used to be a `radiogroup`: picking a second duration silently
+ * unpicked the first, which is #541, and there was no way at all to ask for two
+ * KinCares in one day, which is #543. A radio group is the wrong control for
+ * either — so the cards are now ADD buttons (tap a card again for a second one
+ * of the same duration, which is how the morning-and-evening walk gets asked
+ * for), and the list below is where a KinCare is taken back out. Adding on the
+ * card and removing in the list keeps one control from having to mean both.
+ *
+ * Each KinCare's time of day is set on step 3, next to the dates, where the
+ * single "Visit Time" field used to live.
+ */
+function Step2KinCareSelect(props: {
+  services: ServiceDto[];
+  slots: readonly KinCareSlot[];
+  onAdd: (serviceId: string) => void;
+  onRemove: (slotId: string) => void;
+}) {
   const groups = groupServicesByCategory(props.services);
+  const countFor = (id: string) => props.slots.filter((s) => s.serviceId === id).length;
   return (
     <>
       <h3 className="title">Choose KinCare Duration</h3>
-      <p className="sub">How long should each visit run?</p>
+      <p className="sub">
+        How long should each visit run? Add as many as this booking needs. Tap a duration twice for two of them in the same
+        day.
+      </p>
       {groups.map(([category, list]) => (
         <div key={category}>
           <div className="svc-category">{category}</div>
-          <div className="svc-grid" role="radiogroup" aria-label="KinCare Duration">
+          <div className="svc-grid" role="group" aria-label="KinCare Duration">
             {list.map((s) => {
-              const selected = s.id === props.selectedId;
+              const count = countFor(s.id);
               return (
                 <button
                   type="button"
                   key={s.id}
-                  className={`svc ${selected ? 'sel' : ''}`}
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => props.onSelect(s.id)}
+                  className={`svc ${count > 0 ? 'sel' : ''}`}
+                  aria-label={`Add ${s.name}`}
+                  onClick={() => props.onAdd(s.id)}
                 >
-                  <div className="pick">{'✓'}</div>
+                  <div className="pick">{count > 1 ? `×${count}` : '✓'}</div>
                   <div className="ico">{serviceIcon(s)}</div>
                   <h4>{s.name}</h4>
                   {s.description && <p>{s.description}</p>}
@@ -617,6 +681,31 @@ function Step2ServiceSelect(props: { services: ServiceDto[]; selectedId: string 
           </div>
         </div>
       ))}
+
+      <div className="svc-category" style={{ marginTop: 18 }}>
+        KinCare in each day
+      </div>
+      {props.slots.length === 0 ? (
+        <p className="sub">Nothing added yet. Tap a duration above.</p>
+      ) : (
+        <ul className="slotlist">
+          {props.slots.map((slot, idx) => {
+            const service = props.services.find((s) => s.id === slot.serviceId);
+            const name = service?.name ?? slot.serviceId;
+            return (
+              <li key={slot.slotId} className="slotrow">
+                <span className="slotname">
+                  {idx + 1}. {name}
+                </span>
+                <span className="slotprice">{service ? priceLabel(service) : ''}</span>
+                <button type="button" className="btn ghost" aria-label={`Remove ${name}`} onClick={() => props.onRemove(slot.slotId)}>
+                  Remove
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </>
   );
 }
@@ -630,18 +719,21 @@ function Step3ScheduleDates(props: {
   onToggleWeekday: (day: number) => void;
   weekCount: number;
   onWeekCountChange: (n: number) => void;
-  visitTime: string;
-  onVisitTimeChange: (t: string) => void;
-  serviceLabel: string;
+  slots: readonly KinCareSlot[];
+  services: ServiceDto[];
+  onSlotTimeChange: (slotId: string, time: string) => void;
   weeklyEmitted: number;
   weeklyCapped: boolean;
   weeklyBlocker: string | null;
+  individualBlocker: string | null;
+  visitCount: number;
   /** C1: date key -> closure name, from `getBusinessClosures`. */
   closedDates: ReadonlyMap<string, string>;
   /** C1: dates currently in the plan that land on one of `closedDates`. */
   closedDatesInPlan: readonly string[];
 }) {
-  const { pattern, weeklyDays, weekCount, visitTime, weeklyEmitted, weeklyCapped, weeklyBlocker, closedDatesInPlan } = props;
+  const { pattern, weeklyDays, weekCount, slots, weeklyEmitted, weeklyCapped, weeklyBlocker, individualBlocker, visitCount, closedDatesInPlan } =
+    props;
   return (
     <>
       <h3 className="title">Schedule Dates</h3>
@@ -712,19 +804,36 @@ function Step3ScheduleDates(props: {
         </>
       )}
 
-      <div className="field" style={{ marginTop: 18, maxWidth: 220 }}>
-        <label htmlFor="booking-time">Visit Time</label>
-        <input
-          id="booking-time"
-          type="time"
-          className="inp"
-          value={visitTime}
-          onChange={(e) => props.onVisitTimeChange(e.target.value)}
-        />
-      </div>
-      <p className="sub" style={{ marginTop: 8 }}>
-        KinCare Duration: {props.serviceLabel}
-      </p>
+      {/*
+        #543: one time field PER KinCare, not one for the booking. Two KinCares
+        of the same duration in a day are only two things at all because their
+        times differ, so the time belongs to the KinCare.
+      */}
+      <h4 style={{ marginTop: 18 }}>Visit Times</h4>
+      {slots.length === 0 ? (
+        <p className="sub">No KinCare chosen yet. Go back a step to add one.</p>
+      ) : (
+        <div className="slottimes">
+          {slots.map((slot, idx) => {
+            const name = props.services.find((s) => s.id === slot.serviceId)?.name ?? slot.serviceId;
+            const inputId = `booking-time-${slot.slotId}`;
+            return (
+              <div className="field" key={slot.slotId} style={{ maxWidth: 260 }}>
+                <label htmlFor={inputId}>
+                  {idx + 1}. {name}
+                </label>
+                <input
+                  id={inputId}
+                  type="time"
+                  className="inp"
+                  value={slot.time}
+                  onChange={(e) => props.onSlotTimeChange(slot.slotId, e.target.value)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {pattern === 'weekly' ? (
         <>
@@ -738,11 +847,12 @@ function Step3ScheduleDates(props: {
             </p>
           )}
         </>
-      ) : props.selectedDates.size === 0 ? (
-        <p className="sub">No dates selected yet.</p>
+      ) : individualBlocker !== null ? (
+        <p className={props.selectedDates.size === 0 ? 'sub' : 'wiz-warn'}>{individualBlocker}</p>
       ) : (
         <p className="wiz-ok">
-          {props.selectedDates.size} {props.selectedDates.size === 1 ? 'date' : 'dates'} selected
+          {props.selectedDates.size} {props.selectedDates.size === 1 ? 'date' : 'dates'} selected, {visitCount}{' '}
+          {visitCount === 1 ? 'visit' : 'visits'}
         </p>
       )}
 
@@ -758,30 +868,50 @@ function Step3ScheduleDates(props: {
   );
 }
 
-function Step4InvoiceOptions() {
+/**
+ * #545: step 4 is what the stepper has always called it.
+ *
+ * The card that used to sit here was headed "Invoice Options" and offered no
+ * option: it said an Auntie raises the invoice after she confirms, and gave the
+ * household a Next button. Kinfolk do not choose how they are billed, so
+ * nothing belonged on this step but the note the stepper already promised —
+ * which was stranded at the bottom of Review. It lives here now.
+ */
+function Step4ExtraLoveAndContext(props: { notes: string; onNotesChange: (v: string) => void }) {
   return (
     <>
-      <h3 className="title">Invoice Options</h3>
-      <p className="sub">
-        Auntie creates and sends the invoice once she confirms. You&rsquo;ll be able to add any extra context for Auntie in the next step.
-      </p>
+      <h3 className="title">Extra Love &amp; Context</h3>
+      <p className="sub">Anything your Auntie should know before she arrives? Optional.</p>
+      <div className="field" style={{ marginTop: 14 }}>
+        <label htmlFor="booking-notes">Extra Love &amp; Context</label>
+        <textarea
+          id="booking-notes"
+          className="inp"
+          value={props.notes}
+          onChange={(e) => props.onNotesChange(e.target.value)}
+          placeholder="e.g. She's a bit shy today, or the gate is tricky to open…"
+        />
+        <span className="hint" style={{ color: 'var(--coral)' }}>
+          This note will be highlighted for Auntie during the visit.
+        </span>
+      </div>
     </>
   );
 }
 
 function Step5Review(props: {
   kinNames: string[];
-  service: ServiceDto | null;
+  kinCareSummary: string;
   pattern: Pattern;
-  visitCount: number;
-  visitTime: string;
+  visits: readonly RequestBookingArgsVisit[];
   notes: string;
-  onNotesChange: (v: string) => void;
+  estimateLabel: string;
   capped: boolean;
   submitting: boolean;
   error: string | null;
 }) {
-  const { service, pattern, visitCount, visitTime, notes, onNotesChange, capped, submitting, error } = props;
+  const { pattern, visits, notes, estimateLabel, capped, submitting, error } = props;
+  const rendered = renderPlannedVisits(visits);
   return (
     <>
       <h3 className="title">Review &amp; Confirm</h3>
@@ -792,42 +922,48 @@ function Step5Review(props: {
           <div className="sv">{props.kinNames.join(', ') || '—'}</div>
         </div>
         <div className="sum-row">
-          <div className="sk">KinCare Duration</div>
-          <div className="sv">{service?.name ?? '—'}</div>
+          <div className="sk">KinCare</div>
+          <div className="sv">{props.kinCareSummary || '—'}</div>
         </div>
         <div className="sum-row">
           <div className="sk">Pattern</div>
           <div className="sv">{pattern === 'individual' ? 'Individual Dates' : 'Repeating Schedule'}</div>
         </div>
         <div className="sum-row">
-          <div className="sk">Visits</div>
-          <div className="sv">{visitCount === 1 ? '1 visit' : `${visitCount} visits`}</div>
+          <div className="sk">Est. Price</div>
+          <div className="sv">{estimateLabel}</div>
         </div>
-        <div className="sum-row">
-          <div className="sk">Time</div>
-          <div className="sv">{visitTime}</div>
-        </div>
-        {service && (
-          <div className="sum-row">
-            <div className="sk">Est. Price</div>
-            <div className="sv">{priceLabel(service) || '—'}</div>
-          </div>
-        )}
       </div>
+
+      {/*
+        #547: "Pattern = Dates. Actually display those dates." Review used to
+        print "3 visits" and leave the household to remember which three. Every
+        visit is enumerated here, spelled the way
+        docs/superpowers/specs/2026-08-23-visit-date-rendering-design.md
+        spells one ("Thu, Sep 4 at 9:00 AM") so the wizard and the messages
+        that follow it name the same day the same way.
+      */}
+      <h4 style={{ marginTop: 18 }}>
+        {rendered.length === 1 ? '1 visit' : `${rendered.length} visits`}
+      </h4>
+      {rendered.length === 0 ? (
+        <p className="sub">No visits in this booking yet.</p>
+      ) : (
+        <ul className="visitlist">
+          {rendered.map((v) => (
+            <li key={v.key}>
+              <b>{plannedVisitLine(v)}</b>
+              <small> {v.serviceName}</small>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {capped && <p className="wiz-warn">Capped at {MAX_RECURRING_VISITS} visits. Reduce days or weeks to request fewer.</p>}
 
-      <div className="field" style={{ marginTop: 20 }}>
-        <label htmlFor="booking-notes">Extra Love &amp; Context</label>
-        <textarea
-          id="booking-notes"
-          className="inp"
-          value={notes}
-          onChange={(e) => onNotesChange(e.target.value)}
-          placeholder="e.g. She's a bit shy today, or the gate is tricky to open…"
-        />
-        <span className="hint" style={{ color: 'var(--coral)' }}>
-          This note will be highlighted for Auntie during the visit.
-        </span>
+      <div className="sum-row" style={{ marginTop: 18 }}>
+        <div className="sk">Extra Love &amp; Context</div>
+        <div className={`sv ${notes.trim() ? '' : 'muted'}`}>{notes.trim() || 'None added'}</div>
       </div>
 
       {error && <p className="wiz-warn" style={{ marginTop: 12 }}>{error}</p>}
