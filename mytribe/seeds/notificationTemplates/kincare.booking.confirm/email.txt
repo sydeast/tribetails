@@ -1,7 +1,9 @@
 Subject: It's official, {{kinName}} is on my calendar
 
-Hi {{kinfolkName}}, I've got it locked in. Your {{serviceType}} for {{kinName}} is set for {{bookingDate}} at {{bookingTime}}.
+Hi {{kinfolkName}}, I've got your {{serviceType}} for {{kinName}} locked in. Here are the days:
 
+{{#each visits}}  {{this.weekday}}, {{this.date}} at {{this.time}}
+{{/each}}
 I'll be there ready to go. If anything shifts on your end, just say the word and we'll work it out.
 
 With care, Auntie

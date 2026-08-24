@@ -1,1 +1,1 @@
-It's Auntie. {{kinName}}'s {{serviceType}} is locked in for {{bookingDate}} at {{bookingTime}}.
+It's Auntie. {{kinName}}'s {{serviceType}} is locked in, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}

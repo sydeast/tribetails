@@ -3,6 +3,13 @@ import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import {
+  buildVisitDateData,
+  formatBookingDate,
+  formatBookingTime,
+  loadBusinessTimeZone,
+  startMillisOf,
+} from '../notifications/visitDates';
 
 type BookingDoc = {
   status?: string;
@@ -35,6 +42,13 @@ type BookingDoc = {
    * `kincare.booking.cancel`.
    */
   requestDeclinedAt?: unknown;
+  /**
+   * #536: stamped by `admin/approveBookingSeriesCore` on every visit it confirms
+   * as part of a whole-request approval. Its ARRIVAL is what tells this trigger
+   * the household is being answered once, at the envelope, rather than owed a
+   * message about this one visit.
+   */
+  seriesApprovedAt?: unknown;
 };
 
 /**
@@ -44,6 +58,73 @@ type BookingDoc = {
  */
 export function declineStampedOn(doc: BookingDoc | undefined): boolean {
   return Boolean(doc?.requestDeclinedAt);
+}
+
+/**
+ * True when this write is the one that put `seriesApprovedAt` on the visit, or
+ * moved it on -- i.e. `approveBookingSeriesCore` just approved the whole request
+ * this visit belongs to (#536).
+ *
+ * Compares the stamp's VALUE rather than merely asking whether `after` has one,
+ * because a visit can be approved as part of a series more than once: cancel an
+ * approved series and approve it again and the stamp is already there from the
+ * first time. Asking "did it change" answers "was this write a series approval"
+ * in both cases, where "does it exist" answers it only the first time.
+ *
+ * The test is deliberately the STAMP and not the `requested -> confirmed`
+ * transition. `admin/batchUpdateBookings` and the Android schedule screen both
+ * confirm visits one at a time without going through the series core, and each
+ * of those still owes the household the per-visit message. #533 hit the mirror
+ * image of this on `requested -> cancelled`, which also has two opposite
+ * meanings; the stamp is what tells them apart. Exported for unit tests.
+ */
+export function seriesApproveStampChanged(
+  before: BookingDoc | undefined,
+  after: BookingDoc | undefined,
+): boolean {
+  const now = stampValue(after?.seriesApprovedAt);
+  if (now === null) return false;
+  return stampValue(before?.seriesApprovedAt) !== now;
+}
+
+/**
+ * A stamp reduced to something comparable across revisions. Firestore hands back
+ * a Timestamp; the emulator and the tests can hand back a string or a number.
+ */
+function stampValue(v: unknown): string | null {
+  if (v == null) return null;
+  const ms = startMillisOf(v);
+  if (ms !== null) return String(ms);
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : JSON.stringify(v);
+}
+
+/**
+ * The visit-date block for a confirmation that really is about ONE visit.
+ *
+ * `kincare.booking.confirm` renders from the structured `visits` array the
+ * visit-date rendering spec defines, and its seed no longer references
+ * `{{bookingDate}}` / `{{bookingTime}}`. A single-visit confirmation is that
+ * same shape with one entry, so the template that enumerates four days
+ * enumerates one day here without a second code path or a second wording rule.
+ *
+ * `bookingDate` / `bookingTime` are still sent, for the same reason
+ * `approveBookingSeriesCore` sends them: the template DOCUMENT in production
+ * keeps the old wording until the operator re-imports, and emitter-supplied
+ * values survive `enrichTemplateData` untouched.
+ *
+ * Costs one settings read, and only on the arm that needs it.
+ */
+async function visitDateFieldsFor(
+  after: BookingDoc,
+  visitId: string,
+): Promise<Record<string, unknown>> {
+  const ms = startMillisOf(after.startTime);
+  const tz = await loadBusinessTimeZone();
+  return {
+    ...buildVisitDateData(ms == null ? [] : [{ visitId, startTimeMs: ms }], tz),
+    bookingDate: ms == null ? null : formatBookingDate(ms, tz),
+    bookingTime: ms == null ? null : formatBookingTime(ms, tz),
+  };
 }
 
 const CHANGE_WATCH_FIELDS: Array<keyof BookingDoc> = [
@@ -282,7 +363,20 @@ export const onBookingsWrite = onDocumentWritten(
 
     if (beforeStatus !== afterStatus) {
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
-        await dispatch('kincare.booking.confirm');
+        // #536. A whole-request approval is ONE answer to ONE question. This
+        // trigger is registered per VISIT, so a four-day request confirmed here
+        // sent the household four "your visit is confirmed" messages per
+        // channel, and four more to every business admin through the key's
+        // secondary resolver. `approveBookingSeriesCore` now dispatches the
+        // single envelope-level copy and stamps the visits it approved.
+        //
+        // This is NOT the fail-loud rule being bent: the message is not
+        // silenced, it is sent once, by the code that knows the whole set.
+        // Every other way a visit reaches `confirmed` -- batchUpdateBookings,
+        // the Android schedule screen -- carries no stamp and still sends here.
+        if (!seriesApproveStampChanged(before, after)) {
+          await dispatch('kincare.booking.confirm', await visitDateFieldsFor(after, visitId));
+        }
       } else if (afterStatus === 'cancelled') {
         // #533. A DECLINED request is not a cancelled visit. Those visits were
         // never on the household's schedule, so "your visit was cancelled"

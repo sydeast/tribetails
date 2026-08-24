@@ -1038,11 +1038,23 @@ data class IncomingKinCare(
  * still returns ok and leaves the envelope 'requested'), so callers MUST surface
  * it fail-loud rather than report a clean success. [sessionsCreated] = linked
  * kin_care_sessions the backend created on APPROVE. Mirrors the AuntieOS web type.
+ *
+ * #536: [householdNotified] and [newlyConfirmed] are what the answer to the
+ * household actually was. Approving a four-day request used to send them one
+ * message PER VISIT; it now sends exactly one, naming every date, and it sends
+ * NOTHING on a partial failure (the envelope is deliberately left retryable, so a
+ * dispatch here would repeat on the retry) or on a re-approve of a request that
+ * was already booked. A screen that wants to say the household was told has to
+ * READ these, not infer it from a clean result.
  */
 data class ManageSeriesResult(
     val affectedVisits: Int,
     val failedVisits: Int = 0,
     val sessionsCreated: Int = 0,
+    /** Whether the one message to the household actually went out. */
+    val householdNotified: Boolean = false,
+    /** Visits this call moved into `confirmed`; 0 on a re-approve. */
+    val newlyConfirmed: Int = 0,
 )
 
 /**

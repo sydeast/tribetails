@@ -336,5 +336,125 @@ class EnhancedSchedulingViewModelTest {
         assertNotNull(err)
         assertTrue(err!!.contains("3"))
         assertTrue(err.contains("2"))
+        // #536: nothing is dispatched on a partial failure either, so the
+        // operator has to know the household is still waiting on an answer.
+        assertTrue(err.contains("household has not been told"))
     }
+    // #536. Approving a four-day request sent the household one message PER
+    // VISIT, and this screen said nothing about it either way. It now sends
+    // exactly one, and the screen reports the server's own answer rather than
+    // assuming a clean result means a clean message.
+    @Test
+    fun `approveSeries says the household was told once`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                    affectedVisits = 4, newlyConfirmed = 4, householdNotified = true,
+                ),
+            )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.approveSeries(vm.state.value.incomingSeries.single())
+        advanceUntilIdle()
+        val msg = vm.state.value.seriesActionMessage
+        assertNotNull(msg)
+        assertTrue(msg!!.contains("told once, with every date"))
+    }
+    @Test
+    fun `re-approving a booked request does not claim the household was told again`() =
+        runTest(testDispatcher) {
+            seedIncomingSeries()
+            coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+                Result.success(
+                    com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                        affectedVisits = 4, newlyConfirmed = 0, householdNotified = false,
+                    ),
+                )
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.approveSeries(vm.state.value.incomingSeries.single())
+            advanceUntilIdle()
+            val msg = vm.state.value.seriesActionMessage
+            assertNotNull(msg)
+            assertTrue(msg!!.contains("already booked"))
+            assertFalse(msg.contains("told once"))
+        }
+    @Test
+    fun `a booking whose confirmation failed tells the operator to reach them another way`() =
+        runTest(testDispatcher) {
+            // Not an error: the visits ARE on the schedule. But the household
+            // does not know, and only this line says so.
+            seedIncomingSeries()
+            coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+                Result.success(
+                    com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                        affectedVisits = 4, newlyConfirmed = 4, householdNotified = false,
+                    ),
+                )
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.approveSeries(vm.state.value.incomingSeries.single())
+            advanceUntilIdle()
+            val msg = vm.state.value.seriesActionMessage
+            assertNotNull(msg)
+            assertTrue(msg!!.contains("did not go out"))
+        }
+    // CANCEL confirms nothing, so `newlyConfirmed` is always 0 on that path. Its
+    // wording must not fall into the re-approve branch and call a decline
+    // "already booked".
+    @Test
+    fun `cancelling a series reports the decline the household heard`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries("CANCEL", "kf1", "b1") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                    affectedVisits = 4, newlyConfirmed = 0, householdNotified = true,
+                ),
+            )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.cancelSeries(vm.state.value.incomingSeries.single())
+        advanceUntilIdle()
+        val msg = vm.state.value.seriesActionMessage
+        assertNotNull(msg)
+        // Its OWN line: "with every date" belongs to the confirmation, which
+        // enumerates the days. The decline template does not, yet.
+        assertTrue(msg!!.contains("your answer and your reason"))
+        assertFalse(msg.contains("already booked"))
+        assertFalse(msg.contains("with every date"))
+    }
+    // The optimistic state, and the client half of #536's idempotency: the screen
+    // marks the batch busy for as long as the callable is in flight, so a second
+    // tap cannot fire a second approval, and it clears the flag on every outcome.
+    // (The server half is the transactional claim on the envelope, which is what
+    // covers two operators on two devices.)
+    //
+    // The callable is stubbed to SUSPEND, because this dispatcher is unconfined:
+    // a stub that returned immediately would have run to completion before
+    // `approveSeries` even returned, leaving nothing in flight to test.
+    @Test
+    fun `a second tap while an approval is in flight does not call the callable twice`() =
+        runTest(testDispatcher) {
+            seedIncomingSeries()
+            coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } coAnswers {
+                kotlinx.coroutines.delay(1_000)
+                Result.success(
+                    com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                        affectedVisits = 4, newlyConfirmed = 4, householdNotified = true,
+                    ),
+                )
+            }
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            val series = vm.state.value.incomingSeries.single()
+
+            vm.approveSeries(series)
+            assertEquals("b1", vm.state.value.seriesActionBatchId)
+            vm.approveSeries(series)
+            advanceUntilIdle()
+
+            assertNull(vm.state.value.seriesActionBatchId)
+            coVerify(exactly = 1) { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") }
+        }
 }

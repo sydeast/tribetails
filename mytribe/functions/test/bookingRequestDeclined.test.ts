@@ -16,7 +16,7 @@ vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.e
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
-  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
+  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => '__DELETE__' } };
 });
 
 import { manageBookingSeriesHandler } from '../src/admin/manageBookingSeries';

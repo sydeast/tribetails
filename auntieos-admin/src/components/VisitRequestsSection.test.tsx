@@ -386,16 +386,96 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(screen.queryByText(/1 visits/)).toBeNull();
   });
 
-  it('approving books the whole envelope through one call', async () => {
+  it('approving books the whole envelope through one call, and says the household heard once', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
-    approveBookingRequest.mockResolvedValue({ affectedVisits: 4, failedVisits: 0 });
+    approveBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      newlyConfirmed: 4,
+      householdNotified: true,
+    });
     render(<VisitRequestsSection />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
 
     await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3'));
-    expect(await screen.findByText(/All 4 visits are on the schedule/)).toBeInTheDocument();
+    // #536: once for the request, not once per visit, and the copy says so.
+    expect(
+      await screen.findByText(
+        /All 4 visits are on the schedule and the household has been told once, with every date/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('a re-approve of something already booked does not claim the household was told again', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      newlyConfirmed: 0,
+      householdNotified: false,
+    });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    expect(await screen.findByText(/already booked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/has been told once/)).toBeNull();
+  });
+
+  it('a booking whose confirmation did not go out tells the operator to reach them another way', async () => {
+    // The state that matters most, and the one the old copy could not express:
+    // the visits ARE on the schedule, so this is not an error, but the household
+    // does not know. An operator who is not told never finds out.
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      newlyConfirmed: 4,
+      householdNotified: false,
+    });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    expect(await screen.findByText(/tell them another way/)).toBeInTheDocument();
+  });
+
+  it('a partial failure says the household has NOT been told', async () => {
+    // The backend deliberately dispatches nothing on a partial failure, so the
+    // retry is not a second confirmation. An operator who reads this as "they
+    // heard about the ones that worked" stops chasing it.
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockResolvedValue({
+      affectedVisits: 3,
+      failedVisits: 1,
+      newlyConfirmed: 3,
+      householdNotified: false,
+    });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    expect(
+      await screen.findByText(/the household has not been told, so try again/i),
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces a failed approve in the dialog and leaves the request answerable', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    approveBookingRequest.mockRejectedValue(new Error('the callable refused'));
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
+
+    expect(await screen.findByText('the callable refused')).toBeInTheDocument();
+    // A request that failed to book must not vanish from the queue.
+    expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
   });
 
   it('refuses to decline without a reason, because a silent no is the same gap', async () => {
