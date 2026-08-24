@@ -149,6 +149,9 @@ export async function endRevokedSession(reason: SessionEndedReason): Promise<voi
     // the kinfolk just lands on /signin without the explanation.
   }
 
+  // Read BEFORE the sign-out: `auth.currentUser` is null afterwards and the
+  // persisted tribe pick is keyed by uid.
+  const uid = auth.currentUser?.uid ?? null;
   try {
     await firebaseSignOut(auth);
   } catch {
@@ -156,17 +159,22 @@ export async function endRevokedSession(reason: SessionEndedReason): Promise<voi
     // them off the authenticated surface.
   }
 
+  // The SAME purge the deliberate sign-out performs (#539 added it): access
+  // state, the React Query cache, and the persisted tribe pick. Reused rather
+  // than reimplemented, because a revoked session must leave exactly as little
+  // behind as a voluntary one, and two copies of that list would drift.
+  //
   // Deliberately a call-time import, not a top-level one. `lib/fns.ts` imports
-  // this module, and `activeTribe.ts` reaches `lib/fns.ts` again through
-  // `api/portal.ts` — a static edge here would close that loop at module
+  // this module and `auth.ts` reaches `lib/fns.ts` again through
+  // `api/authApi.ts` — a static edge here would close that loop at module
   // evaluation time, which is a bundler-ordering bug waiting to happen on a
   // path that only runs when something has already gone wrong. Deferring it to
   // the moment of teardown means the cycle never exists.
   try {
-    const { clearAccess } = await import('./activeTribe');
-    clearAccess();
+    const { purgeSessionCaches } = await import('./auth');
+    purgeSessionCaches(uid);
   } catch {
-    // A chunk that will not load cannot stop the sign-out below from landing.
+    // A chunk that will not load cannot stop the navigation below from landing.
   }
 
   try {

@@ -223,7 +223,15 @@ export async function signOut(): Promise<void> {
  * is the previous kinfolk's household sitting in memory, ready to paint the
  * moment an authenticated route mounts again.
  */
-function purgeSessionCaches(uid: string | null): void {
+/**
+ * Exported for `revokedSession.ts` (#557), which tears a session down when the
+ * SERVER ends it rather than when the kinfolk asks. That path cannot call
+ * `signOut()` above (it starts with two authenticated callables, and being
+ * refused is what got it there), but it must leave exactly as little behind.
+ * One definition of what a session leaves behind means the next thing added
+ * here covers both ways out.
+ */
+export function purgeSessionCaches(uid: string | null): void {
   clearAccess();
   // Every screen's data, keyed by kinfolk id. `clear()` and not
   // `removeQueries()`: there is no query in here that a signed-out visitor

@@ -15,11 +15,11 @@ import {
   resetRevokedSessionForTest,
   sessionEndedReason,
 } from './revokedSession';
-import { clearAccess } from './activeTribe';
+import { purgeSessionCaches } from './auth';
 
 vi.mock('./firebase', () => ({ auth: { name: 'test-auth' } }));
 vi.mock('firebase/auth', () => ({ signOut: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('./activeTribe', () => ({ clearAccess: vi.fn() }));
+vi.mock('./auth', () => ({ purgeSessionCaches: vi.fn() }));
 
 /** A callable rejection shaped exactly as the Functions SDK delivers one. */
 function callableError(code: string, message: string, details?: unknown): FirebaseError {
@@ -81,14 +81,17 @@ describe('endRevokedSession', () => {
   beforeEach(() => {
     resetRevokedSessionForTest();
     vi.mocked(firebaseSignOut).mockClear();
-    vi.mocked(clearAccess).mockClear();
+    vi.mocked(purgeSessionCaches).mockClear();
     sessionStorage.clear();
   });
 
-  it('signs the local session out and drops cached tribe access', async () => {
+  it('signs the local session out and purges every session cache', async () => {
     await endRevokedSession(REVOKED_REASON);
     expect(firebaseSignOut).toHaveBeenCalledTimes(1);
-    expect(clearAccess).toHaveBeenCalledTimes(1);
+    // The same purge the deliberate sign-out runs (#539): access state, the
+    // React Query cache, the persisted tribe pick. A revoked session must not
+    // leave the previous household sitting in memory.
+    expect(purgeSessionCaches).toHaveBeenCalledTimes(1);
   });
 
   it('leaves an explanation for the sign-in screen', async () => {
@@ -104,7 +107,7 @@ describe('endRevokedSession', () => {
   it('still clears local state when the Firebase sign-out itself fails', async () => {
     vi.mocked(firebaseSignOut).mockRejectedValueOnce(new Error('network'));
     await expect(endRevokedSession(REVOKED_REASON)).resolves.toBeUndefined();
-    expect(clearAccess).toHaveBeenCalledTimes(1);
+    expect(purgeSessionCaches).toHaveBeenCalledTimes(1);
   });
 
   it('runs once for a burst of refusals, not once per refused call', async () => {

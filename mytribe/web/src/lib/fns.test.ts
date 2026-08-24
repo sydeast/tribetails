@@ -8,7 +8,7 @@ import { resetRevokedSessionForTest } from './revokedSession';
 vi.mock('./firebase', () => ({ functions: {}, auth: { name: 'test-auth' } }));
 vi.mock('firebase/functions', () => ({ httpsCallable: vi.fn() }));
 vi.mock('firebase/auth', () => ({ signOut: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('./activeTribe', () => ({ clearAccess: vi.fn() }));
+vi.mock('./auth', () => ({ purgeSessionCaches: vi.fn() }));
 
 beforeEach(() => {
   resetRevokedSessionForTest();
