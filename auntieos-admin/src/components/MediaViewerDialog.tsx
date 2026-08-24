@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Dialog } from './Dialog';
-import { PrimaryButton } from './Buttons';
+import { PrimaryButton, GhostButton } from './Buttons';
+import { updateMediaCaption, mediaWriteErrorMessage, MAX_CAPTION_LENGTH } from '../api/mediaWrite';
 import {
   mediaKindOf,
   mediaKindHasPreview,
@@ -53,6 +54,22 @@ export interface MediaViewerDialogProps {
  * Firestore). All three exist now, so the hand-off is real: `onTagKin` closes
  * this viewer and opens `TagKinDialog`, exactly as `GalleryScreen.kt` does.
  *
+ * CAPTION EDITING (#397 S3) lives here, and deliberately not on the tile. It is
+ * the one surface both grids share, so putting it here closes the gap on the
+ * global Gallery and the entity-scoped Media screen in one place; it is also
+ * where the operator can actually SEE the photo they are describing, which a
+ * 132px thumbnail is not. Neither web nor Android could fix a caption before
+ * this: every client wrote `description` once, at upload, and never again.
+ * `api/mediaWrite.ts#updateMediaCaption` is a direct single-key `updateDoc`,
+ * which is what `firestore.rules` already allows, see that file for why this
+ * one is not a callable when its two neighbours are.
+ *
+ * NO MOCK COVERS THIS. `auntieos-admin/ui-ideas/auntieos-media-gallery-*.html`
+ * draws the grid, the delete X and its confirm dialog, and a read-only hover
+ * caption strip; it has no caption-editing control anywhere. The editor below
+ * follows the shared `Dialog` + form-field conventions the rest of this admin
+ * already uses rather than inventing a shape the mock never proposed.
+ *
  * Escape-to-close, backdrop-click-to-close, the Tab focus trap, and focus
  * restore to the tile that opened it are ALL `Dialog`'s job (components/
  * Dialog.tsx): this component supplies only the title and body, the same
@@ -65,22 +82,108 @@ export function MediaViewerDialog({
   onTagKin,
 }: MediaViewerDialogProps) {
   const kind = mediaKindOf(str(media.fileType));
-  const caption = mediaCaption(media);
+  /**
+   * #397 S3. The description as it stands RIGHT NOW, which is the prop until
+   * this dialog itself changes it.
+   *
+   * Why local state rather than reading the prop back: the grids hold the
+   * opened row as a value (`useState<MediaFile | null>`), so the copy this
+   * dialog was handed does not update when the Firestore listener delivers the
+   * edited document. The tile behind the dialog DOES update, live. Without this
+   * the operator would save a caption, watch the grid change, and see the open
+   * viewer still showing the old words, which reads as a failed save.
+   */
+  const [savedDescription, setSavedDescription] = useState<string | null>(null);
+  const shown: MediaFile =
+    savedDescription === null ? media : { ...media, description: savedDescription };
+
+  const caption = mediaCaption(shown);
   const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
   const title = caption !== '' ? caption : 'Media';
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const captionInputId = useId();
+
+  function startEditing() {
+    // Seeds from the stored `description`, NOT from `mediaCaption`: the caption
+    // shown falls back to the original filename, and pre-filling the editor with
+    // "IMG_4821.jpg" would turn a fallback the operator never typed into a real
+    // stored caption the first time they hit Save.
+    setDraft(str(shown.description));
+    setSaveError(null);
+    setEditing(true);
+  }
+
+  async function saveCaption() {
+    if (saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await updateMediaCaption(media._id, draft);
+      setSavedDescription(draft.trim());
+      setEditing(false);
+    } catch (err) {
+      // The draft is kept exactly as typed: a failed save must not eat the words.
+      setSaveError(mediaWriteErrorMessage(err, 'Saving the caption'));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <Dialog
       title={title}
       onClose={onClose}
       size="wide"
-      footer={onTagKin ? <PrimaryButton label="Tag kin" onClick={onTagKin} /> : undefined}
+      footer={
+        <>
+          {!editing && <GhostButton label="Edit caption" onClick={startEditing} />}
+          {onTagKin && <PrimaryButton label="Tag kin" onClick={onTagKin} />}
+        </>
+      }
     >
       <div className="media-viewer">
-        <ViewerStage kind={kind} url={mediaKindHasPreview(kind) ? mediaViewerUrl(media) : undefined} label={title} />
+        <ViewerStage kind={kind} url={mediaKindHasPreview(kind) ? mediaViewerUrl(shown) : undefined} label={title} />
         {kind === 'video' && (
           <p className="media-viewer__hint">Video preview only. Open the original to play it.</p>
+        )}
+
+        {editing && (
+          <div className="media-viewer__caption-editor">
+            <label className="media-viewer__caption-label" htmlFor={captionInputId}>
+              Caption
+            </label>
+            <textarea
+              id={captionInputId}
+              className="media-viewer__caption-input"
+              value={draft}
+              maxLength={MAX_CAPTION_LENGTH}
+              rows={3}
+              disabled={saving}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <p className="media-viewer__caption-hint">
+              Leave it empty to go back to showing the file name.
+            </p>
+            <div className="media-viewer__caption-actions">
+              <GhostButton label="Cancel" onClick={() => setEditing(false)} disabled={saving} />
+              <PrimaryButton
+                label={saving ? 'Saving…' : 'Save caption'}
+                onClick={() => void saveCaption()}
+                disabled={saving}
+                busy={saving}
+              />
+            </div>
+            {saveError !== null && (
+              <p className="media-viewer__caption-error" role="alert">
+                {saveError}
+              </p>
+            )}
+          </div>
         )}
         {(meta !== '' || duration !== undefined) && (
           <p className="media-viewer__meta">

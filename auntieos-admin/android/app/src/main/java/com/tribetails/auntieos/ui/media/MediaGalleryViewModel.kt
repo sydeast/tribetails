@@ -83,15 +83,54 @@ class MediaGalleryViewModel(
         _uiState.value = _uiState.value.copy(selectedMediaType = mediaType)
     }
 
-    fun deleteMediaFile(mediaFileId: String) {
+    /**
+     * #397 S2: deletes through the server-bound callable, passing the ROW's own
+     * entityId as the scope cross-check so a stale id from one household can
+     * never delete another's media. Takes the whole [mediaFile] for exactly that
+     * reason, where it used to take a bare id.
+     */
+    fun deleteMediaFile(mediaFile: MediaFile) {
         viewModelScope.launch {
-            repository.deleteMediaFile(mediaFileId).onSuccess {
-                // Remove from current list
-                val updatedFiles = _uiState.value.mediaFiles.filter { it.id != mediaFileId }
+            repository.deleteMediaFile(mediaFile.id, mediaFile.entityId).onSuccess {
+                // Safe to splice ONLY because the callable resolved: the document
+                // is genuinely gone, not presumed gone.
+                val updatedFiles = _uiState.value.mediaFiles.filter { it.id != mediaFile.id }
                 _uiState.value = _uiState.value.copy(mediaFiles = updatedFiles)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     error = "Failed to delete media: ${error.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * #397 S3: rewrites one file's caption. Neither client could do this before;
+     * `description` was written once, at upload, and never again.
+     *
+     * On success the row in state is patched with `copy(description = ...)`
+     * ONE field on the model that was LOADED, never a model rebuilt from what the
+     * editor happened to show. This screen loads with a one-shot `getMediaFiles`
+     * rather than a live listener, so without the patch the grid would keep
+     * showing the old caption until the next load and a real save would read as
+     * a no-op.
+     *
+     * An empty caption is a real value: it CLEARS the description, and the tile
+     * falls back to the file name, same as a file that was never captioned.
+     */
+    fun updateCaption(mediaFileId: String, description: String) {
+        viewModelScope.launch {
+            repository.updateMediaFileDescription(mediaFileId, description).onSuccess {
+                val trimmed = description.trim()
+                val updatedFiles = _uiState.value.mediaFiles.map {
+                    if (it.id == mediaFileId) it.copy(description = trimmed) else it
+                }
+                _uiState.value = _uiState.value.copy(mediaFiles = updatedFiles, error = null)
+            }.onFailure { error ->
+                // Fail loud, and leave the STORED caption on screen: a refused
+                // save must never look like it landed.
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to save caption: ${error.message}"
                 )
             }
         }

@@ -49,6 +49,11 @@ describe('withMediaDefaults', () => {
     expect(filled).toEqual({
       _id: 'm1',
       kinfolkId: '',
+      // #397 S2: the media callables cross-check these against the stored doc,
+      // so a row that carries neither must read as "no entity" rather than as
+      // undefined that a caller could quietly substitute a route segment for.
+      entityId: '',
+      entityType: '',
       fileType: 'IMAGE',
       storageUrl: '',
       thumbnailUrl: '',

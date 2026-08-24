@@ -82,3 +82,46 @@
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
+/* Caption editor (#397 S3). Sits under the stage, inside the same panel, so the
+   photo stays on screen while its description is being written. */
+.media-viewer__caption-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+}
+.media-viewer__caption-label {
+  color: var(--color-text-dim);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.media-viewer__caption-input {
+  width: 100%;
+  padding: var(--space-2);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  resize: vertical;
+}
+.media-viewer__caption-hint {
+  margin: 0;
+  color: var(--color-text-faint);
+  font-size: var(--type-body-sm-size);
+}
+.media-viewer__caption-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+.media-viewer__caption-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: var(--type-body-sm-size);
+}

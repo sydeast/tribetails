@@ -23,10 +23,18 @@ import { type CollectionSpec } from '../lib/firestore';
  *
  * Only the fields this screen actually renders are modeled here (not the full
  * ~20-field MediaFile shape in MediaModels.kt): the Kinfolk/InvoiceEntry subset
- * convention. Dropped: entityId/entityType (which KinTale/session it belongs to,
- * not shown in the grid), fileName/mimeType/fileSizeBytes/width/height/
+ * convention. Dropped: fileName/mimeType/fileSizeBytes/width/height/
  * cloudinaryPublicId (storage bookkeeping, not rendered), and `tags` (a
  * separate free-text tag list nothing on this screen reads).
+ *
+ * `entityId`/`entityType` ARE modeled now (#397 S2). They were dropped while
+ * this was a read-only grid, because nothing on screen shows them. The moment a
+ * grid can delete a file or promote it to a profile photo, they stop being
+ * bookkeeping: both `deleteMediaFile` and `setMediaProfilePhoto` cross-check the
+ * caller's entity against the STORED one and refuse a mismatch, so the row is
+ * the only correct source for those arguments. The route's `{type}`/`{id}`
+ * segments are not: `#/media/household/fam1` carries `household` where the
+ * document carries `KINFOLK` (or lower-case `kinfolk` on older rows).
  *
  * `taggedKinIds` IS modeled now (#447): the Gallery tags kin in a photo and
  * shows who is tagged, mirroring Android's `GalleryScreen.kt`. Writes go
@@ -52,6 +60,10 @@ export interface MediaFile {
   _id: string;
   /** Household this media belongs to. Blank on a doc predating the association, or on operator-scoped media (see MediaModels.kt's kinfolkId comment). */
   kinfolkId?: string | undefined;
+  /** The document this file hangs off: a kin id, a household id, or `business_settings`. The scoping key `api/media.ts`'s query filters on, and the only correct `entityId` to hand a media callable. */
+  entityId?: string | undefined;
+  /** "KINFOLK" | "KIN" | "BUSINESS" | ..., CASING VARIES IN THE WILD ("kinfolk" and "BUSINESS" live side by side; see api/media.ts's header). Pass it through verbatim; never compare it to the route's `{type}` segment. */
+  entityType?: string | undefined;
   /** "IMAGE" | "VIDEO" | "DOCUMENT" | "AUDIO" free text: go through `lib/mediaFormat.ts`'s `mediaKindOf`, never switch on this directly (same discipline as InvoiceEntry.status). */
   fileType?: string | undefined;
   /** Cloudinary delivery URL for the original asset. */

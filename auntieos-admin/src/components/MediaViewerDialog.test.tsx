@@ -1,8 +1,19 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { type MediaFile } from '../api/gallery';
+// #397 S3. Mocked at the api seam, not at `firebase/firestore`: these tests
+// cover the dialog's wiring, and `api/mediaWrite.test.ts` covers the write.
+const { updateMediaCaption } = vi.hoisted(() => ({ updateMediaCaption: vi.fn() }));
+vi.mock('../api/mediaWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/mediaWrite')>('../api/mediaWrite');
+  return { ...actual, updateMediaCaption };
+});
 import { MediaViewerDialog } from './MediaViewerDialog';
+beforeEach(() => {
+  updateMediaCaption.mockReset().mockResolvedValue(undefined);
+});
 
 function media(over: Partial<MediaFile>): MediaFile {
   return {
@@ -153,5 +164,92 @@ describe('MediaViewerDialog, kin tagging (#447)', () => {
   it('shows no "Tagged kin" line at all when nobody is tagged, rather than an empty label', () => {
     render(<MediaViewerDialog media={media({ description: 'Rufus' })} taggedNames={[]} onClose={vi.fn()} />);
     expect(screen.queryByText('Tagged kin')).toBeNull();
+  });
+});
+describe('MediaViewerDialog, caption editing (#397 S3)', () => {
+  async function openEditor() {
+    await userEvent.click(screen.getByRole('button', { name: 'Edit caption' }));
+  }
+  it('offers the editor on every viewer, since neither grid could fix a caption before', () => {
+    render(<MediaViewerDialog media={media({ description: 'Rufus' })} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Edit caption' })).toBeInTheDocument();
+  });
+  it('seeds the field from the STORED description, not from the filename fallback', async () => {
+    render(
+      <MediaViewerDialog
+        media={media({ description: '', originalFileName: 'IMG_4821.jpg' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await openEditor();
+    // The heading falls back to the filename; the editor must not, or the first
+    // Save would store a caption the operator never typed.
+    expect(screen.getByLabelText('Caption')).toHaveValue('');
+  });
+  it('saves the new caption against the media id', async () => {
+    render(<MediaViewerDialog media={media({ _id: 'm7', description: 'old' })} onClose={vi.fn()} />);
+    await openEditor();
+    const field = screen.getByLabelText('Caption');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'Rufus at the park');
+    await userEvent.click(screen.getByRole('button', { name: 'Save caption' }));
+    await waitFor(() => expect(updateMediaCaption).toHaveBeenCalledWith('m7', 'Rufus at the park'));
+  });
+  it('shows the saved caption immediately, because the grid holds a stale copy of the row', async () => {
+    render(<MediaViewerDialog media={media({ _id: 'm7', description: 'old caption' })} onClose={vi.fn()} />);
+    await openEditor();
+    const field = screen.getByLabelText('Caption');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'new caption');
+    await userEvent.click(screen.getByRole('button', { name: 'Save caption' }));
+    await waitFor(() => expect(screen.queryByLabelText('Caption')).toBeNull());
+    expect(screen.getByRole('dialog')).toHaveTextContent('new caption');
+    expect(screen.queryByText('old caption')).toBeNull();
+  });
+  it('lets an empty caption CLEAR the description, which falls back to the filename', async () => {
+    render(
+      <MediaViewerDialog
+        media={media({ _id: 'm7', description: 'wrong', originalFileName: 'IMG_9.jpg' })}
+        onClose={vi.fn()}
+      />,
+    );
+    await openEditor();
+    await userEvent.clear(screen.getByLabelText('Caption'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save caption' }));
+    await waitFor(() => expect(updateMediaCaption).toHaveBeenCalledWith('m7', ''));
+    expect(screen.getByRole('dialog')).toHaveTextContent('IMG_9.jpg');
+  });
+  it('surfaces a refusal and KEEPS the typed words, rather than swallowing both', async () => {
+    updateMediaCaption.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    render(<MediaViewerDialog media={media({ _id: 'm7', description: 'old' })} onClose={vi.fn()} />);
+    await openEditor();
+    const field = screen.getByLabelText('Caption');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'my new words');
+    await userEvent.click(screen.getByRole('button', { name: 'Save caption' }));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/insufficient permissions/i),
+    );
+    // Still open, still holding what was typed: a failed save must not eat it.
+    expect(screen.getByLabelText('Caption')).toHaveValue('my new words');
+  });
+  it('does not change the shown caption when the save was refused', async () => {
+    updateMediaCaption.mockRejectedValue(new Error('nope'));
+    render(<MediaViewerDialog media={media({ _id: 'm7', description: 'old caption' })} onClose={vi.fn()} />);
+    await openEditor();
+    const field = screen.getByLabelText('Caption');
+    await userEvent.clear(field);
+    await userEvent.type(field, 'never stored');
+    await userEvent.click(screen.getByRole('button', { name: 'Save caption' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('dialog')).toHaveTextContent('old caption');
+  });
+  it('Cancel closes the editor and writes nothing', async () => {
+    render(<MediaViewerDialog media={media({ _id: 'm7', description: 'old' })} onClose={vi.fn()} />);
+    await openEditor();
+    await userEvent.type(screen.getByLabelText('Caption'), ' edited');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Caption')).toBeNull();
+    expect(updateMediaCaption).not.toHaveBeenCalled();
   });
 });
