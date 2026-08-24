@@ -83,6 +83,45 @@ export function getBusinessClosures(req: GetBusinessClosuresRequest): Promise<Ge
   return call<GetBusinessClosuresRequest, GetBusinessClosuresResult>('getBusinessClosures', req);
 }
 
+// ── getBookingPolicy (functions/src/portal/getBookingPolicy.ts) ─────────────
+//
+// Time-block booking (operator requirement 2026-08-24): "kinfolk book within
+// time blocks, not at a specific set time." The named windows live on
+// `business_settings.timeBlocks`, which is admin-only in firestore.rules, so
+// this callable is the wizard's only way to learn them — the same seam and the
+// same reason as getBusinessClosures above.
+//
+// The values are NORMALIZED server-side, and `requestBooking` validates against
+// that same resolver, so the wizard is never offered a mode the write path will
+// refuse. In particular `allowTimeBlockBooking` comes back FALSE when the
+// business has no usable window, so "block booking on with an empty
+// `timeBlocks`" is a state this type cannot arrive in.
+
+/** How a household says WHEN. */
+export type BookingMode = 'SPECIFIC_TIME' | 'TIME_BLOCK';
+
+export interface TimeBlockDto {
+  id: string;
+  label: string;
+  /** `HH:MM` in the business's timezone, inclusive. */
+  startTime: string;
+  /** `HH:MM` in the business's timezone, exclusive. */
+  endTime: string;
+  durationMinutes: number;
+}
+
+export interface GetBookingPolicyResult {
+  allowTimeBlockBooking: boolean;
+  allowSpecificTimeBooking: boolean;
+  defaultBookingMode: BookingMode;
+  timeBlocks: TimeBlockDto[];
+}
+
+/** What this business lets a household choose, and which windows it may pick from. */
+export function getBookingPolicy(): Promise<GetBookingPolicyResult> {
+  return call<Record<string, never>, GetBookingPolicyResult>('getBookingPolicy', {});
+}
+
 // ── requestBooking (functions/src/portal/requestBooking.ts, multi-visit shape) ──
 //
 // `RequestBookingArgs` is a SUPERSET schema covering both the multi-visit

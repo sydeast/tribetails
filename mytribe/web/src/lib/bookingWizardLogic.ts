@@ -26,7 +26,7 @@
  * `estimateBookingTotal`, so the two platforms still compute the same visits
  * and the same money from the same inputs.
  */
-import type { ServiceDto } from '../api/bookingApi';
+import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit } from '../contracts/bookingContracts.generated';
 import { formatUsd } from './invoiceFormat';
 
@@ -76,13 +76,90 @@ export type WizardService = Pick<ServiceDto, 'id' | 'name' | 'priceCents' | 'pri
 export interface KinCareSlot {
   slotId: string;
   serviceId: string;
-  /** 'HH:MM', local to the household. */
+  /** 'HH:MM', local to the household. Read in SPECIFIC_TIME mode. */
   time: string;
+  /**
+   * Time-block booking: the named window this KinCare was asked for. Read in
+   * TIME_BLOCK mode; null there means the household has not chosen one yet.
+   *
+   * BOTH fields live on the slot at once, deliberately. The MODE is a
+   * booking-level choice (see {@link BookingTiming}) — an operator asked for
+   * blocks instead of clocks, not for a per-KinCare mixture — so switching mode
+   * must not discard what was already typed on the other control. What the
+   * server receives is decided by the mode, never by which field happens to be
+   * set.
+   */
+  timeBlockId: string | null;
+}
+
+/**
+ * Time-block booking, client half. Operator requirement 2026-08-24: "kinfolk
+ * book within time blocks, not at a specific set time."
+ *
+ * The MODE is booking-level and the BLOCK is per-KinCare, which is the shape
+ * the requirement actually has: a day may hold several KinCares (#541/#543), so
+ * a household may want the 30-minute one in the Midday block and the 60-minute
+ * one in the Evening block, or two different KinCares in the same block. What
+ * it never wants is one KinCare on the clock and the next one in a window.
+ */
+export interface BookingTiming {
+  mode: BookingMode;
+  /** The windows on offer. Empty in SPECIFIC_TIME mode, and never empty in TIME_BLOCK mode. */
+  blocks: readonly TimeBlockDto[];
+}
+
+/** The pre-time-block world: clock times, no windows. The default every existing caller gets. */
+export const SPECIFIC_TIME_ONLY: BookingTiming = { mode: 'SPECIFIC_TIME', blocks: [] };
+
+/**
+ * Which mode the wizard opens on, and which the household may switch to.
+ *
+ * Reads the SERVER-NORMALIZED policy and nothing else: `getBookingPolicy`
+ * already resolved "block booking on but no usable window" down to block
+ * booking off, and "neither mode allowed" down to specific time, so there is no
+ * combination left here that renders an empty screen. The one job left is
+ * picking the opening mode, and honouring `defaultBookingMode` when it is
+ * available.
+ */
+export function initialBookingMode(policy: Pick<GetBookingPolicyResult, 'allowTimeBlockBooking' | 'allowSpecificTimeBooking' | 'defaultBookingMode'>): BookingMode {
+  if (!policy.allowTimeBlockBooking) return 'SPECIFIC_TIME';
+  if (!policy.allowSpecificTimeBooking) return 'TIME_BLOCK';
+  return policy.defaultBookingMode;
+}
+
+/** The window with this id, or null. */
+export function findTimeBlock(blocks: readonly TimeBlockDto[], id: string | null): TimeBlockDto | null {
+  if (id === null) return null;
+  return blocks.find((b) => b.id === id) ?? null;
+}
+
+/** 'Midday (11:00-15:00)': how a window is named wherever one is chosen or confirmed. */
+export function timeBlockLabel(block: TimeBlockDto): string {
+  return `${block.label} (${block.startTime}-${block.endTime})`;
+}
+
+/**
+ * The 'HH:MM' a slot actually starts at, under `timing`, or null when it has
+ * nothing usable yet.
+ *
+ * In TIME_BLOCK mode a visit starts at its window's FIRST MINUTE. That is not a
+ * pretence that the Auntie arrives at 11:00 sharp — it is the only instant the
+ * whole window is derivable from, it is what AuntieOS's own containment
+ * resolver labels back as "Midday block", and the block id travels beside it so
+ * the office reads the household's answer rather than inferring it.
+ */
+function slotStartHHmm(slot: KinCareSlot, timing: BookingTiming): string | null {
+  if (timing.mode === 'TIME_BLOCK') {
+    return findTimeBlock(timing.blocks, slot.timeBlockId)?.startTime ?? null;
+  }
+  return parseHourMinute(slot.time) === null ? null : slot.time;
 }
 
 /** Chronological, so the plan a household reads runs down the day. Ties broken by service for determinism. */
-function compareSlots(a: KinCareSlot, b: KinCareSlot): number {
-  if (a.time !== b.time) return a.time < b.time ? -1 : 1;
+function compareSlots(a: KinCareSlot, b: KinCareSlot, timing: BookingTiming): number {
+  const at = slotStartHHmm(a, timing) ?? '';
+  const bt = slotStartHHmm(b, timing) ?? '';
+  if (at !== bt) return at < bt ? -1 : 1;
   return a.serviceId < b.serviceId ? -1 : a.serviceId > b.serviceId ? 1 : 0;
 }
 
@@ -95,8 +172,29 @@ function compareSlots(a: KinCareSlot, b: KinCareSlot): number {
  * duplicate guard). Saying so here means a household finds out while they can
  * still fix it, instead of at Create Booking.
  */
-export function slotsBlocker(slots: readonly KinCareSlot[]): string | null {
+export function slotsBlocker(slots: readonly KinCareSlot[], timing: BookingTiming = SPECIFIC_TIME_ONLY): string | null {
   if (slots.length === 0) return 'Add at least one KinCare Duration.';
+  if (timing.mode === 'TIME_BLOCK') {
+    if (slots.some((s) => findTimeBlock(timing.blocks, s.timeBlockId) === null)) {
+      return 'Choose a time block for every KinCare.';
+    }
+    const seenBlocks = new Set<string>();
+    for (const s of slots) {
+      // The duplicate rule, in block words. In block mode every KinCare in a
+      // window starts at the same instant, so "same duration at the same time"
+      // would refuse the perfectly good "a 30 minute AND a 60 minute, both in
+      // Midday" — and would say so next to a picker that has no times in it.
+      // What is actually one KinCare asked for twice is the same duration in
+      // the same window, and that is what both this and `requestBooking`'s
+      // server-side guard refuse.
+      const key = `${s.serviceId}@block:${s.timeBlockId}`;
+      if (seenBlocks.has(key)) {
+        return 'Two KinCares are the same duration in the same time block. Remove one, or move it to another block.';
+      }
+      seenBlocks.add(key);
+    }
+    return null;
+  }
   if (slots.some((s) => parseHourMinute(s.time) === null)) return 'Enter every KinCare time as HH:MM.';
   const seen = new Set<string>();
   for (const s of slots) {
@@ -122,17 +220,33 @@ export function weeklyVisitsBlocker(
   weeklyDays: ReadonlySet<number>,
   weeks: number,
   slots: readonly KinCareSlot[],
+  timing: BookingTiming = SPECIFIC_TIME_ONLY,
 ): string | null {
   if (weeklyDays.size === 0) return 'Pick at least one day of the week.';
   if (weeks < 1) return 'Choose how many weeks.';
-  return slotsBlocker(slots);
+  return slotsBlocker(slots, timing);
 }
 
-/** Builds one visit for `slot` on the calendar day `d`, or null when the slot's service is gone from the catalog. */
-function slotVisitOn(d: Date, slot: KinCareSlot, services: readonly WizardService[]): RequestBookingArgsVisit | null {
+/**
+ * Builds one visit for `slot` on the calendar day `d`, or null when the slot's
+ * service is gone from the catalog or it has no usable start yet.
+ *
+ * `priceCents` still comes from the SERVICE, in both modes. A block says WHEN a
+ * visit happens; the KinCare says how long it runs and what it costs, and the
+ * server re-resolves the price from the same catalog either way. Nothing about
+ * time-block booking touches the money.
+ */
+function slotVisitOn(
+  d: Date,
+  slot: KinCareSlot,
+  services: readonly WizardService[],
+  timing: BookingTiming,
+): RequestBookingArgsVisit | null {
   const service = services.find((s) => s.id === slot.serviceId);
   if (!service) return null;
-  const t = parseHourMinute(slot.time);
+  const hhmm = slotStartHHmm(slot, timing);
+  if (hhmm === null) return null;
+  const t = parseHourMinute(hhmm);
   if (t === null) return null;
   const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate(), t.hour, t.minute);
   return {
@@ -141,6 +255,7 @@ function slotVisitOn(d: Date, slot: KinCareSlot, services: readonly WizardServic
     serviceId: service.id,
     serviceName: service.name,
     priceCents: service.priceCents ?? service.priceMinCents,
+    timeBlockId: timing.mode === 'TIME_BLOCK' ? slot.timeBlockId : null,
   };
 }
 
@@ -150,6 +265,8 @@ export interface BuildWeeklyVisitsParams {
   weeks: number;
   slots: readonly KinCareSlot[];
   services: readonly WizardService[];
+  /** Defaults to clock times, which is what every caller did before time blocks existed. */
+  timing?: BookingTiming;
 }
 
 /**
@@ -169,9 +286,10 @@ export interface BuildWeeklyVisitsParams {
  */
 export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBookingArgsVisit[] {
   const { nowMs, weeklyDays, weeks, slots, services } = params;
+  const timing = params.timing ?? SPECIFIC_TIME_ONLY;
   if (weeklyDays.size === 0 || weeks < 1 || slots.length === 0) return [];
 
-  const ordered = [...slots].sort(compareSlots);
+  const ordered = [...slots].sort((a, b) => compareSlots(a, b, timing));
   const now = new Date(nowMs);
   const startYear = now.getFullYear();
   const startMonth = now.getMonth();
@@ -185,7 +303,7 @@ export function buildWeeklyVisits(params: BuildWeeklyVisitsParams): RequestBooki
     if (weeklyDays.has(d.getDay())) {
       for (const slot of ordered) {
         if (out.length >= MAX_RECURRING_VISITS) break;
-        const visit = slotVisitOn(d, slot, services);
+        const visit = slotVisitOn(d, slot, services, timing);
         if (visit !== null && visit.startTimeMs > nowMs) out.push(visit);
       }
     }
@@ -207,15 +325,37 @@ export function buildVisits(
   dates: readonly Date[],
   slots: readonly KinCareSlot[],
   services: readonly WizardService[],
+  timing: BookingTiming = SPECIFIC_TIME_ONLY,
 ): RequestBookingArgsVisit[] {
   const out: RequestBookingArgsVisit[] = [];
   for (const d of dates) {
     for (const slot of slots) {
-      const visit = slotVisitOn(d, slot, services);
+      const visit = slotVisitOn(d, slot, services, timing);
       if (visit !== null) out.push(visit);
     }
   }
   return out.sort((a, b) => a.startTimeMs - b.startTimeMs || a.serviceId.localeCompare(b.serviceId));
+}
+
+/**
+ * Visits in the plan whose start has ALREADY PASSED, formatted for a warning.
+ *
+ * `requestBooking` refuses any visit starting more than a minute ago, and the
+ * Individual pattern has never filtered for it (only the weekly expansion does)
+ * — so a household that taps today and leaves the time at 09:00 in the
+ * afternoon gets the whole request refused at Create Booking with no earlier
+ * warning. Time blocks make that a certainty rather than a mistake: a block
+ * offers ONE start time, so once today's Midday window has opened, every
+ * Midday visit placed on today is in the past by construction, and the
+ * household has no control to nudge.
+ *
+ * So the plan says so while it can still be fixed, in both modes.
+ */
+export function pastPlannedVisits(
+  visits: readonly RequestBookingArgsVisit[],
+  nowMs: number,
+): RequestBookingArgsVisit[] {
+  return visits.filter((v) => v.startTimeMs <= nowMs);
 }
 
 /**
@@ -293,8 +433,15 @@ export interface RenderedPlannedVisit {
   date: string;
   /** '9:00 AM' */
   time: string;
+  /**
+   * 'Midday (11:00-15:00)' when the visit was booked into a named window,
+   * null when it was booked on the clock. When set it REPLACES the time in
+   * {@link plannedVisitLine}: the household chose a window, and printing
+   * "11:00 AM" back at them would be reporting a precision they never gave.
+   */
+  timeBlockLabel: string | null;
   serviceName: string;
-  /** Stable list key: two KinCares of the same duration on one day differ by time. */
+  /** Stable list key: two KinCares of the same duration on one day differ by time or by block. */
   key: string;
 }
 
@@ -315,7 +462,10 @@ export interface RenderedPlannedVisit {
  * calendar — formatting those in the business's zone could show them a day they
  * did not pick. The spec governs messages; this is the wizard.
  */
-export function renderPlannedVisits(visits: readonly RequestBookingArgsVisit[]): RenderedPlannedVisit[] {
+export function renderPlannedVisits(
+  visits: readonly RequestBookingArgsVisit[],
+  blocks: readonly TimeBlockDto[] = [],
+): RenderedPlannedVisit[] {
   const weekdayFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
   const dateFmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
   const timeFmt = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -323,18 +473,28 @@ export function renderPlannedVisits(visits: readonly RequestBookingArgsVisit[]):
     .sort((a, b) => a.startTimeMs - b.startTimeMs)
     .map((v) => {
       const d = new Date(v.startTimeMs);
+      const block = findTimeBlock(blocks, v.timeBlockId);
       return {
         weekday: weekdayFmt.format(d),
         date: dateFmt.format(d),
         time: timeFmt.format(d),
+        timeBlockLabel: block === null ? null : timeBlockLabel(block),
         serviceName: v.serviceName,
-        key: `${v.startTimeMs}-${v.serviceId}`,
+        // Two KinCares of one duration in one day are told apart by the time in
+        // clock mode and by the block in block mode, where every start is equal.
+        key: `${v.startTimeMs}-${v.serviceId}-${v.timeBlockId ?? ''}`,
       };
     });
 }
 
-/** 'Thu, Sep 4 at 9:00 AM' — the spec's own one-line spelling of a visit. */
+/**
+ * 'Thu, Sep 4 at 9:00 AM' — the spec's own one-line spelling of a visit — or
+ * 'Thu, Sep 4, Midday (11:00-15:00)' when the household picked a window
+ * instead of a clock. The date half is unchanged in both: the enumeration rule
+ * is about WHICH DAYS, and a block does not make a day any less specific.
+ */
 export function plannedVisitLine(v: RenderedPlannedVisit): string {
+  if (v.timeBlockLabel !== null) return `${v.weekday}, ${v.date}, ${v.timeBlockLabel}`;
   return `${v.weekday}, ${v.date} at ${v.time}`;
 }
 
