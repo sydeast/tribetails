@@ -10,10 +10,15 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  * sends via Twilio Messages API, returns provider message SID.
  *
  * Fails loud if:
- *   - SMS template doc missing
+ *   - the catalog row has no sms template id (a misconfigured row)
  *   - recipient has no phone
  *   - Twilio rejects (will surface error.code + status; outer wrapTrigger
  *     captures to Sentry)
+ * Soft-skips (returns { skipped }) if:
+ *   - `smsTemplates/{id}` is missing or has no text. Unlike email and push there
+ *     is NO generic fallback here: a segment costs money and content-free text
+ *     is not worth paying for (operator ruling 2026-08-23). See
+ *     notifications/fallbackTemplate.ts.
  *
  * Phone format expectation: E.164 (`+15551234567`). Documents missing the
  * leading `+` are passed through to Twilio which will reject with a 21211
@@ -28,12 +33,22 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
   }
 
   const tplSnap = await db().doc(`smsTemplates/${templateId}`).get();
-  if (!tplSnap.exists) {
-    throw new Error(`smsChannel(${def.key}): smsTemplates/${templateId} missing`);
-  }
-  const tpl = tplSnap.data() as { text?: string };
-  if (!tpl.text) {
-    throw new Error(`smsChannel(${def.key}): smsTemplates/${templateId} has no .text field`);
+  const tpl = tplSnap.exists ? (tplSnap.data() as { text?: string }) : null;
+  if (!tpl?.text) {
+    // SMS gets NO generic fallback, unlike email and push. Operator ruling
+    // 2026-08-23: a segment costs money and "there's an update, sign in" is not
+    // worth paying for. Email carries the generic copy instead, and it is the
+    // channel `required.email` keeps on for almost every key.
+    //
+    // Skipped rather than thrown, because an unauthored template is a content
+    // gap on the operator's schedule, not an infrastructure fault: throwing
+    // would Sentry-capture and retry something no retry can fix. The fan-out
+    // handler stamps the channel subdoc `status: 'skipped'` with this reason and
+    // logs it, so it stays visible.
+    return {
+      skipped: true,
+      skipReason: tplSnap.exists ? 'template_text_empty' : 'template_missing',
+    };
   }
 
   const phone = await lookupRecipientPhone(recipientUid);

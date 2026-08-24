@@ -70,12 +70,38 @@ describe('sendSmsChannel', () => {
     });
   });
 
-  it('throws if template missing', async () => {
+  it('SKIPS rather than throwing when the template is not authored yet', async () => {
+    // Operator ruling 2026-08-23: SMS gets no generic fallback, because a
+    // segment costs money and "there's an update, sign in" is not worth paying
+    // for. Email carries the generic copy instead. Skipped, not thrown, because
+    // unauthored copy is a content gap no retry can fix.
+    const ctx = buildDbMock({ docs: { 'clients/u1': { phone: '+15555551111' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res).toEqual({ skipped: true, skipReason: 'template_missing' });
+    expect(mocks.messagesCreate).not.toHaveBeenCalled();
+  });
+  it('SKIPS when the template exists but its text is empty', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { phone: '+15555551111' }, 'smsTemplates/t.k': { text: '' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res).toEqual({ skipped: true, skipReason: 'template_text_empty' });
+    expect(mocks.messagesCreate).not.toHaveBeenCalled();
+  });
+  it('still THROWS when the catalog row has no sms template id at all', async () => {
+    // A misconfigured catalog row is a developer bug, not a content gap. No
+    // amount of authoring fixes it, so it must stay loud.
     const ctx = buildDbMock({ docs: { 'clients/u1': { phone: '+15555551111' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
-      sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} }),
-    ).rejects.toThrow(/smsTemplates\/t.k missing/);
+      sendSmsChannel({
+        def: def({ templates: {} as never }),
+        recipientUid: 'u1',
+        data: {},
+      }),
+    ).rejects.toThrow(/catalog has no sms template id/);
   });
 
   it('throws if phone missing from both clients/ and staff/', async () => {
