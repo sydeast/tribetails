@@ -365,23 +365,60 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
 
 interface SessionPickerProps {
   sessions: ReturnType<typeof useCollection<SessionEntry>>;
+  /**
+   * Narrow to one household. Absent means every household, the KinTales list's
+   * own "New".
+   *
+   * This is what `KinTaleComposeProps.kinfolkId` was added for, and until #552 it
+   * did not reach here: the prop was declared on the parent and spread into this
+   * component, which never took it. JSX spread is not excess-property checked, so
+   * TypeScript said nothing and the profile's "New KinTale" landed the operator in
+   * every household's visits. Threaded properly, with `pickableSessions` below as
+   * the one place the two filters live.
+   */
+  kinfolkId?: string;
   onPick: (sessionId: string) => void;
 }
 
-function SessionPicker({ sessions, onPick }: SessionPickerProps) {
+/**
+ * The sessions this picker may offer: the visits that have HAPPENED, narrowed to
+ * one household when the caller named one.
+ *
+ * Exported so the narrowing is a testable fact rather than a prop that looks
+ * plumbed. A session doc with no `status` at all classifies as 'unknown', which
+ * is not DEPARTED/COMPLETED, so it stays out either way.
+ */
+export function pickableSessions(data: SessionEntry[], kinfolkId?: string): SessionEntry[] {
+  const eligible = data.filter((s) => isKinTaleEligibleSession(s.status ?? ''));
+  if (kinfolkId === undefined || kinfolkId === '') return eligible;
+  return eligible.filter((s) => (s.kinfolkId ?? '') === kinfolkId);
+}
+
+function SessionPicker({ sessions, kinfolkId, onPick }: SessionPickerProps) {
+  const scoped = kinfolkId !== undefined && kinfolkId !== '';
   return (
-    <DenPanel title="Pick a Kin Care session" subtitle="A KinTale always starts from a visit that's already happened.">
+    <DenPanel
+      title="Pick a Kin Care session"
+      subtitle={
+        scoped
+          ? "This household's visits that have already happened."
+          : "A KinTale always starts from a visit that's already happened."
+      }
+    >
       <AsyncRegion
         state={sessions}
         what="Kin Care sessions"
-        // A session doc with no `status` at all classifies as 'unknown', which is
-        // not DEPARTED/COMPLETED, so it stays out of the picker, the same answer
-        // the non-defaulted read gave before it could throw.
-        isEmpty={(data) => data.filter((s) => isKinTaleEligibleSession(s.status ?? '')).length === 0}
-        empty={<EmptyHint>No departed or completed sessions yet.</EmptyHint>}
+        isEmpty={(data) => pickableSessions(data, kinfolkId).length === 0}
+        empty={
+          <EmptyHint>
+            {scoped
+              ? 'No departed or completed visits for this household yet.'
+              : 'No departed or completed sessions yet.'}
+          </EmptyHint>
+        }
       >
         {(data) => {
-          const eligible = data.filter((s) => isKinTaleEligibleSession(s.status ?? ''));
+          const eligible = pickableSessions(data, kinfolkId);
           return (
             <ul className="kintale-compose__picker-list">
               {eligible.map((s) => (

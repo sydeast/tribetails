@@ -66,7 +66,34 @@ data class KinTaleUiState(
     val isSharing: Boolean = false,
     val shareUrl: String? = null,
     val shareError: String? = null,
-)
+) {
+    // ── Draft validation (#552), the same rules the React composer enforces ──
+    //
+    // DERIVED, never stored. A stored copy of "is the headline legal" is a second
+    // answer that can disagree with the headline, and the field it describes
+    // changes on every keystroke. Computing it off [report] means the screen and
+    // the send guard cannot read different verdicts.
+    //
+    // `auntieos-admin/src/lib/kinTaleDraftSchema.ts` is the other half of this;
+    // [kinTaleTitleError] / [kinTaleBodyError] carry the port note.
+
+    /** The headline's problem, or null. Shown under the field, not on send. */
+    val titleError: String? get() = kinTaleTitleError(report.title)
+
+    /** The body's problem, or null. */
+    val bodyError: String? get() = kinTaleBodyError(report.bodyCopy)
+
+    /** The first field problem anywhere in the draft, or null when it is clean. */
+    val validationError: String? get() = titleError ?: bodyError
+
+    /**
+     * Why this draft cannot be SENT (as opposed to saved), or null.
+     *
+     * A draft with a rule broken in it is still a draft, and saving it has to keep
+     * working. Only the outward-facing action is gated.
+     */
+    val sendBlocker: String? get() = validationError ?: kinTaleSendBlocker(report.sessionId)
+}
 
 enum class SaveStatus { IDLE, SAVED, ERROR }
 
@@ -656,6 +683,16 @@ class KinTaleReportViewModel(
 
         if (!hasContent(report)) {
             _uiState.value = _uiState.value.copy(error = "Nothing to send yet - fill in some details.")
+            return
+        }
+
+        // #552: the draft rules gate the OUTWARD action, not the save. The screen
+        // already disables Send while [KinTaleUiState.sendBlocker] is non-null, so
+        // this is the guard behind the disabled control rather than the only one:
+        // a send arriving any other way (a stale recomposition, a later caller)
+        // still has to pass the same rule the operator was shown.
+        state.sendBlocker?.let { blocker ->
+            _uiState.value = _uiState.value.copy(error = blocker)
             return
         }
 
