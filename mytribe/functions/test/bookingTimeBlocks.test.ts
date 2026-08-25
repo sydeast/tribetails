@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  businessCalendarDate,
+  containmentIsInert,
   findTimeBlock,
+  formatDayBoundaryHHmm,
+  formatHHmm,
+  parseDayBoundaryHHmm,
   parseHHmm,
   parseTimeBlockRow,
   resolveBookingPolicy,
@@ -72,6 +77,39 @@ describe('parseTimeBlockRow', () => {
   it('normalises HH:MM padding', () => {
     expect(parseTimeBlockRow({ id: 'a', startTime: '8:05', endTime: '9:00' }, FOUR_HOURS)?.startTime).toBe('08:05');
   });
+
+  /**
+   * #596: the block that broke containment. The default duration is 4 hours, so
+   * ANY start at or after 20:00 with no stored end lands on the end of the day —
+   * and an operator typing 24:00 as an end time gets there directly. The row
+   * must survive, keep its full window, and the times it comes out with must be
+   * readable (see the round-trip property below).
+   */
+  it('keeps a window that runs to the end of the day, and its times still parse', () => {
+    const fromDefault = parseTimeBlockRow({ id: 'evening', startTime: '20:00' }, FOUR_HOURS);
+    expect(fromDefault).toEqual({
+      id: 'evening',
+      label: 'Evening',
+      startTime: '20:00',
+      endTime: '24:00',
+      durationMinutes: 240,
+    });
+    expect(parseHHmm(fromDefault!.startTime)).toBe(1200);
+    expect(parseDayBoundaryHHmm(fromDefault!.endTime)).toBe(1440);
+
+    // Same window, stated outright by the operator rather than defaulted.
+    expect(parseTimeBlockRow({ id: 'evening', startTime: '20:00', endTime: '24:00' }, 60)?.endTime).toBe('24:00');
+  });
+
+  it('never runs a window PAST the end of the day, however large the default duration', () => {
+    const late = parseTimeBlockRow({ id: 'late', startTime: '23:00' }, 600);
+    expect(late?.endTime).toBe('24:00');
+    expect(late?.durationMinutes).toBe(60);
+  });
+
+  it('refuses a start of 24:00, which is a boundary rather than a time a block can open at', () => {
+    expect(parseTimeBlockRow({ id: 'nope', startTime: '24:00', endTime: '24:00' }, FOUR_HOURS)).toBeNull();
+  });
 });
 
 describe('parseHHmm', () => {
@@ -83,6 +121,66 @@ describe('parseHHmm', () => {
     for (const bad of ['24:00', '11:60', '11', '', '  ', 'abc', null, undefined, 1100, {}]) {
       expect(parseHHmm(bad)).toBeNull();
     }
+  });
+});
+
+describe('parseDayBoundaryHHmm', () => {
+  it('accepts everything parseHHmm does, plus the exclusive end-of-day boundary', () => {
+    expect(parseDayBoundaryHHmm('11:00')).toBe(660);
+    expect(parseDayBoundaryHHmm('00:00')).toBe(0);
+    expect(parseDayBoundaryHHmm('23:59')).toBe(1439);
+    // The value #596 turned on: a window running to midnight ENDS at 24:00, and
+    // 23:59 would be a different, shorter window.
+    expect(parseDayBoundaryHHmm('24:00')).toBe(1440);
+    expect(parseDayBoundaryHHmm(' 24:00 ')).toBe(1440);
+  });
+
+  it('stops at the boundary — nothing past the end of the day is a boundary either', () => {
+    for (const bad of ['24:01', '25:00', '24:60', '11:60', '11', '', 'abc', null, undefined, 1440, {}]) {
+      expect(parseDayBoundaryHHmm(bad)).toBeNull();
+    }
+  });
+});
+
+/**
+ * #596, THE PROPERTY THAT WOULD HAVE CAUGHT IT.
+ *
+ * The shipped defect was a formatter emitting a string its own parser rejected:
+ * `formatHHmm(1440)` -> "24:00" -> `parseHHmm` -> null. Nothing asserted that
+ * the two agreed, so a block ending at midnight failed the server's own parser
+ * and containment silently stopped running for it.
+ *
+ * Every value each formatter can emit must be readable by its parser, and read
+ * back as the same number. Exhaustive rather than sampled: the whole domain is
+ * 1441 integers, and the one value that broke was an endpoint.
+ */
+describe('HH:MM round-trip', () => {
+  it('formatHHmm -> parseHHmm is lossless for every minute of the day', () => {
+    const broken: string[] = [];
+    for (let m = 0; m <= 1439; m++) {
+      const s = formatHHmm(m);
+      if (parseHHmm(s) !== m) broken.push(`${m} -> "${s}" -> ${parseHHmm(s)}`);
+    }
+    expect(broken).toEqual([]);
+  });
+
+  it('formatDayBoundaryHHmm -> parseDayBoundaryHHmm is lossless for every boundary, 24:00 included', () => {
+    const broken: string[] = [];
+    for (let m = 0; m <= 1440; m++) {
+      const s = formatDayBoundaryHHmm(m);
+      if (parseDayBoundaryHHmm(s) !== m) broken.push(`${m} -> "${s}" -> ${parseDayBoundaryHHmm(s)}`);
+    }
+    expect(broken).toEqual([]);
+    expect(formatDayBoundaryHHmm(1440)).toBe('24:00');
+  });
+
+  it('clamps rather than emitting a string its own parser cannot read', () => {
+    // Out-of-range input is clamped INTO the readable range, both ways, so the
+    // property above holds for every argument either formatter can be handed.
+    expect(parseHHmm(formatHHmm(99_999))).toBe(1439);
+    expect(parseHHmm(formatHHmm(-5))).toBe(0);
+    expect(parseDayBoundaryHHmm(formatDayBoundaryHHmm(99_999))).toBe(1440);
+    expect(parseDayBoundaryHHmm(formatDayBoundaryHHmm(-5))).toBe(0);
   });
 });
 
@@ -247,6 +345,102 @@ describe('visitMatchesBlock', () => {
   it('says "cannot tell" rather than "no" when the stored zone is unusable', () => {
     expect(visitMatchesBlock(at(16), MIDDAY, '')).toBe('zone-unusable');
     expect(visitMatchesBlock(at(16), MIDDAY, 'Mars/Olympus_Mons')).toBe('zone-unusable');
+  });
+
+  /**
+   * #596: a block ending at midnight used to fail the server's own parser and
+   * come back `zone-unusable`, which `assertVisitBookingMode` lets through — so
+   * for that block, "a client cannot send an arbitrary time under a block's
+   * name" simply did not run. It runs now, and both ends of the window answer.
+   */
+  describe('a block that runs to the end of the day', () => {
+    const EVENING = { id: 'evening', label: 'Evening', startTime: '20:00', endTime: '24:00', durationMinutes: 240 };
+
+    it('answers, instead of reporting the zone as unusable', () => {
+      expect(visitMatchesBlock(at(1, 0), EVENING, TZ)).toBe('inside'); // 20:00 local, the first minute
+      expect(visitMatchesBlock(at(4, 59), EVENING, TZ)).toBe('inside'); // 23:59 local, the last
+      expect(visitMatchesBlock(at(17), EVENING, TZ)).toBe('outside'); // 12:00 local: the #596 case
+      expect(visitMatchesBlock(at(0, 59), EVENING, TZ)).toBe('outside'); // 19:59 local
+    });
+
+    it('still fails open on an unusable ZONE, which is a different thing entirely', () => {
+      expect(visitMatchesBlock(at(17), EVENING, '')).toBe('zone-unusable');
+    });
+  });
+
+  /**
+   * The split #596 asked for. An unreadable ZONE is missing configuration and
+   * fails open; an unreadable BLOCK is a bug in code that generated those two
+   * strings itself, and must never wear the same "cannot tell" answer.
+   */
+  it('names an unreadable BLOCK separately, and does so even when the zone is unusable too', () => {
+    const broken = { id: 'x', label: 'X', startTime: 'nonsense', endTime: '15:00', durationMinutes: 0 };
+    const brokenEnd = { id: 'x', label: 'X', startTime: '11:00', endTime: '25:00', durationMinutes: 0 };
+    const inverted = { id: 'x', label: 'X', startTime: '15:00', endTime: '11:00', durationMinutes: 0 };
+    expect(visitMatchesBlock(at(16), broken, TZ)).toBe('block-unreadable');
+    expect(visitMatchesBlock(at(16), brokenEnd, TZ)).toBe('block-unreadable');
+    expect(visitMatchesBlock(at(16), inverted, TZ)).toBe('block-unreadable');
+    // Zone ALSO unusable: the server-side defect still wins, because it is the
+    // one we can answer for.
+    expect(visitMatchesBlock(at(16), broken, '')).toBe('block-unreadable');
+  });
+});
+
+/**
+ * #597: the identity of a block-mode visit is (date, KinCare, block), and the
+ * date is the BUSINESS's — every visit in a window carries that window's first
+ * minute, so the instant is approximate by design and only the business's day
+ * boundary can say whether two of them are the same day.
+ */
+describe('businessCalendarDate', () => {
+  it('reads the business day, not UTC and not the device', () => {
+    // 2026-09-05T02:00Z is still 2026-09-04 in Chicago.
+    const lateEvening = Date.parse('2026-09-05T02:00:00.000Z');
+    expect(businessCalendarDate(lateEvening, 'America/Chicago')).toBe('2026-09-04');
+    expect(businessCalendarDate(lateEvening, 'UTC')).toBe('2026-09-05');
+  });
+
+  it('falls back to the UTC date when the zone is unusable, rather than giving up on keying', () => {
+    const t = Date.parse('2026-09-04T16:00:00.000Z');
+    expect(businessCalendarDate(t, '')).toBe('2026-09-04');
+    expect(businessCalendarDate(t, 'Mars/Olympus_Mons')).toBe('2026-09-04');
+    // The refusal that must survive any fallback: the same instant always keys
+    // the same, whatever the zone is.
+    expect(businessCalendarDate(t, '')).toBe(businessCalendarDate(t, ''));
+  });
+
+  it('never throws on an instant that is not a number', () => {
+    expect(businessCalendarDate(Number.NaN, 'UTC')).toBe('unknown-date');
+    expect(businessCalendarDate(Number.POSITIVE_INFINITY, '')).toBe('unknown-date');
+  });
+});
+
+/**
+ * #596, the wider half. Fail-open on an unreadable zone stays; being SILENT
+ * about it does not. A business taking block bookings with no usable timezone
+ * has containment switched off for every block, and that is an enforcement
+ * control not running.
+ */
+describe('containmentIsInert', () => {
+  const withBlocks = resolveBookingPolicy({
+    allowTimeBlockBooking: true,
+    timeBlocks: [{ id: 'midday', startTime: '11:00', endTime: '15:00', active: true }],
+  }).policy;
+
+  it('is true when a block-booking business has no usable zone', () => {
+    expect(containmentIsInert(withBlocks, '')).toBe(true);
+    expect(containmentIsInert(withBlocks, '   ')).toBe(true);
+    expect(containmentIsInert(withBlocks, 'Mars/Olympus_Mons')).toBe(true);
+  });
+
+  it('is false once the zone is readable', () => {
+    expect(containmentIsInert(withBlocks, 'America/Chicago')).toBe(false);
+    expect(containmentIsInert(withBlocks, 'UTC')).toBe(false);
+  });
+
+  it('is false for a business that takes no block bookings — it has no containment to lose', () => {
+    const clockOnly = resolveBookingPolicy({ allowTimeBlockBooking: false }).policy;
+    expect(containmentIsInert(clockOnly, '')).toBe(false);
   });
 });
 
