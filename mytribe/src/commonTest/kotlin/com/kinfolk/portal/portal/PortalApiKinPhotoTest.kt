@@ -53,6 +53,41 @@ class PortalApiKinPhotoTest {
         assertEquals("3", payload["kinfolkId"]?.jsonPrimitive?.contentOrNull)
     }
 
+    /**
+     * #583. The signer folds `transformation=fl_force_strip` into the signature
+     * base, which is what makes the STORED ORIGINAL carry no EXIF GPS. This
+     * decoder is the only thing standing between that instruction and the
+     * upload POST: a dropped field is an Invalid Signature from Cloudinary, so
+     * losing it here breaks every kin photo upload rather than quietly storing
+     * coordinates -- but it still has to survive the decode to work at all.
+     */
+    @Test
+    fun signKinPhotoUpload_decodesTheSignedMetadataStripTransformation() = runTest {
+        val fns = FakeFunctionsClient()
+        fns.stub("signKinPhotoUpload", buildJsonObject {
+            put("cloudName", "demo"); put("apiKey", "key123"); put("timestamp", 1700000000L)
+            put("signature", "abc123"); put("folder", "tribetails/kinfolks/3/kin/k1")
+            put("allowedFormats", "jpg,png,webp,gif"); put("transformation", "fl_force_strip")
+        })
+        val api = PortalApi(fns)
+        val signed = api.signKinPhotoUpload(kinId = "k1", kinfolkId = "3")
+        assertEquals("fl_force_strip", signed.transformation)
+        assertEquals("jpg,png,webp,gif", signed.allowedFormats)
+    }
+    /**
+     * #583. A signer that predates the strip sends no `transformation` at all.
+     * Blank has to mean "post nothing extra", because posting an unsigned field
+     * is the same Invalid Signature as dropping a signed one.
+     */
+    @Test
+    fun signKinPhotoUpload_treatsAnAbsentTransformationAsBlank() = runTest {
+        val fns = FakeFunctionsClient()
+        fns.stub("signKinPhotoUpload", buildJsonObject {
+            put("cloudName", "demo"); put("signature", "abc123")
+        })
+        val api = PortalApi(fns)
+        assertEquals("", api.signKinPhotoUpload(kinId = "k1").transformation)
+    }
     @Test
     fun signKinPhotoUpload_omitsKinfolkId_whenNull() = runTest {
         val fns = FakeFunctionsClient()

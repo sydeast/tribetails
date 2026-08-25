@@ -118,6 +118,10 @@ export interface SignedAvatarUpload {
   /** Signed server-side; must be echoed verbatim in the upload POST or
    *  Cloudinary rejects it as a signature mismatch. */
   allowedFormats: string;
+  /** #583. The incoming transformation the server signed (`fl_force_strip`),
+   *  which is what makes the STORED ORIGINAL carry no EXIF GPS. Signed, so it
+   *  is echoed verbatim exactly like `allowedFormats`. */
+  transformation: string;
 }
 
 export function signKinfolkAvatar(): Promise<SignedAvatarUpload> {
@@ -189,6 +193,8 @@ export async function uploadAvatarToCloudinary(signed: SignedAvatarUpload, file:
   form.append('signature', signed.signature);
   form.append('folder', signed.folder);
   if (signed.allowedFormats) form.append('allowed_formats', signed.allowedFormats);
+  // #583: signed, therefore mandatory whenever the server sent one.
+  if (signed.transformation) form.append('transformation', signed.transformation);
   form.append('file', file, file.name || 'avatar');
 
   const res = await fetch(`https://api.cloudinary.com/v1_1/${signed.cloudName}/image/upload`, {

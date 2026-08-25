@@ -12,6 +12,7 @@ import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.content.PartData
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
@@ -83,24 +84,14 @@ internal object JvmMediaUpload {
             // 2. Fetch a signed-upload grant from the same backend the web/Android apps use.
             val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Admin sign-in required before media upload")
             val folder = "tribetails/entity/$entityId"
-            val sign = fetchSignedUpload(token, folder, entityType, entityId)
+            // #583: the file's own MIME type picks the resource kind, so a photo
+            // is always signed with the metadata strip and a video is never
+            // signed with an image-only transformation Cloudinary would reject.
+            val sign = fetchSignedUpload(token, folder, entityType, entityId, cloudinaryResourceKind(resolvedMime))
 
             // 3. Multipart upload to Cloudinary.
             val cloudResp = http.post("https://api.cloudinary.com/v1_1/${sign.cloudName}/auto/upload") {
-                setBody(
-                    MultiPartFormDataContent(
-                        formData {
-                            append("file", fileBytes, Headers.build {
-                                append(HttpHeaders.ContentType, resolvedMime)
-                                append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
-                            })
-                            append("api_key", sign.apiKey)
-                            append("timestamp", sign.timestamp.toString())
-                            append("signature", sign.signature)
-                            append("folder", sign.folder)
-                        }
-                    )
-                )
+                setBody(MultiPartFormDataContent(uploadFormData(fileBytes, fileName, resolvedMime, sign)))
             }
             val cloudText = cloudResp.bodyAsText()
             if (!cloudResp.status.isSuccess()) {
@@ -146,11 +137,58 @@ internal object JvmMediaUpload {
         }
     }
 
+    /**
+     * The exact multipart form posted to Cloudinary.
+     *
+     * #583: `transformation` is signed server-side, so it is posted exactly
+     * when the signer signed one and never otherwise. A blank value means no
+     * transformation was signed; posting one anyway is the same Invalid
+     * Signature as dropping a signed one.
+     *
+     * Internal, and split out of [upload], so the posted field set is
+     * assertable without a live signed-upload endpoint or a Cloudinary round
+     * trip.
+     */
+    internal fun uploadFormData(
+        fileBytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        sign: CloudinarySignedUpload,
+    ): List<PartData> = formData {
+        append("file", fileBytes, Headers.build {
+            append(HttpHeaders.ContentType, mimeType)
+            append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
+        })
+        append("api_key", sign.apiKey)
+        append("timestamp", sign.timestamp.toString())
+        append("signature", sign.signature)
+        append("folder", sign.folder)
+        if (sign.transformation.isNotBlank()) append("transformation", sign.transformation)
+    }
+    /**
+     * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
+     * signer so it knows whether to sign the metadata-strip transformation.
+     * IMAGE is the only kind that strips: `fl_force_strip` is an image flag, and
+     * an incoming transformation on a video would mean re-encoding the whole
+     * file inside the upload request.
+     *
+     * Internal rather than private so the upload contract is testable without a
+     * picker, a signed-in admin, or a network call.
+     */
+    internal fun cloudinaryResourceKind(mimeType: String): String {
+        val mime = mimeType.trim().lowercase()
+        return when {
+            mime.startsWith("image/") -> "image"
+            mime.startsWith("video/") -> "video"
+            else -> "raw"
+        }
+    }
     private suspend fun fetchSignedUpload(
         token: String,
         folder: String,
         entityType: String,
         entityId: String,
+        resourceKind: String,
     ): CloudinarySignedUpload {
         val resp = http.post(SIGN_URL) {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -159,6 +197,7 @@ internal object JvmMediaUpload {
                 put("folder", folder)
                 put("entityType", entityType)
                 put("entityId", entityId)
+                put("resourceKind", resourceKind)
             }.toString())
         }
         val text = resp.bodyAsText()
@@ -170,6 +209,9 @@ internal object JvmMediaUpload {
             timestamp = o["timestamp"]?.jsonPrimitive?.longOrNull ?: 0L,
             signature = o["signature"]?.jsonPrimitive?.content.orEmpty(),
             folder = o["folder"]?.jsonPrimitive?.content.orEmpty().ifBlank { folder },
+            // Absent on a signer that predates #583: blank means "sign nothing
+            // extra, post nothing extra", i.e. the old request verbatim.
+            transformation = o["transformation"]?.jsonPrimitive?.content.orEmpty(),
             entityType = entityType,
             entityId = entityId,
         )
