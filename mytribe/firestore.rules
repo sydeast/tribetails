@@ -1003,7 +1003,39 @@ service cloud.firestore {
     match /users/{uid}                          { allow read, write: if isAuntie(); }
     match /visit_logs/{id}                      { allow read, write: if isAuntie(); }
     match /visit_routes/{id}                    { allow read, write: if isAuntie(); }
-    match /voicemails/{id}                      { allow read, write: if isAuntie(); }
+    match /voicemails/{id} {
+ // Issue #581: Mark read and Dismiss used to be a bare client write authorized
+ // by isAuntie() alone, with no floor under it. A stray tap on a voicemail
+ // that had ALREADY been replied to silently rewrote `replyStatus` back to
+ // `read`/`dismissed` and blanked `repliedAt`/`replyLogId`, destroying the
+ // only record of who answered it and when, with no confirmation and no way
+ // back. All three clients (web SDK, Android SDK, desktop's REST PATCH -
+ // JvmFirestoreRest carries the caller's own Firebase ID token, so this rule
+ // governs it too) write the same three keys through this one grant, so this
+ // is the one place the floor can be enforced for all of them at once rather
+ // than three UI checks that can each be a stray tap or a future regression
+ // away from clobbering the record again.
+ //
+ // A re-reply is deliberately NOT blocked: the new write is still allowed to
+ // move repliedAt/replyLogId forward as long as it KEEPS replyStatus at
+ // 'replied' (answering a voicemail a second time is legitimate and should
+ // update the record). What is blocked is moving AWAY from 'replied' at all -
+ // Mark read and Dismiss never send 'replied', so neither can touch a
+ // replied voicemail's status or its two reply fields, full stop.
+ //
+ // `!('replyStatus' in resource.data)` covers a voicemail written before the
+ // field existed: with no replyStatus to protect, the write is ungated, same
+ // as every other legacy-shape rule in this file.
+      function voicemailReplyGuardSatisfied() {
+        return !('replyStatus' in resource.data)
+          || resource.data.replyStatus != 'replied'
+          || request.resource.data.replyStatus == 'replied';
+      }
+      allow read: if isAuntie();
+      allow create: if isAuntie();
+      allow update: if isAuntie() && voicemailReplyGuardSatisfied();
+      allow delete: if isAuntie();
+    }
  // Dashboard-widget collections (AO-40/41/39): admin read, writes callable-only.
  //
  // The comment here used to claim mutations "normally flow through" the

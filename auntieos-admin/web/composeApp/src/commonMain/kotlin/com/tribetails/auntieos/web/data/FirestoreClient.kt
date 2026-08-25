@@ -624,7 +624,16 @@ class FirestoreClient {
         replyLogId: String,
     ): WriteResult<Unit> = platformMarkVoicemailReplied(voicemailId, repliedAtIso, replyLogId)
 
-    /** Transitions a voicemail from `unread` to `read`. No-op if already read/replied/dismissed. */
+    /**
+     * Transitions a voicemail from `unread` to `read`.
+     *
+     * NOT a no-op if called on an already replied/dismissed voicemail - this
+     * is a bare PATCH, it does not read current state first. The UI only ever
+     * calls it from `statusHint == "unread"` (auto-mark-on-open in
+     * `InboxScreen`), and the Firestore rule on `voicemails/{id}` refuses the
+     * write outright if the doc is already `replied` (issue #581), but this
+     * function itself asserts neither.
+     */
     suspend fun markVoicemailRead(voicemailId: String): WriteResult<Unit> =
         platformMarkVoicemailRead(voicemailId)
 
@@ -638,6 +647,12 @@ class FirestoreClient {
      * Android admin's `AuntieRepository.markVoicemailDismissed`; all three
      * write the same three keys with the same blank `repliedAt`, because
      * dismissing is not replying.
+     *
+     * Like `markVoicemailRead` above, this is a bare PATCH with no
+     * precondition read: `InboxScreen` only offers the Dismiss button while
+     * `canDismissVoicemail(entry.statusHint)` is true, and the Firestore rule
+     * on `voicemails/{id}` refuses the write outright if the doc is already
+     * `replied` (issue #581) regardless of what this function is asked to do.
      */
     suspend fun markVoicemailDismissed(voicemailId: String): WriteResult<Unit> =
         platformMarkVoicemailDismissed(voicemailId)

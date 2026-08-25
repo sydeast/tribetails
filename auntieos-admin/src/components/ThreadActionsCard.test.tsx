@@ -256,6 +256,21 @@ describe('ThreadActionsCard', () => {
     expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
   });
 
+  /**
+   * Issue #581: a stray tap on Mark read or Dismiss for an already-replied
+   * voicemail used to overwrite `repliedAt`/`replyLogId` with no confirmation
+   * and no way back. Neither control is offered once `statusHint` is
+   * `replied` - the Firestore rule on `voicemails/{id}` refuses the write
+   * outright regardless, but the button should not invite a tap that is
+   * going to fail.
+   */
+  it('offers neither Mark read nor Dismiss on an already-replied voicemail', () => {
+    render(<ThreadActionsCard entry={entry({ statusHint: 'replied' })} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(markVoicemail).not.toHaveBeenCalled();
+  });
+
   it('withdraws Dismiss once the write lands, so it cannot be pressed twice', async () => {
     render(<ThreadActionsCard entry={entry()} onClose={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
