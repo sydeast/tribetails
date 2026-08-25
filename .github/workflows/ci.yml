@@ -233,6 +233,12 @@ jobs:
             scripts:
               - 'scripts/**'
               - '.github/workflows/ci.yml'
+              # deploy-guard runs scripts/client-secrets.test.mjs, and one of its
+              # cases asserts that every client secret the web apps declare is
+              # mirrored by a repo secret in preview.yml. Without this line a
+              # change that dropped one of those mappings would sail through:
+              # the test that catches it would not have run.
+              - '.github/workflows/preview.yml'
 
   admin:
     name: React admin
@@ -623,10 +629,19 @@ jobs:
     name: Deploy guard
     needs: changes
     if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
-    timeout-minutes: 10
+    # Raised from 10 when release.test.sh joined this job. It builds a throwaway
+    # git repo per case and measures ~55s on the operator's machine, so the
+    # previous ceiling left very little room on a slower runner.
+    timeout-minutes: 15
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
+      # Node, for `node --test` and for the scripts release.test.sh drives
+      # (declared-secrets.js, client-secrets.mjs). Pinned to the version the
+      # rest of this workflow uses rather than whatever the runner image ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - name: Run the deploy-guard test if present
         run: |
           if [ -f scripts/safe-deploy.test.sh ]; then
@@ -659,6 +674,39 @@ jobs:
             bash scripts/release-bg.test.sh
           else
             echo "scripts/release-bg.test.sh not present yet, skipping."
+          fi
+      # The client build config both web bundles compile in. Two tests, two
+      # different questions:
+      #
+      #   client-secrets.test.mjs  the resolver itself, with a FAKE fetcher, so
+      #                            every branch (secret absent, secret present
+      #                            but empty, store unreachable, precedence) is
+      #                            reachable on a runner with no gcloud and no
+      #                            credentials. It also fails on a VITE_ variable
+      #                            either app reads without declaring, and on a
+      #                            declared secret this workflow's sibling
+      #                            preview.yml never mirrors.
+      #
+      #   release.test.sh          the ORDER, which only a release test can show:
+      #                            that the values are present when the build
+      #                            runs, and that a missing one stops the run
+      #                            before anything is deployed.
+      #
+      # release.test.sh was not run by any workflow until now, so the release
+      # script's 59 existing cases were only ever run by hand. It is ~55 seconds.
+      - name: Run the client build-config test if present
+        run: |
+          if [ -f scripts/client-secrets.test.mjs ]; then
+            node --test scripts/client-secrets.test.mjs
+          else
+            echo "scripts/client-secrets.test.mjs not present yet, skipping."
+          fi
+      - name: Run the release-script test if present
+        run: |
+          if [ -f scripts/release.test.sh ]; then
+            bash scripts/release.test.sh
+          else
+            echo "scripts/release.test.sh not present yet, skipping."
           fi
       # This job is where the workflow files check themselves. The `scripts`
       # filter watches ci.yml, so adding a job here is enough to re-run this,

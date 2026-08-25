@@ -19,6 +19,11 @@
 #                       does not run e2e and never did, so until this existed a
 #                       red e2e job could not stop a release. One didn't, on
 #                       2026-08-01.
+#  0c. client config - fill each web app's VITE_* build config from Google
+#                       Secret Manager, BEFORE step 1 builds them. `vite build`
+#                       compiles these values INTO the bundle, so after the
+#                       build it is too late: there is no server process to
+#                       inject them into later. See scripts/client-secrets.mjs.
 #   1. npm run check  - typecheck, lint, test, build. This is also what
 #                       produces the dist/ that step 5 uploads, so it is not
 #                       optional theatre: skipping it ships a stale bundle.
@@ -64,6 +69,12 @@
 #                                       the run SAYS when it skipped them.
 #   RELEASE_YES=1                       do not prompt (CI). Preconditions still
 #                                       apply; nothing is bypassed.
+#   RELEASE_SKIP_CLIENT_SECRETS=1       skip step 0c and build both web apps
+#                                       from whatever their own .env files hold.
+#                                       The sibling of RELEASE_SKIP_SECRET_CHECK,
+#                                       and the same warning applies: on a
+#                                       machine with no .env that is an empty
+#                                       string compiled into the bundle.
 #   RELEASE_SKIP_ANDROID=1              ship the web without the Android client.
 #                                       Off by default: shipping them together
 #                                       is the point of steps 1c and 6b.
@@ -140,10 +151,22 @@ cyan() { printf '\033[36m%s\033[0m\n' "$*"; }
 ylw()  { printf '\033[33m%s\033[0m\n' "$*"; }
 
 STEP="starting up"
+
+# The generated .env.production.local files (step 0c) exist only for the length
+# of this run. They are gitignored and hold nothing a browser cannot already
+# read out of the deployed bundle, but leaving them behind would mean the next
+# `npm run build` on this machine silently used a previous release's values
+# instead of the developer's own .env, which is a confusing way to debug
+# nothing. Removing them through the script that wrote them keeps ONE list of
+# where they are.
+cleanup_client_env() {
+  node "$ROOT/scripts/client-secrets.mjs" --clean >/dev/null 2>&1 || true
+}
+
 # Any exit that is not the clean end of this script names the step it died in.
 # A release that stops silently mid-way leaves production half-shipped, which is
 # worse than not starting: functions ahead of hosting is a state nobody chose.
-trap 'code=$?; if [ "$code" -ne 0 ]; then red ""; red "RELEASE STOPPED during: $STEP"; red "Production may be PARTIALLY shipped. Check what completed above before retrying."; fi' EXIT
+trap 'code=$?; cleanup_client_env; if [ "$code" -ne 0 ]; then red ""; red "RELEASE STOPPED during: $STEP"; red "Production may be PARTIALLY shipped. Check what completed above before retrying."; fi' EXIT
 
 banner() {
   printf '\n'
@@ -164,6 +187,7 @@ confirm() {
   case "$reply" in
     [yY]|[yY][eE][sS]) return 0 ;;
     *)
+      cleanup_client_env
       trap - EXIT
       ylw "Stopped at your request. Nothing further was deployed."
       exit 0
@@ -756,6 +780,67 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 0c. Client build config, BEFORE the build that compiles it in.
+# ---------------------------------------------------------------------------
+banner "0c. Client build config (VITE_*)"
+
+# THE ORDER IS THE WHOLE POINT, and it is why this is 0c and not 6a. `vite build`
+# INLINES import.meta.env.VITE_* into the JavaScript at build time. There is no
+# server process to inject a value into afterwards, so a value that arrives
+# after step 1 arrives after the only moment it could have mattered, and the
+# bundle that ships carries an empty string where a Sentry DSN or a Mapbox token
+# was supposed to be. Nothing fails. The site just quietly does less.
+#
+# Until 2026-08-24 the only source for these was a gitignored .env on one
+# laptop, and nothing in the repo listed which variables existed at all.
+# Operator ruling: "SECRETS MANAGER, ALL OUR SHIT IS IN THERE."
+#
+# PRECEDENCE (Vite's own, see scripts/client-secrets.mjs for the mechanics):
+#   process.env  >  <app>/.env.production.local  >  <app>/.env.local, .env
+# This step writes the middle one from Secret Manager, so the store beats a
+# developer's local files for a RELEASE build while local development keeps
+# working with no gcloud, no credentials and no network.
+STEP="resolving client build config from Secret Manager"
+if [ "${RELEASE_SKIP_CLIENT_SECRETS:-0}" = "1" ]; then
+  ylw "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1). Both web bundles will be built"
+  ylw "  from whatever each app's own .env files hold."
+else
+  # --release is what VITE_SENTRY_RELEASE becomes: derived here rather than
+  # stored, because a release tag kept by hand in a .env is a tag that names the
+  # last release someone remembered to edit it for.
+  #
+  # THE EXIT CODE IS READ, not just its truthiness, because there are three
+  # answers and only one of them is good: resolved (0), refused (1), and could
+  # not look at all (3). Collapsing the third into the first is the same mistake
+  # step 1b's comment warns about: "no secrets found" and "could not look" must
+  # never print the same.
+  CLIENT_RC=0
+  node "$ROOT/scripts/client-secrets.mjs" --write \
+    --project "$PROJECT" --release "$(git rev-parse --short HEAD)" || CLIENT_RC=$?
+  case "$CLIENT_RC" in
+    0)
+      grn "client config: every declared VITE_* value resolved, and written where"
+      grn "  only a production build reads it"
+      ;;
+    3)
+      ylw "client config: NOT CHECKED. Neither Secret Manager nor the apps' own"
+      ylw "  .env files could be read, so nothing here judged what the build will"
+      ylw "  compile in. The names it could not verify are listed above."
+      ;;
+    *)
+      red ""
+      red "REFUSED: the web apps declare client build config that has no value."
+      red "  The names and the exact commands are listed above. Refusing here,"
+      red "  before anything is built, because a bundle compiled without them"
+      red "  deploys perfectly and then does less than it says it does."
+      red ""
+      red "  To ship anyway, knowing what is missing: RELEASE_SKIP_CLIENT_SECRETS=1"
+      exit 1
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Build and verify, which is also what produces the artifacts we upload.
 # ---------------------------------------------------------------------------
 banner "1. Check (typecheck, lint, test, build)"
@@ -1055,6 +1140,7 @@ if [ "$ANDROID_ANY_BUILT" = "1" ] && [ -z "$ANDROID_GROUPS" ] && [ -z "$ANDROID_
 fi
 
 if [ "$PREFLIGHT_ONLY" = "1" ]; then
+  cleanup_client_env
   trap - EXIT
   banner "Preflight only: stopping here"
   grn "Steps 0 and 1b ran. Nothing was deployed."
@@ -1809,6 +1895,7 @@ else
   ylw "branch prune disabled (RELEASE_PRUNE_BRANCHES=0)."
 fi
 
+cleanup_client_env
 trap - EXIT
 STEP="done"
 

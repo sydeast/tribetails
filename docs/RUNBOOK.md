@@ -1088,9 +1088,72 @@ VALUE or whether the DEPLOYED function carries the declaration; both live in the
 project. For those: `gcloud secrets list` and
 `gcloud functions describe <name> --gen2 --region us-central1`.
 
-`VITE_*` is different by mechanism, not by policy: Vite inlines
-`import.meta.env.VITE_*` into the bundle at build time, so it ships to every
-browser. Public client keys only. A Sentry DSN qualifies (write-only ingestion).
+### Client build config (`VITE_*`) comes from the store too
+
+`VITE_*` is different by mechanism, not by policy. Vite inlines
+`import.meta.env.VITE_*` into the bundle at build time, so whatever the build
+machine holds is what every browser downloads. That is a reason to put only
+public client keys in these variables. It is not a reason to keep them on one
+laptop, which is where they lived until 2026-08-24. Nothing in the repo listed
+which variables existed either: `VITE_ADMIN_APPCHECK_SITE_KEY` appeared in
+neither `.env.example`, so a fresh clone had no way to find out it existed.
+
+They are declared in `scripts/client-secrets.mjs`, one row per variable per app,
+and release step 0c fills them from Secret Manager before anything is built:
+
+```bash
+node scripts/client-secrets.mjs --list    # what each app declares
+node scripts/client-secrets.mjs --check   # resolve it; refuse if one is empty
+```
+
+**To store a value**, once, per secret:
+
+```bash
+gcloud secrets create ADMIN_WEB_SENTRY_DSN --project auntieos-ttpc \
+  --replication-policy=automatic
+printf %s "<the value>" | gcloud secrets versions add ADMIN_WEB_SENTRY_DSN \
+  --project auntieos-ttpc --data-file=-
+```
+
+Unlike a function secret, no redeploy pins a version here: the next release
+reads `latest` at build time, so a rotated value ships with the next build and
+nothing has to be rebound.
+
+**Precedence**, which is Vite's own and not something the release invents:
+
+| rank | source | who sets it |
+| --- | --- | --- |
+| 1 | `process.env` | an explicit inline override, and how CI passes a repo secret in |
+| 2 | `<app>/.env.production.local` | the release, from Secret Manager |
+| 3 | `<app>/.env.local`, `<app>/.env` | you, on your own machine |
+
+Rank 2 is written at step 0c and removed when the release finishes, and only a
+production build reads it. `vite` dev and vitest never do. So the store wins a
+release build while local development keeps working with no gcloud, no
+credentials and no network.
+
+A release **refuses** when a required variable resolves to nothing, or when the
+stored secret exists and its latest version is empty, and it names the variable,
+the secret and the command that fixes it. A release that went ahead would
+compile an empty string into the bundle, deploy perfectly, and quietly do less
+than it says: no crash reports, the plainer map. `RELEASE_SKIP_CLIENT_SECRETS=1`
+ships without the check if you know what is missing.
+
+Two names are deliberately outside all of this. `VITE_SENTRY_RELEASE` is derived
+from the commit being released, because a release tag maintained by hand names
+the last release someone remembered to edit it for. `VITE_APPCHECK_DEBUG_TOKEN`
+is per-developer and bypasses App Check attestation. It is the one genuinely
+sensitive name in the set, it stays in your own `.env.local`, and it must never
+be stored centrally or set in CI.
+
+CI previews get these from **repo secrets named after the Secret Manager
+secrets** (`.github/workflows/preview.yml`), because a GitHub runner has no
+gcloud and a fork PR must never be handed credentials. An unset repo secret
+builds the preview anyway and the job warns which values were empty.
+
+```bash
+gh secret set PORTAL_WEB_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails
+```
 
 The `AIzaSy...` values in the repo are Firebase Web API keys, public by design.
 Access is controlled by Firestore rules and App Check.

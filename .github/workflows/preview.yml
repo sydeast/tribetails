@@ -170,8 +170,47 @@ jobs:
       # The Build step below is still a gate on compiling, not just a bundler:
       # `npm run build` is `tsc --noEmit && vite build`, so a preview is still
       # never published from code that does not typecheck.
+      # WHERE THE CLIENT BUILD CONFIG COMES FROM IN CI (scripts/client-secrets.mjs).
+      # A release resolves these from Google Secret Manager. A runner has no
+      # gcloud and no credentials, and it must never get any: this workflow is
+      # `pull_request`, so a fork PR runs untrusted code, and reaching Secret
+      # Manager from here would hand it a door the deploy credential is
+      # deliberately kept behind. So CI mirrors the values as REPO SECRETS named
+      # exactly after the Secret Manager secrets they copy, which is what makes a
+      # drift between the two visible rather than mysterious.
+      #
+      # An unset repo secret expands to an empty string and the preview builds
+      # anyway, degrading exactly the way the app degrades: no Sentry reporting,
+      # RouteMap draws its SVG polyline, admin App Check reports `unconfigured`.
+      # The step after this one names each one that was empty. A preview is a
+      # look at a change, and failing every fork PR over a missing DSN would cost
+      # more than the DSN is worth here.
+      #
+      # VITE_APPCHECK_DEBUG_TOKEN is absent on purpose and must stay absent: it
+      # bypasses App Check attestation and is per-developer.
       - name: Build
         run: npm run build
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
+          VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+          # Derived, never stored: the commit this preview was built from, so a
+          # Sentry event raised in a preview names the code it came from.
+          VITE_SENTRY_RELEASE: ${{ github.event.pull_request.head.sha }}
+
+      - name: Report client config this preview built without
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
+          VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+        run: |
+          missing=""
+          for v in VITE_SENTRY_DSN VITE_ADMIN_APPCHECK_SITE_KEY; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning title=Preview built without client config::This admin preview compiled empty values for:$missing. Sentry reporting is off in it and App Check reads 'unconfigured'. Fork PRs never get repo secrets; on a same-repo PR, mirror the Secret Manager value: gh secret set ADMIN_WEB_SENTRY_DSN --repo sydeast/tribetails"
+          else
+            echo "All declared admin client config was present."
+          fi
 
       # The service account is an EXTERNAL secret only the operator can issue.
       # Until it exists the job says so plainly rather than failing every PR,
@@ -246,8 +285,31 @@ jobs:
       # above: ci.yml's `Kinfolk portal` job runs this exact `npm test` against
       # this exact commit, and ci.yml's `portal` filter covers every path that
       # can trigger this job. Measured at 46 seconds a run.
+      # Same mirror as the admin job above, with the portal's own names. The two
+      # apps are separate Sentry projects (`auntieos-admin` and `mytribe-web`),
+      # so VITE_SENTRY_DSN is a DIFFERENT value here. That is exactly why each
+      # app declares its own secret instead of sharing one name.
       - name: Build
         run: npm run build
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.PORTAL_WEB_SENTRY_DSN }}
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.PORTAL_WEB_MAPBOX_PUBLIC_TOKEN }}
+          VITE_SENTRY_RELEASE: ${{ github.event.pull_request.head.sha }}
+
+      - name: Report client config this preview built without
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.PORTAL_WEB_SENTRY_DSN }}
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.PORTAL_WEB_MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          missing=""
+          for v in VITE_SENTRY_DSN VITE_MAPBOX_PUBLIC_TOKEN; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning title=Preview built without client config::This portal preview compiled empty values for:$missing. Sentry reporting is off in it and the visit route falls back to the SVG polyline instead of the Mapbox map. Fork PRs never get repo secrets; on a same-repo PR, mirror the Secret Manager value: gh secret set PORTAL_WEB_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails"
+          else
+            echo "All declared portal client config was present."
+          fi
 
       - name: Check for the deploy credential
         id: cred
