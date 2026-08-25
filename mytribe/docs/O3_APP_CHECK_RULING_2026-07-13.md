@@ -6,6 +6,17 @@ Fable 5 designs, Opus implements." This document is the design. The
 implementing session should follow the rollout sequence at the bottom
 literally; every deviation from it should be treated as a new ruling request.
 
+> **OWNER-1 was answered after this document was written, and the answer is
+> final.** The "OWNER input needed" section below and Phase 2 still read as
+> though the Play Console question is open. It is not:
+> `docs/DEVELOPMENT_PLAN_2026-07-10.md`'s 2026-07-14/15 session records "OWNER-1
+> (Play Console): NO — hard stop, permanent. The app will never be in a public
+> store. Android stays APK-sideload only... Never present Play Console
+> registration as an option again." Android App Check on Play Integrity is
+> therefore permanently blocked, not pending; Phase 2 as scoped below needs the
+> non-Play "sideload attestation path" that same session re-scopes it to, which
+> has not been designed yet.
+
 Threat-model framing that shapes everything below: App Check raises the cost
 of scripted abuse (token replay from non-app clients, scraping, credential-
 stuffing amplification). It is NOT an authorization boundary. Firestore rules

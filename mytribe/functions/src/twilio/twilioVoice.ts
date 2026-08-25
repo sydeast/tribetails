@@ -57,19 +57,22 @@ import { sanitizePlainText } from '../lib/richText';
  *
  * ── PRESS 3 ───────────────────────────────────────────────────────────────────
  *
- * Press 3 currently takes a message. It is NOT yet a live connect, and that is
- * deliberate rather than unfinished: the screening path it used to reach is
- * verifiably non-functional on this account (no TwiML Application exists, and
- * the Voice SDK token endpoint 404s), so a caller pressing 3 could not have
- * reached a person even if the flow had let them try. Offering "talk to me now"
- * and then failing is worse than offering a message, so the greeting says what
- * actually happens. Restoring the live connect is the next change, and this
- * comment should be deleted with it.
+ * Press 3, during open hours, is a real live connect (landed in `8d09bf7`).
+ * `/route` redirects to `/screen`, which gathers a spoken reason and hands off
+ * to `/screen-connect`: `sendCallInvitePush` tells the operator's devices who
+ * is calling over FCM, `dialOperator` places an outbound call to
+ * `client:auntie`, and both legs are bridged in a `<Conference>` (:372-461).
+ * If nobody is reachable (`push.delivered === 0 && !dialed`) or the operator
+ * never picks up (`/screen-status` ends the conference on a no-answer
+ * status), the caller falls through to `/missed` and then `/voicemail`. Press
+ * 4, or anything outside open hours, goes straight to voicemail.
  *
  * ── ROUTES ────────────────────────────────────────────────────────────────────
  *
  *   POST /           entry. Resolves hours, greets, gathers one digit.
- *   POST /route      the digit. 3 or 4 -> voicemail, anything else -> retry.
+ *   POST /route      the digit. 3 during open hours -> /screen (live
+ *                    connect); 4, or 3 outside open hours -> voicemail;
+ *                    anything else -> retry.
  *   POST /retry      one more chance during open hours, then the text nudge.
  *   POST /voicemail  <Record>, both callbacks wired.
  *   POST /goodbye    the text nudge, then hang up.
@@ -106,8 +109,11 @@ const VOICEMAIL_CALLBACK_ENV = 'TWILIO_INBOUND_VOICEMAIL_URL';
  * 404. The live flow used text-to-speech, which is what actually reached
  * callers, so that is what is reproduced here.
  *
- * OPEN_GREETING is the one line that is NOT verbatim. The original offered
- * "press 3 to talk to me right now", which was never true on this account.
+ * OPEN_GREETING's "press 3 to talk to me right now" is true again as of
+ * `8d09bf7`: press 3 is a live connect (see PRESS 3 above). Between this
+ * file's creation and that commit, press 3 only took a message, and this
+ * greeting's wording briefly did not promise a live connect for exactly that
+ * reason. It reverted along with the fix.
  */
 const SPEECH = {
   OPEN_GREETING:

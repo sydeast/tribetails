@@ -22,23 +22,31 @@ import kotlinx.coroutines.tasks.await
  * each developer registers once in the App Check console.
  *
  * ---------------------------------------------------------------------------
- * WHAT HAPPENS BEFORE THE OPERATOR REGISTERS THIS APP
+ * WHY THIS APP CAN NEVER REGISTER FOR PLAY INTEGRITY
  * ---------------------------------------------------------------------------
  * Checked against the live project on 2026-08-24 rather than assumed:
  * `firebaseappcheck.googleapis.com/.../apps/1:153396971788:android:6bcb7c5411aeda837f2129/playIntegrityConfig`
  * comes back empty, so `com.tribetails.auntieos` has no Play Integrity
- * registration yet (nor does the kinfolk portal's `com.kinfolk.portal` — issue
- * #576 records that as an operator item of its own).
+ * registration (nor does the kinfolk portal's `com.kinfolk.portal`, issue #576's
+ * matching item). This is not a pending task: the owner ruled OWNER-1 in
+ * `mytribe/docs/DEVELOPMENT_PLAN_2026-07-10.md` (2026-07-14/15 session) a hard
+ * "NO — permanent. The app will never be in a public store. Android stays
+ * APK-sideload only... Never present Play Console registration as an option
+ * again." Play Integrity requires the app registered in the Play Console (an
+ * internal-testing-track upload would even suffice), and that will not happen.
+ * So this app cannot attest via Play Integrity, ever, absent a future non-Play
+ * attestation path (`O3_APP_CHECK_RULING_2026-07-13.md`'s re-scoped Phase 2,
+ * not yet built).
  *
- * Shipping this anyway is the correct call and not a gamble, because App Check
- * is not an authorization boundary: `req.auth` claims and firestore.rules are,
- * and the policy layer ships in `log` mode where nothing is refused. So the
- * unregistered state costs one failed token fetch per launch, which this file
- * reports as [AppCheckStatus.Failed] — loudly, in the log and in Sentry —
- * rather than swallowing. That is precisely the signal that tells the operator
- * the registration is still outstanding. The alternative, leaving the code out
- * until someone remembers, is how the kinfolk portal spent months believing it
- * had attestation it had never once obtained (#556).
+ * Shipping the Play Integrity provider anyway is still the correct call and not
+ * a gamble, because App Check is not an authorization boundary: `req.auth`
+ * claims and firestore.rules are, and the policy layer ships in `log` mode
+ * where nothing is refused. So the permanently-unregistered state costs one
+ * failed token fetch per launch, which this file reports as
+ * [AppCheckStatus.Failed] — loudly, in the log and in Sentry — rather than
+ * swallowing. That keeps the gap visible instead of inventing a fake pass, the
+ * same failure mode that let the kinfolk portal spend months believing it had
+ * attestation it had never once obtained (#556).
  */
 enum class AppCheckStatus {
     /** Never attempted. Only ever true before [AppCheckActivation.activate] runs. */

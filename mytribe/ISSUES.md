@@ -145,8 +145,9 @@ Each entry is an open issue AND a future end-to-end test. Status legend:
 ### #13 App Check
 - **Status**: OPEN
   - **CORRECTION 2026-08-04**: no longer open on web. `mytribe/web/src/lib/firebase.ts:73-74` calls `initializeAppCheck` with `ReCaptchaEnterpriseProvider`, and `functions/src/lib/wrapCallable.ts` handles enforcement. See `docs/O3_APP_CHECK_RULING_2026-07-13.md` for the ruling that governs it.
+  - **CORRECTION 2026-08-25**: "register App Check provider... Play Integrity" below reads as an open task for both Android apps. It is not, for either: `com.kinfolk.portal` and `com.tribetails.auntieos` both depend on `firebase-appcheck-playintegrity` and install the provider already (`mytribe/src/androidMain/.../AppCheck.android.kt`, `auntieos-admin/.../AppCheckActivation.kt`). What is missing is the Play Console registration Play Integrity needs to actually verify a token, and that is permanently blocked, not pending: `docs/DEVELOPMENT_PLAN_2026-07-10.md`'s 2026-07-14/15 session records OWNER-1 as "NO — hard stop, permanent... Android stays APK-sideload only." Neither app will ever attest via Play Integrity absent a non-Play path, which `O3_APP_CHECK_RULING_2026-07-13.md`'s re-scoped Phase 2 names but has not designed.
 - **Why**: Firebase project hardening + abuse prevention before public release
-- **Tasks**: register App Check provider per platform (Play Integrity, reCAPTCHA, DeviceCheck-via-web), client init, enforce on rules + functions
+- **Tasks**: register App Check provider per platform (Play Integrity — client code ships on both Android apps, but the Play Console registration it needs is permanently blocked per the correction above; reCAPTCHA — done on web, one operator step remains on the AuntieOS admin per #576; DeviceCheck-via-web — not started), client init, enforce on rules + functions
 
 ### #14 Crashlytics + Analytics + Sentry
 - **Status**: OPEN

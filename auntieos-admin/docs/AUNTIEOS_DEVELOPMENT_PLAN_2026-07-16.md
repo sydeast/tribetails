@@ -120,12 +120,16 @@ enforcement).
 > backend policy layer and the admin was the last surface with no attestation at
 > all. The collision lesson is honoured rather than deferred: the React admin
 > decides ONCE per page lifetime, from the first resolved auth state, so exactly
-> one Enterprise loader can ever exist in a document. What remains is the
-> operator registration: a new reCAPTCHA Enterprise key covering the admin's
-> three origins (the portal's key does not, verified against the live project),
-> and Play Integrity for `com.tribetails.auntieos`. Both are absent today, both
-> say so loudly at boot, and neither breaks anything while the backend policy
-> runs in `log` mode.
+> one Enterprise loader can ever exist in a document. What remains is one real
+> operator step: a new reCAPTCHA Enterprise key covering the admin's three
+> origins (the portal's key does not, verified against the live project). Play
+> Integrity for `com.tribetails.auntieos` is a different case, not a matching
+> to-do: the owner ruled OWNER-1 permanent "no public store"
+> (`mytribe/docs/DEVELOPMENT_PLAN_2026-07-10.md`, 2026-07-14/15 session), so this
+> app cannot ever register for it and there is nothing for an operator to go
+> click through. Both gaps say so loudly at boot (`AppCheckStatus.Failed` /
+> `Unconfigured`), and neither breaks anything while the backend policy runs in
+> `log` mode.
 
 ### A9+ — Post-cutover
 Android admin app strategy (keep native Compose vs align), desktop DMG

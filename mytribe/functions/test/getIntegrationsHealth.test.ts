@@ -63,6 +63,12 @@ const FAKE = {
   TWILIO_ACCOUNT_SID: 'ACfakefakefakefakefakefakefakefake',
   TWILIO_AUTH_TOKEN: 'fakefakefakefakefakefakefakefake',
   TWILIO_FROM_NUMBER: '+15550000000',
+  // Required alongside the three above: `mintVoiceAccessToken.ts` throws
+  // `failed-precondition` if either is blank, so the catalog marks both
+  // required (unlike TWIML_APP_SID and PUSH_CREDENTIAL_SID, which that same
+  // callable genuinely treats as optional — see integrationCatalog.ts).
+  TWILIO_API_KEY_SID: 'SKfakefakefakefakefakefakefakefake',
+  TWILIO_API_KEY_SECRET: 'fakeVoiceApiKeySecretFakeFakeFake',
   SMTP2GO_API_KEY: 'api-FAKEfakeFAKEfakeFAKEfake',
   EMAIL_FROM: 'auntie@tribetails.invalid',
   CLOUDINARY_CLOUD_NAME: 'fake-cloud',
@@ -195,6 +201,32 @@ describe('getIntegrationsHealth, a missing secret', () => {
     expect(smtp.remediation).toContain('SMTP2GO_API_KEY');
     expect(smtp.remediation).toContain('EMAIL_FROM');
   });
+
+  // Regression coverage for #580: the Voice SDK secrets used to be marked
+  // `required: false` across the board, which hid a broken voice feature
+  // behind a green "configured" status. `mintVoiceAccessToken.ts` throws
+  // without TWILIO_API_KEY_SID/SECRET, so those two must fail this integration
+  // red; TWIML_APP_SID and PUSH_CREDENTIAL_SID are genuinely optional there
+  // (see integrationCatalog.ts) and must NOT.
+  it.each(['TWILIO_API_KEY_SID', 'TWILIO_API_KEY_SECRET'])(
+    'is `missing` without %s, the pair mintVoiceAccessToken cannot mint a token without',
+    async (name) => {
+      const res = await run({ env: envWith({ [name]: undefined }) });
+      const twilio = row(res, 'twilio');
+      expect(twilio.status).toBe('missing');
+      expect(twilio.remediation).toContain(name);
+    },
+  );
+
+  it.each(['TWIML_APP_SID', 'PUSH_CREDENTIAL_SID'])(
+    'stays `configured` without %s, which mintVoiceAccessToken treats as optional',
+    async (name) => {
+      const res = await run({ env: envWith({ [name]: undefined }) });
+      const twilio = row(res, 'twilio');
+      expect(twilio.status).toBe('configured');
+      expect(twilio.remediation).toBe('');
+    },
+  );
 });
 
 describe('getIntegrationsHealth, the metered vendors', () => {
