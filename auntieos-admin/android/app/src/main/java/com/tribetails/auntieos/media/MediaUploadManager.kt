@@ -143,7 +143,7 @@ class MediaUploadManager(
         onProgress: (UploadProgress) -> Unit
     ): UploadResult {
         onProgress(UploadProgress(file.name, 0, file.length(), 0))
-        val uploadAuth = fetchSignedUploadAuth(folder, entityType, entityId)
+        val uploadAuth = fetchSignedUploadAuth(folder, entityType, entityId, mediaType)
 
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
@@ -158,6 +158,17 @@ class MediaUploadManager(
             .addFormDataPart("timestamp", uploadAuth.timestamp.toString())
             .addFormDataPart("signature", uploadAuth.signature)
             .addFormDataPart("folder", uploadAuth.folder)
+            .also { builder ->
+                // #583: the signer signs `transformation=fl_force_strip` for image
+                // uploads so the STORED ORIGINAL has no EXIF GPS. Cloudinary
+                // recomputes the signature over the fields it receives, so this
+                // field is posted exactly when the signer signed one and never
+                // otherwise — a blank value means no transformation was signed
+                // (video/raw), and posting it anyway would be an Invalid Signature.
+                if (uploadAuth.transformation.isNotBlank()) {
+                    builder.addFormDataPart("transformation", uploadAuth.transformation)
+                }
+            }
             .build()
 
         val request = Request.Builder()
@@ -195,12 +206,21 @@ class MediaUploadManager(
         )
     }
 
-    private suspend fun fetchSignedUploadAuth(folder: String, entityType: MediaEntityType, entityId: String): SignedUploadAuth {
+    private suspend fun fetchSignedUploadAuth(
+        folder: String,
+        entityType: MediaEntityType,
+        entityId: String,
+        mediaType: MediaType,
+    ): SignedUploadAuth {
         val idToken = repository.currentAdminIdToken(forceRefresh = false).getOrElse { throw it }
         val payload = JSONObject()
             .put("folder", folder)
             .put("entityType", entityType.name)
             .put("entityId", entityId)
+            // #583: tells the signer which incoming transformation to sign. The
+            // file's own MIME type decided this (determineMediaType), never a
+            // caller, so a photo is always signed with the metadata strip.
+            .put("resourceKind", cloudinaryResourceKind(mediaType))
             .toString()
         val request = Request.Builder()
             .url("https://auntieos-ttpc.web.app/api/cloudinary/sign-upload")
@@ -219,7 +239,10 @@ class MediaUploadManager(
             apiKey = body.optString("apiKey"),
             timestamp = body.optLong("timestamp"),
             signature = body.optString("signature"),
-            folder = body.optString("folder")
+            folder = body.optString("folder"),
+            // Absent on a signer that predates #583: blank means "sign nothing
+            // extra, post nothing extra", which is the old request verbatim.
+            transformation = body.optString("transformation")
         ).also {
             if (it.cloudName.isBlank() || it.apiKey.isBlank() || it.signature.isBlank() || it.folder.isBlank()) {
                 error("Cloudinary signing response missing required fields")
@@ -227,6 +250,22 @@ class MediaUploadManager(
         }
     }
 
+    /**
+     * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
+     * signer so it knows whether to sign the metadata-strip transformation.
+     *
+     * IMAGE is the only kind that strips: `fl_force_strip` is an image flag,
+     * and an incoming transformation on a video would mean re-encoding the
+     * whole file inside the upload request. Audio and documents are `raw`.
+     *
+     * Internal rather than private so the upload contract is testable without
+     * a network call or a real Uri.
+     */
+    internal fun cloudinaryResourceKind(mediaType: MediaType): String = when (mediaType) {
+        MediaType.IMAGE -> "image"
+        MediaType.VIDEO -> "video"
+        MediaType.AUDIO, MediaType.DOCUMENT -> "raw"
+    }
     private fun determineMediaType(mimeType: String, file: File): MediaType {
         val normalizedMime = mimeType.lowercase()
         return when {
@@ -339,6 +378,12 @@ class MediaUploadManager(
         val timestamp: Long,
         val signature: String,
         val folder: String,
+        /**
+         * #583. The incoming transformation the SERVER signed (`fl_force_strip`
+         * for an image, blank otherwise). Signed, therefore not optional: post
+         * it verbatim when non-blank, never when blank.
+         */
+        val transformation: String = "",
     )
 
     private class ProgressRequestBody(

@@ -43,6 +43,7 @@ actual suspend fun uploadImageToCloudinary(
             // Must exactly echo what the server signed, or Cloudinary
             // rejects the upload as a signature mismatch.
             if (signed.allowedFormats.isNotBlank()) writeField("allowed_formats", signed.allowedFormats)
+            if (signed.transformation.isNotBlank()) writeField("transformation", signed.transformation)
 
             out.writeBytes("--$boundary\r\n")
             out.writeBytes(

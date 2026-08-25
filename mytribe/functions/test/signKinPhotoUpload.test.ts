@@ -108,6 +108,10 @@ describe('signKinPhotoUploadHandler', () => {
     expect(res.apiKey).toBe('key123');
     expect(res.folder).toBe('tribetails/kinfolks/3/kin/k1');
     expect(res.signature).toMatch(/^[a-f0-9]{40}$/);
+    // #583: the callable hands the client the strip instruction it must echo,
+    // so a kin photo's stored original carries no EXIF GPS. cloudinary.test.ts
+    // proves this value is inside the signature base, not beside it.
+    expect(res.transformation).toBe('fl_force_strip');
   });
 
   it('MULTIPLE linked households, kinfolkId omitted -> refuses to guess (PR28b)', async () => {

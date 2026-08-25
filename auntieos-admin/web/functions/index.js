@@ -410,6 +410,56 @@ function validateUploadFolder(folder, entityType, entityId) {
   return folder;
 }
 
+// ── #583: photo location metadata is stripped at upload ─────────────────────
+//
+// Photos never pass through these functions; a client posts the bytes straight
+// to api.cloudinary.com. So the ONLY place we can dictate what Cloudinary does
+// with the file is the signature: Cloudinary recomputes the signature over the
+// params it RECEIVES, so a param we sign is a param the client is forced to
+// send verbatim, and a param we do not sign cannot be added by the client at
+// all. Signing the strip instruction is therefore the one change that covers
+// web, Android, desktop and any client written later.
+//
+// `fl_force_strip` is Cloudinary's own flag for this and is documented against
+// exactly this use: "Instructs Cloudinary to clear all image metadata (IPTC,
+// Exif and XMP) while applying an incoming transformation"
+// (transformation_reference_fl_flag_force_strip). Passed as the `transformation`
+// upload param it becomes an INCOMING transformation, which the upload docs
+// define as "applied before storing the asset in Cloudinary" — so the STORED
+// ORIGINAL is the stripped file, not a stripped copy of a coordinate-bearing
+// original.
+//
+// IT IS ALL-OR-NOTHING. There is no GPS-only option in the Upload API; this
+// discards capture time, camera/lens, IPTC and XMP along with the coordinates,
+// and re-encodes the image to do it. Cloudinary auto-rotates from the EXIF
+// orientation tag before stripping (its documented default), so a phone photo
+// does not come back sideways.
+//
+// IMAGES ONLY. `fl_force_strip` is an image flag, and any incoming
+// transformation on a video means re-encoding the whole file inside the upload
+// request. Video/raw uploads are signed WITHOUT it — see the PR for #583.
+const STRIP_METADATA_TRANSFORMATION = 'fl_force_strip';
+const UPLOAD_RESOURCE_KINDS = ['image', 'video', 'raw'];
+
+// Which transformation to sign for a client-declared resource kind. Absent or
+// blank means IMAGE: the default has to fail toward stripping, because the
+// clients that predate this parameter are all photo/gallery uploaders and a
+// missing hint must never quietly turn the privacy behaviour off.
+//
+// Throws a plain Error on an unrecognized kind; the HTTP handler turns that
+// into a 400 rather than signing something Cloudinary would reject later.
+//
+// Exported for hermetic unit tests; called by signCloudinaryUpload.
+function uploadTransformationFor(resourceKind) {
+  const kind = resourceKind === undefined || resourceKind === null || resourceKind === ''
+    ? 'image'
+    : resourceKind;
+  if (typeof kind !== 'string' || !UPLOAD_RESOURCE_KINDS.includes(kind)) {
+    throw new Error(`resourceKind must be one of ${UPLOAD_RESOURCE_KINDS.join('/')}`);
+  }
+  return kind === 'image' ? STRIP_METADATA_TRANSFORMATION : '';
+}
+
 // Fail loud on a WRONG secret, not just a MISSING one.
 //
 // On 2026-07-19 CLOUDINARY_API_SECRET was replaced with an invalid value. This
@@ -475,13 +525,22 @@ exports.signCloudinaryUpload = onRequest(
     }
 
 
-    const { folder, entityType, entityId } = req.body || {};
+    const { folder, entityType, entityId, resourceKind } = req.body || {};
     if (typeof folder !== 'string' || !folder) {
       res.status(400).json({ error: 'folder is required' });
       return;
     }
     if (typeof entityType !== 'string' || !entityType || typeof entityId !== 'string' || !entityId) {
       res.status(400).json({ error: 'entityType and entityId are required' });
+      return;
+    }
+
+    // #583: what Cloudinary must do to the bytes before storing them.
+    let transformation;
+    try {
+      transformation = uploadTransformationFor(resourceKind);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
       return;
     }
 
@@ -541,9 +600,17 @@ exports.signCloudinaryUpload = onRequest(
     // exactly one entity's folder and cannot be reused for a different entity.
     // Cloudinary auto-assigns a unique public_id per file, so multi-file uploads
     // (gallery, KinTale) no longer collide on one public_id.
+    //
+    // #583 adds ONE more signed param, `transformation`, for image uploads.
+    // The rule above still holds in both directions: the clients now send it
+    // whenever this response carries it, and they omit it when it is blank
+    // (video/raw), which is why `transformation` is only put in `signedParams`
+    // when it is non-empty. A blank value signed but not sent — or sent but not
+    // signed — is the same "Invalid Signature" as any other mismatch.
     const signedParams = {
       folder: signFolder,
       timestamp: String(timestamp),
+      ...(transformation ? { transformation } : {}),
     };
     const signatureBase = Object.keys(signedParams)
       .sort()
@@ -557,6 +624,9 @@ exports.signCloudinaryUpload = onRequest(
       timestamp,
       signature,
       folder: signFolder,
+      // Blank for video/raw. Clients MUST post this field verbatim when it is
+      // non-empty and MUST NOT post it when it is empty.
+      transformation,
       entityType,
       entityId,
       signedBy: decodedToken.uid,
@@ -802,6 +872,8 @@ module.exports.resolveAnthropicModel = resolveAnthropicModel;
 module.exports.ALLOWED_ANTHROPIC_MODELS = ALLOWED_ANTHROPIC_MODELS;
 module.exports.ANTHROPIC_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT;
 module.exports.validateUploadFolder = validateUploadFolder;
+module.exports.uploadTransformationFor = uploadTransformationFor;
+module.exports.STRIP_METADATA_TRANSFORMATION = STRIP_METADATA_TRANSFORMATION;
 module.exports.cloudinaryCredentialsValid = cloudinaryCredentialsValid;
 module.exports.__resetCloudinaryCredentialCache = () => {
   cloudinaryCredentialCheck = null;

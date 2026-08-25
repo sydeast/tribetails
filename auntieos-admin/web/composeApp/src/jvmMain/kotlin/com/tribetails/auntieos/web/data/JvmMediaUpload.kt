@@ -83,7 +83,10 @@ internal object JvmMediaUpload {
             // 2. Fetch a signed-upload grant from the same backend the web/Android apps use.
             val token = jvmFirebaseIdToken() ?: return WriteResult.Err("Admin sign-in required before media upload")
             val folder = "tribetails/entity/$entityId"
-            val sign = fetchSignedUpload(token, folder, entityType, entityId)
+            // #583: the file's own MIME type picks the resource kind, so a photo
+            // is always signed with the metadata strip and a video is never
+            // signed with an image-only transformation Cloudinary would reject.
+            val sign = fetchSignedUpload(token, folder, entityType, entityId, cloudinaryResourceKind(resolvedMime))
 
             // 3. Multipart upload to Cloudinary.
             val cloudResp = http.post("https://api.cloudinary.com/v1_1/${sign.cloudName}/auto/upload") {
@@ -98,6 +101,10 @@ internal object JvmMediaUpload {
                             append("timestamp", sign.timestamp.toString())
                             append("signature", sign.signature)
                             append("folder", sign.folder)
+                            // #583: signed server-side, so it is posted exactly when
+                            // it was signed and never otherwise. A blank value means
+                            // the signer signed no transformation.
+                            if (sign.transformation.isNotBlank()) append("transformation", sign.transformation)
                         }
                     )
                 )
@@ -146,11 +153,30 @@ internal object JvmMediaUpload {
         }
     }
 
+    /**
+     * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
+     * signer so it knows whether to sign the metadata-strip transformation.
+     * IMAGE is the only kind that strips: `fl_force_strip` is an image flag, and
+     * an incoming transformation on a video would mean re-encoding the whole
+     * file inside the upload request.
+     *
+     * Internal rather than private so the upload contract is testable without a
+     * picker, a signed-in admin, or a network call.
+     */
+    internal fun cloudinaryResourceKind(mimeType: String): String {
+        val mime = mimeType.trim().lowercase()
+        return when {
+            mime.startsWith("image/") -> "image"
+            mime.startsWith("video/") -> "video"
+            else -> "raw"
+        }
+    }
     private suspend fun fetchSignedUpload(
         token: String,
         folder: String,
         entityType: String,
         entityId: String,
+        resourceKind: String,
     ): CloudinarySignedUpload {
         val resp = http.post(SIGN_URL) {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -159,6 +185,7 @@ internal object JvmMediaUpload {
                 put("folder", folder)
                 put("entityType", entityType)
                 put("entityId", entityId)
+                put("resourceKind", resourceKind)
             }.toString())
         }
         val text = resp.bodyAsText()
@@ -170,6 +197,9 @@ internal object JvmMediaUpload {
             timestamp = o["timestamp"]?.jsonPrimitive?.longOrNull ?: 0L,
             signature = o["signature"]?.jsonPrimitive?.content.orEmpty(),
             folder = o["folder"]?.jsonPrimitive?.content.orEmpty().ifBlank { folder },
+            // Absent on a signer that predates #583: blank means "sign nothing
+            // extra, post nothing extra", i.e. the old request verbatim.
+            transformation = o["transformation"]?.jsonPrimitive?.content.orEmpty(),
             entityType = entityType,
             entityId = entityId,
         )

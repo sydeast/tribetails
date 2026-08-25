@@ -18,6 +18,10 @@ export interface SignedUploadParams {
   folder: string;
   /** Signed server-side; must be echoed verbatim in the upload POST. */
   allowedFormats: string;
+  /** #583. The incoming transformation the server signed (`fl_force_strip`),
+   *  which is what makes the STORED ORIGINAL carry no EXIF GPS. Signed, so it
+   *  is echoed verbatim exactly like `allowedFormats`. */
+  transformation: string;
 }
 
 export interface SignedImageUploadProps {
@@ -88,6 +92,8 @@ function uploadToCloudinary(
     form.append('signature', signed.signature);
     form.append('folder', signed.folder);
     if (signed.allowedFormats) form.append('allowed_formats', signed.allowedFormats);
+    // #583: signed, therefore mandatory whenever the server sent one.
+    if (signed.transformation) form.append('transformation', signed.transformation);
     form.append('file', file, file.name || 'photo');
 
     const xhr = new XMLHttpRequest();

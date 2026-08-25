@@ -18,21 +18,36 @@ import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
  *
  *   1. SIGN     POST /api/cloudinary/sign-upload (same-origin, hosting
  *               rewrite -> `signCloudinaryUpload`), `Authorization: Bearer
- *               <idToken>`, JSON body `{ folder, entityType, entityId }`.
- *               The SERVER owns the canonical folder: the response's
- *               `folder` is what actually gets used below, never the
- *               request's guess (mirrors every existing client).
+ *               <idToken>`, JSON body `{ folder, entityType, entityId,
+ *               resourceKind }`. The SERVER owns the canonical folder: the
+ *               response's `folder` is what actually gets used below, never
+ *               the request's guess (mirrors every existing client).
  *   2. UPLOAD   POST https://api.cloudinary.com/v1_1/{cloudName}/auto/upload,
  *               multipart/form-data: file, api_key, timestamp, signature,
- *               folder. Exactly the field set JvmMediaUpload.kt and the
- *               wasm's `pickAndUploadKinTaleMedia` send today, no more (in
- *               particular, no `allowed_formats` field, even though the
- *               signer's response carries one: every shipped client omits
- *               it, so this mirrors the real, already-working pipeline
- *               rather than the field list alone).
+ *               folder, plus `transformation` when the signer signed one.
+ *               No `allowed_formats` field, even though the signer's
+ *               response type carries one: every shipped client omits it, so
+ *               this mirrors the real, already-working pipeline rather than
+ *               the field list alone.
  *   3. WRITE    `addDoc` directly to `media_files`, no Cloud Function
  *               involved, same field shape `JvmMediaUpload.kt#upload`'s
  *               `MediaFile` record writes.
+ *
+ * ── #583: THE STORED ORIGINAL CARRIES NO LOCATION ───────────────────────────
+ *
+ * A photo taken with the phone's location services on has the coordinates
+ * inside the file, in its EXIF block, before this app ever sees it. The bytes
+ * go straight from the browser to Cloudinary — nothing of ours can edit them
+ * in flight — so the only lever is the signature: Cloudinary recomputes it
+ * over the params it receives, which makes a signed param one the client is
+ * forced to send and an unsigned one it cannot add.
+ *
+ * So the signer signs `transformation=fl_force_strip` for image uploads and
+ * this client posts it verbatim. Cloudinary treats `transformation` as an
+ * INCOMING transformation, applied before the asset is stored, so the stored
+ * original is the stripped file. `resourceKind` is what tells the signer which
+ * kind of upload this is; it is derived from the file's own MIME type by
+ * `resourceKindForFile` and is never a caller's free choice.
  */
 
 // ── entity target ────────────────────────────────────────────────────────────
@@ -64,6 +79,26 @@ export const BUSINESS_ENTITY_ID = 'business_settings';
 
 const SIGN_ENDPOINT = '/api/cloudinary/sign-upload';
 
+/**
+ * What kind of asset Cloudinary is about to store, in Cloudinary's own
+ * vocabulary. The signer needs it because the strip instruction is an IMAGE
+ * transformation: signing it onto a video or a document would make Cloudinary
+ * reject the upload outright.
+ */
+export type UploadResourceKind = 'image' | 'video' | 'raw';
+
+/**
+ * The file's own MIME type decides, never the caller. `MediaUploadDialog`
+ * already refuses anything that is not `image/*` or `video/*`, so `raw` is
+ * reachable only through the Tribal Intel attachment picker.
+ */
+export function resourceKindForFile(file: { type: string }): UploadResourceKind {
+  const mime = file.type.trim().toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return 'raw';
+}
+
 export interface CloudinarySignedUpload {
   cloudName: string;
   apiKey: string;
@@ -72,6 +107,14 @@ export interface CloudinarySignedUpload {
   /** SERVER-computed canonical folder; always what the Cloudinary upload uses, never the request's guess. */
   folder: string;
   allowedFormats: string;
+  /**
+   * #583. The incoming transformation the server SIGNED (`fl_force_strip` for
+   * an image, blank for video/raw). It is part of the signature base, so
+   * `uploadToCloudinary` must post it verbatim when it is non-empty and must
+   * not post it at all when it is empty — either mismatch is an "Invalid
+   * Signature" from Cloudinary.
+   */
+  transformation: string;
   entityType: string;
   entityId: string;
 }
@@ -96,6 +139,7 @@ async function readErrorMessage(resp: Response): Promise<string> {
 export async function requestSignedUpload(
   entityType: UploadEntityType,
   entityId: string,
+  resourceKind: UploadResourceKind = 'image',
 ): Promise<CloudinarySignedUpload> {
   const folder = `tribetails/${entityType.toLowerCase()}/${entityId}`;
 
@@ -105,7 +149,7 @@ export async function requestSignedUpload(
   try {
     resp = await adminApiFetch(SIGN_ENDPOINT, 'uploading media', {
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder, entityType, entityId }),
+      body: JSON.stringify({ folder, entityType, entityId, resourceKind }),
     });
   } catch (err) {
     if (err instanceof NotSignedInError) {
@@ -139,6 +183,9 @@ export async function requestSignedUpload(
     signature: body.signature,
     folder: body.folder,
     allowedFormats: body.allowedFormats ?? '',
+    // Defaults to blank so a signer that predates #583 keeps working: no
+    // transformation signed, none posted, same request as before.
+    transformation: body.transformation ?? '',
     entityType: body.entityType ?? entityType,
     entityId: body.entityId ?? entityId,
   };
@@ -161,11 +208,11 @@ export interface CloudinaryUploadResult {
 
 /**
  * Multipart upload to Cloudinary's `auto/upload` endpoint. Field set mirrors
- * `JvmMediaUpload.kt`/`firebase-bridge.js#pickAndUploadKinTaleMedia` exactly:
- * file, api_key, timestamp, signature, folder. `auto` lets Cloudinary itself
- * pick image vs video (read back via `resource_type`), matching every
- * existing client rather than forcing an `image/upload` endpoint that would
- * reject video.
+ * `JvmMediaUpload.kt` and Android's `MediaUploadManager`: file, api_key,
+ * timestamp, signature, folder, plus `transformation` when the signer signed
+ * one. `auto` lets Cloudinary itself pick image vs video (read back via
+ * `resource_type`), matching every existing client rather than forcing an
+ * `image/upload` endpoint that would reject video.
  */
 export async function uploadToCloudinary(
   file: File,
@@ -177,6 +224,9 @@ export async function uploadToCloudinary(
   form.append('timestamp', String(sign.timestamp));
   form.append('signature', sign.signature);
   form.append('folder', sign.folder);
+  // #583. Signed server-side, so it is posted exactly when it was signed and
+  // never otherwise: a blank value means the signer signed no transformation.
+  if (sign.transformation) form.append('transformation', sign.transformation);
 
   const resp = await fetch(`https://api.cloudinary.com/v1_1/${sign.cloudName}/auto/upload`, {
     method: 'POST',
@@ -317,7 +367,10 @@ export async function uploadMediaFile(input: UploadMediaInput): Promise<string> 
   if (entityId === '') throw new Error('uploadMediaFile requires a non-blank entityId');
 
   input.onStage?.('signing');
-  const sign = await requestSignedUpload(input.entityType, entityId);
+  // #583: the file's own MIME type picks the resource kind, so an image is
+  // always signed with the metadata strip and a video is never signed with an
+  // image-only transformation Cloudinary would reject.
+  const sign = await requestSignedUpload(input.entityType, entityId, resourceKindForFile(input.file));
 
   input.onStage?.('uploading');
   const cloud = await uploadToCloudinary(input.file, sign);
