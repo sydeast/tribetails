@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, it } from 'vitest';
+import { afterAll, afterEach, describe, it } from 'vitest';
 import { assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { getEnv, cleanup, shutdown } from './setup';
 
