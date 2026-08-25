@@ -269,11 +269,58 @@ describe('requestBookingHandler — catalog price resolution', () => {
 });
 
 describe('duplicateVisitKey', () => {
+  const TZ = 'America/Chicago';
+
   it('names the repeated (duration, start) pair and is null otherwise', async () => {
     const { duplicateVisitKey } = await import('../src/portal/requestBooking');
-    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 2, serviceId: 'a' }])).toBeNull();
-    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 1, serviceId: 'b' }])).toBeNull();
-    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 1, serviceId: 'a' }])).toBe('a@1');
-    expect(duplicateVisitKey([])).toBeNull();
+    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 2, serviceId: 'a' }], TZ)).toBeNull();
+    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 1, serviceId: 'b' }], TZ)).toBeNull();
+    expect(duplicateVisitKey([{ startTimeMs: 1, serviceId: 'a' }, { startTimeMs: 1, serviceId: 'a' }], TZ)).toBe('a@1');
+    expect(duplicateVisitKey([], TZ)).toBeNull();
+  });
+
+  /**
+   * #597: in block mode the identity is (date, KinCare, block). The date is the
+   * BUSINESS's, because every visit in a window carries that window's first
+   * minute and the instant is approximate by design.
+   */
+  it('keys a block-mode visit on the business DATE as well as the block', async () => {
+    const { duplicateVisitKey } = await import('../src/portal/requestBooking');
+    const sep4 = Date.parse('2026-09-04T16:00:00.000Z'); // 11:00 in Chicago
+    const DAY = 86_400_000;
+    const on = (t: number) => ({ startTimeMs: t, serviceId: '30Minute', timeBlockId: 'midday' });
+
+    // Three dates, one block, one KinCare: the case the shipped code refused.
+    expect(duplicateVisitKey([on(sep4), on(sep4 + DAY), on(sep4 + 2 * DAY)], TZ)).toBeNull();
+    // The same day twice is still one visit asked for twice.
+    expect(duplicateVisitKey([on(sep4), on(sep4)], TZ)).toBe('30Minute@2026-09-04@block:midday');
+    // Two KinCares in one window remain fine — #541/#543's several-a-day case.
+    expect(
+      duplicateVisitKey([on(sep4), { ...on(sep4), serviceId: '60Minute' }], TZ),
+    ).toBeNull();
+    // A stray space is the same block, and cannot walk a duplicate past this.
+    expect(duplicateVisitKey([on(sep4), { ...on(sep4), timeBlockId: ' midday ' }], TZ)).not.toBeNull();
+  });
+
+  it('reads the BUSINESS day boundary, not UTC', async () => {
+    const { duplicateVisitKey } = await import('../src/portal/requestBooking');
+    // 23:00 and 00:30 Chicago: two different business days that share one UTC date.
+    const lateSep4 = Date.parse('2026-09-05T04:00:00.000Z');
+    const earlySep5 = Date.parse('2026-09-05T05:30:00.000Z');
+    const at = (t: number) => ({ startTimeMs: t, serviceId: '30Minute', timeBlockId: 'overnight' });
+    expect(duplicateVisitKey([at(lateSep4), at(earlySep5)], TZ)).toBeNull();
+    // Under UTC they ARE the same day, and the rule says so — which is why the
+    // zone the business states is the one that decides.
+    expect(duplicateVisitKey([at(lateSep4), at(earlySep5)], 'UTC')).toBe('30Minute@2026-09-05@block:overnight');
+  });
+
+  it('still refuses the same instant when the stored zone is unusable', async () => {
+    const { duplicateVisitKey } = await import('../src/portal/requestBooking');
+    const t = Date.parse('2026-09-04T16:00:00.000Z');
+    const at = (ms: number) => ({ startTimeMs: ms, serviceId: '30Minute', timeBlockId: 'midday' });
+    // The UTC fallback is deterministic, so the one refusal that can never be
+    // wrong survives a zone this server cannot read.
+    expect(duplicateVisitKey([at(t), at(t)], '')).toBe('30Minute@2026-09-04@block:midday');
+    expect(duplicateVisitKey([at(t), at(t + 86_400_000)], '')).toBeNull();
   });
 });

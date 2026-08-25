@@ -167,6 +167,35 @@ class TimeBlockBookingTest {
         assertEquals(listOf("30Minute", "60Minute"), visits.map { it.serviceId })
     }
 
+    /**
+     * #597, client half. The server used to key a block-mode visit as
+     * (KinCare, block) with no date and refuse this as one visit asked for three
+     * times. The wizard was never wrong — `slotsBlocker` reads ONE day's KinCare
+     * list and `buildVisits` multiplies it by the dates — and this pins that, so
+     * the client half of the (date, KinCare, block) identity cannot drift into
+     * agreeing with the bug.
+     */
+    @Test
+    fun `sends the same KinCare in the same window on every chosen date, not one duplicate`() {
+        val slots = listOf(blockSlot("30Minute", "midday"))
+        assertNull(slotsBlocker(slots, blockTiming))
+        val visits = buildVisits(
+            listOf(LocalDate(2026, 9, 4), LocalDate(2026, 9, 5), LocalDate(2026, 9, 6)),
+            slots,
+            catalog,
+            utc,
+            blockTiming,
+        )
+        assertEquals(3, visits.size)
+        assertTrue(visits.all { it.timeBlockId == "midday" })
+        // Three distinct instants, one per date, all on the window's first minute.
+        assertEquals(3, visits.map { it.startTimeMs }.toSet().size)
+        assertEquals(
+            listOf(msAt(2026, 9, 4, 11), msAt(2026, 9, 5, 11), msAt(2026, 9, 6, 11)),
+            visits.map { it.startTimeMs },
+        )
+    }
+
     @Test
     fun `drops a KinCare whose window is gone rather than inventing a time for it`() {
         assertTrue(

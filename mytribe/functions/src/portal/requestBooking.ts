@@ -17,7 +17,9 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
 import { mapServiceRates } from './getServiceCatalog';
 import {
+  businessCalendarDate,
   businessTimeZone,
+  containmentIsInert,
   findTimeBlock,
   resolveBookingPolicy,
   visitMatchesBlock,
@@ -411,6 +413,8 @@ export async function resolveService(
  */
 export function duplicateVisitKey(
   visits: ReadonlyArray<{ startTimeMs: number; serviceId: string; timeBlockId?: string | null | undefined }>,
+  /** `business_settings.timeZone`. Required, never defaulted: keying block dates in a silently-assumed zone is the bug. */
+  timeZone: string,
 ): string | null {
   const seen = new Set<string>();
   for (const v of visits) {
@@ -419,10 +423,26 @@ export function duplicateVisitKey(
     // and a 60 minute, both in the Midday block" — which is exactly the
     // several-KinCares-a-day case #541/#543 built. Worse, the message would
     // tell a household to "change one of the times" next to a picker that has
-    // no times in it. So in block mode the identity of a visit is
-    // (KinCare, block), and what is refused is the SAME KinCare in the SAME
-    // block twice, which is still one visit asked for twice.
-    const when = v.timeBlockId != null && v.timeBlockId.length > 0 ? `block:${v.timeBlockId}` : `${v.startTimeMs}`;
+    // no times in it.
+    //
+    // #597: dropping the instant entirely dropped the DAY with it, and a
+    // household picking Sep 4, Sep 5 and Sep 6 in the Midday block was told it
+    // had asked for the same visit three times — which broke Pattern = Dates
+    // (#547) and weekly recurring the moment block mode was on. The identity of
+    // a block-mode visit is (date, KinCare, block): what is refused is the SAME
+    // KinCare in the SAME block ON THE SAME DAY, which is still one visit asked
+    // for twice, and nothing else is.
+    //
+    // The date is the BUSINESS's calendar date, not the instant and not the
+    // device's day — see `businessCalendarDate`, including what it does when the
+    // stored zone is unusable. The block id is trimmed here for the same reason
+    // `assertVisitBookingMode` trims it: " midday " and "midday" are one block,
+    // and a stray space must not walk a duplicate past this check.
+    const blockId = typeof v.timeBlockId === 'string' ? v.timeBlockId.trim() : '';
+    const when =
+      blockId.length > 0
+        ? `${businessCalendarDate(v.startTimeMs, timeZone)}@block:${blockId}`
+        : `${v.startTimeMs}`;
     const key = `${v.serviceId}@${when}`;
     if (seen.has(key)) return key;
     seen.add(key);
@@ -433,7 +453,7 @@ export function duplicateVisitKey(
 /** Which duplicate rule tripped, so the refusal can name a control the household actually has. */
 function duplicateVisitMessage(key: string): string {
   return key.includes('@block:')
-    ? 'Two KinCares in this request are the same duration in the same time block. Remove one, or move it to another block.'
+    ? 'Two KinCares in this request are the same duration in the same time block on the same day. Remove one, or move it to another block.'
     : 'Two KinCares in this request have the same duration at the same time. Change one of the times.';
 }
 
@@ -464,7 +484,30 @@ export async function loadBookingPolicy(): Promise<{ policy: BookingPolicy; time
       errorMessage: (err as Error)?.message,
     });
   }
-  return { policy: resolveBookingPolicy(raw).policy, timeZone: businessTimeZone(raw) };
+  const policy = resolveBookingPolicy(raw).policy;
+  const timeZone = businessTimeZone(raw);
+
+  // #596, the wider half: `visitMatchesBlock` fails open on a zone it cannot
+  // read, which is deliberate and stays — but a business taking block bookings
+  // with no usable `timeZone` has rule 4 of `assertVisitBookingMode` switched
+  // off for EVERY block, and that is an enforcement control not running rather
+  // than a household-side unknown. It gets a named line at the enforcement
+  // point, so it shows up in a log search instead of being inferred from
+  // bookings that should have been refused. Deliberately NOT also logged in
+  // `getBookingPolicy`: that callable enforces nothing, runs on every wizard
+  // open, and would only bury this one under its own copies.
+  if (containmentIsInert(policy, timeZone)) {
+    logEvent({
+      severity: 'error',
+      function: 'requestBooking',
+      event: 'timeblock.containment.inert',
+      errorMessage:
+        'business_settings.timeZone is blank or not a usable IANA zone, so time-block containment is not being checked on any block.',
+      extra: { timeZone, blockCount: policy.timeBlocks.length },
+    });
+  }
+
+  return { policy, timeZone };
 }
 
 /** What the server decided one visit's WHEN actually is. Persisted on the visit. */
@@ -495,8 +538,11 @@ export interface ResolvedVisitBlock {
  *     "not active" and "not a block" refuse identically and for one reason.
  *  4. BLOCK NAMED and real, but `startTimeMs` falls outside its window ->
  *     refused. Containment is checked on the BUSINESS's wall clock; when the
- *     stored zone is unusable the check is skipped (see `visitMatchesBlock`)
- *     rather than guessed at, and rules 1-3 still stand.
+ *     stored ZONE is unusable the check is skipped (see `visitMatchesBlock`)
+ *     rather than guessed at, and rules 1-3 still stand. A block whose OWN
+ *     times are unreadable is the other way round and refuses (#596): the
+ *     server wrote those strings, so that is a bug here, not missing operator
+ *     configuration, and it must never read as a "cannot tell".
  */
 export function assertVisitBookingMode(
   visit: { startTimeMs: number; timeBlockId?: string | null | undefined },
@@ -530,10 +576,29 @@ export function assertVisitBookingMode(
     );
   }
 
-  if (visitMatchesBlock(visit.startTimeMs, block, timeZone) === 'outside') {
+  const match = visitMatchesBlock(visit.startTimeMs, block, timeZone);
+  if (match === 'outside') {
     throw new HttpsError(
       'invalid-argument',
       `That visit time is outside the ${block.label} block (${block.startTime}-${block.endTime}). Pick the block again.`,
+    );
+  }
+  // #596: a block whose OWN times will not parse is a server-side defect, not a
+  // household-side unknown, so it refuses rather than falling open the way an
+  // unusable ZONE does. It should be unreachable — `parseTimeBlockRow` re-parses
+  // what it emits — and if it ever fires, the alternative is accepting a visit
+  // under the name of a window nothing can check it against.
+  if (match === 'block-unreadable') {
+    logEvent({
+      severity: 'error',
+      function: 'requestBooking',
+      event: 'timeblock.block.unreadable',
+      errorMessage: `Time block ${block.id} has unreadable times ${block.startTime}-${block.endTime}.`,
+      extra: { timeBlockId: block.id, startTime: block.startTime, endTime: block.endTime },
+    });
+    throw new HttpsError(
+      'invalid-argument',
+      `Something is wrong with the ${block.label} block on our side, so it cannot be booked right now. Pick another block.`,
     );
   }
 
@@ -742,7 +807,8 @@ export async function requestBookingHandler(
     const resolvedBlocks = args.visits.map((v) => assertVisitBookingMode(v, policy, timeZone));
 
     // #543: several KinCares in one day are fine; the SAME one twice is not.
-    const dupKey = duplicateVisitKey(args.visits);
+    // #597: "one day" is the BUSINESS's day, which is why the zone goes in.
+    const dupKey = duplicateVisitKey(args.visits, timeZone);
     if (dupKey !== null) {
       throw new HttpsError('invalid-argument', duplicateVisitMessage(dupKey));
     }

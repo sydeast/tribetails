@@ -11,10 +11,10 @@ import { buildDbMock } from './_helpers/mockDb';
  * one branch of a two-branch handler is not a guard.
  */
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), writeAuditEntryFn: vi.fn(), logEventFn: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
-vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
@@ -23,9 +23,15 @@ vi.mock('firebase-admin/firestore', async () => {
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  mocks.logEventFn.mockReset();
   mocks.writeAuditEntryFn.mockReset();
   mocks.writeAuditEntryFn.mockResolvedValue('audit-id');
 });
+
+/** Every `event` name the handler logged during a call, so a named line can be asserted. */
+function loggedEvents(): string[] {
+  return mocks.logEventFn.mock.calls.map((c) => (c[0] as { event: string }).event);
+}
 
 const DAY = 86_400_000;
 
@@ -202,6 +208,51 @@ describe('requestBookingHandler — time-block booking', () => {
     });
   });
 
+  /**
+   * #597, the case that regressed. `duplicateVisitKey` keyed a block-mode visit
+   * as (KinCare, block) with no date, and `buildVisits` loops dates x slots — so
+   * a household picking Sep 4, Sep 5 and Sep 6 in the Midday block was told it
+   * had asked for the same visit three times. That broke Pattern = Dates (#547)
+   * and weekly recurring the moment block mode was on.
+   */
+  it('accepts the SAME KinCare in the SAME block on DIFFERENT DAYS', async () => {
+    const ctx = ctxWith(BLOCK_ONLY);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    const res: any = await requestBookingHandler(
+      multi([
+        visit({ startTimeMs: atUtc(11, 0, 1) }),
+        visit({ startTimeMs: atUtc(11, 0, 2) }),
+        visit({ startTimeMs: atUtc(11, 0, 3) }),
+      ]),
+    );
+    expect(visitsOf(ctx, res.batchId)).toHaveLength(3);
+  });
+
+  it('still refuses the same KinCare in the same block on ONE day, with the multi-day rule in force', async () => {
+    mocks.dbFn.mockReturnValue(ctxWith(BLOCK_ONLY).db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    // Three good days plus a repeat of the first: the repeat is the only thing
+    // wrong, and it is still refused.
+    await expect(
+      requestBookingHandler(
+        multi([
+          visit({ startTimeMs: atUtc(11, 0, 1) }),
+          visit({ startTimeMs: atUtc(11, 0, 2) }),
+          visit({ startTimeMs: atUtc(11, 0, 1) }),
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: expect.stringContaining('same time block') });
+  });
+
+  it('keys the duplicate rule on the BUSINESS day, so a stray space cannot walk one past it', async () => {
+    mocks.dbFn.mockReturnValue(ctxWith(BLOCK_ONLY).db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await expect(
+      requestBookingHandler(multi([visit(), visit({ timeBlockId: ' midday ' })])),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message: expect.stringContaining('same time block') });
+  });
+
   it('accepts the same KinCare in two DIFFERENT blocks on the same day', async () => {
     const ctx = ctxWith(BLOCK_ONLY);
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -246,6 +297,70 @@ describe('requestBookingHandler — time-block booking', () => {
     // back on, so the household is not locked out by a bad settings row.
     const res: any = await requestBookingHandler(multi([visit({ timeBlockId: undefined, startTimeMs: atUtc(9, 30) })]));
     expect(visitsOf(ctx, res.batchId)).toHaveLength(1);
+  });
+
+  /**
+   * #596: `formatHHmm` emitted "24:00" for a block ending at midnight and
+   * `parseHHmm` rejected it, so `visitMatchesBlock` answered `zone-unusable` —
+   * and `assertVisitBookingMode` refuses only on 'outside'. For any such block
+   * the guarantee "a client cannot send an arbitrary time under a block's name"
+   * was not enforced at all. Both fixtures below produce the 24:00 end: one from
+   * the 4-hour default, one typed outright.
+   */
+  describe('a block that runs to the end of the day', () => {
+    const LATE_DEFAULTED = { id: 'evening', label: 'Evening', startTime: '20:00', active: true };
+    const LATE_EXPLICIT = { id: 'evening', label: 'Evening', startTime: '20:00', endTime: '24:00', active: true };
+
+    for (const [name, row] of [['defaulted end', LATE_DEFAULTED], ['explicit 24:00 end', LATE_EXPLICIT]] as const) {
+      it(`refuses an arbitrary time under its name (${name})`, async () => {
+        const ctx = ctxWith({ ...BLOCK_ONLY, timeBlocks: [row] });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        const { requestBookingHandler } = await import('../src/portal/requestBooking');
+        // 12:00 UTC wearing the 20:00-24:00 block's name: the exact attempt the
+        // shipped code accepted.
+        await expect(
+          requestBookingHandler(multi([visit({ timeBlockId: 'evening', startTimeMs: atUtc(12) })])),
+        ).rejects.toMatchObject({ code: 'invalid-argument' });
+        expect(ctx.writes).toHaveLength(0);
+      });
+
+      it(`still accepts a time genuinely inside it (${name})`, async () => {
+        const ctx = ctxWith({ ...BLOCK_ONLY, timeBlocks: [row] });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        const { requestBookingHandler } = await import('../src/portal/requestBooking');
+        const res: any = await requestBookingHandler(
+          multi([visit({ timeBlockId: 'evening', startTimeMs: atUtc(23, 59) })]),
+        );
+        expect(visitsOf(ctx, res.batchId)).toHaveLength(1);
+      });
+    }
+  });
+
+  /**
+   * #596, the wider half. Fail-open on an unreadable zone is deliberate and
+   * stays — but it must not be silent, because it means rule 4 is not running
+   * for ANY block in the business.
+   */
+  it('logs a named line when a blank timezone leaves containment inert', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'business_settings/business_settings': { serviceRates: SERVICE_RATES, timeZone: '', ...BLOCK_ONLY },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await requestBookingHandler(multi([visit({ startTimeMs: atUtc(3) })]));
+    expect(loggedEvents()).toContain('timeblock.containment.inert');
+    expect(mocks.logEventFn.mock.calls.map((c) => c[0]).find((f: any) => f.event === 'timeblock.containment.inert'))
+      .toMatchObject({ severity: 'error' });
+  });
+
+  it('says nothing about inert containment when the timezone is usable', async () => {
+    mocks.dbFn.mockReturnValue(ctxWith(BLOCK_ONLY).db);
+    const { requestBookingHandler } = await import('../src/portal/requestBooking');
+    await requestBookingHandler(multi([visit()]));
+    expect(loggedEvents()).not.toContain('timeblock.containment.inert');
   });
 
   it('skips the window check, but not the block check, when the stored timezone is unusable', async () => {

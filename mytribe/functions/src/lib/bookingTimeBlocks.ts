@@ -58,7 +58,12 @@ export interface BookableTimeBlock {
   label: string;
   /** `HH:MM`, business-local, inclusive. */
   startTime: string;
-  /** `HH:MM`, business-local, exclusive — same convention as the admin `resolveTimeBlock`. */
+  /**
+   * `HH:MM`, business-local, exclusive — same convention as the admin
+   * `resolveTimeBlock`. `"24:00"` for a window running to the end of the day,
+   * which is a boundary rather than a clock time; read it with
+   * {@link parseDayBoundaryHHmm}, never {@link parseHHmm}.
+   */
   endTime: string;
   /** `endTime - startTime`, so a client can say how long the window is without re-parsing. */
   durationMinutes: number;
@@ -102,21 +107,73 @@ export interface ResolvedBookingPolicy {
 
 const HHMM_RE = /^(\d{1,2}):(\d{2})$/;
 
-/** Minutes since local midnight for a bare `HH:MM`, or null. Never throws, whatever `raw` is. */
+/** The last minute a WALL CLOCK can show, 23:59. */
+const LAST_MINUTE_OF_DAY = 24 * 60 - 1;
+/** The end of the day as an EXCLUSIVE boundary, 24:00. Not a time any clock shows. */
+const END_OF_DAY = 24 * 60;
+
+/**
+ * TWO KINDS OF `HH:MM`, AND WHY THEY NEED TWO PARSERS (#596).
+ *
+ * A WALL-CLOCK TIME is what `zonedNow` reports and what a block STARTS at: it
+ * runs 00:00-23:59, and "24:00" is not one of its values. An EXCLUSIVE END
+ * BOUNDARY is what a block ENDS at: a window running to the end of the day ends
+ * at 24:00, and 23:59 would be a different, shorter window.
+ *
+ * One parser for both is the defect #596 found. `formatHHmm` clamped to
+ * `24 * 60` and emitted `"24:00"` for a block ending at midnight, `parseHHmm`
+ * rejected any hour above 23 and returned null for it, so a string the server
+ * had just generated failed the server's own parser and `visitMatchesBlock`
+ * answered `zone-unusable` — a "cannot tell" that `assertVisitBookingMode` lets
+ * through. Containment stopped running for that block entirely.
+ *
+ * So there are two pairs now, and each round-trips losslessly across its whole
+ * range (asserted as a property in `test/bookingTimeBlocks.test.ts`, because
+ * that property is what would have caught this):
+ *
+ *   parseHHmm            <-> formatHHmm             0..1439  ("00:00".."23:59")
+ *   parseDayBoundaryHHmm <-> formatDayBoundaryHHmm  0..1440  ("00:00".."24:00")
+ *
+ * `parseHHmm` deliberately still rejects "24:00": a clock never shows it, a
+ * block may not START at it, and `zonedNow` (`hourCycle: 'h23'`) never emits it.
+ */
+
+/** Minutes since local midnight for a bare wall-clock `HH:MM`, or null. Never throws, whatever `raw` is. */
 export function parseHHmm(raw: unknown): number | null {
+  return parseMinutesOfDay(raw, LAST_MINUTE_OF_DAY);
+}
+
+/**
+ * Minutes since local midnight for an EXCLUSIVE end boundary, or null. Accepts
+ * everything {@link parseHHmm} does, plus exactly `"24:00"` -> 1440.
+ */
+export function parseDayBoundaryHHmm(raw: unknown): number | null {
+  return parseMinutesOfDay(raw, END_OF_DAY);
+}
+
+function parseMinutesOfDay(raw: unknown, maxMinutes: number): number | null {
   if (typeof raw !== 'string') return null;
   const m = HHMM_RE.exec(raw.trim());
   if (!m) return null;
   const hh = Number(m[1]);
   const mm = Number(m[2]);
   if (!Number.isInteger(hh) || !Number.isInteger(mm)) return null;
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
-  return hh * 60 + mm;
+  if (hh < 0 || mm < 0 || mm > 59) return null;
+  const total = hh * 60 + mm;
+  return total > maxMinutes ? null : total;
 }
 
-/** Minutes since midnight back to `HH:MM`, zero-padded. Clamped into the day. */
+/** Minutes since midnight back to a wall-clock `HH:MM`, zero-padded. Clamped to 00:00-23:59. */
 export function formatHHmm(minutes: number): string {
-  const clamped = Math.max(0, Math.min(24 * 60, Math.round(minutes)));
+  return padHHmm(Math.max(0, Math.min(LAST_MINUTE_OF_DAY, Math.round(minutes))));
+}
+
+/** Minutes since midnight back to an exclusive end boundary, zero-padded. Clamped to 00:00-24:00. */
+export function formatDayBoundaryHHmm(minutes: number): string {
+  return padHHmm(Math.max(0, Math.min(END_OF_DAY, Math.round(minutes))));
+}
+
+function padHHmm(clamped: number): string {
   const hh = Math.floor(clamped / 60);
   const mm = clamped % 60;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
@@ -164,20 +221,34 @@ export function parseTimeBlockRow(raw: unknown, defaultBlockDurationMinutes: num
   const id = typeof row['id'] === 'string' ? row['id'].trim() : '';
   if (id.length === 0) return null;
 
+  // A START is a wall-clock time: 24:00 is not one, and a row claiming it has
+  // no readable start.
   const startMinutes = parseHHmm(row['startTime']);
   if (startMinutes === null) return null;
 
-  const parsedEnd = parseHHmm(row['endTime']);
+  // An END is an exclusive boundary, so 24:00 IS one — that is a window running
+  // to the end of the day, and it is the case #596 was lost on.
+  const parsedEnd = parseDayBoundaryHHmm(row['endTime']);
   const fallbackEnd = startMinutes + Math.max(1, Math.round(defaultBlockDurationMinutes));
-  const endMinutes = parsedEnd !== null && parsedEnd > startMinutes ? parsedEnd : Math.min(24 * 60, fallbackEnd);
+  const endMinutes = parsedEnd !== null && parsedEnd > startMinutes ? parsedEnd : Math.min(END_OF_DAY, fallbackEnd);
   if (endMinutes <= startMinutes) return null;
+
+  const startTime = formatHHmm(startMinutes);
+  const endTime = formatDayBoundaryHHmm(endMinutes);
+  // THE INVARIANT, ENFORCED AT THE ONLY DOOR (#596). `BookableTimeBlock`'s
+  // contract is that its times are parseable, and every consumer — the
+  // containment check above all — is written as if that holds. It is asserted
+  // here rather than assumed, so a future change to either formatter turns into
+  // a dropped row (which `resolveBookingPolicy` degrades honestly) instead of
+  // an enforcement check that silently stops running.
+  if (parseHHmm(startTime) !== startMinutes || parseDayBoundaryHHmm(endTime) !== endMinutes) return null;
 
   const rawLabel = typeof row['label'] === 'string' ? row['label'].trim() : '';
   return {
     id,
     label: rawLabel.length > 0 ? rawLabel : labelFromId(id),
-    startTime: formatHHmm(startMinutes),
-    endTime: formatHHmm(endMinutes),
+    startTime,
+    endTime,
     durationMinutes: endMinutes - startMinutes,
   };
 }
@@ -269,8 +340,13 @@ export function findTimeBlock(policy: BookingPolicy, id: string): BookableTimeBl
   return policy.timeBlocks.find((b) => b.id === wanted) ?? null;
 }
 
-/** What {@link visitMatchesBlock} concluded. `zone-unusable` is a "cannot tell", never a "no". */
-export type BlockMatch = 'inside' | 'outside' | 'zone-unusable';
+/**
+ * What {@link visitMatchesBlock} concluded.
+ *
+ * `zone-unusable` is a "cannot tell", never a "no". `block-unreadable` IS a no —
+ * see {@link visitMatchesBlock} for why the two are not the same answer.
+ */
+export type BlockMatch = 'inside' | 'outside' | 'zone-unusable' | 'block-unreadable';
 
 /**
  * Does this instant fall inside the block's window, read on the BUSINESS's own
@@ -287,6 +363,8 @@ export type BlockMatch = 'inside' | 'outside' | 'zone-unusable';
  * not always sitting in the business's. Containment over a multi-hour window
  * absorbs the ordinary case of that drift; equality would refuse it outright.
  *
+ * ── TWO FAILURES THAT ARE NOT THE SAME FAILURE (#596) ────────────────────────
+ *
  * `timeZone` unusable (blank, or an IANA name `Intl` rejects) returns
  * `zone-unusable` rather than a verdict. Callers treat that as "cannot tell"
  * and let the request through on the window check alone — the SAME fail-open
@@ -295,19 +373,32 @@ export type BlockMatch = 'inside' | 'outside' | 'zone-unusable';
  * a visit landing an hour off inside a 4-hour window costs the office nothing
  * they cannot see, because the block id is persisted on the visit either way.
  * The id/active checks are NOT skipped: those we can always answer.
+ *
+ * A BLOCK whose own `startTime`/`endTime` will not parse is the opposite case
+ * and gets its own answer, `block-unreadable`. Nothing about it is unknown from
+ * the household's side: the server generated those two strings itself, in
+ * {@link parseTimeBlockRow}, so an unreadable one is a bug in this file rather
+ * than configuration the operator never filled in. Failing open on it is how
+ * #596 turned a formatter/parser mismatch into an enforcement check that
+ * silently stopped running, and callers must refuse instead. In practice this
+ * is unreachable — {@link parseTimeBlockRow} re-parses what it emits and drops
+ * the row otherwise — which is exactly the point: it is a tripwire, not a path.
  */
 export function visitMatchesBlock(
   startTimeMs: number,
   block: BookableTimeBlock,
   timeZone: string,
 ): BlockMatch {
+  // The block is checked FIRST, so a server-side defect is never reported as a
+  // household-side unknown even when the zone is also unusable.
+  const start = parseHHmm(block.startTime);
+  const end = parseDayBoundaryHHmm(block.endTime);
+  if (start === null || end === null || end <= start) return 'block-unreadable';
+
   const local = zonedNow(startTimeMs, timeZone);
   if (local === null) return 'zone-unusable';
   const minutes = parseHHmm(local.timeHHmm);
   if (minutes === null) return 'zone-unusable';
-  const start = parseHHmm(block.startTime);
-  const end = parseHHmm(block.endTime);
-  if (start === null || end === null) return 'zone-unusable';
   return minutes >= start && minutes < end ? 'inside' : 'outside';
 }
 
@@ -315,4 +406,57 @@ export function visitMatchesBlock(
 export function businessTimeZone(settings: unknown): string {
   const data = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
   return typeof data['timeZone'] === 'string' ? (data['timeZone'] as string).trim() : '';
+}
+
+/**
+ * The BUSINESS's own calendar date (`YYYY-MM-DD`) for an instant.
+ *
+ * #597: the identity of a block-mode visit is (date, KinCare, block), and the
+ * date has to be the business's, not the raw instant and not the device's. The
+ * whole premise of block booking is that the instant is approximate — every
+ * visit in a window carries that window's first minute — so two visits in the
+ * same block on the same BUSINESS day must still collide while different days
+ * must not, and only the business's day boundary answers that.
+ *
+ * WHEN THE ZONE IS UNUSABLE we fall back to the UTC calendar date rather than
+ * refusing to key at all, for three reasons:
+ *   - it is deterministic and total, so the duplicate rule keeps running rather
+ *     than quietly switching itself off — which is the failure mode #596 is
+ *     about, and repeating it here would be worse than a slightly wrong day;
+ *   - the refusal it must never lose is the SAME KinCare at the SAME instant,
+ *     and identical `startTimeMs` values always produce the identical UTC date,
+ *     whatever the zone is. That case is preserved exactly;
+ *   - the case it could get wrong is two visits the business considers
+ *     different days landing on one UTC date, which needs them under 24h apart;
+ *     block-mode visits on different dates are a whole day apart by
+ *     construction, since both clients build them from the same block start.
+ * A blank zone is also loud at the call site — see `containmentIsInert`.
+ */
+export function businessCalendarDate(startTimeMs: number, timeZone: string): string {
+  const local = zonedNow(startTimeMs, timeZone);
+  if (local !== null) return local.dateIso;
+  if (!Number.isFinite(startTimeMs)) return 'unknown-date';
+  return new Date(startTimeMs).toISOString().slice(0, 10);
+}
+
+/**
+ * Is time-block CONTAINMENT switched off by a timezone this server cannot read?
+ *
+ * `visitMatchesBlock` fails open on an unusable zone, on purpose, and that
+ * decision stands. What must not stand is it happening SILENTLY: with a blank
+ * or invalid `business_settings.timeZone` the containment check returns
+ * `zone-unusable` for every block, so rule 4 of `assertVisitBookingMode` — a
+ * client cannot send an arbitrary time under a block's name — is not running at
+ * all, for anyone. That is an enforcement control being off, and nobody would
+ * otherwise find out. Callers log it by name.
+ *
+ * Only meaningful where blocks are actually bookable, which is why the policy is
+ * a parameter: a business that takes no block bookings has no containment to
+ * lose.
+ */
+export function containmentIsInert(policy: BookingPolicy, timeZone: string): boolean {
+  if (!policy.allowTimeBlockBooking) return false;
+  // The exact predicate containment itself uses, so the two cannot drift: blank
+  // and "not an IANA name Intl knows" are both covered, and neither is guessed at.
+  return zonedNow(Date.now(), timeZone) === null;
 }

@@ -627,6 +627,27 @@ describe('buildVisits in block mode', () => {
     expect(buildVisits([new Date(2026, 8, 4)], [blockSlot('30Minute', 'brunch')], CATALOG, BLOCK_TIMING)).toEqual([]);
   });
 
+  /**
+   * #597, client half. The server used to key a block-mode visit as
+   * (KinCare, block) with no date and refuse this as one visit asked for three
+   * times. The wizard was never wrong — `slotsBlocker` reads ONE day's KinCare
+   * list and `buildVisits` multiplies it by the dates — and this pins that, so
+   * the client half of the (date, KinCare, block) identity cannot drift into
+   * agreeing with the bug.
+   */
+  it('sends the same KinCare in the same window on EVERY chosen date, and does not call that a duplicate', () => {
+    const slots = [blockSlot('30Minute', 'midday')];
+    const dates = [new Date(2026, 8, 4), new Date(2026, 8, 5), new Date(2026, 8, 6)];
+    expect(slotsBlocker(slots, BLOCK_TIMING)).toBeNull();
+    const visits = buildVisits(dates, slots, CATALOG, BLOCK_TIMING);
+    expect(visits).toHaveLength(3);
+    expect(visits.every((v) => v.timeBlockId === 'midday')).toBe(true);
+    // Three distinct instants, one per date, all on the window's first minute.
+    expect(new Set(visits.map((v) => v.startTimeMs)).size).toBe(3);
+    expect(visits.map((v) => new Date(v.startTimeMs).getDate())).toEqual([4, 5, 6]);
+    expect(visits.every((v) => new Date(v.startTimeMs).getHours() === 11)).toBe(true);
+  });
+
   it('leaves timeBlockId null on every clock-booked visit', () => {
     const visits = buildVisits([new Date(2026, 8, 4)], [slot('30Minute', '09:00')], CATALOG);
     expect(visits[0]!.timeBlockId).toBeNull();
