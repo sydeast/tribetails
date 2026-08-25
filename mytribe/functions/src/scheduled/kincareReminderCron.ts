@@ -6,6 +6,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
+import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
@@ -79,8 +80,27 @@ export async function processUpcomingBooking(
  * (bookings: status ASC, __name__ ASC) that we have not deployed. An
  * UNFILTERED collectionGroup().orderBy(documentId()) uses only the automatic
  * single-field index, so no composite index is needed. Exported for testing.
+ *
+ * ISSUE #519: the scan is gated on `business_settings.enableAutoReminder24h`
+ * ("Send a reminder 24 hours before a visit"), read ONCE per run rather than
+ * per booking — the answer cannot change mid-scan in a way that should split a
+ * single hour's reminders in two, and one document read is not worth repeating
+ * across a whole collection-group drain. Off means the scan does not run at
+ * all: no pagination, no `upcomingReminderNotifiedAtMs` stamps, so turning the
+ * switch back on still reminds about the visits that came due while it was off
+ * (their window is 24-48h wide, an hourly cron gets many attempts at it).
+ * Absent decodes as ON; see `lib/autoReminder.ts` for why that is not optional.
  */
 export async function runKincareReminderScan(now: number = Date.now()): Promise<number> {
+  if (!(await isAutoReminder24hEnabled(db()))) {
+    logEvent({
+      severity: 'info',
+      function: 'kincareReminderCron',
+      event: 'kincare.reminder.disabled',
+      extra: { reason: 'enableAutoReminder24h=false' },
+    });
+    return 0;
+  }
   let reminded = 0;
   await paginateQuery(
     db().collectionGroup('bookings'),

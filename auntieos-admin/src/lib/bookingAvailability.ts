@@ -23,13 +23,18 @@ import { closureOccurrencesInRange, type ClosureEntry } from './closureRecurrenc
  *     would silently desynchronise the two admin clients that write the same
  *     collection, which is exactly the "a visit somebody misses" failure.
  *
- *  2. `business_settings.timeZone` exists on the doc but no surface in this app
- *     reads it (see `lib/settingsFormat.ts`'s header: it is one of the fields
- *     the wasm settings screen never rendered either). Converting through an
- *     IANA name that nothing validates and nothing else honours would be
- *     inventing a conversion, not performing one. Instead the DIALOG discloses
- *     the mismatch when that field disagrees with the device zone, so the
- *     operator sees the ambiguity rather than a silently shifted booking.
+ *  2. `business_settings.timeZone` is now a validated, editable setting
+ *     (`screens/settings/TimeZoneSection.tsx`, issue #519) with five real
+ *     consumers, all of them server-side: the phone line's open/closed answer,
+ *     quote expiry, visit dates in notifications, notification template time
+ *     tokens. NONE of them is a booking write. Converting the picker through it
+ *     would still be wrong, and for reasons 1 and 3 rather than because nothing
+ *     reads the field: the two admin clients would stop agreeing about what a
+ *     booking time means, and the slot rows have no offset to convert from.
+ *     So the DIALOG keeps disclosing the mismatch when the business zone
+ *     disagrees with the device zone — the difference #519 made is that the
+ *     operator now has somewhere to go and fix it, instead of being shown a
+ *     conflict with no control behind it.
  *
  *  3. `booking_time_slots.date`/`startTime`/`endTime` carry NO zone at all, and
  *     their two writers disagree about whose clock they are in (the asymmetry

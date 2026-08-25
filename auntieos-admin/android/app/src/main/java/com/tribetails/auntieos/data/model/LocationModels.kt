@@ -183,7 +183,9 @@ data class BusinessSettings(
     // "On My Way" defaults - surfaced as a dropdown on the visit card
     var defaultEtaMinutes: Int = 15,
     var etaMinuteOptions: List<Int> = listOf(5, 10, 15, 20, 30, 45, 60),
-    // KinTale draft retention - auto-purge unsent drafts older than this
+    // KinTale draft retention. Unsent drafts older than this are deleted nightly by
+    // `purgeOldDrafts` (mytribe/functions), dated from `updatedAt`. #519 built that job;
+    // before it, this comment described an auto-purge that did not exist.
     var draftRetentionDays: Int = 30,
     var draftRetentionOptions: List<Int> = listOf(30, 60, 90),
     // Time Off - observed US federal holidays + custom company holidays.
@@ -206,7 +208,13 @@ data class BusinessSettings(
     var allowTimeBlockBooking: Boolean = true,
     var allowSpecificTimeBooking: Boolean = true,
     var enableConflictDetection: Boolean = true,
-    var enableAutoReminder24h: Boolean = false,
+    // ISSUE #519 flipped this from `false`. `kincareReminderCron` has always
+    // enqueued the 24-hour `kincare.upcoming.reminder` for every confirmed
+    // booking, unconditionally, so `false` never described what the product
+    // did. The cron reads the field now (mytribe/functions/src/lib/
+    // autoReminder.ts) and treats an absent key as ON, which is what this
+    // default now says out loud.
+    var enableAutoReminder24h: Boolean = true,
     var defaultTimeBlockDurationHours: Int = 4, // Default 4-hour blocks
     var travelBufferMinutes: Int = 30,
     // timeBlocks: booking time-block definitions. Element key `active` matches prod

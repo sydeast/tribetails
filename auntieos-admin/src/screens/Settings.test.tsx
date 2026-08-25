@@ -80,6 +80,18 @@ vi.mock('../api/integrations', async (orig) => ({
 // which is exactly what happened during the #158-era rebase of this file.
 
 import { Settings } from './Settings';
+/**
+ * The Business profile TAB holds three panels since #519 (the text fields, the
+ * time-zone picker, and the instant-save booking toggles), so a bare
+ * `getByRole('button', { name: /save/i })` inside the tabpanel is ambiguous.
+ * This narrows to the one `DenPanel` that owns a given control, which is what
+ * these cases were always asserting about.
+ */
+function panelOwning(el: HTMLElement): HTMLElement {
+  const owner = el.closest('.den-panel');
+  if (!(owner instanceof HTMLElement)) throw new Error('control is not inside a DenPanel');
+  return owner;
+}
 
 /**
  * A local fixture, not imported from the (partially mocked) api/settings module:
@@ -101,9 +113,6 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   cashappHandle: '',
   paymentOptions: {},
   weatherLocation: '',
-  notificationEmail: true,
-  notificationSms: true,
-  notificationPush: true,
   observedUsHolidays: [],
   companyHolidays: [],
   specialHours: [],
@@ -113,7 +122,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   allowTimeBlockBooking: true,
   allowSpecificTimeBooking: true,
   enableConflictDetection: true,
-  enableAutoReminder24h: false,
+  enableAutoReminder24h: true,
   defaultTimeBlockDurationHours: 4,
   travelBufferMinutes: 30,
   timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
@@ -209,12 +218,17 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 11. Was 13: the 2026-07-31 calendar-tab merge took two calendar features
-    // down to one tab, then mark 16 of the 2026-08-17 walk folded Weather area
-    // and Booking behavior into Business profile ("it does not need to be its
-    // own page with so little fields"). Integrations still sits last, because
-    // it reports on outside services rather than editing anything.
-    expect(tabs).toHaveLength(11);
+    // 13. It was 11: the 2026-07-31 calendar-tab merge took two calendar
+    // features down to one tab, then mark 16 of the 2026-08-17 walk folded
+    // Weather area and Booking behavior into Business profile ("it does not
+    // need to be its own page with so little fields"). Issue #519 then added
+    // the two sections for the twenty fields the clients decoded and none of
+    // them edited: Booking rules and Visits and tracking. Integrations still
+    // sits last, because it reports on outside services rather than editing
+    // anything.
+    expect(tabs).toHaveLength(13);
+    expect(within(tablist).getByRole('tab', { name: 'Booking rules' })).toBeInTheDocument();
+    expect(within(tablist).getByRole('tab', { name: 'Visits and tracking' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /weather area/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /booking behavior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
@@ -354,11 +368,11 @@ describe('Settings — Business profile editor', () => {
     saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-07-17T12:00:00.000Z', updatedBy: 'auntie@tribetails.com' });
     render(<Settings />);
     const panel = screen.getByRole('tabpanel');
-    await within(panel).findByLabelText('Business name');
-    const saveBtn = within(panel).getByRole('button', { name: /^save$/i });
+    const nameInput = await within(panel).findByLabelText('Business name');
+    const fields = panelOwning(nameInput);
+    const saveBtn = within(fields).getByRole('button', { name: /^save$/i });
     expect(saveBtn).toBeDisabled();
 
-    const nameInput = within(panel).getByLabelText('Business name');
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, 'New Name');
     expect(saveBtn).toBeEnabled();
@@ -373,8 +387,8 @@ describe('Settings — Business profile editor', () => {
       businessAddress: '',
       weatherLocation: '',
     });
-    expect(await within(panel).findByText('Saved')).toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+    expect(await within(fields).findByText('Saved')).toBeInTheDocument();
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
   });
 
   it('shows a fail-loud error and keeps the field dirty when the save rejects', async () => {
@@ -383,11 +397,12 @@ describe('Settings — Business profile editor', () => {
     render(<Settings />);
     const panel = screen.getByRole('tabpanel');
     const nameInput = await within(panel).findByLabelText('Business name');
+    const fields = panelOwning(nameInput);
     await userEvent.type(nameInput, 'X');
-    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
-    expect(await within(panel).findByText(/permission-denied/i)).toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeEnabled();
-    expect(within(panel).queryByText('Saved')).not.toBeInTheDocument();
+    await userEvent.click(within(fields).getByRole('button', { name: /^save$/i }));
+    expect(await within(fields).findByText(/permission-denied/i)).toBeInTheDocument();
+    expect(within(fields).getByRole('button', { name: /^save$/i })).toBeEnabled();
+    expect(within(fields).queryByText('Saved')).not.toBeInTheDocument();
   });
 
   it('trims saved values', async () => {
@@ -395,8 +410,9 @@ describe('Settings — Business profile editor', () => {
     saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
     const panel = screen.getByRole('tabpanel');
-    await userEvent.type(await within(panel).findByLabelText('Business name'), '  Padded  ');
-    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    const nameInput = await within(panel).findByLabelText('Business name');
+    await userEvent.type(nameInput, '  Padded  ');
+    await userEvent.click(within(panelOwning(nameInput)).getByRole('button', { name: /^save$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith(expect.objectContaining({ businessName: 'Padded' }));
   });
 
@@ -509,10 +525,16 @@ describe('Settings — Business profile absorbed the two thin sections', () => {
     expect(within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i })).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: /snap drag-to-reschedule/i })).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: /block bookings during busy events/i })).toBeInTheDocument();
-    // One Save button, and it belongs to the text fields. The toggles write on
-    // every flip, so a Save button beside them would be a lie about what is
-    // already stored.
-    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(1);
+    // NO Save button in the toggles' own panel. They write on every flip, so a
+    // Save button beside them would be a lie about what is already stored. The
+    // two Saves in this tab belong to the sibling panels (the text fields, and
+    // #519's time-zone picker), which is why this is scoped to the toggle panel
+    // rather than counting buttons across the whole tab.
+    const togglePanel = panelOwning(
+      within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i }),
+    );
+    expect(within(togglePanel).queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(2);
   });
 });
 describe('Settings — real editors wire through the shared persist', () => {

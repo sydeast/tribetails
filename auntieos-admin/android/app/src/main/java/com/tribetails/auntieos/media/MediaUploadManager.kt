@@ -65,6 +65,14 @@ class MediaUploadManager(
         entityType: MediaEntityType,
         description: String = "",
         tags: List<String> = emptyList(),
+        /**
+         * ISSUE #519: where this media was captured, or null to store no
+         * location at all. Defaulted to null so every existing caller keeps
+         * writing exactly what it wrote before; only the KinTale composer
+         * supplies one, and only when `enablePhotoLocationTagging` and the GPS
+         * master switch are both on. See [com.tribetails.auntieos.media.PhotoLocationTagging].
+         */
+        location: com.tribetails.auntieos.data.model.GeoLocation? = null,
         onProgress: (UploadProgress) -> Unit = {}
     ): Result<MediaFile> = withContext(Dispatchers.IO) {
         var localFile: LocalUploadFile? = null
@@ -112,7 +120,11 @@ class MediaUploadManager(
                 metadata = MediaMetadata(
                     width = uploadResult.width,
                     height = uploadResult.height,
-                    duration = uploadResult.durationSeconds
+                    duration = uploadResult.durationSeconds,
+                    // Null unless the caller resolved one under the operator's
+                    // switch. This is the ONLY site in the app that writes a
+                    // coordinate onto a media record.
+                    location = location
                 )
             )
 

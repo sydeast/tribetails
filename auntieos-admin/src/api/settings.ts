@@ -19,8 +19,13 @@ import type { TagDef } from '../lib/tags/model';
  * read (not a live listener) because this screen is a read-only snapshot, not an
  * editor watching for concurrent changes.
  *
- * `firestore.rules` line 140-143: `allow read: if signedIn()` on
- * `business_settings/{docId}`, so any authenticated admin can read it directly.
+ * `mytribe/firestore.rules` (the `business_settings/{docId}` match block):
+ * `allow read: if isAuntie() || isTestAdmin()`, `allow write: if isAuntie()`.
+ * So this doc is ADMIN-ONLY on both sides — an ordinary signed-in kinfolk gets
+ * permission-denied, and anything assuming this `getDoc` succeeds for them is
+ * wrong. (This header used to cite "line 140-143: allow read: if signedIn()",
+ * which was stale on both the line number and the predicate; a line-number
+ * citation is not repeated here for the same reason it went stale.)
  *
  * Every field defaults exactly as `BusinessSettings` does in
  * `FirestoreClient.kt` (lines 2445-2560), so a doc missing a key, or no doc at
@@ -367,9 +372,26 @@ export interface BusinessSettings {
    */
   paymentOptions: Record<string, PaymentOptionSetting>;
   weatherLocation: string;
-  notificationEmail: boolean;
-  notificationSms: boolean;
-  notificationPush: boolean;
+  /**
+   * ISSUE #519: `notificationEmail` / `notificationSms` / `notificationPush`
+   * USED TO BE DECLARED HERE and are deliberately gone.
+   *
+   * They were three booleans this module declared, defaulted and decoded, that
+   * no screen rendered and — the part that decided it — that no dispatcher read.
+   * A repo-wide sweep found zero occurrences in `mytribe/functions`, zero in
+   * `mytribe/web`, zero in `auntieos-admin/web/functions`, and none on the
+   * Android model at all. Every channel decision is made by
+   * `mytribe/functions/src/notifications/prefs.ts#resolveChannels`, off the
+   * per-notification gate matrix stored on a DIFFERENT document
+   * (`businessSettings/notifications`, camel-case, edited by `NotificationGate`).
+   * The near-identical collection names are why these three read as live.
+   *
+   * They are removed from the MODEL, not from any document: nothing deletes the
+   * keys, so a doc that carries them keeps them, inert, exactly as it is today.
+   * The alternative — giving an operator an Email/SMS/Push switch that changes
+   * nothing while the real gate sits one tab away — is the defect this issue is
+   * about, pointed in the opposite direction.
+   */
   observedUsHolidays: string[];
   companyHolidays: string[];
   specialHours: string[];
@@ -479,9 +501,6 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   cashappHandle: '',
   paymentOptions: {},
   weatherLocation: '',
-  notificationEmail: true,
-  notificationSms: true,
-  notificationPush: true,
   observedUsHolidays: [],
   companyHolidays: [],
   specialHours: [],
@@ -491,7 +510,12 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   allowTimeBlockBooking: true,
   allowSpecificTimeBooking: true,
   enableConflictDetection: true,
-  enableAutoReminder24h: false,
+  // ISSUE #519 flipped this from `false`. `kincareReminderCron` has always
+  // enqueued `kincare.upcoming.reminder` for every confirmed booking 24-48h out,
+  // unconditionally, so `false` was never what the product did. The server now
+  // gates on the field (`mytribe/functions/src/lib/autoReminder.ts`) and reads
+  // absent as ON; this default is what the models should always have said.
+  enableAutoReminder24h: true,
   defaultTimeBlockDurationHours: 4,
   travelBufferMinutes: 30,
   timeBlocks: [
@@ -678,9 +702,6 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     cashappHandle: pickString(r.cashappHandle, d.cashappHandle),
     paymentOptions: mergePaymentOptions(r.paymentOptions),
     weatherLocation: pickString(r.weatherLocation, d.weatherLocation),
-    notificationEmail: (r.notificationEmail as boolean) ?? d.notificationEmail,
-    notificationSms: (r.notificationSms as boolean) ?? d.notificationSms,
-    notificationPush: (r.notificationPush as boolean) ?? d.notificationPush,
     // `arr` (default `[]`) rather than `pickList`, because these three ship
     // empty: a non-array here reads as "nothing configured", not as a crash in
     // TimeOffEditor's `[...data.companyHolidays]` spread.

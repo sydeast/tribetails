@@ -585,4 +585,9 @@ export { notificationBatchSweep } from './scheduled/notificationBatchSweep';
 export { invoiceRemindersCron, invoiceOverdueCron } from './scheduled/invoiceRemindersCron';
 export { aiBatchPollCron } from './scheduled/aiBatchPollCron';
 export { kincareReminderCron } from './scheduled/kincareReminderCron';
+// ISSUE #519: the two retention windows the settings screen has claimed for as
+// long as the fields existed, now actually applied. Both delete records, so both
+// refuse to run on an unreadable, zero or negative window (`lib/retentionWindow.ts`).
+export { purgeOldVisitRoutes } from './scheduled/purgeOldVisitRoutes';
+export { purgeOldDrafts } from './scheduled/purgeOldDrafts';
 export { scheduleDigestCron } from './scheduled/scheduleDigestCron';

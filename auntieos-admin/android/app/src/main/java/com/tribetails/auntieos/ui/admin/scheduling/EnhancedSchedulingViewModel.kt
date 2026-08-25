@@ -168,7 +168,20 @@ enum class CalendarViewMode(val displayName: String) {
     DAY("Day"),
     WEEK("Week"),
     MONTH("Month"),
-    AGENDA("Agenda")
+    AGENDA("Agenda");
+    companion object {
+        /**
+         * ISSUE #519: the typed view of `business_settings.defaultCalendarView`,
+         * which had no editor and no consumer on any surface until this change.
+         * Unknown or legacy strings fall back to MONTH, the same shipped default
+         * every model states, rather than throwing on a hand-edited document.
+         *
+         * Lives here rather than as an accessor on `BusinessSettings` because
+         * this enum is a UI concept: the data model must not import from `ui/`.
+         */
+        fun fromWire(wire: String): CalendarViewMode =
+            entries.firstOrNull { it.name == wire.trim().uppercase() } ?: MONTH
+    }
 }
 
 data class DragState(
@@ -564,7 +577,11 @@ class EnhancedSchedulingViewModel(
                     businessHours = businessHoursResult.getOrNull() ?: emptyList(),
                     businessSettings = businessSettings,
                     calendarSyncRun = calendarSyncRun,
-                    bookingMode = businessSettings.defaultBookingModeEnum
+                    bookingMode = businessSettings.defaultBookingModeEnum,
+                    // ISSUE #519: the calendar opens on the view the operator
+                    // chose. `defaultCalendarView` had been decoded and defaulted
+                    // by three clients and read by none of them.
+                    viewMode = CalendarViewMode.fromWire(businessSettings.defaultCalendarView),
                 )
 
                 // Phase 14: load BOOKING-placed form_schemas for the new-booking dialog.

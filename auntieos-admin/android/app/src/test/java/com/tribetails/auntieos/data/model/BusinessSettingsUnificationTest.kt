@@ -36,7 +36,11 @@ class BusinessSettingsUnificationTest {
         assertTrue(s.allowTimeBlockBooking)
         assertTrue(s.allowSpecificTimeBooking)
         assertTrue(s.enableConflictDetection)
-        assertFalse(s.enableAutoReminder24h)
+        // ISSUE #519 flipped this from false. `kincareReminderCron` has always
+        // enqueued the 24-hour reminder for every confirmed booking, so `false`
+        // never described the shipped behavior; the cron reads the field now and
+        // treats an absent key as ON. The design doc's `false` is the stale side.
+        assertTrue(s.enableAutoReminder24h)
         assertFalse(s.observeUsHolidays)
         assertEquals(4, s.defaultTimeBlockDurationHours)
         assertEquals(30, s.travelBufferMinutes)

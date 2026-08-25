@@ -470,7 +470,15 @@ class HomeViewModel(
                     targetId         = sessionId,
                     targetCollection = "kin_care_sessions",
                 )
-                if (_uiState.value.businessSettings.enableGPSTrackingForAllVisits) {
+                // ISSUE #519: `autoStartTrackingOnVisitStart` was persisted by
+                // the Settings panel and read by nothing — arriving always
+                // started tracking, under the master switch alone, so the
+                // "Auto-Start Tracking on Visit Start" toggle changed nothing.
+                // It gates the auto-start now. Departure below is deliberately
+                // NOT gated on it: if tracking is running for any reason,
+                // leaving has to stop it.
+                val settings = _uiState.value.businessSettings
+                if (settings.enableGPSTrackingForAllVisits && settings.autoStartTrackingOnVisitStart) {
                     startGpsForSession(context, card.session)
                 }
                 notifier.notify(VisitNotifier.Event.ARRIVED, card.session)
