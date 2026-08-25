@@ -142,6 +142,13 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'auntieos-admin/android/**'
+              # Same gap `mytribe` records below, and android was the last filter
+              # still carrying it: a change to the job's own definition did not
+              # re-run the job. Proven on the PR that added the per-runner Gradle
+              # home: it rewrote the android job's Gradle setup and "Android unit
+              # tests" reported "skipping", so a workflow edit that breaks the
+              # Android build could ship green.
+              - '.github/workflows/ci.yml'
             mytribe:
               - 'mytribe/functions/**'
               # The backfill and seed scripts sit outside functions/ but are
