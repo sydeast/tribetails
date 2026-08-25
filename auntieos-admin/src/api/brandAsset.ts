@@ -79,7 +79,11 @@ export async function uploadBrandAsset(input: UploadBrandAssetInput): Promise<Co
   if (!check.ok) throw new Error(check.reason);
 
   input.onStage?.('signing');
-  const sign = await requestSignedUpload('BUSINESS', BUSINESS_ENTITY_ID);
+  // #583: a brand logo is always an image (checkBrandAssetFile above accepts
+  // png/jpeg/webp and nothing else), so it is always signed with the metadata
+  // strip. A logo carrying the photographer's coordinates is the same leak as
+  // a kin photo carrying them.
+  const sign = await requestSignedUpload('BUSINESS', BUSINESS_ENTITY_ID, 'image');
 
   input.onStage?.('uploading');
   const cloud = await uploadToCloudinary(input.file, sign);

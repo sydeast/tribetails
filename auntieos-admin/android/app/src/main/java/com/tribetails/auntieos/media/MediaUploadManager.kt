@@ -143,22 +143,15 @@ class MediaUploadManager(
         onProgress: (UploadProgress) -> Unit
     ): UploadResult {
         onProgress(UploadProgress(file.name, 0, file.length(), 0))
-        val uploadAuth = fetchSignedUploadAuth(folder, entityType, entityId)
+        val uploadAuth = fetchSignedUploadAuth(folder, entityType, entityId, mediaType)
 
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "file",
-                file.name,
-                ProgressRequestBody(file, mimeType) { bytes, total ->
-                    onProgress(UploadProgress(file.name, bytes, total))
-                }
-            )
-            .addFormDataPart("api_key", uploadAuth.apiKey)
-            .addFormDataPart("timestamp", uploadAuth.timestamp.toString())
-            .addFormDataPart("signature", uploadAuth.signature)
-            .addFormDataPart("folder", uploadAuth.folder)
-            .build()
+        val requestBody = buildCloudinaryUploadBody(
+            uploadAuth,
+            ProgressRequestBody(file, mimeType) { bytes, total ->
+                onProgress(UploadProgress(file.name, bytes, total))
+            },
+            file.name,
+        )
 
         val request = Request.Builder()
             .url("https://api.cloudinary.com/v1_1/${uploadAuth.cloudName}/auto/upload")
@@ -195,12 +188,51 @@ class MediaUploadManager(
         )
     }
 
-    private suspend fun fetchSignedUploadAuth(folder: String, entityType: MediaEntityType, entityId: String): SignedUploadAuth {
+    /**
+     * The exact multipart form posted to Cloudinary.
+     *
+     * #583: the signer signs `transformation=fl_force_strip` for image uploads,
+     * which is what makes the STORED ORIGINAL carry no EXIF GPS. Cloudinary
+     * recomputes the signature over the fields it RECEIVES, so this field is
+     * posted exactly when the signer signed one and never otherwise: a blank
+     * value means no transformation was signed (video/raw), and posting one
+     * anyway is the same Invalid Signature as dropping a signed one.
+     *
+     * Internal, and split out of [uploadToCloudinary], so the posted field set
+     * is assertable without a network call or a staged file on disk.
+     */
+    internal fun buildCloudinaryUploadBody(
+        auth: SignedUploadAuth,
+        fileBody: RequestBody,
+        fileName: String,
+    ): MultipartBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("file", fileName, fileBody)
+        .addFormDataPart("api_key", auth.apiKey)
+        .addFormDataPart("timestamp", auth.timestamp.toString())
+        .addFormDataPart("signature", auth.signature)
+        .addFormDataPart("folder", auth.folder)
+        .also { builder ->
+            if (auth.transformation.isNotBlank()) {
+                builder.addFormDataPart("transformation", auth.transformation)
+            }
+        }
+        .build()
+    private suspend fun fetchSignedUploadAuth(
+        folder: String,
+        entityType: MediaEntityType,
+        entityId: String,
+        mediaType: MediaType,
+    ): SignedUploadAuth {
         val idToken = repository.currentAdminIdToken(forceRefresh = false).getOrElse { throw it }
         val payload = JSONObject()
             .put("folder", folder)
             .put("entityType", entityType.name)
             .put("entityId", entityId)
+            // #583: tells the signer which incoming transformation to sign. The
+            // file's own MIME type decided this (determineMediaType), never a
+            // caller, so a photo is always signed with the metadata strip.
+            .put("resourceKind", cloudinaryResourceKind(mediaType))
             .toString()
         val request = Request.Builder()
             .url("https://auntieos-ttpc.web.app/api/cloudinary/sign-upload")
@@ -219,7 +251,10 @@ class MediaUploadManager(
             apiKey = body.optString("apiKey"),
             timestamp = body.optLong("timestamp"),
             signature = body.optString("signature"),
-            folder = body.optString("folder")
+            folder = body.optString("folder"),
+            // Absent on a signer that predates #583: blank means "sign nothing
+            // extra, post nothing extra", which is the old request verbatim.
+            transformation = body.optString("transformation")
         ).also {
             if (it.cloudName.isBlank() || it.apiKey.isBlank() || it.signature.isBlank() || it.folder.isBlank()) {
                 error("Cloudinary signing response missing required fields")
@@ -227,6 +262,22 @@ class MediaUploadManager(
         }
     }
 
+    /**
+     * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
+     * signer so it knows whether to sign the metadata-strip transformation.
+     *
+     * IMAGE is the only kind that strips: `fl_force_strip` is an image flag,
+     * and an incoming transformation on a video would mean re-encoding the
+     * whole file inside the upload request. Audio and documents are `raw`.
+     *
+     * Internal rather than private so the upload contract is testable without
+     * a network call or a real Uri.
+     */
+    internal fun cloudinaryResourceKind(mediaType: MediaType): String = when (mediaType) {
+        MediaType.IMAGE -> "image"
+        MediaType.VIDEO -> "video"
+        MediaType.AUDIO, MediaType.DOCUMENT -> "raw"
+    }
     private fun determineMediaType(mimeType: String, file: File): MediaType {
         val normalizedMime = mimeType.lowercase()
         return when {
@@ -333,12 +384,18 @@ class MediaUploadManager(
         val mimeType: String,
     )
 
-    private data class SignedUploadAuth(
+    internal data class SignedUploadAuth(
         val cloudName: String,
         val apiKey: String,
         val timestamp: Long,
         val signature: String,
         val folder: String,
+        /**
+         * #583. The incoming transformation the SERVER signed (`fl_force_strip`
+         * for an image, blank otherwise). Signed, therefore not optional: post
+         * it verbatim when non-blank, never when blank.
+         */
+        val transformation: String = "",
     )
 
     private class ProgressRequestBody(

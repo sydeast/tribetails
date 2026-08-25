@@ -490,6 +490,9 @@ class PortalApi(private val fns: FunctionsClient) {
             signature      = raw["signature"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             folder         = raw["folder"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             allowedFormats = raw["allowedFormats"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            // #583. Blank on a signer that predates it: nothing signed, nothing
+            // posted, which is the old request verbatim.
+            transformation = raw["transformation"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         )
 
     suspend fun getBusinessContact(): com.kinfolk.portal.config.BusinessContact {

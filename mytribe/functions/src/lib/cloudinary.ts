@@ -7,6 +7,13 @@ export interface CloudinarySignedUpload {
   signature: string;
   folder: string;
   allowedFormats: string;
+  /**
+   * #583. The incoming transformation the server signed. Always
+   * `fl_force_strip` here: every folder this signer scopes is a photo folder
+   * (kin photos, kinfolk avatars), so there is no non-image case. Part of the
+   * signature base, so a client MUST echo it verbatim in the upload POST.
+   */
+  transformation: string;
 }
 
 /** Image formats every signed upload is constrained to, both at Cloudinary
@@ -17,6 +24,29 @@ export interface CloudinarySignedUpload {
  *  `/raw/upload` or `/video/upload` and store arbitrary non-image content.
  *  Signing `allowed_formats` closes that at the source. */
 const ALLOWED_IMAGE_FORMATS = 'jpg,png,webp,gif';
+
+/** #583: photo location metadata does not survive an upload.
+ *
+ *  A photo taken with the phone's location services on carries the coordinates
+ *  inside the file, in its EXIF block, before the portal ever sees it. The
+ *  bytes go straight from the client to api.cloudinary.com — nothing of ours
+ *  touches them in flight — so the only lever is the signature. A param we
+ *  sign is a param the client is forced to send verbatim; a param we do not
+ *  sign it cannot add. So the strip instruction is signed.
+ *
+ *  `fl_force_strip` is Cloudinary's own flag for this: "Instructs Cloudinary to
+ *  clear all image metadata (IPTC, Exif and XMP) while applying an incoming
+ *  transformation". Passed as the `transformation` upload param it IS that
+ *  incoming transformation, and incoming transformations are applied before
+ *  the asset is stored, so the STORED ORIGINAL is the stripped file rather
+ *  than a stripped copy of a coordinate-bearing original.
+ *
+ *  IT IS ALL-OR-NOTHING: the Upload API has no GPS-only option, so capture
+ *  time, camera/lens, IPTC and XMP go with the coordinates, and the image is
+ *  re-encoded to do it. Cloudinary auto-rotates from the EXIF orientation tag
+ *  before stripping (its documented default), so a phone photo does not come
+ *  back sideways. */
+const STRIP_METADATA_TRANSFORMATION = 'fl_force_strip';
 
 /**
  * Classic Cloudinary signed-upload recipe: sha1(sorted params + api_secret).
@@ -31,8 +61,11 @@ export function signCloudinaryFolderUpload(params: {
   folder: string;
 }): CloudinarySignedUpload {
   const timestamp = Math.floor(Date.now() / 1000);
+  // Alphabetical by param name, per Cloudinary's signature recipe:
+  // allowed_formats < folder < timestamp < transformation.
   const signatureBase =
-    `allowed_formats=${ALLOWED_IMAGE_FORMATS}&folder=${params.folder}&timestamp=${timestamp}${params.apiSecret}`;
+    `allowed_formats=${ALLOWED_IMAGE_FORMATS}&folder=${params.folder}&timestamp=${timestamp}` +
+    `&transformation=${STRIP_METADATA_TRANSFORMATION}${params.apiSecret}`;
   const signature = crypto.createHash('sha1').update(signatureBase).digest('hex');
   return {
     cloudName: params.cloudName,
@@ -41,6 +74,7 @@ export function signCloudinaryFolderUpload(params: {
     signature,
     folder: params.folder,
     allowedFormats: ALLOWED_IMAGE_FORMATS,
+    transformation: STRIP_METADATA_TRANSFORMATION,
   };
 }
 

@@ -16,6 +16,7 @@ import {
   uploadToCloudinary,
   writeMediaFileDoc,
   uploadMediaFile,
+  resourceKindForFile,
   cloudinaryThumbnailUrl,
   BUSINESS_ENTITY_ID,
   type CloudinarySignedUpload,
@@ -30,6 +31,7 @@ function signedUpload(over: Partial<CloudinarySignedUpload> = {}): CloudinarySig
     signature: 'abc123signature',
     folder: 'tribetails/kinfolk/kf1',
     allowedFormats: 'jpg,png,webp,gif',
+    transformation: 'fl_force_strip',
     entityType: 'KINFOLK',
     entityId: 'kf1',
     ...over,
@@ -89,7 +91,31 @@ describe('requestSignedUpload', () => {
       folder: 'tribetails/kinfolk/kf1',
       entityType: 'KINFOLK',
       entityId: 'kf1',
+      // #583: the signer needs to know which incoming transformation to sign.
+      resourceKind: 'image',
     });
+  });
+  // #583. The signer defaults an absent resourceKind to image, but a client
+  // that simply never sends it would leave that default as the ONLY thing
+  // standing between a photo and its coordinates. Pin that the field is on the
+  // wire, and that a video upload asks for the video signature rather than an
+  // image-only transformation Cloudinary would reject.
+  it('#583 sends the resourceKind the caller derived from the file', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, signedUpload()));
+    await requestSignedUpload('KINFOLK', 'kf1', 'video');
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(opts.body as string).resourceKind).toBe('video');
+  });
+  it('#583 carries the signed transformation through to the grant', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, signedUpload()));
+    const result = await requestSignedUpload('KINFOLK', 'kf1');
+    expect(result.transformation).toBe('fl_force_strip');
+  });
+  it('#583 treats a signer that sends no transformation as "post none"', async () => {
+    const { transformation: _drop, ...noStrip } = signedUpload();
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, noStrip));
+    const result = await requestSignedUpload('KINFOLK', 'kf1');
+    expect(result.transformation).toBe('');
   });
 
   it('returns the parsed grant, preferring the SERVER folder over the request guess', async () => {
@@ -168,6 +194,37 @@ describe('uploadToCloudinary', () => {
     expect(form.get('folder')).toBe('tribetails/kinfolk/kf1');
     expect(form.get('allowed_formats')).toBeNull();
     expect((form.get('file') as File).name).toBe('photo.jpg');
+  });
+  // #583. The strip only happens if this field actually reaches Cloudinary:
+  // the server signed it, so a client that keeps it out of the form does not
+  // "skip the strip", it gets an Invalid Signature. Both halves are pinned.
+  it('#583 posts the signed transformation so the STORED ORIGINAL is stripped', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, {
+        secure_url: 'https://res.cloudinary.com/tribetails/image/upload/v1/abc.jpg',
+        public_id: 'tribetails/kinfolk/kf1/abc',
+        resource_type: 'image',
+        format: 'jpg',
+        bytes: 999,
+      }),
+    );
+    await uploadToCloudinary(file(), signedUpload({ transformation: 'fl_force_strip' }));
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((opts.body as FormData).get('transformation')).toBe('fl_force_strip');
+  });
+  it('#583 posts NO transformation field when the signer signed none (video/raw)', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, {
+        secure_url: 'https://res.cloudinary.com/tribetails/video/upload/v1/clip.mp4',
+        public_id: 'tribetails/kinfolk/kf1/clip',
+        resource_type: 'video',
+        format: 'mp4',
+        bytes: 999,
+      }),
+    );
+    await uploadToCloudinary(file(), signedUpload({ transformation: '' }));
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((opts.body as FormData).get('transformation')).toBeNull();
   });
 
   it('resolves the shape the writer needs, including video duration when present', async () => {
@@ -373,5 +430,68 @@ describe('uploadMediaFile (orchestrator)', () => {
       uploadMediaFile({ file: file(), entityType: 'KINFOLK', entityId: 'kf1' }),
     ).rejects.toThrow('Invalid Signature');
     expect(addDoc).not.toHaveBeenCalled();
+  });
+});
+// ---------------------------------------------------------------------------
+// #583: the resource kind is read off the FILE, never chosen by a caller
+// ---------------------------------------------------------------------------
+// The signer strips only when the client says "image". If a caller could pass
+// that in by hand, a mislabelled photo would keep its coordinates, so the one
+// thing worth pinning is that the file's own MIME type decides.
+describe('resourceKindForFile (#583)', () => {
+  it('reports image for every image MIME type, including HEIC from a phone', () => {
+    expect(resourceKindForFile({ type: 'image/jpeg' })).toBe('image');
+    expect(resourceKindForFile({ type: 'image/png' })).toBe('image');
+    expect(resourceKindForFile({ type: 'image/heic' })).toBe('image');
+    expect(resourceKindForFile({ type: 'IMAGE/JPEG' })).toBe('image');
+  });
+  it('reports video for video MIME types, so no image-only flag is signed for them', () => {
+    expect(resourceKindForFile({ type: 'video/mp4' })).toBe('video');
+    expect(resourceKindForFile({ type: 'video/quicktime' })).toBe('video');
+  });
+  it('reports raw for anything else, including a blank type', () => {
+    expect(resourceKindForFile({ type: 'application/pdf' })).toBe('raw');
+    expect(resourceKindForFile({ type: '' })).toBe('raw');
+  });
+});
+describe('uploadMediaFile: the kind it signs comes from the file (#583)', () => {
+  function bodyOf(callIndex: number): Record<string, unknown> {
+    const [, opts] = vi.mocked(fetch).mock.calls[callIndex] as [string, RequestInit];
+    return JSON.parse(opts.body as string);
+  }
+  function cloudinaryOk(resourceType: string): Response {
+    return jsonResponse(200, {
+      secure_url: `https://res.cloudinary.com/tribetails/${resourceType}/upload/v1/a`,
+      public_id: 'tribetails/kinfolk/kf1/a',
+      resource_type: resourceType,
+      format: resourceType === 'video' ? 'mp4' : 'jpg',
+      bytes: 10,
+    });
+  }
+  it('asks for the image signature — and posts the strip — for a photo', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, signedUpload({ transformation: 'fl_force_strip' })))
+      .mockResolvedValueOnce(cloudinaryOk('image'));
+    await uploadMediaFile({
+      file: new File(['b'], 'beach.jpg', { type: 'image/jpeg' }),
+      entityType: 'KINFOLK',
+      entityId: 'kf1',
+    });
+    expect(bodyOf(0).resourceKind).toBe('image');
+    const [, upload] = vi.mocked(fetch).mock.calls[1] as [string, RequestInit];
+    expect((upload.body as FormData).get('transformation')).toBe('fl_force_strip');
+  });
+  it('asks for the video signature for a video, and posts no transformation', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, signedUpload({ transformation: '' })))
+      .mockResolvedValueOnce(cloudinaryOk('video'));
+    await uploadMediaFile({
+      file: new File(['b'], 'clip.mp4', { type: 'video/mp4' }),
+      entityType: 'KINFOLK',
+      entityId: 'kf1',
+    });
+    expect(bodyOf(0).resourceKind).toBe('video');
+    const [, upload] = vi.mocked(fetch).mock.calls[1] as [string, RequestInit];
+    expect((upload.body as FormData).get('transformation')).toBeNull();
   });
 });

@@ -85,6 +85,15 @@ data class CloudinarySignedUpload(
     val timestamp: Long,
     val signature: String,
     val folder: String,
+    /**
+     * #583. The incoming transformation the SERVER signed: `fl_force_strip`
+     * for an image (so the stored original carries no EXIF GPS), blank for a
+     * video or a raw file. Cloudinary recomputes the signature over the fields
+     * it receives, so this must be posted verbatim when non-blank and must not
+     * be posted at all when blank. Blank is also what a signer that predates
+     * #583 returns, which is why it defaults rather than being required.
+     */
+    val transformation: String = "",
     val entityType: String,
     val entityId: String,
 )
