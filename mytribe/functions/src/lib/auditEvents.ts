@@ -231,6 +231,14 @@ export const AUDIT_EVENTS = {
   // because "who tried to complete a cancelled visit" is exactly the question
   // an audit trail exists to answer, and a success-only trail cannot.
   BOOKING_TRANSITION_REFUSED: 'BOOKING_TRANSITION_REFUSED',
+  // #582: `verifyVisitArrival` measured a recorded arrival against the
+  // household's stored coordinate. Written on EVERY outcome, including the ones
+  // that verify nothing (no household coordinate, a fix too imprecise to be
+  // evidence), because "the check did not run, and why" is the question an
+  // operator asks when a visit completes unverified. The payload carries the
+  // distance, the radius and the reported accuracy; it never carries the
+  // coordinate the Auntie's device sent, which is measured and discarded.
+  VISIT_ARRIVAL_LOCATION_CHECK: 'VISIT_ARRIVAL_LOCATION_CHECK',
   // B6: admin manually blocks a window so kinfolk can't book it (createBlockedTimeSlot).
   CREATE_BLOCKED_TIME_SLOT: 'CREATE_BLOCKED_TIME_SLOT',
   // #574: the same window unblocked again (deleteBlockedTimeSlot). Recorded

@@ -434,6 +434,10 @@ export { listPendingBookingRequests } from './admin/pendingBookingRequests';
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.
 export { transitionBookingStatus } from './admin/transitionBookingStatus';
+// #582: measures a recorded arrival against the household's stored coordinate
+// and stamps the DISTANCE on the visit. Beside transitionBookingStatus because
+// that callable is what enforces the result at COMPLETE.
+export { verifyVisitArrival } from './admin/verifyVisitArrival';
 // Punchlist B4: the write half of the shared vet catalog. `submitVetClinic`
 // (portal, create) had no update or delete counterpart on the server, so both
 // Kotlin trees wrote `vet_clinics` directly and the React admin could not edit a
@@ -564,6 +568,10 @@ export { onKinTaleCommentCreate } from './triggers/onKinTaleCommentCreate';
 export { onBookingNoteCreate } from './triggers/onBookingNoteCreate';
 export { onRatingCreate } from './triggers/onRatingCreate';
 export { onKinfolkCreate } from './triggers/onKinfolkCreate';
+// #582: geocodes a household's address into `serviceLocation` whenever the
+// address on the record changes. The only hook that sees every address write:
+// three client surfaces patch `kinfolk` directly, with no callable in front.
+export { onKinfolkAddressWrite } from './triggers/onKinfolkAddressWrite';
 // #593: strips location metadata from every uploaded video, asynchronously.
 export { onMediaFileVideoStrip } from './triggers/onMediaFileVideoStrip';
 
