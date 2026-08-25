@@ -12,6 +12,7 @@ import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.content.PartData
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
@@ -90,24 +91,7 @@ internal object JvmMediaUpload {
 
             // 3. Multipart upload to Cloudinary.
             val cloudResp = http.post("https://api.cloudinary.com/v1_1/${sign.cloudName}/auto/upload") {
-                setBody(
-                    MultiPartFormDataContent(
-                        formData {
-                            append("file", fileBytes, Headers.build {
-                                append(HttpHeaders.ContentType, resolvedMime)
-                                append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
-                            })
-                            append("api_key", sign.apiKey)
-                            append("timestamp", sign.timestamp.toString())
-                            append("signature", sign.signature)
-                            append("folder", sign.folder)
-                            // #583: signed server-side, so it is posted exactly when
-                            // it was signed and never otherwise. A blank value means
-                            // the signer signed no transformation.
-                            if (sign.transformation.isNotBlank()) append("transformation", sign.transformation)
-                        }
-                    )
-                )
+                setBody(MultiPartFormDataContent(uploadFormData(fileBytes, fileName, resolvedMime, sign)))
             }
             val cloudText = cloudResp.bodyAsText()
             if (!cloudResp.status.isSuccess()) {
@@ -153,6 +137,34 @@ internal object JvmMediaUpload {
         }
     }
 
+    /**
+     * The exact multipart form posted to Cloudinary.
+     *
+     * #583: `transformation` is signed server-side, so it is posted exactly
+     * when the signer signed one and never otherwise. A blank value means no
+     * transformation was signed; posting one anyway is the same Invalid
+     * Signature as dropping a signed one.
+     *
+     * Internal, and split out of [upload], so the posted field set is
+     * assertable without a live signed-upload endpoint or a Cloudinary round
+     * trip.
+     */
+    internal fun uploadFormData(
+        fileBytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        sign: CloudinarySignedUpload,
+    ): List<PartData> = formData {
+        append("file", fileBytes, Headers.build {
+            append(HttpHeaders.ContentType, mimeType)
+            append(HttpHeaders.ContentDisposition, ContentDisposition.File.withParameter(ContentDisposition.Parameters.FileName, fileName).toString())
+        })
+        append("api_key", sign.apiKey)
+        append("timestamp", sign.timestamp.toString())
+        append("signature", sign.signature)
+        append("folder", sign.folder)
+        if (sign.transformation.isNotBlank()) append("transformation", sign.transformation)
+    }
     /**
      * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
      * signer so it knows whether to sign the metadata-strip transformation.

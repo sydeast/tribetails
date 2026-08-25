@@ -145,31 +145,13 @@ class MediaUploadManager(
         onProgress(UploadProgress(file.name, 0, file.length(), 0))
         val uploadAuth = fetchSignedUploadAuth(folder, entityType, entityId, mediaType)
 
-        val requestBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "file",
-                file.name,
-                ProgressRequestBody(file, mimeType) { bytes, total ->
-                    onProgress(UploadProgress(file.name, bytes, total))
-                }
-            )
-            .addFormDataPart("api_key", uploadAuth.apiKey)
-            .addFormDataPart("timestamp", uploadAuth.timestamp.toString())
-            .addFormDataPart("signature", uploadAuth.signature)
-            .addFormDataPart("folder", uploadAuth.folder)
-            .also { builder ->
-                // #583: the signer signs `transformation=fl_force_strip` for image
-                // uploads so the STORED ORIGINAL has no EXIF GPS. Cloudinary
-                // recomputes the signature over the fields it receives, so this
-                // field is posted exactly when the signer signed one and never
-                // otherwise — a blank value means no transformation was signed
-                // (video/raw), and posting it anyway would be an Invalid Signature.
-                if (uploadAuth.transformation.isNotBlank()) {
-                    builder.addFormDataPart("transformation", uploadAuth.transformation)
-                }
-            }
-            .build()
+        val requestBody = buildCloudinaryUploadBody(
+            uploadAuth,
+            ProgressRequestBody(file, mimeType) { bytes, total ->
+                onProgress(UploadProgress(file.name, bytes, total))
+            },
+            file.name,
+        )
 
         val request = Request.Builder()
             .url("https://api.cloudinary.com/v1_1/${uploadAuth.cloudName}/auto/upload")
@@ -206,6 +188,36 @@ class MediaUploadManager(
         )
     }
 
+    /**
+     * The exact multipart form posted to Cloudinary.
+     *
+     * #583: the signer signs `transformation=fl_force_strip` for image uploads,
+     * which is what makes the STORED ORIGINAL carry no EXIF GPS. Cloudinary
+     * recomputes the signature over the fields it RECEIVES, so this field is
+     * posted exactly when the signer signed one and never otherwise: a blank
+     * value means no transformation was signed (video/raw), and posting one
+     * anyway is the same Invalid Signature as dropping a signed one.
+     *
+     * Internal, and split out of [uploadToCloudinary], so the posted field set
+     * is assertable without a network call or a staged file on disk.
+     */
+    internal fun buildCloudinaryUploadBody(
+        auth: SignedUploadAuth,
+        fileBody: RequestBody,
+        fileName: String,
+    ): MultipartBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart("file", fileName, fileBody)
+        .addFormDataPart("api_key", auth.apiKey)
+        .addFormDataPart("timestamp", auth.timestamp.toString())
+        .addFormDataPart("signature", auth.signature)
+        .addFormDataPart("folder", auth.folder)
+        .also { builder ->
+            if (auth.transformation.isNotBlank()) {
+                builder.addFormDataPart("transformation", auth.transformation)
+            }
+        }
+        .build()
     private suspend fun fetchSignedUploadAuth(
         folder: String,
         entityType: MediaEntityType,
@@ -372,7 +384,7 @@ class MediaUploadManager(
         val mimeType: String,
     )
 
-    private data class SignedUploadAuth(
+    internal data class SignedUploadAuth(
         val cloudName: String,
         val apiKey: String,
         val timestamp: Long,
