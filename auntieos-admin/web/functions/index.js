@@ -437,9 +437,35 @@ function validateUploadFolder(folder, entityType, entityId) {
 //
 // IMAGES ONLY. `fl_force_strip` is an image flag, and any incoming
 // transformation on a video means re-encoding the whole file inside the upload
-// request. Video/raw uploads are signed WITHOUT it — see the PR for #583.
+// request. Video/raw uploads are signed WITHOUT it — see the PR for #583, and
+// see UPLOAD_PENDING_STRIP_TAG below for what video gets instead (#593).
 const STRIP_METADATA_TRANSFORMATION = 'fl_force_strip';
 const UPLOAD_RESOURCE_KINDS = ['image', 'video', 'raw'];
+
+// ── #593: every uploaded video is tagged as not-yet-stripped ────────────────
+//
+// Video cannot be stripped inside the upload the way a photo is; the operator
+// ruling on #593 is to strip asynchronously afterwards and accept a window.
+// The strip itself lives in mytribe/functions (an `onDocumentCreated` trigger
+// on `media_files`, plus a sweep). This tag is what makes that job's coverage
+// checkable INDEPENDENTLY of our own database.
+//
+// The tag rides in on the signature for the same reason the photo strip does:
+// Cloudinary recomputes the signature over the params it receives, so a param
+// we sign is a param the client is forced to send verbatim, and a param we do
+// not sign it cannot add. So from the instant a video lands in the account it
+// carries `needs-gps-strip`, on every client, including any client written
+// later, whether or not that client remembers to write a Firestore row.
+//
+// Only a verified strip removes it (the overwrite posts an empty `tags`). So
+// `GET /resources/video/tags/needs-gps-strip` is a live, account-side list of
+// every video whose coordinates are still in place — including the ones our
+// Firestore-driven job can never see, because the upload succeeded and the
+// client died before writing the `media_files` doc.
+//
+// Images do not get it: they are already stripped before storage, so a
+// pending-strip tag on a photo would be a lie.
+const UPLOAD_PENDING_STRIP_TAG = 'needs-gps-strip';
 
 // Which transformation to sign for a client-declared resource kind. Absent or
 // blank means IMAGE: the default has to fail toward stripping, because the
@@ -451,13 +477,28 @@ const UPLOAD_RESOURCE_KINDS = ['image', 'video', 'raw'];
 //
 // Exported for hermetic unit tests; called by signCloudinaryUpload.
 function uploadTransformationFor(resourceKind) {
+  return normalizeResourceKind(resourceKind) === 'image' ? STRIP_METADATA_TRANSFORMATION : '';
+}
+
+// #593. Which tags to sign for a client-declared resource kind. Video gets the
+// pending-strip tag; image and raw get none. Blank string means "sign no tags
+// and post none", exactly like a blank transformation.
+//
+// Exported for hermetic unit tests; called by signCloudinaryUpload.
+function uploadTagsFor(resourceKind) {
+  return normalizeResourceKind(resourceKind) === 'video' ? UPLOAD_PENDING_STRIP_TAG : '';
+}
+
+// Shared by both of the above so a resource kind is validated once and cannot
+// mean one thing to the transformation decision and another to the tag one.
+function normalizeResourceKind(resourceKind) {
   const kind = resourceKind === undefined || resourceKind === null || resourceKind === ''
     ? 'image'
     : resourceKind;
   if (typeof kind !== 'string' || !UPLOAD_RESOURCE_KINDS.includes(kind)) {
     throw new Error(`resourceKind must be one of ${UPLOAD_RESOURCE_KINDS.join('/')}`);
   }
-  return kind === 'image' ? STRIP_METADATA_TRANSFORMATION : '';
+  return kind;
 }
 
 // Fail loud on a WRONG secret, not just a MISSING one.
@@ -536,9 +577,12 @@ exports.signCloudinaryUpload = onRequest(
     }
 
     // #583: what Cloudinary must do to the bytes before storing them.
+    // #593: and how the asset must be labelled once it is stored.
     let transformation;
+    let tags;
     try {
       transformation = uploadTransformationFor(resourceKind);
+      tags = uploadTagsFor(resourceKind);
     } catch (e) {
       res.status(400).json({ error: e.message });
       return;
@@ -607,10 +651,17 @@ exports.signCloudinaryUpload = onRequest(
     // (video/raw), which is why `transformation` is only put in `signedParams`
     // when it is non-empty. A blank value signed but not sent — or sent but not
     // signed — is the same "Invalid Signature" as any other mismatch.
+    //
+    // #593 adds `tags` on exactly the same terms, for video uploads. The two
+    // are disjoint by construction (image gets a transformation and no tags,
+    // video gets tags and no transformation), but nothing here assumes that:
+    // each is signed if and only if it is non-empty, and posted on the same
+    // condition.
     const signedParams = {
       folder: signFolder,
       timestamp: String(timestamp),
       ...(transformation ? { transformation } : {}),
+      ...(tags ? { tags } : {}),
     };
     const signatureBase = Object.keys(signedParams)
       .sort()
@@ -627,6 +678,10 @@ exports.signCloudinaryUpload = onRequest(
       // Blank for video/raw. Clients MUST post this field verbatim when it is
       // non-empty and MUST NOT post it when it is empty.
       transformation,
+      // #593. Blank for image/raw, `needs-gps-strip` for video. Same contract
+      // as `transformation`: post it verbatim when non-empty, omit it entirely
+      // when empty.
+      tags,
       entityType,
       entityId,
       signedBy: decodedToken.uid,
@@ -874,6 +929,8 @@ module.exports.ANTHROPIC_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT;
 module.exports.validateUploadFolder = validateUploadFolder;
 module.exports.uploadTransformationFor = uploadTransformationFor;
 module.exports.STRIP_METADATA_TRANSFORMATION = STRIP_METADATA_TRANSFORMATION;
+module.exports.uploadTagsFor = uploadTagsFor;
+module.exports.UPLOAD_PENDING_STRIP_TAG = UPLOAD_PENDING_STRIP_TAG;
 module.exports.cloudinaryCredentialsValid = cloudinaryCredentialsValid;
 module.exports.__resetCloudinaryCredentialCache = () => {
   cloudinaryCredentialCheck = null;

@@ -25,6 +25,18 @@ export interface CloudinarySignedUpload {
  *  Signing `allowed_formats` closes that at the source. */
 const ALLOWED_IMAGE_FORMATS = 'jpg,png,webp,gif';
 
+/** #593 note, for anyone extending video handling: THIS signer cannot produce a
+ *  video upload, so the asynchronous video location strip does not apply to
+ *  anything it grants. Two independent gates say so — `allowed_formats` above
+ *  is folded into the signature base, so Cloudinary itself refuses a non-image
+ *  file, and `assertCloudinaryUrlInFolder` below refuses to persist any URL
+ *  that is not `/image/upload/`. Every folder this signer scopes (kin photos,
+ *  kinfolk avatars) is a photo folder, and both portal clients constrain their
+ *  file pickers to jpeg/png/webp/gif on top of that. If a video path is ever
+ *  wanted here, all three have to change deliberately — and note the strip job
+ *  in `stripVideoLocationJob.ts` finds its work through `media_files`, a
+ *  collection these portal callables do not write to at all. */
+
 /** #583: photo location metadata does not survive an upload.
  *
  *  A photo taken with the phone's location services on carries the coordinates

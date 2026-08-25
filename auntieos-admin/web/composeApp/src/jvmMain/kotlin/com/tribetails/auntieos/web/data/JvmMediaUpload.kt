@@ -127,16 +127,42 @@ internal object JvmMediaUpload {
                 // Real signed-in uploader (was hardcoded "auntie"); single-admin fallback.
                 uploadedBy = jvmFirebaseUid()?.takeIf { it.isNotBlank() } ?: "auntie",
                 cloudinaryPublicId = publicId,
+                // #593. Only a video is queued for the asynchronous location
+                // strip. An image was already stripped before Cloudinary stored
+                // it (#583), so marking one PENDING would sit in the sweep's
+                // queue forever as a false positive.
+                gpsStripStatus = if (isVideo) "PENDING" else "",
             )
             // Stage 0I: a test admin must stamp kinfolkId == testTribeId or the rules deny the write.
             val scoped = record.withSandboxScope(platformTestTribeId(forceRefresh = false))
-            val id = JvmFirestoreRest.addDoc("media_files", codec.encodeToString(scoped))
+            val id = JvmFirestoreRest.addDoc("media_files", encodeMediaFileForWrite(scoped))
             WriteResult.Ok(scoped.copy(_id = id))
         } catch (e: Exception) {
             WriteResult.Err(e.message ?: "upload failed")
         }
     }
 
+    /**
+     * #593. Serialises a `media_files` document, dropping the gpsStrip* keys
+     * when there is no asynchronous strip to report.
+     *
+     * The codec here runs with `encodeDefaults = true`, so a data class field
+     * always emits its key — which would stamp `gpsStripStatus: ""` on every
+     * image. That is the equality-on-empty-string trap this repo already
+     * documents for `kinfolkId` and `invoiceId`: a doc written blank and a doc
+     * that never had the field read as two different things to any later
+     * query, and only one of those two is what "no async strip applies" means.
+     * Android's writer deletes the same keys for the same reason. Absent is the
+     * one representation every reader already has to handle.
+     *
+     * Internal so the omission is assertable without a Firestore round trip.
+     */
+    internal fun encodeMediaFileForWrite(record: MediaFile): String {
+        val encoded = codec.encodeToJsonElement(MediaFile.serializer(), record).jsonObject
+        if (record.gpsStripStatus.isNotBlank()) return encoded.toString()
+        val kept = encoded.filterKeys { it != "gpsStripStatus" && it != "gpsStripAttempts" && it != "gpsStripError" }
+        return JsonObject(kept).toString()
+    }
     /**
      * The exact multipart form posted to Cloudinary.
      *
@@ -164,6 +190,8 @@ internal object JvmMediaUpload {
         append("signature", sign.signature)
         append("folder", sign.folder)
         if (sign.transformation.isNotBlank()) append("transformation", sign.transformation)
+        // #593. Signed server-side on exactly the same terms.
+        if (sign.tags.isNotBlank()) append("tags", sign.tags)
     }
     /**
      * #583. Cloudinary's own resource vocabulary for a picked file, sent to the
@@ -212,6 +240,9 @@ internal object JvmMediaUpload {
             // Absent on a signer that predates #583: blank means "sign nothing
             // extra, post nothing extra", i.e. the old request verbatim.
             transformation = o["transformation"]?.jsonPrimitive?.content.orEmpty(),
+            // #593. Same defaulting as `transformation`: a signer that predates
+            // it signs no tags, so none are posted and the request is unchanged.
+            tags = o["tags"]?.jsonPrimitive?.content.orEmpty(),
             entityType = entityType,
             entityId = entityId,
         )

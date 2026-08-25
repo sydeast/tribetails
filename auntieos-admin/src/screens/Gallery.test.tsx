@@ -138,6 +138,26 @@ describe('Gallery screen, media stream', () => {
     expect(within(tileFor('Photo')).queryByText('1:15')).toBeNull();
   });
 
+  it('#593 badges a video whose location strip FAILED, and only that one', () => {
+    // The one strip state an operator has to see without reading a log: this
+    // video still carries the coordinates it was recorded with, and the retry
+    // sweep has stopped trying. PENDING is ordinary progress measured in
+    // seconds and STRIPPED is the expected outcome, so neither is decorated.
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'v1', fileType: 'VIDEO', description: 'Failed clip', gpsStripStatus: 'FAILED' }),
+        media({ _id: 'v2', fileType: 'VIDEO', description: 'Pending clip', gpsStripStatus: 'PENDING' }),
+        media({ _id: 'v3', fileType: 'VIDEO', description: 'Clean clip', gpsStripStatus: 'STRIPPED' }),
+        media({ _id: 'p1', fileType: 'IMAGE', description: 'A photo' }),
+      ],
+    };
+    render(<Gallery />);
+    expect(within(tileFor('Failed clip')).getByText('Location not removed')).toBeInTheDocument();
+    expect(within(tileFor('Pending clip')).queryByText('Location not removed')).toBeNull();
+    expect(within(tileFor('Clean clip')).queryByText('Location not removed')).toBeNull();
+    expect(within(tileFor('A photo')).queryByText('Location not removed')).toBeNull();
+  });
   it('shows a Profile badge only on the household\'s designated profile photo', () => {
     mediaAsync = {
       status: 'ready',

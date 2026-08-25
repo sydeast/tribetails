@@ -342,7 +342,7 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     const withoutStrip = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}` + 'demo-secret';
     assert.notStrictEqual(out.signature, crypto.createHash('sha1').update(withoutStrip).digest('hex'));
   });
-  it('#583 video upload: signs NO transformation, and the signature proves it', async () => {
+  it('#583/#593 video upload: NO transformation, but tags=needs-gps-strip, both in the signature', async () => {
     configureCloudinary();
     installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
     const res = makeRes();
@@ -353,12 +353,41 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
     assert.strictEqual(res.statusCode, 200);
     const out = res.jsonBody;
-    // blank tells the client to post no transformation field at all ...
+    // #583: a blank transformation still tells the client to post no
+    // transformation field at all. `fl_force_strip` is image-only, and an
+    // incoming transformation on a video means re-encoding it inside the
+    // upload request. That has not changed.
     assert.strictEqual(out.transformation, '');
-    // ... and the signature must match a base WITHOUT it, or every video
-    // upload would come back "Invalid Signature".
-    const base = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}` + 'demo-secret';
+    // #593: what HAS changed is that a video now carries a pending-strip tag
+    // from the moment it lands, so the account itself lists every video whose
+    // coordinates are still in place -- including one whose upload succeeded
+    // and whose Firestore row never got written.
+    assert.strictEqual(out.tags, 'needs-gps-strip');
+    // Alphabetical base: folder < tags < timestamp. The tag is genuinely IN the
+    // signature, so a client cannot drop it and cannot add one of its own.
+    const base = `folder=tribetails/kinfolk/kf_1&tags=needs-gps-strip&timestamp=${out.timestamp}` + 'demo-secret';
     assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+    // and it is NOT merely a returned constant: the same request without the
+    // tag in the base produces a different signature, so a video posted
+    // without it is refused by Cloudinary rather than stored untagged.
+    const withoutTag = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}` + 'demo-secret';
+    assert.notStrictEqual(out.signature, crypto.createHash('sha1').update(withoutTag).digest('hex'));
+  });
+  it('#593 image upload: signs NO tags -- a pending-strip tag on a photo would be a lie', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    const res = makeRes();
+    const body = {
+      folder: 'tribetails/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1',
+      resourceKind: 'image',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 200);
+    // A photo is stripped BEFORE Cloudinary stores it (#583), so it is never
+    // pending anything, and the base stays exactly what #583 fixed it at.
+    assert.strictEqual(res.jsonBody.tags, '');
+    const base = `folder=tribetails/kinfolk/kf_1&timestamp=${res.jsonBody.timestamp}&transformation=fl_force_strip` + 'demo-secret';
+    assert.strictEqual(res.jsonBody.signature, crypto.createHash('sha1').update(base).digest('hex'));
   });
   it('#583 raw upload (documents/audio): signs NO transformation', async () => {
     configureCloudinary();
@@ -372,6 +401,9 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     assert.strictEqual(res.statusCode, 200);
     const out = res.jsonBody;
     assert.strictEqual(out.transformation, '');
+    // #593: raw is documents and audio, neither of which carries a location
+    // atom this repo strips, so it gets no pending-strip tag either.
+    assert.strictEqual(out.tags, '');
     const base = `folder=tribetails/tribal_intel/pending&timestamp=${out.timestamp}` + 'demo-secret';
     assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
   });

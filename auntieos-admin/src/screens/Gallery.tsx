@@ -8,6 +8,7 @@ import {
   mediaCaption,
   mediaMetaLine,
   mediaDurationLabel,
+  mediaGpsStripState,
   filterGalleryMedia,
   galleryMonths,
   galleryKinfolkIds,
@@ -381,6 +382,13 @@ function GalleryTile({ media, householdName, taggedNames, onOpen }: GalleryTileP
   const caption = mediaCaption(media);
   const meta = mediaMetaLine(str(media.uploadedAt), str(media.uploadedBy));
   const duration = kind === 'video' ? mediaDurationLabel(media.durationSeconds) : undefined;
+  // #593. Only the FAILED state gets a badge. Pending is ordinary progress
+  // measured in seconds and badging it would put a scary label on every video
+  // for a moment; stripped is the expected outcome and needs no decoration.
+  // Failed means the video still carries the coordinates it was recorded with
+  // and no further retry is coming, which is the one thing an operator has to
+  // be able to see without opening a log.
+  const stripFailed = mediaGpsStripState(media) === 'failed';
   const accessibleLabel = caption !== '' ? caption : 'Media';
 
   return (
@@ -407,6 +415,11 @@ function GalleryTile({ media, householdName, taggedNames, onOpen }: GalleryTileP
           )}
           {duration !== undefined && <span className="gallery__tile-duration">{duration}</span>}
           {media.isProfilePhoto && <span className="gallery__tile-profile-badge">Profile</span>}
+          {stripFailed && (
+            <span className="gallery__tile-strip-badge" title="Location metadata could not be removed from this video.">
+              Location not removed
+            </span>
+          )}
         </div>
 
         <div className="gallery__tile-body">

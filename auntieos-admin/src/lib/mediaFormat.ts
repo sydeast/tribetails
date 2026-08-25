@@ -290,6 +290,41 @@ export function mediaTaggedKinIds(media: Pick<MediaFile, 'taggedKinIds'>): strin
 }
 
 /**
+ * #593. What the asynchronous video location strip has managed so far.
+ *
+ *   'pending'  queued, not processed yet. The stored original still holds
+ *              whatever coordinates the camera wrote. This is the exposure
+ *              window the operator ruling accepted, normally seconds.
+ *   'stripped' verified clean: the bytes Cloudinary serves were read back and
+ *              checked, not merely assumed.
+ *   'failed'   tried and did not succeed. The video still carries its
+ *              coordinates and needs a human. THIS is the state the UI has to
+ *              show; the other two are ordinary progress.
+ *   'unknown'  no state on the doc. Every image (stripped before storage, so
+ *              there is no async step to report), and every video that
+ *              predates #593. Deliberately NOT reported as clean: we do not
+ *              know, and a badge claiming otherwise would be a lie.
+ *
+ * Mirrors Android's `mediaGpsStripState` in MediaFormat.kt. Coerces an absent
+ * field, a null, or an unrecognized string rather than throwing: this runs per
+ * tile in the gallery grid.
+ */
+export type MediaGpsStripState = 'pending' | 'stripped' | 'failed' | 'unknown';
+
+export function mediaGpsStripState(media: Pick<MediaFile, 'gpsStripStatus'>): MediaGpsStripState {
+  switch (str(media.gpsStripStatus).trim().toUpperCase()) {
+    case 'PENDING':
+      return 'pending';
+    case 'STRIPPED':
+      return 'stripped';
+    case 'FAILED':
+      return 'failed';
+    default:
+      return 'unknown';
+  }
+}
+
+/**
  * Resolves a file's tagged kin ids to display names. Ports Android's
  * `taggedKinNames` (domain/GalleryFilters.kt) verbatim, including the part that
  * looks like a bug and is not: an id with no matching kin, or a kin with a blank

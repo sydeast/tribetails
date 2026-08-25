@@ -13,6 +13,7 @@ import {
   galleryFileTypes,
   galleryHasUnattachedMedia,
   mediaTaggedKinIds,
+  mediaGpsStripState,
   taggedKinNames,
   taggableKin,
   type TaggableKin,
@@ -337,5 +338,29 @@ describe('taggableKin (the same scope rule the saveMediaTags callable enforces)'
 
   it('offers nothing when the household has no kin, rather than falling back to everyone', () => {
     expect(taggableKin({ kinfolkId: 'fam-empty' }, roster)).toEqual([]);
+  });
+});
+describe('mediaGpsStripState (#593, the normalisation point for the async video strip)', () => {
+  it('reads the three states the job writes', () => {
+    expect(mediaGpsStripState({ gpsStripStatus: 'PENDING' })).toBe('pending');
+    expect(mediaGpsStripState({ gpsStripStatus: 'STRIPPED' })).toBe('stripped');
+    expect(mediaGpsStripState({ gpsStripStatus: 'FAILED' })).toBe('failed');
+  });
+  it('is case- and whitespace-insensitive: the field is raw Firestore free text', () => {
+    expect(mediaGpsStripState({ gpsStripStatus: ' failed ' })).toBe('failed');
+    expect(mediaGpsStripState({ gpsStripStatus: 'Stripped' })).toBe('stripped');
+  });
+  it('reads an ABSENT field as unknown, never as clean', () => {
+    // Absent means "no async strip applies here": every image, and every video
+    // that predates #593. Reporting those as `stripped` would put a clean bill
+    // of health on a video nobody has ever checked.
+    expect(mediaGpsStripState({})).toBe('unknown');
+    expect(mediaGpsStripState({ gpsStripStatus: undefined })).toBe('unknown');
+    expect(mediaGpsStripState({ gpsStripStatus: '' })).toBe('unknown');
+  });
+  it('reads a value it does not recognise as unknown rather than throwing', () => {
+    expect(mediaGpsStripState({ gpsStripStatus: 'RUNNING' })).toBe('unknown');
+    expect(mediaGpsStripState({ gpsStripStatus: null as unknown as string })).toBe('unknown');
+    expect(mediaGpsStripState({ gpsStripStatus: 7 as unknown as string })).toBe('unknown');
   });
 });

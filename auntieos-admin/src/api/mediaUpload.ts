@@ -115,6 +115,17 @@ export interface CloudinarySignedUpload {
    * Signature" from Cloudinary.
    */
   transformation: string;
+  /**
+   * #593. The tags the server SIGNED (`needs-gps-strip` for a video, blank for
+   * image/raw). Same contract as `transformation`: part of the signature base,
+   * so post it verbatim when non-empty and not at all when empty.
+   *
+   * A video's location metadata cannot be stripped inside the upload the way a
+   * photo's is, so it is stripped asynchronously afterwards. This tag marks the
+   * asset as not-yet-stripped at Cloudinary itself, independently of whether a
+   * Firestore row was ever written for it.
+   */
+  tags: string;
   entityType: string;
   entityId: string;
 }
@@ -186,6 +197,10 @@ export async function requestSignedUpload(
     // Defaults to blank so a signer that predates #583 keeps working: no
     // transformation signed, none posted, same request as before.
     transformation: body.transformation ?? '',
+    // Same defaulting as `transformation`, for the same reason: a signer that
+    // predates #593 signs no tags, so none are posted and the request stays
+    // byte-identical to what it was before.
+    tags: body.tags ?? '',
     entityType: body.entityType ?? entityType,
     entityId: body.entityId ?? entityId,
   };
@@ -227,6 +242,8 @@ export async function uploadToCloudinary(
   // #583. Signed server-side, so it is posted exactly when it was signed and
   // never otherwise: a blank value means the signer signed no transformation.
   if (sign.transformation) form.append('transformation', sign.transformation);
+  // #593. Signed server-side on exactly the same terms.
+  if (sign.tags) form.append('tags', sign.tags);
 
   const resp = await fetch(`https://api.cloudinary.com/v1_1/${sign.cloudName}/auto/upload`, {
     method: 'POST',
@@ -335,7 +352,21 @@ export async function writeMediaFileDoc(input: WriteMediaFileInput): Promise<str
     description: '',
     isProfilePhoto: false,
     durationSeconds: input.cloud.durationSeconds ?? 0,
+    // #593. Stamped on every upload, video or not, so the async strip job has
+    // the id it needs to address the asset without parsing it back out of a
+    // URL. Android and the desktop uploader have always written this field;
+    // the web path did not, which left web-uploaded videos addressable only by
+    // URL parsing.
+    cloudinaryPublicId: input.cloud.publicId,
   };
+  // #593. Only a video is queued for the asynchronous location strip. An image
+  // was already stripped before Cloudinary stored it (#583), so marking one
+  // PENDING would put a permanent false positive in the sweep's queue.
+  if (isVideo) {
+    fields.gpsStripStatus = 'PENDING';
+    fields.gpsStripAttempts = 0;
+    fields.gpsStripError = '';
+  }
   if (input.entityType === 'KINFOLK') fields.kinfolkId = input.entityId;
   if (typeof input.cloud.width === 'number') fields.width = input.cloud.width;
   if (typeof input.cloud.height === 'number') fields.height = input.cloud.height;

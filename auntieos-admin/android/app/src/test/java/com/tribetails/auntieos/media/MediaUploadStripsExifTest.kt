@@ -33,13 +33,14 @@ class MediaUploadStripsExifTest {
 
     private fun manager() = MediaUploadManager(mockk(relaxed = true), mockk(relaxed = true))
 
-    private fun auth(transformation: String) = MediaUploadManager.SignedUploadAuth(
+    private fun auth(transformation: String, tags: String = "") = MediaUploadManager.SignedUploadAuth(
         cloudName = "tribetails",
         apiKey = "key123",
         timestamp = 1_700_000_000L,
         signature = "sig",
         folder = "tribetails/kinfolk/kf1",
         transformation = transformation,
+        tags = tags,
     )
 
     /** Field names in the multipart body, read back off each part's Content-Disposition. */
@@ -51,8 +52,8 @@ class MediaUploadStripsExifTest {
                 ?.takeIf { it.isNotEmpty() }
         }
 
-    private fun bodyWith(transformation: String): MultipartBody = manager().buildCloudinaryUploadBody(
-        auth(transformation),
+    private fun bodyWith(transformation: String, tags: String = ""): MultipartBody = manager().buildCloudinaryUploadBody(
+        auth(transformation, tags),
         "bytes".toRequestBody("image/jpeg".toMediaTypeOrNull()),
         "beach.jpg",
     )
@@ -108,5 +109,50 @@ class MediaUploadStripsExifTest {
             folder = "tribetails/kinfolk/kf1",
         )
         assertEquals("", legacy.transformation)
+    }
+    // ── 3. #593: the video half, carried by the same signature ──────────────
+    //
+    // A video cannot be stripped inside the upload the way a photo is, so the
+    // signer tags it `needs-gps-strip` instead and a Cloud Function strips it
+    // afterwards. The tag rides in on the SIGNATURE for the same reason the
+    // photo strip does: a signed field is a field this client is forced to
+    // send, and one it could never have invented on its own. Without it a
+    // video that uploaded successfully and then failed to write its Firestore
+    // row would be invisible to everything.
+    @Test
+    fun `the signed pending-strip tag is posted in the multipart body`() {
+        val names = fieldNames(bodyWith(transformation = "", tags = "needs-gps-strip"))
+        assertTrue(
+            "tags must be posted or Cloudinary rebuilds a different signature; got $names",
+            names.contains("tags"),
+        )
+        assertTrue(names.containsAll(listOf("file", "api_key", "timestamp", "signature", "folder")))
+        // ...and a video is still signed with NO transformation.
+        assertFalse(names.contains("transformation"))
+    }
+    @Test
+    fun `no tags field is posted when the signer signed none`() {
+        // Image and raw uploads: posting an UNSIGNED field is the same Invalid
+        // Signature as dropping a signed one, so blank must mean "send none".
+        val names = fieldNames(bodyWith(transformation = "fl_force_strip", tags = ""))
+        assertFalse("blank tags must not be posted; got $names", names.contains("tags"))
+        assertTrue(names.contains("transformation"))
+    }
+    @Test
+    fun `an absent tags key on the signer response defaults to blank, not to a stray field`() {
+        // A signer that predates #593 sends no `tags` key at all.
+        val legacy = MediaUploadManager.SignedUploadAuth(
+            cloudName = "tribetails",
+            apiKey = "key123",
+            timestamp = 1_700_000_000L,
+            signature = "sig",
+            folder = "tribetails/kinfolk/kf1",
+        )
+        assertEquals("", legacy.tags)
+        assertFalse(fieldNames(manager().buildCloudinaryUploadBody(
+            legacy,
+            "bytes".toRequestBody("video/mp4".toMediaTypeOrNull()),
+            "clip.mp4",
+        )).contains("tags"))
     }
 }

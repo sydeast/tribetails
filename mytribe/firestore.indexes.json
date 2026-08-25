@@ -409,6 +409,20 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "media_files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "gpsStripStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "gpsStripAttempts",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
