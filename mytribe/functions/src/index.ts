@@ -238,6 +238,11 @@ export { submitVetClinic } from './portal/submitVetClinic';
 export { getMyVisits } from './portal/getMyVisits';
 export { getBusinessContact } from './portal/getBusinessContact';
 export { getBusinessClosures } from './portal/getBusinessClosures';
+// Time-block booking (operator requirement 2026-08-24): the narrow projection
+// of `business_settings` a booking wizard needs to offer NAMED windows instead
+// of a clock. Sits beside getBusinessClosures because it is the same seam onto
+// the same admin-only document.
+export { getBookingPolicy } from './portal/getBookingPolicy';
 export { getFeatureFlags } from './portal/getFeatureFlags';
 export { getInvitePreview } from './portal/getInvitePreview';
 export { claimInviteSignup } from './membership/claimInviteSignup';

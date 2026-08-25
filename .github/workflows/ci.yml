@@ -142,6 +142,13 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'auntieos-admin/android/**'
+              # Same gap `mytribe` records below, and android was the last filter
+              # still carrying it: a change to the job's own definition did not
+              # re-run the job. Proven on the PR that added the per-runner Gradle
+              # home: it rewrote the android job's Gradle setup and "Android unit
+              # tests" reported "skipping", so a workflow edit that breaks the
+              # Android build could ship green.
+              - '.github/workflows/ci.yml'
             mytribe:
               - 'mytribe/functions/**'
               # The backfill and seed scripts sit outside functions/ but are
@@ -693,7 +700,35 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Issue #588. The three self-hosted runners run as the same macOS user, so
+      # every one of them - plus any build a human or an agent starts on the box -
+      # defaults to the same ~/.gradle. Gradle's resolution and artifact-transform
+      # caches are not written to be shared that way, and when two builds interleave
+      # in them a component can end up pointing at another component's transform
+      # output. That is what took every Android PR down on 2026-08-24:
+      # com.composables:composeunstyled-theming-android-debug resolved to the
+      # transform directory holding internal-shared's exploded AAR, so the manifest
+      # merger saw namespace 'com.composeunstyled.internal' declared by two
+      # libraries and refused to merge. Nothing was wrong with the dependency graph:
+      # the same commit builds clean against a Gradle home of its own.
+      #
+      # The parent of $GITHUB_WORKSPACE is <runner>/_work/<repo>, so it is already
+      # private to one runner, and actions/checkout only cleans the repository
+      # directory inside it. A Gradle home there belongs to exactly one runner and
+      # is still warm on that runner's next job.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Isolating the directory is only half of it. setup-gradle's restore
+          # unpacks its archive by absolute path, so a cache saved from runner 1's
+          # Gradle home is written back into runner 1's Gradle home no matter which
+          # runner is restoring it, on top of whatever build is live there. These
+          # runners are persistent machines whose Gradle home above survives between
+          # jobs, so they lose nothing by skipping the restore. GitHub-hosted
+          # runners are discarded after every job and genuinely need it, so when
+          # CI_RUNNER is unset and the job lands on ubuntu-latest the cache stays on.
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
       # The authoritative task for mytribe/src: it runs commonTest and the
@@ -767,7 +802,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # The same per-runner Gradle home as the mytribe-gradle job above, for the
+      # same reason: one ~/.gradle shared by three runners crosses components inside
+      # Gradle's caches. That job carries the full account, and so does issue #588.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       - run: ./gradlew :composeApp:jvmTest --no-daemon
 
   android:
@@ -785,7 +827,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # The same per-runner Gradle home as the mytribe-gradle job above, for the
+      # same reason: one ~/.gradle shared by three runners crosses components inside
+      # Gradle's caches. That job carries the full account, and so does issue #588.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       # local.properties is gitignored (it holds the keystore and SDK paths), so
       # CI writes the one line the SDK needs. Release signing is NOT available
       # here, which is why this runs the debug unit tests and never assembles a

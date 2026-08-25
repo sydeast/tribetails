@@ -559,6 +559,7 @@ data class RequestBookingArgsVisit(
     val serviceId: String,
     val serviceName: String,
     val priceCents: Long?,
+    val timeBlockId: String?,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -570,6 +571,7 @@ data class RequestBookingArgsVisit(
         put("serviceId", serviceId)
         put("serviceName", serviceName)
         put("priceCents", priceCents)
+        put("timeBlockId", timeBlockId)
     }
 }
 
