@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
@@ -50,7 +50,23 @@ vi.mock('../components/BookingDetailModal', () => ({
   ),
 }));
 
+/**
+ * The three write surfaces (#397 M11/M12/M13). Only the CALLABLES are stubbed:
+ * the dialogs, the grid, and the refusal-reading helpers are the real thing, so
+ * these assertions are about what actually reaches the wire.
+ */
+const { rescheduleBooking } = vi.hoisted(() => ({ rescheduleBooking: vi.fn() }));
+vi.mock('../api/bookingsWrite', () => ({ rescheduleBooking }));
+const { createBlockedTimeSlot, createKinCareSession } = vi.hoisted(() => ({
+  createBlockedTimeSlot: vi.fn(),
+  createKinCareSession: vi.fn(),
+}));
+vi.mock('../api/scheduleWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/scheduleWrite')>('../api/scheduleWrite');
+  return { ...actual, createBlockedTimeSlot, createKinCareSession };
+});
 import { Schedule } from './Schedule';
+import { HOUR_HEIGHT_PX } from '../lib/scheduleGrid';
 
 function sessionEntry(over: Partial<ScheduleSessionEntry>): ScheduleSessionEntry {
   return {
@@ -82,6 +98,7 @@ function busySlot(over: Partial<BusySlotEntry>): BusySlotEntry {
 
 const emptyBusy: Async<BusySlotEntry[]> = { status: 'ready', data: [] };
 const emptySessions: Async<ScheduleSessionEntry[]> = { status: 'ready', data: [] };
+const emptyKinfolk: Async<unknown[]> = { status: 'ready', data: [] };
 
 /**
  * Schedule.tsx calls `useCollection` twice (sessions + busy slots), so the
@@ -92,10 +109,15 @@ const emptySessions: Async<ScheduleSessionEntry[]> = { status: 'ready', data: []
 function mockCollections(opts: {
   sessions?: Async<ScheduleSessionEntry[]>;
   busy?: Async<BusySlotEntry[]>;
+  kinfolk?: Async<unknown[]>;
 }): void {
   useCollection.mockImplementation((spec: { path: string }) => {
     if (spec.path === 'kin_care_sessions') return opts.sessions ?? emptySessions;
     if (spec.path === 'booking_time_slots') return opts.busy ?? emptyBusy;
+    // The third listener arrived with the New visit dialog (#397 M12): its
+    // household picker needs the roster, and Schedule opens its own bounded
+    // listener rather than reaching into Directory's.
+    if (spec.path === 'kinfolk') return opts.kinfolk ?? emptyKinfolk;
     throw new Error(`unexpected collection path in test: ${spec.path}`);
   });
 }
@@ -119,7 +141,12 @@ beforeEach(() => {
   useCollection.mockReset();
   navigate.mockReset();
   mockCollections({});
-  getBusinessSettings.mockReset().mockResolvedValue({ serviceDurations: {} });
+  getBusinessSettings
+    .mockReset()
+    .mockResolvedValue({ serviceDurations: {}, serviceRates: {}, snapRescheduleTo15Min: false });
+  rescheduleBooking.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-42' });
+  createBlockedTimeSlot.mockReset().mockResolvedValue({ ok: true, docId: 'slot-1' });
+  createKinCareSession.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-9' });
 });
 
 /**
@@ -138,12 +165,23 @@ function withFixedToday(run: () => void): void {
   }
 }
 
+
+/**
+ * The agenda list under the calendar. Since #397 M13 the week view is a real
+ * time grid whose blocks ALSO carry the household name, so an unscoped
+ * `getByText('The Whitfields')` now legitimately matches two elements. These
+ * assertions are about the agenda row, so they say so; the grid block has its
+ * own coverage in `components/ScheduleWeekGrid.test.tsx`.
+ */
+function agenda(): HTMLElement {
+  return document.querySelector('.schedule__agenda-panel') as HTMLElement;
+}
 describe('Schedule screen', () => {
   it('renders a streamed session in the selected-day agenda with its time window, household, and status chip', () => {
     withFixedToday(() => {
       mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
       render(<Schedule />);
-      const row = screen.getByText('The Whitfields').closest('.schedule__row') as HTMLElement;
+      const row = within(agenda()).getByText('The Whitfields').closest('.schedule__row') as HTMLElement;
       expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
       expect(within(row).getByText('Dog Walk')).toBeInTheDocument();
       expect(within(row).getByText('SCHEDULED')).toBeInTheDocument();
@@ -241,7 +279,7 @@ describe('Schedule screen', () => {
       ).toHaveTextContent('permission-denied');
       // The primary (sessions) content still renders; a secondary stream's
       // error must not blank the whole screen.
-      expect(screen.getByText('The Whitfields')).toBeInTheDocument();
+      expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
     });
   });
 
@@ -323,10 +361,14 @@ describe('Schedule screen', () => {
       },
     });
     render(<Schedule />);
-    expect(screen.queryByText('Target-Day Household')).toBeNull();
+    // Scoped to the AGENDA: since #397 M13 the week view is a real time grid
+    // that draws every visit in the week, so this household is legitimately on
+    // screen in its own column before any day is selected. What selecting a day
+    // changes is which day the agenda below lists.
+    expect(within(agenda()).queryByText('Target-Day Household')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: targetDay }));
-    expect(screen.getByText('Target-Day Household')).toBeInTheDocument();
+    expect(within(agenda()).getByText('Target-Day Household')).toBeInTheDocument();
   });
 
   // Real-clock (not withFixedToday): userEvent's click is async and does not
@@ -344,7 +386,7 @@ describe('Schedule screen', () => {
     });
     const onSelect = vi.fn();
     render(<Schedule onSelect={onSelect} />);
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     expect(onSelect).toHaveBeenCalledWith('sess-42');
   });
 
@@ -363,14 +405,14 @@ describe('Schedule screen', () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule />);
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'sess-42');
   });
 
   it('closing the detail sheet returns to the agenda', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule />);
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     await user.click(screen.getByRole('button', { name: 'stub close' }));
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
@@ -378,7 +420,7 @@ describe('Schedule screen', () => {
   it('the sheet routes to the kinfolk detail (operator issue 16, the hyperlink half)', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession({ kinfolkId: 'kf-7' })] } });
     render(<Schedule />);
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     await user.click(screen.getByRole('button', { name: 'stub open kinfolk' }));
     expect(navigate).toHaveBeenCalledWith({
       to: '/directory/$kinfolkId',
@@ -389,7 +431,7 @@ describe('Schedule screen', () => {
   it('the sheet routes to the KinTale detail', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule />);
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     await user.click(screen.getByRole('button', { name: 'stub open kintale' }));
     // Search param, not a path: lib/notificationActions.ts set that convention
     // for kintale and invoice deep links, and this sheet follows it.
@@ -402,7 +444,7 @@ describe('Schedule screen', () => {
   it('an onSelect override takes over and the sheet never opens', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule onSelect={vi.fn()} />);
-    await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
 
@@ -558,5 +600,148 @@ describe('Schedule screen', () => {
     const card = screen.getByText('Week sessions').closest('.den-stat, button.den-stat--button');
     expect(card).not.toBeNull();
     expect(within(card as HTMLElement).getByText('-')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #397 M11/M12/M13: the Schedule screen's own write wiring — the drag that
+ * reaches `rescheduleBooking`, and the two dialogs the header opens.
+ *
+ * The DROP ARITHMETIC is pinned in `lib/scheduleGrid.test.ts` and the GESTURE in
+ * `components/ScheduleWeekGrid.test.tsx`. What this suite owns is the join: that
+ * a real drag on this screen sends the exact start and end a reader can check,
+ * and that a refusal is shown rather than swallowed.
+ */
+describe('Schedule write surfaces', () => {
+  /** A visit at 9:00-10:30 LOCAL today, so it lands inside the 8a-6p grid in any zone. */
+  function gridSession(): ScheduleSessionEntry {
+    const today = new Date();
+    return sessionEntry({
+      _id: 'sess-42',
+      startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0, 0, 0).toISOString(),
+      endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 10, 30, 0, 0).toISOString(),
+    });
+  }
+  function gridBlock(): HTMLElement {
+    return within(document.querySelector('.schedule-grid') as HTMLElement).getByRole('button', {
+      name: /The Whitfields/i,
+    });
+  }
+  /** One press-move-release on a grid block, in client coordinates. */
+  function dragBy(el: HTMLElement, dy: number) {
+    fireEvent(el, new MouseEvent('pointerdown', { bubbles: true, clientX: 40, clientY: 40 }));
+    fireEvent(el, new MouseEvent('pointermove', { bubbles: true, clientX: 40, clientY: 40 + dy }));
+    fireEvent(el, new MouseEvent('pointerup', { bubbles: true, clientX: 40, clientY: 40 + dy }));
+  }
+  function refusal(code: string, message: string) {
+    return Object.assign(new Error(message), {
+      code: 'functions/failed-precondition',
+      details: { code },
+    });
+  }
+  it('a drag sends the snapped new start and an end derived from the visit’s own duration', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX); // one hour down: 9:00 -> 10:00
+    await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
+    const today = new Date();
+    const at = (hh: number, mm: number) =>
+      new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0).toISOString();
+    expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', at(10, 0), at(11, 30), {});
+  });
+  /**
+   * A drop that resolves back to the visit's own start writes nothing: no
+   * callable, no audit entry, no "rescheduled" event for a move nobody made.
+   *
+   * Run with the operator's 15-minute snap ON, and that is the point rather
+   * than an incidental setting. At minute precision any travel that clears the
+   * 5px click threshold is already six minutes or more, so it always lands on a
+   * different minute; the quarter-hour snap is what makes a real drag resolve
+   * back to where it started, and therefore the only case this guard bites.
+   */
+  it('a drag that snaps back onto the visit’s own start writes nothing at all', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceDurations: {},
+      serviceRates: {},
+      snapRescheduleTo15Min: true,
+    });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    await act(async () => {}); // let the one-shot settings read land before dragging
+
+    // 6px is 6.7 minutes down from 9:00, so the drop resolves to 9:07 and then
+    // floors back to the same 9:00 quarter-hour the visit already sits on.
+    dragBy(gridBlock(), 6);
+    await waitFor(() => expect(rescheduleBooking).not.toHaveBeenCalled());
+
+    // The same gesture DOES write once the travel clears that quarter-hour, so
+    // the assertion above is about the no-op guard and not about a dead drag.
+    dragBy(gridBlock(), 15);
+    await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
+  });
+  it('a refusal is surfaced with the server’s own sentence, and offers the override', async () => {
+    rescheduleBooking.mockRejectedValueOnce(
+      refusal('visit_overlap_conflict', 'That time is already taken: visit 1 overlaps a visit already booked.'),
+    );
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    await screen.findByText('Couldn’t move that visit');
+    expect(screen.getByText(/overlaps a visit already booked/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Move anyway' }));
+    await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(2));
+    expect(rescheduleBooking.mock.calls[1]![3]).toEqual({ visit: true });
+  });
+  it('a company closure refusal is final: the override is not offered', async () => {
+    rescheduleBooking.mockRejectedValueOnce(
+      refusal('company_holiday_conflict', 'This date is not available. The business is closed.'),
+    );
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    await screen.findByText('Couldn’t move that visit');
+    expect(screen.queryByRole('button', { name: 'Move anyway' })).toBeNull();
+  });
+  it('"Block time" opens the dialog and reaches the callable with the selected day', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    // Two controls legitimately read "Block time": the header action that opens
+    // the dialog, and the dialog's own submit. Scoped rather than disambiguated
+    // by order, so a layout change cannot silently retarget this.
+    await user.click(
+      within(document.querySelector('.schedule__actions') as HTMLElement).getByRole('button', {
+        name: 'Block time',
+      }),
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Block time' });
+    await user.click(within(dialog).getByRole('button', { name: 'Block time' }));
+    await waitFor(() => expect(createBlockedTimeSlot).toHaveBeenCalledTimes(1));
+    expect(createBlockedTimeSlot.mock.calls[0]![0].date).toBe(localDateIso(new Date()));
+  });
+  it('"New visit" opens the dialog over the operator’s real catalog', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceDurations: {},
+      serviceRates: { '30Minute': '25' },
+      snapRescheduleTo15Min: false,
+    });
+    mockCollections({
+      sessions: { status: 'ready', data: [gridSession()] },
+      kinfolk: { status: 'ready', data: [{ _id: 'kf1', firstName: 'Ada', lastName: 'Lovelace' }] },
+    });
+    render(<Schedule />);
+    await act(async () => {});
+    await user.click(screen.getByRole('button', { name: 'New visit' }));
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await user.selectOptions(
+      screen.getByLabelText('Service'),
+      screen.getByRole('option', { name: '30Minute · $25' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    await waitFor(() => expect(createKinCareSession).toHaveBeenCalledTimes(1));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({
+      kinfolkId: 'kf1',
+      serviceType: '30Minute',
+      serviceDurationMinutes: 30,
+    });
   });
 });

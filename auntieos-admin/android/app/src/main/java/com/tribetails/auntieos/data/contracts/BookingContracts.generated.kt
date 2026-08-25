@@ -559,6 +559,7 @@ data class RequestBookingArgsVisit(
     val serviceId: String,
     val serviceName: String,
     val priceCents: Long?,
+    val timeBlockId: String?,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -570,6 +571,7 @@ data class RequestBookingArgsVisit(
         put("serviceId", serviceId)
         put("serviceName", serviceName)
         put("priceCents", priceCents)
+        put("timeBlockId", timeBlockId)
     }
 }
 
@@ -769,6 +771,10 @@ data class RescheduleBookingArgs(
     val sessionId: String,
     val startTime: String,
     val endTime: String,
+    /** Optional: omitted from the payload when null. */
+    val overrideBusyConflict: Boolean? = null,
+    /** Optional: omitted from the payload when null. */
+    val overrideVisitConflict: Boolean? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -778,6 +784,8 @@ data class RescheduleBookingArgs(
         put("sessionId", sessionId)
         put("startTime", startTime)
         put("endTime", endTime)
+        if (overrideBusyConflict != null) put("overrideBusyConflict", overrideBusyConflict)
+        if (overrideVisitConflict != null) put("overrideVisitConflict", overrideVisitConflict)
     }
 }
 

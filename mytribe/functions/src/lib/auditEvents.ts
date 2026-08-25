@@ -240,6 +240,15 @@ export const AUDIT_EVENTS = {
   // operator knowingly double-books their own calendar, which is exactly the
   // state a later "why is this visit here" question needs to find.
   BOOKING_BUSY_CONFLICT_OVERRIDDEN: 'BOOKING_BUSY_CONFLICT_OVERRIDDEN',
+  // Visit-overlap guard (`lib/visitOverlapConflict.ts`, #397 M11/M12/M13): an
+  // admin explicitly wrote over a visit that was already on the books, via
+  // `overrideVisitConflict: true` — a second visit in the same window, a visit
+  // dragged onto another, or a blocked-out window a promised visit occupies.
+  // The sibling of BOOKING_BUSY_CONFLICT_OVERRIDDEN and separate from it,
+  // because the two answer different questions after the fact: that one is
+  // "the operator booked over their own calendar", this one is "the operator
+  // double-booked an hour that was already promised".
+  VISIT_OVERLAP_CONFLICT_OVERRIDDEN: 'VISIT_OVERLAP_CONFLICT_OVERRIDDEN',
 
   // O-8 AI copy gen: staff creates a tale-title backfill batch
   // (aiBackfillTaleTitles callable) and the poll cron applies the finished

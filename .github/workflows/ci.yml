@@ -142,6 +142,13 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'auntieos-admin/android/**'
+              # Same gap `mytribe` records below, and android was the last filter
+              # still carrying it: a change to the job's own definition did not
+              # re-run the job. Proven on the PR that added the per-runner Gradle
+              # home: it rewrote the android job's Gradle setup and "Android unit
+              # tests" reported "skipping", so a workflow edit that breaks the
+              # Android build could ship green.
+              - '.github/workflows/ci.yml'
             mytribe:
               - 'mytribe/functions/**'
               # The backfill and seed scripts sit outside functions/ but are
@@ -200,6 +207,11 @@ jobs:
             mytribeGradle:
               - 'mytribe/build.gradle.kts'
               - 'mytribe/settings.gradle.kts'
+              # Added with the Mapbox work in #520, which put credential
+              # documentation and AGP flags in the same file. A change to it can
+              # decide whether the android target resolves at all, so it has to
+              # be able to trigger the job on its own.
+              - 'mytribe/gradle.properties'
               - 'mytribe/src/**'
               - 'mytribe/gradle/**'
               - '.github/workflows/ci.yml'
@@ -688,16 +700,77 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Issue #588. The three self-hosted runners run as the same macOS user, so
+      # every one of them - plus any build a human or an agent starts on the box -
+      # defaults to the same ~/.gradle. Gradle's resolution and artifact-transform
+      # caches are not written to be shared that way, and when two builds interleave
+      # in them a component can end up pointing at another component's transform
+      # output. That is what took every Android PR down on 2026-08-24:
+      # com.composables:composeunstyled-theming-android-debug resolved to the
+      # transform directory holding internal-shared's exploded AAR, so the manifest
+      # merger saw namespace 'com.composeunstyled.internal' declared by two
+      # libraries and refused to merge. Nothing was wrong with the dependency graph:
+      # the same commit builds clean against a Gradle home of its own.
+      #
+      # The parent of $GITHUB_WORKSPACE is <runner>/_work/<repo>, so it is already
+      # private to one runner, and actions/checkout only cleans the repository
+      # directory inside it. A Gradle home there belongs to exactly one runner and
+      # is still warm on that runner's next job.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          # Isolating the directory is only half of it. setup-gradle's restore
+          # unpacks its archive by absolute path, so a cache saved from runner 1's
+          # Gradle home is written back into runner 1's Gradle home no matter which
+          # runner is restoring it, on top of whatever build is live there. These
+          # runners are persistent machines whose Gradle home above survives between
+          # jobs, so they lose nothing by skipping the restore. GitHub-hosted
+          # runners are discarded after every job and genuinely need it, so when
+          # CI_RUNNER is unset and the job lands on ubuntu-latest the cache stays on.
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       - name: Write local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
       # The authoritative task for mytribe/src: it runs commonTest and the
       # Compose UI tests in composeUiTest. See mytribe/CLAUDE.md.
       - run: ./gradlew :jvmTest --no-daemon
+      # From issue #520 the portal's androidTarget depends on the Mapbox Maps
+      # SDK, which comes from Mapbox's private Maven repo behind a downloads
+      # token. That is an EXTERNAL secret only the operator can issue, so the
+      # android step reports honestly instead of failing every PR without it.
+      # A green "skipped" here means the Android variant was NOT tested, which is
+      # why it says so loudly rather than quietly passing.
+      #
+      # Only THIS step is gated. :jvmTest above and compileKotlinJs below need no
+      # Mapbox anything - those targets render the Canvas polyline permanently -
+      # and mytribe/settings.gradle.kts is written so a missing token leaves them
+      # working. :jvmTest is the authoritative task for this module and must not
+      # be skippable by a credential it does not use.
+      - name: Check for Mapbox token
+        id: mapbox
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: |
+          if [ -n "$MAPBOX_DOWNLOADS_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # The Android unit-test variant. Nothing ran it until issue #473, by which
       # point it was failing 143 of its 524 tests on a clean main. It passes
       # now, and it only stays passing if something runs it.
-      - run: ./gradlew testDebugUnitTest --no-daemon
+      - name: Portal Android unit tests
+        if: steps.mapbox.outputs.present == 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Report skipped
+        if: steps.mapbox.outputs.present != 'true'
+        run: |
+          echo "::warning title=Portal Android tests skipped::MAPBOX_DOWNLOADS_TOKEN is not set, so the Mapbox SDK cannot be resolved and testDebugUnitTest did NOT run. jvmTest and compileKotlinJs in this job DID run."
+          echo "Set it with: gh secret set MAPBOX_DOWNLOADS_TOKEN --repo sydeast/tribetails"
       # The js target, which nothing had ever compiled (issue #507). It arrived
       # in the 2026-07-20 subtree import and stopped compiling somewhere in the
       # Kotlin 2.2.20 -> 2.4.10 dependabot bumps, because `org.w3c.fetch.fetch`
@@ -729,7 +802,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # The same per-runner Gradle home as the mytribe-gradle job above, for the
+      # same reason: one ~/.gradle shared by three runners crosses components inside
+      # Gradle's caches. That job carries the full account, and so does issue #588.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       - run: ./gradlew :composeApp:jvmTest --no-daemon
 
   android:
@@ -747,7 +827,14 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      # The same per-runner Gradle home as the mytribe-gradle job above, for the
+      # same reason: one ~/.gradle shared by three runners crosses components inside
+      # Gradle's caches. That job carries the full account, and so does issue #588.
+      - name: Isolate the Gradle home per runner
+        run: echo "GRADLE_USER_HOME=$(dirname "$GITHUB_WORKSPACE")/.gradle-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-disabled: ${{ vars.CI_RUNNER != '' }}
       # local.properties is gitignored (it holds the keystore and SDK paths), so
       # CI writes the one line the SDK needs. Release signing is NOT available
       # here, which is why this runs the debug unit tests and never assembles a
