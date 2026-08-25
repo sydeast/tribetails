@@ -492,7 +492,10 @@ private fun KinTaleComposerBody(
                         onRemove = { mediaFile ->
                             if (mediaFile._id.isBlank()) return@MediaBlock
                             scope.launch {
-                                when (val r = client.deleteKinTaleMedia(mediaFile._id)) {
+                                // #577: send the row's OWN entityId (the session id) as
+                                // the scope cross-check, so a stale attachment id can
+                                // never delete another session's media.
+                                when (val r = client.deleteKinTaleMedia(mediaFile._id, mediaFile.entityId)) {
                                     is WriteResult.Ok -> {
                                         attachedMedia = attachedMedia.filter { it._id != mediaFile._id }
                                         val updated = report.copy(mediaFileIds = report.mediaFileIds.filter { it != mediaFile._id })

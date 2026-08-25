@@ -101,7 +101,15 @@ interface AuntieDataSource {
             is WriteResult.Ok  -> WriteResult.Ok(listOf(r.value))
             is WriteResult.Err -> r
         }
-    suspend fun deleteMedia(mediaId: String): WriteResult<Unit>
+    /**
+     * #577: routed through the `deleteMediaFile` callable, never a client write.
+     *
+     * [entityId] is the OPTIONAL scope cross-check and must come off the media
+     * ROW, not the route: the server refuses a doc belonging to a different
+     * entity, so a stale row id from one household can never delete another
+     * household's media. Blank means "unscoped" and is omitted from the payload.
+     */
+    suspend fun deleteMedia(mediaId: String, entityId: String = ""): WriteResult<Unit>
 
     // KinTale report authoring
     fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>>

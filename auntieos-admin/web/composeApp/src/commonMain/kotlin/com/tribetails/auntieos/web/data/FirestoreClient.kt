@@ -870,8 +870,12 @@ class FirestoreClient {
     fun mediaForSessionStream(sessionId: String): Flow<FirestoreResult<List<MediaFile>>> =
         platformMediaForSessionStream(sessionId)
 
-    suspend fun deleteKinTaleMedia(mediaFileId: String): WriteResult<Unit> =
-        platformDeleteKinTaleMedia(mediaFileId)
+    /**
+     * Removes one KinTale attachment. Same server-bound route as [deleteMedia];
+     * see its header for why this cannot be a client write.
+     */
+    suspend fun deleteKinTaleMedia(mediaFileId: String, entityId: String = ""): WriteResult<Unit> =
+        deleteMedia(mediaFileId, entityId)
 
     fun mediaStream(entityId: String, entityType: String): Flow<FirestoreResult<List<MediaFile>>> =
         platformMediaStream(entityId, entityType)
@@ -892,8 +896,53 @@ class FirestoreClient {
     ): WriteResult<List<MediaFile>> =
         platformPickAndUploadMedia(entityId, entityType, max)
 
-    suspend fun deleteMedia(mediaId: String): WriteResult<Unit> =
-        platformDeleteMedia(mediaId)
+    /**
+     * ISSUE #577: server-bound delete, through the `deleteMediaFile` callable,
+     * the destructive twin of [setMediaProfilePhoto].
+     *
+     * WHAT THIS USED TO DO, and why it was wrong twice over. The desktop actual
+     * was `patchFields("media_files", id, {"deleted": true})`, a client UPDATE
+     * that set a soft-delete flag NOTHING in this repo reads. So a delete on the
+     * desktop admin reported success, left the row in `media_files`, and left
+     * the tile on screen; the operator's only recourse was to press it again.
+     * Had it been the raw document delete the other clients once did, it would
+     * have been worse rather than better: `setMediaProfilePhoto` stamps
+     * `kinfolk`/`kin.profilePictureUrl` (or `users.photoUrl`) with THIS doc's
+     * own `storageUrl`, so dropping the row alone leaves a profile rendering a
+     * photo the gallery has forgotten, with no screen left in the app able to
+     * clear that field again.
+     *
+     * The callable owns both writes in one atomic batch, clears the entity's
+     * photo field ONLY when it still points at this file, promotes no
+     * replacement, and writes the `MEDIA_FILE_DELETED` audit entry a client
+     * delete never could, which matters most here, because the deleted row is
+     * otherwise the only record that the file existed. React
+     * (`api/mediaWrite.ts`) and Android (`AuntieRepository.deleteMediaFile`)
+     * have taken this route since #397 S2; this was the last client that did
+     * not, and `firestore.rules` now denies `delete` on `media_files` outright.
+     *
+     * [entityId] is the OPTIONAL scope cross-check, and must come off the media
+     * ROW, never a route segment: `#/media/household/{id}`'s type segment is
+     * `household` while the stored `entityType` is `KINFOLK`. Sent only when
+     * non-blank (the server's own `min(1)` would refuse a padded blank), so an
+     * unscoped caller simply omits it and the doc's own entity is the truth.
+     *
+     * The Cloudinary asset itself deliberately survives; see the callable's
+     * header for why.
+     */
+    suspend fun deleteMedia(mediaId: String, entityId: String = ""): WriteResult<Unit> {
+        val id = mediaId.trim()
+        if (id.isBlank()) return WriteResult.Err("deleteMedia requires a non-blank media id")
+        val scope = entityId.trim()
+        val payload = buildJsonObject {
+            put("mediaFileId", JsonPrimitive(id))
+            if (scope.isNotBlank()) put("entityId", JsonPrimitive(scope))
+        }
+        return when (val r = platformInvokeCallable("deleteMediaFile", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
 
     /**
      * #13 Gallery: stream of ALL business media (every entity), newest-relevant.
@@ -1846,7 +1895,11 @@ internal expect suspend fun platformPickAndUploadKinTaleMedia(
 
 internal expect fun platformMediaForSessionStream(sessionId: String): Flow<FirestoreResult<List<MediaFile>>>
 
-internal expect suspend fun platformDeleteKinTaleMedia(mediaFileId: String): WriteResult<Unit>
+// #577: there is no platformDeleteKinTaleMedia / platformDeleteMedia any more.
+// Deleting a media row is a two-collection invariant the client cannot hold, so
+// both went through the `deleteMediaFile` callable and collapsed into
+// FirestoreClient.deleteMedia: one platform-independent body over
+// platformInvokeCallable, no per-target write to keep in step.
 
 internal expect fun platformMediaStream(entityId: String, entityType: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile>
@@ -1854,7 +1907,6 @@ internal expect suspend fun platformUploadMedia(entityId: String, entityType: St
 // Run-4 #4b: multi-file variant for general/business/gallery media. wasm picks up to
 // [max] files and writes one media_files doc each; jvm is the mobile-only stub.
 internal expect suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>>
-internal expect suspend fun platformDeleteMedia(mediaId: String): WriteResult<Unit>
 internal expect fun platformAllMediaStream(): Flow<FirestoreResult<List<MediaFile>>>
 internal expect fun platformMediaForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<MediaFile>>>
 internal expect suspend fun platformUpdateMediaTags(mediaId: String, taggedKinIds: List<String>): WriteResult<Unit>

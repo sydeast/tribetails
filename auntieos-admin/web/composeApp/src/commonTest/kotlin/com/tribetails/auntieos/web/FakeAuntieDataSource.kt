@@ -199,7 +199,11 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(newItem)
     }
 
-    override suspend fun deleteMedia(mediaId: String): WriteResult<Unit> {
+    /** #577: records the last (mediaId, entityId) pair the caller sent. */
+    var lastDeleteArgs: Pair<String, String>? = null
+
+    override suspend fun deleteMedia(mediaId: String, entityId: String): WriteResult<Unit> {
+        lastDeleteArgs = mediaId to entityId
         if (deleteShouldFail) return WriteResult.Err("delete failed")
         val current = _media.value
         if (current is FirestoreResult.Data) {
