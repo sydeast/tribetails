@@ -804,6 +804,19 @@ internal enum class AuntieTimeAction {
  * Undo Arrived is the subtle one: it rewinds to ON_MY_WAY only when the session
  * actually recorded an on-my-way stamp, otherwise all the way to SCHEDULED, and
  * it always clears `arrivedAt` so the card cannot show a stale arrival time.
+ *
+ * ISSUE #582 adds the arrival-location evidence to that clear, for the same
+ * reason and a sharper one. The three fields are the distance
+ * `verifyVisitArrival` measured for the arrival being undone; leaving them
+ * behind means the NEXT arrival — quite possibly at a different door, quite
+ * possibly offline, so with no new measurement of its own — inherits the old
+ * one. That is wrong evidence, and wrong evidence can refuse a COMPLETE that
+ * should pass or pass one that should be refused.
+ *
+ * They are cleared to `""` rather than removed, because this patch is a
+ * `Map<String, String>` and the server reads a non-numeric value on those
+ * fields as "no evidence" (`readArrivalEvidence`), which is exactly the state
+ * an undone arrival should be in. Same treatment `arrivedAt` already gets here.
  */
 internal fun kinCarePatch(
     session: KinCareSession,
@@ -814,8 +827,11 @@ internal fun kinCarePatch(
     AuntieTimeAction.Arrived       -> mapOf("status" to "ARRIVED", "arrivedAt" to now)
     AuntieTimeAction.Departed      -> mapOf("status" to "DEPARTED", "departedAt" to now)
     AuntieTimeAction.UndoArrived   -> mapOf(
-        "status"    to if (session.onMyWayAt.isNotBlank()) "ON_MY_WAY" else "SCHEDULED",
-        "arrivedAt" to "",
+        "status"                   to if (session.onMyWayAt.isNotBlank()) "ON_MY_WAY" else "SCHEDULED",
+        "arrivedAt"                to "",
+        "arrivalDistanceMeters"    to "",
+        "arrivalAccuracyMeters"    to "",
+        "arrivalLocationCheckedAt" to "",
     )
     AuntieTimeAction.MarkCompleted -> mapOf("status" to "COMPLETED", "completedAt" to now)
     AuntieTimeAction.Cancel        -> mapOf("status" to "CANCELLED")
