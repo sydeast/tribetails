@@ -403,9 +403,45 @@ service cloud.firestore {
                && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['completedAt']);
       }
 
-      allow read: if isAuntie()
-                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
-                  || testOwnsExisting();
+ // ISSUE #584: THERE IS NO KINFOLK BRANCH HERE, AND ITS ABSENCE IS THE
+ // ENFORCEMENT. Until 2026-08-25 this line also carried
+ //   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
+ // which handed a household the WHOLE session document: `gpsSummary`, with the
+ // start and end coordinates and the full route, and alongside it `notes` (gate
+ // codes, key locations), `kinfolkNotes`, `invoiceId`, `formValues`, and every
+ // field AuntieOS adds to this collection next.
+ //
+ // #519 made `allowClientLocationSharing` real in the two callables that serve
+ // route data and on the breadcrumbs read below. This grant was the hole left
+ // over, and it could not be patched in place: a rule gates a DOCUMENT, never a
+ // field, so no condition written here can withhold `gpsSummary` and still
+ // serve the visit. Only removing the grant closes it.
+ //
+ // WHAT REPLACES IT IS NOT NEW. `functions/src/portal/getMyVisits.ts` already
+ // projects this collection field by field for the portal and reads the sharing
+ // switch once per call, and both shipping portal clients already load visits
+ // through that callable and nothing else (`mytribe/web/src/api/portal.ts`,
+ // `mytribe/src/commonMain/.../portal/PortalApi.kt`). The grant was REACHABLE,
+ // not used: a kinfolk could open the raw document with the SDK, and no portal
+ // screen depends on being able to. Two guard tests keep it that way, one per
+ // client (`web/src/lib/sessionDirectReads.test.ts`, `DirectSessionReadTest.kt`).
+ //
+ // SAME MOVE AS `match /kinfolk/{kinfolkId}` ABOVE, and as #377 on `the_411`
+ // before it: a collection whose every portal consumer is already a projecting
+ // callable does not need a client read grant, and keeping one only widens what
+ // a curious or compromised client can take.
+ //
+ // NOT DONE HERE: `kin_care_reports` still carries the same kinfolk branch, and
+ // a report document carries `gpsRoute` that `getMyKinTales` strips. That is the
+ // identical hole one collection over, and it is tracked as #602 rather than
+ // given a silent ride on this one.
+ //
+ // THE BREADCRUMBS READ BELOW IS UNAFFECTED. Its kinfolk branch resolves the
+ // parent session's `kinfolkId` through `get()`, and a rules `get()` is not
+ // itself subject to rules, so it never consulted this `allow read`. Live
+ // tracking keeps working, still gated on the operator's switch.
+ // `test/rules/kinCareSessionRead.test.ts` proves both halves.
+      allow read: if isAuntie() || testOwnsExisting();
  // The create guard closes the delete-and-recreate walkaround: without it a
  // client reaches the same terminal state on the same doc id in two writes
  // instead of one.
