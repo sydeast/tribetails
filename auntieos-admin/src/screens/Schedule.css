@@ -274,8 +274,11 @@
   outline-offset: -2px;
 }
 
+/* A busy row carries a fourth cell the visit rows do not: Unblock, or the
+   "From Google Calendar" line that stands in its place (#574). */
 .schedule__row--busy .schedule__row-main {
   cursor: default;
+  grid-template-columns: auto 1.8fr auto auto;
 }
 .schedule__row--busy .schedule__row-main:hover {
   background: none;
@@ -348,6 +351,14 @@
 .schedule__chip--busy {
   background: var(--color-surface-2);
   color: var(--color-text-faint);
+}
+/* Where a busy row came from, shown in place of Unblock on a Google Calendar
+   mirror (#574): those rows come straight back on the next sync, so the remedy
+   is in Google Calendar rather than on this screen. */
+.schedule__busy-source {
+  font-size: 0.78rem;
+  color: var(--color-text-faint);
+  white-space: nowrap;
 }
 /* ── Phone width ──────────────────────────────────────────────────────────
    The agenda row, `auto 1.8fr auto`, gets the same treatment as

@@ -27,7 +27,12 @@ import { SNAP_MINUTES_OFF, SNAP_MINUTES_ON, rescheduleTimesForDrop, isNoOpDrop }
 import { getBusinessSettings } from '../api/settings';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
-import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
+import {
+  deleteBlockedTimeSlot,
+  isOperatorBlock,
+  overridableScheduleRefusal,
+  overrideHint,
+} from '../api/scheduleWrite';
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { asyncScalar } from '../lib/async';
@@ -226,6 +231,31 @@ export function Schedule({ onSelect }: ScheduleProps) {
     { drop: ScheduleDrop; kind: 'visit' | 'busy' } | null
   >(null);
 
+  // ── unblock (#574) ─────────────────────────────────────────────────────────
+  // Blocking a window has had a callable since B6; removing one had none, so no
+  // web surface could ever offer it. `deleteBlockedTimeSlot` is the other half,
+  // and this is where an operator takes a block back off the calendar.
+  //
+  // NO OPTIMISTIC REMOVAL: `booking_time_slots` is a live stream, so the row
+  // leaves on its own the moment the delete lands. `unblockingId` only marks the
+  // row as in-flight so it cannot be pressed twice.
+  const [unblockingId, setUnblockingId] = useState<string | null>(null);
+  const [unblockError, setUnblockError] = useState<string | null>(null);
+
+  async function unblock(slotId: string) {
+    setUnblockingId(slotId);
+    setUnblockError(null);
+    try {
+      await deleteBlockedTimeSlot(slotId);
+      setUnblockingId(null);
+    } catch (err) {
+      setUnblockingId(null);
+      // The server's own sentence: on the Google-mirror refusal it IS the
+      // instruction (clear it in Google Calendar, or turn sync off).
+      setUnblockError(err instanceof Error ? err.message : 'Could not remove that block.');
+    }
+  }
+
   async function commitDrop(drop: ScheduleDrop, override: 'visit' | 'busy' | null) {
     const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes);
     if (times === null) {
@@ -409,6 +439,11 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   subtitle="Kin Care visits on this day."
                   className="schedule__agenda-panel"
                 >
+                  {unblockError !== null && (
+                    <Banner tone="error" title="Couldn’t remove that block">
+                      <p>{unblockError}</p>
+                    </Banner>
+                  )}
                   {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
                     <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
                   ) : (
@@ -421,7 +456,13 @@ export function Schedule({ onSelect }: ScheduleProps) {
                         />
                       ))}
                       {selectedBusy.map((slot) => (
-                        <BusyRow key={slot._id} slot={slot} />
+                        <BusyRow
+                          key={slot._id}
+                          slot={slot}
+                          pending={unblockingId === slot._id}
+                          busy={unblockingId !== null}
+                          onUnblock={() => void unblock(slot._id)}
+                        />
                       ))}
                     </ul>
                   )}
@@ -638,7 +679,32 @@ function AgendaRow({ entry, onSelect }: AgendaRowProps) {
  * collection anyway. Making this a button to match `AgendaRow` would produce
  * exactly the dead control the Buttons.tsx convention exists to prevent.
  */
-function BusyRow({ slot }: { slot: BusySlotEntry }) {
+/**
+ * One blocked window on the selected day, and (#574) the only place on this app
+ * where one can be taken back off.
+ *
+ * UNBLOCK IS DRAWN ONLY ON THE OPERATOR'S OWN BLOCKS. A `GOOGLE_BUSY_IMPORT`
+ * row mirrors an event on the connected calendar, and deleting it here would
+ * not free the time: the next sync writes it straight back.
+ * `deleteBlockedTimeSlot` refuses those server-side, so a button beside one
+ * would be exactly the dead control the Buttons.tsx convention exists to
+ * prevent. The row says where the block came from instead, which is also where
+ * the remedy is.
+ */
+function BusyRow({
+  slot,
+  pending,
+  busy,
+  onUnblock,
+}: {
+  slot: BusySlotEntry;
+  /** True while THIS row's delete is in flight. */
+  pending: boolean;
+  /** True while ANY row's delete is in flight, so two cannot be started at once. */
+  busy: boolean;
+  onUnblock: () => void;
+}) {
+  const removable = isOperatorBlock(slot.source);
   return (
     <li className="schedule__row schedule__row--busy">
       <div className="schedule__row-main schedule__row-main--static">
@@ -647,6 +713,15 @@ function BusyRow({ slot }: { slot: BusySlotEntry }) {
           <span className="schedule__row-name">Busy</span>
         </span>
         <span className="schedule__chip schedule__chip--busy">BLOCKED</span>
+        {removable ? (
+          <GhostButton
+            label={pending ? 'Removing…' : 'Unblock'}
+            onClick={onUnblock}
+            disabled={busy}
+          />
+        ) : (
+          <span className="schedule__busy-source">From Google Calendar</span>
+        )}
       </div>
     </li>
   );

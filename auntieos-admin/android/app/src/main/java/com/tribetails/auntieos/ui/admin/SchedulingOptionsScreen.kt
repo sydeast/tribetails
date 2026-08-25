@@ -34,6 +34,7 @@ import com.tribetails.auntieos.data.model.BookingStatus
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.TimeSlotSource
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
+import com.tribetails.auntieos.ui.admin.scheduling.BlockMode
 import com.tribetails.auntieos.ui.admin.scheduling.CALENDAR_ID_EXAMPLE
 import com.tribetails.auntieos.ui.admin.scheduling.CALENDAR_SYNC_SA_EMAIL
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
@@ -41,6 +42,7 @@ import com.tribetails.auntieos.ui.admin.scheduling.EnhancedSchedulingViewModel
 import com.tribetails.auntieos.ui.admin.scheduling.GOOGLE_OAUTH_SECRET_NAMES
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarUiState
+import com.tribetails.auntieos.ui.admin.scheduling.ScheduleWriteBanner
 import com.tribetails.auntieos.ui.admin.scheduling.calendarIdProblem
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunLabel
 import com.tribetails.auntieos.ui.admin.scheduling.googleCalendarPushLabel
@@ -51,12 +53,6 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 import java.time.LocalDate
 import androidx.compose.ui.unit.dp
-
-private enum class BlockMode(val label: String) {
-    WHOLE_DAY("Whole Day"),
-    TIME_BLOCK("Time Block"),
-    SPECIFIC_TIME("Specific Time")
-}
 
 @Composable
 fun SchedulingOptionsScreen(
@@ -122,32 +118,39 @@ fun SchedulingOptionsScreen(
                             Icon(Lucide.CalendarX, contentDescription = null, tint = AuntieTheme.colors.kinfolkOrange)
                             Text("Block Dates / Times", style = AuntieTheme.typography.titleMedium)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            BlockMode.entries.forEach { mode ->
-                                GhostButton(
-                                    label = mode.label,
-                                    onClick = { blockMode = mode }
-                                )
-                            }
-                        }
+                        // The mode buttons used to be three identical GhostButtons
+                        // with no selected state at all, so the operator could not
+                        // see which one the Save would use. A SegmentedPicker is
+                        // the component that shows a choice.
+                        SegmentedPicker(
+                            options = BlockMode.entries.toList(),
+                            selected = blockMode,
+                            onSelect = { blockMode = it },
+                            label = { it.label },
+                        )
                         AuntieField(
                             value = selectedDate,
                             onValueChange = { selectedDate = it },
                             label = "Date (YYYY-MM-DD)",
                             modifier = Modifier.fillMaxWidth()
                         )
-                        AuntieField(
-                            value = startTime,
-                            onValueChange = { startTime = it },
-                            label = "Start Time (HH:mm)",
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        AuntieField(
-                            value = endTime,
-                            onValueChange = { endTime = it },
-                            label = "End Time (HH:mm)",
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        // Hidden in Whole day, rather than shown and ignored: the
+                        // window is 00:00-23:59 in that mode and a field whose
+                        // value is discarded is a control that lies.
+                        if (blockMode == BlockMode.TIME_BLOCK) {
+                            AuntieField(
+                                value = startTime,
+                                onValueChange = { startTime = it },
+                                label = "Start Time (HH:mm)",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            AuntieField(
+                                value = endTime,
+                                onValueChange = { endTime = it },
+                                label = "End Time (HH:mm)",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                         AuntieField(
                             value = blockReason,
                             onValueChange = { blockReason = it },
@@ -155,17 +158,31 @@ fun SchedulingOptionsScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                         PrimaryButton(
-                            label = "Save Block",
+                            label = if (schedulingState.scheduleWriteInFlight) "Blocking…" else "Save Block",
+                            enabled = !schedulingState.scheduleWriteInFlight,
                             onClick = {
-                                val date = runCatching { LocalDate.parse(selectedDate) }.getOrNull() ?: LocalDate.now()
-                                val (resolvedStart, resolvedEnd) = when (blockMode) {
-                                    BlockMode.WHOLE_DAY -> "00:00" to "23:59"
-                                    BlockMode.TIME_BLOCK -> startTime.trim() to endTime.trim()
-                                    BlockMode.SPECIFIC_TIME -> startTime.trim() to startTime.trim()
-                                }
-                                schedulingViewModel.blockTimeSlot(date, resolvedStart, resolvedEnd, blockReason.ifBlank { "Blocked" })
+                                // Everything this used to do inline -- and get
+                                // wrong, silently falling back to today on an
+                                // unparseable date -- now lives in
+                                // `resolveBlockWindow`, behind the ViewModel.
+                                schedulingViewModel.blockTimeSlot(
+                                    dateText = selectedDate,
+                                    startTime = startTime,
+                                    endTime = endTime,
+                                    reason = blockReason,
+                                    mode = blockMode,
+                                )
                             },
                             modifier = Modifier.fillMaxWidth()
+                        )
+                        ScheduleWriteBanner(
+                            message = schedulingState.scheduleWriteError,
+                            override = schedulingState.scheduleWriteOverride,
+                            busy = schedulingState.scheduleWriteInFlight,
+                            title = "Couldn’t block the time",
+                            overrideLabel = "Block anyway",
+                            onOverride = { schedulingViewModel.retryScheduleWriteWithOverride() },
+                            onDismiss = { schedulingViewModel.clearScheduleWriteFeedback() },
                         )
                     }
                 }
@@ -220,18 +237,38 @@ fun SchedulingOptionsScreen(
     }
 }
 
+/**
+ * #574: UNBLOCK IS DRAWN ONLY ON THE OPERATOR'S OWN BLOCKS.
+ *
+ * This list mixes two writers. A `GOOGLE_BUSY_IMPORT` row is a mirror of an
+ * event on the connected Google Calendar, and deleting it here would not free
+ * the time — the next sync reads the same event and writes the row straight
+ * back. `deleteBlockedTimeSlot` refuses those server-side; drawing the button
+ * anyway would make the refusal the operator's first news of it, which is the
+ * dead control this codebase's Buttons convention exists to prevent. The row
+ * says where the block came from instead.
+ */
 @Composable
 private fun BlockedEntriesList(entries: List<BookingTimeSlot>, onUnblock: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         entries.take(20).forEach { slot ->
+            val imported = slot.source == TimeSlotSource.GOOGLE_BUSY_IMPORT
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${slot.date} ${slot.startTime}-${slot.endTime} (${slot.notes})", style = AuntieTheme.typography.bodySmall)
                 Text(
-                    text = if (slot.source == TimeSlotSource.GOOGLE_BUSY_IMPORT) "Google Busy" else "Manual",
+                    text = if (imported) "Google Busy" else "Manual",
                     style = AuntieTheme.typography.labelSmall,
                     color = AuntieTheme.colors.kinfolkOrange
                 )
-                GhostButton(label = "Unblock", onClick = { onUnblock(slot.id) })
+                if (imported) {
+                    Text(
+                        text = "Clear it in Google Calendar",
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                } else {
+                    GhostButton(label = "Unblock", onClick = { onUnblock(slot.id) })
+                }
             }
         }
     }

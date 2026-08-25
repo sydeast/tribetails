@@ -57,13 +57,14 @@ vi.mock('../components/BookingDetailModal', () => ({
  */
 const { rescheduleBooking } = vi.hoisted(() => ({ rescheduleBooking: vi.fn() }));
 vi.mock('../api/bookingsWrite', () => ({ rescheduleBooking }));
-const { createBlockedTimeSlot, createKinCareSession } = vi.hoisted(() => ({
+const { createBlockedTimeSlot, createKinCareSession, deleteBlockedTimeSlot } = vi.hoisted(() => ({
   createBlockedTimeSlot: vi.fn(),
   createKinCareSession: vi.fn(),
+  deleteBlockedTimeSlot: vi.fn(),
 }));
 vi.mock('../api/scheduleWrite', async () => {
   const actual = await vi.importActual<typeof import('../api/scheduleWrite')>('../api/scheduleWrite');
-  return { ...actual, createBlockedTimeSlot, createKinCareSession };
+  return { ...actual, createBlockedTimeSlot, createKinCareSession, deleteBlockedTimeSlot };
 });
 import { Schedule } from './Schedule';
 import { HOUR_HEIGHT_PX } from '../lib/scheduleGrid';
@@ -147,6 +148,7 @@ beforeEach(() => {
   rescheduleBooking.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-42' });
   createBlockedTimeSlot.mockReset().mockResolvedValue({ ok: true, docId: 'slot-1' });
   createKinCareSession.mockReset().mockResolvedValue({ ok: true, sessionId: 'sess-9' });
+  deleteBlockedTimeSlot.mockReset().mockResolvedValue({ ok: true, slotId: 'slot1' });
 });
 
 /**
@@ -290,6 +292,84 @@ describe('Schedule screen', () => {
       expect(screen.getByText('8:00 AM to 9:00 AM')).toBeInTheDocument();
       expect(screen.getByText('BLOCKED')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * #574: the other half of "block time". `createBlockedTimeSlot` shipped in
+   * B6; there was no way to take a block back off until `deleteBlockedTimeSlot`
+   * was built, and the only unblock affordance that existed (Android's) deleted
+   * the document straight from the client, which `firestore.rules` denies.
+   */
+  it('Unblock removes an operator’s own block through the callable', async () => {
+    mockCollections({
+      sessions: { status: 'ready', data: [sessionEntry({})] },
+      busy: {
+        status: 'ready',
+        data: [busySlot({ date: localDateIso(new Date()), source: 'INTERNAL_MANUAL' })],
+      },
+    });
+    render(<Schedule />);
+
+    await user.click(within(agenda()).getByRole('button', { name: 'Unblock' }));
+
+    await waitFor(() => expect(deleteBlockedTimeSlot).toHaveBeenCalledTimes(1));
+    expect(deleteBlockedTimeSlot).toHaveBeenCalledWith('slot1');
+  });
+
+  /**
+   * A Google mirror comes straight back on the next sync, so the server refuses
+   * to delete it — and the button must not be there in the first place, or the
+   * refusal is the operator's first news of it.
+   */
+  it('a Google Calendar mirror gets no Unblock button at all', () => {
+    withFixedToday(() => {
+      mockCollections({
+        sessions: { status: 'ready', data: [sessionEntry({})] },
+        busy: {
+          status: 'ready',
+          data: [busySlot({ date: '2026-07-16', source: 'GOOGLE_BUSY_IMPORT' })],
+        },
+      });
+      render(<Schedule />);
+      expect(screen.queryByRole('button', { name: 'Unblock' })).toBeNull();
+      expect(screen.getByText('From Google Calendar')).toBeInTheDocument();
+    });
+  });
+
+  /** A row written before `source` existed is an operator block, and removable. */
+  it('a row with no source is treated as an operator block', () => {
+    withFixedToday(() => {
+      mockCollections({
+        sessions: { status: 'ready', data: [sessionEntry({})] },
+        busy: { status: 'ready', data: [busySlot({ date: '2026-07-16' })] },
+      });
+      render(<Schedule />);
+      expect(screen.getByRole('button', { name: 'Unblock' })).toBeInTheDocument();
+    });
+  });
+
+  it('a refused unblock surfaces the server’s own sentence and leaves the row alone', async () => {
+    deleteBlockedTimeSlot.mockRejectedValueOnce(
+      Object.assign(
+        new Error('That busy block is a mirror of an event on the connected Google Calendar.'),
+        { code: 'functions/failed-precondition', details: { code: 'imported_busy_slot' } },
+      ),
+    );
+    mockCollections({
+      sessions: { status: 'ready', data: [sessionEntry({})] },
+      busy: {
+        status: 'ready',
+        data: [busySlot({ date: localDateIso(new Date()), source: 'INTERNAL_MANUAL' })],
+      },
+    });
+    render(<Schedule />);
+
+    await user.click(within(agenda()).getByRole('button', { name: 'Unblock' }));
+
+    await screen.findByText('Couldn’t remove that block');
+    expect(screen.getByText(/mirror of an event on the connected Google Calendar/)).toBeInTheDocument();
+    // No optimistic removal: the row is still drawn, because nothing was deleted.
+    expect(within(agenda()).getByText('BLOCKED')).toBeInTheDocument();
   });
 
   it('drops a busy slot with an unrecognized slotType (AO-12-style: never assumed BLOCKED)', () => {

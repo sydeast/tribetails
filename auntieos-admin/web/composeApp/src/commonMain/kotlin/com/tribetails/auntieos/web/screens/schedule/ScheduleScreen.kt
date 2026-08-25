@@ -64,6 +64,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
+import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
@@ -148,6 +149,7 @@ fun ScheduleScreen() {
     var viewMode by remember { mutableStateOf(ScheduleView.Week) }
     var selectedSession by remember { mutableStateOf<KinCareSession?>(null) }
     var showBlockTime by remember { mutableStateOf(false) }
+    var showNewVisit by remember { mutableStateOf(false) }
 
     // Drag-to-reschedule (schedule.dragReschedule): optimistic per-session start/end
     // overrides applied to the grid immediately, reverted if rescheduleBooking fails.
@@ -235,14 +237,20 @@ fun ScheduleScreen() {
                     rangeLabel = selected?.let { rangeLabelFor(it, viewMode) }.orEmpty(),
                     viewMode = viewMode,
                     onBlockTime = { showBlockTime = true },
+                    onNewVisit = { showNewVisit = true },
                     onViewChange = { viewMode = it },
                     onPrev = { selected = selected?.let { shiftRange(it, viewMode, -1) } },
                     onNext = { selected = selected?.let { shiftRange(it, viewMode, +1) } },
                 )
 
-                // New visit now schedules directly via createKinCareSession (§A.9): the
-                // button opens NewVisitDialog. This is the admin-direct schedule path,
-                // distinct from the Bookings *request* flow. No longer gated dark.
+                // #575: this comment described a "New visit" button that was not
+                // here. `NewVisitDialog` existed, called the deployed
+                // createKinCareSession callable, and NOTHING opened it - so the
+                // admin-direct schedule path was documented on a screen that could
+                // not reach it. The button below the range navigator is that entry
+                // point, now real. It is distinct from the Bookings *request* flow:
+                // this writes a SCHEDULED visit straight onto the calendar rather
+                // than filing a request that needs approving.
 
                 // Google Calendar "Busy" blocks are written server-side to
                 // booking_time_slots by syncGoogleCalendarBusyEvents and drawn on the
@@ -354,6 +362,14 @@ fun ScheduleScreen() {
         )
     }
 
+    if (showNewVisit) {
+        NewVisitDialog(
+            client = client,
+            localZone = localZone,
+            onDismiss = { showNewVisit = false },
+            onCreated = { showNewVisit = false }, // the sessions stream re-renders the grid
+        )
+    }
     if (showBlockTime) {
         // B6: operator replaced the admin-direct "New Visit" create here with blocking
         // an unavailable window. Admins create visits via Bookings; this blocks time off.
@@ -371,6 +387,7 @@ private fun ScheduleControls(
     rangeLabel: String,
     viewMode: ScheduleView,
     onBlockTime: () -> Unit,
+    onNewVisit: () -> Unit,
     onViewChange: (ScheduleView) -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
@@ -379,6 +396,7 @@ private fun ScheduleControls(
         rangeLabel = rangeLabel,
         viewMode = viewMode,
         onBlockTime = onBlockTime,
+        onNewVisit = onNewVisit,
         onViewChange = onViewChange,
         onPrev = onPrev,
         onNext = onNext,
@@ -391,6 +409,7 @@ private fun FlowRowControls(
     rangeLabel: String,
     viewMode: ScheduleView,
     onBlockTime: () -> Unit,
+    onNewVisit: () -> Unit,
     onViewChange: (ScheduleView) -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
@@ -440,7 +459,13 @@ private fun FlowRowControls(
             label = { it.label },
         )
 
-        // B6: blocks an unavailable window (replaced the old admin-direct New-Visit create).
+        // #575: the admin-direct "put a visit on the calendar" path. `NewVisitDialog`
+        // and the `createKinCareSession` callable behind it have both been here the
+        // whole time; this screen simply never offered a way in, while a comment above
+        // said it did. Ghost rather than primary because Block time is the action this
+        // screen leads with, and the React admin makes the same pairing.
+        GhostButton(label = "New visit", onClick = onNewVisit)
+        // B6: blocks an unavailable window.
         PrimaryButton(
             label = "Block time",
             onClick = onBlockTime,

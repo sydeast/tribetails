@@ -398,6 +398,7 @@ export { listTemplates, listTemplateBindings } from './admin/listTemplates';
 export { listCategories } from './admin/listCategories';
 export { listCatalogKeys } from './admin/listCatalogKeys';
 export { createBlockedTimeSlot } from './admin/createBlockedTimeSlot';
+export { deleteBlockedTimeSlot } from './admin/deleteBlockedTimeSlot';
 export { assignAuntie } from './admin/assignAuntie';
 export { listStaff } from './admin/listStaff';
 export {
