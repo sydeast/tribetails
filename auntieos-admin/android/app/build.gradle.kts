@@ -282,6 +282,12 @@ dependencies {
     implementation(libs.firebase.storage)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.functions)
+    // O-3 App Check (#576). Play Integrity ships in every build because the
+    // provider is only INSTALLED when the build is not a debug one (see
+    // AppCheckActivation); the debug provider is debug-only so a release APK
+    // cannot be talked into accepting a developer's debug token.
+    implementation(libs.firebase.appcheck.playintegrity)
+    debugImplementation(libs.firebase.appcheck.debug)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)

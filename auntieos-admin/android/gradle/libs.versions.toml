@@ -67,6 +67,10 @@ firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-functions = { group = "com.google.firebase", name = "firebase-functions" }
+# O-3 App Check (#576). Play Integrity in release builds, the debug provider in
+# debug ones; SafetyNet is decommissioned and the ruling forbids a fallback to it.
+firebase-appcheck-playintegrity = { group = "com.google.firebase", name = "firebase-appcheck-playintegrity" }
+firebase-appcheck-debug = { group = "com.google.firebase", name = "firebase-appcheck-debug" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }

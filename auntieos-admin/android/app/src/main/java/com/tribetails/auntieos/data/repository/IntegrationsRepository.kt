@@ -7,7 +7,6 @@ import com.tribetails.auntieos.ui.admin.IntegrationStatus
 import com.tribetails.auntieos.ui.admin.IntegrationsHealth
 import com.tribetails.auntieos.ui.admin.ServerIntegration
 import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.tasks.await
 
 /**
  * Settings > Integrations, the read half.
@@ -52,7 +51,7 @@ class IntegrationsRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getIntegrationsHealth")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("getIntegrationsHealth: non-map payload")
 

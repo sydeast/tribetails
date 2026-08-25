@@ -114,6 +114,19 @@ quiet week. THEN: AuntieOS App Check web registration (O-30 Phase 2 partner
 work — remember the reCAPTCHA collision lessons: unify loaders BEFORE any
 enforcement).
 
+> **Update 2026-08-24 (#576).** The App Check CLIENT half shipped ahead of this
+> gate, on the React admin (`src/lib/firebase.ts` + `lib/boot.ts`) and the
+> Android admin (`AppCheckActivation.kt`), because #562 had already landed the
+> backend policy layer and the admin was the last surface with no attestation at
+> all. The collision lesson is honoured rather than deferred: the React admin
+> decides ONCE per page lifetime, from the first resolved auth state, so exactly
+> one Enterprise loader can ever exist in a document. What remains is the
+> operator registration: a new reCAPTCHA Enterprise key covering the admin's
+> three origins (the portal's key does not, verified against the live project),
+> and Play Integrity for `com.tribetails.auntieos`. Both are absent today, both
+> say so loudly at boot, and neither breaks anything while the backend policy
+> runs in `log` mode.
+
 ### A9+ — Post-cutover
 Android admin app strategy (keep native Compose vs align), desktop DMG
 maintenance mode (owner-personal, exempt), engagement/reporting features.

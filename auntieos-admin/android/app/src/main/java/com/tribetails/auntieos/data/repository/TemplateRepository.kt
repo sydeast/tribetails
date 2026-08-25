@@ -2,7 +2,6 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.tasks.await
 
 /**
  * Admin-side wrapper for email-template + binding callables.
@@ -92,7 +91,7 @@ class TemplateRepository(
 
     suspend fun listTemplates(): Result<List<EmailTemplate>> = runCatching {
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listTemplates").call(emptyMap<String, Any>()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("listTemplates").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listTemplates: non-map payload")
         val list = (raw["templates"] as? List<*>).orEmpty()
         list.mapNotNull { item ->
@@ -116,14 +115,14 @@ class TemplateRepository(
      */
     suspend fun listCategories(): Result<List<String>> = runCatching {
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listCategories").call(emptyMap<String, Any>()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("listCategories").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listCategories: non-map payload")
         (raw["categories"] as? List<*>).orEmpty().mapNotNull { it as? String }
     }.onFailure { AuntieLog.e("TemplateRepository.listCategories failed", it) }
 
     suspend fun listBindings(): Result<List<TemplateBinding>> = runCatching {
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listTemplateBindings").call(emptyMap<String, Any>()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("listTemplateBindings").call(emptyMap<String, Any>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listTemplateBindings: non-map payload")
         val list = (raw["bindings"] as? List<*>).orEmpty()
         list.mapNotNull { item ->
@@ -162,7 +161,7 @@ class TemplateRepository(
             if (expectNew) put("expectNew", true)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("saveTemplate").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("saveTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("saveTemplate: non-map payload")
         raw["templateId"] as? String ?: error("saveTemplate: missing templateId")
     }.onFailure { AuntieLog.e("TemplateRepository.saveTemplate failed", it) }
@@ -181,7 +180,7 @@ class TemplateRepository(
             triggerKey?.let { put("triggerKey", it) }
             put("active", active)
         }
-        functions.getHttpsCallable("assignTemplate").call(payload).await()
+        functions.getHttpsCallable("assignTemplate").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("TemplateRepository.assignTemplate failed", it) }
 
@@ -197,7 +196,7 @@ class TemplateRepository(
     suspend fun unassignTemplate(catalogKey: String): Result<Boolean> = runCatching {
         val payload = mapOf("catalogKey" to catalogKey)
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("unassignTemplate").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("unassignTemplate").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("unassignTemplate: non-map payload")
         raw["removed"] as? Boolean ?: false
     }.onFailure { AuntieLog.e("TemplateRepository.unassignTemplate failed", it) }
@@ -218,7 +217,7 @@ class TemplateRepository(
             filter?.takeIf { it.isNotBlank() }?.let { put("filter", it) }
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listCatalogKeys").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("listCatalogKeys").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("listCatalogKeys: non-map payload")
         (raw["rows"] as? List<*>).orEmpty().mapNotNull { item ->
             val m = item as? Map<*, *> ?: return@mapNotNull null
@@ -263,7 +262,7 @@ class TemplateRepository(
             if (onlyIds.isNotEmpty()) put("onlyIds", onlyIds)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("importSeedTemplates").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("importSeedTemplates").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("importSeedTemplates: non-map payload")
         decodeImportReport(raw)
     }.onFailure { AuntieLog.e("TemplateRepository.importSeedTemplates failed", it) }

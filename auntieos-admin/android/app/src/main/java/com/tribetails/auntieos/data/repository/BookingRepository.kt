@@ -141,7 +141,7 @@ class BookingRepository(
             overrideBusyConflict = overrideBusyConflict,
         )
         val raw = try {
-            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).await().data
+            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).awaitCallable().data
         } catch (e: FirebaseFunctionsException) {
             // Translate at the boundary so nothing above this line has to know
             // about Firebase types to tell a busy conflict (overridable) from a
@@ -439,7 +439,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("syncGoogleCalendarBusyEvents")
             .call(mapOf("lookAheadDays" to lookAheadDays))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("syncGoogleCalendarBusyEvents: non-map payload")
         val imported = (raw["imported"] as? Number)?.toInt() ?: 0
@@ -473,7 +473,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("startGoogleCalendarConnect")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("startGoogleCalendarConnect: non-map payload")
         GoogleCalendarConnectStart(
@@ -489,7 +489,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getGoogleCalendarConnection")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("getGoogleCalendarConnection: non-map payload")
         GoogleCalendarConnectionState(
@@ -509,7 +509,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listGoogleCalendars")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("listGoogleCalendars: non-map payload")
         @Suppress("UNCHECKED_CAST")
@@ -545,7 +545,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("setGoogleCalendarTargets")
             .call(mapOf("writeCalendarId" to writeCalendarId, "enabledCalendarIds" to enabledCalendarIds))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("setGoogleCalendarTargets: non-map payload")
         decodeGoogleCalendarConnection(raw["connection"])
@@ -564,7 +564,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("disconnectGoogleCalendar")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("disconnectGoogleCalendar: non-map payload")
         GoogleCalendarDisconnectResult(
@@ -585,7 +585,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("pushVisitsToGoogleCalendar")
             .call(mapOf("lookAheadDays" to lookAheadDays))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("pushVisitsToGoogleCalendar: non-map payload")
         @Suppress("UNCHECKED_CAST")
