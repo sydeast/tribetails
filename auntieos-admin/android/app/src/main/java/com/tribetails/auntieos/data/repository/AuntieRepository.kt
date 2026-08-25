@@ -1414,8 +1414,24 @@ class AuntieRepository(
         // never had the field read as two different things to a future query).
         // Never fires for a sandbox test-admin write: withSandboxScope above always
         // stamps a real, non-blank testTribeId when that mode is active.
+        // #593 folds its own blank-field cleanup into the same update. The
+        // gpsStrip* fields describe an ASYNCHRONOUS step that only applies to
+        // video; on an image there is no such step, and `MediaFile` is a data
+        // class, so `set()` above always writes the keys. Leaving `""` behind
+        // would make every photo indistinguishable from a video whose strip
+        // state was lost -- the same equality-on-empty-string trap kinfolkId
+        // documents. Deleted, a blank means "no async strip applies here".
+        val blankFields = mutableMapOf<String, Any>()
         if (newMediaFile.hasBlankKinfolkId()) {
-            docRef.update("kinfolkId", FieldValue.delete()).await()
+            blankFields["kinfolkId"] = FieldValue.delete()
+        }
+        if (newMediaFile.gpsStripStatus.isBlank()) {
+            blankFields["gpsStripStatus"] = FieldValue.delete()
+            blankFields["gpsStripAttempts"] = FieldValue.delete()
+            blankFields["gpsStripError"] = FieldValue.delete()
+        }
+        if (blankFields.isNotEmpty()) {
+            docRef.update(blankFields).await()
         }
         docRef.id
     }.onFailure { AuntieLog.e("Failed to save media file", it) }

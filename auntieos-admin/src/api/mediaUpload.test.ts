@@ -32,6 +32,7 @@ function signedUpload(over: Partial<CloudinarySignedUpload> = {}): CloudinarySig
     folder: 'tribetails/kinfolk/kf1',
     allowedFormats: 'jpg,png,webp,gif',
     transformation: 'fl_force_strip',
+    tags: '',
     entityType: 'KINFOLK',
     entityId: 'kf1',
     ...over,
@@ -116,6 +117,22 @@ describe('requestSignedUpload', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, noStrip));
     const result = await requestSignedUpload('KINFOLK', 'kf1');
     expect(result.transformation).toBe('');
+  });
+  // #593. A video cannot be stripped inside the upload, so the signer tags it
+  // as pending instead and the strip happens afterwards. Same contract as the
+  // transformation: carried through the grant, posted verbatim.
+  it('#593 carries the signed pending-strip tag through to the grant', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, signedUpload({ transformation: '', tags: 'needs-gps-strip' })),
+    );
+    const result = await requestSignedUpload('KINFOLK', 'kf1', 'video');
+    expect(result.tags).toBe('needs-gps-strip');
+  });
+  it('#593 treats a signer that sends no tags as "post none"', async () => {
+    const { tags: _drop, ...noTags } = signedUpload();
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, noTags));
+    const result = await requestSignedUpload('KINFOLK', 'kf1');
+    expect(result.tags).toBe('');
   });
 
   it('returns the parsed grant, preferring the SERVER folder over the request guess', async () => {
@@ -225,6 +242,37 @@ describe('uploadToCloudinary', () => {
     await uploadToCloudinary(file(), signedUpload({ transformation: '' }));
     const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
     expect((opts.body as FormData).get('transformation')).toBeNull();
+  });
+  // #593. Same both-halves discipline as the transformation above: the tag is
+  // in the signature, so a client that keeps it out of the form does not
+  // "skip the tagging", it gets an Invalid Signature and uploads nothing.
+  it('#593 posts the signed pending-strip tag on a video upload', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, {
+        secure_url: 'https://res.cloudinary.com/tribetails/video/upload/v1/clip.mp4',
+        public_id: 'tribetails/kinfolk/kf1/clip',
+        resource_type: 'video',
+        format: 'mp4',
+        bytes: 999,
+      }),
+    );
+    await uploadToCloudinary(file(), signedUpload({ transformation: '', tags: 'needs-gps-strip' }));
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((opts.body as FormData).get('tags')).toBe('needs-gps-strip');
+  });
+  it('#593 posts NO tags field when the signer signed none (image/raw)', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(200, {
+        secure_url: 'https://res.cloudinary.com/tribetails/image/upload/v1/abc.jpg',
+        public_id: 'tribetails/kinfolk/kf1/abc',
+        resource_type: 'image',
+        format: 'jpg',
+        bytes: 999,
+      }),
+    );
+    await uploadToCloudinary(file(), signedUpload({ tags: '' }));
+    const [, opts] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect((opts.body as FormData).get('tags')).toBeNull();
   });
 
   it('resolves the shape the writer needs, including video duration when present', async () => {
@@ -345,6 +393,48 @@ describe('writeMediaFileDoc', () => {
     expect(payload.durationSeconds).toBe(0);
   });
 
+  // #593. The async strip job addresses the Cloudinary asset by public id.
+  // Android and the desktop uploader have always stamped it; the web path did
+  // not, which left a web-uploaded video addressable only by parsing the URL.
+  it('#593 stamps cloudinaryPublicId, so the strip job never has to parse a URL', async () => {
+    await writeMediaFileDoc({
+      entityId: 'kf1',
+      entityType: 'KINFOLK',
+      originalFileName: 'clip.mp4',
+      cloud: cloudResult({ resourceType: 'video', publicId: 'tribetails/kinfolk/kf1/clip' }),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload.cloudinaryPublicId).toBe('tribetails/kinfolk/kf1/clip');
+  });
+  it('#593 queues a VIDEO for the asynchronous location strip', async () => {
+    await writeMediaFileDoc({
+      entityId: 'kf1',
+      entityType: 'KINFOLK',
+      originalFileName: 'clip.mp4',
+      cloud: cloudResult({ resourceType: 'video' }),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload.gpsStripStatus).toBe('PENDING');
+    expect(payload.gpsStripAttempts).toBe(0);
+  });
+  it('#593 leaves an IMAGE with no strip state: absent, never blank', async () => {
+    // A photo is stripped before Cloudinary stores it (#583), so it is not
+    // pending anything. Writing "" instead of omitting the key is the same
+    // equality-on-empty-string trap kinfolkId documents above, and it would
+    // also park every photo in the retry sweep's queue as a false positive.
+    await writeMediaFileDoc({
+      entityId: 'kf1',
+      entityType: 'KINFOLK',
+      originalFileName: 'photo.jpg',
+      cloud: cloudResult(),
+      cloudName: 'tribetails',
+    });
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect('gpsStripStatus' in payload).toBe(false);
+    expect('gpsStripAttempts' in payload).toBe(false);
+  });
   it('stamps the real signed-in uid, falling back to "auntie" only when signed out', async () => {
     mockAuth.currentUser = null;
     await writeMediaFileDoc({

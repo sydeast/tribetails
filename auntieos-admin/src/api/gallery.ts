@@ -91,6 +91,21 @@ export interface MediaFile {
    * out). Written ONLY by the `saveMediaTags` callable.
    */
   taggedKinIds?: string[] | undefined;
+  /**
+   * #593. Where this video is in the asynchronous location-metadata strip:
+   * "PENDING" | "STRIPPED" | "FAILED". ABSENT on every image (an image is
+   * stripped before Cloudinary stores it, #583, so it has no async state) and
+   * absent on every video uploaded before #593 — historical assets are out of
+   * scope and are not backfilled. Read it through
+   * `lib/mediaFormat.ts#mediaGpsStripState`, which coerces an absent field, a
+   * `null` or an unrecognized string to `unknown` rather than letting the grid
+   * assert something it cannot know.
+   */
+  gpsStripStatus?: string | undefined;
+  /** #593. How many times the strip has been attempted. Absent means none. */
+  gpsStripAttempts?: number | undefined;
+  /** #593. The last failure message, bounded to 500 chars. Blank on success. */
+  gpsStripError?: string | undefined;
 }
 
 /**

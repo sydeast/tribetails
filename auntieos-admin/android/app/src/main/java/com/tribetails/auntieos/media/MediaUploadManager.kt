@@ -112,6 +112,7 @@ class MediaUploadManager(
                 storageUrl = uploadResult.deliveryUrl ?: "",
                 thumbnailUrl = uploadResult.thumbnailUrl ?: "",
                 cloudinaryPublicId = uploadResult.publicId ?: "",
+                gpsStripStatus = gpsStripStatusFor(mediaType),
                 uploadedAt = getCurrentTimestamp(),
                 // Real signed-in uploader (was hardcoded "auntie"); single-admin fallback.
                 uploadedBy = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "auntie",
@@ -228,6 +229,10 @@ class MediaUploadManager(
             if (auth.transformation.isNotBlank()) {
                 builder.addFormDataPart("transformation", auth.transformation)
             }
+            // #593. Signed server-side on exactly the same terms.
+            if (auth.tags.isNotBlank()) {
+                builder.addFormDataPart("tags", auth.tags)
+            }
         }
         .build()
     private suspend fun fetchSignedUploadAuth(
@@ -266,7 +271,10 @@ class MediaUploadManager(
             folder = body.optString("folder"),
             // Absent on a signer that predates #583: blank means "sign nothing
             // extra, post nothing extra", which is the old request verbatim.
-            transformation = body.optString("transformation")
+            transformation = body.optString("transformation"),
+            // #593. Same defaulting as `transformation`, same reason: a signer
+            // that predates it signs no tags, so none are posted.
+            tags = body.optString("tags")
         ).also {
             if (it.cloudName.isBlank() || it.apiKey.isBlank() || it.signature.isBlank() || it.folder.isBlank()) {
                 error("Cloudinary signing response missing required fields")
@@ -285,6 +293,24 @@ class MediaUploadManager(
      * Internal rather than private so the upload contract is testable without
      * a network call or a real Uri.
      */
+    /**
+     * #593. The initial strip state stamped on a new `media_files` row.
+     *
+     * Only a VIDEO is queued for the asynchronous location strip. An image was
+     * already stripped before Cloudinary stored it (#583), and audio and
+     * documents carry no location atom this repo strips, so marking either
+     * PENDING would park a permanent false positive in the retry sweep's queue.
+     *
+     * BLANK, never a "NOT_APPLICABLE" word: the repository DELETES the key when
+     * this is blank, so a doc with no async strip to report has no field at
+     * all. That is the equality-on-empty-string Firestore trap `kinfolkId`
+     * documents, and the same answer.
+     *
+     * Internal rather than private so the rule is testable without staging a
+     * file, a Uri and a Cloudinary round trip.
+     */
+    internal fun gpsStripStatusFor(mediaType: MediaType): String =
+        if (mediaType == MediaType.VIDEO) "PENDING" else ""
     internal fun cloudinaryResourceKind(mediaType: MediaType): String = when (mediaType) {
         MediaType.IMAGE -> "image"
         MediaType.VIDEO -> "video"
@@ -408,6 +434,17 @@ class MediaUploadManager(
          * it verbatim when non-blank, never when blank.
          */
         val transformation: String = "",
+        /**
+         * #593. The tags the SERVER signed (`needs-gps-strip` for a video,
+         * blank otherwise). Signed on exactly the same terms as
+         * [transformation]: post it verbatim when non-blank, never when blank.
+         *
+         * A video's location metadata cannot be stripped inside the upload, so
+         * it is stripped asynchronously afterwards. This tag marks the asset as
+         * not-yet-stripped at Cloudinary itself, so an upload that succeeded
+         * and then failed to write its Firestore row is still findable.
+         */
+        val tags: String = "",
     )
 
     private class ProgressRequestBody(

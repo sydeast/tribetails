@@ -33,6 +33,13 @@ data class MediaFile(
     val width: Int = 0,
     val height: Int = 0,
     val cloudinaryPublicId: String = "",        // kept for delete + transform URL builds
+    // #593. State of the asynchronous video location-metadata strip:
+    // "PENDING" | "STRIPPED" | "FAILED". Blank on every image (a photo is
+    // stripped before Cloudinary stores it, #583, so no async step applies) and
+    // on every video predating #593.
+    val gpsStripStatus: String = "",
+    val gpsStripAttempts: Int = 0,
+    val gpsStripError: String = "",
 )
 
 /** #13 Gallery: minimal patch body for a taggedKinIds-only doc update. */
@@ -94,6 +101,17 @@ data class CloudinarySignedUpload(
      * #583 returns, which is why it defaults rather than being required.
      */
     val transformation: String = "",
+    /**
+     * #593. The tags the SERVER signed (`needs-gps-strip` for a video, blank
+     * otherwise). Signed on exactly the same terms as [transformation]: post it
+     * verbatim when non-blank, never when blank.
+     *
+     * A video's location metadata cannot be stripped inside the upload the way
+     * a photo's is, so it is stripped asynchronously afterwards. This tag marks
+     * the asset as not-yet-stripped at Cloudinary itself, so an upload that
+     * succeeded and then failed to write its Firestore row is still findable.
+     */
+    val tags: String = "",
     val entityType: String,
     val entityId: String,
 )

@@ -515,3 +515,49 @@ describe('uploadTransformationFor (#583 EXIF strip decision)', () => {
     assert.throws(() => uploadTransformationFor({}), /resourceKind/i);
   });
 });
+describe('uploadTagsFor (#593 pending-video-strip tag)', () => {
+  const { uploadTagsFor, UPLOAD_PENDING_STRIP_TAG, uploadTransformationFor } = idx;
+  it('is needs-gps-strip', () => {
+    assert.strictEqual(UPLOAD_PENDING_STRIP_TAG, 'needs-gps-strip');
+  });
+  // A video cannot be stripped inside the upload the way a photo is, so it is
+  // stripped afterwards by a Cloud Function. The tag rides in on the SIGNATURE,
+  // so every client is forced to send it and no client can invent one: from the
+  // instant a video lands in the account it is listed as not-yet-stripped.
+  it('tags a video as pending', () => {
+    assert.strictEqual(uploadTagsFor('video'), 'needs-gps-strip');
+  });
+  // A photo is stripped BEFORE Cloudinary stores it, so it is never pending
+  // anything and a tag saying otherwise would be a standing false positive in
+  // the account-side list this tag exists to be.
+  it('tags nothing for an image', () => {
+    assert.strictEqual(uploadTagsFor('image'), '');
+  });
+  it('tags nothing for raw (documents, audio)', () => {
+    assert.strictEqual(uploadTagsFor('raw'), '');
+  });
+  // Same default as the transformation decision, and for the same reason: a
+  // client that omits the hint is a photo uploader predating the parameter.
+  it('tags nothing when the kind is omitted, null or blank', () => {
+    assert.strictEqual(uploadTagsFor(undefined), '');
+    assert.strictEqual(uploadTagsFor(null), '');
+    assert.strictEqual(uploadTagsFor(''), '');
+  });
+  // Validated by the SAME helper as the transformation decision, so a resource
+  // kind can never mean one thing to one and something else to the other.
+  it('throws on an unrecognized kind, exactly as uploadTransformationFor does', () => {
+    assert.throws(() => uploadTagsFor('VIDEO'), /resourceKind/i);
+    assert.throws(() => uploadTagsFor('movie'), /resourceKind/i);
+    assert.throws(() => uploadTagsFor(7), /resourceKind/i);
+    assert.throws(() => uploadTagsFor({}), /resourceKind/i);
+  });
+  // The two decisions are disjoint on every kind: nothing is both stripped at
+  // upload and queued for an async strip, and nothing is neither when it could
+  // carry coordinates.
+  it('never signs a transformation and a pending tag for the same kind', () => {
+    for (const kind of ['image', 'video', 'raw']) {
+      assert.ok(!(uploadTransformationFor(kind) !== '' && uploadTagsFor(kind) !== ''),
+        `${kind} got both a transformation and a pending tag`);
+    }
+  });
+});

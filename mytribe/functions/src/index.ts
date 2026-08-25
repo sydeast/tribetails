@@ -563,6 +563,8 @@ export { onKinTaleCommentCreate } from './triggers/onKinTaleCommentCreate';
 export { onBookingNoteCreate } from './triggers/onBookingNoteCreate';
 export { onRatingCreate } from './triggers/onRatingCreate';
 export { onKinfolkCreate } from './triggers/onKinfolkCreate';
+// #593: strips location metadata from every uploaded video, asynchronously.
+export { onMediaFileVideoStrip } from './triggers/onMediaFileVideoStrip';
 
 // notifications
 export {
@@ -591,3 +593,5 @@ export { kincareReminderCron } from './scheduled/kincareReminderCron';
 export { purgeOldVisitRoutes } from './scheduled/purgeOldVisitRoutes';
 export { purgeOldDrafts } from './scheduled/purgeOldDrafts';
 export { scheduleDigestCron } from './scheduled/scheduleDigestCron';
+// #593: retry / catch-up for the asynchronous video location strip.
+export { videoGpsStripSweep } from './scheduled/videoGpsStripSweep';

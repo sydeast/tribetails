@@ -375,6 +375,24 @@ private fun MediaViewerDialog(
     }
 }
 
+/**
+ * #593. True when the asynchronous video location-metadata strip ran out of
+ * attempts without succeeding, so the stored video still holds the coordinates
+ * the camera wrote.
+ *
+ * Mirrors the web admin's `mediaGpsStripState` in `lib/mediaFormat.ts`, and
+ * coerces the same way: the field is FREE TEXT off Firestore, absent on every
+ * image (a photo is stripped before Cloudinary stores it, #583, so there is no
+ * async step) and absent on every video predating #593. Anything it does not
+ * recognise is NOT reported as failed and equally NOT reported as clean -- the
+ * badge only ever makes the one claim it can back up.
+ *
+ * Internal rather than private so the rule is unit-testable without composing
+ * the screen.
+ */
+internal fun mediaGpsStripFailed(media: MediaFile): Boolean =
+    media.gpsStripStatus.trim().uppercase() == "FAILED"
+
 @Composable
 private fun GalleryThumb(media: MediaFile, taggedNames: List<String>, onClick: () -> Unit) {
     val c = AuntieTheme.colors
@@ -406,6 +424,30 @@ private fun GalleryThumb(media: MediaFile, taggedNames: List<String>, onClick: (
                     tint = c.kinfolkOrange,
                     modifier = Modifier.size(28.dp),
                 )
+            }
+            // #593. Only the FAILED state is drawn. PENDING is ordinary progress
+            // measured in seconds, and badging it would put an alarming label on
+            // every video the moment it lands; STRIPPED is the expected outcome.
+            // FAILED means the video still carries the coordinates it was
+            // recorded with and no further retry is coming, which is the one
+            // state an operator has to see without reading a log.
+            if (mediaGpsStripFailed(media)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(c.error.copy(alpha = 0.92f))
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = "Location not removed",
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.background,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             if (taggedNames.isNotEmpty()) {
                 Box(

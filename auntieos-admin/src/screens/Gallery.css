@@ -177,6 +177,25 @@
   padding: 0.1rem 0.5rem;
 }
 
+/* #593. Shown only when the asynchronous location strip FAILED, so the tile
+   itself says the video still carries the coordinates it was recorded with.
+   Runs along the bottom rather than sharing the profile badge's corner: the
+   two states are independent and either can be true on its own. */
+.gallery__tile-strip-badge {
+  position: absolute;
+  left: var(--space-1);
+  right: var(--space-1);
+  bottom: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  text-align: center;
+  color: var(--color-background);
+  background: var(--color-error);
+  border-radius: var(--radius-pill);
+  padding: 0.1rem 0.5rem;
+}
+
 .gallery__tile-body {
   display: flex;
   flex-direction: column;

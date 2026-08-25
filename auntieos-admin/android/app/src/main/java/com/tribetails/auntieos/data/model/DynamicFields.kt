@@ -168,6 +168,17 @@ data class MediaFile(
     var description: String = "",
     var isProfilePhoto: Boolean = false,
     var cloudinaryPublicId: String = "",   // parity with web MediaFile; needed for delete + Tribal Intel attachment refs
+    // #593. State of the asynchronous video location-metadata strip:
+    // "PENDING" | "STRIPPED" | "FAILED". A video cannot be stripped inside the
+    // upload the way a photo is (#583 signs an image-only transformation), so
+    // it is stripped afterwards by a Cloud Function and this records where that
+    // got to. BLANK on every image and on every video predating #593; the
+    // repository DELETES the key rather than writing "" (the same
+    // equality-on-empty-string trap kinfolkId documents above), so a blank here
+    // means "no async strip applies", never "not stripped".
+    var gpsStripStatus: String = "",
+    var gpsStripAttempts: Int = 0,
+    var gpsStripError: String = "",
     var metadata: MediaMetadata = MediaMetadata()
 ) {
     /** Case-insensitive view of [entityType] as the enum; unknown -> KIN. */

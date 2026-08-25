@@ -87,22 +87,23 @@ class JvmMediaUploadValidationTest {
  * signed instruction on the wire — without needing a live endpoint.
  */
 class JvmMediaUploadStripsExifTest {
-    private fun signed(transformation: String) = CloudinarySignedUpload(
+    private fun signed(transformation: String, tags: String = "") = CloudinarySignedUpload(
         cloudName = "tribetails",
         apiKey = "key123",
         timestamp = 1_700_000_000L,
         signature = "sig",
         folder = "tribetails/entity/kf1",
         transformation = transformation,
+        tags = tags,
         entityType = "KINFOLK",
         entityId = "kf1",
     )
-    private fun fieldNames(transformation: String): List<String> =
+    private fun fieldNames(transformation: String, tags: String = ""): List<String> =
         JvmMediaUpload.uploadFormData(
             fileBytes = byteArrayOf(1, 2, 3),
             fileName = "beach.jpg",
             mimeType = "image/jpeg",
-            sign = signed(transformation),
+            sign = signed(transformation, tags),
         ).map { it.name.orEmpty() }
     @Test
     fun `a photo asks the signer for the image signature, which is the one that strips`() {
@@ -132,5 +133,55 @@ class JvmMediaUploadStripsExifTest {
         val names = fieldNames("")
         assertFalse(names.contains("transformation"), "blank transformation must not be posted; got $names")
         assertTrue(names.containsAll(listOf("file", "api_key", "timestamp", "signature", "folder")))
+    }
+    // #593. A video cannot be stripped inside the upload, so the signer tags it
+    // `needs-gps-strip` and a Cloud Function strips it afterwards. The tag is in
+    // the signature, so desktop is forced to send it and could never invent one.
+    // Desktop's file chooser is image-only today, but its direct-bytes entry
+    // point takes whatever mime type the caller hands it, so the video contract
+    // has to hold here too.
+    @Test
+    fun `the signed pending-strip tag is posted in the multipart form`() {
+        val names = fieldNames(transformation = "", tags = "needs-gps-strip")
+        assertTrue(names.contains("tags"), "tags must be posted or Cloudinary rebuilds a different signature; got $names")
+        assertFalse(names.contains("transformation"))
+    }
+    @Test
+    fun `no tags field is posted when the signer signed none`() {
+        val names = fieldNames(transformation = "fl_force_strip", tags = "")
+        assertFalse(names.contains("tags"), "blank tags must not be posted; got $names")
+        assertTrue(names.contains("transformation"))
+    }
+    @Test
+    fun `a signer response with no tags key at all reads as blank`() {
+        // A signer that predates #593 sends no `tags` key.
+        assertEquals("", CloudinarySignedUpload(
+            cloudName = "tribetails",
+            apiKey = "key123",
+            timestamp = 1_700_000_000L,
+            signature = "sig",
+            folder = "tribetails/entity/kf1",
+            entityType = "KINFOLK",
+            entityId = "kf1",
+        ).tags)
+    }
+    // #593. The gpsStrip* keys describe an ASYNCHRONOUS step that only applies
+    // to video. On an image there is no such step, and the codec runs with
+    // encodeDefaults = true, so the keys would be stamped blank on every photo
+    // -- the equality-on-empty-string trap `kinfolkId` documents. Absent is the
+    // only representation that means "no async strip applies here".
+    @Test
+    fun `a video row keeps its strip state in the written document`() {
+        val json = JvmMediaUpload.encodeMediaFileForWrite(
+            MediaFile(fileType = "VIDEO", gpsStripStatus = "PENDING"),
+        )
+        assertTrue(json.contains("\"gpsStripStatus\":\"PENDING\""), "got $json")
+    }
+    @Test
+    fun `an image row omits the strip keys entirely rather than writing them blank`() {
+        val json = JvmMediaUpload.encodeMediaFileForWrite(MediaFile(fileType = "IMAGE"))
+        assertFalse(json.contains("gpsStripStatus"), "got $json")
+        assertFalse(json.contains("gpsStripAttempts"), "got $json")
+        assertFalse(json.contains("gpsStripError"), "got $json")
     }
 }
