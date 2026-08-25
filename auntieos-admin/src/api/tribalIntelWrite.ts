@@ -1,5 +1,5 @@
 import { call } from '../lib/fns';
-import { requestSignedUpload, uploadToCloudinary, writeMediaFileDoc } from './mediaUpload';
+import { requestSignedUpload, resourceKindForFile, uploadToCloudinary, writeMediaFileDoc } from './mediaUpload';
 import type { TribalIntelAttachmentDraft, TribalIntelCallableArgs } from '../lib/tribalIntelDraftSchema';
 
 /**
@@ -102,7 +102,11 @@ export const TRIBAL_INTEL_UPLOAD_ENTITY_ID = 'pending';
  * summarizer cites the URL; it does not read image bytes. The form says so.
  */
 export async function uploadTribalIntelAttachment(file: File): Promise<TribalIntelAttachmentDraft> {
-  const sign = await requestSignedUpload('TRIBAL_INTEL', TRIBAL_INTEL_UPLOAD_ENTITY_ID);
+  // #583: attachments run the same pipeline, so a photographed document
+  // attached here is stripped exactly like a gallery photo. The kind comes from
+  // the file itself, so a video or a PDF is not signed with an image-only
+  // transformation.
+  const sign = await requestSignedUpload('TRIBAL_INTEL', TRIBAL_INTEL_UPLOAD_ENTITY_ID, resourceKindForFile(file));
   const cloud = await uploadToCloudinary(file, sign);
 
   await writeMediaFileDoc({

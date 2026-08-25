@@ -58,6 +58,7 @@ const SIGNED: SignedUploadParams = {
   signature: 'sig',
   folder: 'tribetails/kinfolks/uid/avatars',
   allowedFormats: 'jpg,png,webp,gif',
+  transformation: 'fl_force_strip',
 };
 
 async function selectFile(input: HTMLInputElement, file: File) {
@@ -160,6 +161,38 @@ describe('SignedImageUpload', () => {
     await waitFor(() => expect(onUploaded).toHaveBeenCalledWith('https://res.cloudinary.com/demo/image/upload/v1/avatar.jpg'));
   });
 
+  // #583. The signer folds `transformation=fl_force_strip` into the signature
+  // base, which makes posting it mandatory: a form without it is an Invalid
+  // Signature, not an unstripped upload. This asserts the field is genuinely in
+  // the multipart body that goes to Cloudinary, since that is the only place
+  // the strip can actually take effect.
+  it('#583 posts the signed transformation, so the stored original carries no EXIF GPS', async () => {
+    const validate = vi.fn().mockReturnValue(null);
+    const sign = vi.fn().mockResolvedValue(SIGNED);
+    const onUploaded = vi.fn();
+    const { container } = render(
+      <SignedImageUpload sign={sign} validate={validate} onUploaded={onUploaded} imageUrl="" fallback="M" />,
+    );
+    await selectFile(getFileInput(container), VALID_FILE);
+    await waitFor(() => expect(FakeXHR.instances).toHaveLength(1));
+    const body = FakeXHR.instances[0]?.sentBody as FormData;
+    expect(body.get('transformation')).toBe('fl_force_strip');
+    // and the rest of the signed set is still there, unchanged.
+    expect(body.get('folder')).toBe('tribetails/kinfolks/uid/avatars');
+    expect(body.get('allowed_formats')).toBe('jpg,png,webp,gif');
+    expect(body.get('signature')).toBe('sig');
+  });
+  it('#583 posts NO transformation field when the signer signed none', async () => {
+    const validate = vi.fn().mockReturnValue(null);
+    const sign = vi.fn().mockResolvedValue({ ...SIGNED, transformation: '' });
+    const onUploaded = vi.fn();
+    const { container } = render(
+      <SignedImageUpload sign={sign} validate={validate} onUploaded={onUploaded} imageUrl="" fallback="M" />,
+    );
+    await selectFile(getFileInput(container), VALID_FILE);
+    await waitFor(() => expect(FakeXHR.instances).toHaveLength(1));
+    expect((FakeXHR.instances[0]?.sentBody as FormData).get('transformation')).toBeNull();
+  });
   it('surfaces a distinct error when the sign callable fails, without ever POSTing to Cloudinary', async () => {
     const validate = vi.fn().mockReturnValue(null);
     const sign = vi.fn().mockRejectedValue(new Error("Photo uploads aren't available right now. Try again later."));

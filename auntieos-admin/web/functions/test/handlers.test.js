@@ -254,8 +254,9 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     assert.strictEqual(out.apiKey, 'demo-key');
     assert.strictEqual(out.folder, 'tribetails/entity/ent_1');
     assert.strictEqual(out.signedBy, 'admin-1');
-    // signature is sha1(folder=..&timestamp=.. + apiSecret) over exactly folder+timestamp.
-    const base = `folder=${out.folder}&timestamp=${out.timestamp}` + 'demo-secret';
+    // #583: with no resourceKind in the body the signer defaults to image, so
+    // the signed set is folder + timestamp + transformation, alphabetically.
+    const base = `folder=${out.folder}&timestamp=${out.timestamp}&transformation=fl_force_strip` + 'demo-secret';
     assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
     // the api secret must never cross the wire.
     assert.ok(!('apiSecret' in out));
@@ -274,8 +275,8 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     const out = res.jsonBody;
     assert.strictEqual(out.folder, 'tribetails/kinfolk/kf_test');
     assert.strictEqual(out.signedBy, 'test-1');
-    // signature still signs exactly folder+timestamp with the secret appended.
-    const base = `folder=${out.folder}&timestamp=${out.timestamp}` + 'demo-secret';
+    // signature signs folder+timestamp+transformation with the secret appended.
+    const base = `folder=${out.folder}&timestamp=${out.timestamp}&transformation=fl_force_strip` + 'demo-secret';
     assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
   });
 
@@ -310,6 +311,83 @@ describe('signCloudinaryUpload handler (onRequest)', () => {
     assert.match(res.jsonBody.error, /\.\.|backslash|relative|segment/i);
   });
 
+  // ── #583: the metadata strip is IN the signature, not just in the response ──
+  //
+  // Cloudinary recomputes the signature over the params it RECEIVES. So the
+  // only thing that actually forces a client to strip is the transformation
+  // being part of the signature base: a client that drops it gets "Invalid
+  // Signature" rather than a coordinate-bearing original. These tests
+  // recompute sha1 by hand from the base string, so they fail if the value
+  // stops reaching the base even while the response field still says the
+  // right thing.
+  it('#583 image upload: signs transformation=fl_force_strip INTO the signature base', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    const res = makeRes();
+    const body = {
+      folder: 'tribetails/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1',
+      resourceKind: 'image',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 200);
+    const out = res.jsonBody;
+    // the response tells the client what to post ...
+    assert.strictEqual(out.transformation, 'fl_force_strip');
+    // ... and the signature is genuinely computed over it, in alphabetical
+    // order (folder < timestamp < transformation), per Cloudinary's recipe.
+    const base = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}&transformation=fl_force_strip` + 'demo-secret';
+    assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+    // and it is NOT merely a returned constant: the same request without the
+    // transformation in the base produces a different signature.
+    const withoutStrip = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}` + 'demo-secret';
+    assert.notStrictEqual(out.signature, crypto.createHash('sha1').update(withoutStrip).digest('hex'));
+  });
+  it('#583 video upload: signs NO transformation, and the signature proves it', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    const res = makeRes();
+    const body = {
+      folder: 'tribetails/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1',
+      resourceKind: 'video',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 200);
+    const out = res.jsonBody;
+    // blank tells the client to post no transformation field at all ...
+    assert.strictEqual(out.transformation, '');
+    // ... and the signature must match a base WITHOUT it, or every video
+    // upload would come back "Invalid Signature".
+    const base = `folder=tribetails/kinfolk/kf_1&timestamp=${out.timestamp}` + 'demo-secret';
+    assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+  });
+  it('#583 raw upload (documents/audio): signs NO transformation', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    const res = makeRes();
+    const body = {
+      folder: 'tribetails/tribal_intel/pending', entityType: 'tribal_intel', entityId: 'pending',
+      resourceKind: 'raw',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 200);
+    const out = res.jsonBody;
+    assert.strictEqual(out.transformation, '');
+    const base = `folder=tribetails/tribal_intel/pending&timestamp=${out.timestamp}` + 'demo-secret';
+    assert.strictEqual(out.signature, crypto.createHash('sha1').update(base).digest('hex'));
+  });
+  it('#583 400 on an unrecognized resourceKind, never a silently unstripped upload', async () => {
+    configureCloudinary();
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    const res = makeRes();
+    const body = {
+      folder: 'tribetails/kinfolk/kf_1', entityType: 'kinfolk', entityId: 'kf_1',
+      resourceKind: 'photo',
+    };
+    await idx.signCloudinaryUpload(makeReq({ headers: ADMIN_BEARER, body }), res);
+    assert.strictEqual(res.statusCode, 400);
+    assert.match(res.jsonBody.error, /resourceKind/i);
+    assert.ok(!('signature' in res.jsonBody));
+  });
   it('500 when the Cloudinary secrets are not configured (fail loud, no signature)', async () => {
     // env deliberately left unset by beforeEach.
     installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });

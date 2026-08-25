@@ -4,7 +4,9 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * #518: desktop's admin/operator profile-photo upload (`SettingsScreen.kt`'s
@@ -72,5 +74,63 @@ class JvmMediaUploadValidationTest {
             "Selected media exceeds the ${JvmMediaUpload.MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB limit",
             err.message,
         )
+    }
+}
+/**
+ * #583: photo location metadata does not survive a desktop upload either.
+ *
+ * Desktop posts the picked bytes straight to api.cloudinary.com, so the strip
+ * is carried by the SIGNATURE: the signer folds `transformation=fl_force_strip`
+ * into the signature base for an image, and Cloudinary recomputes that
+ * signature over the fields it actually receives. This pins both halves of what
+ * desktop is responsible for — asking for the right kind, and putting the
+ * signed instruction on the wire — without needing a live endpoint.
+ */
+class JvmMediaUploadStripsExifTest {
+    private fun signed(transformation: String) = CloudinarySignedUpload(
+        cloudName = "tribetails",
+        apiKey = "key123",
+        timestamp = 1_700_000_000L,
+        signature = "sig",
+        folder = "tribetails/entity/kf1",
+        transformation = transformation,
+        entityType = "KINFOLK",
+        entityId = "kf1",
+    )
+    private fun fieldNames(transformation: String): List<String> =
+        JvmMediaUpload.uploadFormData(
+            fileBytes = byteArrayOf(1, 2, 3),
+            fileName = "beach.jpg",
+            mimeType = "image/jpeg",
+            sign = signed(transformation),
+        ).map { it.name.orEmpty() }
+    @Test
+    fun `a photo asks the signer for the image signature, which is the one that strips`() {
+        assertEquals("image", JvmMediaUpload.cloudinaryResourceKind("image/jpeg"))
+        assertEquals("image", JvmMediaUpload.cloudinaryResourceKind("IMAGE/HEIC"))
+    }
+    @Test
+    fun `a video asks for the video signature, so no image-only flag is signed onto it`() {
+        assertEquals("video", JvmMediaUpload.cloudinaryResourceKind("video/mp4"))
+    }
+    @Test
+    fun `anything else is raw, including a blank mime type`() {
+        assertEquals("raw", JvmMediaUpload.cloudinaryResourceKind("application/pdf"))
+        assertEquals("raw", JvmMediaUpload.cloudinaryResourceKind(""))
+    }
+    @Test
+    fun `the signed strip instruction is posted in the multipart form`() {
+        val names = fieldNames("fl_force_strip")
+        assertTrue(
+            names.contains("transformation"),
+            "transformation must be posted or Cloudinary rebuilds a different signature; got $names",
+        )
+        assertTrue(names.containsAll(listOf("file", "api_key", "timestamp", "signature", "folder")))
+    }
+    @Test
+    fun `nothing extra is posted when the signer signed no transformation`() {
+        val names = fieldNames("")
+        assertFalse(names.contains("transformation"), "blank transformation must not be posted; got $names")
+        assertTrue(names.containsAll(listOf("file", "api_key", "timestamp", "signature", "folder")))
     }
 }
