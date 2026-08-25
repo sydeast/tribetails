@@ -260,7 +260,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.auntie.on_my_way': [
     {
-      trigger: 'An Auntie taps "On my way" on a visit.',
+      trigger:
+        'An Auntie taps "On my way" on a visit (Android), or an operator marks it on the way from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`, which calls it server-side in the same request that moves the status.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -278,7 +279,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.auntie.arrived': [
     {
-      trigger: 'An Auntie taps "Arrived" on a visit.',
+      trigger:
+        'An Auntie taps "Arrived" on a visit (Android), or an operator clocks it in from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
@@ -295,7 +297,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.auntie.departed': [
     {
-      trigger: 'An Auntie taps "Departed" on a visit.',
+      trigger:
+        'An Auntie taps "Departed" on a visit (Android), or an operator clocks it out from the web admin\'s Auntie Time detail. Both reach the same dispatch core; the web path goes through `src/admin/setVisitLifecycle.ts`.',
       source: 'src/admin/dispatchVisitNotification.ts',
       dataKeys: [
         'familyId',
