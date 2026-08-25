@@ -978,14 +978,33 @@ service cloud.firestore {
  // kin existed or even belonged to the household whose photo it is, and no
  // audit entry was written. The callable enforces both and the admin SDK
  // bypasses these rules, so denying the key here leaves exactly one way in.
- // Every OTHER field on the doc keeps its existing client write path: the
- // upload pipelines (`create`) and the soft-delete flag are untouched.
+ // Every OTHER field on the doc keeps its existing client `update` path, and
+ // the upload pipelines keep their client `create`: `api/mediaUpload.ts`,
+ // `JvmMediaUpload` and Android's repository all addDoc straight into this
+ // collection, and #397 S3 caption editing writes `description` the same way.
+ //
+ // DELETE IS CALLABLE-ONLY (#577). Deleting a media row is a two-collection
+ // invariant: setMediaProfilePhoto stamps kinfolk/kin `.profilePictureUrl` (or
+ // users `.photoUrl`) with THIS doc's storageUrl, so dropping the row from a
+ // client leaves the profile rendering a photo the gallery has forgotten, with
+ // nothing left in the app able to clear that field again - and no audit entry,
+ // at the one moment the deleted row was the only record the file ever existed.
+ // The deleteMediaFile callable does both writes in one batch, clears the photo
+ // field only when it actually points at this file, refuses a wrong-entity id,
+ // and writes MEDIA_FILE_DELETED. The admin SDK bypasses these rules, so
+ // `if false` leaves exactly one way in - the same stance training_documents
+ // above already takes.
+ //
+ // PR #568 shipped that callable and repointed React and Android at it but left
+ // this line open on purpose, because the desktop admin was still writing
+ // `media_files` from the client. It no longer is (#577), so the line closes
+ // here, in the same change that removes the last client writer.
     match /media_files/{id} {
       allow read: if isAuntie() || testOwnsExisting();
       allow create: if isAuntie() || testOwnsIncoming();
       allow update: if (isAuntie() || testOwnsExisting())
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['taggedKinIds']);
-      allow delete: if isAuntie() || testOwnsExisting();
+      allow delete: if false;
     }
     match /payments/{id} {
       allow read: if isAuntie() || testOwnsExisting();

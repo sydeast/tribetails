@@ -402,16 +402,19 @@ internal actual suspend fun platformApproveGeneratedDraft(draftId: String, edite
 
 // GPS / media byte pipelines: not part of the desktop admin surface, kept honest fail-loud.
 internal actual suspend fun platformPickAndUploadKinTaleMedia(sessionId: String, remainingSlots: Int): WriteResult<List<MediaFile>> = stubWriteResult("Media upload is mobile-only")
-internal actual suspend fun platformDeleteKinTaleMedia(mediaFileId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("media_files", mediaFileId, mapOf("deleted" to JsonPrimitive(true)))) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
+// #577: both media deletes used to live here as
+// patchFields("media_files", id, {"deleted": true}), a client UPDATE writing a
+// soft-delete flag NOTHING in this repo reads, so the row and its tile both
+// survived a "successful" delete. They are gone: FirestoreClient.deleteMedia now
+// calls the `deleteMediaFile` callable (which also clears a profile photo still
+// pointing at the file, and writes the audit entry), and firestore.rules denies
+// client deletes on media_files outright.
 internal actual suspend fun platformUploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> =
     JvmMediaUpload.upload(entityId, entityType, bytes, mimeType)
 // Run-4 #4b: bulk multi-file picker is mobile/web-only on desktop (same as the
 // KinTale multi path); single uploads still route through JvmMediaUpload above.
 internal actual suspend fun platformPickAndUploadMedia(entityId: String, entityType: String, max: Int): WriteResult<List<MediaFile>> =
     stubWriteResult("Bulk media upload is mobile-only")
-internal actual suspend fun platformDeleteMedia(mediaId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("media_files", mediaId, mapOf("deleted" to JsonPrimitive(true)))) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
 internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTemplate): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
 internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit> =

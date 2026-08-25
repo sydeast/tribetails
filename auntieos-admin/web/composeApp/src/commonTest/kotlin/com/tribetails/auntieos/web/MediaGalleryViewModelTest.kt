@@ -102,12 +102,32 @@ class MediaGalleryViewModelTest {
         ds.emitMedia(FirestoreResult.Data(items))
         vm.uiState.first { !it.isLoading }
 
-        vm.deleteMedia("m1")
+        vm.deleteMedia(items[0])
 
         val state = vm.uiState.first { s -> s.items.none { it._id == "m1" } }
         assertEquals(1, state.items.size)
         assertEquals("m2", state.items[0]._id)
         assertNull(state.error)
+    }
+
+    /**
+     * #577: the scope cross-check the `deleteMediaFile` callable applies must be
+     * the ROW's `entityId`, never the VM's route-derived one. Pinned with a row
+     * whose entityId deliberately differs from the screen's: if this VM ever goes
+     * back to passing its own constructor arg, this assertion catches it.
+     */
+    @Test
+    fun deleteMedia_sends_the_rows_own_entityId_as_the_scope_cross_check() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = MediaGalleryViewModel(entityId = "route-kf", entityType = "kinfolk", dataSource = ds)
+        val row = media("m1", entityId = "row-kf")
+        ds.emitMedia(FirestoreResult.Data(listOf(row)))
+        vm.uiState.first { !it.isLoading }
+
+        vm.deleteMedia(row)
+
+        vm.uiState.first { s -> s.items.none { it._id == "m1" } }
+        assertEquals("m1" to "row-kf", ds.lastDeleteArgs)
     }
 
     @Test
@@ -118,7 +138,7 @@ class MediaGalleryViewModelTest {
         ds.emitMedia(FirestoreResult.Data(items))
         vm.uiState.first { !it.isLoading }
 
-        vm.deleteMedia("m1")
+        vm.deleteMedia(items[0])
 
         val state = vm.uiState.first { it.error != null }
         assertNotNull(state.error)

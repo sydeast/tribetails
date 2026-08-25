@@ -204,7 +204,7 @@ class BookingViewModelExtTest {
                 com.tribetails.auntieos.web.data.WriteResult.Err("quota exceeded")
             override fun mediaStream(entityId: String, entityType: String) = _fake.mediaStream(entityId, entityType)
             override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) = _fake.uploadMedia(entityId, entityType, bytes, mimeType)
-            override suspend fun deleteMedia(mediaId: String) = _fake.deleteMedia(mediaId)
+            override suspend fun deleteMedia(mediaId: String, entityId: String) = _fake.deleteMedia(mediaId, entityId)
             override fun reportForSessionStream(sessionId: String) = _fake.reportForSessionStream(sessionId)
             override suspend fun saveReport(report: com.tribetails.auntieos.web.data.KinCareReport) = _fake.saveReport(report)
             override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = _fake.sendReport(report, session)

@@ -35,7 +35,7 @@ class FirestoreAuntieDataSource(
         client.manageBookingSeries(action, kinfolkId, batchId)
     override fun mediaStream(entityId: String, entityType: String): Flow<FirestoreResult<List<MediaFile>>> = client.mediaStream(entityId, entityType)
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> = client.uploadMedia(entityId, entityType, bytes, mimeType)
-    override suspend fun deleteMedia(mediaId: String): WriteResult<Unit> = client.deleteMedia(mediaId)
+    override suspend fun deleteMedia(mediaId: String, entityId: String): WriteResult<Unit> = client.deleteMedia(mediaId, entityId)
     override fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(report: KinCareReport): WriteResult<String> = client.saveReport(report)
     override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> = client.sendReport(report, session)
