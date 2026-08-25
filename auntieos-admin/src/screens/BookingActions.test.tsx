@@ -219,6 +219,32 @@ describe('BookingActions: a server refusal the offer-map did not predict', () =>
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  /**
+   * ISSUE #582. The distance refusal is a SECOND, differently-coded refusal
+   * under the same operator switch, and the two remedies are different: one
+   * says record the step, the other says you were measured a long way from the
+   * house. This surface has no arrival control of its own — the in-visit
+   * lifecycle lives on the phone and the desktop console — so the server's own
+   * sentence, which names the distance and both ways out, is the whole of what
+   * a React-only operator gets. It must not be swallowed or rewritten.
+   */
+  it('surfaces the arrival-radius refusal verbatim, naming the distance and the radius', async () => {
+    markBookingCompleted.mockRejectedValue(
+      new Error(
+        "This visit's arrival was recorded 2.4 km from the household, and your settings require " +
+          'it within 150 m. Record the arrival again from the household, widen "Arrival must be ' +
+          'within" in Settings, or turn off "Verify arrival and departure".',
+      ),
+    );
+    const onClose = vi.fn();
+    render(<BookingActions entry={entry({ _id: 'ses-8', status: 'SCHEDULED' })} onClose={onClose} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, mark it completed' }));
+    expect(await screen.findByText(/2\.4 km from the household/i)).toBeInTheDocument();
+    expect(await screen.findByText(/within 150 m/i)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('surfaces an unreadable-status refusal verbatim', async () => {
     markBookingCompleted.mockRejectedValue(
       new Error("Booking status 'HIJACKED' is not a status this app recognizes, so no transition can be applied to it."),

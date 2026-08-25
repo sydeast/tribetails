@@ -408,6 +408,12 @@ export interface BusinessSettings {
   enableGPSTrackingForAllVisits: boolean;
   enablePhotoLocationTagging: boolean;
   requireArrivalDepartureVerification: boolean;
+  /**
+   * ISSUE #582: how close to the household counts as arrived, in metres. Only
+   * meaningful while `requireArrivalDepartureVerification` is on — it is that
+   * switch's threshold, not a second switch, so there is no "off" value here.
+   */
+  arrivalRadiusMeters: number;
   autoStartTrackingOnVisitStart: boolean;
   trackingAccuracy: string;
   saveRoutesForDays: number;
@@ -524,6 +530,12 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enableGPSTrackingForAllVisits: true,
   enablePhotoLocationTagging: true,
   requireArrivalDepartureVerification: true,
+  // 150 m. Android's dormant geofence constants are 50 m and 100 m, which are
+  // too tight for a fix taken indoors, where an Auntie usually is when she
+  // presses the button. See ARRIVAL_RADIUS_DEFAULT_METERS in
+  // `functions/src/lib/arrivalVerification.ts`, which is the value the server
+  // falls back to and must stay in step with this one.
+  arrivalRadiusMeters: 150,
   autoStartTrackingOnVisitStart: true,
   trackingAccuracy: 'HIGH',
   saveRoutesForDays: 90,
@@ -725,6 +737,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.enablePhotoLocationTagging as boolean) ?? d.enablePhotoLocationTagging,
     requireArrivalDepartureVerification:
       (r.requireArrivalDepartureVerification as boolean) ?? d.requireArrivalDepartureVerification,
+    arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,
     trackingAccuracy: pickString(r.trackingAccuracy, d.trackingAccuracy),

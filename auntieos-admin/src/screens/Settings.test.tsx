@@ -129,6 +129,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enableGPSTrackingForAllVisits: true,
   enablePhotoLocationTagging: true,
   requireArrivalDepartureVerification: true,
+  arrivalRadiusMeters: 150,
   autoStartTrackingOnVisitStart: true,
   trackingAccuracy: 'HIGH',
   saveRoutesForDays: 90,

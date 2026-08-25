@@ -36,15 +36,23 @@ import '../SettingsEdit.css';
  *         priority, so it trades battery against precision for real.
  *  LIVE   `defaultEtaMinutes` + `etaMinuteOptions`  the value and the choices on
  *         the "On My Way" sheet.
- *  STORED `enablePhotoLocationTagging`, `requireArrivalDepartureVerification`,
+ *  LIVE   `enablePhotoLocationTagging`, `requireArrivalDepartureVerification`,
  *         `saveRoutesForDays`, `allowClientLocationSharing`,
- *         `draftRetentionDays` + `draftRetentionOptions`: persisted and read
- *         back, with no behavior behind them yet. Each is called out on the
- *         panel so nobody mistakes a saved value for an enforced one. Building
- *         those consumers (a route-retention purge, a draft purge, a photo
- *         EXIF gate, an arrival-verification step, a portal location gate)
- *         means building features, not wiring a switch, and each needs its own
- *         ruling. This issue is the editors.
+ *         `draftRetentionDays` + `draftRetentionOptions`. These five were
+ *         STORED-and-unread when this panel was written; the operator ruled
+ *         that a control must turn on a working feature, and all five got
+ *         consumers in the same change. The "no behaviour behind them yet"
+ *         note that stood here was already false, and both Kotlin panels had
+ *         been corrected; this is the third.
+ *
+ * ISSUE #582 adds `arrivalRadiusMeters` under the arrival switch. It is that
+ * switch's THRESHOLD, not a second switch: with verification on, a visit whose
+ * arrival was recorded confidently further than this from the household cannot
+ * be marked complete. An arrival with no usable location — no fix, offline, a
+ * household whose address will not geocode, the desktop console, which has no
+ * GPS at all — is allowed through and recorded as unverified, which is why the
+ * hint under the field says so rather than promising a check that will not
+ * always run.
  */
 
 interface VisitsTrackingSectionProps {
@@ -58,6 +66,7 @@ interface Draft {
   trackingAccuracy: string;
   enablePhotoLocationTagging: boolean;
   requireArrivalDepartureVerification: boolean;
+  arrivalRadiusMeters: string;
   allowClientLocationSharing: boolean;
   saveRoutesForDays: string;
   defaultEtaMinutes: number;
@@ -73,6 +82,7 @@ function seed(data: BusinessSettings): Draft {
     trackingAccuracy: data.trackingAccuracy,
     enablePhotoLocationTagging: data.enablePhotoLocationTagging,
     requireArrivalDepartureVerification: data.requireArrivalDepartureVerification,
+    arrivalRadiusMeters: String(data.arrivalRadiusMeters),
     allowClientLocationSharing: data.allowClientLocationSharing,
     saveRoutesForDays: String(data.saveRoutesForDays),
     defaultEtaMinutes: data.defaultEtaMinutes,
@@ -96,6 +106,11 @@ export function visitsTrackingPatch(
 ): { patch: Partial<BusinessSettings> } | { error: string } {
   const routeDays = parseWholeNumber(draft.saveRoutesForDays, NUMBER_FIELDS.saveRoutesForDays);
   if ('error' in routeDays) return { error: `Keep routes for: ${routeDays.error}` };
+  // #582. Validated even while the switch above is off, because the value is
+  // still saved and would otherwise become an unfixable problem the first time
+  // somebody turns verification on.
+  const radius = parseWholeNumber(draft.arrivalRadiusMeters, NUMBER_FIELDS.arrivalRadiusMeters);
+  if ('error' in radius) return { error: `Arrival must be within: ${radius.error}` };
   const eta = parseOptionList(draft.etaMinuteOptions, 'minutes');
   if ('error' in eta) return { error: `On-my-way choices: ${eta.error}` };
   const drafts = parseOptionList(draft.draftRetentionOptions, 'days');
@@ -107,6 +122,7 @@ export function visitsTrackingPatch(
       trackingAccuracy: draft.trackingAccuracy,
       enablePhotoLocationTagging: draft.enablePhotoLocationTagging,
       requireArrivalDepartureVerification: draft.requireArrivalDepartureVerification,
+      arrivalRadiusMeters: radius.value,
       allowClientLocationSharing: draft.allowClientLocationSharing,
       saveRoutesForDays: routeDays.value,
       defaultEtaMinutes: clampToOptions(draft.defaultEtaMinutes, eta.value),
@@ -131,6 +147,7 @@ function isDirty(draft: Draft, data: BusinessSettings): boolean {
     p.trackingAccuracy !== data.trackingAccuracy ||
     p.enablePhotoLocationTagging !== data.enablePhotoLocationTagging ||
     p.requireArrivalDepartureVerification !== data.requireArrivalDepartureVerification ||
+    p.arrivalRadiusMeters !== data.arrivalRadiusMeters ||
     p.allowClientLocationSharing !== data.allowClientLocationSharing ||
     p.saveRoutesForDays !== data.saveRoutesForDays ||
     p.defaultEtaMinutes !== data.defaultEtaMinutes ||
@@ -356,6 +373,27 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
         <div className="settingsEdit__fields">
           <div className="settingsEdit__fieldGroup">
             <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">Arrival must be within (metres)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="settingsEdit__input"
+                value={draft.arrivalRadiusMeters}
+                disabled={busy}
+                aria-describedby="arrivalRadius-hint"
+                onChange={(e) => edit({ arrivalRadiusMeters: e.target.value })}
+              />
+            </label>
+            <span id="arrivalRadius-hint" className="settingsEdit__hint">
+              Only applies while the switch above is on. An arrival recorded further than this from
+              the household stops the visit being marked complete. An arrival with no usable
+              location — no signal, location turned off, an address we cannot place on the map, or
+              the desktop console, which has no GPS — still goes through, and is recorded as
+              unverified.
+            </span>
+          </div>
+          <div className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
               <span className="settingsEdit__fieldLabel">Keep visit routes for (days)</span>
               <input
                 type="text"
@@ -370,7 +408,8 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
         </div>
         <p className="settingsEdit__hint">
           Route pings older than this are deleted nightly; the visit and its summary map stay.
-          Photo tagging and the arrival check apply on the phone, where visits are worked.
+          Photo tagging happens on the phone, where visits are worked. The arrival check is made on
+          the server when a visit is marked complete, so it applies wherever the visit is closed.
         </p>
       </div>
 
