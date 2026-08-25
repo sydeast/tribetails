@@ -36,6 +36,7 @@ actual suspend fun uploadImageToCloudinary(
     // Must exactly echo what the server signed, or Cloudinary rejects the
     // upload as a signature mismatch.
     if (signed.allowedFormats.isNotBlank()) form.append("allowed_formats", signed.allowedFormats)
+    if (signed.transformation.isNotBlank()) form.append("transformation", signed.transformation)
     form.append("file",      blob, image.fileName.ifBlank { "photo" })
 
     val resp = kotlinx.browser.window.fetch(
