@@ -6,6 +6,8 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.HttpsCallableReference
+import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.data.model.BookingTimeSlot
 import com.tribetails.auntieos.data.model.TimeSlotType
 import com.tribetails.auntieos.data.model.bookingTimeSlotFieldChanges
@@ -72,6 +74,9 @@ class BookingTimeSlotMergeTest {
 
     private var recorded: RecordedWrite? = null
 
+    /** Set if the repository ever issues a client DELETE on `booking_time_slots`. */
+    private var deletedPath: String? = null
+
     private fun repo(slotId: String = SLOT_ID): BookingRepository {
         every { firestore.collection("booking_time_slots") } returns collection
         every { collection.document(slotId) } returns docRef
@@ -85,10 +90,27 @@ class BookingTimeSlotMergeTest {
             recorded = RecordedWrite(firstArg(), merge = true)
             Tasks.forResult<Void>(null)
         }
-        return BookingRepository(
-            firestore = firestore,
-            functions = mockk<FirebaseFunctions>(relaxed = true),
-        )
+        every { docRef.delete() } answers {
+            deletedPath = "booking_time_slots/$slotId"
+            Tasks.forResult<Void>(null)
+        }
+        return BookingRepository(firestore = firestore, functions = happyCallables())
+    }
+
+    /**
+     * A Firebase Functions surface where every callable succeeds. The point of
+     * the two #574 tests is what does NOT reach Firestore, so the callable half
+     * only has to complete: a relaxed mock would hand `await()` a Task that
+     * never finishes and the test would hang rather than fail.
+     */
+    private fun happyCallables(): FirebaseFunctions {
+        val functions = mockk<FirebaseFunctions>()
+        val ref = mockk<HttpsCallableReference>()
+        val result = mockk<HttpsCallableResult>(relaxed = true)
+        every { result.getData() } returns mapOf("ok" to true, "docId" to "slot-new", "slotId" to SLOT_ID)
+        every { ref.call(any<Map<String, Any?>>()) } returns Tasks.forResult(result)
+        every { functions.getHttpsCallable(any()) } returns ref
+        return functions
     }
 
     /**
@@ -260,33 +282,50 @@ class BookingTimeSlotMergeTest {
         assertNull(recorded)
     }
 
-    /**
-     * `createTimeSlot` carried the same
-     * `if (id.isBlank()) document() else document(id)` branch #337 and #343
-     * removed from six service creates: a bare `set()` of the whole model over
-     * whatever was already at that id - an UPDATE wearing a create's name, and
-     * on this collection it is the very write that erases `createdBy`.
-     *
-     * No screen reaches it (`blockTimeSlot` always builds a blank-id slot), which
-     * is exactly why it should be shut rather than left as a convenience.
-     */
+    // ── #574: the write that could never land ────────────────────────────────
+    //
+    // `createTimeSlot` and `deleteTimeSlot` stood here and wrote/deleted
+    // `booking_time_slots` DIRECTLY. The rule quoted in this class's header
+    // (`allow write: if false`) denies every client write to this collection, so
+    // both failed with PERMISSION_DENIED every single time an operator pressed
+    // the button - "Save Block" on Scheduling Options, "Unblock" on either list.
+    // The write shape was dangerous AND the write was impossible; #574 moved
+    // both paths onto the `createBlockedTimeSlot` / `deleteBlockedTimeSlot`
+    // callables.
+    //
+    // These two tests are the ones that would have caught it. They give the
+    // repository a Firestore whose every write and delete is recorded, drive the
+    // two block-time paths, and assert that NOTHING reached the collection. A
+    // test asserting the callable was invoked would pass just as happily beside
+    // a stray direct write left in place next to it; this asserts the absence.
+    // What goes ON the wire instead is pinned by `BookingTimeSlotCallableTest`.
     @Test
-    fun `creating a time slot with an id is refused before any write`() {
-        val result = runBlocking { repo().createTimeSlot(loaded.copy(id = SLOT_ID)) }
+    fun `blocking a window issues no client write to booking_time_slots`() {
+        runBlocking {
+            repo().createBlockedTimeSlot(
+                date = "2026-08-24",
+                startTime = "09:00",
+                endTime = "12:00",
+                notes = "Vet",
+                startTimeMs = 1_000L,
+                endTimeMs = 2_000L,
+            )
+        }
 
         assertNull(
-            "createTimeSlot with an id REPLACED booking_time_slots/$SLOT_ID: $recorded",
+            "blocking a window wrote booking_time_slots straight from the client: $recorded",
             recorded,
         )
-        assertTrue("a create handed an id must fail loud, not update", result.isFailure)
     }
 
     @Test
-    fun `creating a time slot with no id still writes a new document`() {
-        val result = runBlocking { repo().createTimeSlot(loaded.copy(id = "")) }
+    fun `unblocking a window issues no client delete on booking_time_slots`() {
+        runBlocking { repo().deleteBlockedTimeSlot(SLOT_ID) }
 
-        assertTrue(result.isSuccess)
-        assertEquals("generated-id", result.getOrNull())
+        assertNull(
+            "unblocking deleted booking_time_slots/$SLOT_ID straight from the client",
+            deletedPath,
+        )
     }
 
     private companion object {

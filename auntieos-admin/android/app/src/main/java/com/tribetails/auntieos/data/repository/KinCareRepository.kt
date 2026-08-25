@@ -370,11 +370,52 @@ class KinCareRepository(
      * success. The callable's own handler only ever returns `ok: true` today, so
      * this fail-loud path is guarding against a FUTURE server response the
      * client cannot yet know is wrong, not a bug this handler currently has.
+     *
+     * #575: [sessionId] IS A `kin_care_sessions` DOCUMENT ID. Saying so here is
+     * not decoration — the Schedule screen was handing this an `enhanced_bookings`
+     * id, which is a different collection, so every reschedule from this phone
+     * came back `not-found`. `EnhancedSchedulingViewModel` resolves the linked
+     * session through `sourceBookingId` before it calls this.
+     *
+     * #575 (the regression #571 introduced for android): the two override flags
+     * are now really wired. PR #571 gave `rescheduleBooking` a server-side
+     * visit-overlap guard, so a move onto an occupied slot is correctly refused
+     * — but android offered no way past it, so an android operator hit a hard
+     * failure where a web operator got "Move anyway". Both flags are OFF unless
+     * the operator explicitly retries; a company closure has no flag at all and
+     * must never grow one (`companyHolidayConflict.ts`).
      */
-    suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): Result<Unit> = runCatching {
+    suspend fun rescheduleBooking(
+        sessionId: String,
+        startTime: String,
+        endTime: String,
+        overrideBusyConflict: Boolean = false,
+        overrideVisitConflict: Boolean = false,
+    ): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        val args = RescheduleBookingArgs(sessionId = sessionId, startTime = startTime, endTime = endTime)
-        val raw = functions.getHttpsCallable("rescheduleBooking").call(args.toPayload()).await().data
+        require(sessionId.isNotBlank()) { "rescheduleBooking needs a kin_care_sessions document id" }
+        val args = RescheduleBookingArgs(
+            sessionId = sessionId,
+            startTime = startTime,
+            endTime = endTime,
+            // Omitted rather than sent as `false`: the two flags are separate
+            // deliberate decisions and the server audits each one it is given,
+            // so a routine move must not look like an override that was declined.
+            overrideBusyConflict = overrideBusyConflict.takeIf { it },
+            overrideVisitConflict = overrideVisitConflict.takeIf { it },
+        )
+        val raw = try {
+            functions.getHttpsCallable("rescheduleBooking").call(args.toPayload()).await().data
+        } catch (e: com.google.firebase.functions.FirebaseFunctionsException) {
+            // Translated at the boundary, exactly as
+            // `BookingRepository.createMultiDateBookingRequest` does, so nothing
+            // above this line needs Firebase types to tell an overridable visit
+            // clash from a company closure that has no override at all.
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "That visit could not be moved.",
+            )
+        }
         @Suppress("UNCHECKED_CAST")
         val result = decodeRescheduleBookingResult(raw as? Map<String, Any?>)
         check(result.ok) { "rescheduleBooking did not confirm the reschedule (ok=false) for session $sessionId" }

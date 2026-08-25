@@ -205,6 +205,46 @@ class BookingRepository(
         Unit
     }.onFailure { AuntieLog.e("Error updating booking ${booking.id}", it) }
 
+    /**
+     * #575: move ONE booking envelope's window, and nothing else on it.
+     *
+     * A reschedule writes the SESSION (`kin_care_sessions`, through the
+     * `rescheduleBooking` callable, which is the only writer rules allow). This
+     * phone's Schedule renders `enhanced_bookings` — a different collection,
+     * carrying its own copy of the times — so without this patch a successful
+     * reschedule would leave the calendar showing the old slot until something
+     * else happened to rewrite the envelope. The server cannot do it: the
+     * envelope stores zoneless local wall clock and the session stores instants,
+     * so turning one into the other needs the operator's zone, which only the
+     * client has.
+     *
+     * A THREE-FIELD UPDATE, NOT [updateBooking]. That one takes a whole
+     * [EnhancedBooking] and bare-`set()`s it, so it rebuilds the document from
+     * whatever the caller happened to be holding and drops every field the model
+     * does not declare — the rebuild-vs-diff trap this repo has paid for on
+     * `booking_time_slots`, KinTale templates and the desktop admin's `deleted`
+     * flag. A move changes a start and an end; this writes a start and an end.
+     */
+    suspend fun updateBookingTimes(
+        bookingId: String,
+        startDateTime: String,
+        endDateTime: String,
+    ): Result<Unit> = runCatching {
+        require(bookingId.isNotBlank()) { "updateBookingTimes needs an enhanced_bookings document id" }
+        require(startDateTime.isNotBlank() && endDateTime.isNotBlank()) {
+            "updateBookingTimes needs both a start and an end"
+        }
+        AuntieLog.i("Moving enhanced booking $bookingId to $startDateTime")
+        firestore.collection("enhanced_bookings").document(bookingId).update(
+            mapOf(
+                "startDateTime" to startDateTime,
+                "endDateTime" to endDateTime,
+                "updatedAt" to LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            )
+        ).await()
+        Unit
+    }.onFailure { AuntieLog.e("Error moving booking $bookingId", it) }
+
     suspend fun deleteBooking(bookingId: String): Result<Unit> = runCatching {
         AuntieLog.w("Deleting enhanced booking: $bookingId")
         firestore.collection("enhanced_bookings").document(bookingId).delete().await()
@@ -705,37 +745,102 @@ class BookingRepository(
     // === Time Slots ===
 
     /**
-     * Creates a NEW blocked/available window. A create, and only a create.
+     * #574: block a window, THROUGH THE CALLABLE.
      *
-     * This used to choose its document with
-     * `if (id.isBlank()) document() else document(id)` and then bare-`set()` the
-     * whole model over whatever was already there - an UPDATE wearing a create's
-     * name, through the write mode that REPLACES a document rather than patching
-     * it. That is the branch #337 and #343 removed from six service creates, and
-     * on THIS collection it is the very write that erases the server's
-     * `createdBy`/`updatedAt` (see [BookingTimeSlotDiff]).
+     * WHAT THIS REPLACES, AND WHY IT COULD NEVER HAVE WORKED. `createTimeSlot`
+     * stood here and wrote `booking_time_slots` straight from the client.
+     * `firestore.rules` reads
+     * `match /booking_time_slots/{id} { allow read: if isAuntie(); allow write: if false; }`
+     * — the collection has two SERVER writers (`createBlockedTimeSlot`,
+     * `syncGoogleCalendarBusyEvents`, both through the admin SDK, which bypasses
+     * rules) and no client one. So every "Save Block" tap on this phone failed
+     * with PERMISSION_DENIED and always had. The rule is right; this side was
+     * wrong, and the callable it should have been calling has been deployed
+     * since B6 (`mytribe/functions/src/admin/createBlockedTimeSlot.ts`), wired on
+     * the desktop admin (`BlockTimeDialog.kt`) and, as of #571, on the React
+     * admin (`api/scheduleWrite.ts`).
      *
-     * No screen reaches the branch: [EnhancedSchedulingViewModel.blockTimeSlot]
-     * always builds a blank-id slot. That is exactly why it is worth shutting
-     * rather than leaving as a convenience - a whole-document replace nothing
-     * calls, waiting for the first caller that passes an id and does not know
-     * what it costs. Edits go through [updateTimeSlotFields].
+     * IT SENDS THE WINDOW TWICE, and that is deliberate: the wall-clock trio is
+     * what the zoneless document stores, and the epoch-ms twin is what the
+     * server checks against the visits already on the books. The phone is the
+     * one place the operator's zone is known — omit the twin and the server
+     * cannot overlap-check the block at all. [resolveBlockWindow] builds both
+     * halves from one window so they can never describe two.
+     *
+     * [overrideVisitConflict] is the knowing "Block anyway" retry after a
+     * `visit_overlap_conflict` refusal, and only that: a company closure is
+     * refused with no override at all, here exactly as on web and on the booking
+     * wizard. The refusal arrives as [BookingRequestRefusedException] carrying
+     * the server's `details.code`, so callers branch on a code rather than on
+     * the wording of a sentence.
      */
-    suspend fun createTimeSlot(timeSlot: BookingTimeSlot): Result<String> = runCatching {
-        require(timeSlot.id.isBlank()) {
-            "createTimeSlot creates; an existing slot is edited with updateTimeSlotFields, " +
-                "so it must not replace booking_time_slots/${timeSlot.id}"
+    suspend fun createBlockedTimeSlot(
+        date: String,
+        startTime: String,
+        endTime: String,
+        notes: String,
+        startTimeMs: Long,
+        endTimeMs: Long,
+        overrideVisitConflict: Boolean = false,
+    ): Result<String> = runCatching {
+        require(date.isNotBlank()) { "createBlockedTimeSlot needs a YYYY-MM-DD date" }
+        AuntieLog.d("Blocking $date $startTime-$endTime via createBlockedTimeSlot")
+        val payload = buildMap<String, Any?> {
+            put("date", date)
+            put("startTime", startTime)
+            put("endTime", endTime)
+            put("notes", notes)
+            put("startTimeMs", startTimeMs)
+            put("endTimeMs", endTimeMs)
+            if (overrideVisitConflict) put("overrideVisitConflict", true)
         }
-        AuntieLog.d("Creating time slot for date: ${timeSlot.date}")
-        val now = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        val timeSlotWithTimestamp = timeSlot.copy(createdAt = now)
+        val raw = try {
+            functions.getHttpsCallable("createBlockedTimeSlot").call(payload).await().data
+        } catch (e: FirebaseFunctionsException) {
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "That time could not be blocked.",
+            )
+        }
+        val result = raw as? Map<*, *>
+        check(result?.get("ok") == true) {
+            "createBlockedTimeSlot did not confirm the block (ok != true) for $date $startTime-$endTime"
+        }
+        (result?.get("docId") as? String).orEmpty()
+    }.onFailure { AuntieLog.e("createBlockedTimeSlot failed", it) }
 
-        val docRef = firestore.collection("booking_time_slots").document()
-
-        docRef.set(timeSlotWithTimestamp).await()
-        AuntieLog.d("Time slot created with ID: ${docRef.id}")
-        docRef.id
-    }.onFailure { AuntieLog.e("Error creating time slot", it) }
+    /**
+     * #574: unblock a window, THROUGH THE CALLABLE.
+     *
+     * The twin of [createBlockedTimeSlot], and denied by the same rule for the
+     * same reason: this used to be `deleteTimeSlot`, a client
+     * `booking_time_slots/{id}.delete()`, so every "Unblock" tap failed with
+     * PERMISSION_DENIED too. `deleteBlockedTimeSlot` is the callable that half
+     * was missing; #574 built it.
+     *
+     * A Google Calendar import is REFUSED by the server rather than deleted,
+     * because the next sync writes it straight back — the clients also stop
+     * drawing Unblock on those rows, so this is the belt to that braces. The
+     * refusal carries `details.code = 'imported_busy_slot'`.
+     */
+    suspend fun deleteBlockedTimeSlot(timeSlotId: String): Result<Unit> = runCatching {
+        require(timeSlotId.isNotBlank()) { "deleteBlockedTimeSlot needs a booking_time_slots document id" }
+        AuntieLog.w("Unblocking time slot: $timeSlotId")
+        val raw = try {
+            functions.getHttpsCallable("deleteBlockedTimeSlot")
+                .call(mapOf("slotId" to timeSlotId)).await().data
+        } catch (e: FirebaseFunctionsException) {
+            throw BookingRequestRefusedException(
+                code = conflictCodeFrom(e.details),
+                message = e.message ?: "That block could not be removed.",
+            )
+        }
+        val result = raw as? Map<*, *>
+        check(result?.get("ok") == true) {
+            "deleteBlockedTimeSlot did not confirm the unblock (ok != true) for $timeSlotId"
+        }
+        Unit
+    }.onFailure { AuntieLog.e("deleteBlockedTimeSlot failed for $timeSlotId", it) }
 
     suspend fun getTimeSlots(
         startDate: String,
@@ -819,11 +924,9 @@ class BookingRepository(
         Unit
     }.onFailure { AuntieLog.e("Error updating time slot $timeSlotId", it) }
 
-    suspend fun deleteTimeSlot(timeSlotId: String): Result<Unit> = runCatching {
-        AuntieLog.w("Deleting time slot: $timeSlotId")
-        firestore.collection("booking_time_slots").document(timeSlotId).delete().await()
-        Unit
-    }.onFailure { AuntieLog.e("Error deleting time slot $timeSlotId", it) }
+    // `deleteTimeSlot` stood here: a client `booking_time_slots/{id}.delete()`,
+    // denied by `firestore.rules` on every call it ever made. Replaced by
+    // [deleteBlockedTimeSlot] above, which goes through the callable. See #574.
 
     // === Booking Analytics & Reports ===
 
@@ -1094,6 +1197,57 @@ const val BOOKING_BUSY_CONFLICT_CODE = "booking_busy_conflict"
 
 /** `details.code` from `guardCompanyHolidayConflict`. Never overridable, by design. */
 const val COMPANY_HOLIDAY_CONFLICT_CODE = "company_holiday_conflict"
+
+/**
+ * `details.code` from `guardVisitOverlapConflict` (#397 M11/M12/M13): the
+ * candidate window already has a visit in it.
+ *
+ * OVERRIDABLE, like the busy-import one and unlike the closure one. Assignment
+ * lives on the envelope visit doc and is never mirrored onto the flat
+ * `kin_care_sessions` row, so the server genuinely cannot tell "one Auntie
+ * double-booked" from "two Aunties working the same hour" — refusing outright
+ * would forbid something the business supports. See
+ * `functions/src/lib/visitOverlapConflict.ts`.
+ */
+const val VISIT_OVERLAP_CONFLICT_CODE = "visit_overlap_conflict"
+
+/**
+ * `details.code` from `deleteBlockedTimeSlot` refusing to remove a Google
+ * Calendar mirror (#574). NOT a conflict and NOT overridable: it says the
+ * delete would not last, because the next sync writes the row back. The remedy
+ * is in Google Calendar, and the message says so.
+ */
+const val IMPORTED_BUSY_SLOT_CODE = "imported_busy_slot"
+
+/**
+ * Which refusals an operator may knowingly go past, and on which flag.
+ *
+ * The twin of the web's `overridableScheduleRefusal` (`api/scheduleWrite.ts`):
+ * one place that reads a code and answers "is there an override for this", so
+ * no screen has to pattern-match an English sentence. `null` covers everything
+ * else — a company closure, an imported busy row, a plain bad argument — and a
+ * `null` here is what stops a screen drawing a retry button that would re-send
+ * the identical request and fail identically.
+ *
+ * [alreadyOverridden] is the second half of the same rule: offering the same
+ * losing move twice is what `NewBookingWizard.kt` already refuses to do.
+ */
+enum class ScheduleOverrideKind { VISIT, BUSY }
+
+fun overridableScheduleRefusal(code: String?, alreadyOverridden: Boolean): ScheduleOverrideKind? {
+    if (alreadyOverridden) return null
+    return when (code) {
+        VISIT_OVERLAP_CONFLICT_CODE -> ScheduleOverrideKind.VISIT
+        BOOKING_BUSY_CONFLICT_CODE -> ScheduleOverrideKind.BUSY
+        else -> null
+    }
+}
+
+/** What an overridable refusal offers the operator, one sentence per kind. Mirrors web's `overrideHint`. */
+fun scheduleOverrideHint(kind: ScheduleOverrideKind): String = when (kind) {
+    ScheduleOverrideKind.VISIT -> "That clash is a visit already on the books. You can book over one."
+    ScheduleOverrideKind.BUSY -> "That clash is an imported Google Calendar busy block. You can book over one."
+}
 
 /**
  * Pulls `details.code` out of a callable rejection's `details` payload. Pure and

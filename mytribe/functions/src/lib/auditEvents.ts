@@ -219,6 +219,13 @@ export const AUDIT_EVENTS = {
   BOOKING_TRANSITION_REFUSED: 'BOOKING_TRANSITION_REFUSED',
   // B6: admin manually blocks a window so kinfolk can't book it (createBlockedTimeSlot).
   CREATE_BLOCKED_TIME_SLOT: 'CREATE_BLOCKED_TIME_SLOT',
+  // #574: the same window unblocked again (deleteBlockedTimeSlot). Recorded
+  // separately from the create rather than folded into it, because the delete
+  // removes the only record the block ever had: once the document is gone,
+  // "why was that afternoon closed, and who reopened it" has no other source.
+  // Only an operator-authored INTERNAL_MANUAL slot can reach this event; a
+  // Google Calendar mirror is refused before the delete.
+  DELETE_BLOCKED_TIME_SLOT: 'DELETE_BLOCKED_TIME_SLOT',
   // Booking-write busy-conflict guard (`lib/bookingBusyConflict.ts`): an admin
   // explicitly booked over a Google Calendar busy import via
   // `overrideBusyConflict: true`. Never emitted for a kinfolk-initiated

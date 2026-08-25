@@ -16,7 +16,9 @@ import com.tribetails.auntieos.data.repository.ManageSeriesResult
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
+import com.tribetails.auntieos.data.repository.ScheduleOverrideKind
 import com.tribetails.auntieos.data.repository.ServiceRepository
+import com.tribetails.auntieos.data.repository.overridableScheduleRefusal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -110,6 +112,20 @@ data class SchedulingState(
     // feature from calendarSyncRun above (that one is 7.1's free/busy read);
     // this one writes visits onto a calendar the operator connects to.
     val googleCalendar: GoogleCalendarUiState = GoogleCalendarUiState(),
+    // #574/#575: the last SCHEDULE WRITE refusal -- block a window, unblock one,
+    // move a visit -- carrying the server's own sentence, never a summary of it.
+    // Its own field rather than [errorMessage] because these three are the only
+    // errors on this screen an operator can act on, and the banner that shows
+    // them is the one that may carry a retry button.
+    val scheduleWriteError: String? = null,
+    // Non-null ONLY when the refusal above is one the operator may knowingly go
+    // past, and has not already tried to. A company closure and a Google
+    // Calendar mirror both set [scheduleWriteError] and leave this null: their
+    // guards have no override parameter at all, so a retry button would re-send
+    // the identical request and fail identically. See `overridableScheduleRefusal`.
+    val scheduleWriteOverride: ScheduleOverrideKind? = null,
+    // The write currently in flight, so the same block/move cannot be fired twice.
+    val scheduleWriteInFlight: Boolean = false,
 )
 
 /**
@@ -1033,28 +1049,183 @@ class EnhancedSchedulingViewModel(
         val booking = _state.value.selectedBooking ?: return
         val times = buildRescheduleTimes(date, time, booking.startDateTime, booking.endDateTime)
         if (times == null) {
-            _state.value = _state.value.copy(errorMessage = "Enter a valid date (YYYY-MM-DD) and time (HH:MM).")
+            _state.value = _state.value.copy(
+                scheduleWriteError = "Enter a valid date (YYYY-MM-DD) and time (HH:MM).",
+                scheduleWriteOverride = null,
+            )
             return
         }
+        moveVisit(booking, times.first, times.second, override = null, closeDetail = true)
+    }
+
+    /**
+     * #575: move ONE booking's visit, through the callable, with the overrides
+     * the operator is allowed to take.
+     *
+     * THREE THINGS WERE WRONG HERE AND THEY ARE ONE PROBLEM: this screen renders
+     * `enhanced_bookings`, and `rescheduleBooking` writes `kin_care_sessions`.
+     *
+     *  1. It sent `booking.id` — an `enhanced_bookings` document id — as
+     *     `sessionId`, so the callable answered `not-found` and no reschedule
+     *     from this phone had ever landed. The link between the two collections
+     *     already existed and was already used by the cancellation bridge:
+     *     `kin_care_sessions.sourceBookingId`. [findLinkedSessionIds] is that
+     *     lookup, reused rather than reinvented.
+     *  2. Nothing patched the ENVELOPE afterwards, so even a successful move
+     *     would have left this screen drawing the old slot. The server cannot do
+     *     it: the envelope stores zoneless local wall clock, the session stores
+     *     instants, and turning one into the other needs the operator's zone.
+     *     [BookingRepository.updateBookingTimes] writes the two fields that
+     *     moved and nothing else — never [BookingRepository.updateBooking],
+     *     which rebuilds the whole document from the model.
+     *  3. There was no way past a refusal. PR #571 gave the callable a
+     *     visit-overlap guard, so a move onto an occupied slot is correctly
+     *     refused — and this phone had no "Move anyway", so an android operator
+     *     hit a wall where a web operator got a choice. That is what [override]
+     *     is, and [ScheduleOverrideKind] decides which flag it becomes.
+     *
+     * ZERO AND MANY ARE BOTH REFUSED BY NAME. An ACCEPTED booking whose session
+     * was never created (approval predating the bridge, or a create that failed)
+     * has nothing to move, and saying "no linked visit" is the only honest
+     * answer. More than one linked session is a state this screen cannot resolve
+     * on the operator's behalf: fanning the same window onto every one of them
+     * would stack visits, so it names the count and stops.
+     */
+    private fun moveVisit(
+        booking: EnhancedBooking,
+        startIso: String,
+        endIso: String,
+        override: ScheduleOverrideKind?,
+        closeDetail: Boolean,
+    ) {
+        if (_state.value.scheduleWriteInFlight) return
+        _state.value = _state.value.copy(
+            scheduleWriteInFlight = true,
+            scheduleWriteError = null,
+            scheduleWriteOverride = null,
+        )
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true)
-            kinCareRepository.rescheduleBooking(booking.id, times.first, times.second)
-                .onSuccess {
-                    com.tribetails.auntieos.data.admin.AuditLog.fire(
-                        scope            = viewModelScope,
-                        repository       = auntieRepository,
-                        actionType       = "RESCHEDULE_BOOKING",
-                        description      = "Rescheduled booking for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} to ${times.first}",
-                        targetId         = booking.id,
-                        targetCollection = "enhanced_bookings",
-                    )
-                    _state.value = _state.value.copy(isLoading = false, selectedBooking = null)
-                    loadBookingsForDateRange()
-                }
-                .onFailure { e ->
-                    _state.value = _state.value.copy(isLoading = false, errorMessage = "Reschedule failed: ${e.message}")
-                }
+            val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
+                failScheduleWrite("Could not look up the visit behind this booking: ${e.message}")
+                return@launch
+            }
+            if (sessionIds.isEmpty()) {
+                failScheduleWrite(
+                    "No scheduled visit is linked to this booking, so there is nothing to move. " +
+                        "Confirm the booking first: approving it is what creates the visit.",
+                )
+                return@launch
+            }
+            if (sessionIds.size > 1) {
+                failScheduleWrite(
+                    "This booking has ${sessionIds.size} visits linked to it, and moving them all to " +
+                        "the same window would stack them. Move each visit from its own record.",
+                )
+                return@launch
+            }
+            val sessionId = sessionIds.first()
+
+            kinCareRepository.rescheduleBooking(
+                sessionId = sessionId,
+                startTime = startIso,
+                endTime = endIso,
+                overrideBusyConflict = override == ScheduleOverrideKind.BUSY,
+                overrideVisitConflict = override == ScheduleOverrideKind.VISIT,
+            ).onSuccess {
+                // The visit moved; the envelope this screen draws has to follow,
+                // or the calendar keeps showing the old slot.
+                val patched = bookingRepository.updateBookingTimes(booking.id, startIso, endIso)
+                com.tribetails.auntieos.data.admin.AuditLog.fire(
+                    scope            = viewModelScope,
+                    repository       = auntieRepository,
+                    actionType       = "RESCHEDULE_BOOKING",
+                    description      = "Rescheduled visit for ${booking.kinfolkName.ifBlank { booking.kinfolkId }} to $startIso" +
+                        (if (override != null) " (override: ${override.name.lowercase()} conflict)" else ""),
+                    targetId         = sessionId,
+                    // The write the callable made, not the envelope patch that
+                    // followed it: an audit entry that named enhanced_bookings
+                    // would point at a document the reschedule did not author.
+                    targetCollection = "kin_care_sessions",
+                )
+                _state.value = _state.value.copy(
+                    scheduleWriteInFlight = false,
+                    scheduleWriteError = patched.exceptionOrNull()?.let {
+                        // Fail loud rather than quietly: the visit really did
+                        // move, and this screen is now showing a stale window.
+                        "The visit moved, but this calendar could not be updated to match: ${it.message}. Refresh to see the new time."
+                    },
+                    scheduleWriteOverride = null,
+                    dragState = null,
+                    selectedBooking = if (closeDetail) null else _state.value.selectedBooking,
+                )
+                loadBookingsForDateRange()
+            }.onFailure { e ->
+                val code = (e as? BookingRequestRefusedException)?.code
+                _state.value = _state.value.copy(
+                    scheduleWriteInFlight = false,
+                    scheduleWriteError = e.message ?: "That visit could not be moved.",
+                    scheduleWriteOverride = overridableScheduleRefusal(code, alreadyOverridden = override != null),
+                    dragState = null,
+                )
+                pendingScheduleRetry = PendingScheduleWrite.Move(booking, startIso, endIso, closeDetail)
+            }
         }
+    }
+
+    /** One refusal that never reached the server: same banner, never a retry button. */
+    private fun failScheduleWrite(message: String) {
+        pendingScheduleRetry = null
+        _state.value = _state.value.copy(
+            scheduleWriteInFlight = false,
+            scheduleWriteError = message,
+            scheduleWriteOverride = null,
+            dragState = null,
+        )
+    }
+
+    /**
+     * The write a "Block anyway" / "Move anyway" press re-sends.
+     *
+     * Held here rather than in [SchedulingState] because it is not something the
+     * screen renders: the screen renders [SchedulingState.scheduleWriteOverride],
+     * which is what decides whether the button is drawn at all.
+     */
+    private sealed interface PendingScheduleWrite {
+        data class Block(val window: BlockWindow) : PendingScheduleWrite
+        data class Move(
+            val booking: EnhancedBooking,
+            val startIso: String,
+            val endIso: String,
+            val closeDetail: Boolean,
+        ) : PendingScheduleWrite
+    }
+
+    private var pendingScheduleRetry: PendingScheduleWrite? = null
+
+    /**
+     * Take the override the last refusal offered, and only that one.
+     *
+     * A no-op when [SchedulingState.scheduleWriteOverride] is null, which is the
+     * whole point: a company closure and a Google Calendar mirror leave it null,
+     * so there is nothing here for a stray press to send. The retry is offered
+     * once — the refusal that comes back from it carries
+     * `alreadyOverridden = true` into `overridableScheduleRefusal`, which
+     * returns null, so the same losing move is never offered twice.
+     */
+    fun retryScheduleWriteWithOverride() {
+        val kind = _state.value.scheduleWriteOverride ?: return
+        when (val pending = pendingScheduleRetry) {
+            is PendingScheduleWrite.Block -> submitBlock(pending.window, overrideVisitConflict = true)
+            is PendingScheduleWrite.Move ->
+                moveVisit(pending.booking, pending.startIso, pending.endIso, override = kind, closeDetail = pending.closeDetail)
+            null -> Unit
+        }
+    }
+
+    /** Dismiss the schedule-write banner. Clears the retry with it: the offer goes when the sentence does. */
+    fun clearScheduleWriteFeedback() {
+        pendingScheduleRetry = null
+        _state.value = _state.value.copy(scheduleWriteError = null, scheduleWriteOverride = null)
     }
 
     // === Drag & Drop Functions ===
@@ -1101,20 +1272,32 @@ class EnhancedSchedulingViewModel(
         )
     }
 
+    /**
+     * #575: a dropped drag is a reschedule, and goes down the SAME path the
+     * detail sheet's Reschedule form does.
+     *
+     * WHAT IT USED TO DO: build a whole [EnhancedBooking] with new times and
+     * hand it to [updateBooking], which bare-`set()`s the envelope document
+     * straight from the client. That wrote no session at all, so the visit
+     * itself never moved; it ran none of the server's guards (a closed day, a
+     * Google busy import, a visit already in the slot); and it was a
+     * whole-document replace built from screen state, which is the rebuild-write
+     * this repo has been bitten by before.
+     *
+     * A DROP BACK WHERE THE VISIT ALREADY WAS WRITES NOTHING — no callable, no
+     * audit entry, no "rescheduled" event for a move nobody made. Web's
+     * `isNoOpDrop` makes the same call for the same reason.
+     */
     fun completeDrag() {
         val dragState = _state.value.dragState ?: return
-
-        // Update the booking with new times
-        val updatedBooking = dragState.draggedBooking.copy(
-            startDateTime = dragState.newStartTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
-            endDateTime = dragState.newEndTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        )
-
-        // Clear drag state
-        _state.value = _state.value.copy(dragState = null)
-
-        // Update the booking
-        updateBooking(updatedBooking)
+        val startIso = dragState.newStartTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val endIso = dragState.newEndTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val booking = dragState.draggedBooking
+        if (startIso == booking.startDateTime) {
+            _state.value = _state.value.copy(dragState = null)
+            return
+        }
+        moveVisit(booking, startIso, endIso, override = null, closeDetail = false)
     }
 
     fun cancelDrag() {
@@ -1123,60 +1306,122 @@ class EnhancedSchedulingViewModel(
 
     // === Time Slot Management ===
 
-    fun createTimeSlot(timeSlot: BookingTimeSlot) {
-        viewModelScope.launch {
-            val result = bookingRepository.createTimeSlot(timeSlot)
+    /**
+     * #574: block a window, validating what the operator typed BEFORE anything
+     * goes out, then writing through `createBlockedTimeSlot`.
+     *
+     * The old path took a already-parsed `LocalDate` and two unchecked strings,
+     * and the screen that fed it fell back to `LocalDate.now()` whenever the
+     * date would not parse — so a typo blocked out TODAY, silently, on a day the
+     * operator may well be working. Every refusal [resolveBlockWindow] can
+     * return is a defect that shipped; the parse now lives in one place both
+     * block-time surfaces call.
+     */
+    fun blockTimeSlot(
+        dateText: String,
+        startTime: String,
+        endTime: String,
+        reason: String,
+        mode: BlockMode = BlockMode.TIME_BLOCK,
+    ) {
+        when (val resolved = resolveBlockWindow(dateText, startTime, endTime, reason, mode)) {
+            is BlockWindowResult.Problem -> failScheduleWrite(resolved.message)
+            is BlockWindowResult.Ok -> submitBlock(resolved.window, overrideVisitConflict = false)
+        }
+    }
 
-            if (result.isSuccess) {
+    private fun submitBlock(window: BlockWindow, overrideVisitConflict: Boolean) {
+        if (_state.value.scheduleWriteInFlight) return
+        _state.value = _state.value.copy(
+            scheduleWriteInFlight = true,
+            scheduleWriteError = null,
+            scheduleWriteOverride = null,
+        )
+        viewModelScope.launch {
+            bookingRepository.createBlockedTimeSlot(
+                date = window.date,
+                startTime = window.startTime,
+                endTime = window.endTime,
+                notes = window.notes.ifBlank { "Blocked" },
+                startTimeMs = window.startTimeMs,
+                endTimeMs = window.endTimeMs,
+                overrideVisitConflict = overrideVisitConflict,
+            ).onSuccess { docId ->
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = auntieRepository,
                     actionType       = "BLOCK_TIME_SLOT",
-                    description      = "Blocked ${timeSlot.date} ${timeSlot.startTime}-${timeSlot.endTime} (${timeSlot.notes.ifBlank { timeSlot.slotType.name }})",
-                    targetId         = result.getOrNull().orEmpty(),
+                    description      = "Blocked ${window.date} ${window.startTime}-${window.endTime}" +
+                        (if (window.notes.isNotBlank()) " (${window.notes})" else "") +
+                        (if (overrideVisitConflict) " (override: visit conflict)" else ""),
+                    targetId         = docId,
                     targetCollection = "booking_time_slots",
                 )
-                loadBookingsForDateRange()
-            } else {
+                pendingScheduleRetry = null
                 _state.value = _state.value.copy(
-                    errorMessage = "Failed to create time slot: ${result.exceptionOrNull()?.message}"
+                    scheduleWriteInFlight = false,
+                    scheduleWriteError = null,
+                    scheduleWriteOverride = null,
                 )
+                loadBookingsForDateRange()
+            }.onFailure { e ->
+                val code = (e as? BookingRequestRefusedException)?.code
+                _state.value = _state.value.copy(
+                    scheduleWriteInFlight = false,
+                    scheduleWriteError = e.message ?: "That time could not be blocked.",
+                    // Narrowed to the VISIT clash on purpose: `createBlockedTimeSlot`
+                    // has no busy-import guard and therefore no `overrideBusyConflict`
+                    // argument, so a "Block anyway" for that code would re-send the
+                    // identical request. Same narrowing the web dialog makes.
+                    scheduleWriteOverride = overridableScheduleRefusal(code, alreadyOverridden = overrideVisitConflict)
+                        ?.takeIf { it == ScheduleOverrideKind.VISIT },
+                )
+                pendingScheduleRetry = PendingScheduleWrite.Block(window)
             }
         }
     }
 
-    fun blockTimeSlot(date: LocalDate, startTime: String, endTime: String, reason: String = "Blocked") {
-        val timeSlot = BookingTimeSlot(
-            date = date.format(DateTimeFormatter.ISO_LOCAL_DATE),
-            startTime = startTime,
-            endTime = endTime,
-            isAvailable = false,
-            slotType = TimeSlotType.BLOCKED,
-            notes = reason
-        )
-
-        createTimeSlot(timeSlot)
-    }
-
+    /**
+     * #574: unblock a window, THROUGH the callable.
+     *
+     * This used to be a client `booking_time_slots/{id}.delete()`, denied by
+     * `firestore.rules` on every tap it ever took. A Google Calendar mirror is
+     * refused by the server (the next sync writes it straight back) and the two
+     * lists that draw Unblock no longer offer it on those rows at all, so the
+     * refusal is a backstop rather than the operator's first news of it.
+     */
     fun unblockTimeSlot(timeSlotId: String) {
+        if (_state.value.scheduleWriteInFlight) return
+        _state.value = _state.value.copy(
+            scheduleWriteInFlight = true,
+            scheduleWriteError = null,
+            scheduleWriteOverride = null,
+        )
         viewModelScope.launch {
-            val result = bookingRepository.deleteTimeSlot(timeSlotId)
-
-            if (result.isSuccess) {
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = auntieRepository,
-                    actionType       = "UNBLOCK_TIME_SLOT",
-                    description      = "Unblocked time slot",
-                    targetId         = timeSlotId,
-                    targetCollection = "booking_time_slots",
-                )
-                loadBookingsForDateRange()
-            } else {
-                _state.value = _state.value.copy(
-                    errorMessage = "Failed to unblock time slot: ${result.exceptionOrNull()?.message}"
-                )
-            }
+            bookingRepository.deleteBlockedTimeSlot(timeSlotId)
+                .onSuccess {
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = auntieRepository,
+                        actionType       = "UNBLOCK_TIME_SLOT",
+                        description      = "Unblocked time slot",
+                        targetId         = timeSlotId,
+                        targetCollection = "booking_time_slots",
+                    )
+                    pendingScheduleRetry = null
+                    _state.value = _state.value.copy(scheduleWriteInFlight = false)
+                    loadBookingsForDateRange()
+                }
+                .onFailure { e ->
+                    // No override exists for either refusal this can return
+                    // (a Google mirror, a missing document), so no retry is offered.
+                    pendingScheduleRetry = null
+                    _state.value = _state.value.copy(
+                        scheduleWriteInFlight = false,
+                        scheduleWriteError = e.message ?: "That block could not be removed.",
+                        scheduleWriteOverride = null,
+                    )
+                }
         }
     }
 

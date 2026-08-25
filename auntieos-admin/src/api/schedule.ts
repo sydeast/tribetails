@@ -71,6 +71,19 @@ export interface BusySlotEntry {
   endTime?: string | undefined;
   /** Free-text; only `'BLOCKED'` is written by any real writer today, see `lib/scheduleFormat.ts#busySlotKind`. */
   slotType?: string | undefined;
+  /**
+   * Which writer put this row here: `'INTERNAL_MANUAL'` (an operator's own
+   * block, via `createBlockedTimeSlot`) or `'GOOGLE_BUSY_IMPORT'` (a mirror of
+   * an event on the connected calendar, via `syncGoogleCalendarBusyEvents`).
+   *
+   * READ FOR ONE DECISION: whether to offer Unblock. Deleting a mirrored row
+   * does not free the time — the next sync reads the same Google event and
+   * writes the row straight back — so `deleteBlockedTimeSlot` refuses those,
+   * and a button beside one would be a control that cannot work. Absent on rows
+   * that predate the field; the callable treats an unlabelled row as an
+   * operator block, which is what it is.
+   */
+  source?: string | undefined;
 }
 
 /**

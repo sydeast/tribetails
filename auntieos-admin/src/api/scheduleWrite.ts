@@ -115,6 +115,65 @@ export async function createBlockedTimeSlot(
   return call<BlockTimeArgs, CreateBlockedTimeSlotResult>('createBlockedTimeSlot', args);
 }
 
+/**
+ * The `details.code` `deleteBlockedTimeSlot` refuses a Google Calendar mirror
+ * with (#574).
+ *
+ * NOT A CONFLICT AND NOT OVERRIDABLE, which is why it is a constant here rather
+ * than another arm of `overridableScheduleRefusal`: the two conflict codes say
+ * "this clashes, and you may decide otherwise"; this one says the delete would
+ * not last, because the next sync writes the row back. A retry button would
+ * re-send the identical request and fail identically.
+ */
+export const IMPORTED_BUSY_SLOT_CODE = 'imported_busy_slot';
+
+/** The `source` a row must carry (or lack) for Unblock to be offered at all. */
+export const OPERATOR_BLOCK_SOURCE = 'INTERNAL_MANUAL';
+
+/**
+ * Whether this busy row is one an operator may remove.
+ *
+ * A row with NO `source` counts: the collection predates the field
+ * (`scripts/repairBlockedTimeSlotShape.ts` exists because historical rows are
+ * known to be shaped differently), and an unlabelled row in this collection is
+ * a manual block. `deleteBlockedTimeSlot` makes exactly the same call, so the
+ * button and the server cannot disagree about which rows are removable.
+ */
+export function isOperatorBlock(source: string | undefined): boolean {
+  return source === undefined || source === '' || source === OPERATOR_BLOCK_SOURCE;
+}
+
+export interface DeleteBlockedTimeSlotArgs {
+  slotId: string;
+}
+
+export interface DeleteBlockedTimeSlotResult {
+  ok: true;
+  slotId: string;
+}
+
+/**
+ * deleteBlockedTimeSlot (admin callable, #574): removes ONE operator-authored
+ * `booking_time_slots` row.
+ *
+ * THE HALF THAT HAD NO CALLABLE. `createBlockedTimeSlot` shipped in B6;
+ * un-blocking had nothing, and the only unblock affordance in the product
+ * (Android's) deleted the document straight from the client — which
+ * `firestore.rules` denies, so it had never once worked. #574 built the
+ * callable and wired it on both surfaces.
+ *
+ * It refuses a Google Calendar import rather than deleting it, and this app
+ * does not offer the button on those rows in the first place; see
+ * {@link isOperatorBlock}.
+ */
+export async function deleteBlockedTimeSlot(
+  slotId: string,
+): Promise<DeleteBlockedTimeSlotResult> {
+  return call<DeleteBlockedTimeSlotArgs, DeleteBlockedTimeSlotResult>('deleteBlockedTimeSlot', {
+    slotId,
+  });
+}
+
 // ── M12: one-off visit ───────────────────────────────────────────────────────
 
 export interface CreateKinCareSessionArgs {

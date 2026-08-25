@@ -199,10 +199,17 @@ fun ScheduleViewScreen(
     // window) for the selected day, placed by time. Mirrors web's per-slot BusyBlock:
     // filter !isAvailable, group by date, place in the 8a-6p window, generic "Busy"
     // label only (the slot carries hideDetailsFromKinfolk and no event detail).
-    val selectedDayBusy = remember(state.timeSlots, state.selectedDate) {
+    val selectedDayBlocked = remember(state.timeSlots, state.selectedDate) {
         val key = state.selectedDate.format(DateTimeFormatter.ISO_LOCAL_DATE)
         blockedSlotsByDate(state.timeSlots)[key].orEmpty()
-            .mapNotNull { slot -> busyPlacement(slot.startTime, slot.endTime)?.let { slot to it } }
+    }
+    // The BANDS are placement-filtered; the LIST below is not, and that split
+    // matters: `busyPlacement` drops anything outside the drawn 8a-6p window, so
+    // a whole-day block (00:00 to 23:59) never places. Feeding the manage dialog
+    // the placed list would tell an operator "No blocked slots for this day" on a
+    // day that is entirely blocked, with no way to unblock it from there.
+    val selectedDayBusy = remember(selectedDayBlocked) {
+        selectedDayBlocked.mapNotNull { slot -> busyPlacement(slot.startTime, slot.endTime)?.let { slot to it } }
     }
 
     val agendaLabel = remember(state.selectedDate) {
@@ -247,6 +254,9 @@ fun ScheduleViewScreen(
     // is the working set fed to the batch action bar.
     var selecting by remember { mutableStateOf(false) }
     var selectedBookingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // #574: the block/unblock dialog for the selected day. Opened from the month
+    // grid's blocked-slot tap, which used to be wired to a no-op lambda.
+    var showTimeSlotDialog by remember { mutableStateOf(false) }
     // Selectable bookings = pending DRAFT + confirmed ACCEPTED (the transitionable set).
     val selectableIds = remember(pendingBookings, scheduledBookings) {
         (pendingBookings + scheduledBookings).map { it.id }.toSet()
@@ -542,12 +552,29 @@ fun ScheduleViewScreen(
             item {
                 DenPanel(
                     title = agendaLabel,
-                    subtitle = "Tap a visit to open its booking detail and notes. Long-press an approved visit to reschedule it.",
+                    subtitle = "Tap a visit to open its booking detail and notes. Long-press a confirmed visit and drag to move it.",
                 ) {
                     if (selectedDayBookings.isEmpty() && selectedDayBusy.isEmpty()) {
                         EmptyHint("No Kin Care sessions on this day.")
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // #575: a dropped drag is a reschedule, and its refusal
+                            // (with the "Move anyway" the server allows, and NOT the
+                            // one it does not) belongs next to the agenda it came
+                            // from. The detail sheet carries the same banner for the
+                            // reschedule FORM; only one of the two is on screen at a
+                            // time, because the sheet covers the agenda.
+                            if (state.selectedBooking == null) {
+                                ScheduleWriteBanner(
+                                    message       = state.scheduleWriteError,
+                                    override      = state.scheduleWriteOverride,
+                                    busy          = state.scheduleWriteInFlight,
+                                    title         = "Couldn’t move that visit",
+                                    overrideLabel = "Move anyway",
+                                    onOverride    = { viewModel.retryScheduleWriteWithOverride() },
+                                    onDismiss     = { viewModel.clearScheduleWriteFeedback() },
+                                )
+                            }
                             // Read-only "Busy" bands placed by their start time (Google
                             // Calendar busy imports + manual blocks). No event detail:
                             // hideDetailsFromKinfolk, generic "Busy" label only. Parity
@@ -556,13 +583,22 @@ fun ScheduleViewScreen(
                                 BusyBand(slot = slot, placement = placement)
                             }
                             selectedDayBookings.forEach { booking ->
+                                val dragged = state.dragState?.draggedBooking?.id == booking.id
                                 AdminBookingAgendaRow(
                                     booking = booking,
                                     onClick = { viewModel.selectBooking(booking) },
-                                    // Long-press is the Android reschedule entry point: it
-                                    // opens the same booking detail whose RESCHEDULE block
-                                    // writes via the real rescheduleBooking callable.
-                                    onLongClick = { viewModel.selectBooking(booking) },
+                                    // #9 already made this operator choice for the
+                                    // reschedule FORM; the drag reads the same
+                                    // setting so one gesture cannot land on a
+                                    // granularity the other refuses.
+                                    snapMinutes = if (state.businessSettings.snapRescheduleTo15Min) DRAG_MINUTE_SNAP else 1,
+                                    isDragging = dragged,
+                                    dragPreviewStart = if (dragged) state.dragState?.newStartTime else null,
+                                    dragPreviewEnd = if (dragged) state.dragState?.newEndTime else null,
+                                    onStartDrag = { b, start -> viewModel.startDragBooking(b, start) },
+                                    onDragUpdate = { viewModel.updateDragPosition(it) },
+                                    onDragComplete = { viewModel.completeDrag() },
+                                    onDragCancel = { viewModel.cancelDrag() },
                                 )
                             }
                         }
@@ -587,7 +623,13 @@ fun ScheduleViewScreen(
                                 viewModel.selectDate(date)
                                 viewModel.changeViewMode(CalendarViewMode.DAY)
                             },
-                            onTimeSlotClick = {},
+                            // #574: was `{}` — a tap that looked live and did
+                            // nothing. It opens the (previously unreachable)
+                            // time-block dialog on the day it was tapped.
+                            onTimeSlotClick = { slot ->
+                                runCatching { LocalDate.parse(slot.date) }.getOrNull()?.let { viewModel.selectDate(it) }
+                                showTimeSlotDialog = true
+                            },
                         )
                     } else if (state.viewMode != CalendarViewMode.DAY) {
                         AndroidWeekStrip(
@@ -807,6 +849,31 @@ fun ScheduleViewScreen(
                     val snapped = if (state.businessSettings.snapRescheduleTo15Min) snapTimeStringTo15(time) else time
                     viewModel.rescheduleSelectedBooking(date, snapped)
                 },
+                writeError          = state.scheduleWriteError,
+                writeOverride       = state.scheduleWriteOverride,
+                writeInFlight       = state.scheduleWriteInFlight,
+                onOverrideWrite     = { viewModel.retryScheduleWriteWithOverride() },
+                onDismissWriteError = { viewModel.clearScheduleWriteFeedback() },
+            )
+        }
+
+        if (showTimeSlotDialog) {
+            TimeSlotManagementDialog(
+                selectedDate = state.selectedDate,
+                blockedSlots = selectedDayBlocked,
+                onDismiss    = {
+                    showTimeSlotDialog = false
+                    viewModel.clearScheduleWriteFeedback()
+                },
+                onBlock      = { date, start, end, reason ->
+                    viewModel.blockTimeSlot(dateText = date, startTime = start, endTime = end, reason = reason)
+                },
+                onUnblock    = { viewModel.unblockTimeSlot(it) },
+                writeError          = state.scheduleWriteError,
+                writeOverride       = state.scheduleWriteOverride,
+                writeInFlight       = state.scheduleWriteInFlight,
+                onOverrideWrite     = { viewModel.retryScheduleWriteWithOverride() },
+                onDismissWriteError = { viewModel.clearScheduleWriteFeedback() },
             )
         }
       }
@@ -938,25 +1005,88 @@ private fun SectionCount(count: String) {
  * Day-agenda row in the Den vocabulary (mirrors the web ScheduleScreen DayAgenda):
  * a service-toned accent bar, the start time, then title + ServicePill +
  * AuntieStatusPill and a subtitle. The whole row opens the booking detail.
+ *
+ * DRAG-TO-RESCHEDULE LIVES HERE (#575), on the agenda the operator actually
+ * uses, and it is a LONG-PRESS drag rather than a plain one for a reason: this
+ * list scrolls, and a gesture that claimed every downward drag would eat the
+ * scroll. Long-press was previously bound to "open the booking detail" — which
+ * is exactly what a plain TAP already did, so it was a second way to do one
+ * thing — and the panel's own subtitle already told the operator that
+ * long-press is the reschedule gesture. Nothing is lost by making it the real
+ * one.
+ *
+ * IT REPLACES A CHAIN THAT WAS NEVER CALLED. `EnhancedAgendaView` and
+ * `EnhancedBookingCard` carried a working drag and an unreachable one:
+ * nothing in the app rendered either, so the ViewModel's `startDragBooking` /
+ * `completeDrag` were machinery with no gesture attached — and `completeDrag`
+ * wrote `enhanced_bookings` straight from the client rather than calling the
+ * reschedule callable. Both composables are deleted; the drag is now on the
+ * row that is on screen, and the drop goes through
+ * `EnhancedSchedulingViewModel.completeDrag`, which is the same
+ * `rescheduleBooking` path the detail sheet's Reschedule form uses, guards,
+ * overrides and all.
+ *
+ * ONLY A CONFIRMED VISIT IS DRAGGABLE, on the same test the detail sheet's
+ * Reschedule block uses: a request nobody has approved has no visit to move.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AdminBookingAgendaRow(
     booking: EnhancedBooking,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = onClick,
+    /** 15 when the operator turned on "Snap drag-to-reschedule to 15 min", else 1. Parity with web. */
+    snapMinutes: Int = DRAG_MINUTE_SNAP,
+    isDragging: Boolean = false,
+    dragPreviewStart: LocalDateTime? = null,
+    dragPreviewEnd: LocalDateTime? = null,
+    onStartDrag: ((EnhancedBooking, LocalDateTime) -> Unit)? = null,
+    onDragUpdate: ((LocalDateTime) -> Unit)? = null,
+    onDragComplete: (() -> Unit)? = null,
+    onDragCancel: (() -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
     val accent = bookingServiceTint(booking)
     val serviceText = booking.baseServiceTitle.ifBlank { booking.title.ifBlank { "Kin Care Visit" } }
+    val bookingStart = parseIsoDateTimeOrNull(booking.startDateTime)
+    // No start time we can read is no window we can move: the row still opens,
+    // it just cannot be dragged onto a time nobody could name.
+    val draggable = onStartDrag != null && booking.status == BookingStatus.ACCEPTED && bookingStart != null
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(c.surfaceGlass)
+            .background(if (isDragging) c.kinfolkOrange.copy(alpha = 0.18f).compositeOver(c.surfaceGlass) else c.surfaceGlass)
             .border(AuntieTheme.dims.borderHairline, c.borderSoft, RoundedCornerShape(18.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .clickable(onClick = onClick)
+            .then(
+                // Keyed on the WINDOW as well as the id: `pointerInput` does not
+                // restart while its keys compare equal, so keying on the id alone
+                // would leave the gesture coroutine holding the booking it
+                // captured before a successful move. The second drag of the same
+                // visit would then compute from its pre-move start, which is the
+                // stale-state write this whole PR exists to remove.
+                if (!draggable) Modifier else Modifier.pointerInput(
+                    booking.id, booking.startDateTime, booking.endDateTime, snapMinutes,
+                ) {
+                    var accumulatedY = 0f
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            accumulatedY = 0f
+                            onStartDrag?.invoke(booking, bookingStart!!)
+                        },
+                        onDragEnd = { accumulatedY = 0f; onDragComplete?.invoke() },
+                        onDragCancel = { accumulatedY = 0f; onDragCancel?.invoke() },
+                    ) { change, dragAmount ->
+                        accumulatedY += dragAmount.y
+                        val snap = if (snapMinutes <= 0) 1 else snapMinutes
+                        val rawMinutes = (accumulatedY / DRAG_PIXELS_PER_MINUTE).roundToInt()
+                        val snapped = (rawMinutes.toFloat() / snap).roundToInt() * snap
+                        onDragUpdate?.invoke(bookingStart!!.plusMinutes(snapped.toLong()))
+                        change.consume()
+                    }
+                }
+            )
             .padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -997,6 +1127,25 @@ private fun AdminBookingAgendaRow(
                     ServicePill(booking.baseServiceTitle, serviceTone(booking.baseServiceTitle))
                 }
                 Text(text = bookingSubtitle(booking), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+            // Live preview of where the drop would land. Nothing is written
+            // until the finger lifts, and a drop back where the visit already
+            // was writes nothing at all.
+            if (isDragging && dragPreviewStart != null && dragPreviewEnd != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Lucide.GripVertical,
+                        contentDescription = null,
+                        tint = c.warning,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = "Move to " + dragPreviewStart.format(DateTimeFormatter.ofPattern("h:mm a")) +
+                            " - " + dragPreviewEnd.format(DateTimeFormatter.ofPattern("h:mm a")),
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textPrimary,
+                    )
+                }
             }
         }
     }
@@ -1588,240 +1737,43 @@ fun EnhancedDayCell(
     }
 }
 
-@Suppress("unused")
-@Composable
-fun EnhancedAgendaView(
-    currentDate: LocalDate,
-    bookings: List<EnhancedBooking>,
-    viewMode: CalendarViewType,
-    dragState: DragState?,
-    onBookingClick: (EnhancedBooking) -> Unit,
-    onStartDrag: (EnhancedBooking, LocalDateTime) -> Unit,
-    onDragUpdate: (LocalDateTime) -> Unit,
-    onDragComplete: () -> Unit,
-    onDragCancel: () -> Unit
-) {
-    val dragConflictCount = remember(bookings, dragState) {
-        val drag = dragState ?: return@remember 0
-        bookings.count { booking ->
-            if (booking.id == drag.draggedBooking.id) false
-            else {
-                val otherStart = parseIsoDateTimeOrNull(booking.startDateTime)
-                val otherEnd   = parseIsoDateTimeOrNull(booking.endDateTime)
-                otherStart != null && otherEnd != null && intervalsOverlap(drag.newStartTime, drag.newEndTime, otherStart, otherEnd)
-            }
-        }
-    }
+// `EnhancedAgendaView` and `EnhancedBookingCard` stood here: a whole second
+// agenda list, with the app's only drag gesture on it, that NOTHING rendered.
+// Their drop called `completeDrag`, which wrote `enhanced_bookings` straight
+// from the client instead of the reschedule callable, so the machinery was
+// both unreachable and wrong. #575 moved the drag onto `AdminBookingAgendaRow`,
+// the row the operator is actually looking at, and routed the drop through
+// `rescheduleBooking`. Deleted rather than left as a spare: an unreachable
+// second copy of a gesture is where the next divergence starts.
 
-    val filteredBookings = when (viewMode) {
-        CalendarViewType.DAY -> bookings.filter { booking ->
-            try {
-                LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME).toLocalDate() == currentDate
-            } catch (e: Exception) { false }
-        }
-        CalendarViewType.WEEK -> {
-            val startOfWeek = currentDate.minusDays(currentDate.dayOfWeek.value.toLong() - 1)
-            val endOfWeek   = startOfWeek.plusDays(6)
-            bookings.filter { booking ->
-                try {
-                    val bookingDate = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME).toLocalDate()
-                    !bookingDate.isBefore(startOfWeek) && !bookingDate.isAfter(endOfWeek)
-                } catch (e: Exception) { false }
-            }
-        }
-        else -> bookings
-    }
-
-    if (filteredBookings.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No bookings scheduled.", color = Color.Gray)
-        }
-    } else {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (dragState != null) {
-                item {
-                    AuntieCard(
-                        containerColor = if (dragConflictCount > 0) Color.Red.copy(alpha = 0.12f) else AuntieTheme.colors.warning.copy(alpha = 0.12f)
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (dragConflictCount > 0) Lucide.CircleAlert else Lucide.GripVertical,
-                                contentDescription = null,
-                                tint = if (dragConflictCount > 0) Color.Red else AuntieTheme.colors.warning,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text  = if (dragConflictCount > 0) "Drag preview overlaps $dragConflictCount booking(s)." else "Drag preview active. Release to save new time.",
-                                style = AuntieTheme.typography.bodySmall,
-                                color = AuntieTheme.colors.textPrimary
-                            )
-                        }
-                    }
-                }
-            }
-            items(filteredBookings.sortedBy { it.startDateTime }) { booking ->
-                val isDraggedBooking = dragState?.draggedBooking?.id == booking.id
-                EnhancedBookingCard(
-                    booking             = booking,
-                    isDragging          = isDraggedBooking,
-                    onBookingClick      = onBookingClick,
-                    onStartDrag         = onStartDrag,
-                    onDragUpdate        = onDragUpdate,
-                    onDragComplete      = onDragComplete,
-                    onDragCancel        = onDragCancel,
-                    dragPreviewStart    = if (isDraggedBooking) dragState?.newStartTime else null,
-                    dragPreviewEnd      = if (isDraggedBooking) dragState?.newEndTime else null,
-                    hasPreviewConflict  = isDraggedBooking && dragConflictCount > 0
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Suppress("unused")
-@Composable
-fun EnhancedBookingCard(
-    booking: EnhancedBooking,
-    isDragging: Boolean,
-    onBookingClick: (EnhancedBooking) -> Unit,
-    onStartDrag: (EnhancedBooking, LocalDateTime) -> Unit,
-    onDragUpdate: (LocalDateTime) -> Unit,
-    onDragComplete: () -> Unit,
-    onDragCancel: () -> Unit,
-    dragPreviewStart: LocalDateTime? = null,
-    dragPreviewEnd: LocalDateTime? = null,
-    hasPreviewConflict: Boolean = false
-) {
-    AuntieCard(
-        containerColor = if (isDragging) AuntieTheme.colors.kinfolkOrange.copy(alpha = 0.3f) else AuntieTheme.colors.surface2,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onBookingClick(booking) }
-            .pointerInput(booking.id) {
-                var dragBaseStartTime: LocalDateTime? = null
-                var accumulatedY = 0f
-                detectDragGestures(
-                    onDragStart = {
-                        try {
-                            val startTime = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                            dragBaseStartTime = startTime
-                            accumulatedY = 0f
-                            onStartDrag(booking, startTime)
-                        } catch (e: Exception) { }
-                    },
-                    onDragEnd = { dragBaseStartTime = null; accumulatedY = 0f; onDragComplete() },
-                    onDragCancel = { dragBaseStartTime = null; accumulatedY = 0f; onDragCancel() }
-                ) { change, dragAmount ->
-                    val baseStartTime = dragBaseStartTime
-                    if (baseStartTime != null) {
-                        accumulatedY += dragAmount.y
-                        val rawMinutes     = (accumulatedY / DRAG_PIXELS_PER_MINUTE).roundToInt()
-                        val snappedMinutes = (rawMinutes / DRAG_MINUTE_SNAP.toFloat()).roundToInt() * DRAG_MINUTE_SNAP
-                        onDragUpdate(baseStartTime.plusMinutes(snappedMinutes.toLong()))
-                    }
-                    change.consume()
-                }
-            }
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = booking.title, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(
-                                    when (booking.status) {
-                                        BookingStatus.ACCEPTED  -> Color.Green.copy(alpha = 0.2f)
-                                        BookingStatus.DRAFT     -> AuntieTheme.colors.warning.copy(alpha = 0.2f)
-                                        BookingStatus.COMPLETED -> AuntieTheme.colors.kinfolkOrange.copy(alpha = 0.2f)
-                                        BookingStatus.REJECTED  -> Color.Red.copy(alpha = 0.2f)
-                                    }
-                                )
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text  = booking.status.name,
-                                style = AuntieTheme.typography.labelSmall,
-                                color = when (booking.status) {
-                                    BookingStatus.ACCEPTED  -> Color.Green
-                                    BookingStatus.DRAFT     -> AuntieTheme.colors.warning
-                                    BookingStatus.COMPLETED -> AuntieTheme.colors.kinfolkOrange
-                                    BookingStatus.REJECTED  -> Color.Red
-                                }
-                            )
-                        }
-                    }
-                    if (booking.kinfolkName.isNotBlank()) {
-                        Text(text = "Client: ${booking.kinfolkName}", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f), modifier = Modifier.padding(top = 2.dp))
-                    }
-                    if (booking.kinNames.isNotEmpty()) {
-                        Text(text = "Pets: ${booking.kinNames.joinToString(", ")}", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f), modifier = Modifier.padding(top = 2.dp))
-                    }
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(text = "$${String.format("%.2f", booking.totalPrice)}", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.kinfolkOrange)
-                    if (booking.bookingMode == BookingMode.TIME_BLOCK) {
-                        Icon(Lucide.Clock3, contentDescription = "Time Block", modifier = Modifier.size(16.dp), tint = Color.Blue)
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                val bookingTimeText = remember(booking.startDateTime, booking.endDateTime) {
-                    runCatching {
-                        val startTime = LocalDateTime.parse(booking.startDateTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                        val endTime   = LocalDateTime.parse(booking.endDateTime,   DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-                        "${startTime.format(DateTimeFormatter.ofPattern("MMM dd, h:mm a"))} - ${endTime.format(DateTimeFormatter.ofPattern("h:mm a"))}"
-                    }.getOrElse { "Invalid time format" }
-                }
-                Text(text = bookingTimeText, style = AuntieTheme.typography.bodyMedium, color = if (bookingTimeText == "Invalid time format") Color.Red else AuntieTheme.colors.textPrimary)
-                if (booking.baseServiceTitle.isNotBlank()) {
-                    Text(text = booking.baseServiceTitle, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.kinfolkOrange)
-                }
-            }
-            if (booking.notes.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(text = booking.notes, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.6f))
-            }
-            if (isDragging && dragPreviewStart != null && dragPreviewEnd != null) {
-                Spacer(Modifier.height(8.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (hasPreviewConflict) Color.Red.copy(alpha = 0.15f) else AuntieTheme.colors.warning.copy(alpha = 0.15f))
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (hasPreviewConflict) Lucide.TriangleAlert else Lucide.GripVertical,
-                            contentDescription = null,
-                            tint = if (hasPreviewConflict) Color.Red else AuntieTheme.colors.warning,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text  = "Preview: ${dragPreviewStart.format(DateTimeFormatter.ofPattern("h:mm a"))} - ${dragPreviewEnd.format(DateTimeFormatter.ofPattern("h:mm a"))}",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.textPrimary
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
+/**
+ * Block and unblock windows on ONE day, from the calendar (#574).
+ *
+ * REACHABLE AS OF #574, and that is half the fix. This dialog was written,
+ * never opened by anything, and the month grid's blocked-slot tap was wired to
+ * `onTimeSlotClick = {}` — a control that looked live and did nothing. The tap
+ * now opens this, so the Schedule screen has the block-time entry point the web
+ * and desktop admins already have.
+ *
+ * The other half is where the write goes. "Block Time" here used to reach
+ * `createTimeSlot`, a direct client write to a collection `firestore.rules`
+ * denies every client write to; it now goes through `createBlockedTimeSlot`,
+ * with the date parsed and the window ordered before anything is sent, and the
+ * server's refusal (plus its "Block anyway", where one is allowed) shown in
+ * [ScheduleWriteBanner].
+ */
 @Composable
 fun TimeSlotManagementDialog(
     selectedDate: LocalDate,
     blockedSlots: List<BookingTimeSlot>,
     onDismiss: () -> Unit,
-    onBlock: (LocalDate, String, String, String) -> Unit,
-    onUnblock: (String) -> Unit
+    onBlock: (date: String, start: String, end: String, reason: String) -> Unit,
+    onUnblock: (String) -> Unit,
+    writeError: String? = null,
+    writeOverride: com.tribetails.auntieos.data.repository.ScheduleOverrideKind? = null,
+    writeInFlight: Boolean = false,
+    onOverrideWrite: () -> Unit = {},
+    onDismissWriteError: () -> Unit = {},
 ) {
     var startTime by remember { mutableStateOf("09:00") }
     var endTime   by remember { mutableStateOf("17:00") }
@@ -1846,9 +1798,26 @@ fun TimeSlotManagementDialog(
                 AuntieField(value = reason, onValueChange = { reason = it }, label = "REASON", modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(12.dp))
                 PrimaryButton(
-                    label    = "Block Time",
-                    onClick  = { onBlock(selectedDate, startTime.trim(), endTime.trim(), reason.trim().ifBlank { "Blocked" }) },
+                    label    = if (writeInFlight) "Blocking…" else "Block Time",
+                    onClick  = {
+                        onBlock(
+                            selectedDate.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                            startTime,
+                            endTime,
+                            reason,
+                        )
+                    },
+                    enabled  = !writeInFlight,
                     modifier = Modifier.fillMaxWidth()
+                )
+                ScheduleWriteBanner(
+                    message       = writeError,
+                    override      = writeOverride,
+                    busy          = writeInFlight,
+                    title         = "Couldn’t block the time",
+                    overrideLabel = "Block anyway",
+                    onOverride    = onOverrideWrite,
+                    onDismiss     = onDismissWriteError,
                 )
                 Box(modifier = Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.dp).background(AuntieTheme.colors.border))
                 Text(text = "Blocked Slots", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.Medium, color = AuntieTheme.colors.textPrimary)
@@ -1867,7 +1836,22 @@ fun TimeSlotManagementDialog(
                                             Text(text = slot.notes, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f))
                                         }
                                     }
-                                    AuntieTextBtn(onClick = { onUnblock(slot.id) }) { Text("Unblock") }
+                                    // Unblock only on the operator's OWN blocks: a
+                                    // Google Calendar mirror comes straight back on
+                                    // the next sync, so the server refuses to delete
+                                    // it and this must not offer to.
+                                    if (slot.source == TimeSlotSource.GOOGLE_BUSY_IMPORT) {
+                                        Text(
+                                            text  = "From Google Calendar",
+                                            style = AuntieTheme.typography.labelSmall,
+                                            color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                                        )
+                                    } else {
+                                        AuntieTextBtn(
+                                            onClick = { onUnblock(slot.id) },
+                                            enabled = !writeInFlight,
+                                        ) { Text("Unblock") }
+                                    }
                                 }
                             }
                         }
@@ -2133,6 +2117,14 @@ fun BookingDetailsDialog(
     onUnarchive: () -> Unit = {},
     onSaveNotes: (notes: String, specialInstructions: String) -> Unit = { _, _ -> },
     onReschedule: (date: String, time: String) -> Unit = { _, _ -> },
+    // #575: the reschedule's own refusal, and the override the operator may take.
+    // The sheet stays open on a refusal (the ViewModel clears the selection only
+    // on success), so this is where the operator reads it and retries.
+    writeError: String? = null,
+    writeOverride: com.tribetails.auntieos.data.repository.ScheduleOverrideKind? = null,
+    writeInFlight: Boolean = false,
+    onOverrideWrite: () -> Unit = {},
+    onDismissWriteError: () -> Unit = {},
 ) {
     var notes              by remember(booking.id) { mutableStateOf(booking.notes) }
     var specialInstructions by remember(booking.id) { mutableStateOf(booking.specialInstructions) }
@@ -2235,10 +2227,19 @@ fun BookingDetailsDialog(
                         AuntieField(value = reTime, onValueChange = { reTime = it }, label = "Time (HH:MM)", modifier = Modifier.weight(1f))
                     }
                     PrimaryButton(
-                        label    = "Reschedule visit",
+                        label    = if (writeInFlight) "Moving…" else "Reschedule visit",
                         onClick  = { onReschedule(reDate, reTime) },
-                        enabled  = reDate.length == 10 && reTime.length == 5,
+                        enabled  = reDate.length == 10 && reTime.length == 5 && !writeInFlight,
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    com.tribetails.auntieos.ui.admin.scheduling.ScheduleWriteBanner(
+                        message       = writeError,
+                        override      = writeOverride,
+                        busy          = writeInFlight,
+                        title         = "Couldn’t move that visit",
+                        overrideLabel = "Move anyway",
+                        onOverride    = onOverrideWrite,
+                        onDismiss     = onDismissWriteError,
                     )
                 }
 

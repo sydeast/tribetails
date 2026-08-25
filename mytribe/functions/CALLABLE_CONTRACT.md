@@ -1303,6 +1303,46 @@ closure so the operator can act on them manually.
 - Mirrors: `auntieos-admin/src/api/vetClinicsWrite.ts`, Android
   `AuntieRepository.archiveVetClinic`. Frozen in `test/callableContract.test.ts`.
 
+## Blocked time windows (admin-gated)
+- req `{ date: 'YYYY-MM-DD', startTime: 'HH:mm', endTime: 'HH:mm', notes?: string
+  (<=500), startTimeMs?: number, endTimeMs?: number, overrideVisitConflict?: boolean }`
+- res `{ ok: true, docId: string }`
+- Writes one private, unavailable `booking_time_slots` row (`slotType: 'BLOCKED'`,
+  `source: 'INTERNAL_MANUAL'`, `syncState: 'LOCAL_ONLY'`, ISO-string stamps), which
+  the Schedule busy overlays and the kinfolk availability checks already read.
+- Refuses `startTime >= endTime` and any non-`HH:mm` clock.
+- `startTimeMs`/`endTimeMs` are the SAME window as real instants, and they exist
+  because the stored document has no timezone field: without them the server
+  cannot compare a zoneless wall clock against `kin_care_sessions` and simply
+  does not overlap-check the block. Optional so the desktop admin's older
+  three-field call keeps working unchanged; every client that can name the
+  operator's zone sends them. When sent, the window is checked by
+  `guardVisitOverlapConflict` and refused with
+  `details { code: 'visit_overlap_conflict' }`, which `overrideVisitConflict: true`
+  may knowingly go past (audited as `VISIT_OVERLAP_CONFLICT_OVERRIDDEN`).
+- CALLERS: React admin `components/BlockTimeDialog.tsx`, desktop admin
+  `screens/schedule/BlockTimeDialog.kt`, android
+  `BookingRepository.createBlockedTimeSlot`.
+- req `{ slotId: string }`
+- res `{ ok: true, slotId: string }`
+- The other half of block time, and the half that had no callable at all.
+  `firestore.rules` denies every client write to `booking_time_slots`
+  (`allow write: if false`), so the only unblock affordance that existed
+  (android's, a client `.delete()`) had never once worked in production.
+- `not-found` when the slot is gone.
+- REFUSES A CALENDAR MIRROR: a row whose `source` is anything other than
+  `INTERNAL_MANUAL` (in practice `GOOGLE_BUSY_IMPORT`) is refused
+  `failed-precondition` with `details { code: 'imported_busy_slot', source }`,
+  because deleting it would not free the time - the next
+  `syncGoogleCalendarBusyEvents` run writes the same event straight back. The
+  message names the real remedy (clear it in Google Calendar, or turn sync off).
+  NOT overridable; there is no flag. A row carrying NO `source` IS deletable:
+  the collection predates the field and an unlabelled row is a manual block.
+- Audited as `DELETE_BLOCKED_TIME_SLOT`, with the window it removed on the
+  payload - once the document is gone the audit entry is the only record that
+  the block ever existed.
+- CALLERS: React admin `screens/Schedule.tsx` (Unblock on the day agenda),
+  android `BookingRepository.deleteBlockedTimeSlot`.
 ## Calendar sync (admin-gated)
 
 ### syncGoogleCalendarBusyEvents
