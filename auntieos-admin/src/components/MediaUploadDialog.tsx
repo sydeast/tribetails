@@ -40,8 +40,18 @@ interface MediaUploadDialogProps {
   /** Uploads straight to this entity, with no target picker at all. See {@link FixedUploadTarget}. */
   fixedTarget?: FixedUploadTarget;
   onClose: () => void;
-  /** Called once the doc actually lands in `media_files`. The caller's own `useCollection` listener picks up the new row live; this only closes the dialog. */
-  onUploaded: () => void;
+  /**
+   * Called once the doc actually lands in `media_files`, with its new document
+   * id.
+   *
+   * The gallery callers ignore the argument, because their own `useCollection`
+   * listener picks the row up live and this callback only closes the dialog.
+   * The KinTale composer cannot: a photo is attached to a tale by pushing its
+   * id onto `kin_care_reports.mediaFileIds`, so it needs the id the write
+   * produced. Passing it costs the existing callers nothing, a zero-argument
+   * handler being assignable to this type.
+   */
+  onUploaded: (mediaFileId: string) => void;
 }
 
 /** "Requesting upload permission…" etc, one line per real pipeline stage, never a fabricated byte-progress percentage the app has no way to track honestly. */
@@ -173,9 +183,9 @@ export function MediaUploadDialog({
     setUploadError(null);
     setStage('signing');
     try {
-      await uploadMediaFile({ file, entityType, entityId, onStage: setStage });
+      const mediaFileId = await uploadMediaFile({ file, entityType, entityId, onStage: setStage });
       setStage(null);
-      onUploaded();
+      onUploaded(mediaFileId);
     } catch (err) {
       setUploadError(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setStage(null);

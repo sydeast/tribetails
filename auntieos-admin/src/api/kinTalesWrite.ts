@@ -1,6 +1,8 @@
 import { addDoc, arrayUnion, collection, doc, increment, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
+import { checklistHasContent } from '../lib/kinTaleChecklist';
+import type { FieldResponse } from '../lib/kinTale/model';
 
 /**
  * The write-side counterpart to `api/kinTales.ts` (list/read only). Confirmed
@@ -78,21 +80,64 @@ export interface KinTaleDraft {
    */
   titleGeneratedByAi: boolean;
   bodyCopy: string;
+  /**
+   * `media_files` document ids, in attach order. Append-only from this screen,
+   * matching Android (`KinTaleReportViewModel.kt:654`). Detaching filters the id
+   * out of this list and deliberately does NOT delete the `media_files` doc, so
+   * the photo stays in the Den's gallery, exactly as Android's `removeMedia`
+   * (`:674-682`) behaves.
+   */
   mediaFileIds: string[];
+  /**
+   * The `kintale_templates` doc id this recap was composed against, or `''` for
+   * the built-in default. Stamped once at scaffold time and never re-derived,
+   * mirroring `scaffoldReport` on both Kotlin composers
+   * (`KinTaleReportViewModel.kt:366`, `KinTaleComposeScreen.kt:1167`), each of
+   * which strips its own sentinel id so it never reaches Firestore.
+   *
+   * Not bookkeeping: this is the field the kinfolk portal resolves a sent
+   * tale's checklist labels from (`getMyKinTales.ts:156`), so without it the
+   * household is shown the built-in template's items regardless of which
+   * template the visit was actually captured under.
+   */
+  templateId: string;
+  /**
+   * Captured checklist answers, keyed `"$kinId|$fieldKey"` (bare `fieldKey` for
+   * a per-visit item). Built and read exclusively through
+   * `lib/kinTaleChecklist.ts`, whose header documents the wire shape and why
+   * unticking writes `false` rather than deleting the entry.
+   */
+  fieldResponses: Record<string, FieldResponse>;
 }
 
 /**
  * True when a draft has enough real content to be worth persisting or
  * sending. Mirrors the wasm composer's own `hasContent()` gate
- * (`KinTaleComposeScreen.kt`): an empty draft never round-trips to Firestore
- * just because the screen opened, and Send stays disabled until there's
- * something to send. Narrower than the wasm's version on purpose: this
- * compose surface doesn't carry `fieldResponses`/`petMoodSelections`/
- * `formValues`, so only the fields it actually edits count toward "has
- * content".
+ * (`KinTaleComposeScreen.kt:1171-1179`): an empty draft never round-trips to
+ * Firestore just because the screen opened, and Send stays disabled until
+ * there's something to send.
+ *
+ * A ticked checklist item counts, via `checklistHasContent`. UNTICKING does
+ * not: the desktop predicate requires `boolValue == true || stringValue`
+ * non-blank, and Android's (`KinTaleReportViewModel.kt:621`) counts any
+ * non-empty `fieldResponses` map at all, which means opening the screen and
+ * unticking one row mints a Firestore document that records nothing happening.
+ * The desktop's is the one both platforms' own "no ghost row" comments are
+ * reaching for, so it is the one ported.
+ *
+ * Still narrower than the wasm's on purpose: this compose surface carries no
+ * `petMoodSelections`/`formValues`, so those cannot count toward "has content"
+ * here.
  */
-export function hasKinTaleContent(draft: Pick<KinTaleDraft, 'title' | 'bodyCopy' | 'mediaFileIds'>): boolean {
-  return draft.title.trim() !== '' || draft.bodyCopy.trim() !== '' || draft.mediaFileIds.length > 0;
+export function hasKinTaleContent(
+  draft: Pick<KinTaleDraft, 'title' | 'bodyCopy' | 'mediaFileIds' | 'fieldResponses'>,
+): boolean {
+  return (
+    draft.title.trim() !== '' ||
+    draft.bodyCopy.trim() !== '' ||
+    draft.mediaFileIds.length > 0 ||
+    checklistHasContent(draft.fieldResponses)
+  );
 }
 
 /**
@@ -125,6 +170,8 @@ export async function saveKinTaleDraft(draft: KinTaleDraft): Promise<string | nu
     titleGeneratedByAi: draft.titleGeneratedByAi,
     bodyCopy: draft.bodyCopy,
     mediaFileIds: draft.mediaFileIds,
+    templateId: draft.templateId,
+    fieldResponses: draft.fieldResponses,
   };
 
   if (draft._id === undefined || draft._id === '') {

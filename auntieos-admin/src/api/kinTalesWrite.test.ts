@@ -30,6 +30,8 @@ function draft(over: Partial<KinTaleDraft> = {}): KinTaleDraft {
     titleGeneratedByAi: false,
     bodyCopy: '',
     mediaFileIds: [],
+    templateId: '',
+    fieldResponses: {},
     ...over,
   };
 }
@@ -177,5 +179,60 @@ describe('sendKinTale', () => {
     writeBatch.mockReturnValue({ update, commit });
 
     await expect(sendKinTale({ reportId: 'r1', sessionId: 's1' })).rejects.toThrow('unavailable');
+  });
+});
+/**
+ * The two fields the KinTale composer's template + checklist blocks add to the
+ * document. Pinned here rather than only in the screen test, because a field
+ * that fails to reach Firestore looks identical on screen to one that arrives.
+ */
+describe('templateId and fieldResponses reach the document', () => {
+  const ticked = {
+    'pet1|fed': {
+      fieldKey: 'fed',
+      kinId: 'pet1',
+      sectionKey: '',
+      boolValue: true,
+      intValue: null,
+      stringValue: '',
+      mediaIds: [],
+    },
+  };
+  it('counts a ticked checklist item as content on its own', () => {
+    expect(hasKinTaleContent(draft({ fieldResponses: ticked }))).toBe(true);
+  });
+  it('does NOT count an all-unticked checklist, so unticking mints no ghost row', async () => {
+    const unticked = {
+      'pet1|fed': { ...ticked['pet1|fed'], boolValue: false },
+    };
+    expect(hasKinTaleContent(draft({ fieldResponses: unticked }))).toBe(false);
+    expect(await saveKinTaleDraft(draft({ fieldResponses: unticked }))).toBeNull();
+    expect(addDoc).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
+  });
+  it('writes both fields on CREATE', async () => {
+    addDoc.mockResolvedValue({ id: 'new1' });
+    await saveKinTaleDraft(draft({ title: 'A great walk', templateId: 'tpl_walk', fieldResponses: ticked }));
+    const written = addDoc.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(written['templateId']).toBe('tpl_walk');
+    expect(written['fieldResponses']).toEqual(ticked);
+  });
+  it('writes both fields on UPDATE, still merging so untouched fields survive', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveKinTaleDraft(
+      draft({ _id: 'r1', title: 'A great walk', templateId: 'tpl_walk', fieldResponses: ticked }),
+    );
+    const [, payload, options] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>, unknown];
+    expect(payload['templateId']).toBe('tpl_walk');
+    expect(payload['fieldResponses']).toEqual(ticked);
+    expect(options).toEqual({ merge: true });
+  });
+  /** The built-in default is a blank id on the wire, never a sentinel string. */
+  it('writes a blank templateId through unchanged rather than omitting it', async () => {
+    addDoc.mockResolvedValue({ id: 'new1' });
+    await saveKinTaleDraft(draft({ title: 'A great walk' }));
+    const written = addDoc.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(written).toHaveProperty('templateId', '');
+    expect(written).toHaveProperty('fieldResponses', {});
   });
 });

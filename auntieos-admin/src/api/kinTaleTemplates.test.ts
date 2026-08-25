@@ -5,6 +5,9 @@ import {
   decodeChecklistItem,
   decodeFieldCondition,
   pickInitialTemplate,
+  pickTemplateForService,
+  templateForDraft,
+  templateIdForWire,
 } from './kinTaleTemplates';
 import { DEFAULT_KINTALE_TEMPLATE, type KinTaleTemplate } from '../lib/kinTale/model';
 
@@ -127,5 +130,81 @@ describe('pickInitialTemplate', () => {
 
   it('is null for an empty list (caller then seeds a fresh draft)', () => {
     expect(pickInitialTemplate([])).toBeNull();
+  });
+});
+/**
+ * `pickTemplateForService` is the rule a NEW KinTale draft is scaffolded by, so
+ * these are the pins on which checklist an operator is offered for a given
+ * visit, and on what reaches `kin_care_reports.templateId`.
+ */
+describe('pickTemplateForService', () => {
+  const t = (over: Partial<KinTaleTemplate>): KinTaleTemplate =>
+    decodeKinTaleTemplate({ _id: 'id', name: 'n', isActive: true, ...over });
+  it('matches a template whose serviceTypeKeys names the session service type', () => {
+    const list = [
+      t({ _id: 'other', serviceTypeKeys: ['Drop-in'] }),
+      t({ _id: 'walk', serviceTypeKeys: ['Dog Walk'] }),
+    ];
+    expect(pickTemplateForService(list, 'Dog Walk')._id).toBe('walk');
+  });
+  it('matches case-insensitively and ignores surrounding whitespace on both sides', () => {
+    const list = [t({ _id: 'walk', serviceTypeKeys: ['  dog WALK '] })];
+    expect(pickTemplateForService(list, 'Dog Walk')._id).toBe('walk');
+  });
+  it('never picks an inactive template, even on an exact service match', () => {
+    const list = [
+      t({ _id: 'retired', isActive: false, serviceTypeKeys: ['Dog Walk'] }),
+      t({ _id: 'fallback', isDefault: true }),
+    ];
+    expect(pickTemplateForService(list, 'Dog Walk')._id).toBe('fallback');
+  });
+  it('falls back to the flagged default when no service type matches', () => {
+    const list = [t({ _id: 'walk', serviceTypeKeys: ['Dog Walk'] }), t({ _id: 'std', isDefault: true })];
+    expect(pickTemplateForService(list, 'Overnight')._id).toBe('std');
+  });
+  it('falls back to the built-in when the Den has authored no templates at all', () => {
+    expect(pickTemplateForService([], 'Dog Walk')).toBe(DEFAULT_KINTALE_TEMPLATE);
+  });
+  it('falls back to the built-in when nothing matches and nothing is flagged default', () => {
+    expect(pickTemplateForService([t({ _id: 'walk', serviceTypeKeys: ['Dog Walk'] })], 'Overnight')).toBe(
+      DEFAULT_KINTALE_TEMPLATE,
+    );
+  });
+  /**
+   * 76 of 99 live sessions carry no `serviceType`. Pairing that with a
+   * template whose key list holds a stray empty string would call an accident a
+   * deliberate match, so a blank needle matches nothing and takes the default.
+   */
+  it('treats a blank service type as no match rather than matching a blank key', () => {
+    const list = [t({ _id: 'blankkey', serviceTypeKeys: [''] }), t({ _id: 'std', isDefault: true })];
+    expect(pickTemplateForService(list, '')._id).toBe('std');
+    expect(pickTemplateForService(list, '   ')._id).toBe('std');
+  });
+});
+describe('templateForDraft (reopening a saved draft)', () => {
+  const t = (over: Partial<KinTaleTemplate>): KinTaleTemplate =>
+    decodeKinTaleTemplate({ _id: 'id', name: 'n', ...over });
+  it('resolves by the stored id, not by service type', () => {
+    const list = [t({ _id: 'walk', serviceTypeKeys: ['Dog Walk'] }), t({ _id: 'overnight' })];
+    expect(templateForDraft(list, 'overnight')._id).toBe('overnight');
+  });
+  it('reads a blank templateId as the built-in default', () => {
+    expect(templateForDraft([t({ _id: 'walk' })], '')).toBe(DEFAULT_KINTALE_TEMPLATE);
+  });
+  /** The operator may delete a template; a draft saved against it still opens. */
+  it('falls back to the built-in for an id that no longer resolves', () => {
+    expect(templateForDraft([t({ _id: 'walk' })], 'deleted-one')).toBe(DEFAULT_KINTALE_TEMPLATE);
+  });
+  it('resolves an INACTIVE template it was saved against, unlike the service-type rule', () => {
+    const list = [t({ _id: 'retired', isActive: false })];
+    expect(templateForDraft(list, 'retired')._id).toBe('retired');
+  });
+});
+describe('templateIdForWire', () => {
+  it('strips the built-in sentinel to a blank string, as scaffoldReport does', () => {
+    expect(templateIdForWire(DEFAULT_KINTALE_TEMPLATE)).toBe('');
+  });
+  it('passes a real doc id through unchanged', () => {
+    expect(templateIdForWire(decodeKinTaleTemplate({ _id: 'walk', name: 'Walks' }))).toBe('walk');
   });
 });

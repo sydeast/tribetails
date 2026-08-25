@@ -1,3 +1,5 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { type CollectionSpec } from '../lib/firestore';
 
 /**
@@ -137,3 +139,56 @@ export const GALLERY_QUERY: CollectionSpec = {
   order: ['uploadedAt', 'desc'],
   max: 500,
 };
+/**
+ * One-shot read of specific `media_files` docs by id, preserving the order of
+ * `ids` and DROPPING any that no longer exist.
+ *
+ * Used by the KinTale composer's photo strip. It reads by id rather than
+ * querying `entityId == sessionId` deliberately:
+ *
+ *  - a report's attached photos are exactly its `mediaFileIds`, so the ids are
+ *    the precise question, while the session query would also return media
+ *    uploaded to that visit but attached to a different tale;
+ *  - `getDoc` needs no composite index. A filtered, ordered `useCollection` on
+ *    `media_files` would, and a missing index is a runtime failure no jsdom test
+ *    can see;
+ *  - attach ORDER is the operator's, and Android preserves it
+ *    (`KinTaleReportViewModel.kt:654` appends). The desktop's session stream
+ *    overwrites `mediaFileIds` with `uploadedAt`-descending order
+ *    (`KinTaleComposeScreen.kt:243-251`), silently rearranging a list the
+ *    operator built; reading by id cannot do that.
+ *
+ * A DELETED doc is skipped rather than throwing, unlike `api/kinView.ts#getKin`.
+ * A kin is only ever opened from a Directory card, so a missing one is a real
+ * error; a media id, by contrast, is a reference held on another document and
+ * the file behind it can legitimately have been deleted from the gallery since.
+ * Losing one thumbnail must not blank the composer.
+ *
+ * A rejected READ still propagates: that is a permissions or connectivity fact
+ * the screen has to surface, not a missing row.
+ */
+export async function getMediaFilesByIds(ids: readonly string[]): Promise<MediaFile[]> {
+  const wanted = ids.filter((id) => id.trim() !== '');
+  if (wanted.length === 0) return [];
+  const snaps = await Promise.all(wanted.map((id) => getDoc(doc(db, 'media_files', id))));
+  const out: MediaFile[] = [];
+  snaps.forEach((snap) => {
+    if (!snap.exists()) return;
+    const raw = snap.data() as Record<string, unknown>;
+    out.push({
+      ...(raw as Omit<MediaFile, '_id' | 'isProfilePhoto' | 'durationSeconds'>),
+      _id: snap.id,
+      // The two non-optional fields on `MediaFile`, defaulted here for the same
+      // reason the interface leaves everything else optional: this is a cast
+      // over raw document data, and a doc written before either field existed
+      // would otherwise hand a screen an `undefined` it was promised could not
+      // happen.
+      isProfilePhoto: raw['isProfilePhoto'] === true,
+      durationSeconds:
+        typeof raw['durationSeconds'] === 'number' && Number.isFinite(raw['durationSeconds'])
+          ? raw['durationSeconds']
+          : 0,
+    });
+  });
+  return out;
+}

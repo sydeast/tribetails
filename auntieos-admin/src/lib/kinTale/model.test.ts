@@ -10,7 +10,13 @@ import {
 
 /**
  * Pins the ported model constants so the default template cannot silently drift
- * from the Compose/android `DefaultKinTaleTemplate` (round-trip fidelity).
+ * from Android's `DefaultKinTaleTemplate` (`KinTaleTemplateEngine.kt`).
+ *
+ * ANDROID, not the Compose desktop, is the reference, and the keys are the whole
+ * point: the kinfolk portal resolves a blank-`templateId` report's checklist
+ * labels against Android's list alone, so a key that exists only in the
+ * desktop's list is dropped before the household ever sees it. The long form of
+ * that argument is in `model.ts`'s own header.
  */
 
 describe('DEFAULT_KINTALE_TEMPLATE', () => {
@@ -30,17 +36,71 @@ describe('DEFAULT_KINTALE_TEMPLATE', () => {
     expect(DEFAULT_KINTALE_TEMPLATE.reviewBoosterEnabled).toBe(false);
   });
 
-  it('ports the 12 default checklist items (6 per-pet, 6 per-visit)', () => {
+  it('ports the 10 Android default checklist items, keys and order intact', () => {
     const items = DEFAULT_KINTALE_TEMPLATE.checklistItems;
-    expect(items).toHaveLength(12);
-    expect(items.filter((i) => i.scope === 'PER_PET')).toHaveLength(6);
-    expect(items.filter((i) => i.scope === 'PER_VISIT')).toHaveLength(6);
-    // peed/pooed are required; everything defaults to showWhenUnchecked=false, no conditions
-    const peed = items.find((i) => i.key === 'peed');
-    expect(peed?.required).toBe(true);
-    expect(peed?.showWhenUnchecked).toBe(false);
-    expect(peed?.conditions).toEqual([]);
-    expect(items.find((i) => i.key === 'fed')?.required).toBe(false);
+    expect(items.map((i) => i.key)).toEqual([
+      'peed',
+      'pooed',
+      'fed',
+      'fresh_water',
+      'meds_given',
+      'played',
+      'litter_scooped',
+      'walk_water_refill',
+      'trash_taken_out',
+      'lights_off',
+    ]);
+    expect(items.map((i) => i.order)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(items.filter((i) => i.scope === 'PER_PET')).toHaveLength(8);
+    expect(items.filter((i) => i.scope === 'PER_VISIT')).toHaveLength(2);
+  });
+
+  /**
+   * The keys the kinfolk portal can resolve for a blank `templateId`, verbatim
+   * from `mytribe/functions/src/portal/getMyKinTales.ts`'s
+   * `DEFAULT_TEMPLATE_CHECKLIST_ITEMS`. A tick written against a key absent from
+   * that list is dropped by the portal, so this is the round-trip pin, not a
+   * restatement of the test above.
+   */
+  it('uses only keys the portal can resolve for a blank templateId', () => {
+    const portalResolvable = [
+      'peed',
+      'pooed',
+      'fed',
+      'fresh_water',
+      'meds_given',
+      'played',
+      'litter_scooped',
+      'walk_water_refill',
+      'trash_taken_out',
+      'lights_off',
+    ];
+    for (const item of DEFAULT_KINTALE_TEMPLATE.checklistItems) {
+      expect(portalResolvable).toContain(item.key);
+    }
+  });
+
+  it('keeps peed/pooed visible when unchecked, and ports the three conditional items', () => {
+    const items = DEFAULT_KINTALE_TEMPLATE.checklistItems;
+    const by = (key: string) => items.find((i) => i.key === key);
+
+    expect(by('peed')?.showWhenUnchecked).toBe(true);
+    expect(by('pooed')?.showWhenUnchecked).toBe(true);
+    expect(by('fed')?.showWhenUnchecked).toBe(false);
+
+    expect(by('meds_given')?.conditions).toEqual([
+      { source: 'KIN_ATTRIBUTE', op: 'EXISTS', value: '', attributeKey: 'medicationHealthNotes' },
+    ]);
+    expect(by('litter_scooped')?.conditions).toEqual([
+      { source: 'KIN_SPECIES', op: 'EQUALS', value: 'Cat', attributeKey: '' },
+    ]);
+    expect(by('walk_water_refill')?.conditions).toEqual([
+      { source: 'SERVICE_TYPE', op: 'CONTAINS', value: 'walk', attributeKey: '' },
+    ]);
+
+    // Everything else is unconditional, exactly as on Android.
+    const conditional = items.filter((i) => i.conditions.length > 0).map((i) => i.key);
+    expect(conditional).toEqual(['meds_given', 'litter_scooped', 'walk_water_refill']);
   });
 
   it('ports the 8 mood options in order', () => {

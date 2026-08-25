@@ -311,8 +311,11 @@ describe('KinTaleTemplates: create-from-default', () => {
     render(<KinTaleTemplates />);
     expect(await screen.findByText(/no templates saved yet/i)).toBeInTheDocument();
     // The create-from-default path the always-visible editor used to pre-seed.
+    // The built-in default is Android's `DefaultKinTaleTemplate` ("Standard
+    // Visit"); `lib/kinTale/model.ts` records why Android is the reference and
+    // not the Compose desktop.
     await openNewTemplate();
-    expect(screen.getByDisplayValue('Default KinTale')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Standard Visit')).toBeInTheDocument();
     // Even this seed carries no canned message: the built-in default's own
     // `defaultEmailMessage` is blank (mark 23 of the 2026-08-17 walk).
     expect(screen.getByLabelText('Default message to kinfolk')).toHaveValue('');

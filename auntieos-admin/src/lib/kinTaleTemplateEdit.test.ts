@@ -233,9 +233,12 @@ describe('new-template drafts', () => {
   it('seedTemplateDraft is the built-in default, unsaved, still the default', () => {
     const d = seedTemplateDraft();
     expect(d._id).toBe('');
-    expect(d.name).toBe('Default KinTale');
+    // The built-in default is Android's `DefaultKinTaleTemplate` ("Standard
+    // Visit", 10 items); see `lib/kinTale/model.ts` for why Android and not the
+    // Compose desktop.
+    expect(d.name).toBe('Standard Visit');
     expect(d.isDefault).toBe(true);
-    expect(d.checklistItems).toHaveLength(12);
+    expect(d.checklistItems).toHaveLength(10);
   });
 
   it('newTemplateDraft is unsaved, renamed, and NOT default', () => {

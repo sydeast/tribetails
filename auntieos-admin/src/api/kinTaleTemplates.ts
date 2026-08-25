@@ -1,6 +1,7 @@
 import { type CollectionSpec } from '../lib/firestore';
 import {
   DEFAULT_KINTALE_TEMPLATE,
+  DEFAULT_KINTALE_TEMPLATE_ID,
   makeChecklistItem,
   makeFieldCondition,
   makeMoodOption,
@@ -158,4 +159,76 @@ export function decodeKinTaleTemplate(raw: unknown): KinTaleTemplate {
  */
 export function pickInitialTemplate(list: readonly KinTaleTemplate[]): KinTaleTemplate | null {
   return list.find((t) => t.isDefault) ?? list[0] ?? null;
+}
+
+/**
+ * The template a NEW KinTale draft is composed against, resolved from the
+ * session's service type. A verbatim port of the rule both Kotlin composers
+ * share, `FirestoreClient.kt#activeTemplateForService` and
+ * `AuntieRepository.kt#getActiveTemplateForService`:
+ *
+ *   1. consider only `isActive` templates;
+ *   2. the first whose `serviceTypeKeys` contains the session's `serviceType`,
+ *      compared lowercased and trimmed on BOTH sides;
+ *   3. else the first flagged `isDefault`;
+ *   4. else the built-in {@link DEFAULT_KINTALE_TEMPLATE}.
+ *
+ * "First" is the order the caller hands in, which for `KINTALE_TEMPLATES_QUERY`
+ * is `name` ascending. The Kotlin queries have NO `orderBy` at all, so with two
+ * matching templates their pick is Firestore snapshot order and effectively
+ * unspecified; ordering by name here is a strict improvement (deterministic and
+ * legible) rather than a divergence in the rule itself.
+ *
+ * A BLANK `serviceType` matches nothing rather than matching a blank
+ * `serviceTypeKeys` entry, because the trimmed-and-lowered comparison would
+ * otherwise pair "this session has no service type recorded" (true of 76 of 99
+ * live sessions) with "this template's key list has a stray empty string" and
+ * call that a deliberate match. Step 3's default is the honest answer there.
+ */
+export function pickTemplateForService(
+  list: readonly KinTaleTemplate[],
+  serviceType: string,
+): KinTaleTemplate {
+  const active = list.filter((t) => t.isActive);
+  const needle = serviceType.toLowerCase().trim();
+  const match =
+    needle === ''
+      ? undefined
+      : active.find((t) => t.serviceTypeKeys.some((k) => k.toLowerCase().trim() === needle));
+  return match ?? active.find((t) => t.isDefault) ?? DEFAULT_KINTALE_TEMPLATE;
+}
+
+/**
+ * The template an EXISTING draft was composed against: looked up by the
+ * `templateId` stored on the report, never re-derived from the service type.
+ *
+ * Re-deriving would silently re-key a saved draft's `fieldResponses` whenever
+ * the Den's templates changed between saving and reopening: the responses are
+ * keyed by `fieldKey`, so a different template turns every stored tick into a
+ * key the new item list does not contain, and the operator watches their
+ * checklist empty itself.
+ *
+ * A blank `templateId` means the built-in default, which is what every
+ * platform's `scaffoldReport` writes for it. An id that no longer resolves (the
+ * template was deleted, which the operator is allowed to do) also falls back to
+ * the built-in: fabricating a different template's labels over the stored ticks
+ * would be worse than the built-in's honest ones.
+ */
+export function templateForDraft(
+  list: readonly KinTaleTemplate[],
+  templateId: string,
+): KinTaleTemplate {
+  if (templateId.trim() === '') return DEFAULT_KINTALE_TEMPLATE;
+  return list.find((t) => t._id === templateId) ?? DEFAULT_KINTALE_TEMPLATE;
+}
+
+/**
+ * The value to STAMP on a report's `templateId` for a resolved template: the
+ * doc id, or `''` for the built-in default. Mirrors
+ * `template._id.takeUnless { it == DefaultKinTaleTemplate.ID }.orEmpty()`
+ * (`KinTaleComposeScreen.kt:1167`, `KinTaleReportViewModel.kt:366`), so the
+ * sentinel id never reaches Firestore.
+ */
+export function templateIdForWire(template: KinTaleTemplate): string {
+  return template._id === DEFAULT_KINTALE_TEMPLATE_ID ? '' : template._id;
 }

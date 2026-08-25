@@ -63,10 +63,25 @@ import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
  * exact sign/upload/write pipeline under Android's own entity name so both
  * clients file into the same Cloudinary folder. It is deliberately NOT offered
  * in `MediaUploadDialog`: a general gallery upload has no Tribal Intel entry to
- * attach to. The full Kotlin enum has more members still (HOUSEHOLD/VISIT_LOG/
- * INVOICE/TRAINING/USER); those stay unmodeled until something uploads to them.
+ * attach to.
+ *
+ * VISIT_LOG is the KinTale composer's photo strip, and its `entityId` is the
+ * `kin_care_sessions` DOC ID, not a household or a kin. That is Android's and
+ * the desktop's shared convention rather than a choice made here: Android
+ * uploads with `entityId = sessionId, entityType = MediaEntityType.VISIT_LOG`
+ * (`KinTaleReportViewModel.kt:648`) and the desktop's `KinTaleMediaConfig`
+ * files into `tribetails/visit_log/$sessionId` (`MediaModels.kt:49-88`), which
+ * is byte-identical to the folder `requestSignedUpload` derives below. So a
+ * photo attached to a visit on any platform lands in one Cloudinary folder.
+ *
+ * The signer needs no change to accept it: `validateUploadFolder`
+ * (`auntieos-admin/web/functions/index.js:389`) checks the folder's SHAPE and
+ * that its last segment is the entityId, and carries no entity-type allowlist.
+ *
+ * The full Kotlin enum has more members still (HOUSEHOLD/INVOICE/TRAINING/
+ * USER); those stay unmodeled until something uploads to them.
  */
-export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS' | 'TRIBAL_INTEL';
+export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS' | 'TRIBAL_INTEL' | 'VISIT_LOG';
 
 /**
  * The fixed entityId Android's `AdminSettingsViewModel#uploadLogo` uses for
