@@ -16,6 +16,43 @@ describe('signCloudinaryFolderUpload', () => {
     expect(result.allowedFormats).toBe('jpg,png,webp,gif');
     expect(result.signature).toMatch(/^[a-f0-9]{40}$/); // sha1 hex digest length
   });
+  // ── #583: photo location metadata is stripped at upload ──────────────────
+  //
+  // Portal photos go straight from the client to api.cloudinary.com, so the
+  // signature is the only lever on what gets stored. These pin that the strip
+  // instruction is genuinely IN the signature base — not merely a constant
+  // returned next to it — by recomputing sha1 by hand from the exact string
+  // Cloudinary will rebuild from the params it receives.
+  it('#583 signs transformation=fl_force_strip, so the STORED ORIGINAL keeps no EXIF GPS', () => {
+    const result = signCloudinaryFolderUpload({
+      cloudName: 'demo', apiKey: 'key123', apiSecret: 'secret456', folder: 'a',
+    });
+    expect(result.transformation).toBe('fl_force_strip');
+    // Cloudinary sorts signed params alphabetically:
+    // allowed_formats < folder < timestamp < transformation.
+    const expected = crypto
+      .createHash('sha1')
+      .update(
+        `allowed_formats=jpg,png,webp,gif&folder=a&timestamp=${result.timestamp}` +
+        `&transformation=fl_force_strip` +
+        `secret456`,
+      )
+      .digest('hex');
+    expect(result.signature).toBe(expected);
+  });
+  it('#583 the strip is load-bearing: dropping it from the base changes the signature', () => {
+    // If a client omitted `transformation` from the upload POST, Cloudinary
+    // would rebuild THIS base and reject the upload. That refusal is the
+    // enforcement — the photo cannot be stored unstripped.
+    const result = signCloudinaryFolderUpload({
+      cloudName: 'demo', apiKey: 'key123', apiSecret: 'secret456', folder: 'a',
+    });
+    const withoutStrip = crypto
+      .createHash('sha1')
+      .update(`allowed_formats=jpg,png,webp,gif&folder=a&timestamp=${result.timestamp}secret456`)
+      .digest('hex');
+    expect(result.signature).not.toBe(withoutStrip);
+  });
 
   it('binds allowed_formats into the signature so Cloudinary itself enforces it', () => {
     // Cloudinary's classic signature only covers signed body params, not the

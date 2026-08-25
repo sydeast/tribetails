@@ -141,7 +141,7 @@ class BookingRepository(
             overrideBusyConflict = overrideBusyConflict,
         )
         val raw = try {
-            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).await().data
+            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).awaitCallable().data
         } catch (e: FirebaseFunctionsException) {
             // Translate at the boundary so nothing above this line has to know
             // about Firebase types to tell a busy conflict (overridable) from a
@@ -479,7 +479,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("syncGoogleCalendarBusyEvents")
             .call(mapOf("lookAheadDays" to lookAheadDays))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("syncGoogleCalendarBusyEvents: non-map payload")
         val imported = (raw["imported"] as? Number)?.toInt() ?: 0
@@ -513,7 +513,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("startGoogleCalendarConnect")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("startGoogleCalendarConnect: non-map payload")
         GoogleCalendarConnectStart(
@@ -529,7 +529,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getGoogleCalendarConnection")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("getGoogleCalendarConnection: non-map payload")
         GoogleCalendarConnectionState(
@@ -549,7 +549,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listGoogleCalendars")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("listGoogleCalendars: non-map payload")
         @Suppress("UNCHECKED_CAST")
@@ -585,7 +585,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("setGoogleCalendarTargets")
             .call(mapOf("writeCalendarId" to writeCalendarId, "enabledCalendarIds" to enabledCalendarIds))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("setGoogleCalendarTargets: non-map payload")
         decodeGoogleCalendarConnection(raw["connection"])
@@ -604,7 +604,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("disconnectGoogleCalendar")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("disconnectGoogleCalendar: non-map payload")
         GoogleCalendarDisconnectResult(
@@ -625,7 +625,7 @@ class BookingRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("pushVisitsToGoogleCalendar")
             .call(mapOf("lookAheadDays" to lookAheadDays))
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("pushVisitsToGoogleCalendar: non-map payload")
         @Suppress("UNCHECKED_CAST")
@@ -795,7 +795,10 @@ class BookingRepository(
             if (overrideVisitConflict) put("overrideVisitConflict", true)
         }
         val raw = try {
-            functions.getHttpsCallable("createBlockedTimeSlot").call(payload).await().data
+            // `awaitCallable`, never a bare `await` (#573): that seam is what
+            // notices a revoked session, and the translation below sits OUTSIDE
+            // it so the guard still sees the original FirebaseFunctionsException.
+            functions.getHttpsCallable("createBlockedTimeSlot").call(payload).awaitCallable().data
         } catch (e: FirebaseFunctionsException) {
             throw BookingRequestRefusedException(
                 code = conflictCodeFrom(e.details),
@@ -827,8 +830,9 @@ class BookingRepository(
         require(timeSlotId.isNotBlank()) { "deleteBlockedTimeSlot needs a booking_time_slots document id" }
         AuntieLog.w("Unblocking time slot: $timeSlotId")
         val raw = try {
+            // `awaitCallable`, same reason as [createBlockedTimeSlot] above.
             functions.getHttpsCallable("deleteBlockedTimeSlot")
-                .call(mapOf("slotId" to timeSlotId)).await().data
+                .call(mapOf("slotId" to timeSlotId)).awaitCallable().data
         } catch (e: FirebaseFunctionsException) {
             throw BookingRequestRefusedException(
                 code = conflictCodeFrom(e.details),

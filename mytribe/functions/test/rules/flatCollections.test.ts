@@ -207,6 +207,98 @@ describe('rules: flat top-level collections', () => {
       asTestAdmin(env).firestore().doc('business_settings/business_settings').get(),
     );
   });
+  // ── business_settings: the write is shape-checked now (#519) ──────────────
+  // Nothing sits in front of this document — the three admin clients write it
+  // directly — so these rules are the only server-side check its operator-facing
+  // configuration gets. Five Cloud Functions read those fields.
+  it('business_settings: a per-section partial patch still writes, naming only its own keys', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    // The React admin's shape: one section's fields plus the stamp.
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings').set(
+        { travelBufferMinutes: 45, defaultBookingMode: 'TIME_BLOCK', updatedAt: '2026-08-24T00:00:00Z' },
+        { merge: true },
+      ),
+    );
+    // The desktop console's shape: an arbitrary changed-field subset.
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings').set(
+        { enableAutoReminder24h: false }, { merge: true },
+      ),
+    );
+  });
+  it('business_settings: a whole-model write of every checked field still passes', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings').set({
+        timeZone: 'America/Chicago',
+        defaultBookingMode: 'SPECIFIC_TIME',
+        defaultCalendarView: 'MONTH',
+        trackingAccuracy: 'HIGH',
+        allowTimeBlockBooking: true,
+        allowSpecificTimeBooking: true,
+        enableConflictDetection: true,
+        enableAutoReminder24h: true,
+        enableGPSTrackingForAllVisits: true,
+        enablePhotoLocationTagging: true,
+        requireArrivalDepartureVerification: true,
+        autoStartTrackingOnVisitStart: true,
+        allowClientLocationSharing: true,
+        defaultTimeBlockDurationHours: 4,
+        travelBufferMinutes: 30,
+        saveRoutesForDays: 90,
+        defaultEtaMinutes: 15,
+        draftRetentionDays: 30,
+        timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
+        etaMinuteOptions: [5, 10, 15],
+        draftRetentionOptions: [30, 60, 90],
+      }, { merge: true }),
+    );
+  });
+  it('business_settings: a wrong-typed field is refused, not stored for a Function to trip over', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    // `timeZone` as a number: `resolveBusinessOpen` would log timezone-unusable
+    // and the phone line would answer as open around the clock.
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ timeZone: 5 }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ enableAutoReminder24h: 'yes' }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ etaMinuteOptions: '5,10,15' }, { merge: true }),
+    );
+  });
+  it('business_settings: an out-of-range number is refused', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ travelBufferMinutes: -1 }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ saveRoutesForDays: 0 }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ defaultTimeBlockDurationHours: 25 }, { merge: true }),
+    );
+  });
+  it('business_settings: an absurdly long option list or block list is refused', async () => {
+    const env = await getEnv();
+    await seedBusinessSettings();
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ etaMinuteOptions: Array.from({ length: 13 }, (_, i) => i + 1) }, { merge: true }),
+    );
+  });
 
   // ── operators: collection + isOperator() helper both removed ──────────────
   // Nothing in the tree reads, writes or seeds `operators`. The rule granted

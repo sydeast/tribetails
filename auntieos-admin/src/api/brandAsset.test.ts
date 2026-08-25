@@ -21,7 +21,7 @@ const decode = () => Promise.resolve({ width: 512, height: 200 });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requestSignedUpload.mockResolvedValue({ cloudName: 'tribetails', apiKey: 'k', timestamp: 1, signature: 's', folder: 'tribetails/business/business_settings', allowedFormats: '', entityType: 'BUSINESS', entityId: 'business_settings' });
+  requestSignedUpload.mockResolvedValue({ cloudName: 'tribetails', apiKey: 'k', timestamp: 1, signature: 's', folder: 'tribetails/business/business_settings', allowedFormats: '', transformation: 'fl_force_strip', entityType: 'BUSINESS', entityId: 'business_settings' });
   uploadToCloudinary.mockResolvedValue({ secureUrl: SECURE_URL, publicId: 'p', resourceType: 'image', format: 'png', bytes: 40_000 });
   call.mockResolvedValue({ kind: 'businessLogo', logoUrl: SECURE_URL, logoRemovedAt: '' });
 });
@@ -34,7 +34,10 @@ describe('uploadBrandAsset reuses the existing upload path', () => {
     // No new signer: this is `api/mediaUpload.ts`'s existing
     // `/api/cloudinary/sign-upload` call, with the same entity Android's
     // MediaUploadManager uses for the logo today.
-    expect(requestSignedUpload).toHaveBeenCalledWith('BUSINESS', 'business_settings');
+    // #583: 'image' is the third argument, so the signer signs the metadata
+    // strip. A logo carrying the photographer's coordinates is the same leak
+    // as a kin photo carrying them.
+    expect(requestSignedUpload).toHaveBeenCalledWith('BUSINESS', 'business_settings', 'image');
   });
 
   it('persists through confirmBrandAssetUpload, not by writing the doc itself', async () => {

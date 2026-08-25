@@ -2,7 +2,6 @@ package com.tribetails.auntieos.data.repository
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.tasks.await
 
 /**
  * Household members and invites. (B1)
@@ -146,7 +145,7 @@ class MembersRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listMembers")
-            .call(mapOf("kinfolkId" to kinfolkId)).await().data as? Map<String, Any?>
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
             ?: error("listMembers: non-map payload")
         decodeMembers(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listMembers failed", it) }
@@ -156,7 +155,7 @@ class MembersRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listInvites")
-            .call(mapOf("familyId" to familyId)).await().data as? Map<String, Any?>
+            .call(mapOf("familyId" to familyId)).awaitCallable().data as? Map<String, Any?>
             ?: error("listInvites: non-map payload")
         decodeInvites(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listInvites failed", it) }
@@ -178,7 +177,7 @@ class MembersRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listAllInvites")
-            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            .call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listAllInvites: non-map payload")
         decodeAllInvites(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listAllInvites failed", it) }
@@ -217,7 +216,7 @@ class MembersRepository(
             "proposedRole" to MemberRole.PRIMARY.name,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("mintInvite").call(payload).await().data
+        val raw = functions.getHttpsCallable("mintInvite").call(payload).awaitCallable().data
             as? Map<String, Any?> ?: error("mintInvite: non-map payload")
         raw["inviteId"] as? String ?: error("mintInvite: response carried no inviteId")
     }.onFailure { AuntieLog.e("MembersRepository.mintInvite failed", it) }
@@ -225,7 +224,7 @@ class MembersRepository(
     suspend fun revokeInvite(inviteId: String): Result<Unit> = runCatching {
         require(inviteId.isNotBlank()) { "revokeInvite requires an invite id" }
         authGate.ensureAuthenticated()
-        functions.getHttpsCallable("revokeInvite").call(mapOf("inviteId" to inviteId)).await()
+        functions.getHttpsCallable("revokeInvite").call(mapOf("inviteId" to inviteId)).awaitCallable()
         Unit
     }.onFailure {
         // The id is the claim-link bearer token; the message names the callable,
@@ -260,7 +259,7 @@ class MembersRepository(
             "targetUid" to targetUid,
             "permissions" to mapOf(key.wireName to value),
         )
-        functions.getHttpsCallable("setMemberPermissions").call(payload).await()
+        functions.getHttpsCallable("setMemberPermissions").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("MembersRepository.setMemberPermissions failed", it) }
 
@@ -275,7 +274,7 @@ class MembersRepository(
         require(targetUid.isNotBlank()) { "removeMember requires a member uid" }
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("removeMember")
-            .call(mapOf("familyId" to familyId, "targetUid" to targetUid)).await()
+            .call(mapOf("familyId" to familyId, "targetUid" to targetUid)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("MembersRepository.removeMember failed", it) }
 

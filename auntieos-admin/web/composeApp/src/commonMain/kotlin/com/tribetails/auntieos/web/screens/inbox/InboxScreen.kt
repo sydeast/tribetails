@@ -106,7 +106,7 @@ internal data class InboxEntry(
     val voicemailAudioUrl: String,
     val canReply: Boolean,
     val direction: String,    // inbound | outbound | "" (voicemail)
-    val statusHint: String,   // missed | unread | ""
+    val statusHint: String,   // missed | unread | replied | dismissed | ""
     val mediaCount: Int,
 )
 
@@ -782,10 +782,13 @@ private fun ThreadActionsCard(
                 //
                 // Opening a thread here already auto-marks an unread voicemail
                 // read, so there is no Mark read button to sit beside; Dismiss
-                // is offered on anything not ALREADY dismissed, so it is never a
-                // round-trip that changes nothing. The live voicemail stream
-                // carries the new state back and the row's pip updates itself.
-                if (entry.statusHint != "dismissed") {
+                // is offered on anything not ALREADY dismissed or ALREADY
+                // replied (issue #581: see `canDismissVoicemail`), so it is
+                // never a round-trip that changes nothing, and never invites a
+                // tap the Firestore rule on `voicemails/{id}` is going to
+                // refuse anyway. The live voicemail stream carries the new
+                // state back and the row's pip updates itself.
+                if (canDismissVoicemail(entry.statusHint)) {
                     GhostButton(
                         label = "Dismiss",
                         onClick = onDismissVoicemail,
@@ -900,6 +903,18 @@ private fun EmptyState(filter: Channel) {
 // ---------- mappers ----------
 
 /**
+ * Issue #581: Dismiss is offered only while the voicemail is neither already
+ * dismissed (pressing it again would write the state it is already in) nor
+ * already replied (pressing it would overwrite `repliedAt`/`replyLogId` with
+ * no way back - the Firestore rule on `voicemails/{id}` now refuses that
+ * write outright, but the button should not invite a tap that is going to
+ * fail). `internal` so `commonTest` can pin the truth table without standing
+ * up a Compose test harness, the same reason `toEntry()` below is `internal`.
+ */
+internal fun canDismissVoicemail(statusHint: String): Boolean =
+    statusHint != "dismissed" && statusHint != "replied"
+
+/**
  * `internal`, not `private`: the other three `toEntry()`s below stay private
  * because nothing about their status mapping is worth a unit test on its own,
  * but this one carries the S8 `dismissed` branch and the lower-casing that
@@ -920,14 +935,18 @@ internal fun VoicemailLog.toEntry() = InboxEntry(
     voicemailAudioUrl = audioUrl,
     canReply = callerNumber.isNotBlank(),
     direction   = "",
-    // `dismissed` is carried, not flattened: the row has to be able to say
-    // somebody closed this out (as opposed to nobody having looked), and it is
-    // what gates the Dismiss button off when pressing it would write the state
-    // the document is already in. Lower-cased because casing on this field is
-    // unenforced across the Twilio webhooks, both admin clients and the python
-    // reconcile pipeline.
+    // `dismissed` and `replied` are carried, not flattened. `dismissed` lets
+    // the row say somebody closed this out (as opposed to nobody having
+    // looked). `replied` exists ONLY to gate Dismiss off (issue #581): before
+    // this it collapsed into the same "" bucket as a merely-read voicemail,
+    // so Dismiss (gated only on `!= "dismissed"`) could not tell a replied
+    // voicemail apart from an unreplied one and rendered on it anyway. Neither
+    // value matches a pip check below, so this carries no visual change.
+    // Lower-cased because casing on this field is unenforced across the
+    // Twilio webhooks, both admin clients and the python reconcile pipeline.
     statusHint  = when (replyStatus.trim().lowercase()) {
         "unread"    -> "unread"
+        "replied"   -> "replied"
         "dismissed" -> "dismissed"
         else        -> ""
     },

@@ -53,9 +53,13 @@ Business profile:
 - businessHours: Map<String,String> = {}   // day -> "HH:MM-HH:MM" or ""
 
 Notifications:
-- notificationEmail: Boolean = true
-- notificationSms: Boolean = true
-- notificationPush: Boolean = true
+- RETIRED by issue #519. `notificationEmail` / `notificationSms` /
+  `notificationPush` were declared, defaulted and decoded by the web models and
+  read by nothing: zero occurrences in `mytribe/functions`, and never present on
+  the Android model at all. Every channel decision is made by
+  `notifications/prefs.ts#resolveChannels` off the per-notification gate matrix
+  on a DIFFERENT document, `businessSettings/notifications`. The three keys were
+  removed from the models, not from any stored document.
 
 Time off / holidays:
 - observedUsHolidays: List<String> = []     // which holiday ids are observed
@@ -69,7 +73,10 @@ Booking / scheduling config (migrated from admin_settings):
 - allowTimeBlockBooking: Boolean = true
 - allowSpecificTimeBooking: Boolean = true
 - enableConflictDetection: Boolean = true
-- enableAutoReminder24h: Boolean = false
+- enableAutoReminder24h: Boolean = true   // #519: was `false`, while
+  //   `kincareReminderCron` sent the reminder unconditionally. The cron reads
+  //   the field now and treats an absent key as ON, so the default states what
+  //   the product has always done.
 - defaultTimeBlockDurationHours: Int = 4
 - travelBufferMinutes: Int = 30
 - timeBlocks: List<TimeBlockDefinition> = [ midday 11:00-15:00 active ]

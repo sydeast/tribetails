@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.SessionEndedNotice
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
@@ -40,6 +41,26 @@ fun AdminLoginScreen(
     var loading          by remember { mutableStateOf(false) }
     var error            by remember { mutableStateOf<String?>(null) }
     var resetStatus      by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * Issue #573: why the operator is looking at this screen, when they did not
+     * ask to be.
+     *
+     * A revoked or disabled session is signed out from inside the callable seam
+     * (`awaitCallable`), several layers below anything holding UI state, and
+     * `AuntieNavHost` then drops the whole app back here on its own because
+     * `authStateFlow()` went null. Without this the console simply vanishes
+     * mid-task and a login form appears, which reads as the app having broken
+     * rather than as a session having ended.
+     *
+     * `consume()` clears as it reads, so a recomposition or a later visit to
+     * this screen is quiet. Keyed on `Unit`, because the notice belongs to the
+     * arrival and not to anything the operator types afterwards.
+     */
+    LaunchedEffect(Unit) {
+        SessionEndedNotice.consume()?.let { error = it }
+    }
+
     // 02-sign-in items 1/2: explicit Email -> Password traversal + autofill content types
     // so Google Password Manager can fill/save.
     val emailFocus    = remember { FocusRequester() }

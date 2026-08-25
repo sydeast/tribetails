@@ -148,7 +148,7 @@ class InvoiceRepository(
             invoiceDiscountCents = invoiceDiscountCents,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
             ?: error("createInvoice: non-map payload")
         decodeCreateInvoiceResult(raw).invoiceId.ifBlank { error("createInvoice: missing invoiceId") }
     }.onFailure { AuntieLog.e("Failed to create invoice", it) }
@@ -178,7 +178,7 @@ class InvoiceRepository(
             invoiceDiscountCents = invoiceDiscountCents,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
             ?: error("createQuote: non-map payload")
         decodeCreateQuoteResult(raw).invoiceId.ifBlank { error("createQuote: missing invoiceId") }
     }.onFailure { AuntieLog.e("Failed to create quote", it) }
@@ -229,7 +229,7 @@ class InvoiceRepository(
                     to = to,
                 ).toPayload(),
             )
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeListUninvoicedSessionsResult(raw)
     }.onFailure { AuntieLog.e("listUninvoicedSessions failed for $kinfolkId", it) }
 
@@ -264,7 +264,7 @@ class InvoiceRepository(
                     reason = reason,
                 ).toPayload(),
             )
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeSetSessionDoNotInvoiceResult(raw)
     }.onFailure { AuntieLog.e("setSessionDoNotInvoice failed", it) }
 
@@ -280,7 +280,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("generateInvoicePdf")
             .call(GenerateInvoicePdfArgs(invoiceId = invoiceId).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeGenerateInvoicePdfResult(raw).pdfUrl
             .ifBlank { error("generateInvoicePdf: server returned no pdfUrl") }
     }.onFailure { AuntieLog.e("generateInvoicePdf failed for $invoiceId", it) }
@@ -305,7 +305,7 @@ class InvoiceRepository(
     suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
-        functions.getHttpsCallable("archiveInvoice").call(archiveInvoiceArgs(invoiceId, force).toPayload()).await()
+        functions.getHttpsCallable("archiveInvoice").call(archiveInvoiceArgs(invoiceId, force).toPayload()).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("archiveInvoice failed for $invoiceId", it) }
 
@@ -322,7 +322,7 @@ class InvoiceRepository(
         require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
         functions.getHttpsCallable("unarchiveInvoice")
             .call(UnarchiveInvoiceArgs(invoiceId = invoiceId).toPayload())
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
 
@@ -363,7 +363,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("markInvoicePaid")
             .call(markInvoicePaidArgs(invoiceId, amount, method, reference).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeMarkInvoicePaidResult(raw)
     }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
 
@@ -372,7 +372,7 @@ class InvoiceRepository(
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("generateReceipt")
             .call(GenerateReceiptArgs(invoiceId = invoiceId).toPayload())
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("generateReceipt failed for $invoiceId", it) }
 
@@ -388,7 +388,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendInvoiceReminder")
             .call(SendInvoiceReminderArgs(invoiceId = invoiceId).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         reminderInvoiceIdOrRequested(raw, invoiceId)
     }.onFailure { AuntieLog.e("sendInvoiceReminder failed for $invoiceId", it) }
 
@@ -412,7 +412,7 @@ class InvoiceRepository(
             invoiceId = invoiceId,
             payload = mapOf("status" to "sent"),
         )
-        functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).await()
+        functions.getHttpsCallable("postInvoiceEvent").call(args.toPayload()).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("reviewAndSendDraftInvoice failed for $invoiceId", it) }
 
@@ -443,7 +443,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("resendQuote")
             .call(ResendQuoteArgs(invoiceId = invoiceId).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeResendQuoteResult(raw).status
     }.onFailure { AuntieLog.e("resendQuote failed for $invoiceId", it) }
 
@@ -473,7 +473,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("linkInvoiceSessions")
             .call(LinkInvoiceSessionsArgs(invoiceId = invoiceId, sessionIds = sessionIds).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         invoiceSessionLinksOf(raw, invoiceId, sessionIds).also {
             AuntieLog.i("Linked ${it.sessionIds.size} session(s) to invoice $invoiceId (+${it.added.size}/-${it.removed.size})")
         }
@@ -516,7 +516,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getInvoiceLedger")
             .call(GetInvoiceLedgerArgs(invoiceId = invoiceId).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeGetInvoiceLedgerResult(raw)
     }.onFailure { AuntieLog.e("getInvoiceLedger failed for $invoiceId", it) }
 
@@ -561,7 +561,7 @@ class InvoiceRepository(
                     startAfterId = startAfterId,
                 ).toPayload(),
             )
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeListPaymentsResult(raw)
     }.onFailure { AuntieLog.e("listPayments failed", it) }
 
@@ -605,7 +605,7 @@ class InvoiceRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
             .call(recordPaymentArgs(payment).toPayload())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("recordPayment: non-map payload")
         decodeRecordPaymentResult(raw).paymentId.ifBlank { error("recordPayment: missing paymentId") }
     }.onFailure { AuntieLog.e("Failed to record payment", it) }

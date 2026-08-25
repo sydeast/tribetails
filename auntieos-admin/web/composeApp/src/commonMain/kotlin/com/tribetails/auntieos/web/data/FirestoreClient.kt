@@ -624,7 +624,16 @@ class FirestoreClient {
         replyLogId: String,
     ): WriteResult<Unit> = platformMarkVoicemailReplied(voicemailId, repliedAtIso, replyLogId)
 
-    /** Transitions a voicemail from `unread` to `read`. No-op if already read/replied/dismissed. */
+    /**
+     * Transitions a voicemail from `unread` to `read`.
+     *
+     * NOT a no-op if called on an already replied/dismissed voicemail - this
+     * is a bare PATCH, it does not read current state first. The UI only ever
+     * calls it from `statusHint == "unread"` (auto-mark-on-open in
+     * `InboxScreen`), and the Firestore rule on `voicemails/{id}` refuses the
+     * write outright if the doc is already `replied` (issue #581), but this
+     * function itself asserts neither.
+     */
     suspend fun markVoicemailRead(voicemailId: String): WriteResult<Unit> =
         platformMarkVoicemailRead(voicemailId)
 
@@ -638,6 +647,12 @@ class FirestoreClient {
      * Android admin's `AuntieRepository.markVoicemailDismissed`; all three
      * write the same three keys with the same blank `repliedAt`, because
      * dismissing is not replying.
+     *
+     * Like `markVoicemailRead` above, this is a bare PATCH with no
+     * precondition read: `InboxScreen` only offers the Dismiss button while
+     * `canDismissVoicemail(entry.statusHint)` is true, and the Firestore rule
+     * on `voicemails/{id}` refuses the write outright if the doc is already
+     * `replied` (issue #581) regardless of what this function is asked to do.
      */
     suspend fun markVoicemailDismissed(voicemailId: String): WriteResult<Unit> =
         platformMarkVoicemailDismissed(voicemailId)
@@ -3037,12 +3052,22 @@ data class BusinessSettings(
     val weatherLocation: String = "",
 
     // ---- Notifications ----
-    // Legacy coarse channel toggles. The per-notification gate matrix
-    // (getBusinessNotificationOverrides) is the source of truth now; these stay for
-    // back-compat with existing docs and serialization round-trips.
-    val notificationEmail: Boolean = true,
-    val notificationSms: Boolean = true,
-    val notificationPush: Boolean = true,
+    // ISSUE #519: `notificationEmail` / `notificationSms` / `notificationPush`
+    // USED TO BE DECLARED HERE and are deliberately gone. They were three
+    // booleans this model declared, defaulted and round-tripped, that no screen
+    // rendered and that no dispatcher read: a repo-wide sweep found zero
+    // occurrences in `mytribe/functions`, zero in `mytribe/web`, and none on the
+    // Android model at all. Every channel decision is made by
+    // `mytribe/functions/src/notifications/prefs.ts#resolveChannels` off the
+    // per-notification gate matrix stored on a DIFFERENT document,
+    // `businessSettings/notifications` (camel-case), which is why these three
+    // read as live for so long.
+    //
+    // Removed from the MODEL, not from any document: nothing deletes the keys,
+    // so a doc that carries them keeps them, inert, and `merge`-based writes
+    // leave them alone. Giving an operator an Email/SMS/Push switch that changes
+    // nothing, while the real gate sits one tab away, is the same defect #519 is
+    // about pointed the other way.
 
     // ---- Time off / holidays ----
     // List of US holiday IDs observed (e.g. "new_years", "thanksgiving")
@@ -3060,7 +3085,12 @@ data class BusinessSettings(
     val allowTimeBlockBooking: Boolean = true,
     val allowSpecificTimeBooking: Boolean = true,
     val enableConflictDetection: Boolean = true,
-    val enableAutoReminder24h: Boolean = false,
+    // ISSUE #519 flipped this from `false`. `kincareReminderCron` has always
+    // enqueued the 24-hour `kincare.upcoming.reminder` for every confirmed
+    // booking, unconditionally, so `false` never described what the product did.
+    // The cron reads the field now (`mytribe/functions/src/lib/autoReminder.ts`)
+    // and treats an absent key as ON, which is what this default now states.
+    val enableAutoReminder24h: Boolean = true,
     val defaultTimeBlockDurationHours: Int = 4,
     val travelBufferMinutes: Int = 30,
     // Bookable time blocks (formerly admin_settings.timeBlocks). Drives the

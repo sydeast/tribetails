@@ -1,0 +1,42 @@
+/* Time-block rows. One grid so the name box takes the slack and the two time
+   pickers stay the same width down the column, the same shape
+   BusinessHoursEditor.css gives its day rows. Collapses to a stack on a narrow
+   viewport rather than squeezing four controls into one line. */
+
+.bookingRules__blocks {
+  list-style: none;
+  margin: var(--space-3) 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bookingRules__block {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.bookingRules__blockName {
+  min-width: 0;
+}
+
+.bookingRules__blockActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-1);
+}
+
+@media (max-width: 640px) {
+  .bookingRules__block {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .bookingRules__blockName,
+  .bookingRules__blockActions {
+    grid-column: 1 / -1;
+  }
+}

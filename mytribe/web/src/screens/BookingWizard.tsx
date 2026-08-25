@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
-import { getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
-import type { ServiceDto } from '../api/bookingApi';
+import { getBookingPolicy, getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
+import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import { getMyKin } from '../api/portal';
 import type { KinDto } from '../api/types';
@@ -20,16 +20,19 @@ import {
   dateKey,
   estimateBookingTotal,
   formatEstimate,
+  initialBookingMode,
   MAX_RECURRING_VISITS,
+  pastPlannedVisits,
   plannedVisitLine,
   priceLabel,
   renderPlannedVisits,
   slotsBlocker,
   summariseSlots,
+  timeBlockLabel,
   weeklyPotentialCount,
   weeklyVisitsBlocker,
 } from '../lib/bookingWizardLogic';
-import type { KinCareSlot } from '../lib/bookingWizardLogic';
+import type { BookingTiming, KinCareSlot } from '../lib/bookingWizardLogic';
 import '../styles/booking.css';
 
 /**
@@ -58,6 +61,18 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEK_COUNT_OPTIONS = [2, 4, 6, 8];
 /** What a freshly added KinCare's time starts at. The household changes it in step 3. */
 const DEFAULT_VISIT_TIME = '09:00';
+/**
+ * Time-block booking: what the wizard runs on while `getBookingPolicy` is in
+ * flight, or when it failed. Clock times, no windows — the pre-time-block
+ * behaviour, and the same shape the callable itself falls back to when its own
+ * settings read fails, so a loading wizard and a degraded one behave alike.
+ */
+const CLOCK_ONLY_POLICY: GetBookingPolicyResult = {
+  allowTimeBlockBooking: false,
+  allowSpecificTimeBooking: true,
+  defaultBookingMode: 'SPECIFIC_TIME',
+  timeBlocks: [],
+};
 const SERVICE_ICON_EMOJI: Record<string, string> = {
   sun: '\u{2600}\u{FE0F}',
   bell: '\u{1F514}',
@@ -191,17 +206,12 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const [weeklyDays, setWeeklyDays] = useState<Set<number>>(new Set());
   const [weekCount, setWeekCount] = useState(4);
   const [notes, setNotes] = useState('');
-
-  // Slot ids are local and never sent; they exist so two KinCares of the same
-  // duration stay distinguishable to React while one of their times is edited.
-  const slotSeq = useRef(0);
-  const addSlot = (serviceId: string) => {
-    slotSeq.current += 1;
-    setSlots((prev) => [...prev, { slotId: `slot-${slotSeq.current}`, serviceId, time: DEFAULT_VISIT_TIME }]);
-  };
-  const removeSlot = (slotId: string) => setSlots((prev) => prev.filter((s) => s.slotId !== slotId));
-  const setSlotTime = (slotId: string, time: string) =>
-    setSlots((prev) => prev.map((s) => (s.slotId === slotId ? { ...s, time } : s)));
+  /**
+   * Time-block booking: null means "whatever this business opens on". The
+   * household's own choice overrides it once they use the toggle, which only
+   * exists when the business allows both.
+   */
+  const [modeChoice, setModeChoice] = useState<BookingMode | null>(null);
 
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
   const servicesQuery = useQuery({ queryKey: ['serviceCatalog'], queryFn: () => getServiceCatalog() });
@@ -226,6 +236,62 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     return m;
   }, [closuresQuery.data]);
 
+  /**
+   * Time-block booking: what this business lets a household choose.
+   *
+   * A failed or still-loading read degrades to {@link CLOCK_ONLY_POLICY} —
+   * specific times, no windows — which is BOTH the pre-time-block behaviour and
+   * the exact fallback `getBookingPolicy` itself returns when its settings read
+   * fails. A secondary read must not decide whether the wizard opens, and the
+   * server refuses whatever it will not accept regardless of what this shows.
+   */
+  const policyQuery = useQuery({ queryKey: ['bookingPolicy'], queryFn: () => getBookingPolicy() });
+  const policy = policyQuery.data ?? CLOCK_ONLY_POLICY;
+
+  /**
+   * The mode in force. Derived rather than stored, so it can never be a mode
+   * the business does not allow — including in the moment between the wizard
+   * mounting and the policy arriving.
+   */
+  const mode: BookingMode = (() => {
+    const preferred = modeChoice ?? initialBookingMode(policy);
+    if (preferred === 'TIME_BLOCK' && !policy.allowTimeBlockBooking) return 'SPECIFIC_TIME';
+    if (preferred === 'SPECIFIC_TIME' && !policy.allowSpecificTimeBooking) return 'TIME_BLOCK';
+    return preferred;
+  })();
+  const timeBlocks = policy.timeBlocks;
+  const timing: BookingTiming = useMemo(
+    () => ({ mode, blocks: mode === 'TIME_BLOCK' ? timeBlocks : [] }),
+    [mode, timeBlocks],
+  );
+  /** Both modes on offer: the only case where the household gets a choice to make. */
+  const canChooseMode = policy.allowTimeBlockBooking && policy.allowSpecificTimeBooking;
+
+  // Slot ids are local and never sent; they exist so two KinCares of the same
+  // duration stay distinguishable to React while one of their times or blocks
+  // is edited.
+  const slotSeq = useRef(0);
+  const addSlot = (serviceId: string) => {
+    slotSeq.current += 1;
+    setSlots((prev) => [
+      ...prev,
+      {
+        slotId: `slot-${slotSeq.current}`,
+        serviceId,
+        time: DEFAULT_VISIT_TIME,
+        // In block mode a fresh KinCare lands in the FIRST window rather than
+        // on "choose one": a picker whose every row starts unset is a blocker
+        // dressed as a control, and the household can move it in one tap.
+        timeBlockId: mode === 'TIME_BLOCK' ? (timeBlocks[0]?.id ?? null) : null,
+      },
+    ]);
+  };
+  const removeSlot = (slotId: string) => setSlots((prev) => prev.filter((s) => s.slotId !== slotId));
+  const setSlotTime = (slotId: string, time: string) =>
+    setSlots((prev) => prev.map((s) => (s.slotId === slotId ? { ...s, time } : s)));
+  const setSlotBlock = (slotId: string, timeBlockId: string) =>
+    setSlots((prev) => prev.map((s) => (s.slotId === slotId ? { ...s, timeBlockId } : s)));
+
   const activeKin = useMemo(() => (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active'), [kinQuery.data]);
   const services = useMemo(() => servicesQuery.data?.services ?? [], [servicesQuery.data]);
   const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
@@ -235,18 +301,18 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   // exactly when the plan changes.
   const plannedVisits: RequestBookingArgsVisit[] = useMemo(() => {
     if (pattern === 'weekly') {
-      return buildWeeklyVisits({ nowMs: Date.now(), weeklyDays, weeks: weekCount, slots, services });
+      return buildWeeklyVisits({ nowMs: Date.now(), weeklyDays, weeks: weekCount, slots, services, timing });
     }
-    return buildVisits([...selectedDates.values()], slots, services);
-  }, [pattern, weeklyDays, weekCount, slots, selectedDates, services]);
+    return buildVisits([...selectedDates.values()], slots, services, timing);
+  }, [pattern, weeklyDays, weekCount, slots, selectedDates, services, timing]);
 
   /** #546: the running estimate, derived from the plan above and from nothing else. */
   const estimate = useMemo(() => estimateBookingTotal(plannedVisits, services), [plannedVisits, services]);
 
   const weeklyPotential = weeklyPotentialCount(weeklyDays, weekCount, slots.length);
   const weeklyCapped = pattern === 'weekly' && plannedVisits.length > 0 && weeklyPotential > plannedVisits.length;
-  const weeklyBlocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots);
-  const individualBlocker = selectedDates.size === 0 ? 'Tap at least one date.' : slotsBlocker(slots);
+  const weeklyBlocker = weeklyVisitsBlocker(weeklyDays, weekCount, slots, timing);
+  const individualBlocker = selectedDates.size === 0 ? 'Tap at least one date.' : slotsBlocker(slots, timing);
 
   /**
    * C1: every date currently in the plan that `closedDates` says is closed.
@@ -269,8 +335,24 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     return [...seen];
   }, [pattern, selectedDates, plannedVisits, closedDates]);
 
+  /**
+   * Visits the plan already puts in the PAST. `requestBooking` refuses any
+   * start more than a minute ago, and the Individual pattern has never
+   * filtered for one, so this used to surface only as a refusal at Create
+   * Booking. Time blocks make it routine rather than rare: a window offers one
+   * start time, so today's Midday visits are all in the past from the moment
+   * the window opens, and the household has no control to nudge.
+   *
+   * Recomputed with the plan, not on a clock: the household is editing, and a
+   * warning that appears while nobody touched anything is worse than one that
+   * appears when they next change something.
+   */
+  const pastVisits = useMemo(() => pastPlannedVisits(plannedVisits, Date.now()), [plannedVisits]);
+
   const scheduleReady =
-    (pattern === 'individual' ? individualBlocker === null : weeklyBlocker === null) && closedDatesInPlan.length === 0;
+    (pattern === 'individual' ? individualBlocker === null : weeklyBlocker === null) &&
+    closedDatesInPlan.length === 0 &&
+    pastVisits.length === 0;
   const visitCount = plannedVisits.length;
   /** How many calendar days the plan touches; with 2 KinCares a day that is not the visit count. */
   const dayCount =
@@ -408,6 +490,11 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   slots={slots}
                   services={services}
                   onSlotTimeChange={setSlotTime}
+                  onSlotBlockChange={setSlotBlock}
+                  mode={mode}
+                  canChooseMode={canChooseMode}
+                  onModeChange={setModeChoice}
+                  timeBlocks={timeBlocks}
                   weeklyEmitted={plannedVisits.length}
                   weeklyCapped={weeklyCapped}
                   weeklyBlocker={weeklyBlocker}
@@ -415,6 +502,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   visitCount={visitCount}
                   closedDates={closedDates}
                   closedDatesInPlan={closedDatesInPlan}
+                  pastVisitCount={pastVisits.length}
                 />
               )}
               {step === 4 && <Step4ExtraLoveAndContext notes={notes} onNotesChange={setNotes} />}
@@ -424,6 +512,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   kinCareSummary={summariseSlots(slots, services)}
                   pattern={pattern}
                   visits={plannedVisits}
+                  timeBlocks={timeBlocks}
                   notes={notes}
                   estimateLabel={formatEstimate(estimate)}
                   capped={weeklyCapped}
@@ -722,6 +811,13 @@ function Step3ScheduleDates(props: {
   slots: readonly KinCareSlot[];
   services: ServiceDto[];
   onSlotTimeChange: (slotId: string, time: string) => void;
+  /** Time-block booking: which named window this KinCare goes in. */
+  onSlotBlockChange: (slotId: string, timeBlockId: string) => void;
+  mode: BookingMode;
+  /** True only when the business allows BOTH, which is the only case with a choice to render. */
+  canChooseMode: boolean;
+  onModeChange: (m: BookingMode) => void;
+  timeBlocks: readonly TimeBlockDto[];
   weeklyEmitted: number;
   weeklyCapped: boolean;
   weeklyBlocker: string | null;
@@ -731,8 +827,10 @@ function Step3ScheduleDates(props: {
   closedDates: ReadonlyMap<string, string>;
   /** C1: dates currently in the plan that land on one of `closedDates`. */
   closedDatesInPlan: readonly string[];
+  /** Visits the plan already puts in the past; the server refuses every one of them. */
+  pastVisitCount: number;
 }) {
-  const { pattern, weeklyDays, weekCount, slots, weeklyEmitted, weeklyCapped, weeklyBlocker, individualBlocker, visitCount, closedDatesInPlan } =
+  const { pattern, weeklyDays, weekCount, slots, mode, canChooseMode, timeBlocks, weeklyEmitted, weeklyCapped, weeklyBlocker, individualBlocker, visitCount, closedDatesInPlan, pastVisitCount } =
     props;
   return (
     <>
@@ -805,11 +903,50 @@ function Step3ScheduleDates(props: {
       )}
 
       {/*
-        #543: one time field PER KinCare, not one for the booking. Two KinCares
-        of the same duration in a day are only two things at all because their
-        times differ, so the time belongs to the KinCare.
+        Time-block booking (operator requirement 2026-08-24). The mode is a
+        BOOKING-level choice, not a per-KinCare one: the operator asked for
+        blocks instead of clocks, not for a mixture. It is only rendered when
+        the business allows both — with one mode on offer there is nothing to
+        decide, and a disabled toggle would be a control that lies.
       */}
-      <h4 style={{ marginTop: 18 }}>Visit Times</h4>
+      {canChooseMode && (
+        <>
+          <h4 style={{ marginTop: 18 }}>How do you want to set the time?</h4>
+          <div className="pattern-toggle" role="radiogroup" aria-label="Time selection">
+            <button
+              type="button"
+              className={`pattern-btn ${mode === 'TIME_BLOCK' ? 'is-on' : ''}`}
+              role="radio"
+              aria-checked={mode === 'TIME_BLOCK'}
+              onClick={() => props.onModeChange('TIME_BLOCK')}
+            >
+              Time Blocks
+            </button>
+            <button
+              type="button"
+              className={`pattern-btn ${mode === 'SPECIFIC_TIME' ? 'is-on' : ''}`}
+              role="radio"
+              aria-checked={mode === 'SPECIFIC_TIME'}
+              onClick={() => props.onModeChange('SPECIFIC_TIME')}
+            >
+              A Specific Time
+            </button>
+          </div>
+        </>
+      )}
+
+      {/*
+        #543: one control PER KinCare, not one for the booking. Two KinCares of
+        the same duration in a day are only two things at all because they
+        differ here — by the clock in specific-time mode, and by the window in
+        block mode.
+      */}
+      <h4 style={{ marginTop: 18 }}>{mode === 'TIME_BLOCK' ? 'Time Blocks' : 'Visit Times'}</h4>
+      {mode === 'TIME_BLOCK' && (
+        <p className="sub">
+          Your Auntie arrives at some point during the block you pick. That leaves her room to get between homes without rushing anyone.
+        </p>
+      )}
       {slots.length === 0 ? (
         <p className="sub">No KinCare chosen yet. Go back a step to add one.</p>
       ) : (
@@ -822,13 +959,29 @@ function Step3ScheduleDates(props: {
                 <label htmlFor={inputId}>
                   {idx + 1}. {name}
                 </label>
-                <input
-                  id={inputId}
-                  type="time"
-                  className="inp"
-                  value={slot.time}
-                  onChange={(e) => props.onSlotTimeChange(slot.slotId, e.target.value)}
-                />
+                {mode === 'TIME_BLOCK' ? (
+                  <select
+                    id={inputId}
+                    className="inp"
+                    value={slot.timeBlockId ?? ''}
+                    onChange={(e) => props.onSlotBlockChange(slot.slotId, e.target.value)}
+                  >
+                    {slot.timeBlockId === null && <option value="">Choose a time block</option>}
+                    {timeBlocks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {timeBlockLabel(b)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={inputId}
+                    type="time"
+                    className="inp"
+                    value={slot.time}
+                    onChange={(e) => props.onSlotTimeChange(slot.slotId, e.target.value)}
+                  />
+                )}
               </div>
             );
           })}
@@ -862,6 +1015,16 @@ function Step3ScheduleDates(props: {
             ? `${closedDatesInPlan[0]} is closed`
             : `${closedDatesInPlan.length} of these dates are closed (${closedDatesInPlan.join(', ')})`}
           . Remove {closedDatesInPlan.length === 1 ? 'it' : 'them'} to continue. A closed date can&rsquo;t be booked.
+        </p>
+      )}
+
+      {pastVisitCount > 0 && (
+        <p className="wiz-warn">
+          {pastVisitCount === 1 ? '1 visit in this plan has' : `${pastVisitCount} visits in this plan have`} already
+          started.{' '}
+          {mode === 'TIME_BLOCK'
+            ? 'Pick a later block, or drop today from the dates.'
+            : 'Pick a later time, or drop today from the dates.'}
         </p>
       )}
     </>
@@ -904,6 +1067,8 @@ function Step5Review(props: {
   kinCareSummary: string;
   pattern: Pattern;
   visits: readonly RequestBookingArgsVisit[];
+  /** Time-block booking: needed to NAME the window each visit was booked into. */
+  timeBlocks: readonly TimeBlockDto[];
   notes: string;
   estimateLabel: string;
   capped: boolean;
@@ -911,7 +1076,7 @@ function Step5Review(props: {
   error: string | null;
 }) {
   const { pattern, visits, notes, estimateLabel, capped, submitting, error } = props;
-  const rendered = renderPlannedVisits(visits);
+  const rendered = renderPlannedVisits(visits, props.timeBlocks);
   return (
     <>
       <h3 className="title">Review &amp; Confirm</h3>

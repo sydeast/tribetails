@@ -14,6 +14,9 @@ import {
   BUSINESS_PROFILE_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
+import { TimeZoneSection } from './settings/TimeZoneSection';
+import { BookingRulesSection } from './settings/BookingRulesSection';
+import { VisitsTrackingSection } from './settings/VisitsTrackingSection';
 import { CalendarSection } from './settings/CalendarSection';
 import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
@@ -68,6 +71,8 @@ type SectionId =
   | 'businessHours'
   | 'timeOff'
   | 'kinCare'
+  | 'bookingRules'
+  | 'visitsTracking'
   | 'payments'
   | 'branding'
   | 'mytribe'
@@ -82,6 +87,14 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'businessHours', label: 'Business hours' },
   { id: 'timeOff', label: 'Time off' },
   { id: 'kinCare', label: 'KinCare types' },
+  // ISSUE #519: two sections for the twenty `business_settings` fields the three
+  // admin clients decoded and none of them edited. They are two rather than one
+  // because they answer different questions: `bookingRules` is what a booking is
+  // allowed to be, `visitsTracking` is what happens once you are out on it. The
+  // split matches how Android already groups them (Business operations holds the
+  // tracking + visit defaults; the booking config had no home at all).
+  { id: 'bookingRules', label: 'Booking rules' },
+  { id: 'visitsTracking', label: 'Visits and tracking' },
   { id: 'payments', label: 'Payments' },
   { id: 'branding', label: 'Branding' },
   { id: 'mytribe', label: 'MyTribe portal' },
@@ -280,6 +293,12 @@ function renderDataSection(
     // draft behind a Save button, the toggles write on every flip. Merging them
     // into one panel would put a Save button next to controls that have already
     // saved.
+    //
+    // ISSUE #519 added the third panel here: `timeZone`. It belongs with the
+    // business's own identity rather than with the booking rules (the issue's
+    // own grouping says so), and it is its own panel rather than a row in the
+    // text fields above because it is a validated picker whose wrong value
+    // silently makes the phone line answer as open around the clock.
     case 'businessProfile':
       return (
         <>
@@ -290,6 +309,7 @@ function renderDataSection(
             fields={BUSINESS_PROFILE_FIELDS}
             onSave={persist}
           />
+          <TimeZoneSection data={data} onSave={persist} />
           <BookingBehaviorSection data={data} onSave={persist} />
         </>
       );
@@ -299,6 +319,10 @@ function renderDataSection(
       return <TimeOffEditor data={data} onSave={persist} />;
     case 'kinCare':
       return <KinCareRatesEditor data={data} onSave={persist} />;
+    case 'bookingRules':
+      return <BookingRulesSection data={data} onSave={persist} />;
+    case 'visitsTracking':
+      return <VisitsTrackingSection data={data} onSave={persist} />;
     // ISSUE #409: a real toggle per method, replacing the three free-text
     // boxes whose only off switch was deleting the handle. Operator, walk
     // mark 17: "make it a true toggle for different payment option".

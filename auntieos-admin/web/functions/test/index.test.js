@@ -473,3 +473,45 @@ describe('cloudinaryCredentialsValid (fail loud on an invalid secret)', () => {
     assert.match(result.detail, /ECONNRESET/);
   });
 });
+// ---------------------------------------------------------------------------
+// uploadTransformationFor (#583) — the metadata strip is decided server-side
+// ---------------------------------------------------------------------------
+// Photos never pass through these functions, so the signature is the only
+// lever on what Cloudinary stores. This helper decides WHICH incoming
+// transformation gets signed; `handlers.test.js` proves the value it returns
+// actually reaches the signature base and the response.
+describe('uploadTransformationFor (#583 EXIF strip decision)', () => {
+  const { uploadTransformationFor, STRIP_METADATA_TRANSFORMATION } = idx;
+  it('is fl_force_strip, Cloudinary\'s documented clear-all-image-metadata flag', () => {
+    assert.strictEqual(STRIP_METADATA_TRANSFORMATION, 'fl_force_strip');
+  });
+  it('strips for an explicit image upload', () => {
+    assert.strictEqual(uploadTransformationFor('image'), 'fl_force_strip');
+  });
+  // The privacy default has to be "strip". A client that omits the hint is a
+  // photo uploader that predates this parameter, and a missing field must
+  // never be the thing that quietly turns location stripping back off.
+  it('strips when the kind is omitted entirely (undefined)', () => {
+    assert.strictEqual(uploadTransformationFor(undefined), 'fl_force_strip');
+  });
+  it('strips when the kind is null or blank', () => {
+    assert.strictEqual(uploadTransformationFor(null), 'fl_force_strip');
+    assert.strictEqual(uploadTransformationFor(''), 'fl_force_strip');
+  });
+  // fl_force_strip is an IMAGE flag, and any incoming transformation on a
+  // video means re-encoding the whole file inside the upload request.
+  it('signs NO transformation for video', () => {
+    assert.strictEqual(uploadTransformationFor('video'), '');
+  });
+  it('signs NO transformation for raw (documents, audio)', () => {
+    assert.strictEqual(uploadTransformationFor('raw'), '');
+  });
+  // Fail loud rather than sign something Cloudinary would reject later, and
+  // rather than silently treating an unknown word as "don't strip".
+  it('throws on an unrecognized kind', () => {
+    assert.throws(() => uploadTransformationFor('IMAGE'), /resourceKind/i);
+    assert.throws(() => uploadTransformationFor('photo'), /resourceKind/i);
+    assert.throws(() => uploadTransformationFor(7), /resourceKind/i);
+    assert.throws(() => uploadTransformationFor({}), /resourceKind/i);
+  });
+});

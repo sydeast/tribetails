@@ -7,7 +7,6 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.tasks.await
 
 /**
  * Admin-side wrapper for the KinTale comment thread (spec 11 item 6.2).
@@ -108,7 +107,7 @@ class KinTaleCommentsRepository(
             if (!parentCommentId.isNullOrBlank()) put("parentCommentId", parentCommentId)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("addKinTaleComment").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("addKinTaleComment").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("addKinTaleComment: non-map payload")
         raw["commentId"] as? String ?: error("addKinTaleComment: missing commentId")
     }.onFailure { AuntieLog.e("KinTaleCommentsRepository.addComment failed", it) }

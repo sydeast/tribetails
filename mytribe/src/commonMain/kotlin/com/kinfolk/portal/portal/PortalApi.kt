@@ -231,6 +231,11 @@ class PortalApi(private val fns: FunctionsClient) {
                         put("serviceId", v.serviceId)
                         put("serviceName", v.serviceName)
                         v.priceCents?.let { put("priceCents", it) }
+                        // Time-block booking: sent only when the household
+                        // picked a named window. Its absence is what tells the
+                        // server this visit was chosen on the clock, and under
+                        // a block-only policy that is refused.
+                        v.timeBlockId?.let { put("timeBlockId", it) }
                     })
                 }
             })
@@ -344,6 +349,57 @@ class PortalApi(private val fns: FunctionsClient) {
         }.orEmpty()
     }
 
+    /**
+     * Time-block booking (operator requirement 2026-08-24): which NAMED windows
+     * this business takes bookings in, and whether it takes clock times at all.
+     *
+     * Same seam and same reason as `getBusinessClosures` above:
+     * `business_settings` (where `timeBlocks` and the three mode switches live)
+     * is admin-only in firestore.rules, so this callable is the only way a
+     * household learns them. FOUR fields cross that boundary and nothing else
+     * off the document does.
+     *
+     * The values arrive NORMALIZED — block booking comes back off when the
+     * business has no usable window, and specific time comes back on when
+     * neither switch was set — and `requestBooking` validates against the same
+     * server-side resolver, so the wizard is never offered a mode the write
+     * path will refuse.
+     */
+    suspend fun getBookingPolicy(): BookingPolicy {
+        val raw = fns.call("getBookingPolicy", null)
+        val blocks = (raw["timeBlocks"] as? JsonArray)?.mapNotNull { el ->
+            val o = el.jsonObject
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val start = o["startTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val end = o["endTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            TimeBlock(
+                id = id,
+                label = o["label"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: id,
+                startTime = start,
+                endTime = end,
+                durationMinutes = o["durationMinutes"]?.jsonPrimitive?.intOrNull ?: 0,
+            )
+        }.orEmpty()
+        // The server already normalized this. Re-applying the two rules here is
+        // not distrust of it, it is the decode: a row THIS decoder could not
+        // read is a row the picker must not offer, and dropping every row
+        // leaves the client in the same position as a business with none.
+        // Neither rule can disagree with the server — both only ever turn block
+        // booking OFF and specific time ON, which is the direction the server's
+        // own degrade goes.
+        val allowBlocks = (raw["allowTimeBlockBooking"]?.jsonPrimitive?.booleanOrNull ?: false) && blocks.isNotEmpty()
+        val storedAllowSpecific = raw["allowSpecificTimeBooking"]?.jsonPrimitive?.booleanOrNull ?: true
+        return BookingPolicy(
+            allowTimeBlockBooking = allowBlocks,
+            allowSpecificTimeBooking = if (allowBlocks) storedAllowSpecific else true,
+            defaultBookingMode = when (raw["defaultBookingMode"]?.jsonPrimitive?.contentOrNull) {
+                "TIME_BLOCK" -> BookingMode.TimeBlock
+                else -> BookingMode.SpecificTime
+            },
+            timeBlocks = blocks,
+        )
+    }
+
     // -- Mapbox autocomplete (Function-proxied; secret access token never ships in the bundle) --
     suspend fun mapboxSearch(query: String, sessionToken: String, limit: Int = 5, country: String? = null): List<MapboxSuggestion> {
         if (query.length < 2) return emptyList()
@@ -434,6 +490,9 @@ class PortalApi(private val fns: FunctionsClient) {
             signature      = raw["signature"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             folder         = raw["folder"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             allowedFormats = raw["allowedFormats"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            // #583. Blank on a signer that predates it: nothing signed, nothing
+            // posted, which is the old request verbatim.
+            transformation = raw["transformation"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         )
 
     suspend fun getBusinessContact(): com.kinfolk.portal.config.BusinessContact {

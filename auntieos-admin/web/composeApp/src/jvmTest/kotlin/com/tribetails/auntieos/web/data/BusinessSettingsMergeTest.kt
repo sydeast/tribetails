@@ -44,7 +44,7 @@ class BusinessSettingsMergeTest {
         // Spot-check a representative field from each union region survives in the mask,
         // so a partial-screen save still merges (never clobbers) these.
         listOf(
-            "businessName", "timeZone", "notificationEmail", "observeUsHolidays",
+            "businessName", "timeZone", "weatherLocation", "observeUsHolidays",
             "defaultBookingMode", "timeBlocks", "enableGPSTrackingForAllVisits",
             "trackingAccuracy", "defaultEtaMinutes", "draftRetentionOptions",
             "calendarSyncId", "updatedBy",
@@ -59,10 +59,10 @@ class BusinessSettingsMergeTest {
         // produce a mask that names ONLY those keys, leaving every other prod field
         // untouched. This is the property that prevents cross-schema field loss.
         val sparse = codec.parseToJsonElement(
-            """{"_id":"business_settings","notificationEmail":false,"calendarSyncId":"x"}""",
+            """{"_id":"business_settings","weatherLocation":"Austin, TX","calendarSyncId":"x"}""",
         ).jsonObject
         val paths = JvmFirestoreRest.mergeFieldPaths(sparse)
-        assertEquals(setOf("`notificationEmail`", "`calendarSyncId`"), paths.toSet())
+        assertEquals(setOf("`weatherLocation`", "`calendarSyncId`"), paths.toSet())
         assertFalse(paths.contains("`businessName`"), "absent fields must not appear in the mask")
     }
 }

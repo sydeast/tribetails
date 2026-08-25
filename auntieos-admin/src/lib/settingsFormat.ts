@@ -7,18 +7,33 @@ import type { PortalHome } from '../api/settings';
  * Pure Settings-overview formatting, kept out of the screen so the mapping
  * logic has direct vitest coverage (the invoiceFormat.ts / sessionFormat.ts /
  * mediaFormat.ts convention). Every helper here is READ-ONLY display shaping;
- * none of them mutate or validate for a save, since this port is the overview
- * only (edit/save is the deferred, not-yet-built surface).
+ * none of them mutate or validate for a save.
  *
- * Scope note: only the `BusinessSettings` fields that actually have a home in
- * the wasm `SettingsScreen.kt` (per its `SettingsSection` switch) are surfaced
- * here. Several doc fields (`timeZone`, the legacy `notification*` toggles,
- * `defaultBookingMode`/`defaultCalendarView`, the GPS/tracking block, the ETA
- * and draft-retention options, `timeBlocks`) are defined on the doc but are
- * not rendered by ANY section of the live wasm screen (verified: zero hits
- * grepping their field names across `screens/settings/*.kt`), so porting a
- * display section for them would be inventing content the source screen does
- * not show. They stay out of this overview.
+ * TWO CLAIMS THAT USED TO STAND HERE ARE GONE, and issue #519 is about what the
+ * second one cost.
+ *
+ * The first said "this port is the overview only (edit/save is the deferred,
+ * not-yet-built surface)". It has been false for a long time:
+ * `screens/settings/BusinessHoursEditor.tsx`, `TimeOffEditor.tsx`,
+ * `CalendarSyncSection.tsx` and every section in `sections.tsx` save for real.
+ *
+ * The second listed doc fields this file would not surface — `timeZone`, the
+ * legacy `notification*` toggles, `defaultBookingMode`/`defaultCalendarView`,
+ * the GPS/tracking block, the ETA and draft-retention options, `timeBlocks` —
+ * on the grounds that no section of the wasm screen rendered them, so showing
+ * them would be inventing content. The grep behind it was accurate; the
+ * conclusion was not. Treating one client's gap as a ceiling for the others is
+ * how twenty operator-facing fields ended up decoded by three clients and
+ * editable on none, which is what #519 found. What another surface happens to
+ * render is not an argument about what a field is for.
+ *
+ * All of them are editable now (`TimeZoneSection.tsx`,
+ * `BookingRulesSection.tsx`, `VisitsTrackingSection.tsx`), except the
+ * `notification*` triple, which was deleted from the models: nothing in
+ * `mytribe/functions` ever read it, and the real channel gate lives on
+ * `businessSettings/notifications` (see `api/settings.ts`). This module still
+ * shapes only what the Settings OVERVIEW line needs, which is a statement
+ * about this file's job, not about which fields may exist.
  *
  * `mergeBusinessSettings` (api/settings.ts) type-checks every TOP-LEVEL field,
  * so the `BusinessSettings` values these helpers receive really are strings.

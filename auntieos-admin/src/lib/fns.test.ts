@@ -32,6 +32,17 @@ vi.mock('./firebase', () => ({
   E2E_FUNCTIONS_PORT: 5399,
 }));
 
+/**
+ * #573: the revocation reaction is mocked rather than exercised end-to-end here.
+ * `revokedSession.test.ts` owns what it DOES; this file owns whether `call()`
+ * routes to it at all, which is the wiring a refactor can silently drop.
+ */
+const { noteSessionAlive, reactToCallableError } = vi.hoisted(() => ({
+  noteSessionAlive: vi.fn(),
+  reactToCallableError: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('./revokedSession', () => ({ noteSessionAlive, reactToCallableError }));
+
 const { call, CallableNotStubbedError, CallableTimeoutError } = await import('./fns');
 
 /** Makes the next `call()` reject with [code], as the SDK would. */
@@ -44,6 +55,8 @@ function rejectWith(code: string): void {
 beforeEach(() => {
   emulatorHost = '';
   httpsCallable.mockReset();
+  noteSessionAlive.mockClear();
+  reactToCallableError.mockClear();
 });
 
 describe('call', () => {
@@ -87,5 +100,55 @@ describe('call', () => {
     const err = await call('listSupplies', {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(FirebaseError);
     expect((err as FirebaseError).code).toBe('functions/permission-denied');
+  });
+});
+
+/**
+ * #573. `call()` is the one place every admin callable passes through, which is
+ * why the revocation reaction is installed here and not in the ~200 api/ call
+ * sites. These assert the two halves of that seam: every failure is offered to
+ * the classifier, and every success re-arms it.
+ */
+describe('call, revoked-session reaction', () => {
+  it('offers a failed callable to the classifier, then rethrows unchanged', async () => {
+    rejectWith('functions/unauthenticated');
+    const err = await call('listSupplies', {}).catch((e: unknown) => e);
+    expect(reactToCallableError).toHaveBeenCalledTimes(1);
+    // Rethrown, not consumed: a screen that was going to show a banner still does.
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect((err as FirebaseError).code).toBe('functions/unauthenticated');
+  });
+
+  it('awaits the reaction before the caller sees the rejection', async () => {
+    // The sign-out has to be under way before a screen paints its own error, or
+    // the operator gets a red banner on a screen that is about to disappear.
+    let reacted = false;
+    reactToCallableError.mockImplementationOnce(async () => {
+      await Promise.resolve();
+      reacted = true;
+    });
+    rejectWith('functions/unauthenticated');
+    await call('listSupplies', {}).catch(() => undefined);
+    expect(reacted).toBe(true);
+  });
+
+  it('re-arms the teardown guard on every success', async () => {
+    httpsCallable.mockReturnValue(() => Promise.resolve({ data: {} }));
+    await call('listSupplies', {});
+    expect(noteSessionAlive).toHaveBeenCalledTimes(1);
+    expect(reactToCallableError).not.toHaveBeenCalled();
+  });
+
+  it('does not offer a deadline to the classifier — a timeout says nothing about the session', async () => {
+    rejectWith('functions/deadline-exceeded');
+    await expect(call('listSupplies', {})).rejects.toBeInstanceOf(CallableTimeoutError);
+    expect(reactToCallableError).not.toHaveBeenCalled();
+  });
+
+  it('does not offer an unstubbed-callable harness error to the classifier either', async () => {
+    emulatorHost = '127.0.0.1';
+    rejectWith('functions/internal');
+    await expect(call('listSupplies', {})).rejects.toBeInstanceOf(CallableNotStubbedError);
+    expect(reactToCallableError).not.toHaveBeenCalled();
   });
 });

@@ -23,6 +23,15 @@ data class CloudinarySignedUpload(
      * rather than sent as an empty field).
      */
     val allowedFormats: String = "",
+    /**
+     * #583. The incoming transformation the SERVER signed (`fl_force_strip`).
+     * It is what makes the STORED ORIGINAL carry no EXIF GPS: Cloudinary
+     * applies an incoming transformation BEFORE storing the asset, and
+     * `fl_force_strip` clears all image metadata (IPTC, Exif and XMP) while it
+     * does so. Signed, so — exactly like [allowedFormats] — it MUST be echoed
+     * verbatim in the upload POST, and omitted when blank.
+     */
+    val transformation: String = "",
 )
 
 /**
@@ -33,7 +42,8 @@ data class CloudinarySignedUpload(
  *
  * Endpoint: `https://api.cloudinary.com/v1_1/{cloudName}/image/upload`.
  * Multipart form fields: `file`, `api_key`, `timestamp`, `signature`,
- * `folder`, `allowed_formats` (when signed's `allowedFormats` is non-blank).
+ * `folder`, `allowed_formats` (when signed's `allowedFormats` is non-blank),
+ * `transformation` (when signed's `transformation` is non-blank, #583).
  *
  * Each platform supplies its own implementation:
  * - android: OkHttp (already on classpath via Firebase deps).

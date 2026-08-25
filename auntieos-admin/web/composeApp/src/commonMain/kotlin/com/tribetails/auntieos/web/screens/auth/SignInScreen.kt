@@ -43,6 +43,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.PawPrint
 import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.AuthUser
+import com.tribetails.auntieos.web.data.SessionEndedNotice
 import com.tribetails.auntieos.web.data.SignInResult
 import com.tribetails.auntieos.web.data.platformMountSignInAutofill
 import com.tribetails.auntieos.web.data.platformSetSignInAutofillValues
@@ -78,6 +79,25 @@ fun SignInScreen(
     var loading    by remember { mutableStateOf(false) }
     var resetting  by remember { mutableStateOf(false) }
     var toast      by remember { mutableStateOf<Pair<String, ToastKind>?>(null) }
+
+    /**
+     * Issue #573: why the operator is looking at this screen, when they did not
+     * ask to be.
+     *
+     * A revoked or disabled session is signed out from inside the callable seam
+     * (`RevocationAwareCallables`), several layers below anything holding UI
+     * state, and `App.kt`'s auth gate then drops the whole app back here on its
+     * own. Without this, the console simply vanishes mid-task and a login form
+     * appears, which reads as the app having broken rather than as a session
+     * having ended.
+     *
+     * `consume()` clears as it reads, so a recomposition or a later visit to
+     * this screen is quiet. Keyed on `Unit`, because the notice belongs to the
+     * arrival and not to anything the operator types afterwards.
+     */
+    LaunchedEffect(Unit) {
+        SessionEndedNotice.consume()?.let { toast = it to ToastKind.Error }
+    }
 
     // 02-sign-in item 1: mount the hidden autofill <form> while this screen is shown so
     // a password manager can offer to fill; route fills back into Compose state. No-op

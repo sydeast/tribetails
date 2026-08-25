@@ -78,6 +78,7 @@ describe('tribalIntelWrite api', () => {
       signature: 's',
       folder: 'tribetails/tribal_intel/pending',
       allowedFormats: '',
+      transformation: 'fl_force_strip',
       entityType: 'TRIBAL_INTEL',
       entityId: 'pending',
     });
@@ -93,7 +94,9 @@ describe('tribalIntelWrite api', () => {
     const file = new File(['x'], 'gate.jpg', { type: 'image/jpeg' });
     const attachment = await uploadTribalIntelAttachment(file);
 
-    expect(requestSignedUpload).toHaveBeenCalledWith('TRIBAL_INTEL', 'pending');
+    // #583: a photographed document attached here is stripped exactly like a
+    // gallery photo, and the kind comes from the picked file, not the caller.
+    expect(requestSignedUpload).toHaveBeenCalledWith('TRIBAL_INTEL', 'pending', 'image');
     expect(writeMediaFileDoc).toHaveBeenCalled();
     expect(attachment).toEqual({
       storageUrl: 'https://res.cloudinary.com/tt/image/upload/v1/a.jpg',

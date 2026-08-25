@@ -158,6 +158,55 @@ class HomeViewModelTest {
         assertNull(vm.uiState.value.pendingActionSessionId)
     }
 
+    // ── ISSUE #519: arriving auto-starts tracking only if the operator says so ──
+    //
+    // `autoStartTrackingOnVisitStart` was persisted by the Settings panel and read
+    // by nothing: arriving always started tracking under the master switch alone,
+    // so the "Auto-Start Tracking on Visit Start" toggle changed nothing. These
+    // three cases fail against that code, because the first one starts the
+    // service when the operator has turned auto-start off.
+    private fun arriveWithSettings(settings: BusinessSettings): android.content.Context {
+        val context = mockk<android.content.Context>(relaxed = true)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockRepo.getBusinessSettings() } returns Result.success(settings)
+        coEvery { mockKinCareRepo.markSessionArrived(any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.logActivity(any()) } returns Result.success(Unit)
+        return context
+    }
+    @Test
+    fun `arriving does NOT start tracking when auto-start is off`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(
+            BusinessSettings(enableGPSTrackingForAllVisits = true, autoStartTrackingOnVisitStart = false)
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        verify(exactly = 0) { context.startForegroundService(any()) }
+    }
+    @Test
+    fun `arriving starts tracking when auto-start is on`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(
+            BusinessSettings(enableGPSTrackingForAllVisits = true, autoStartTrackingOnVisitStart = true)
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        verify(exactly = 1) { context.startForegroundService(any()) }
+    }
+    @Test
+    fun `the master GPS switch still wins over auto-start`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(
+            BusinessSettings(enableGPSTrackingForAllVisits = false, autoStartTrackingOnVisitStart = true)
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        verify(exactly = 0) { context.startForegroundService(any()) }
+    }
     @Test
     fun `complete does nothing when sessionId not in todayVisits`() = runTest(testDispatcher) {
         val vm = buildViewModel()
