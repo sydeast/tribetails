@@ -104,6 +104,14 @@ export const PRODUCTION_ENV_FILE = '.env.production.local';
  *
  * required: true means a release REFUSES rather than shipping without it, the
  * same rule release.sh step 1b applies to Cloud Function secrets.
+ *
+ * REQUIRED IS NOT THE DEFAULT AND MUST NOT BECOME ONE. A gate that demands a
+ * value nothing needs is the same defect as a missing gate, pointed the other
+ * way: it stops releases to protect a capability the product does not use, and
+ * the first thing anyone does with it is learn the flag that turns it off. Both
+ * Sentry DSNs are optional because web Sentry has never been configured in
+ * either app, checked against the actual files rather than assumed from the
+ * variable names existing.
  */
 export const CLIENT_VARS = [
   {
@@ -111,13 +119,18 @@ export const CLIENT_VARS = [
     variable: 'VITE_SENTRY_DSN',
     secret: 'ADMIN_WEB_SENTRY_DSN',
     kind: 'secret-manager',
-    required: true,
+    required: false,
     sensitive: false,
     why:
-      'Crash reporting for the React admin, Sentry project `auntieos-admin`. ' +
-      'Required because an UNSET DSN is not a quiet degradation: the admin ' +
-      'shipped without one and a two-hour CRITICAL error loop in ' +
-      'notificationBatchSweep raised no alert at all.',
+      'Crash reporting for the React admin at auntie.tribetails.com, Sentry ' +
+      'project `auntieos-admin`. OPTIONAL, and the reason is that it has ' +
+      'never been configured: on 2026-08-24 both the admin .env and the ' +
+      "portal .env.local carried an EMPTY VITE_SENTRY_DSN, and there is no " +
+      'other source. Web Sentry has never been switched on for either app. ' +
+      'lib/sentry.ts treats a blank DSN as an ordinary state: it logs ' +
+      '"Sentry disabled: no VITE_SENTRY_DSN" and returns without throwing. ' +
+      'Requiring it would refuse every release over a capability the product ' +
+      'has never used, which is a gate demanding something nothing needs.',
   },
   {
     app: 'admin',
@@ -159,12 +172,15 @@ export const CLIENT_VARS = [
     variable: 'VITE_SENTRY_DSN',
     secret: 'PORTAL_WEB_SENTRY_DSN',
     kind: 'secret-manager',
-    required: true,
+    required: false,
     sensitive: false,
     why:
-      'Crash reporting for the kinfolk portal, Sentry project `mytribe-web`. ' +
-      'A DIFFERENT project from the admin, so a different DSN. That is why ' +
-      'the two apps cannot share one exported VITE_SENTRY_DSN.',
+      'Crash reporting for the kinfolk portal at kinfolk.tribetails.com, ' +
+      'Sentry project `mytribe-web`. A DIFFERENT project from the admin, so ' +
+      'a different DSN, which is why the two apps cannot share one exported ' +
+      'VITE_SENTRY_DSN. OPTIONAL for the same reason as the admin: the value ' +
+      'has never been set, and a blank DSN disables reporting rather than ' +
+      'breaking anything.',
   },
   {
     app: 'portal',

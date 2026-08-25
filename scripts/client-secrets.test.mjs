@@ -102,30 +102,30 @@ test('a required client secret missing from the store refuses, BY NAME', () => {
 });
 
 test('a stored-but-EMPTY value refuses too, and is not reported as missing', () => {
-  const store = fullStore({ ADMIN_WEB_SENTRY_DSN: '   \n' });
+  const store = fullStore({ PORTAL_WEB_MAPBOX_PUBLIC_TOKEN: '   \n' });
   const { refusals } = resolveClientVars({ fetchSecret: store, release: 'abc1234' });
 
-  const dsn = refusals.find((r) => r.variable === 'VITE_SENTRY_DSN' && r.app === 'admin');
-  assert.ok(dsn, 'an empty stored value must refuse');
-  assert.equal(dsn.status, 'empty');
+  const token = refusals.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  assert.ok(token, 'an empty stored value must refuse');
+  assert.equal(token.status, 'empty');
   // An empty secret already exists, so telling the operator to CREATE it is
   // wrong advice.
-  const cmds = fixCommands(dsn, 'auntieos-ttpc');
+  const cmds = fixCommands(token, 'auntieos-ttpc');
   assert.equal(cmds.length, 1);
-  assert.ok(cmds[0].includes('versions add ADMIN_WEB_SENTRY_DSN'));
+  assert.ok(cmds[0].includes('versions add PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'));
 });
 
 test('a local .env does NOT excuse a value the store is missing, and the refusal says so', () => {
   const store = fullStore();
   const { refusals } = resolveClientVars({
-    fetchSecret: (name) => (name === 'ADMIN_WEB_SENTRY_DSN' ? null : store(name)),
-    localEnv: { admin: { VITE_SENTRY_DSN: FAKE_DSN } },
+    fetchSecret: (name) => (name === 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN' ? null : store(name)),
+    localEnv: { portal: { VITE_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN } },
     release: 'abc1234',
   });
 
-  const dsn = refusals.find((r) => r.app === 'admin' && r.variable === 'VITE_SENTRY_DSN');
-  assert.ok(dsn);
-  assert.equal(dsn.localAlso, true);
+  const token = refusals.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  assert.ok(token);
+  assert.equal(token.localAlso, true);
 });
 
 test('an optional variable warns by name instead of refusing', () => {
@@ -153,6 +153,32 @@ test('an optional variable warns by name instead of refusing', () => {
   assert.equal(refusals.length, 0);
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0].variable, 'VITE_SOMETHING_OPTIONAL');
+});
+
+test('neither Sentry DSN can stop a release, and the warning explains itself', () => {
+  // Checked against the files on 2026-08-24, not inferred from the variables
+  // existing: auntieos-admin/.env and mytribe/web/.env.local both carry an
+  // EMPTY VITE_SENTRY_DSN and there is no other source. Web Sentry has never
+  // been switched on for either app, and lib/sentry.ts treats a blank DSN as an
+  // ordinary state. A release that refused over it would be blocking on a
+  // capability the product does not use.
+  for (const app of ['admin', 'portal']) {
+    const decl = CLIENT_VARS.find((v) => v.app === app && v.variable === 'VITE_SENTRY_DSN');
+    assert.equal(decl.required, false, `${app} VITE_SENTRY_DSN must not stop a release`);
+    // The warning text is the whole user interface of an optional value. If it
+    // does not say this is accepted, every release reads as half-configured.
+    assert.match(decl.why, /never been (configured|set)|has never been/i);
+  }
+
+  const { refusals, warnings } = resolveClientVars({
+    fetchSecret: (name) => (name.endsWith('_SENTRY_DSN') ? null : fullStore()(name)),
+    release: 'abc1234',
+  });
+  assert.equal(refusals.length, 0, 'missing DSNs must not refuse');
+  assert.deepEqual(
+    warnings.map((w) => `${w.app}:${w.variable}`).sort(),
+    ['admin:VITE_SENTRY_DSN', 'portal:VITE_SENTRY_DSN'],
+  );
 });
 
 test('the admin App Check site key is REQUIRED, now that the key exists', () => {
@@ -212,9 +238,7 @@ test('with no fetcher and no local value either, a required variable still refus
   const names = refusals.map((r) => `${r.app}:${r.variable}`).sort();
   assert.deepEqual(names, [
     'admin:VITE_ADMIN_APPCHECK_SITE_KEY',
-    'admin:VITE_SENTRY_DSN',
     'portal:VITE_MAPBOX_PUBLIC_TOKEN',
-    'portal:VITE_SENTRY_DSN',
   ]);
 });
 

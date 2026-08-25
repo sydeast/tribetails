@@ -1174,7 +1174,8 @@ fi
 # happen before anything ships.
 D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
-                  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1
+                  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
+                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 FCALLS="$D/firebase-calls"
 RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets" FIREBASE_CALL_LOG="$FCALLS")"
@@ -1210,9 +1211,10 @@ fi
 # named after: the release would have compiled an empty string into the bundle
 # and shipped it looking healthy.
 D="$(make_repo)"; write_stubs "$D"
-secret_store "$D" ADMIN_WEB_SENTRY_DSN= \
+secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
                   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
-                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
 OUT="$(cat "$D/out")"
@@ -1222,7 +1224,7 @@ if [ "$RC" -ne 0 ]; then
 else
   bad "an EMPTY client secret shipped"
 fi
-if printf '%s' "$OUT" | grep -q "VITE_SENTRY_DSN (admin).*is empty"; then
+if printf '%s' "$OUT" | grep -q "VITE_MAPBOX_PUBLIC_TOKEN (portal).*is empty"; then
   ok "the refusal says empty, not missing, and names the app"
 else
   bad "the refusal did not distinguish empty from missing"; echo "$OUT" | tail -25
@@ -1258,6 +1260,33 @@ if printf '%s' "$OUT" | grep -q "gcloud secrets create VITE_"; then
   bad "the refusal told the operator to create a VITE_-prefixed secret"
 else
   ok "the refusal never names a VITE_-prefixed secret to create"
+fi
+
+# NEITHER SENTRY DSN IS SET, which is the live state of this product: both were
+# checked on 2026-08-24 and both are empty, in the .env files and in the store.
+# Web Sentry has never been switched on. A release must ship, name them, and not
+# read as though something is broken.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "a release with no Sentry DSN at all still ships"
+else
+  bad "an unset Sentry DSN stopped the release (rc $RC)"; echo "$OUT" | tail -25
+fi
+if [ "$(printf '%s' "$OUT" | grep -c "WARNING: VITE_SENTRY_DSN")" = "2" ]; then
+  ok "both apps' missing DSNs are named, once each"
+else
+  bad "the missing DSNs were not both named"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "WARNING: VITE_SENTRY_DSN.*never been"; then
+  ok "the warning says web Sentry has never been configured, not that it broke"
+else
+  bad "the warning does not say this is an accepted state"; echo "$OUT" | tail -25
 fi
 
 # The escape hatch, and it has to SAY it was used.

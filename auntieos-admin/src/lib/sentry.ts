@@ -13,9 +13,10 @@ import * as Sentry from '@sentry/react';
  *
  * WHERE THE DSN COMES FROM: Google Secret Manager, as ADMIN_WEB_SENTRY_DSN,
  * declared in scripts/client-secrets.mjs and fetched by release step 0c before
- * the build. A release refuses without it, because this file's graceful
- * degradation is exactly what let the admin ship with reporting off for weeks.
- * A local .env is the fallback for a machine with no gcloud.
+ * the build, with a local .env as the fallback for a machine with no gcloud.
+ * A release NAMES a missing DSN and ships anyway: the degradation below is
+ * real and nothing depends on reporting, so refusing would block releases over
+ * a capability that has never been switched on.
  *
  * VITE_ prefix is mandatory: only VITE_-prefixed vars reach the browser bundle.
  */
