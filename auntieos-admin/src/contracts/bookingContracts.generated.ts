@@ -278,6 +278,7 @@ export interface RequestBookingArgsVisit {
   serviceId: string;
   serviceName: string;
   priceCents: number | null;
+  timeBlockId: string | null;
 }
 
 /**
