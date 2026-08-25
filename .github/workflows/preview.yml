@@ -202,6 +202,24 @@ jobs:
           # this app, so site ids read backwards to anyone who has not been told.
           target: app
           expires: 7d
+          # PINNED, and the default is what makes this necessary. Leave it out
+          # and the action runs `npx firebase-tools@latest`, which re-resolves
+          # the package on every run and rewrites the shared npx cache under
+          # $HOME/.npm/_npx. Three self-hosted runners share one $HOME on this
+          # machine (issue #588), so two preview jobs can be reading that cache
+          # while a third is writing it. On 2026-08-25 both preview jobs on
+          # PR #591 died twice with `TypeError: bind.call is not a function`
+          # from .npm/_npx/ba4f1959e38407b5/node_modules/hasown/index.js, a
+          # half-written module read mid-install. The build steps above had
+          # passed; only the deploy died, which reads as a broken PR and is not
+          # one.
+          #
+          # A PIN DOES NOT FIX THE SHARING, and #588 stays open for that. It
+          # removes one exposure: a fixed version resolves to a cache entry that
+          # is written once and then only ever read. 15.18.0 is the version
+          # `prune-preview-channels` at the bottom of this file already pins, so
+          # the whole workflow now agrees on one firebase-tools.
+          firebaseToolsVersion: 15.18.0
 
       - name: Report no preview
         if: steps.cred.outputs.present != 'true'
@@ -279,6 +297,10 @@ jobs:
           # judged against the wrong thing.
           target: kinfolk_portal
           expires: 7d
+          # Same pin and the same reason as the admin job above. Both jobs run
+          # concurrently against one shared npx cache, so pinning only one of
+          # them would leave the race in place.
+          firebaseToolsVersion: 15.18.0
 
       - name: Report no preview
         if: steps.cred.outputs.present != 'true'
