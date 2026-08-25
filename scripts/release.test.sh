@@ -1228,25 +1228,36 @@ else
   bad "the refusal did not distinguish empty from missing"; echo "$OUT" | tail -25
 fi
 
-# The optional one. It warns by name every release and stops nothing, because
-# the reCAPTCHA key it points at does not exist yet (PR #587).
+# The admin App Check site key, which was warn-only until the reCAPTCHA
+# Enterprise key existed and is required now that it does (minted and registered
+# 2026-08-24). Its consumer is still unmerged (#587), which changes nothing here:
+# the release resolves from the declaration, not from grepping usage.
 D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
                   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
                   PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
-RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
+RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
 OUT="$(cat "$D/out")"
 
-if [ "$RC" -eq 0 ]; then
-  ok "an optional client value that is absent does not stop the release"
+if [ "$RC" -ne 0 ]; then
+  ok "a missing admin App Check site key fails the release"
 else
-  bad "an absent OPTIONAL client value stopped the release (rc $RC)"; echo "$OUT" | tail -25
+  bad "a missing admin App Check site key did NOT fail the release"; echo "$OUT" | tail -25
 fi
-if printf '%s' "$OUT" | grep -q "WARNING: VITE_ADMIN_APPCHECK_SITE_KEY"; then
-  ok "the absent optional value is warned about by name"
+if printf '%s' "$OUT" | grep -q "VITE_ADMIN_APPCHECK_SITE_KEY (admin) <- ADMIN_WEB_APPCHECK_SITE_KEY"; then
+  ok "the refusal names the build variable AND the secret behind it"
 else
-  bad "nothing warned about VITE_ADMIN_APPCHECK_SITE_KEY"; echo "$OUT" | tail -25
+  bad "the refusal did not name both names"; echo "$OUT" | tail -25
+fi
+# The names are two namespaces and the operator acts on the second one. A
+# refusal that told them to create a secret called VITE_... would have them
+# store a value nothing ever fetches, which is the mistake that was already
+# made once by hand.
+if printf '%s' "$OUT" | grep -q "gcloud secrets create VITE_"; then
+  bad "the refusal told the operator to create a VITE_-prefixed secret"
+else
+  ok "the refusal never names a VITE_-prefixed secret to create"
 fi
 
 # The escape hatch, and it has to SAY it was used.

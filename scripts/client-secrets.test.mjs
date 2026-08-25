@@ -129,22 +129,73 @@ test('a local .env does NOT excuse a value the store is missing, and the refusal
 });
 
 test('an optional variable warns by name instead of refusing', () => {
-  const store = fullStore();
+  // Driven through a synthetic declaration rather than a real one. Every
+  // declared secret is required today, and the day one is not, this is the
+  // behaviour it will get; a test that could only run while some real variable
+  // happened to be optional would vanish the moment that changed.
+  const vars = [
+    {
+      app: 'admin',
+      variable: 'VITE_SOMETHING_OPTIONAL',
+      secret: 'ADMIN_WEB_SOMETHING_OPTIONAL',
+      kind: 'secret-manager',
+      required: false,
+      sensitive: false,
+      why: 'a declaration whose absence is a warning',
+    },
+  ];
   const { refusals, warnings } = resolveClientVars({
-    fetchSecret: (name) => (name === 'ADMIN_WEB_APPCHECK_SITE_KEY' ? null : store(name)),
+    vars,
+    fetchSecret: () => null,
     release: 'abc1234',
   });
 
   assert.equal(refusals.length, 0);
   assert.equal(warnings.length, 1);
-  assert.equal(warnings[0].variable, 'VITE_ADMIN_APPCHECK_SITE_KEY');
+  assert.equal(warnings[0].variable, 'VITE_SOMETHING_OPTIONAL');
+});
+
+test('the admin App Check site key is REQUIRED, now that the key exists', () => {
+  // It shipped warn-only for about an hour, while the reCAPTCHA Enterprise key
+  // it names did not exist. The operator minted and registered it on
+  // 2026-08-24, so the reason for the exception is gone and a release that
+  // loses the key must stop rather than ship an admin whose App Check reads
+  // `unconfigured`.
+  const decl = CLIENT_VARS.find((v) => v.variable === 'VITE_ADMIN_APPCHECK_SITE_KEY');
+  assert.equal(decl.required, true);
+  assert.equal(decl.secret, 'ADMIN_WEB_APPCHECK_SITE_KEY');
+
+  const store = fullStore();
+  const { refusals } = resolveClientVars({
+    fetchSecret: (name) => (name === 'ADMIN_WEB_APPCHECK_SITE_KEY' ? null : store(name)),
+    release: 'abc1234',
+  });
+  assert.deepEqual(
+    refusals.map((r) => r.variable),
+    ['VITE_ADMIN_APPCHECK_SITE_KEY'],
+  );
+});
+
+test('no declared secret is named after its BUILD variable', () => {
+  // The operator first stored this value under `VITE_ADMIN_APPCHECK_SITE_KEY`,
+  // which is the name of the build variable, not of the secret. Nothing would
+  // ever have fetched it. The two namespaces are easy to blur in prose and the
+  // cost is an operator creating a secret that is never read, so it is checked
+  // rather than remembered.
+  for (const v of CLIENT_VARS.filter((x) => x.kind === 'secret-manager')) {
+    assert.ok(
+      !v.secret.startsWith('VITE_'),
+      `${v.secret} is a build variable name, not a Secret Manager name`,
+    );
+    assert.notEqual(v.secret, v.variable);
+  }
 });
 
 test('with NO fetcher at all, a local .env carries the build', () => {
   const { rows, refusals } = resolveClientVars({
     fetchSecret: null,
     localEnv: {
-      admin: { VITE_SENTRY_DSN: FAKE_DSN },
+      admin: { VITE_SENTRY_DSN: FAKE_DSN, VITE_ADMIN_APPCHECK_SITE_KEY: FAKE_SITE_KEY },
       portal: { VITE_SENTRY_DSN: FAKE_DSN, VITE_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN },
     },
     release: 'abc1234',
@@ -160,6 +211,7 @@ test('with no fetcher and no local value either, a required variable still refus
   const { refusals } = resolveClientVars({ fetchSecret: null, localEnv: {}, release: 'abc1234' });
   const names = refusals.map((r) => `${r.app}:${r.variable}`).sort();
   assert.deepEqual(names, [
+    'admin:VITE_ADMIN_APPCHECK_SITE_KEY',
     'admin:VITE_SENTRY_DSN',
     'portal:VITE_MAPBOX_PUBLIC_TOKEN',
     'portal:VITE_SENTRY_DSN',

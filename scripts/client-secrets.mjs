@@ -136,18 +136,23 @@ export const CLIENT_VARS = [
     variable: 'VITE_ADMIN_APPCHECK_SITE_KEY',
     secret: 'ADMIN_WEB_APPCHECK_SITE_KEY',
     kind: 'secret-manager',
-    required: false,
+    required: true,
     sensitive: false,
     why:
-      'reCAPTCHA Enterprise SITE key for admin App Check (#576). NOT required ' +
-      'yet, and the exception is deliberate: the consuming code is in PR #587, ' +
-      'unmerged, and the key itself does not exist. Checked 2026-08-24, the ' +
-      'only App Check reCAPTCHA key on auntieos-ttpc is `mytribe-appcheck-web`, ' +
-      'whose allowed domains are the portal\'s. Until the operator mints ' +
-      '`auntieos-appcheck-web` and stores it, this warns by name every release. ' +
-      'Flip required to true once it exists: from then on a release that lost ' +
-      'it must stop, because App Check silently unconfigured is the failure ' +
-      'this whole file is about.',
+      'reCAPTCHA Enterprise SITE key for admin App Check (#576). The key was ' +
+      'minted and registered with App Check on 2026-08-24, for ' +
+      'auntie.tribetails.com, auntieos-ttpc.web.app and ' +
+      'auntieos-ttpc.firebaseapp.com. A site key is a public identifier: it ' +
+      'ships in the bundle and says which reCAPTCHA key the page scores ' +
+      'against, and the secret half never leaves Google. What binds it is that ' +
+      'domain list. Required from the moment it exists, because App Check ' +
+      'silently unconfigured is the failure this whole file is about, and an ' +
+      'empty site key produces exactly that while looking healthy. ' +
+      'REQUIRED BEFORE ITS CONSUMER MERGES, on purpose: the release resolves ' +
+      'from this declaration, not from grepping usage, so it fetches and ' +
+      'writes the value whether or not #587 has landed. Vite inlines only the ' +
+      'names the source actually reads, so on main today it reaches no bundle ' +
+      'and breaks nothing; the day #587 merges the value is already there.',
   },
   {
     app: 'portal',

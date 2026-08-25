@@ -1106,6 +1106,15 @@ node scripts/client-secrets.mjs --list    # what each app declares
 node scripts/client-secrets.mjs --check   # resolve it; refuse if one is empty
 ```
 
+**Two namespaces, and they are not interchangeable.** `ADMIN_WEB_SENTRY_DSN` is
+the name of the SECRET. `VITE_SENTRY_DSN` is the name of the BUILD variable the
+app reads. `client-secrets.mjs` maps one to the other, and it is the only thing
+that does. A secret created under a `VITE_`-prefixed name is a value nothing
+ever fetches, which has already happened once: the admin App Check site key was
+first stored as `VITE_ADMIN_APPCHECK_SITE_KEY` and had to be recreated as
+`ADMIN_WEB_APPCHECK_SITE_KEY`. `--list` prints both columns, and every refusal
+names both.
+
 **To store a value**, once, per secret:
 
 ```bash
