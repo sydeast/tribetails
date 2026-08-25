@@ -320,7 +320,7 @@ class KinCareRepository(
             "serviceDurationMinutes" to serviceDurationMinutes, "notes" to notes,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createKinCareSession").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createKinCareSession").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createKinCareSession: non-map payload")
         raw["sessionId"] as? String ?: error("createKinCareSession: missing sessionId")
     }.onFailure { AuntieLog.e("createKinCareSession failed", it) }
@@ -356,7 +356,7 @@ class KinCareRepository(
             if (completedAt.isNotBlank()) put("completedAt", completedAt)
             if (reason.isNotBlank()) put("reason", reason.trim())
         }
-        functions.getHttpsCallable("transitionBookingStatus").call(payload).await()
+        functions.getHttpsCallable("transitionBookingStatus").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("transitionBookingStatus ${action.name} failed for $sessionId", it) }
 
@@ -374,7 +374,7 @@ class KinCareRepository(
     suspend fun rescheduleBooking(sessionId: String, startTime: String, endTime: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         val args = RescheduleBookingArgs(sessionId = sessionId, startTime = startTime, endTime = endTime)
-        val raw = functions.getHttpsCallable("rescheduleBooking").call(args.toPayload()).await().data
+        val raw = functions.getHttpsCallable("rescheduleBooking").call(args.toPayload()).awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         val result = decodeRescheduleBookingResult(raw as? Map<String, Any?>)
         check(result.ok) { "rescheduleBooking did not confirm the reschedule (ok=false) for session $sessionId" }
@@ -510,7 +510,7 @@ class KinCareRepository(
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("assignAuntie")
             .call(assignAuntiePayload(kinfolkId, batchId, visitId, auntieUid))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to assign Auntie on visit $visitId", it) }
 
@@ -523,7 +523,7 @@ class KinCareRepository(
         authGate.ensureAuthenticated()
         val raw = functions.getHttpsCallable("listStaff")
             .call(emptyMap<String, Any?>())
-            .await()
+            .awaitCallable()
             .data as? Map<*, *>
         decodeListStaff(raw)
     }.onFailure { AuntieLog.e("Failed to list staff", it) }
@@ -749,7 +749,7 @@ class KinCareRepository(
                 "kinfolkId"    to kinfolkId,
                 "suppliedName" to kinfolkName,
             ))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to assign kinfolk to orphan report $reportId", it) }
 
@@ -767,7 +767,7 @@ class KinCareRepository(
                 "reportId"            to reportId,
                 "duplicateOfReportId" to duplicateOfReportId,
             ))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to mark orphan report $reportId as duplicate", it) }
 
@@ -784,7 +784,7 @@ class KinCareRepository(
                 "reportId" to reportId,
                 "reason"   to reason,
             ))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to archive orphan report $reportId", it) }
 
@@ -827,7 +827,7 @@ class KinCareRepository(
             "includePhotos" to includePhotos,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createShareLink").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createShareLink").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createShareLink: non-map payload")
         val shareId = raw["shareId"] as? String ?: error("createShareLink: missing shareId")
         val shareUrl = (raw["shareUrl"] as? String)?.takeIf { it.isNotBlank() }

@@ -8,6 +8,7 @@ import com.tribetails.auntieos.data.model.CallEvent
 import com.tribetails.auntieos.data.model.VoicemailEvent
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.awaitCallable
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.CallEventStore
 import com.tribetails.auntieos.util.VoicemailStore
@@ -18,7 +19,6 @@ import com.tribetails.auntieos.voice.IncomingCallNotificationService
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.time.Instant
 
 data class CallsUiState(
@@ -237,7 +237,7 @@ class CallsViewModel(
                 functions
                     .getHttpsCallable(SCREEN_CALL_ACTION)
                     .call(mapOf("callSid" to callSid, "action" to ACTION_REJECT))
-                    .await()
+                    .awaitCallable()
                 Unit
             }
 

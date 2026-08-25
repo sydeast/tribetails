@@ -163,23 +163,24 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("Sign-out failed", it) }
 
     /**
-     * The ONE way a session ends here, whatever ended it: the operator tapping
-     * Sign out, or [signInAdmin] refusing an account that turned out not to be
-     * an admin. Both of those really do sign a Firebase user out, so both owe
-     * the same teardown.
+     * How a session ends here, whatever ended it: the operator tapping Sign out,
+     * or [signInAdmin] refusing an account that turned out not to be an admin.
+     * Both of those really do sign a Firebase user out, so both owe the same
+     * teardown.
      *
      * The two steps are one step. Signing out of Firebase while leaving the
      * [AuthGate] claim cache populated keeps the finished session's
      * `testTribeId` live for whoever signs in next, and a sandbox scope is what
      * decides which business's records a query is allowed to see. The refusal
      * path used to call `auth.signOut()` directly and skip the cache, which is
-     * precisely that leak; it is a private method rather than a comment so the
-     * next branch that ends a session cannot half-do it by accident.
+     * precisely that leak.
+     *
+     * The pair now lives in [endLocalSession] rather than here, because #573
+     * added a THIRD way for a session to end — the backend refusing a callable
+     * from a revoked or disabled account — and that path reaches no repository.
+     * Two copies of a two-step teardown is how the leak above came back.
      */
-    private fun endSession() {
-        auth.signOut()
-        authGate.clearTestModeCache()
-    }
+    private fun endSession() = endLocalSession(auth, authGate)
 
     suspend fun currentAdminIdToken(forceRefresh: Boolean = false): Result<String> = runCatching {
         authGate.ensureAuthenticated()
@@ -411,7 +412,7 @@ class AuntieRepository(
             if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
             if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
         }
-        functions.getHttpsCallable("logActivity").call(payload).await()
+        functions.getHttpsCallable("logActivity").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to write activity_log entry", it) }
 
@@ -425,7 +426,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("inviteKinfolkToPortal")
-            .call(mapOf("kinfolkId" to kinfolkId)).await().data as? Map<String, Any?>
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
             ?: error("inviteKinfolkToPortal: non-map payload")
         raw["status"] as? String ?: error("inviteKinfolkToPortal: missing status")
     }.onFailure { AuntieLog.e("inviteKinfolkToPortal failed", it) }
@@ -691,7 +692,7 @@ class AuntieRepository(
         withContext(Dispatchers.IO) {
             functions.getHttpsCallable("synthesize_kinfolk_profile")
                 .call(mapOf("kinfolkId" to kinfolkId))
-                .await()
+                .awaitCallable()
         }
         Unit
     }.onFailure { AuntieLog.e("Failed to synthesize profile for $kinfolkId", it) }
@@ -702,7 +703,7 @@ class AuntieRepository(
         withContext(Dispatchers.IO) {
             functions.getHttpsCallable("clear_dossier_household_notes")
                 .call(mapOf("kinfolkId" to kinfolkId))
-                .await()
+                .awaitCallable()
         }
         Unit
     }.onFailure { AuntieLog.e("Failed to clear dossier household notes for $kinfolkId", it) }
@@ -739,7 +740,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("sendExternalMessage")
             .call(payload)
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeExternalSendResult(raw, channel)
     }.onFailure { AuntieLog.e("sendExternalMessage failed (channel=$channel)", it) }
 
@@ -756,7 +757,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("suppressExternalRecipient")
             .call(mapOf("channel" to channel, "to" to to))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeExternalSuppressResult(raw, channel)
     }.onFailure { AuntieLog.e("suppressExternalRecipient failed (channel=$channel)", it) }
 
@@ -770,7 +771,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listRecentSends")
             .call(emptyMap<String, Any?>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeRecentSends(raw)
     }.onFailure { AuntieLog.e("listRecentSends failed", it) }
 
@@ -785,7 +786,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getBreeds")
             .call(emptyMap<String, Any?>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("getBreeds: non-map payload")
         BreedBank(
             dogBreeds = (raw["dogBreeds"] as? List<*>).orEmpty().mapNotNull { it as? String },
@@ -804,7 +805,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getLocalWeather")
             .call(emptyMap<String, Any?>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("getLocalWeather: non-map payload")
         val alerts = (raw["alerts"] as? List<*>).orEmpty().mapNotNull { el ->
             val m = el as? Map<*, *> ?: return@mapNotNull null
@@ -838,7 +839,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listChecklistBank")
             .call(emptyMap<String, Any?>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("listChecklistBank: non-map payload")
         (raw["items"] as? List<*>).orEmpty().mapNotNull { el ->
             val m = el as? Map<*, *> ?: return@mapNotNull null
@@ -856,7 +857,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         functions.getHttpsCallable("saveChecklistBankItem")
             .call(mapOf("text" to text, "scope" to scope))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("saveChecklistBankItem failed", it) }
 
@@ -871,7 +872,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listAudienceSegments")
             .call(emptyMap<String, Any?>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.communicate.decodeSegments(raw)
     }.onFailure { AuntieLog.e("listAudienceSegments failed", it) }
 
@@ -887,13 +888,13 @@ class AuntieRepository(
             put("criteria", criteria.toPayload())
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("saveAudienceSegment").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("saveAudienceSegment").call(payload).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.communicate.decodeSavedSegmentId(raw)
     }.onFailure { AuntieLog.e("saveAudienceSegment failed", it) }
 
     suspend fun deleteAudienceSegment(id: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        functions.getHttpsCallable("deleteAudienceSegment").call(mapOf("id" to id)).await()
+        functions.getHttpsCallable("deleteAudienceSegment").call(mapOf("id" to id)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("deleteAudienceSegment failed", it) }
 
@@ -913,7 +914,7 @@ class AuntieRepository(
             put("body", body)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("broadcastMessage").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("broadcastMessage").call(payload).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.communicate.decodeBroadcastResult(raw)
     }.onFailure { AuntieLog.e("broadcastMessage failed", it) }
 
@@ -924,27 +925,27 @@ class AuntieRepository(
     suspend fun listConversations(): Result<List<com.tribetails.auntieos.ui.inbox.ConversationSummary>> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("listConversations").call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("listConversations").call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeConversations(raw)
     }.onFailure { AuntieLog.e("listConversations failed", it) }
 
     suspend fun getConversationThread(kinfolkId: String): Result<List<com.tribetails.auntieos.ui.inbox.ThreadMessage>> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("getConversationThread").call(mapOf("kinfolkId" to kinfolkId)).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("getConversationThread").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeThread(raw)
     }.onFailure { AuntieLog.e("getConversationThread failed", it) }
 
     suspend fun replyToConversation(kinfolkId: String, body: String): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("replyToConversation").call(mapOf("kinfolkId" to kinfolkId, "body" to body)).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("replyToConversation").call(mapOf("kinfolkId" to kinfolkId, "body" to body)).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeReplyMessageId(raw)
     }.onFailure { AuntieLog.e("replyToConversation failed", it) }
 
     suspend fun markConversationRead(kinfolkId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
-        functions.getHttpsCallable("markConversationRead").call(mapOf("kinfolkId" to kinfolkId)).await()
+        functions.getHttpsCallable("markConversationRead").call(mapOf("kinfolkId" to kinfolkId)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("markConversationRead failed", it) }
 
@@ -960,7 +961,7 @@ class AuntieRepository(
     suspend fun markAllThreadsRead(): Result<Int> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("markAllThreadsRead").call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("markAllThreadsRead").call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
         com.tribetails.auntieos.ui.inbox.decodeClearedCount(raw)
             ?: error("markAllThreadsRead returned no count")
     }.onFailure { AuntieLog.e("markAllThreadsRead failed", it) }
@@ -979,7 +980,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("optimizeRoute")
-            .call(mapOf("date" to dateYmd)).await().data as? Map<String, Any?>
+            .call(mapOf("date" to dateYmd)).awaitCallable().data as? Map<String, Any?>
             ?: error("optimizeRoute: non-map payload")
         decodeRouteResult(raw)
     }.onFailure { AuntieLog.e("optimizeRoute failed", it) }
@@ -990,7 +991,7 @@ class AuntieRepository(
         val payload = buildMap<String, Any?> { if (!sinceIso.isNullOrBlank()) put("sinceIso", sinceIso) }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listExpenses")
-            .call(payload).await().data as? Map<String, Any?>
+            .call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("listExpenses: non-map payload")
         decodeExpenseSummary(raw)
     }.onFailure { AuntieLog.e("listExpenses failed", it) }
@@ -1010,7 +1011,7 @@ class AuntieRepository(
             if (!occurredAt.isNullOrBlank()) put("occurredAt", occurredAt)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("logExpense").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("logExpense").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("logExpense: non-map payload")
         raw["id"] as? String ?: error("logExpense: missing id")
     }.onFailure { AuntieLog.e("logExpense failed", it) }
@@ -1020,7 +1021,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listSupplies")
-            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            .call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listSupplies: non-map payload")
         decodeSuppliesResult(raw)
     }.onFailure { AuntieLog.e("listSupplies failed", it) }
@@ -1030,7 +1031,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("adjustSupply")
-            .call(mapOf("supplyId" to supplyId, "delta" to delta)).await().data as? Map<String, Any?>
+            .call(mapOf("supplyId" to supplyId, "delta" to delta)).awaitCallable().data as? Map<String, Any?>
             ?: error("adjustSupply: non-map payload")
         (raw["onHand"] as? Number)?.toInt() ?: error("adjustSupply: missing onHand")
     }.onFailure { AuntieLog.e("adjustSupply failed", it) }
@@ -1040,7 +1041,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listExpirations")
-            .call(emptyMap<String, Any?>()).await().data as? Map<String, Any?>
+            .call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
             ?: error("listExpirations: non-map payload")
         decodeExpirations(raw)
     }.onFailure { AuntieLog.e("listExpirations failed", it) }
@@ -1385,7 +1386,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         val raw = functions.getHttpsCallable("saveMediaTags")
             .call(mapOf("mediaFileId" to mediaFileId, "taggedKinIds" to taggedKinIds))
-            .await().data as? Map<*, *>
+            .awaitCallable().data as? Map<*, *>
         // Fall back to the sent list rather than to EMPTY on an unreadable
         // response: the write succeeded (no exception reached here), and
         // reporting "no tags" would repaint the grid as though it had failed.
@@ -1442,7 +1443,7 @@ class AuntieRepository(
         // Sent only when the caller is entity-scoped. Blank would fail the
         // server's own min(1) validation, so it is omitted rather than padded.
         if (entityId.isNotBlank()) args["entityId"] = entityId
-        functions.getHttpsCallable("deleteMediaFile").call(args).await()
+        functions.getHttpsCallable("deleteMediaFile").call(args).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete media file", it) }
 
@@ -1767,7 +1768,7 @@ class AuntieRepository(
     suspend fun batchUpdateBookings(ids: List<String>, action: String): Result<BatchBookingResult> = runCatching {
         authGate.ensureAuthenticated()
         val args = BatchUpdateBookingsArgs(ids = ids, action = action)
-        val raw = functions.getHttpsCallable("batchUpdateBookings").call(args.toPayload()).await().data
+        val raw = functions.getHttpsCallable("batchUpdateBookings").call(args.toPayload()).awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         decodeBatchBookingResult(raw as? Map<String, Any?>, action)
     }.onFailure { AuntieLog.e("batchUpdateBookings ($action) failed for ${ids.size} id(s)", it) }
@@ -1782,7 +1783,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("bulkMarkNotificationsRead")
             .call(mapOf("ids" to ids))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeMarkedCount(raw)
     }.onFailure { AuntieLog.e("bulkMarkNotificationsRead failed for ${ids.size} id(s)", it) }
 
@@ -1796,7 +1797,7 @@ class AuntieRepository(
         require(id.isNotBlank()) { "markNotificationRead requires a notification id" }
         functions.getHttpsCallable("markNotificationRead")
             .call(mapOf("notificationId" to id))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("markNotificationRead failed for $id", it) }
 
@@ -1809,7 +1810,7 @@ class AuntieRepository(
         require(id.isNotBlank()) { "markNotificationUnread requires a notification id" }
         functions.getHttpsCallable("markNotificationUnread")
             .call(mapOf("notificationId" to id))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("markNotificationUnread failed for $id", it) }
 
@@ -1825,7 +1826,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("archiveNotification")
             .call(mapOf("id" to id))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeArchivedCount(raw)
     }.onFailure { AuntieLog.e("archiveNotification failed for $id", it) }
 
@@ -1840,7 +1841,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("bulkArchiveNotifications")
             .call(mapOf("ids" to ids))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
         decodeArchivedCount(raw)
     }.onFailure { AuntieLog.e("bulkArchiveNotifications failed for ${ids.size} id(s)", it) }
 
@@ -1918,7 +1919,7 @@ class AuntieRepository(
         )
         if (targetType == "KIN" && !targetKinId.isNullOrBlank()) payload["targetKinId"] = targetKinId
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createTrainingDocument").call(payload).await().data as? Map<String, Any?>
+        val raw = functions.getHttpsCallable("createTrainingDocument").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createTrainingDocument: non-map payload")
         raw["docId"] as? String ?: error("createTrainingDocument: missing docId")
     }.onFailure { AuntieLog.e("Failed to create training document", it) }
@@ -1949,7 +1950,7 @@ class AuntieRepository(
             "attachments" to trainingDocAttachmentMaps(attachments),
         )
         if (targetType == "KIN" && !targetKinId.isNullOrBlank()) payload["targetKinId"] = targetKinId
-        functions.getHttpsCallable("updateTrainingDocument").call(payload).await()
+        functions.getHttpsCallable("updateTrainingDocument").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to update training document $docId", it) }
 
@@ -1957,7 +1958,7 @@ class AuntieRepository(
     suspend fun deleteTrainingDocument(docId: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         require(docId.isNotBlank()) { "docId required" }
-        functions.getHttpsCallable("deleteTrainingDocument").call(mapOf("docId" to docId)).await()
+        functions.getHttpsCallable("deleteTrainingDocument").call(mapOf("docId" to docId)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete training document $docId", it) }
 
@@ -1987,7 +1988,7 @@ class AuntieRepository(
             "platform" to "android",
             "appVersion" to BuildConfig.VERSION_NAME,
         )
-        functions.getHttpsCallable("registerFcmToken").call(payload).await()
+        functions.getHttpsCallable("registerFcmToken").call(payload).awaitCallable()
         AuntieLog.i("FCM token registered via callable")
         Unit
     }.onFailure { AuntieLog.e("Failed to register FCM device token", it) }
@@ -2015,7 +2016,7 @@ class AuntieRepository(
      */
     suspend fun mintVoiceAccessToken(): Result<VoiceAccessToken> = runCatching {
         authGate.ensureAuthenticated()
-        val raw = functions.getHttpsCallable("mintVoiceAccessToken").call().await().data
+        val raw = functions.getHttpsCallable("mintVoiceAccessToken").call().awaitCallable().data
         val data = raw as? Map<*, *>
             ?: throw IllegalStateException("mintVoiceAccessToken returned no data")
         // Every field is required and none is guessed. A token assembled out of a
@@ -2558,7 +2559,7 @@ class AuntieRepository(
                     "acknowledgedMatchIds" to acknowledgedMatchIds,
                 )
             )
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("submitVetClinic: non-map payload")
         val status = (raw["status"] as? String).orEmpty()
         @Suppress("UNCHECKED_CAST")
@@ -2619,7 +2620,7 @@ class AuntieRepository(
                     "country" to "us",
                 )
             )
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("mapboxSearch: non-map payload")
         (raw["suggestions"] as? List<*>).orEmpty().mapNotNull { row ->
             val o = row as? Map<*, *> ?: return@mapNotNull null
@@ -2647,7 +2648,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("mapboxRetrieve")
             .call(mapOf("mapboxId" to mapboxId, "sessionToken" to sessionToken))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("mapboxRetrieve: non-map payload")
         val feature = raw["feature"] as? Map<*, *> ?: error("Mapbox returned no address for that suggestion.")
         val props = feature["properties"] as? Map<*, *>
@@ -2672,7 +2673,7 @@ class AuntieRepository(
      */
     suspend fun verifyActivityLogChain(): Result<com.tribetails.auntieos.data.admin.ChainVerifyResult> = runCatching {
         authGate.ensureAuthenticated()
-        val res = functions.getHttpsCallable("verifyActivityLogChain").call(emptyMap<String, Any?>()).await()
+        val res = functions.getHttpsCallable("verifyActivityLogChain").call(emptyMap<String, Any?>()).awaitCallable()
         @Suppress("UNCHECKED_CAST")
         val data = res.data as? Map<String, Any?> ?: emptyMap()
         val anomaly = data["anomaly"] as? Map<*, *>
@@ -2729,7 +2730,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("updateVetClinic")
             .call(payload)
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("updateVetClinic: non-map payload")
         (raw["householdsUpdated"] as? Number)?.toInt() ?: 0
     }.onFailure { AuntieLog.e("Failed to update vet clinic", it) }
@@ -2755,7 +2756,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("archiveVetClinic")
             .call(mapOf("clinicId" to id.trim(), "archived" to archived))
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("archiveVetClinic: non-map payload")
         (raw["householdCount"] as? Number)?.toInt() ?: 0
     }.onFailure { AuntieLog.e("Failed to archive vet clinic", it) }
@@ -2844,7 +2845,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("saveDashboardLayout")
-            .call(mapOf("tokens" to tokens)).await().data as? Map<String, Any?>
+            .call(mapOf("tokens" to tokens)).awaitCallable().data as? Map<String, Any?>
             ?: error("saveDashboardLayout: non-map payload")
         val stored = raw["tokens"] as? List<*>
             ?: error("saveDashboardLayout answered without the stored layout, so the save cannot be confirmed.")
@@ -2863,7 +2864,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listFormSchemas")
             .call(emptyMap<String, Any>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("listFormSchemas: non-map payload")
         val list = (raw["schemas"] as? List<*>).orEmpty()
         list.mapNotNull { item ->
@@ -2890,7 +2891,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getFeatureFlags")
             .call(emptyMap<String, Any>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("getFeatureFlags: non-map payload")
         val flags = (raw["flags"] as? Map<*, *>).orEmpty()
         flags.entries.mapNotNull { (k, v) ->
@@ -2905,7 +2906,7 @@ class AuntieRepository(
         require(flags.isNotEmpty()) { "setFeatureFlags: empty flag map" }
         functions.getHttpsCallable("setFeatureFlags")
             .call(mapOf("flags" to flags))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to set feature flags", it) }
 
@@ -2920,7 +2921,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getBusinessNotificationOverrides")
             .call(emptyMap<String, Any>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("getBusinessNotificationOverrides: non-map payload")
         // Parsing (incl. audiences + per-stream gates + lockReason) lives in pure,
         // unit-tested functions in NotificationMatrix.kt.
@@ -2966,7 +2967,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listNotificationDeliveries")
             .call(args)
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("listNotificationDeliveries: non-map payload")
         notificationDeliveryEvidenceFromMap(raw)
     }.onFailure { AuntieLog.e("Failed to load notification deliveries", it) }
@@ -2987,7 +2988,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("listBusinessAdmins")
             .call(emptyMap<String, Any>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("listBusinessAdmins: non-map payload")
         businessAdminRosterFromMap(raw)
     }.onFailure { AuntieLog.e("Failed to load the business admin roster", it) }
@@ -2997,14 +2998,14 @@ class AuntieRepository(
         // Serialization contract (only-true locks, per-stream gates, lockReason
         // empty-string-clears) lives in NotificationOverride.toCallablePayload().
         val payload = mapOf("key" to key, "override" to override.toCallablePayload())
-        functions.getHttpsCallable("saveBusinessNotificationOverride").call(payload).await()
+        functions.getHttpsCallable("saveBusinessNotificationOverride").call(payload).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to save notification override", it) }
 
     suspend fun deleteBusinessNotificationOverride(key: String): Result<Unit> = runCatching {
         authGate.ensureAuthenticated()
         require(key.isNotBlank()) { "notification override key required" }
-        functions.getHttpsCallable("deleteBusinessNotificationOverride").call(mapOf("key" to key)).await()
+        functions.getHttpsCallable("deleteBusinessNotificationOverride").call(mapOf("key" to key)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to delete notification override", it) }
 
@@ -3020,7 +3021,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("getMyAdminNotificationPrefs")
             .call(emptyMap<String, Any>())
-            .await().data as? Map<String, Any?>
+            .awaitCallable().data as? Map<String, Any?>
             ?: error("getMyAdminNotificationPrefs: non-map payload")
         val prefs = (raw["prefs"] as? Map<*, *>).orEmpty()
         AdminNotificationPrefs(
@@ -3045,7 +3046,7 @@ class AuntieRepository(
             "byCategory" to prefs.byCategory,
             "marketingOptIn" to prefs.marketingOptIn,
         )
-        functions.getHttpsCallable("saveMyAdminNotificationPrefs").call(mapOf("prefs" to prefsMap)).await()
+        functions.getHttpsCallable("saveMyAdminNotificationPrefs").call(mapOf("prefs" to prefsMap)).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to save admin notification prefs", it) }
 
@@ -3074,7 +3075,7 @@ class AuntieRepository(
         authGate.ensureAuthenticated()
         require(schema.id.isNotBlank()) { "FormSchema.id required" }
         val payload = mapOf("schema" to formSchemaToMap(schema))
-        functions.getHttpsCallable("saveFormSchema").call(payload).await()
+        functions.getHttpsCallable("saveFormSchema").call(payload).awaitCallable()
         // Await the audit write - fire-and-forget on a detached CoroutineScope
         // would drop the entry if the app process is killed mid-flight (per
         // [[fail-loud-policy]] / reviewer finding). fireSync suspends until
@@ -3094,7 +3095,7 @@ class AuntieRepository(
         require(id.isNotBlank()) { "FormSchema id required" }
         functions.getHttpsCallable("deleteFormSchema")
             .call(mapOf("id" to id))
-            .await()
+            .awaitCallable()
         // See comment on saveFormSchema: await the audit row so it doesn't drop
         // if the process is killed before the detached coroutine flushes.
         com.tribetails.auntieos.data.admin.AuditLog.fireSync(
@@ -3126,7 +3127,7 @@ class AuntieRepository(
                 "entityType" to entityType.name,
                 "entityId" to entityId,
             ))
-            .await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("setMediaProfilePhoto failed for $mediaFileId", it) }
 
@@ -3153,7 +3154,7 @@ class AuntieRepository(
     suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): Result<ManageSeriesResult> = runCatching {
         authGate.ensureAuthenticated()
         val args = ManageBookingSeriesArgs(action = action, kinfolkId = kinfolkId, batchId = batchId)
-        val raw = functions.getHttpsCallable("manageBookingSeries").call(args.toPayload()).await().data
+        val raw = functions.getHttpsCallable("manageBookingSeries").call(args.toPayload()).awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         val result = decodeManageBookingSeriesResult(raw as? Map<String, Any?>)
         check(result.ok) { "manageBookingSeries did not confirm the $action (ok=false) for series $batchId" }
@@ -3304,7 +3305,7 @@ class AuntieRepository(
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recap_recent_comms")
             .call(mapOf("kinfolkId" to kinfolkId))
-            .await().data as? Map<*, *>
+            .awaitCallable().data as? Map<*, *>
         decodeCommsRecap(raw)
     }.onFailure { AuntieLog.e("recapRecentComms failed for $kinfolkId", it) }
 }

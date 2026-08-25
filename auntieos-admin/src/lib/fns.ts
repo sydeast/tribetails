@@ -1,6 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, functions } from './firebase';
+import { noteSessionAlive, reactToCallableError } from './revokedSession';
 
 /**
  * Typed callables client, lifted from MyTribe/web/src/lib/fns.ts (the plan's
@@ -60,9 +61,16 @@ export async function call<TReq, TRes>(name: string, payload: TReq): Promise<TRe
   const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
   try {
     const result = await fn(payload);
+    // #573: a call that succeeded proves the current session works, which
+    // re-arms the teardown guard. See noteSessionAlive's header for why a guard
+    // that never re-arms goes deaf to the SECOND revocation.
+    noteSessionAlive();
     return result.data;
   } catch (err) {
     if (err instanceof FirebaseError && err.code === 'functions/deadline-exceeded') {
+      // Deliberately BEFORE the revocation check and returning early: a
+      // deadline is a network fact, never a statement about the session, and
+      // the relabelled error carries none of the server's tags anyway.
       throw new CallableTimeoutError(name);
     }
     // `functions/internal` is what the SDK reports for ANY transport failure:
@@ -78,6 +86,14 @@ export async function call<TReq, TRes>(name: string, payload: TReq): Promise<TRe
     ) {
       throw new CallableNotStubbedError(name);
     }
+    // #573: the backend refuses any call made with a revoked session's ID token
+    // (`functions/src/lib/sessionRevocation.ts`). This is the one place every
+    // admin callable passes through, so it is the one place that has to notice
+    // — otherwise the screen retries into a refusal that can never succeed, and
+    // the operator just sees the app stop working. Awaited so the sign-out is
+    // under way before the caller's own error handling paints anything, and it
+    // rethrows regardless: this reacts to the error, it does not consume it.
+    await reactToCallableError(err);
     throw err;
   }
 }

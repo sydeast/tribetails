@@ -2,8 +2,8 @@ package com.tribetails.auntieos.notifications
 
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.repository.awaitCallable
 import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.tasks.await
 
 /**
  * Dispatches visit-lifecycle notifications via the MyTribe catalog-driven
@@ -75,7 +75,7 @@ class VisitNotifier(
         val raw = functions
             .getHttpsCallable("dispatchVisitNotification")
             .call(payload)
-            .await()
+            .awaitCallable()
             .data as? Map<String, Any?>
             ?: error("VisitNotifier: callable returned non-map payload")
 

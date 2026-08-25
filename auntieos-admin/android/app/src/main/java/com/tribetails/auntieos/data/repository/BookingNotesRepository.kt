@@ -11,7 +11,6 @@ import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.tasks.await
 
 /**
  * Admin-side callable wrapper for booking notes living on the MyTribe-canonical
@@ -44,7 +43,7 @@ class BookingNotesRepository(
         require(body.isNotBlank()) { "Note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addBookingNote kinfolk=$kinfolkId booking=$bookingId")
         val args = AddBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
-        val raw = functions.getHttpsCallable("addBookingNote").call(args.toPayload()).await().data
+        val raw = functions.getHttpsCallable("addBookingNote").call(args.toPayload()).awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         decodeAddBookingNoteResult(raw as? Map<String, Any?>).noteId
     }.onFailure { AuntieLog.e("BookingNotesRepository.addKinfolkFacingNote failed", it) }
@@ -58,7 +57,7 @@ class BookingNotesRepository(
         require(body.isNotBlank()) { "Internal note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addInternalBookingNote kinfolk=$kinfolkId booking=$bookingId")
         val args = AddInternalBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
-        val raw = functions.getHttpsCallable("addInternalBookingNote").call(args.toPayload()).await().data
+        val raw = functions.getHttpsCallable("addInternalBookingNote").call(args.toPayload()).awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         decodeAddInternalBookingNoteResult(raw as? Map<String, Any?>).noteId
     }.onFailure { AuntieLog.e("BookingNotesRepository.addInternalNote failed", it) }

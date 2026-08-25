@@ -9,6 +9,7 @@ import android.util.Log
 import com.tribetails.auntieos.BuildConfig
 import com.tribetails.auntieos.config.MapboxConfig
 import com.tribetails.auntieos.data.api.RetrofitClient
+import com.tribetails.auntieos.data.repository.AppCheckActivation
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
@@ -28,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 
@@ -178,8 +180,28 @@ class AuntieOSApp : Application() {
             }
         }
 
+        // O-3 App Check (#576), the client half this admin never had. BEFORE any
+        // repository can fire a callable, so the first request of the process
+        // either carries an attestation token or is already recorded as
+        // unattested — never "we think it did".
+        //
+        // Installing the provider is synchronous and proves nothing on its own,
+        // so the probe fetches one real token. That runs on [appScope] rather
+        // than inline because a token fetch reaches the network and cold start
+        // must not wait on it; whichever way it lands, `AppCheckActivation.status`
+        // is a value the log, Sentry and the tests can all read.
+        //
+        // Skipped under Robolectric for the same reason as Sentry and the voice
+        // registration below: a JVM test has no Play Services, so the only thing
+        // it could produce is a failure line per test, and noise on this line is
+        // how a real failure stops being read.
+        AppCheckActivation.activate(isRobolectric = isRobolectric)
+        if (!isRobolectric) {
+            appScope.launch { AppCheckActivation.probe() }
+        }
+
         AuntieLog.i("AuntieOSApp created")
-        
+
         createNotificationChannels()
 
         // Voice tokens come from the admin-gated `mintVoiceAccessToken` callable

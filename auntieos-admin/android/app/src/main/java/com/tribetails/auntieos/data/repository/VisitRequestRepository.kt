@@ -14,7 +14,6 @@ import com.tribetails.auntieos.data.contracts.decodeListRescheduleRequestsResult
 import com.tribetails.auntieos.data.contracts.decodeResolveBookingCancellationRequestResult
 import com.tribetails.auntieos.data.contracts.decodeResolveBookingRescheduleRequestResult
 import com.tribetails.auntieos.util.AuntieLog
-import kotlinx.coroutines.tasks.await
 
 /**
  * The office's end of the two things a household can ask for on a visit: a new
@@ -52,7 +51,7 @@ class VisitRequestRepository(
         runCatching {
             val raw = functions.getHttpsCallable("listRescheduleRequests")
                 .call(ListRescheduleRequestsArgs(limit = limit).toPayload())
-                .await().data
+                .awaitCallable().data
             @Suppress("UNCHECKED_CAST")
             decodeListRescheduleRequestsResult(raw as? Map<String, Any?>).requests
         }.onFailure { AuntieLog.e("VisitRequestRepository.listRescheduleRequests failed", it) }
@@ -62,7 +61,7 @@ class VisitRequestRepository(
         runCatching {
             val raw = functions.getHttpsCallable("listCancelRequests")
                 .call(ListCancelRequestsArgs(limit = limit).toPayload())
-                .await().data
+                .awaitCallable().data
             @Suppress("UNCHECKED_CAST")
             decodeListCancelRequestsResult(raw as? Map<String, Any?>).requests
         }.onFailure { AuntieLog.e("VisitRequestRepository.listCancelRequests failed", it) }
@@ -90,7 +89,7 @@ class VisitRequestRepository(
                     note = note?.takeIf { it.isNotBlank() },
                 ).toPayload(),
             )
-            .await().data
+            .awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         decodeResolveBookingRescheduleRequestResult(raw as? Map<String, Any?>)
     }.onFailure { AuntieLog.e("VisitRequestRepository.resolveRescheduleRequest failed", it) }
@@ -116,7 +115,7 @@ class VisitRequestRepository(
                     note = note?.takeIf { it.isNotBlank() },
                 ).toPayload(),
             )
-            .await().data
+            .awaitCallable().data
         @Suppress("UNCHECKED_CAST")
         decodeResolveBookingCancellationRequestResult(raw as? Map<String, Any?>)
     }.onFailure { AuntieLog.e("VisitRequestRepository.resolveCancellationRequest failed", it) }
