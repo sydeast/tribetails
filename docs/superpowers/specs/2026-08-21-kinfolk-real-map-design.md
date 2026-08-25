@@ -1,7 +1,8 @@
 # Kinfolk see a real map
 
 **Date:** 2026-08-21  
-**Status:** approved, not yet implemented  
+**Status:** implemented. All three PRs below shipped: #531 (token plumbing +
+AuntieOS Android), #550 (kinfolk web), #570 (portal Android).  
 **Issue:** #520  
 **Operator ruling:** kinfolk must see an actual map for the KinCare route, not a line drawing.
 
@@ -243,14 +244,13 @@ what they get today, so every failure path is a degradation rather than a regres
 Three PRs, one concern each. Token infrastructure lands first because two surfaces depend
 on it, and it is validated on the surface that already has the SDK wired.
 
-| PR | Scope | Why this order |
-|---|---|---|
-| 1 | Token plumbing + AuntieOS Android | Fixes a screen blank in production today. Proves the credential model on the one surface already wired, before anything else depends on it. |
-| 2 | Kinfolk web (`mapbox-gl`, lazy) | The ruling that started this. Independent of PR 3. |
-| 3 | Portal Android (maven repo, SDK, `actual`, CI gate) | Largest build-surface change. Benefits from the model being proven twice. |
+| PR | Scope | Why this order | Shipped |
+|---|---|---|---|
+| 1 | Token plumbing + AuntieOS Android | Fixes a screen blank in production today. Proves the credential model on the one surface already wired, before anything else depends on it. | #531 |
+| 2 | Kinfolk web (`mapbox-gl`, lazy) | The ruling that started this. Independent of PR 3. | #550 |
+| 3 | Portal Android (maven repo, SDK, `actual`, CI gate) | Largest build-surface change. Benefits from the model being proven twice. | #570 |
 
-PR 1 is blocked on the operator revoking the old token and issuing the new one. PRs 2 and
-3 are blocked only on PR 1.
+All three merged.
 
 ## Out of scope
 

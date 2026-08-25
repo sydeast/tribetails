@@ -117,24 +117,47 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
       { name: 'TWILIO_AUTH_TOKEN', required: true, purpose: 'Signs sends, and verifies the delivery-status callback.' },
       { name: 'TWILIO_FROM_NUMBER', required: true, purpose: 'The number kinfolk see. A send with no from number fails.' },
       // The Voice SDK set. Not required for SMS, so an unset one must not read
-      // as an outage, but every one is needed before the admin app can answer.
+      // as an outage on that half of Twilio. `mintVoiceAccessToken.ts` is the
+      // authority on which of these four the admin app's voice calling actually
+      // needs; `required` here mirrors its own `requireSecret`/`requireSid`
+      // calls rather than being asserted independently.
       {
         name: 'TWILIO_API_KEY_SID',
-        required: false,
+        // `mintVoiceAccessToken.ts` calls `requireSid(...)` on this — a blank or
+        // malformed value throws `failed-precondition` on every mint, so a
+        // missing key is not a degraded voice feature, it is a broken one.
+        required: true,
         purpose: 'Signs the admin app voice token. Revokable on its own, so voice can be cut off without rotating the account auth token.',
       },
       {
         name: 'TWILIO_API_KEY_SECRET',
-        required: false,
+        // Same file, same unconditional `requireSecret(...)` call.
+        required: true,
         purpose: 'The other half of the voice signing key. Twilio shows it once at creation and never again.',
       },
       {
         name: 'TWIML_APP_SID',
+        // Genuinely optional, not stale: `mintVoiceAccessToken.ts` only sets
+        // `outgoingApplicationSid` when this is non-blank, and that grant field
+        // governs calls the admin app itself PLACES over the Voice SDK.
+        // `Voice.connect` appears nowhere in `auntieos-admin/android`, and the
+        // inbound "Press 3" live connect (`twilioVoice.ts`'s `dialOperator`)
+        // dials `client:auntie` with a `url`, not through this Application. A
+        // caller-facing screened call does not touch this secret at all.
         required: false,
-        purpose: 'The TwiML Application whose Voice URL answers the admin app leg of a screened call.',
+        purpose: 'The TwiML Application used only if the admin app ever places an outbound call over the Voice SDK. Unused today: the admin app has no outbound-calling UI, and the inbound "Press 3" live connect dials the client directly rather than through this Application.',
       },
       {
         name: 'PUSH_CREDENTIAL_SID',
+        // Also genuinely optional: `mintVoiceAccessToken.ts` mints a working
+        // token either way. Without it the Voice SDK cannot wake the admin app
+        // via Twilio's own push channel, so an incoming "Press 3" call only
+        // rings while the app is already open in the foreground; it does not
+        // fail. `AuntieFirebaseMessagingService.kt`'s own header comment marks
+        // this as the one thing that actually rings the phone in the
+        // background, so treat this as a real capability gap worth closing,
+        // not as a reason to mark it required and turn a deliberate degrade
+        // into a false "missing" status.
         required: false,
         purpose: 'Lets Twilio wake the admin app for an incoming call. Without it, calling works only while the app is open.',
       },
