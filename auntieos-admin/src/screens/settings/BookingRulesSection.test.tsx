@@ -311,7 +311,7 @@ describe('VisitsTrackingSection', () => {
    */
   it('tells the operator that an arrival with no usable location still goes through', () => {
     render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
-    expect(screen.getByText(/still goes through, and is recorded as\s+unverified/)).toBeTruthy();
+    expect(screen.getByText(/still goes through, and is recorded as unverified/)).toBeTruthy();
   });
 
   it('saves an edited ETA option list', async () => {

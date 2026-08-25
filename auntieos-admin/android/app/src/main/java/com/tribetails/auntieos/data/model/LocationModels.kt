@@ -176,6 +176,13 @@ data class BusinessSettings(
     var enableGPSTrackingForAllVisits: Boolean = true, // Master GPS tracking switch
     var enablePhotoLocationTagging: Boolean = true,
     var requireArrivalDepartureVerification: Boolean = true,
+    // ISSUE #582: how close to the household counts as arrived, in metres. The
+    // threshold under the switch above, not a second switch — there is no "off"
+    // value here, that is what the switch is for. 150 m matches
+    // ARRIVAL_RADIUS_DEFAULT_METERS on the server, which is what a settings
+    // document with no key falls back to; the two must stay in step or a save
+    // from this phone silently changes the rule for every surface.
+    var arrivalRadiusMeters: Int = 150,
     var autoStartTrackingOnVisitStart: Boolean = true,
     var trackingAccuracy: TrackingAccuracy = TrackingAccuracy.HIGH,
     var saveRoutesForDays: Int = 90, // Legal/liability retention

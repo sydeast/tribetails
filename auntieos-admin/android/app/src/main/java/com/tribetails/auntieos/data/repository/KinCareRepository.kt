@@ -13,6 +13,8 @@ import com.tribetails.auntieos.data.model.LocationPoint
 import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.model.VisitStatus
 import com.tribetails.auntieos.data.model.createdAtIso
+import com.tribetails.auntieos.domain.ArrivalCheckOutcome
+import com.tribetails.auntieos.domain.ArrivalCheckStatus
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.channels.ProducerScope
@@ -267,6 +269,89 @@ class KinCareRepository(
             "status" to VisitStatus.DEPARTED.name,
             "departedAt" to getCurrentTimestamp()
         )).onFailure { AuntieLog.e("Failed to mark departed for $sessionId", it) }
+
+    /**
+     * ISSUE #582: the three fields `verifyVisitArrival` stamps on a session, and
+     * the ONLY arrival-location state stored anywhere.
+     *
+     * A SCALAR, NOT A POSITION. Kinfolk read their own session documents
+     * directly, so a raw arrival coordinate would hand the household the
+     * Auntie's actual position — and it would be most revealing in exactly the
+     * case the check exists to catch, when she was somewhere else entirely.
+     * "How far from YOUR house" tells them nothing `arrivedAt` has not already.
+     * The fix reaches the server, is measured, and is discarded.
+     *
+     * WRITTEN BY THE SERVER, cleared by the client. This app never computes a
+     * distance; it only wipes a stale one.
+     */
+    private val arrivalEvidenceCleared: Map<String, Any> = mapOf(
+        "arrivalDistanceMeters" to "",
+        "arrivalAccuracyMeters" to "",
+        "arrivalLocationCheckedAt" to "",
+    )
+
+    /**
+     * Undo Arrival: rewind the status and leave NO arrival-location evidence
+     * behind.
+     *
+     * The evidence belongs to the arrival being undone. Left in place, the next
+     * arrival — quite possibly at a different door, quite possibly offline and
+     * so with no measurement of its own — inherits it, and wrong evidence can
+     * refuse a COMPLETE that should pass as easily as pass one that should be
+     * refused.
+     *
+     * Cleared to `""` rather than removed, matching how `arrivedAt` is already
+     * undone on this collection: the server reads a non-numeric value on those
+     * fields as "no evidence" (`readArrivalEvidence`), which is the state an
+     * undone arrival should be in.
+     */
+    suspend fun undoSessionArrival(sessionId: String, hadOnMyWay: Boolean): Result<Unit> =
+        patchSession(sessionId, buildMap {
+            put("status", if (hadOnMyWay) VisitStatus.ON_MY_WAY.name else VisitStatus.SCHEDULED.name)
+            put("arrivedAt", "")
+            putAll(arrivalEvidenceCleared)
+        }).onFailure { AuntieLog.e("Failed to undo arrival for $sessionId", it) }
+
+    /**
+     * ISSUE #582: ask the server how far the arrival just recorded was from the
+     * household.
+     *
+     * BEST EFFORT, BESIDE THE ARRIVAL PATCH, NEVER IN FRONT OF IT. The caller
+     * marks the visit arrived first, through the offline-tolerant direct patch
+     * above, and only then calls this. A failure here — offline, the callable
+     * down, no household coordinate — costs the verification and nothing else:
+     * the arrival has already landed and the visit can still be completed,
+     * recorded as unverified.
+     *
+     * The coordinate is sent and not stored. The server measures it against the
+     * household, writes back the DISTANCE, and keeps no position.
+     */
+    suspend fun verifyVisitArrival(
+        sessionId: String,
+        lat: Double,
+        lng: Double,
+        accuracyMeters: Double?,
+    ): Result<ArrivalCheckOutcome> = runCatching {
+        authGate.ensureAuthenticated()
+        require(sessionId.isNotBlank()) { "sessionId required" }
+        val payload = buildMap<String, Any> {
+            put("sessionId", sessionId)
+            put("lat", lat)
+            put("lng", lng)
+            // Optional on the server with a floor of 0; a device that reported
+            // no accuracy must omit the key rather than claim a perfect fix.
+            if (accuracyMeters != null && accuracyMeters >= 0) put("accuracyMeters", accuracyMeters)
+        }
+        val raw = functions.getHttpsCallable("verifyVisitArrival").call(payload).awaitCallable()
+        @Suppress("UNCHECKED_CAST")
+        val data = raw.data as? Map<String, Any?> ?: emptyMap()
+        ArrivalCheckOutcome(
+            status = ArrivalCheckStatus.fromWire(data["status"] as? String),
+            distanceMeters = (data["distanceMeters"] as? Number)?.toDouble(),
+            radiusMeters = (data["radiusMeters"] as? Number)?.toInt() ?: 150,
+            verificationRequired = data["verificationRequired"] as? Boolean ?: false,
+        )
+    }.onFailure { AuntieLog.e("verifyVisitArrival failed for $sessionId", it) }
 
     /**
      * A3: COMPLETE goes through [transitionBookingStatus], not [patchSession].

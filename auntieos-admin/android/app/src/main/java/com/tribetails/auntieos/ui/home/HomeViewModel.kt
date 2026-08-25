@@ -16,6 +16,10 @@ import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.first
+import com.tribetails.auntieos.domain.arrivalCheckNotice
+import com.tribetails.auntieos.domain.arrivalNoFixNotice
+import com.tribetails.auntieos.location.ArrivalFixProvider
+import com.tribetails.auntieos.location.FusedArrivalFixProvider
 import com.tribetails.auntieos.location.LocationTrackingService
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
@@ -86,7 +90,14 @@ data class HomeUiState(
     val expenses: Result<com.tribetails.auntieos.data.model.ExpenseSummary>? = null,
     val supplies: Result<com.tribetails.auntieos.data.model.SuppliesResult>? = null,
     val route: Result<com.tribetails.auntieos.data.model.RouteResult>? = null,
-    val actionError: String? = null
+    val actionError: String? = null,
+    // ISSUE #582: what the arrival-location check found, in the Auntie's words.
+    // Kept apart from [actionError] deliberately: the arrival LANDED in every
+    // one of these cases, so this is never a report of a failed action. It is a
+    // warning delivered while she is still standing at the door, which is the
+    // entire reason the check runs at arrival rather than only at COMPLETE.
+    // Null = nothing worth saying, which is the normal case.
+    val arrivalCheckNotice: String? = null,
 )
 
 class HomeViewModel(
@@ -97,7 +108,12 @@ class HomeViewModel(
     // W4-3: today's visits, the gatekeeper's session history and every
     // lifecycle button on this dashboard are KinCare domain.
     private val kinCareRepo: KinCareRepository,
-    private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier
+    private val notifier: VisitNotifier = AuntieOSApp.instance.visitNotifier,
+    // #582: where an arrival fix comes from. Injected so the arrival path is
+    // testable off-device, and so a build with no location permission is a
+    // provider that returns null rather than a special case in the ViewModel.
+    private val arrivalFixes: ArrivalFixProvider =
+        FusedArrivalFixProvider(AuntieOSApp.instance.applicationContext),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -354,7 +370,16 @@ class HomeViewModel(
                     allSessions       = allSessions,
                     kin               = allKin,
                     dashboardWidgets  = profile?.dashboardWidgets ?: emptyList(),
-                    actionError       = null
+                    actionError       = null,
+                    // ISSUE #582: CARRIED FORWARD, not defaulted. This is a
+                    // whole-model REBUILD, not a `copy`, so every field left off
+                    // this list is silently reset — the diff-vs-rebuild trap this
+                    // codebase is known for, here on UI state rather than on a
+                    // Firestore model. `runOnSession` calls `load()` in its
+                    // `finally`, immediately after the arrival that raised the
+                    // notice, so leaving it off would wipe the warning before the
+                    // Auntie could read it. It stays until she dismisses it.
+                    arrivalCheckNotice = _uiState.value.arrivalCheckNotice,
                 )
             } catch (e: Exception) {
                 AuntieLog.e("Failed to load dashboard data", e)
@@ -482,8 +507,52 @@ class HomeViewModel(
                     startGpsForSession(context, card.session)
                 }
                 notifier.notify(VisitNotifier.Event.ARRIVED, card.session)
+                // ISSUE #582. AFTER the arrival, never before it, and never
+                // gated on it: the arrival is a direct patch on an offline
+                // write queue and this is a callable, so anything that goes
+                // wrong here must cost the verification and nothing else.
+                checkArrivalLocation(sessionId)
             }
         }
+    }
+
+    /**
+     * ISSUE #582: measure the arrival that just landed against the household.
+     *
+     * WHY AT ARRIVAL AT ALL, when the server enforces this at COMPLETE anyway.
+     * Because an Auntie told at COMPLETE that she was a mile from the house is
+     * told at the end of the day, from the car, with nothing she can do about
+     * it; told here she is standing at the door and can simply mark it again
+     * from the right place. The enforcement is the server's; this is the part
+     * that keeps the enforcement from stranding anybody.
+     *
+     * EVERY FAILURE IS SILENT-AND-ALLOWED. No permission, no fix inside the
+     * timeout, no network, the callable down, a household we cannot place on a
+     * map: the fix provider returns null or the call fails, the arrival stands,
+     * and the visit completes later recorded as unverified. Nothing in this
+     * method can undo an arrival or block one.
+     */
+    private fun checkArrivalLocation(sessionId: String) {
+        viewModelScope.launch {
+            val required = _uiState.value.businessSettings.requireArrivalDepartureVerification
+            val fix = arrivalFixes.currentFix()
+            if (fix == null) {
+                _uiState.value = _uiState.value.copy(arrivalCheckNotice = arrivalNoFixNotice(required))
+                return@launch
+            }
+            val outcome = kinCareRepo
+                .verifyVisitArrival(sessionId, fix.lat, fix.lng, fix.accuracyMeters)
+                .getOrNull()
+            // A failed call is indistinguishable, from here, from having taken
+            // no fix at all: neither produced evidence, and both complete.
+            val notice = if (outcome == null) arrivalNoFixNotice(required) else arrivalCheckNotice(outcome)
+            _uiState.value = _uiState.value.copy(arrivalCheckNotice = notice)
+        }
+    }
+
+    /** Dismisses the arrival-check notice. Nothing to retry: the arrival already landed. */
+    fun clearArrivalCheckNotice() {
+        _uiState.value = _uiState.value.copy(arrivalCheckNotice = null)
     }
 
     fun departed(sessionId: String, context: Context) {

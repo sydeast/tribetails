@@ -725,9 +725,9 @@ internal fun VisitsTrackingPanel(
             Text(
                 "Only applies while the switch above is on. An arrival recorded further than this " +
                     "from the household stops the visit being marked complete. An arrival with no " +
-                    "usable location still goes through and is recorded as unverified — including " +
-                    "every arrival marked from this console, which has no GPS. Use the phone when " +
-                    "you want a visit verified.",
+                    "usable location still goes through and is recorded as unverified. That " +
+                    "includes every arrival marked from this console, which has no GPS. Use the " +
+                    "phone when you want a visit verified.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

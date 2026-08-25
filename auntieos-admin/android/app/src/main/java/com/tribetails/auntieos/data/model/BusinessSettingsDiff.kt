@@ -77,6 +77,7 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "enableGPSTrackingForAllVisits" to SettingsDiffField({ it.enableGPSTrackingForAllVisits }),
     "enablePhotoLocationTagging" to SettingsDiffField({ it.enablePhotoLocationTagging }),
     "requireArrivalDepartureVerification" to SettingsDiffField({ it.requireArrivalDepartureVerification }),
+    "arrivalRadiusMeters" to SettingsDiffField({ it.arrivalRadiusMeters }),
     "autoStartTrackingOnVisitStart" to SettingsDiffField({ it.autoStartTrackingOnVisitStart }),
     // Written as the enum NAME, which is byte-for-byte what the whole-object
     // write produced (Firestore serialises an enum to `name()`). Spelling it out

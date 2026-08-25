@@ -203,6 +203,29 @@ fun HomeScreen(
             }
         }
 
+        // ISSUE #582: what the arrival-location check found. NOT an error tone
+        // and no retry button, because the arrival landed in every case this
+        // can report — a retry would offer to redo something that worked. It is
+        // a warning, dismissible, and it is only ever raised while the operator
+        // requires verification. `Warning` rather than `Error` for the same
+        // reason: even the out-of-radius case leaves a recorded arrival behind,
+        // it just leaves one the visit cannot be completed on.
+        if (!state.arrivalCheckNotice.isNullOrBlank()) {
+            item {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Warning,
+                    title = "Arrival recorded",
+                    onDismiss = viewModel::clearArrivalCheckNotice,
+                ) {
+                    Text(
+                        state.arrivalCheckNotice.orEmpty(),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                }
+            }
+        }
+
         if (!state.isOffline) {
             // 17.3 Dashboard: render the widgets in the operator's saved order; hidden
             // widgets are omitted. On a phone everything stacks full-width. In edit mode
