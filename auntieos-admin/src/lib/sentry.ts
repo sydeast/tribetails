@@ -11,6 +11,13 @@ import * as Sentry from '@sentry/react';
  * disables reporting AND never blocks app boot. The DSN is the one external
  * secret the operator must supply (VITE_SENTRY_DSN) to activate it.
  *
+ * WHERE THE DSN COMES FROM: Google Secret Manager, as ADMIN_WEB_SENTRY_DSN,
+ * declared in scripts/client-secrets.mjs and fetched by release step 0c before
+ * the build, with a local .env as the fallback for a machine with no gcloud.
+ * A release NAMES a missing DSN and ships anyway: the degradation below is
+ * real and nothing depends on reporting, so refusing would block releases over
+ * a capability that has never been switched on.
+ *
  * VITE_ prefix is mandatory: only VITE_-prefixed vars reach the browser bundle.
  */
 

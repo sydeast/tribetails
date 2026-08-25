@@ -65,6 +65,10 @@ make_repo() {
 
   cp "$REPO_SCRIPTS"/*.sh "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.js "$r/scripts/" 2>/dev/null
+  # .mjs too, since step 0c runs scripts/client-secrets.mjs. Without this the
+  # step under test would fail for the uninteresting reason that the file it
+  # runs is not there.
+  cp "$REPO_SCRIPTS"/*.mjs "$r/scripts/" 2>/dev/null
   cp "$REPO_SCRIPTS"/*.py "$r/scripts/" 2>/dev/null
 
   # safe-deploy refuses a rules deploy unless these two are byte-identical.
@@ -262,10 +266,69 @@ STUB
 echo '<script src="/assets/index-deadbeef.js"></script>'
 STUB
 
-  printf '#!/usr/bin/env bash\necho "STUB npm $*"\nexit 0\n' > "$dir/stubs/npm"
+  # Step 0c writes each app's client build config into a file only a PRODUCTION
+  # build reads, and the release removes it again when it finishes. So "did the
+  # build actually get it" cannot be answered after the run; it is answered
+  # here, by the thing standing in for the build.
+  cat > "$dir/stubs/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "STUB npm $*"
+if [ -n "${NPM_CLIENT_ENV_LOG:-}" ]; then
+  for f in auntieos-admin/.env.production.local mytribe/web/.env.production.local; do
+    [ -f "$f" ] && sed "s|^|$f |" "$f" >> "$NPM_CLIENT_ENV_LOG"
+  done
+fi
+exit 0
+STUB
 
   chmod +x "$dir"/stubs/*
 }
+
+# secret_store <dir> NAME=VALUE ...: replace the gcloud stub with one that
+# answers the two reads scripts/client-secrets.mjs makes, out of a directory of
+# files named after secrets. Everything else gcloud is asked still fails, the
+# way the shared stub does, so a case about client config does not accidentally
+# start answering the revision prune or the function-secret preflight.
+#
+# The VALUES are obvious nonsense on purpose. A test fixture holding something
+# that looked like a real DSN or a real pk.* token would be a real key in git
+# the moment somebody pasted one in "to make it realistic".
+secret_store() {
+  local dir="$1"; shift
+  mkdir -p "$dir/secrets"
+  rm -f "$dir/secrets"/*
+  local kv
+  for kv in "$@"; do
+    printf '%s' "${kv#*=}" > "$dir/secrets/${kv%%=*}"
+  done
+  cat > "$dir/stubs/gcloud" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${GCLOUD_SECRETS_DIR:-}" ] || exit 1
+case "$1 $2 $3" in
+  "secrets list --project")
+    for f in "$GCLOUD_SECRETS_DIR"/*; do [ -e "$f" ] && basename "$f"; done
+    exit 0
+    ;;
+  "secrets versions access")
+    name=""
+    for a in "$@"; do case "$a" in --secret=*) name="${a#--secret=}" ;; esac; done
+    [ -n "$name" ] && [ -f "$GCLOUD_SECRETS_DIR/$name" ] || exit 1
+    cat "$GCLOUD_SECRETS_DIR/$name"
+    exit 0
+    ;;
+esac
+exit 1
+STUB
+  chmod +x "$dir/stubs/gcloud"
+}
+
+# Everything a release needs, so a case can take exactly one thing away.
+FULL_STORE=(
+  ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0
+  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1
+  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key
+)
 
 # run_release <dir> [VAR=VAL ...]: run the script under test, stdout+stderr
 # captured to $dir/out, exit code echoed.
@@ -1042,6 +1105,235 @@ if [ "$RC20" = "0" ] && grep -q "RELEASE_SKIP_FLEET_VERIFY=1" "$D20/out"; then
 else
   bad "RELEASE_SKIP_FLEET_VERIFY=1 did not skip the fleet verify"
 fi
+# ---------------------------------------------------------------------------
+# Step 0c: the client build config the web bundles compile in.
+#
+# WHY THIS IS A RELEASE TEST AND NOT ONLY A UNIT TEST. The resolver's own
+# branches are covered without gcloud in scripts/client-secrets.test.mjs. What
+# only a release test can show is the ORDER: that the values are there when the
+# build runs, that a missing one stops the run BEFORE anything is deployed, and
+# that the file they were written into does not outlive the release.
+# ---------------------------------------------------------------------------
+
+# A store with everything: the release completes, and each app's build sees its
+# OWN values. The two Sentry DSNs are different on purpose: auntieos-admin and
+# mytribe-web are separate Sentry projects, which is the whole reason the config
+# is written per app instead of exported once.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" "${FULL_STORE[@]}"
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 \
+        GCLOUD_SECRETS_DIR="$D/secrets" NPM_CLIENT_ENV_LOG="$D/clientenv")"
+OUT="$(cat "$D/out")"
+SEEN="$(cat "$D/clientenv" 2>/dev/null || true)"
+
+if [ "$RC" -eq 0 ]; then
+  ok "a release with every client secret stored completes"
+else
+  bad "a stored-complete release failed (rc $RC)"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
+  ok "step 0c says it resolved the client config"
+else
+  bad "step 0c never reported resolving the client config"
+fi
+if printf '%s' "$SEEN" | grep -q "auntieos-admin/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/0'"; then
+  ok "the admin build sees the admin DSN, from the store"
+else
+  bad "the admin build did not see the admin DSN"; printf '%s\n' "$SEEN"
+fi
+if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token'"; then
+  ok "the portal build sees the Mapbox token, from the store"
+else
+  bad "the portal build did not see the Mapbox token"; printf '%s\n' "$SEEN"
+fi
+# The one that a single exported environment could not have got right.
+if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/1'"; then
+  ok "each app gets its OWN VITE_SENTRY_DSN, not one shared value"
+else
+  bad "the portal did not get its own DSN"; printf '%s\n' "$SEEN"
+fi
+if printf '%s' "$SEEN" | grep -q "VITE_SENTRY_RELEASE='$(cd "$D/repo" && git rev-parse --short HEAD)'"; then
+  ok "VITE_SENTRY_RELEASE is the commit being released, derived not stored"
+else
+  bad "VITE_SENTRY_RELEASE did not name the released commit"; printf '%s\n' "$SEEN"
+fi
+if [ -f "$D/repo/auntieos-admin/.env.production.local" ] ||
+   [ -f "$D/repo/mytribe/web/.env.production.local" ]; then
+  bad "the generated client config outlived the release"
+else
+  ok "the generated client config does not outlive the release"
+fi
+if printf '%s' "$SEEN" | grep -q "APPCHECK_DEBUG"; then
+  bad "the App Check debug token reached a release build"
+else
+  ok "the App Check debug token never reaches a release build"
+fi
+
+# A REQUIRED value the store does not have. This is the refusal, and it has to
+# happen before anything ships.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
+                  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
+                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+FCALLS="$D/firebase-calls"
+RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets" FIREBASE_CALL_LOG="$FCALLS")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "a missing required client secret fails the release"
+else
+  bad "a missing required client secret did NOT fail the release"
+fi
+if printf '%s' "$OUT" | grep -q "VITE_MAPBOX_PUBLIC_TOKEN"; then
+  ok "the refusal names the variable that has no value"
+else
+  bad "the refusal never named VITE_MAPBOX_PUBLIC_TOKEN"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
+  ok "the refusal names the Secret Manager secret to create"
+else
+  bad "the refusal never named the secret"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "gcloud secrets create PORTAL_WEB_MAPBOX_PUBLIC_TOKEN"; then
+  ok "the refusal prints the command that fixes it"
+else
+  bad "the refusal printed no fix command"; echo "$OUT" | tail -25
+fi
+if [ -s "$FCALLS" ]; then
+  bad "the refused release still called firebase"; cat "$FCALLS"
+else
+  ok "nothing was deployed before the client-config refusal"
+fi
+
+# A secret that EXISTS and is EMPTY. This is the failure the whole step is
+# named after: the release would have compiled an empty string into the bundle
+# and shipped it looking healthy.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
+                  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
+                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "a stored-but-empty client secret fails the release"
+else
+  bad "an EMPTY client secret shipped"
+fi
+if printf '%s' "$OUT" | grep -q "VITE_MAPBOX_PUBLIC_TOKEN (portal).*is empty"; then
+  ok "the refusal says empty, not missing, and names the app"
+else
+  bad "the refusal did not distinguish empty from missing"; echo "$OUT" | tail -25
+fi
+
+# The admin App Check site key, which was warn-only until the reCAPTCHA
+# Enterprise key existed and is required now that it does (minted and registered
+# 2026-08-24). Its consumer is still unmerged (#587), which changes nothing here:
+# the release resolves from the declaration, not from grepping usage.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
+                  PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -ne 0 ]; then
+  ok "a missing admin App Check site key fails the release"
+else
+  bad "a missing admin App Check site key did NOT fail the release"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "VITE_ADMIN_APPCHECK_SITE_KEY (admin) <- ADMIN_WEB_APPCHECK_SITE_KEY"; then
+  ok "the refusal names the build variable AND the secret behind it"
+else
+  bad "the refusal did not name both names"; echo "$OUT" | tail -25
+fi
+# The names are two namespaces and the operator acts on the second one. A
+# refusal that told them to create a secret called VITE_... would have them
+# store a value nothing ever fetches, which is the mistake that was already
+# made once by hand.
+if printf '%s' "$OUT" | grep -q "gcloud secrets create VITE_"; then
+  bad "the refusal told the operator to create a VITE_-prefixed secret"
+else
+  ok "the refusal never names a VITE_-prefixed secret to create"
+fi
+
+# NEITHER SENTRY DSN IS SET, which is the live state of this product: both were
+# checked on 2026-08-24 and both are empty, in the .env files and in the store.
+# Web Sentry has never been switched on. A release must ship, name them, and not
+# read as though something is broken.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D" ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "a release with no Sentry DSN at all still ships"
+else
+  bad "an unset Sentry DSN stopped the release (rc $RC)"; echo "$OUT" | tail -25
+fi
+if [ "$(printf '%s' "$OUT" | grep -c "WARNING: VITE_SENTRY_DSN")" = "2" ]; then
+  ok "both apps' missing DSNs are named, once each"
+else
+  bad "the missing DSNs were not both named"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "WARNING: VITE_SENTRY_DSN.*never been"; then
+  ok "the warning says web Sentry has never been configured, not that it broke"
+else
+  bad "the warning does not say this is an accepted state"; echo "$OUT" | tail -25
+fi
+
+# The escape hatch, and it has to SAY it was used.
+D="$(make_repo)"; write_stubs "$D"
+secret_store "$D"
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 RELEASE_SKIP_CLIENT_SECRETS=1 \
+        GCLOUD_SECRETS_DIR="$D/secrets")"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "RELEASE_SKIP_CLIENT_SECRETS=1 skips step 0c"
+else
+  bad "RELEASE_SKIP_CLIENT_SECRETS=1 did not skip the refusal (rc $RC)"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "SKIPPED (RELEASE_SKIP_CLIENT_SECRETS=1)"; then
+  ok "the skipped step says it was skipped"
+else
+  bad "the skip was silent"; echo "$OUT" | tail -25
+fi
+
+# A machine that cannot reach Secret Manager AND cannot read the apps' .env
+# files (the shared stubs: gcloud exits 1, and the synthetic repo has no vite to
+# load .env through). It knows nothing about these values, and the one thing it
+# must not do is say they are fine. This is the shape of the 2026-07-26 secret
+# incident in miniature: a check that prints green when it did not run.
+D="$(make_repo)"; write_stubs "$D"
+fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
+RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1)"
+OUT="$(cat "$D/out")"
+
+if [ "$RC" -eq 0 ]; then
+  ok "an unreadable store does not fail the release"
+else
+  bad "an unreadable store failed the release (rc $RC)"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "client config: NOT CHECKED"; then
+  ok "an unreadable store says the client config was NOT CHECKED"
+else
+  bad "an unreadable store did not say it could not look"; echo "$OUT" | tail -25
+fi
+if printf '%s' "$OUT" | grep -q "every declared VITE_\* value resolved"; then
+  bad "an unreadable store reported the client config as resolved"
+else
+  ok "an unreadable store never claims the client config resolved"
+fi
+
 echo
 echo "release tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -1088,9 +1088,109 @@ VALUE or whether the DEPLOYED function carries the declaration; both live in the
 project. For those: `gcloud secrets list` and
 `gcloud functions describe <name> --gen2 --region us-central1`.
 
-`VITE_*` is different by mechanism, not by policy: Vite inlines
-`import.meta.env.VITE_*` into the bundle at build time, so it ships to every
-browser. Public client keys only. A Sentry DSN qualifies (write-only ingestion).
+### Client build config (`VITE_*`) comes from the store too
+
+`VITE_*` is different by mechanism, not by policy. Vite inlines
+`import.meta.env.VITE_*` into the bundle at build time, so whatever the build
+machine holds is what every browser downloads. That is a reason to put only
+public client keys in these variables. It is not a reason to keep them on one
+laptop, which is where they lived until 2026-08-24. Nothing in the repo listed
+which variables existed either: `VITE_ADMIN_APPCHECK_SITE_KEY` appeared in
+neither `.env.example`, so a fresh clone had no way to find out it existed.
+
+They are declared in `scripts/client-secrets.mjs`, one row per variable per app,
+and release step 0c fills them from Secret Manager before anything is built:
+
+```bash
+node scripts/client-secrets.mjs --list    # what each app declares
+node scripts/client-secrets.mjs --check   # resolve it; refuse if one is empty
+```
+
+**Two namespaces, and they are not interchangeable.** `ADMIN_WEB_SENTRY_DSN` is
+the name of the SECRET. `VITE_SENTRY_DSN` is the name of the BUILD variable the
+app reads. `client-secrets.mjs` maps one to the other, and it is the only thing
+that does. A secret created under a `VITE_`-prefixed name is a value nothing
+ever fetches, which has already happened once: the admin App Check site key was
+first stored as `VITE_ADMIN_APPCHECK_SITE_KEY` and had to be recreated as
+`ADMIN_WEB_APPCHECK_SITE_KEY`. `--list` prints both columns, and every refusal
+names both.
+
+**To store a value**, once, per secret:
+
+```bash
+gcloud secrets create ADMIN_WEB_SENTRY_DSN --project auntieos-ttpc \
+  --replication-policy=automatic
+printf %s "<the value>" | gcloud secrets versions add ADMIN_WEB_SENTRY_DSN \
+  --project auntieos-ttpc --data-file=-
+```
+
+Unlike a function secret, no redeploy pins a version here: the next release
+reads `latest` at build time, so a rotated value ships with the next build and
+nothing has to be rebound.
+
+**Precedence**, which is Vite's own and not something the release invents:
+
+| rank | source | who sets it |
+| --- | --- | --- |
+| 1 | `process.env` | an explicit inline override, and how CI passes a repo secret in |
+| 2 | `<app>/.env.production.local` | the release, from Secret Manager |
+| 3 | `<app>/.env.local`, `<app>/.env` | you, on your own machine |
+
+Rank 2 is written at step 0c and removed when the release finishes, and only a
+production build reads it. `vite` dev and vitest never do. So the store wins a
+release build while local development keeps working with no gcloud, no
+credentials and no network.
+
+### What stops a release and what only gets named
+
+A release **refuses** when a REQUIRED variable resolves to nothing, or when its
+stored secret exists and the latest version is empty. It names the variable, the
+secret and the command that fixes it. Two are required today:
+`ADMIN_WEB_APPCHECK_SITE_KEY` and `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN`. Both back a
+feature that is live and that fails invisibly without them: App Check reads
+`unconfigured`, and the visit route silently drops to the SVG polyline.
+
+Everything else is **named and shipped**. Both Sentry DSNs are optional, and
+that is a deliberate reading of the actual state rather than an oversight:
+checked on 2026-08-24, `auntieos-admin/.env` and `mytribe/web/.env.local` both
+carry an empty `VITE_SENTRY_DSN` and no other source has one. Web Sentry has
+never been switched on for either app, `lib/sentry.ts` treats a blank DSN as an
+ordinary state, and nothing depends on it. A release that refused would be
+blocking on a capability the product does not use, which is the same defect as a
+missing gate pointed the other way. So every release warns about them, by name,
+and ships. Turning Sentry on is a decision worth making; it is not this script's
+to force.
+
+`RELEASE_SKIP_CLIENT_SECRETS=1` skips the check entirely if you know what is
+missing.
+
+Two names are deliberately outside all of this, and **neither is in Secret
+Manager, so do not go looking for them there**. `VITE_SENTRY_RELEASE` is derived:
+step 0c sets it to the commit being released, because a release tag maintained by
+hand names the last release someone remembered to edit it for. There is no
+secret behind it and nothing to create. `VITE_APPCHECK_DEBUG_TOKEN` is
+per-developer and bypasses App Check attestation. It is the one genuinely
+sensitive name in the set, it stays in your own `.env.local`, and it must never
+be stored centrally or set in CI.
+
+**One trap on the Mapbox token.** `PORTAL_WEB_MAPBOX_PUBLIC_TOKEN` must hold the
+**URL-restricted** `web-maps-public` token, not the `MAPBOX_PUBLIC_TOKEN` sitting
+in `~/.gradle/gradle.properties`. That one is the **unrestricted mobile** token,
+and the #520 design says in as many words why there are two: Mapbox validates URL
+restrictions from a browser `Referer` and answers a mobile SDK request `403`, so
+one restricted token cannot serve all three surfaces. The split is also what
+bounds the damage. This variable is compiled into a bundle any browser can read,
+so putting the unrestricted token here publishes a credential whose only
+protection was that it was not published.
+
+CI previews get these from **repo secrets named after the Secret Manager
+secrets** (`.github/workflows/preview.yml`), because a GitHub runner has no
+gcloud and a fork PR must never be handed credentials. An unset repo secret
+builds the preview anyway and the job warns which values were empty.
+
+```bash
+gh secret set PORTAL_WEB_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails
+```
 
 The `AIzaSy...` values in the repo are Firebase Web API keys, public by design.
 Access is controlled by Firestore rules and App Check.

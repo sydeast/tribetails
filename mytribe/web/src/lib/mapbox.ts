@@ -5,9 +5,12 @@ import type { Map as MapboxMap, MapOptions } from 'mapbox-gl';
  * docs/superpowers/specs/2026-08-21-kinfolk-real-map-design.md).
  *
  * Wired exactly like VITE_SENTRY_DSN (lib/sentry.ts): a VITE_-prefixed build
- * time variable read from mytribe/web/.env.local, inlined by Vite into the
- * bundle. There is no server process to inject a runtime secret into, and a
- * public `pk.*` Mapbox token is a client credential by design: read-only,
+ * time variable, inlined by Vite into the bundle. A release fills it from
+ * Google Secret Manager (PORTAL_WEB_MAPBOX_PUBLIC_TOKEN, declared in
+ * scripts/client-secrets.mjs) before it builds; mytribe/web/.env.local is the
+ * local fallback for a machine with no gcloud.
+ *
+ * A public `pk.*` Mapbox token is a client credential by design: read-only,
  * scoped to styles/tiles/fonts, and URL-restricted to the portal's domain.
  * Blast radius, not secrecy, is what makes it safe to ship.
  *
