@@ -60,13 +60,32 @@ internal fun nowIso(): String = Instant.now().toString().substringBefore('.') + 
  * with no measurement of its own — inherits it, and wrong evidence can refuse a
  * COMPLETE that should pass as easily as pass one that should be refused.
  *
+ * ISSUE #608: `departedAt` is cleared for the same reason, one field further
+ * on. Undo is offered from DEPARTED as well as ARRIVED, so leaving it produced
+ * a session whose status said it had not started and whose document still
+ * carried the moment it ended. `missingVisitSteps`
+ * (`functions/src/lib/arrivalVerification.ts`) reads `arrivedAt` and
+ * `departedAt` together to gate a COMPLETE, so the stale half let a later
+ * re-arrival complete against a departure the operator had explicitly undone —
+ * and invoicing, KinTale timing and the household's record of when their Auntie
+ * left all inherited that wrong time. The web path
+ * (`admin/setVisitLifecycle.ts`) has cleared both since PR #606 and carried a
+ * comment saying Android should follow. This is Android following.
+ *
+ * NOT cleared, deliberately: `onMyWayAt`, which is what chooses the undo target
+ * (`ON_MY_WAY` when set, `SCHEDULED` when not) and so is the leg being rewound
+ * TO; `completedAt`, unreachable because undo is only offered from ARRIVED and
+ * DEPARTED; and `etaMinutesAway`, left alone to match the web path.
+ *
  * Cleared to `""` rather than removed, matching `arrivedAt`: the server reads a
  * non-numeric value on those fields as "no evidence" (`readArrivalEvidence`),
- * which is exactly the state an undone arrival should be in.
+ * which is exactly the state an undone arrival should be in, and every reader
+ * that does `.take(10)` or `.trim()` on a timestamp keeps working.
  */
 internal fun undoArrivalPatch(undoTo: String): Map<String, Any> = mapOf(
     "status" to undoTo,
     "arrivedAt" to "",
+    "departedAt" to "",
     "arrivalDistanceMeters" to "",
     "arrivalAccuracyMeters" to "",
     "arrivalLocationCheckedAt" to "",

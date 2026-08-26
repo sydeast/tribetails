@@ -367,14 +367,16 @@ export async function setVisitLifecycleHandler(
     // clear a field (e.g. Undo Arrived)"), not a field delete, so every reader
     // that does `.take(10)` or `.trim()` on it keeps working.
     patch.arrivedAt = '';
-    // ONE DELIBERATE DIVERGENCE FROM ANDROID, disclosed rather than silent.
-    // Android's undo clears `arrivedAt` alone, so undoing from DEPARTED leaves
-    // a `departedAt` on a session whose status is back at ON_MY_WAY: a record
-    // that says the visit both ended and has not started. `missingVisitSteps`
-    // (lib/arrivalVerification.ts) reads exactly these two fields to decide
-    // whether a visit may be completed, so the stale value is not cosmetic --
-    // it would let a re-arrival complete while claiming a departure that was
-    // undone. Cleared here. Android should follow; it is named in the PR.
+    // Undoing from DEPARTED must not leave a `departedAt` behind: that is a
+    // record saying the visit both ended and has not started.
+    // `missingVisitSteps` (lib/arrivalVerification.ts) reads exactly these two
+    // fields to decide whether a visit may be completed, so the stale value is
+    // not cosmetic -- it would let a re-arrival complete while claiming a
+    // departure that was undone.
+    //
+    // This was a disclosed divergence from Android when #606 shipped it here
+    // first. Android closed it in #608 (`KinCareSessionsScreen.kt`'s
+    // `undoArrivalPatch`), so the two paths now clear the same field set.
     patch.departedAt = '';
     // ISSUE #582, same reasoning one field further on. `verifyVisitArrival`
     // stamps how far from the household THIS arrival was recorded, and
