@@ -65,9 +65,20 @@ class MediaGalleryViewModel(
             }
         }
     }
-    fun deleteMedia(mediaId: String) {
+    /**
+     * #577: takes the ROW, not a bare id, so the scope cross-check can be sent
+     * off the document itself. `entityId` is what the server compares against
+     * the stored doc, and this VM's own constructor arg comes from the route,
+     * whose id segment equals `entityId` only by convention. Mirrors Android's
+     * `MediaGalleryViewModel.deleteMediaFile(mediaFile)`.
+     *
+     * No optimistic removal: the tile goes on the next mediaStream emission, so
+     * a refusal leaves the row exactly where it is with the reason on screen,
+     * rather than dropping a tile that is still there.
+     */
+    fun deleteMedia(mediaFile: MediaFile) {
         scope.launch {
-            when (val result = dataSource.deleteMedia(mediaId)) {
+            when (val result = dataSource.deleteMedia(mediaFile._id, mediaFile.entityId)) {
                 is WriteResult.Ok  -> _uiState.update { it.copy(error = null) }
                 is WriteResult.Err -> _uiState.update { it.copy(error = result.message) }
             }

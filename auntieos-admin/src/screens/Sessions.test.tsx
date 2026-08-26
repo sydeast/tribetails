@@ -20,8 +20,28 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
  * `api/sessions.ts` takes only a type from this module, so replacing it whole
  * costs nothing else.
  */
-const { useDocById } = vi.hoisted(() => ({ useDocById: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useDocById }));
+const { useDocById, useCollection } = vi.hoisted(() => ({
+  useDocById: vi.fn(),
+  useCollection: vi.fn(),
+}));
+vi.mock('../lib/firestore', () => ({ useDocById, useCollection }));
+/**
+ * The detail this screen opens now hosts writes (#397 L19), so it reaches three
+ * seams jsdom cannot serve. They are stubbed at the module boundary so these
+ * LIST specs stay about the list: SessionDetail's own suite is what exercises
+ * the writes.
+ */
+vi.mock('../api/sessionsWrite', () => ({
+  setVisitLifecycle: vi.fn(),
+  updateKinCareSession: vi.fn(),
+}));
+vi.mock('../api/settings', () => ({
+  getBusinessSettings: vi.fn().mockResolvedValue({ serviceRates: {}, serviceDurations: {} }),
+}));
+vi.mock('../lib/breadcrumbs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/breadcrumbs')>();
+  return { ...actual, useBreadcrumbs: () => ({ points: [], error: null, ready: true }) };
+});
 
 import { Sessions } from './Sessions';
 
@@ -104,7 +124,11 @@ afterAll(() => {
 const user = userEvent.setup();
 
 beforeEach(() => {
-  useDocById.mockReset().mockReturnValue({ status: 'ready', data: null });
+  // 'loading' by default, which is what a just-mounted subscription really is:
+  // the detail then renders the placeholder row the list already holds. A spec
+  // that cares what the LIVE document says sets this itself.
+  useDocById.mockReset().mockReturnValue({ status: 'loading' });
+  useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
   loadMore.mockReset();
   reload.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([]));
@@ -607,10 +631,33 @@ describe('Sessions screen: a failed FIRST page is not a failed LATER page', () =
 describe('Sessions screen: the deep link into one visit', () => {
   it('opens the named visit straight from the list when the window holds it', () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'vis_1', serviceType: 'Dog Walk' })]));
+    // The subscription has not delivered yet; the row the list holds is the
+    // placeholder, so the detail paints immediately instead of flashing
+    // "unavailable".
+    useDocById.mockReturnValue({ status: 'loading' });
     render(<Sessions initialSessionId="vis_1" />);
     expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
-    // No second read was needed: the row was already on screen.
-    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', null);
+    expect(screen.getByText(/Dog Walk/)).toBeInTheDocument();
+  });
+  /**
+   * #397 L19. This read used to be a FALLBACK, running only when the paged rows
+   * did not hold the id, and the streamed copy won otherwise. That was right
+   * while the detail was read-only and wrong the moment it gained the visit
+   * clock: `usePagedCollection` is a one-shot `getDocs`, so a clock-in would
+   * have written the document and left the screen rendering the row it was
+   * opened with. The live document is now what the detail renders, whether or
+   * not the list happens to hold the same visit.
+   */
+  it('subscribes to the visit even when the list already holds it, because the detail writes', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ _id: 'vis_1', serviceType: 'Dog Walk' })]));
+    useDocById.mockReturnValue({
+      status: 'ready',
+      data: entry({ _id: 'vis_1', serviceType: 'Dog Walk', status: 'ARRIVED' }),
+    });
+    render(<Sessions initialSessionId="vis_1" />);
+    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_1');
+    // The LIVE status, not the one the paged row was fetched with.
+    expect(screen.getByText('ARRIVED')).toBeInTheDocument();
   });
   it('READS a visit the window does not hold, rather than reporting it unavailable', () => {
     usePagedCollection.mockReturnValue(paged([]));

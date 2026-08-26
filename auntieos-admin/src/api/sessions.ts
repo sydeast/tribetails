@@ -111,6 +111,29 @@ export interface SessionEntry {
    * mirroring the wasm's `scaffoldReport`. Blank until the visit is ARRIVED.
    */
   arrivedAt?: string | undefined;
+  /**
+   * When the Auntie declared she was on her way. Same free-text caveat as
+   * `startTime`. Blank until ON_MY_WAY, and cleared by nothing: an undone
+   * arrival clears `arrivedAt`, never this, because whether an on-my-way was
+   * ever declared is what decides where the undone visit goes BACK to (see
+   * `functions/src/lib/visitLifecycle.ts#undoArrivalTarget`).
+   */
+  onMyWayAt?: string | undefined;
+  /**
+   * The CLOCK-OUT, which is NOT the same event as `completedAt`. This is the
+   * Auntie leaving the house; `completedAt` is the office ruling that the visit
+   * happened and is therefore billable, and `transitionBookingStatus` can stamp
+   * the second without the first ever existing. `SessionDetail.tsx` used to
+   * label `completedAt` "Clocked out", which made every visit completed from
+   * the Bookings screen look as though someone had clocked out of it.
+   *
+   * Read SERVER-SIDE too, by `lib/arrivalVerification.ts#missingVisitSteps`,
+   * which is what the operator's "Verify arrival and departure" switch checks
+   * before allowing a COMPLETE. So this field is not merely displayed.
+   *
+   * Same free-text caveat as `startTime`.
+   */
+  departedAt?: string | undefined;
   /** Same caveat as `startTime`. */
   endTime?: string | undefined;
   /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets, see `lib/sessionFormat.ts#sessionState`. */
@@ -119,9 +142,20 @@ export interface SessionEntry {
   completedAt?: string | undefined;
   notes?: string | undefined;
   /**
-   * The visit's finished GPS trail. Read by `KinTaleCompose.tsx`'s GPS block,
-   * which is why it is modeled here now; see {@link SessionGpsSummary}. ABSENT
-   * whenever GPS never ran, which is most sessions.
+   * The visit's finished GPS trail: the DURABLE route copy, baked onto the
+   * session when tracking stops (`LocationTrackingService#saveRoute` on
+   * Android, `saveSessionGpsSummary` on both). Read by the admin route panel
+   * (`SessionDetail.tsx`) and by `KinTaleCompose.tsx`'s GPS block; see
+   * {@link SessionGpsSummary} for the shape. ABSENT whenever GPS never ran,
+   * which is most sessions.
+   *
+   * Its `route` points are `{ lat, lng, t }` -- NOT the `breadcrumbs`
+   * subcollection's shape, which has two spellings in the wild;
+   * `lib/breadcrumbs.ts` owns both normalizers and explains why.
+   *
+   * It is a separate source from the breadcrumbs rather than a duplicate of
+   * them: `scheduled/purgeOldVisitRoutes.ts` deletes breadcrumbs past the
+   * operator's retention window, and this down-sampled copy is what survives.
    */
   gpsSummary?: SessionGpsSummary | undefined;
   /**

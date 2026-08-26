@@ -1264,7 +1264,7 @@ private class FirestoreClientBookingDataSource(
     override fun mediaStream(entityId: String, entityType: String) = client.mediaStream(entityId, entityType)
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) =
         client.uploadMedia(entityId, entityType, bytes, mimeType)
-    override suspend fun deleteMedia(mediaId: String) = client.deleteMedia(mediaId)
+    override suspend fun deleteMedia(mediaId: String, entityId: String) = client.deleteMedia(mediaId, entityId)
 
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(report: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(report)

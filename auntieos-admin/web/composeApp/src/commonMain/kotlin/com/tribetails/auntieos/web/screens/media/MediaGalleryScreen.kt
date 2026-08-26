@@ -316,7 +316,7 @@ private fun EmptyMediaState() {
 @Composable
 private fun MediaGrid(
     items: List<MediaFile>,
-    onDelete: (String) -> Unit,
+    onDelete: (MediaFile) -> Unit,
     onSetProfile: (String) -> Unit,
 ) {
     // A single pending-delete target drives the confirmation dialog. Hoisted here
@@ -358,7 +358,7 @@ private fun MediaGrid(
         DeleteMediaDialog(
             item = target,
             onConfirm = {
-                onDelete(target._id)
+                onDelete(target)
                 pendingDelete = null
             },
             onDismiss = { pendingDelete = null },
@@ -474,7 +474,7 @@ private class FirestoreClientMediaDataSource(
         client.uploadMedia(entityId, entityType, bytes, mimeType)
     override suspend fun pickAndUploadMedia(entityId: String, entityType: String, max: Int) =
         client.pickAndUploadMedia(entityId, entityType, max)
-    override suspend fun deleteMedia(mediaId: String) = client.deleteMedia(mediaId)
+    override suspend fun deleteMedia(mediaId: String, entityId: String) = client.deleteMedia(mediaId, entityId)
     override suspend fun setMediaProfilePhoto(mediaFileId: String, entityType: String, entityId: String) =
         client.setMediaProfilePhoto(mediaFileId, entityType, entityId)
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)

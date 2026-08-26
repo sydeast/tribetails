@@ -122,12 +122,15 @@ interface SessionsProps {
  * chips can, and it already exists. A control that lies about its own scope is
  * worse than a control that looks different from its neighbours.
  *
- * Selecting a row opens `SessionDetail`, a read-only detail view of that one
- * session (status/service, timing, household/kin, notes), resolved from this
- * list's own stream (no second fetch, see SessionsProps.onSelect's doc and the
- * `detailEntry` lookup below). Still NOT built here: the WRITE flows,
- * clock-in/out, GPS tracking, and KinTale compose (`KinCareDetailScreen`/
- * `KinTaleComposeScreen` in the wasm reference), which are a separate surface.
+ * Selecting a row opens `SessionDetail`, the operational detail for that one
+ * visit: status/service, timing, household/kin, notes, AND, since #397 L19, the
+ * writes this screen's header used to say were "still NOT built here" -- the
+ * visit clock (on the way / clock in / clock out / undo arrival), the details
+ * editor, and the GPS route. It is resolved by a live by-id subscription rather
+ * than out of this list's paged rows, because those rows are a one-shot read
+ * and a screen that hosts writes cannot render a frozen copy of the record; see
+ * the `detailEntry` lookup below. Still NOT built here: KinTale compose
+ * (`KinTaleComposeScreen` in the wasm reference, #397 L20), a separate surface.
  */
 export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -199,27 +202,34 @@ export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
   // "all 1 visit" is not a sentence anyone writes.
   const everyOne = loaded === 1 ? 'the 1' : `all ${String(loaded)}`;
 
-  // The row SessionDetail shows, resolved from the SAME live stream `rows`
-  // already holds (never a second fetch): the Bookings.tsx `detailEntry`
-  // pattern. `null` (stream not ready, or the id no longer resolves to a row)
-  // gets its own honest "unavailable" state inside SessionDetail, never a blank.
+  // The row SessionDetail shows, resolved by a LIVE by-id subscription.
+  //
+  // THE DEEP-LINK HALF (issue #389's rule, applied to visits) was always the
+  // reason this read existed: a link into this screen names a visit, and
+  // resolving it by searching the rows this list happens to have loaded answers
+  // a different question -- an invoice line routes here for work that is by
+  // definition old enough to have been billed. A blank id issues no read at all
+  // (see useDocById), so a list with nothing open pays nothing for it.
+  //
+  // WHAT CHANGED WITH #397 L19: it used to run only as a FALLBACK, when the id
+  // was missing from the paged rows, and the streamed copy won otherwise. That
+  // was right while the detail was read-only and wrong the moment it gained the
+  // visit clock and the details editor, because `usePagedCollection` is a
+  // one-shot `getDocs`, not a listener -- so a clock-in would have written the
+  // document and left this screen rendering the stale row it was opened with,
+  // for as long as it stayed open. `useDocById`'s own header states the rule it
+  // exists for: "the sheets these ids open host writes ... and a frozen copy of
+  // the record would disagree with the list behind it the moment one landed."
+  //
+  // The streamed row is still used, as the PLACEHOLDER while the subscription's
+  // first snapshot is in flight, so opening a visit the list already holds
+  // paints instantly rather than flashing "unavailable".
   const streamedEntry =
     detailId !== null && rows.status === 'ready'
       ? (rows.data.find((r) => r._id === detailId) ?? null)
       : null;
-  // THE DEEP-LINK HALF (issue #389's rule, applied to visits). A link into this
-  // screen names a visit; resolving it by searching the rows this list happens
-  // to have loaded answers a different question, and an invoice line routes here
-  // for work that is by definition old enough to have been billed. So a visit the
-  // window does not hold is read by id instead of being reported as unavailable.
-  // A blank id issues no read at all (see useDocById), so the ordinary list pays
-  // nothing for this.
-  const directEntry = useDocById<SessionEntry>(
-    'kin_care_sessions',
-    detailId !== null && streamedEntry === null ? detailId : null,
-  );
-  const detailEntry =
-    streamedEntry ?? (directEntry.status === 'ready' ? directEntry.data : null);
+  const liveEntry = useDocById<SessionEntry>('kin_care_sessions', detailId);
+  const detailEntry = liveEntry.status === 'ready' ? liveEntry.data : streamedEntry;
 
   // Only this screen's OWN selection takes over with its own detail view; an
   // external onSelect (see the prop's doc) means the caller owns the detail UI
