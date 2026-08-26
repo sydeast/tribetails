@@ -93,7 +93,13 @@ class AuntieTimeStateMachineTest {
     }
 
     @Test
-    fun `Undo Arrived always clears arrivedAt and writes only those two fields`() {
+    fun `Undo Arrived always clears arrivedAt and the arrival-location evidence with it`() {
+        val cleared = mapOf(
+            "arrivedAt" to "",
+            "arrivalDistanceMeters" to "",
+            "arrivalAccuracyMeters" to "",
+            "arrivalLocationCheckedAt" to "",
+        )
         val withOmw = kinCarePatch(
             session(status = "ARRIVED", onMyWayAt = "2026-07-21T14:00:00Z"),
             AuntieTimeAction.UndoArrived,
@@ -101,10 +107,36 @@ class AuntieTimeStateMachineTest {
         )
         val withoutOmw = kinCarePatch(session(status = "ARRIVED"), AuntieTimeAction.UndoArrived, now)
 
-        assertEquals(mapOf("status" to "ON_MY_WAY", "arrivedAt" to ""), withOmw)
-        assertEquals(mapOf("status" to "SCHEDULED", "arrivedAt" to ""), withoutOmw)
+        assertEquals(mapOf("status" to "ON_MY_WAY") + cleared, withOmw)
+        assertEquals(mapOf("status" to "SCHEDULED") + cleared, withoutOmw)
         // Undo must never stamp the clock onto the doc.
         assertTrue(withOmw.values.none { it == now })
+    }
+
+    /**
+     * ISSUE #582. The three evidence fields are the distance measured for the
+     * arrival being undone. Left behind, the NEXT arrival — quite possibly at a
+     * different door, quite possibly offline and so with no measurement of its
+     * own — inherits them, and wrong evidence can refuse a COMPLETE that should
+     * pass or pass one that should be refused.
+     */
+    @Test
+    fun `Undo Arrived leaves no arrival-location evidence for a later arrival to inherit`() {
+        val patch = kinCarePatch(session(status = "ARRIVED"), AuntieTimeAction.UndoArrived, now)
+        assertEquals("", patch["arrivalDistanceMeters"])
+        assertEquals("", patch["arrivalAccuracyMeters"])
+        assertEquals("", patch["arrivalLocationCheckedAt"])
+    }
+
+    /**
+     * A re-arrival must not carry the previous attempt's evidence forward
+     * either. `Arrived` writes the stamp and nothing else; the measurement is
+     * the server's to make, through `verifyVisitArrival`.
+     */
+    @Test
+    fun `Arrived does not itself claim any location evidence`() {
+        val patch = kinCarePatch(session(status = "SCHEDULED"), AuntieTimeAction.Arrived, now)
+        assertTrue(patch.keys.none { it.startsWith("arrivalDistance") || it.startsWith("arrivalAccuracy") })
     }
 
     @Test

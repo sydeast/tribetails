@@ -48,6 +48,30 @@ import java.time.LocalDate
 
 internal fun nowIso(): String = Instant.now().toString().substringBefore('.') + "Z"
 
+/**
+ * ISSUE #582: the exact patch Undo Arrival writes.
+ *
+ * Pulled out of the composable so the field set is testable without a Compose
+ * runtime, the way the desktop console's `kinCarePatch` already is.
+ *
+ * The three arrival-location fields are cleared alongside `arrivedAt` because
+ * the evidence belongs to the arrival being undone. Left behind, the next
+ * arrival — quite possibly at a different door, quite possibly offline and so
+ * with no measurement of its own — inherits it, and wrong evidence can refuse a
+ * COMPLETE that should pass as easily as pass one that should be refused.
+ *
+ * Cleared to `""` rather than removed, matching `arrivedAt`: the server reads a
+ * non-numeric value on those fields as "no evidence" (`readArrivalEvidence`),
+ * which is exactly the state an undone arrival should be in.
+ */
+internal fun undoArrivalPatch(undoTo: String): Map<String, Any> = mapOf(
+    "status" to undoTo,
+    "arrivedAt" to "",
+    "arrivalDistanceMeters" to "",
+    "arrivalAccuracyMeters" to "",
+    "arrivalLocationCheckedAt" to "",
+)
+
 private fun startGpsTracking(context: Context, sessionId: String, kinfolkId: String) {
     runCatching {
         val intent = Intent(context, LocationTrackingService::class.java).apply {
@@ -613,7 +637,16 @@ private fun ActionRow(
                     label = "Undo Arrival",
                     onClick = {
                         val undoTo = if (!session.onMyWayAt.isNullOrBlank()) "ON_MY_WAY" else "SCHEDULED"
-                        onPatch(mapOf("status" to undoTo, "arrivedAt" to ""), "Arrival undone.")
+                        // #582: the arrival-location evidence belongs to the
+                        // arrival being undone. Left behind, the next arrival —
+                        // quite possibly at a different door, quite possibly
+                        // offline and so with no measurement of its own —
+                        // inherits it, and wrong evidence can refuse a COMPLETE
+                        // that should pass as easily as pass one that should be
+                        // refused. Cleared to "" the way `arrivedAt` already is:
+                        // the server reads a non-numeric value on those fields
+                        // as no evidence.
+                        onPatch(undoArrivalPatch(undoTo), "Arrival undone.")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.Undo2, contentDescription = null, modifier = Modifier.size(14.dp)) },

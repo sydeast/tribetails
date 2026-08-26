@@ -3161,6 +3161,12 @@ data class BusinessSettings(
     val enableGPSTrackingForAllVisits: Boolean = true,
     val enablePhotoLocationTagging: Boolean = true,
     val requireArrivalDepartureVerification: Boolean = true,
+    // ISSUE #582: how close to the household counts as arrived, in metres. The
+    // threshold under the switch above, not a second switch — there is no "off"
+    // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which
+    // is what a settings document with no key falls back to; the two have to
+    // stay in step or a save from this console would change the rule.
+    val arrivalRadiusMeters: Int = 150,
     val autoStartTrackingOnVisitStart: Boolean = true,
     // Wire String: LOW | MEDIUM | HIGH (android keeps its enum, maps to/from these).
     val trackingAccuracy: String = "HIGH",

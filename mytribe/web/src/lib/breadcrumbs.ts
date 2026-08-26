@@ -3,6 +3,75 @@ import { useEffect, useState } from 'react';
 import { firestore } from './firebase';
 import type { RoutePoint } from '@tribetails/geo';
 
+/** One breadcrumb document, as either writer may have left it. */
+interface BreadcrumbWire {
+  lat?: unknown;
+  lng?: unknown;
+  latitude?: unknown;
+  longitude?: unknown;
+  timestamp?: unknown;
+}
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+/**
+ * One breadcrumb as a `RoutePoint`, or null when it carries no usable
+ * coordinate pair.
+ *
+ * TWO WRITERS, TWO SHAPES, and until issue #607 this module read only one of
+ * them. Android's `LocationPoint` (`data/model/LocationModels.kt`) writes
+ * `latitude` / `longitude` / `timestamp: Long`; the wasm web client, retired in
+ * #513, wrote `lat` / `lng` / `timestamp: String`. Reading the short pair alone
+ * meant every point from an Android Auntie came back with both coordinates null
+ * and was dropped -- which, with the wasm client gone, is every point of every
+ * current visit. A household watching a live visit saw an empty map and no
+ * error, because an empty route and a discarded route render identically.
+ *
+ * Both shapes are on live documents, so this accepts both rather than asking
+ * for a migration. `auntieos-admin/src/lib/breadcrumbs.ts#normalizeBreadcrumb`
+ * is the same function for the operator's side, and
+ * `GitliveFirestoreClient#decodeBreadcrumb` is the same function again for the
+ * Kotlin clients. Three copies because the readers are in three languages; they
+ * are kept semantically identical on purpose, and each has a test naming both
+ * shapes.
+ *
+ * `lat`/`lng` is preferred over `latitude`/`longitude` only because a document
+ * carrying both was written by something that meant the short pair; no writer
+ * in the tree emits both today, so the order is a tiebreak that should never
+ * fire rather than a rule.
+ *
+ * `timestamp` is accepted as a number (Android's epoch millis) or a string (the
+ * older ISO writes), and a point whose timestamp is neither still counts: it
+ * has a real location, and the map does not draw the clock. Dropping it would
+ * put a hole in the polyline over a field nothing renders.
+ */
+export function normalizeBreadcrumb(data: BreadcrumbWire): RoutePoint | null {
+  const lat = num(data.lat) ?? num(data.latitude);
+  const lng = num(data.lng) ?? num(data.longitude);
+  if (lat === null || lng === null) return null;
+  const raw = data.timestamp;
+  const t =
+    typeof raw === 'number' && Number.isFinite(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? Date.parse(raw)
+        : NaN;
+  return Number.isNaN(t) ? { lat, lng } : { lat, lng, t };
+}
+/**
+ * Chronological, on the NORMALIZED millisecond value.
+ *
+ * Firestore sorts a mixed-type field by type group first, so a server
+ * `orderBy('timestamp')` would return every Android ping before every web one
+ * regardless of when they were taken. That is a second reason this query
+ * carries no `orderBy`, alongside the index it would need.
+ *
+ * A point with no usable timestamp sorts to the front rather than being
+ * dropped, which is the `?? 0` this module has always used.
+ */
+export function orderBreadcrumbs(points: RoutePoint[]): RoutePoint[] {
+  return [...points].sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+}
 /**
  * Realtime GPS pings for one in-progress visit, ported from
  * GitliveFirestoreClient.breadcrumbsStream. Path is
@@ -19,17 +88,11 @@ export function subscribeBreadcrumbs(
   return onSnapshot(
     ref,
     (snapshot) => {
-      const points: RoutePoint[] = snapshot.docs
-        .map((doc): RoutePoint | null => {
-          const data = doc.data() as { lat?: unknown; lng?: unknown; timestamp?: unknown };
-          const lat = typeof data.lat === 'number' ? data.lat : null;
-          const lng = typeof data.lng === 'number' ? data.lng : null;
-          if (lat === null || lng === null) return null;
-          const parsed = typeof data.timestamp === 'string' ? Date.parse(data.timestamp) : NaN;
-          return Number.isNaN(parsed) ? { lat, lng } : { lat, lng, t: parsed };
-        })
-        .filter((p): p is RoutePoint => p !== null)
-        .sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+      const points = orderBreadcrumbs(
+        snapshot.docs
+          .map((doc) => normalizeBreadcrumb(doc.data() as BreadcrumbWire))
+          .filter((p): p is RoutePoint => p !== null),
+      );
       onUpdate(points);
     },
     // There was no error callback here, so a permission-denied or transport

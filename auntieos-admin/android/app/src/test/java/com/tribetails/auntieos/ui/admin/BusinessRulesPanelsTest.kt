@@ -269,6 +269,42 @@ class BusinessRulesPanelsTest {
         assertTrue(visitRecordsError("90", "5", "30, 30")!!.startsWith("Draft-retention choices"))
     }
 
+    /**
+     * ISSUE #582. The bounds are the rules guard's own
+     * (`bsInt('arrivalRadiusMeters', 10, 5000)`), so the operator reads what is
+     * wrong here rather than watching the save bounce off firestore.rules with
+     * no usable message.
+     */
+    @Test
+    fun `the visit-records draft refuses an arrival radius the rules would refuse`() {
+        assertNull(visitRecordsError("90", "5, 10", "30, 60", "150"))
+        assertNull(visitRecordsError("90", "5, 10", "30, 60", "10"))
+        assertNull(visitRecordsError("90", "5, 10", "30, 60", "5000"))
+        // Tighter than a consumer GPS fix's own error bar: it would refuse everybody.
+        assertTrue(
+            visitRecordsError("90", "5, 10", "30, 60", "9")!!.startsWith("Arrival must be within"),
+        )
+        // Wider than 5 km is not a check.
+        assertTrue(
+            visitRecordsError("90", "5, 10", "30, 60", "5001")!!.startsWith("Arrival must be within"),
+        )
+        // A cleared box is an unfinished edit, never a silent zero.
+        assertTrue(
+            visitRecordsError("90", "5, 10", "30, 60", "")!!.startsWith("Arrival must be within"),
+        )
+    }
+
+    /**
+     * #582 diff-vs-rebuild, on the field this change adds. `settings.copy(...)`
+     * must write the radius and nothing beside it.
+     */
+    @Test
+    fun `editing only the arrival radius writes only the arrival radius`() {
+        val edited = loaded.copy(arrivalRadiusMeters = 300)
+        val changes = com.tribetails.auntieos.data.model.businessSettingsFieldChanges(loaded, edited)
+        assertEquals(mapOf<String, Any?>("arrivalRadiusMeters" to 300), changes)
+    }
+
     @Test
     fun `an unknown stored vocabulary value stays offered rather than snapping to a legal one`() {
         val out = optionsIncluding(BOOKING_MODE_WIRE, "LEGACY_MODE")

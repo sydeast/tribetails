@@ -442,6 +442,12 @@ export { transitionBookingStatus } from './admin/transitionBookingStatus';
 // row that a client may change has exactly one server-side owner.
 export { setVisitLifecycle } from './admin/setVisitLifecycle';
 export { updateKinCareSession } from './admin/updateKinCareSession';
+// #582: measures a recorded arrival against the household's stored coordinate
+// and stamps the DISTANCE on the visit. It owns no status, so it sits after the
+// three callables that do: `setVisitLifecycle` records THAT an arrival
+// happened, this one records how far from the household it was recorded, and
+// `transitionBookingStatus` is where that measurement is enforced at COMPLETE.
+export { verifyVisitArrival } from './admin/verifyVisitArrival';
 // Punchlist B4: the write half of the shared vet catalog. `submitVetClinic`
 // (portal, create) had no update or delete counterpart on the server, so both
 // Kotlin trees wrote `vet_clinics` directly and the React admin could not edit a
@@ -572,6 +578,10 @@ export { onKinTaleCommentCreate } from './triggers/onKinTaleCommentCreate';
 export { onBookingNoteCreate } from './triggers/onBookingNoteCreate';
 export { onRatingCreate } from './triggers/onRatingCreate';
 export { onKinfolkCreate } from './triggers/onKinfolkCreate';
+// #582: geocodes a household's address into `serviceLocation` whenever the
+// address on the record changes. The only hook that sees every address write:
+// three client surfaces patch `kinfolk` directly, with no callable in front.
+export { onKinfolkAddressWrite } from './triggers/onKinfolkAddressWrite';
 // #593: strips location metadata from every uploaded video, asynchronously.
 export { onMediaFileVideoStrip } from './triggers/onMediaFileVideoStrip';
 

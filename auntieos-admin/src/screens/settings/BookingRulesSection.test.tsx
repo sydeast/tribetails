@@ -180,6 +180,7 @@ describe('visitsTrackingPatch (pure)', () => {
     trackingAccuracy: 'HIGH',
     enablePhotoLocationTagging: true,
     requireArrivalDepartureVerification: true,
+    arrivalRadiusMeters: '150',
     allowClientLocationSharing: true,
     saveRoutesForDays: '90',
     defaultEtaMinutes: 15,
@@ -209,6 +210,51 @@ describe('visitsTrackingPatch (pure)', () => {
       error: 'Draft-retention choices: 30 is listed twice.',
     });
   });
+
+  // -- #582: the arrival radius ---------------------------------------------
+
+  it('carries the arrival radius through as a number', () => {
+    const out = visitsTrackingPatch({ ...base, arrivalRadiusMeters: '300' });
+    expect('patch' in out && out.patch.arrivalRadiusMeters).toBe(300);
+  });
+
+  /**
+   * The bounds are the rules guard's own (`bsInt('arrivalRadiusMeters', 10,
+   * 5000)`), so the operator reads what is wrong here instead of watching a
+   * save bounce off firestore.rules with no usable message.
+   */
+  it('refuses a radius tighter than a GPS fix would ever be, naming the field', () => {
+    expect(visitsTrackingPatch({ ...base, arrivalRadiusMeters: '5' })).toEqual({
+      error: 'Arrival must be within: Enter 10 to 5000 metres.',
+    });
+  });
+
+  it('refuses a radius so wide it is not a check', () => {
+    expect(visitsTrackingPatch({ ...base, arrivalRadiusMeters: '5001' })).toMatchObject({
+      error: 'Arrival must be within: Enter 10 to 5000 metres.',
+    });
+  });
+
+  it('refuses a cleared box rather than saving a silent zero', () => {
+    expect(visitsTrackingPatch({ ...base, arrivalRadiusMeters: '' })).toEqual({
+      error: 'Arrival must be within: Enter a number.',
+    });
+  });
+
+  /**
+   * Validated even with the switch off. The value is saved either way, and a
+   * bad one left behind becomes an unfixable problem the first time somebody
+   * turns verification on.
+   */
+  it('validates the radius even while arrival verification is switched off', () => {
+    expect(
+      visitsTrackingPatch({
+        ...base,
+        requireArrivalDepartureVerification: false,
+        arrivalRadiusMeters: '0',
+      }),
+    ).toMatchObject({ error: 'Arrival must be within: Enter 10 to 5000 metres.' });
+  });
 });
 
 describe('VisitsTrackingSection', () => {
@@ -230,6 +276,42 @@ describe('VisitsTrackingSection', () => {
       allowClientLocationSharing: false,
       saveRoutesForDays: 365,
     });
+  });
+
+  /** #582: the threshold under the arrival switch, editable on this surface too. */
+  it('saves an edited arrival radius', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+
+    const radius = screen.getByLabelText('Arrival must be within (metres)');
+    await user.clear(radius);
+    await user.type(radius, '300');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ arrivalRadiusMeters: 300 });
+  });
+
+  it('refuses to save an out-of-range radius and says why', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+
+    const radius = screen.getByLabelText('Arrival must be within (metres)');
+    await user.clear(radius);
+    await user.type(radius, '2');
+
+    expect(await screen.findByText('Arrival must be within: Enter 10 to 5000 metres.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The panel must not promise a check that cannot always run. An arrival with
+   * no usable location completes and is recorded as unverified, and the
+   * operator has to be able to read that here.
+   */
+  it('tells the operator that an arrival with no usable location still goes through', () => {
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    expect(screen.getByText(/still goes through, and is recorded as unverified/)).toBeTruthy();
   });
 
   it('saves an edited ETA option list', async () => {

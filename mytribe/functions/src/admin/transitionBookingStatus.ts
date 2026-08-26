@@ -7,11 +7,15 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import {
+  ARRIVAL_RADIUS_CODE,
   ARRIVAL_VERIFICATION_CODE,
+  arrivalRadiusMessage,
   arrivalVerificationMessage,
-  isArrivalVerificationRequired,
   missingVisitSteps,
+  readArrivalEvidence,
+  readArrivalSettings,
 } from '../lib/arrivalVerification';
+import { classifyArrivalDistance } from '../lib/geo';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -165,7 +169,15 @@ export async function transitionBookingStatusHandler(
   }
 
   const prev = snap.data() as
-    | { status?: unknown; notes?: unknown; arrivedAt?: unknown; departedAt?: unknown }
+    | {
+        status?: unknown;
+        notes?: unknown;
+        arrivedAt?: unknown;
+        departedAt?: unknown;
+        // #582: the distance `verifyVisitArrival` measured, if it ever ran.
+        arrivalDistanceMeters?: unknown;
+        arrivalAccuracyMeters?: unknown;
+      }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
 
@@ -254,22 +266,71 @@ export async function transitionBookingStatusHandler(
   // COMPLETE, which is the one transition the server owns and the one that
   // decides whether a visit happened. Absent reads as OFF; see
   // `lib/arrivalVerification.ts` for why this gate reads that way round.
-  if (args.action === 'COMPLETE' && (await isArrivalVerificationRequired(db()))) {
-    const missing = missingVisitSteps(prev ?? {});
-    if (missing.length > 0) {
-      await auditRefusal({
-        uid,
-        sessionId: args.sessionId,
-        action: args.action,
-        code: ARRIVAL_VERIFICATION_CODE,
-        from: decision.from,
-        description: `COMPLETE refused: session '${args.sessionId}' has no ${missing.join(' or ')} recorded`,
+  //
+  // ISSUE #582 adds a SECOND gate under the same switch: how far from the
+  // household the arrival was recorded. Its verdict is computed here rather
+  // than trusted off the document — the session carries a measured distance,
+  // this decides what that distance means against the operator's radius.
+  let arrivalLocationVerdict: 'within' | 'outside' | 'unverified' | 'not_checked' = 'not_checked';
+  if (args.action === 'COMPLETE') {
+    const arrivalSettings = await readArrivalSettings(db());
+    if (arrivalSettings.required) {
+      const missing = missingVisitSteps(prev ?? {});
+      if (missing.length > 0) {
+        await auditRefusal({
+          uid,
+          sessionId: args.sessionId,
+          action: args.action,
+          code: ARRIVAL_VERIFICATION_CODE,
+          from: decision.from,
+          description: `COMPLETE refused: session '${args.sessionId}' has no ${missing.join(' or ')} recorded`,
+        });
+        throw new HttpsError('failed-precondition', arrivalVerificationMessage(missing), {
+          code: ARRIVAL_VERIFICATION_CODE,
+          sessionId: args.sessionId,
+          missing,
+        });
+      }
+
+      // ORDERED AFTER the steps check on purpose: a visit with no arrival at
+      // all must report the missing step, not a distance it could not have.
+      const evidence = readArrivalEvidence(prev ?? {});
+      arrivalLocationVerdict = classifyArrivalDistance({
+        distanceMeters: evidence.distanceMeters,
+        accuracyMeters: evidence.accuracyMeters,
+        radiusMeters: arrivalSettings.radiusMeters,
       });
-      throw new HttpsError('failed-precondition', arrivalVerificationMessage(missing), {
-        code: ARRIVAL_VERIFICATION_CODE,
-        sessionId: args.sessionId,
-        missing,
-      });
+
+      if (arrivalLocationVerdict === 'outside') {
+        await auditRefusal({
+          uid,
+          sessionId: args.sessionId,
+          action: args.action,
+          code: ARRIVAL_RADIUS_CODE,
+          from: decision.from,
+          description:
+            `COMPLETE refused: session '${args.sessionId}' arrival was recorded ` +
+            `${Math.round(evidence.distanceMeters ?? 0)}m from the household ` +
+            `(radius ${arrivalSettings.radiusMeters}m)`,
+        });
+        throw new HttpsError(
+          'failed-precondition',
+          arrivalRadiusMessage(evidence.distanceMeters ?? 0, arrivalSettings.radiusMeters),
+          {
+            code: ARRIVAL_RADIUS_CODE,
+            sessionId: args.sessionId,
+            distanceMeters: evidence.distanceMeters,
+            radiusMeters: arrivalSettings.radiusMeters,
+            accuracyMeters: evidence.accuracyMeters,
+          },
+        );
+      }
+      // 'unverified' FALLS THROUGH TO SUCCESS. No fix, an offline arrival, a
+      // household that will not geocode, or an arrival recorded from the
+      // desktop console, which has no GPS at all — none of them is evidence the
+      // Auntie was elsewhere, and refusing on absence would strand the honest
+      // ones. It is recorded on the audit entry below instead, so a visit that
+      // completed unverified is findable rather than indistinguishable.
     }
   }
   const patch: Record<string, unknown> = {
@@ -309,6 +370,11 @@ export async function transitionBookingStatusHandler(
       // only that one was supplied, so the trail carries no free-text the
       // operator may have put a household detail into.
       reasonSupplied: notesAppended,
+      // #582: `unverified` here is the interesting one. It marks a visit that
+      // completed under the arrival rule with no usable location evidence, so
+      // "which completions were actually verified" is answerable after the
+      // fact. `not_checked` means the operator has the rule switched off.
+      arrivalLocationVerdict,
     },
   }).catch((err) => {
     logEvent({
