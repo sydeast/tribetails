@@ -151,7 +151,9 @@ export interface SessionEntry {
    *
    * Its `route` points are `{ lat, lng, t }` -- NOT the `breadcrumbs`
    * subcollection's shape, which has two spellings in the wild;
-   * `lib/breadcrumbs.ts` owns both normalizers and explains why.
+   * `lib/breadcrumbs.ts` owns both normalizers and explains why -- and since
+   * #610 it owns the ONLY summary normalizer: `lib/kinTaleGps.ts` re-exports
+   * that one rather than keeping the second copy that had drifted from it.
    *
    * It is a separate source from the breadcrumbs rather than a duplicate of
    * them: `scheduled/purgeOldVisitRoutes.ts` deletes breadcrumbs past the

@@ -162,6 +162,7 @@ export function useBreadcrumbs(sessionId: string | null): BreadcrumbsState {
 
 /**
  * The DURABLE copy of a route, off the session document's own `gpsSummary`.
+ * THE ONLY summary normalizer in this app; `lib/kinTaleGps.ts` imports it.
  *
  * WHY A SECOND SOURCE EXISTS AT ALL. `scheduled/purgeOldVisitRoutes.ts` deletes
  * breadcrumbs past the operator's retention window, and the summary is what
@@ -171,8 +172,26 @@ export function useBreadcrumbs(sessionId: string | null): BreadcrumbsState {
  * visits an operator goes back to look at.
  *
  * The summary's own points are `{ lat, lng, t }` (`GpsPoint`, the shape
- * `getMyVisits.ts` projects), NOT the breadcrumb subcollection's two shapes, so
- * this normalizer is separate rather than shared.
+ * `getMyVisits.ts` projects), NOT the breadcrumb subcollection's two shapes,
+ * which is why this is a different function from `normalizeBreadcrumb` above
+ * rather than the same one twice.
+ *
+ * `t === 0` IS DROPPED, NOT READ AS 1970 (issue #610). `GpsPoint` documents the
+ * sentinel in as many words -- "Epoch millis. 0 if unknown"
+ * (`LocationModels.kt`) -- and a summary can carry it: `GpsPoint.t` defaults to
+ * `0L` when a stored point has no `t`, and the desktop writer's ISO parser
+ * returns `0L` on any string it cannot read. Passed through, a zero at either
+ * END of the route reaches `RouteMap`'s `durationFromPoints` fallback and spans
+ * 1970 to the real ping: about 56 years, rendered as a five-figure hour count.
+ *
+ * NO SORT, AND THAT IS THE FIX RATHER THAN AN OMISSION. A summary's points
+ * arrive in walked order: both writers map over an already-ordered list
+ * (`LocationTrackingService#downsamplePoints`, and the desktop's `downsample`),
+ * and Android's own composer renders `gpsSummary.route` as-is
+ * (`KinTaleReportViewModel.kt:324`). Sorting on `t ?? 0` was not preserving
+ * that order, it was overriding it -- and it placed every unknown-clock point
+ * at the FRONT, moving the start of the drawn polyline. `orderBreadcrumbs`
+ * remains for the breadcrumbs SUBcollection, which genuinely arrives unordered.
  */
 export function routePointsFromGpsSummary(summary: unknown): RoutePoint[] {
   if (summary === null || typeof summary !== 'object') return [];
@@ -186,7 +205,7 @@ export function routePointsFromGpsSummary(summary: unknown): RoutePoint[] {
     const lng = num(p.lng);
     if (lat === null || lng === null) continue;
     const t = num(p.t);
-    points.push(t === null ? { lat, lng } : { lat, lng, t });
+    points.push(t === null || t === 0 ? { lat, lng } : { lat, lng, t });
   }
-  return orderBreadcrumbs(points);
+  return points;
 }
