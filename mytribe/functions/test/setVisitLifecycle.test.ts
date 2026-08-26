@@ -25,6 +25,7 @@ vi.mock('firebase-admin/firestore', async () => {
 import { setVisitLifecycleHandler } from '../src/admin/setVisitLifecycle';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../src/lib/auditEvents';
+import { ARRIVAL_EVIDENCE_FIELDS } from '../src/lib/arrivalVerification';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -258,6 +259,57 @@ describe('undoing an arrival', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'UNDO_ARRIVAL' }));
     expect(writeAt(ctx, 's1')?.data).toMatchObject({ arrivedAt: '', departedAt: '' });
+  });
+  /**
+   * ISSUE #582, arriving after this callable did. `verifyVisitArrival` stamps
+   * how far from the household an arrival was recorded, and
+   * `transitionBookingStatus` refuses a COMPLETE on a measurement outside the
+   * operator's radius. The measurement belongs to the arrival being undone, so
+   * leaving it lets the NEXT arrival, quite possibly at a different door and
+   * quite possibly offline with no measurement of its own, inherit it. Wrong
+   * evidence can refuse a COMPLETE that should pass as easily as pass one that
+   * should be refused.
+   *
+   * The Android and desktop Auntie Time cards clear the same three fields on
+   * their own direct undo patch, which does not come through here.
+   */
+  it('clears the arrival-location evidence, so a later arrival cannot inherit it', async () => {
+    const ctx = seed({
+      s1: visit({
+        status: 'ARRIVED',
+        arrivedAt: '2026-08-24T14:02:00Z',
+        arrivalDistanceMeters: 2400,
+        arrivalAccuracyMeters: 10,
+        arrivalLocationCheckedAt: '2026-08-24T14:02:03Z',
+      }),
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'UNDO_ARRIVAL' }));
+    expect(writeAt(ctx, 's1')?.data).toMatchObject({
+      arrivalDistanceMeters: '',
+      arrivalAccuracyMeters: '',
+      arrivalLocationCheckedAt: '',
+    });
+  });
+  /** Every field the shared list names is cleared; a field added there cannot be forgotten here. */
+  it('clears every field the shared evidence list names', async () => {
+    const ctx = seed({ s1: visit({ status: 'ARRIVED', arrivedAt: '2026-08-24T14:02:00Z' }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'UNDO_ARRIVAL' }));
+    const written = writeAt(ctx, 's1')?.data ?? {};
+    for (const field of ARRIVAL_EVIDENCE_FIELDS) {
+      expect(written[field]).toBe('');
+    }
+  });
+  /** A forward clock-in must not wipe anything; only the undo clears. */
+  it('does NOT clear the evidence on a plain arrival', async () => {
+    const ctx = seed({ s1: visit({ status: 'ON_MY_WAY', onMyWayAt: '2026-08-24T13:40:00Z' }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'ARRIVED' }));
+    const written = writeAt(ctx, 's1')?.data ?? {};
+    for (const field of ARRIVAL_EVIDENCE_FIELDS) {
+      expect(written).not.toHaveProperty(field);
+    }
   });
 });
 

@@ -192,6 +192,31 @@ export interface ArrivalLocationEvidence {
   arrivalLocationCheckedAt?: unknown;
 }
 
+/**
+ * The three fields, named once, so every path that has to wipe them wipes the
+ * same set. There are two such paths and they are not interchangeable:
+ * `setVisitLifecycle`'s UNDO_ARRIVAL (the server-side undo the web admin uses,
+ * #397 L19) and the direct client patch the Android and desktop Auntie Time
+ * cards still write. Both must clear, because either one can be the undo that
+ * happened.
+ */
+export const ARRIVAL_EVIDENCE_FIELDS = [
+  'arrivalDistanceMeters',
+  'arrivalAccuracyMeters',
+  'arrivalLocationCheckedAt',
+] as const;
+/**
+ * The patch fragment that leaves a session with no arrival-location evidence.
+ *
+ * Cleared to `''`, not deleted, matching how `arrivedAt` is already undone on
+ * this collection (`KinCareRepository#patchKinCareSession` documents the
+ * empty string as this collection's spelling of "cleared"). `readArrivalEvidence`
+ * below reads a non-numeric value as no evidence, which is exactly the state an
+ * undone arrival should be in, so the two spellings agree.
+ */
+export function clearedArrivalEvidence(): Record<string, string> {
+  return Object.fromEntries(ARRIVAL_EVIDENCE_FIELDS.map((f) => [f, '']));
+}
 /** A finite number off a document field, or null. Strings and NaN are not evidence. */
 function finiteNumber(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
