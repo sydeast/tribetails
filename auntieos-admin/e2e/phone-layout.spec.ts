@@ -568,8 +568,22 @@ test('the form-schema wizard, its rail and its footer fit at 390px', async ({ pa
  * here rather than in an operator's hand.
  *
  * The Per-Kin step is the tall one, and the reason the 2026-08-06 review named
- * this screen the tallest in the set: the built-in default carries six items,
- * each an item card with its own two toggles and a conditions editor.
+ * this screen the tallest in the set: the built-in default carries eight
+ * per-Kin items, each an item card with its own two toggles and a conditions
+ * editor.
+ *
+ * THE COUNT TRACKS ANDROID'S `DefaultKinTaleTemplate`, so do not "restore" it to
+ * six. It was six while `lib/kinTale/model.ts` mirrored the Compose desktop's
+ * built-in; issue #397 item L20 corrected it to Android's, because the kinfolk
+ * portal resolves a blank `templateId` against Android's list alone and DROPS
+ * any checked key it cannot label. The two extra rows are Android's
+ * `litter_scooped` and `walk_water_refill`, which the desktop list never had.
+ * `KinTaleTemplates.test.tsx` names all eight, so if this count ever moves
+ * again, read that test before changing this number.
+ *
+ * The editor draws every authored item regardless of its conditions (conditions
+ * are AUTHORED here and evaluated in the composer), so this count is the raw
+ * per-Kin list length, not a filtered view of it.
  */
 test('the KinTale template wizard, its five-step rail and its item cards fit at 390px', async ({
   page,
@@ -588,10 +602,11 @@ test('the KinTale template wizard, its five-step rail and its item cards fit at 
   await assertOverlayFits(page, 'KinTale wizard step 2 (display sections)');
 
   await rail.getByRole('button', { name: /^3 Per-Kin items/ }).click();
-  // Six items, drawn in full: this is the step the length complaint was about,
+  // Eight items, drawn in full: this is the step the length complaint was about,
   // so a step that rendered fewer would make the rest of the check meaningless.
-  await expect(page.locator('.ktt__item')).toHaveCount(6);
-  await assertOverlayFits(page, 'KinTale wizard step 3 (six per-Kin item cards)');
+  // Eight is Android's per-Kin list; see this test's own header before editing it.
+  await expect(page.locator('.ktt__item')).toHaveCount(8);
+  await assertOverlayFits(page, 'KinTale wizard step 3 (eight per-Kin item cards)');
 
   // A condition row puts two selects side by side, the densest thing this editor
   // draws, and it is drawn in full rather than behind any disclosure.

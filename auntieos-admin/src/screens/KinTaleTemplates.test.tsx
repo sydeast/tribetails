@@ -701,3 +701,48 @@ describe('KinTaleTemplates: save, fail-loud', () => {
     expect(saveKinTaleTemplate).not.toHaveBeenCalled();
   });
 });
+/**
+ * WHAT THE PER-KIN STEP ACTUALLY DRAWS, named row by row.
+ *
+ * The e2e phone-layout spec counts `.ktt__item` on this step, and a bare count
+ * cannot tell "the built-in list grew by two" apart from "the editor drew two
+ * rows twice". This names every row, so the next person who sees that count move
+ * can check the cause here instead of guessing at the number.
+ *
+ * The list is Android's `DefaultKinTaleTemplate`; `lib/kinTale/model.ts` records
+ * why Android and not the Compose desktop.
+ */
+describe('KinTaleTemplates: the built-in default’s per-Kin rows', () => {
+  it('draws Android’s eight per-Kin items, each exactly once', async () => {
+    mockStream({ status: 'ready', data: [] });
+    render(<KinTaleTemplates />);
+    await screen.findByText(/no templates saved yet/i);
+    await openNewTemplate();
+    await goToStep('Per-Kin items');
+    const labels = screen
+      .getAllByRole('textbox', { name: /item text/i })
+      .map((el) => (el as HTMLInputElement).value);
+    expect(labels).toEqual([
+      'Peed',
+      'Pooed',
+      'Fed',
+      'Fresh water provided',
+      'Medications given',
+      'Played',
+      'Litter box scooped',
+      'Water refilled after walk',
+    ]);
+    // Named AND deduped: eight distinct rows, not six plus two repeats.
+    expect(new Set(labels).size).toBe(8);
+  });
+  it('draws the two per-visit items on their own step, not alongside the per-Kin ones', async () => {
+    mockStream({ status: 'ready', data: [] });
+    render(<KinTaleTemplates />);
+    await screen.findByText(/no templates saved yet/i);
+    await openNewTemplate();
+    await goToStep('Per-visit items');
+    expect(
+      screen.getAllByRole('textbox', { name: /item text/i }).map((el) => (el as HTMLInputElement).value),
+    ).toEqual(['Trash taken out', 'Lights turned off']);
+  });
+});
