@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { clearedArrivalEvidence } from '../lib/arrivalVerification';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { BOOKING_STATUS_UNKNOWN_CODE, unknownStatusMessage } from '../lib/bookingTransitions';
@@ -375,6 +376,17 @@ export async function setVisitLifecycleHandler(
     // it would let a re-arrival complete while claiming a departure that was
     // undone. Cleared here. Android should follow; it is named in the PR.
     patch.departedAt = '';
+    // ISSUE #582, same reasoning one field further on. `verifyVisitArrival`
+    // stamps how far from the household THIS arrival was recorded, and
+    // `transitionBookingStatus` refuses a COMPLETE on a measurement outside the
+    // operator's radius. An undone arrival's measurement is evidence about an
+    // arrival that no longer exists: leave it and the NEXT arrival, quite
+    // possibly at a different door and quite possibly offline so with no
+    // measurement of its own, inherits it. That can refuse a COMPLETE that
+    // should pass as easily as pass one that should be refused. The Android and
+    // desktop Auntie Time cards clear the same three fields on their own direct
+    // undo patch; the field list is shared so the two paths cannot drift.
+    Object.assign(patch, clearedArrivalEvidence());
   } else {
     patch[STAMP_FIELD[args.action]] = stampedAt;
     if (args.action === 'ON_MY_WAY' && args.etaMinutes !== undefined) {

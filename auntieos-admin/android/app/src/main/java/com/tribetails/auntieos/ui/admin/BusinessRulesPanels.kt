@@ -336,10 +336,25 @@ internal fun bookingRulesError(
 }
 
 /** What is wrong with the visit-records draft, or null. */
-internal fun visitRecordsError(saveRoutesForDays: String, etaOptions: String, draftOptions: String): String? {
+internal fun visitRecordsError(
+    saveRoutesForDays: String,
+    etaOptions: String,
+    draftOptions: String,
+    arrivalRadiusMeters: String = "150",
+): String? {
     if (parseWholeNumber(saveRoutesForDays, 1, 3650) == null) return "Keep routes for: enter 1 to 3650 days."
     if (parseOptionList(etaOptions) == null) return "On-my-way choices: whole numbers over zero, no repeats."
     if (parseOptionList(draftOptions) == null) return "Draft-retention choices: whole numbers over zero, no repeats."
+    // ISSUE #582. The same 10..5000 the rules guard
+    // (`bsInt('arrivalRadiusMeters', 10, 5000)`) and the server's
+    // ARRIVAL_RADIUS_MIN/MAX_METERS enforce, so the operator reads what is wrong
+    // here rather than watching the save bounce off firestore.rules. Validated
+    // even while the switch is off: the value is saved either way, and a bad one
+    // left behind becomes an unfixable problem the first time somebody turns
+    // verification on.
+    if (parseWholeNumber(arrivalRadiusMeters, 10, 5000) == null) {
+        return "Arrival must be within: enter 10 to 5000 metres."
+    }
     return null
 }
 
@@ -599,12 +614,13 @@ internal fun VisitRecordsPanel(
 
     var photoTagging by remember(settings) { mutableStateOf(settings.enablePhotoLocationTagging) }
     var arrivalCheck by remember(settings) { mutableStateOf(settings.requireArrivalDepartureVerification) }
+    var arrivalRadius by remember(settings) { mutableStateOf(settings.arrivalRadiusMeters.toString()) }
     var clientSharing by remember(settings) { mutableStateOf(settings.allowClientLocationSharing) }
     var routeDays by remember(settings) { mutableStateOf(settings.saveRoutesForDays.toString()) }
     var etaOptions by remember(settings) { mutableStateOf(formatOptionList(settings.etaMinuteOptions)) }
     var draftOptions by remember(settings) { mutableStateOf(formatOptionList(settings.draftRetentionOptions)) }
 
-    val problem = visitRecordsError(routeDays, etaOptions, draftOptions)
+    val problem = visitRecordsError(routeDays, etaOptions, draftOptions, arrivalRadius)
 
     DenPanel(
         title = "Visit records",
@@ -655,6 +671,23 @@ internal fun VisitRecordsPanel(
                 showDivider = true,
                 trailing = { AuntieToggle(checked = arrivalCheck, onCheckedChange = { arrivalCheck = it }) },
             )
+            AuntieField(
+                value = arrivalRadius,
+                onValueChange = { arrivalRadius = it },
+                label = "Arrival must be within (metres)",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = parseWholeNumber(arrivalRadius, 10, 5000) == null,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Only applies while the switch above is on. Marking Arrived checks where you are " +
+                    "against the household's address; further away than this and the visit cannot " +
+                    "be marked complete. If your phone cannot get a fix, you are offline, or we " +
+                    "cannot place the address on the map, the visit still goes through and is " +
+                    "recorded as unverified.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
             AuntieSettingRow(
                 title = "Let kinfolk see visit locations",
                 description = "Off withholds route coordinates from the portal and the live map.",
@@ -687,6 +720,8 @@ internal fun VisitRecordsPanel(
                         settings.copy(
                             enablePhotoLocationTagging = photoTagging,
                             requireArrivalDepartureVerification = arrivalCheck,
+                            arrivalRadiusMeters =
+                                parseWholeNumber(arrivalRadius, 10, 5000) ?: settings.arrivalRadiusMeters,
                             allowClientLocationSharing = clientSharing,
                             saveRoutesForDays = parseWholeNumber(routeDays, 1, 3650) ?: settings.saveRoutesForDays,
                             etaMinuteOptions = eta,

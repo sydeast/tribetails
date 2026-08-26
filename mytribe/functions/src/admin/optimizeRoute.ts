@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { ADDRESS_FIELDS, mapboxForwardGeocode } from '../lib/householdLocation';
 
 /**
  * AO-35 Route Optimizer (dashboard widget). Given a day (YYYY-MM-DD) it gathers
@@ -28,7 +29,9 @@ const METERS_PER_MILE = 1609.344;
 // Address fields a household doc may carry, in resolution priority. There is no
 // single canonical field in the data model (kinfolk docs predate a normalized
 // address), so we try the known ones and fail the stop loud if none is present.
-const ADDRESS_FIELDS = ['serviceAddress', 'homeAddress', 'address'] as const;
+// The list itself now lives in `lib/householdLocation.ts`, because #582's
+// geocode-on-write has to resolve the SAME address this optimizer routes to; a
+// second copy would be two definitions of "the household's address".
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -112,16 +115,16 @@ function nextDay(dateIso: string): string {
 // Mapbox seams (real fetch; mocked in tests via vi.stubGlobal('fetch', ...))
 // ---------------------------------------------------------------------------
 
-/** Mapbox v6 forward geocode -> {lon,lat}, or null when nothing matched. */
-async function geocode(address: string, token: string): Promise<{ lon: number; lat: number } | null> {
-  const params = new URLSearchParams({ q: address, limit: '1', country: 'us', access_token: token });
-  const resp = await fetch(`https://api.mapbox.com/search/geocode/v6/forward?${params}`);
-  if (!resp.ok) throw new HttpsError('unavailable', `mapbox_geocode_${resp.status}`);
-  const body: any = await resp.json();
-  const coords = body?.features?.[0]?.geometry?.coordinates;
-  if (!Array.isArray(coords) || coords.length < 2) return null;
-  return { lon: Number(coords[0]), lat: Number(coords[1]) };
-}
+/**
+ * Mapbox v6 forward geocode -> {lon,lat}, or null when nothing matched.
+ *
+ * ISSUE #582 moved the body to `lib/householdLocation.ts` UNCHANGED, so the
+ * coordinate an arrival is checked against and the one this optimizer drives to
+ * come out of one request shape. The alias stays because the two callers want
+ * different handling around an identical call: here a non-match becomes an
+ * `unroutable` stop, there a recorded `serviceLocationError`.
+ */
+const geocode = mapboxForwardGeocode;
 
 interface OptimizedTrip {
   distanceMeters: number;

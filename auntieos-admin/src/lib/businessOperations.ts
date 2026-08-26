@@ -77,6 +77,16 @@ export const NUMBER_FIELDS = {
   defaultTimeBlockDurationHours: { min: 1, max: 24, unit: 'hours' },
   travelBufferMinutes: { min: 0, max: 480, unit: 'minutes' },
   saveRoutesForDays: { min: 1, max: 3650, unit: 'days' },
+  /**
+   * ISSUE #582. The same 10..5000 the rules guard
+   * (`bsInt('arrivalRadiusMeters', 10, 5000)`) and the server's
+   * ARRIVAL_RADIUS_MIN/MAX_METERS enforce, so the operator is told what is
+   * wrong here instead of having a save bounce off firestore.rules with no
+   * usable message. A radius tighter than a consumer GPS fix's own error bar
+   * would refuse every arrival; the switch beside it is how the check is
+   * turned off.
+   */
+  arrivalRadiusMeters: { min: 10, max: 5000, unit: 'metres' },
 } as const satisfies Record<string, NumberFieldSpec>;
 
 /**

@@ -240,6 +240,13 @@ service cloud.firestore {
              && bsInt('saveRoutesForDays', 1, 3650)
              && bsInt('defaultEtaMinutes', 1, 1440)
              && bsInt('draftRetentionDays', 1, 3650)
+ // #582: how close to the household counts as arrived. The bounds match
+ // ARRIVAL_RADIUS_MIN/MAX_METERS in `functions/src/lib/arrivalVerification.ts`
+ // and the three admin editors. The floor is 10 m because a radius tighter than
+ // a consumer GPS fix's own error bar refuses everybody, and an operator who
+ // wants no check has the switch next to it; the ceiling is 5 km because a
+ // radius larger than that is not a check.
+             && bsInt('arrivalRadiusMeters', 10, 5000)
              && bsList('timeBlocks', 12)
              && bsList('etaMinuteOptions', 12)
              && bsList('draftRetentionOptions', 12);

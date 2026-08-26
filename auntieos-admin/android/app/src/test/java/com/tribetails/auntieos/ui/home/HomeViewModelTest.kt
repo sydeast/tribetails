@@ -7,6 +7,10 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.domain.ArrivalCheckOutcome
+import com.tribetails.auntieos.domain.ArrivalCheckStatus
+import com.tribetails.auntieos.location.ArrivalFix
+import com.tribetails.auntieos.location.ArrivalFixProvider
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -69,7 +73,28 @@ class HomeViewModelTest {
         coEvery { mockRepo.getAllKin() } returns Result.success(emptyList())
     }
 
-    private fun buildViewModel() = HomeViewModel(repo = mockRepo, invoiceRepo = mockInvoiceRepo, kinCareRepo = mockKinCareRepo, notifier = mockNotifier)
+    /**
+     * ISSUE #582: a fix provider that hands back whatever the test wants,
+     * `null` by default. Injected rather than defaulted because the real one
+     * reaches for the application context, and because "the phone could not get
+     * a fix" is a case worth exercising, not a case worth mocking away.
+     */
+    private class FakeArrivalFixes(var fix: ArrivalFix? = null) : ArrivalFixProvider {
+        var calls = 0
+        override suspend fun currentFix(): ArrivalFix? {
+            calls++
+            return fix
+        }
+    }
+
+    private fun buildViewModel(arrivalFixes: ArrivalFixProvider = FakeArrivalFixes()) =
+        HomeViewModel(
+            repo = mockRepo,
+            invoiceRepo = mockInvoiceRepo,
+            kinCareRepo = mockKinCareRepo,
+            notifier = mockNotifier,
+            arrivalFixes = arrivalFixes,
+        )
 
     @Test
     fun `init loads dashboard data successfully`() = runTest(testDispatcher) {
@@ -206,6 +231,199 @@ class HomeViewModelTest {
         vm.arrived("ses1", context)
         advanceUntilIdle()
         verify(exactly = 0) { context.startForegroundService(any()) }
+    }
+
+    // ── #582: the arrival-location check ────────────────────────────────────
+
+    /**
+     * THE ARRIVAL COMES FIRST AND IS NEVER GATED ON THE CHECK. The arrival is a
+     * direct Firestore patch riding the offline write queue; the check is a
+     * callable. If the order were reversed, or the arrival waited on the check,
+     * an Auntie between houses with no signal could not mark a visit at all.
+     */
+    @Test
+    fun `the arrival is recorded before the location check runs, and never waits on it`() =
+        runTest(testDispatcher) {
+            val context = arriveWithSettings(
+                BusinessSettings(requireArrivalDepartureVerification = true)
+            )
+            val fixes = FakeArrivalFixes(ArrivalFix(34.05, -118.24, 8.0))
+            coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+                Result.success(
+                    ArrivalCheckOutcome(ArrivalCheckStatus.WITHIN, 30.0, 150, verificationRequired = true)
+                )
+            val vm = buildViewModel(fixes)
+            advanceUntilIdle()
+
+            vm.arrived("ses1", context)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { mockKinCareRepo.markSessionArrived("ses1", "") }
+            coVerify(exactly = 1) { mockKinCareRepo.verifyVisitArrival("ses1", 34.05, -118.24, 8.0) }
+        }
+
+    /** A verified arrival says nothing: the banner is for the cases that need one. */
+    @Test
+    fun `a verified arrival raises no notice`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.success(
+                ArrivalCheckOutcome(ArrivalCheckStatus.WITHIN, 30.0, 150, verificationRequired = true)
+            )
+        val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.05, -118.24, 8.0)))
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertNull(vm.uiState.value.arrivalCheckNotice)
+    }
+
+    /**
+     * The message this whole path exists to deliver, and it is delivered NOW —
+     * while she is still standing there — rather than hours later at COMPLETE.
+     */
+    @Test
+    fun `an arrival outside the radius warns at once, naming the distance`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.success(
+                ArrivalCheckOutcome(ArrivalCheckStatus.OUTSIDE, 2400.0, 150, verificationRequired = true)
+            )
+        val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.09, -118.30, 10.0)))
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        val notice = vm.uiState.value.arrivalCheckNotice
+        assertNotNull(notice)
+        assertTrue(notice!!, notice.contains("2.4 km"))
+        // The arrival still landed. This is a warning, not a failed action.
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionArrived("ses1", "") }
+    }
+
+    /**
+     * No permission, no fix indoors, location off: the provider returns null,
+     * the callable is never called, and the Auntie is told the visit is still
+     * completable — because it is.
+     */
+    @Test
+    fun `no fix means no call, and a notice that says the visit still completes`() =
+        runTest(testDispatcher) {
+            val context = arriveWithSettings(
+                BusinessSettings(requireArrivalDepartureVerification = true)
+            )
+            val fixes = FakeArrivalFixes(fix = null)
+            val vm = buildViewModel(fixes)
+            advanceUntilIdle()
+
+            vm.arrived("ses1", context)
+            advanceUntilIdle()
+
+            assertEquals(1, fixes.calls)
+            coVerify(exactly = 0) { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) }
+            val notice = vm.uiState.value.arrivalCheckNotice
+            assertNotNull(notice)
+            assertTrue(notice!!, notice.contains("can still be completed"))
+        }
+
+    /** A failed call is indistinguishable from no fix: neither produced evidence, both complete. */
+    @Test
+    fun `a failed check is treated as no evidence, not as a failed arrival`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.failure(IllegalStateException("offline"))
+        val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.05, -118.24, 8.0)))
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.arrivalCheckNotice!!.contains("can still be completed"))
+        assertNull("a failed check is not an action error", vm.uiState.value.actionError)
+    }
+
+    /** With the rule off, the Auntie is told nothing about a rule that does not apply to her. */
+    @Test
+    fun `nothing is said when the operator has arrival verification switched off`() =
+        runTest(testDispatcher) {
+            val context = arriveWithSettings(
+                BusinessSettings(requireArrivalDepartureVerification = false)
+            )
+            coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+                Result.success(
+                    ArrivalCheckOutcome(ArrivalCheckStatus.OUTSIDE, 2400.0, 150, verificationRequired = false)
+                )
+            val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.09, -118.30, 10.0)))
+            advanceUntilIdle()
+
+            vm.arrived("ses1", context)
+            advanceUntilIdle()
+
+            assertNull(vm.uiState.value.arrivalCheckNotice)
+        }
+
+    /**
+     * REGRESSION, and the reason this test exists rather than being obvious.
+     * `load()` REBUILDS `HomeUiState` from scratch instead of copying it — the
+     * diff-vs-rebuild trap this codebase is known for, here on UI state — and
+     * `runOnSession` calls `load()` in its `finally`, immediately after the
+     * arrival that raised the notice. Without the carry-forward in `load()`, the
+     * warning was wiped microseconds after it was set and the Auntie never saw
+     * it. Caught by these tests failing, not by reading the code.
+     */
+    @Test
+    fun `the refresh that follows an arrival does not wipe the notice`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.success(
+                ArrivalCheckOutcome(ArrivalCheckStatus.OUTSIDE, 2400.0, 150, verificationRequired = true)
+            )
+        val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.09, -118.30, 10.0)))
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        assertNotNull(vm.uiState.value.arrivalCheckNotice)
+
+        // A further refresh, the way a pull-to-refresh would.
+        vm.load()
+        advanceUntilIdle()
+        assertNotNull(
+            "load() rebuilds the state wholesale and must carry the notice",
+            vm.uiState.value.arrivalCheckNotice,
+        )
+    }
+
+    @Test
+    fun `the notice can be dismissed`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        val vm = buildViewModel(FakeArrivalFixes(fix = null))
+        advanceUntilIdle()
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        assertNotNull(vm.uiState.value.arrivalCheckNotice)
+
+        vm.clearArrivalCheckNotice()
+        assertNull(vm.uiState.value.arrivalCheckNotice)
+    }
+
+    /** A device that reports no accuracy must send none, not claim a perfect fix. */
+    @Test
+    fun `a fix with no reported accuracy is sent without one`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings(requireArrivalDepartureVerification = true))
+        coEvery { mockKinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.success(
+                ArrivalCheckOutcome(ArrivalCheckStatus.UNVERIFIED, null, 150, verificationRequired = true)
+            )
+        val vm = buildViewModel(FakeArrivalFixes(ArrivalFix(34.05, -118.24, null)))
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockKinCareRepo.verifyVisitArrival("ses1", 34.05, -118.24, null) }
     }
     @Test
     fun `complete does nothing when sessionId not in todayVisits`() = runTest(testDispatcher) {

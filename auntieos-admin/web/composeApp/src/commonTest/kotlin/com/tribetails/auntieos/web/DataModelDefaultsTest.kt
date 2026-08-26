@@ -210,6 +210,10 @@ class DataModelDefaultsTest {
         assertTrue(s.enableGPSTrackingForAllVisits)
         assertTrue(s.enablePhotoLocationTagging)
         assertTrue(s.requireArrivalDepartureVerification)
+        // #582. Must equal ARRIVAL_RADIUS_DEFAULT_METERS on the server, which is
+        // what a settings document with no key falls back to. If the two drift,
+        // a save from this console silently changes the rule for everyone.
+        assertEquals(150, s.arrivalRadiusMeters)
         assertTrue(s.autoStartTrackingOnVisitStart)
         assertEquals("HIGH", s.trackingAccuracy)
         assertEquals(90, s.saveRoutesForDays)
@@ -253,6 +257,7 @@ class DataModelDefaultsTest {
             enableGPSTrackingForAllVisits = false,
             enablePhotoLocationTagging = false,
             requireArrivalDepartureVerification = false,
+            arrivalRadiusMeters = 400,
             autoStartTrackingOnVisitStart = false,
             trackingAccuracy = "LOW",
             saveRoutesForDays = 14,

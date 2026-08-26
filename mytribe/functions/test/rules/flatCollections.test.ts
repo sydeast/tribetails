@@ -251,6 +251,7 @@ describe('rules: flat top-level collections', () => {
         saveRoutesForDays: 90,
         defaultEtaMinutes: 15,
         draftRetentionDays: 30,
+        arrivalRadiusMeters: 150,
         timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
         etaMinuteOptions: [5, 10, 15],
         draftRetentionOptions: [30, 60, 90],
@@ -289,6 +290,25 @@ describe('rules: flat top-level collections', () => {
     await assertFails(
       asAuntie(env).firestore().doc('business_settings/business_settings')
         .set({ defaultTimeBlockDurationHours: 25 }, { merge: true }),
+    );
+    // #582: a radius tighter than a GPS fix's own error bar would refuse every
+    // arrival, and one larger than 5 km is not a check. Both bounds match
+    // ARRIVAL_RADIUS_MIN/MAX_METERS and the three admin editors.
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ arrivalRadiusMeters: 9 }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ arrivalRadiusMeters: 5001 }, { merge: true }),
+    );
+    await assertFails(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ arrivalRadiusMeters: '150' }, { merge: true }),
+    );
+    await assertSucceeds(
+      asAuntie(env).firestore().doc('business_settings/business_settings')
+        .set({ arrivalRadiusMeters: 300 }, { merge: true }),
     );
   });
   it('business_settings: an absurdly long option list or block list is refused', async () => {
