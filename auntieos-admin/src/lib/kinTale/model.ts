@@ -180,29 +180,64 @@ function ci(
   text: string,
   scope: ChecklistScope,
   order: number,
-  required = false,
+  showWhenUnchecked = false,
+  conditions: FieldCondition[] = [],
 ): ChecklistItem {
-  return makeChecklistItem({ key, text, scope, order, required });
+  return makeChecklistItem({ key, text, scope, order, showWhenUnchecked, conditions });
 }
 
 function mo(key: string, label: string, emoji: string, order: number): MoodOption {
   return makeMoodOption({ key, label, emoji, order });
 }
 
-// ── DefaultKinTaleTemplate (ported exactly from KinTaleModels.kt) ─────────────
+// ── DefaultKinTaleTemplate (ported from KinTaleTemplateEngine.kt) ─────────────
 
-/** Matches Kotlin `DefaultKinTaleTemplate.ID`. */
+/**
+ * The sentinel id for the built-in template, matching the Compose desktop's
+ * `DefaultKinTaleTemplate.ID`. Android's own sentinel is the DIFFERENT string
+ * `"__default__"` (`KinTaleTemplateEngine.kt:312`), and that divergence is
+ * harmless by construction: every platform's `scaffoldReport` strips its own
+ * sentinel to `""` before writing (`KinTaleReportViewModel.kt:366`,
+ * `KinTaleComposeScreen.kt:1167`, and `scaffoldKinTaleDraft` here), so neither
+ * sentinel ever reaches a `kin_care_reports` doc. A blank `templateId` is what
+ * "the built-in default" means on the wire.
+ */
 export const DEFAULT_KINTALE_TEMPLATE_ID = '__builtin_default__';
 
 /**
  * Built-in fallback template, used when no `kintale_templates` doc matches the
- * session's service type. Kept identical to the Kotlin/Android default so a
- * session scaffolded on either platform produces the same shape.
+ * session's service type.
+ *
+ * PORTED FROM ANDROID (`KinTaleTemplateEngine.kt`'s `DefaultKinTaleTemplate`),
+ * NOT from the Compose desktop's `KinTaleModels.kt`, and that choice is
+ * load-bearing rather than arbitrary. The two Kotlin built-ins disagree about
+ * the checklist KEYS:
+ *
+ *  - Android: `peed, pooed, fed, fresh_water, meds_given, played,
+ *    litter_scooped, walk_water_refill` (per-pet) + `trash_taken_out,
+ *    lights_off` (per-visit), three of them conditional.
+ *  - Desktop: `peed, pooed, fed, water, meds, play` + `secure, locked, alarm,
+ *    mail, plants, trash`, none conditional.
+ *
+ * Those keys are not cosmetic: they are the `fieldKey` half of the
+ * `fieldResponses` map key a composer writes, and the KINFOLK-FACING portal
+ * resolves a report's checklist labels from the report's `templateId` — falling
+ * back, when that id is blank, to Android's list and only Android's
+ * (`mytribe/functions/src/portal/getMyKinTales.ts`'s
+ * `DEFAULT_TEMPLATE_CHECKLIST_ITEMS`, whose own comment records that the
+ * desktop/TS keys "were confirmed to NOT match the Android keys real
+ * fieldResponses are written with"). A checked key the resolved template does
+ * not contain is DROPPED rather than shown with a fabricated label. So a web
+ * composer ticking `water` against a blank `templateId` would write a response
+ * the household can never see. Ticking `fresh_water` is seen.
+ *
+ * The desktop's list stays wrong; fixing it is a Kotlin change and this port is
+ * web-only. Tracked in the PR for issue #397 item L20.
  */
 export const DEFAULT_KINTALE_TEMPLATE: KinTaleTemplate = {
   _id: DEFAULT_KINTALE_TEMPLATE_ID,
-  name: 'Default KinTale',
-  description: "Catch-all template for any service type that doesn't have its own.",
+  name: 'Standard Visit',
+  description: 'Built-in default. Used when no service-specific template is configured.',
   // Deliberately blank. Mark 23 of the 2026-08-17 walk: a canned default here
   // invited Auntie to send it unedited, when the message is meant to be the
   // story of THIS visit. Blank on the shared constant so every path that reads
@@ -226,16 +261,24 @@ export const DEFAULT_KINTALE_TEMPLATE: KinTaleTemplate = {
     ci('peed', 'Peed', ChecklistScope.PER_PET, 0, true),
     ci('pooed', 'Pooed', ChecklistScope.PER_PET, 1, true),
     ci('fed', 'Fed', ChecklistScope.PER_PET, 2),
-    ci('water', 'Fresh water provided', ChecklistScope.PER_PET, 3),
-    ci('meds', 'Medications given', ChecklistScope.PER_PET, 4),
-    ci('play', 'Playtime provided', ChecklistScope.PER_PET, 5),
+    ci('fresh_water', 'Fresh water provided', ChecklistScope.PER_PET, 3),
+    ci('meds_given', 'Medications given', ChecklistScope.PER_PET, 4, false, [
+      makeFieldCondition({
+        source: ConditionSource.KIN_ATTRIBUTE,
+        op: ConditionOp.EXISTS,
+        attributeKey: 'medicationHealthNotes',
+      }),
+    ]),
+    ci('played', 'Played', ChecklistScope.PER_PET, 5),
+    ci('litter_scooped', 'Litter box scooped', ChecklistScope.PER_PET, 6, false, [
+      makeFieldCondition({ source: ConditionSource.KIN_SPECIES, op: ConditionOp.EQUALS, value: 'Cat' }),
+    ]),
+    ci('walk_water_refill', 'Water refilled after walk', ChecklistScope.PER_PET, 7, false, [
+      makeFieldCondition({ source: ConditionSource.SERVICE_TYPE, op: ConditionOp.CONTAINS, value: 'walk' }),
+    ]),
     // Per-visit items
-    ci('secure', 'House / yard secure', ChecklistScope.PER_VISIT, 0),
-    ci('locked', 'All doors locked', ChecklistScope.PER_VISIT, 1),
-    ci('alarm', 'Alarm system set', ChecklistScope.PER_VISIT, 2),
-    ci('mail', 'Mail / packages collected', ChecklistScope.PER_VISIT, 3),
-    ci('plants', 'Plants watered', ChecklistScope.PER_VISIT, 4),
-    ci('trash', 'Trash taken out', ChecklistScope.PER_VISIT, 5),
+    ci('trash_taken_out', 'Trash taken out', ChecklistScope.PER_VISIT, 8),
+    ci('lights_off', 'Lights turned off', ChecklistScope.PER_VISIT, 9),
   ],
 
   moodOptions: [

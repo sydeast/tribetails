@@ -35,12 +35,14 @@ import type { PagedCollectionSpec } from '../lib/usePagedCollection';
  * the AO-18 (local time) and AO-12-style (positive enumeration, no negation)
  * fixes live.
  *
- * Only the fields this LIST screen renders are modeled here (the
- * `directory.ts` "subset type, not a blind mirror" convention), 
- * `fieldResponses`/`petMoodSelections`/`formValues`/`gpsRoute`/`gpsSummary`/
- * the orphan-triage fields (`triageStatus`/`triagedAt`/`triagedBy`/
- * `duplicateOfReportId`/`archiveReason`) belong to the not-yet-built
- * detail/triage screens, not this list.
+ * Only the fields a screen actually renders are modeled here (the
+ * `directory.ts` "subset type, not a blind mirror" convention).
+ * `templateId`/`fieldResponses` are modeled because the composer reopens a
+ * draft's checklist from them; `petMoodSelections`/`formValues`/`gpsRoute`/
+ * `gpsSummary` and the orphan-triage fields
+ * (`triageStatus`/`triagedAt`/`triagedBy`/`duplicateOfReportId`/
+ * `archiveReason`) still are not, and belong to whichever screen first renders
+ * them.
  *
  * EVERY FIELD BELOW IS OPTIONAL, and that is the honest shape, not defensive
  * padding. This interface is a CAST over raw Firestore document data, not a
@@ -78,6 +80,27 @@ export interface KinTaleEntry {
   titleGeneratedByAi?: boolean | undefined;
   bodyCopy?: string | undefined;
   mediaFileIds?: string[] | undefined;
+  /**
+   * The `kintale_templates` doc this recap was composed against. BLANK means
+   * the built-in default, which is what every platform's `scaffoldReport`
+   * writes for it (each strips its own sentinel id before the write).
+   *
+   * Read back by `KinTaleCompose.tsx` when reopening a draft, so the checklist
+   * is rebuilt from the template it was captured under rather than re-derived
+   * from the service type; `api/kinTaleTemplates.ts#templateForDraft` explains
+   * why re-deriving loses ticks. The kinfolk portal resolves the same field to
+   * label a sent tale's checklist (`getMyKinTales.ts:156`).
+   */
+  templateId?: string | undefined;
+  /**
+   * Captured checklist answers: a map from `"$kinId|$fieldKey"` (bare
+   * `fieldKey` for a per-visit item) to a `FieldResponse` object. Deliberately
+   * `unknown` rather than a structural type, because unlike the flat fields
+   * above this one is a NESTED shape whose members a cast would promise without
+   * checking. Decode it through
+   * `lib/kinTaleChecklist.ts#decodeFieldResponses`.
+   */
+  fieldResponses?: unknown;
   /** Free-text; defaults `'DRAFT'` on the source doc, see `lib/kinTaleFormat.ts#kinTaleState`. */
   status?: string | undefined;
   /** Same caveat as `visitDate`; blank until sent. */

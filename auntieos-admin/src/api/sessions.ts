@@ -36,10 +36,10 @@ import { sessionsWindowBounds } from '../lib/sessionFormat';
  * `sessionState`/`sessionTimeOf` family, which is where the AO-18 (local day)
  * and AO-12-style (positive enumeration, no negation) fixes live.
  *
- * Only the fields this LIST screen renders are modeled here (the Directory.ts
- * "subset type, not a blind mirror" convention), `kinIds`/`gpsSummary`/
- * `formValues`/etc. belong to the not-yet-built detail/edit screen, not this
- * list.
+ * Only the fields a screen actually renders are modeled here (the Directory.ts
+ * "subset type, not a blind mirror" convention). `kinIds` and `gpsSummary` are
+ * modeled because the KinTale composer reads them; `formValues` and the rest
+ * still are not, and belong to whichever screen first renders them.
  *
  * EVERY DOCUMENT FIELD IS OPTIONAL, and that is not pessimism, it is the shape
  * of the data. This interface is a CAST over whatever `useCollection` hands back
@@ -53,6 +53,31 @@ import { sessionsWindowBounds } from '../lib/sessionFormat';
  * that one field, not the page. `_id` stays required: `useCollection` always
  * sets it from the doc id, so it is the one field not read off the document.
  */
+
+/**
+ * The finalized GPS trail, baked onto the session when DEPARTED fires
+ * (`saveSessionGpsSummary`; the Kotlin shape is `LocationModels.kt:16-33`, and
+ * `Models.kt:769` records that the KinTale composer is one of its readers).
+ * Down-sampled to at most 1000 points so the document stays under Firestore's
+ * 1MB limit on a multi-hour overnight.
+ *
+ * Optional field-by-field for the same reason as everything on
+ * {@link SessionEntry}: this is a cast over raw document data, and GPS never ran
+ * on most sessions. Read it through `lib/kinTaleGps.ts#kinTaleGpsBlock`, which
+ * states every fallback in one place rather than at each render site.
+ */
+export interface SessionGpsSummary {
+  distanceMeters?: number | undefined;
+  durationSeconds?: number | undefined;
+  startLat?: number | undefined;
+  startLng?: number | undefined;
+  endLat?: number | undefined;
+  endLng?: number | undefined;
+  /** Epoch-millis `t` of `0` means UNKNOWN, not 1970; `kinTaleGpsBlock` drops it. */
+  route?: Array<{ lat?: number | undefined; lng?: number | undefined; t?: number | undefined }> | undefined;
+  computedAt?: string | undefined;
+}
+
 export interface SessionEntry {
   _id: string;
   kinfolkId?: string | undefined;
@@ -109,26 +134,6 @@ export interface SessionEntry {
    * Same free-text caveat as `startTime`.
    */
   departedAt?: string | undefined;
-  /**
-   * The DURABLE route copy, baked onto the session when tracking stops
-   * (`LocationTrackingService#saveRoute` on Android, `saveSessionGpsSummary` on
-   * both). Modelled loosely on purpose: only the keys the admin route panel
-   * reads are named, each optional, because this is a CAST over raw Firestore
-   * data like every other field here. Its `route` points are `{ lat, lng, t }`
-   * -- NOT the `breadcrumbs` subcollection's shape, which has two spellings in
-   * the wild; `lib/breadcrumbs.ts` owns both normalizers and explains why.
-   *
-   * It is a separate source from the breadcrumbs rather than a duplicate of
-   * them: `scheduled/purgeOldVisitRoutes.ts` deletes breadcrumbs past the
-   * operator's retention window, and this down-sampled copy is what survives.
-   */
-  gpsSummary?:
-    | {
-        distanceMeters?: number | undefined;
-        durationSeconds?: number | undefined;
-        route?: unknown;
-      }
-    | undefined;
   /** Same caveat as `startTime`. */
   endTime?: string | undefined;
   /** Free-text; SCHEDULED/ON_MY_WAY/ARRIVED/DEPARTED/COMPLETED/CANCELLED are the only codes any writer sets, see `lib/sessionFormat.ts#sessionState`. */
@@ -136,6 +141,23 @@ export interface SessionEntry {
   /** '' until COMPLETED; stamped by the admin's `patchKinCare` write. Same free-text caveat as `startTime`. */
   completedAt?: string | undefined;
   notes?: string | undefined;
+  /**
+   * The visit's finished GPS trail: the DURABLE route copy, baked onto the
+   * session when tracking stops (`LocationTrackingService#saveRoute` on
+   * Android, `saveSessionGpsSummary` on both). Read by the admin route panel
+   * (`SessionDetail.tsx`) and by `KinTaleCompose.tsx`'s GPS block; see
+   * {@link SessionGpsSummary} for the shape. ABSENT whenever GPS never ran,
+   * which is most sessions.
+   *
+   * Its `route` points are `{ lat, lng, t }` -- NOT the `breadcrumbs`
+   * subcollection's shape, which has two spellings in the wild;
+   * `lib/breadcrumbs.ts` owns both normalizers and explains why.
+   *
+   * It is a separate source from the breadcrumbs rather than a duplicate of
+   * them: `scheduled/purgeOldVisitRoutes.ts` deletes breadcrumbs past the
+   * operator's retention window, and this down-sampled copy is what survives.
+   */
+  gpsSummary?: SessionGpsSummary | undefined;
   /**
    * Expected visit length. Stamped by `approveBookingSeriesCore.ts`
    * (`durationMinutes(startIso, endIso)`) on every session it creates, and

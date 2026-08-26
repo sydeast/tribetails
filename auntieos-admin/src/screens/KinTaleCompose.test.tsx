@@ -35,6 +35,40 @@ vi.mock('../api/kinTalesWrite', async (orig) => ({
   sendKinTale,
 }));
 
+/**
+ * The composer's one-shot reads. Mocked at the API seam rather than at
+ * `firebase/firestore`, so the real decode/defaulting in each module stays
+ * under test everywhere else and only the network hop is replaced here.
+ */
+const { getKin } = vi.hoisted(() => ({ getKin: vi.fn() }));
+vi.mock('../api/kinView', async (orig) => ({
+  ...(await orig<typeof import('../api/kinView')>()),
+  getKin,
+}));
+const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
+vi.mock('../api/kinfolkProfile', async (orig) => ({
+  ...(await orig<typeof import('../api/kinfolkProfile')>()),
+  getKinfolkProfile,
+}));
+const { getMediaFilesByIds } = vi.hoisted(() => ({ getMediaFilesByIds: vi.fn() }));
+vi.mock('../api/gallery', async (orig) => ({
+  ...(await orig<typeof import('../api/gallery')>()),
+  getMediaFilesByIds,
+}));
+/**
+ * The upload orchestrator behind `MediaUploadDialog`. Mocking it and NOT the
+ * dialog keeps the dialog's own validation, staging and the `entityType` /
+ * `entityId` it passes under test, which is the half of the photo path this
+ * screen is actually responsible for getting right.
+ */
+const { uploadMediaFile } = vi.hoisted(() => ({ uploadMediaFile: vi.fn() }));
+vi.mock('../api/mediaUpload', async (orig) => ({
+  ...(await orig<typeof import('../api/mediaUpload')>()),
+  uploadMediaFile,
+}));
+
+import { decodeKinTaleTemplate } from '../api/kinTaleTemplates';
+import { DEFAULT_KINTALE_TEMPLATE } from '../lib/kinTale/model';
 import {
   KinTaleCompose,
   isKinTaleEligibleSession,
@@ -89,20 +123,54 @@ const user = userEvent.setup();
 function mockStreams(opts: {
   reports?: Async<KinTaleEntry[]>;
   sessions?: Async<SessionEntry[]>;
+  /** Raw `kintale_templates` docs; the screen decodes them itself. */
+  templates?: Async<Record<string, unknown>[]>;
 }) {
   const reportsState: Async<KinTaleEntry[]> = opts.reports ?? { status: 'ready', data: [] };
   const sessionsState: Async<SessionEntry[]> = opts.sessions ?? { status: 'ready', data: [] };
-  useCollection.mockImplementation((spec: { path: string }) =>
-    spec.path === 'kin_care_reports' ? reportsState : sessionsState,
-  );
+  const templatesState: Async<Record<string, unknown>[]> = opts.templates ?? { status: 'ready', data: [] };
+  // Dispatch by PATH, never by call order: the screen holds three listeners and
+  // the order it opens them in is not a contract any test should depend on.
+  useCollection.mockImplementation((spec: { path: string }) => {
+    if (spec.path === 'kin_care_reports') return reportsState;
+    if (spec.path === 'kintale_templates') return templatesState;
+    return sessionsState;
+  });
 }
 
 beforeEach(() => {
   useCollection.mockReset();
   saveKinTaleDraft.mockReset();
   sendKinTale.mockReset();
+  // A pet with no medication notes and no species quirks: every conditional
+  // item in the built-in template is withheld from it unless a test says
+  // otherwise, so a suite that never mentions the checklist sees a stable one.
+  getKin.mockReset().mockImplementation((id: string) =>
+    Promise.resolve({ ...BLANK_KIN, _id: id, name: id === 'pet1' ? 'Biscuit' : id }),
+  );
+  getKinfolkProfile.mockReset().mockResolvedValue(null);
+  getMediaFilesByIds.mockReset().mockResolvedValue([]);
+  uploadMediaFile.mockReset();
   mockStreams({});
 });
+/** Enough of a `KinDetail` for the condition engine; every attribute blank. */
+const BLANK_KIN = {
+  _id: 'pet1',
+  name: 'Biscuit',
+  species: 'Dog',
+  breed: '',
+  colorMarkings: '',
+  medicationHealthNotes: '',
+  vaccinations: '',
+  vetInfo: '',
+  feedingBrand: '',
+  trainingCommands: '',
+  routine: '',
+  checklist: '',
+  officeNotes: '',
+  reactive: false,
+  spayedNeutered: false,
+} as unknown as import('../api/kinView').KinDetail;
 
 describe('isKinTaleEligibleSession (pure)', () => {
   it('is true only for departed/completed, never the other four states', () => {
@@ -126,8 +194,8 @@ describe('kinTaleSendLabel (pure)', () => {
 });
 
 describe('scaffoldKinTaleDraft / draftFromKinTaleEntry (pure)', () => {
-  it('scaffolds a blank new draft off a session', () => {
-    const draft = scaffoldKinTaleDraft(session());
+  it('scaffolds a blank new draft off a session, stamping the template it resolved', () => {
+    const draft = scaffoldKinTaleDraft(session(), decodeKinTaleTemplate({ _id: 'tpl_walk', name: 'Walks' }));
     expect(draft).toEqual<KinTaleDraft>({
       sessionId: 'sess1',
       kinfolkId: 'kf1',
@@ -140,7 +208,27 @@ describe('scaffoldKinTaleDraft / draftFromKinTaleEntry (pure)', () => {
       titleGeneratedByAi: false,
       bodyCopy: '',
       mediaFileIds: [],
+      templateId: 'tpl_walk',
+      fieldResponses: {},
     });
+  });
+  /**
+   * The built-in default's sentinel id must never reach Firestore: the portal
+   * reads a BLANK `templateId` as "use the built-in", and would fail to resolve
+   * a template document called `__builtin_default__`.
+   */
+  it('writes a blank templateId for the built-in default, never the sentinel id', () => {
+    expect(scaffoldKinTaleDraft(session(), DEFAULT_KINTALE_TEMPLATE).templateId).toBe('');
+  });
+  it('never lets a template prefill the headline or the body', () => {
+    const opinionated = decodeKinTaleTemplate({
+      _id: 'tpl',
+      name: 'Walks',
+      defaultEmailMessage: 'Your pet had a lovely time.',
+    });
+    const draft = scaffoldKinTaleDraft(session(), opinionated);
+    expect(draft.title).toBe('');
+    expect(draft.bodyCopy).toBe('');
   });
 
   it('rehydrates an editable draft off an existing report, carrying its _id', () => {
@@ -335,7 +423,7 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
     await screen.findByLabelText(/headline/i);
     expect(screen.getByRole('button', { name: /send to the whitfields/i })).toBeDisabled();
-    expect(screen.getByText(/add a headline, some notes, or a photo to enable send/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing here yet\. add a headline, some notes, a photo, or tick a moment\./i)).toBeInTheDocument();
   });
 
   it('clicking Send opens a confirm dialog rather than sending immediately', async () => {
@@ -456,5 +544,294 @@ describe('Ask Auntie: the generated title must never clobber the operator', () =
     await user.click(await screen.findByRole('button', { name: /ask auntie/i }));
     expect(await screen.findByText('generate_rate_limit_exceeded')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Mine')).toBeInTheDocument();
+  });
+});
+// ── issue #397 item L20: template, checklist, photo, GPS ────────────────────
+/** A `kintale_templates` doc as Firestore hands it back, with `_id` attached. */
+function templateDoc(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    _id: 'tpl_walk',
+    name: 'Dog Walk recap',
+    isActive: true,
+    serviceTypeKeys: ['Dog Walk'],
+    checklistItems: [
+      { key: 'fed', text: 'Fed', scope: 'PER_PET', order: 0 },
+      { key: 'gate_locked', text: 'Gate locked', scope: 'PER_VISIT', order: 1 },
+      {
+        key: 'meds_given',
+        text: 'Medications given',
+        scope: 'PER_PET',
+        order: 2,
+        conditions: [{ source: 'KIN_ATTRIBUTE', op: 'EXISTS', attributeKey: 'medicationHealthNotes' }],
+      },
+    ],
+    ...over,
+  };
+}
+/** Open the composer on a real session with the given templates on stream. */
+function renderComposer(opts: {
+  templates?: Record<string, unknown>[];
+  session?: SessionEntry;
+} = {}) {
+  mockStreams({
+    sessions: { status: 'ready', data: [opts.session ?? session()] },
+    templates: { status: 'ready', data: opts.templates ?? [templateDoc()] },
+  });
+  return render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+}
+describe('L20 · template selection', () => {
+  it('names the template the session service type resolves to', async () => {
+    renderComposer();
+    expect(await screen.findByText('Dog Walk recap')).toBeInTheDocument();
+  });
+  it('says so, in the operator’s own words, when it fell back to the built-in', async () => {
+    renderComposer({ templates: [templateDoc({ serviceTypeKeys: ['Overnight'] })] });
+    expect(await screen.findByText('Standard Visit')).toBeInTheDocument();
+    expect(screen.getByText(/nothing in the template bank matches/i)).toBeInTheDocument();
+  });
+  /**
+   * The REFUSAL that matters most: an unresolved template must never be
+   * scaffolded as the built-in. `templateId` is written once and never
+   * re-derived, so scaffolding early would pin the draft to the wrong checklist
+   * permanently.
+   */
+  it('refuses to scaffold at all while the template list is still loading', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session()] },
+      templates: { status: 'loading' },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/headline/i)).toBeNull();
+  });
+  /**
+   * The same refusal on the EDIT path, which hydrates off the reports stream
+   * alone and so could otherwise render a form for the moment before the
+   * template arrives. A tick landed then would be keyed against the built-in's
+   * items instead of the draft's real template.
+   */
+  it('refuses to render a reopened draft until its template can be resolved', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', title: 'Night check' })] },
+      templates: { status: 'loading' },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+  });
+  it('carries the resolved template id into the saved document', async () => {
+    saveKinTaleDraft.mockResolvedValue('r1');
+    renderComposer();
+    await user.type(await screen.findByLabelText(/headline/i), 'A good walk');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(saveKinTaleDraft.mock.calls[0]?.[0]).toMatchObject({ templateId: 'tpl_walk' });
+  });
+  /**
+   * Reopening resolves by the STORED id, not by service type. Here the stored
+   * template is not the one this service type would pick, and the stored one
+   * must win, or every saved tick would be re-keyed out of existence.
+   */
+  it('reopens an existing draft against the template it was saved with', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tpl_overnight', title: 'Night check' })],
+      },
+      templates: {
+        status: 'ready',
+        data: [
+          templateDoc(),
+          templateDoc({ _id: 'tpl_overnight', name: 'Overnight recap', serviceTypeKeys: ['Overnight'] }),
+        ],
+      },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Overnight recap')).toBeInTheDocument();
+    expect(screen.queryByText('Dog Walk recap')).toBeNull();
+  });
+});
+describe('L20 · per-item checklist', () => {
+  it('offers the template’s per-pet items under the kin, and per-visit items under the visit', async () => {
+    renderComposer();
+    expect(await screen.findByRole('checkbox', { name: /^fed$/i })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /gate locked/i })).toBeInTheDocument();
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.getByText('The visit')).toBeInTheDocument();
+  });
+  /** The refusal: a condition that does not hold withholds the item entirely. */
+  it('withholds a medication item from a kin with no medication notes', async () => {
+    renderComposer();
+    expect(await screen.findByRole('checkbox', { name: /^fed$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /medications given/i })).toBeNull();
+  });
+  it('offers that same item once the kin actually has medication notes', async () => {
+    getKin.mockResolvedValue({ ...BLANK_KIN, medicationHealthNotes: 'Half a tablet at noon' });
+    renderComposer();
+    expect(await screen.findByRole('checkbox', { name: /medications given/i })).toBeInTheDocument();
+  });
+  it('renders no Moments panel at all when the template has the checklist off', async () => {
+    renderComposer({ templates: [templateDoc({ checklistEnabled: false })] });
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.queryByText('Moments')).toBeNull();
+  });
+  it('writes a ticked item in the shape the portal reads, keyed kinId|fieldKey', async () => {
+    saveKinTaleDraft.mockResolvedValue('r1');
+    renderComposer();
+    await user.click(await screen.findByRole('checkbox', { name: /^fed$/i }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(saveKinTaleDraft.mock.calls[0]?.[0].fieldResponses).toEqual({
+      'pet1|fed': {
+        fieldKey: 'fed',
+        kinId: 'pet1',
+        sectionKey: '',
+        boolValue: true,
+        intValue: null,
+        stringValue: '',
+        mediaIds: [],
+      },
+    });
+  });
+  it('keys a per-visit item by the bare fieldKey, with no kin id', async () => {
+    saveKinTaleDraft.mockResolvedValue('r1');
+    renderComposer();
+    await user.click(await screen.findByRole('checkbox', { name: /gate locked/i }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(Object.keys(saveKinTaleDraft.mock.calls[0]?.[0].fieldResponses)).toEqual(['gate_locked']);
+  });
+  /**
+   * The M18-compatibility pin at the screen level. Unticking must leave a
+   * `false` behind, because the operator ruling's fix distinguishes
+   * "deliberately left undone" from "never applied", and a deleted entry throws
+   * that distinction away before the portal can use it.
+   */
+  it('records an untick as false rather than dropping the answer', async () => {
+    saveKinTaleDraft.mockResolvedValue('r1');
+    renderComposer();
+    const fed = await screen.findByRole('checkbox', { name: /^fed$/i });
+    await user.click(fed);
+    await user.click(fed);
+    expect(fed).not.toBeChecked();
+    await user.type(screen.getByLabelText(/headline/i), 'A good walk');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(saveKinTaleDraft.mock.calls[0]?.[0].fieldResponses['pet1|fed']).toMatchObject({ boolValue: false });
+  });
+  it('rehydrates the ticks a saved draft already carries', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [
+          report({
+            templateId: 'tpl_walk',
+            fieldResponses: {
+              'pet1|fed': { fieldKey: 'fed', kinId: 'pet1', boolValue: true },
+            },
+          }),
+        ],
+      },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: /^fed$/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /gate locked/i })).not.toBeChecked();
+  });
+  /** Ticking a moment is content on its own: a checklist-only tale can be sent. */
+  it('enables Send off a tick alone, with no headline and no notes', async () => {
+    renderComposer();
+    const send = await screen.findByRole('button', { name: /send to the whitfields/i });
+    expect(send).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /^fed$/i }));
+    expect(screen.getByRole('button', { name: /send to the whitfields/i })).toBeEnabled();
+  });
+});
+describe('L20 · photos', () => {
+  it('attaches an uploaded photo to the tale and sends its id', async () => {
+    uploadMediaFile.mockResolvedValue('media9');
+    saveKinTaleDraft.mockResolvedValue('r1');
+    renderComposer();
+    await user.click(await screen.findByRole('button', { name: /add a photo/i }));
+    const file = new File(['bytes'], 'biscuit.jpg', { type: 'image/jpeg' });
+    await user.upload(screen.getByLabelText(/photo or video/i), file);
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalled());
+    // The visit's own Cloudinary folder, matching Android and the desktop.
+    expect(uploadMediaFile.mock.calls[0]?.[0]).toMatchObject({
+      entityType: 'VISIT_LOG',
+      entityId: 'sess1',
+    });
+    await user.click(await screen.findByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(saveKinTaleDraft.mock.calls[0]?.[0].mediaFileIds).toEqual(['media9']);
+  });
+  /** The refusal: a failed upload attaches nothing and says why. */
+  it('attaches nothing and surfaces the error when the upload fails', async () => {
+    uploadMediaFile.mockRejectedValue(new Error('Upload signing refused this sign-in'));
+    renderComposer();
+    await user.click(await screen.findByRole('button', { name: /add a photo/i }));
+    const file = new File(['bytes'], 'biscuit.jpg', { type: 'image/jpeg' });
+    await user.upload(screen.getByLabelText(/photo or video/i), file);
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+    expect(await screen.findByText(/upload signing refused this sign-in/i)).toBeInTheDocument();
+    expect(screen.getByText('Nothing attached yet.')).toBeInTheDocument();
+  });
+  it('shows an already-attached photo, and detaching it drops only the reference', async () => {
+    getMediaFilesByIds.mockResolvedValue([
+      { _id: 'm1', storageUrl: 'https://example.test/m1.jpg', description: 'Biscuit at the park', isProfilePhoto: false, durationSeconds: 0 },
+    ]);
+    saveKinTaleDraft.mockResolvedValue('r1');
+    mockStreams({
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', mediaFileIds: ['m1'] })] },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Biscuit at the park')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /remove from tale/i }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    expect(saveKinTaleDraft.mock.calls[0]?.[0].mediaFileIds).toEqual([]);
+  });
+  it('offers no photo block when the template has the showcase off', async () => {
+    renderComposer({ templates: [templateDoc({ photoShowcaseEnabled: false })] });
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add a photo/i })).toBeNull();
+  });
+});
+describe('L20 · GPS block', () => {
+  const ROUTE = {
+    distanceMeters: 1234,
+    durationSeconds: 900,
+    route: [
+      { lat: 34.42, lng: -119.7, t: 1_755_000_000_000 },
+      { lat: 34.43, lng: -119.69, t: 1_755_000_900_000 },
+    ],
+  };
+  it('draws the visit’s captured route with its distance and duration', async () => {
+    renderComposer({ session: session({ gpsSummary: ROUTE }) });
+    expect(await screen.findByText('Visit route')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /route of 1\.2 km over 15m 0s/i })).toBeInTheDocument();
+    expect(screen.getByText('1.2 km')).toBeInTheDocument();
+  });
+  /** The refusal: most visits have no GPS, and an empty map is worse than none. */
+  it('renders nothing at all for a visit with no GPS', async () => {
+    renderComposer();
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.queryByText('Visit route')).toBeNull();
+  });
+  it('renders nothing for a single ping, which is a location and not a route', async () => {
+    renderComposer({ session: session({ gpsSummary: { route: [{ lat: 34.42, lng: -119.7 }] } }) });
+    expect(await screen.findByLabelText(/headline/i)).toBeInTheDocument();
+    expect(screen.queryByText('Visit route')).toBeNull();
+  });
+  it('finds the parent visit’s route when reopening a saved draft too', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk' })] },
+      sessions: { status: 'ready', data: [session({ gpsSummary: ROUTE })] },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Visit route')).toBeInTheDocument();
   });
 });
