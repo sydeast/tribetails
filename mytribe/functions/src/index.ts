@@ -434,6 +434,14 @@ export { listPendingBookingRequests } from './admin/pendingBookingRequests';
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.
 export { transitionBookingStatus } from './admin/transitionBookingStatus';
+// #397 L19: the last two writes to that same document that had no server owner.
+// `setVisitLifecycle` is the IN-VISIT clock (On my way / Arrived / Departed /
+// Undo arrival) the web admin had no path to at all; `updateKinCareSession` is
+// the descriptive edit (service, notes, duration, Kin roster). Between the four
+// callables now exported from this block, every field on a `kin_care_sessions`
+// row that a client may change has exactly one server-side owner.
+export { setVisitLifecycle } from './admin/setVisitLifecycle';
+export { updateKinCareSession } from './admin/updateKinCareSession';
 // Punchlist B4: the write half of the shared vet catalog. `submitVetClinic`
 // (portal, create) had no update or delete counterpart on the server, so both
 // Kotlin trees wrote `vet_clinics` directly and the React admin could not edit a
