@@ -6,6 +6,7 @@ import {
   type RoutePoint,
 } from '@tribetails/geo';
 import type { SessionGpsSummary } from '../api/sessions';
+import { routePointsFromGpsSummary } from './breadcrumbs';
 
 /**
  * The GPS block the KinTale composer shows: the route the visit actually took,
@@ -75,21 +76,18 @@ export function kinTaleGpsBlock(summary: SessionGpsSummary | undefined): KinTale
   };
 }
 
-/** The coordinate list alone, defensively decoded. Exported for the block's own tests. */
-export function routePointsFrom(summary: SessionGpsSummary | undefined): RoutePoint[] {
-  const raw = summary?.route;
-  if (!Array.isArray(raw)) return [];
-  const out: RoutePoint[] = [];
-  for (const p of raw) {
-    if (p === null || typeof p !== 'object') continue;
-    const lat = numberOrNull((p as { lat?: unknown }).lat);
-    const lng = numberOrNull((p as { lng?: unknown }).lng);
-    if (lat === null || lng === null) continue;
-    const t = numberOrNull((p as { t?: unknown }).t);
-    out.push(t === null || t === 0 ? { lat, lng } : { lat, lng, t });
-  }
-  return out;
-}
+/**
+ * The coordinate list alone. Re-exported so this module's own tests and callers
+ * keep their name, but the IMPLEMENTATION is `lib/breadcrumbs.ts`'s.
+ *
+ * ISSUE #610: there used to be a second copy here. It and the breadcrumbs one
+ * did the same job and disagreed on two things -- this one dropped Android's
+ * `t === 0` UNKNOWN sentinel and did not sort, the other passed the sentinel
+ * through and sorted on `t ?? 0`. Same stored summary, two different routes.
+ * The behaviour here was the correct one on both counts, so it is what survived
+ * the merge; what changed is that there is now one function instead of two.
+ */
+export const routePointsFrom = routePointsFromGpsSummary;
 
 function numberOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;

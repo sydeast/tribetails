@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { durationFromPoints } from '@tribetails/geo';
 import { normalizeBreadcrumb, orderBreadcrumbs, routePointsFromGpsSummary } from './breadcrumbs';
 
 /**
@@ -75,7 +76,14 @@ describe('orderBreadcrumbs', () => {
 describe('routePointsFromGpsSummary', () => {
   // The durable copy is what survives `purgeOldVisitRoutes`, so a completed
   // visit's only route is usually this one.
-  it('reads the {lat,lng,t} points the summary stores', () => {
+  /**
+   * CHANGED BY #610, deliberately: this used to assert the two points came back
+   * SORTED, pinning a re-order this function no longer does. A summary's `route`
+   * is written in walked order by both writers, so the stored order is the
+   * answer and sorting on a partial clock could only corrupt it. The points are
+   * returned as stored.
+   */
+  it('reads the {lat,lng,t} points the summary stores, in stored order', () => {
     expect(
       routePointsFromGpsSummary({
         distanceMeters: 1200,
@@ -85,8 +93,8 @@ describe('routePointsFromGpsSummary', () => {
         ],
       }),
     ).toEqual([
-      { lat: 30.3, lng: -97.8, t: 10 },
       { lat: 30.2, lng: -97.7, t: 20 },
+      { lat: 30.3, lng: -97.8, t: 10 },
     ]);
   });
 
@@ -102,5 +110,67 @@ describe('routePointsFromGpsSummary', () => {
     expect(
       routePointsFromGpsSummary({ route: [{ lat: 30.2, lng: -97.7 }, { lat: 30.3 }] }),
     ).toEqual([{ lat: 30.2, lng: -97.7 }]);
+  });
+});
+
+/**
+ * ISSUE #610: `t: 0` is Android's documented UNKNOWN sentinel on a summary
+ * point (`GpsPoint`, `LocationModels.kt`: "Epoch millis. 0 if unknown"), not a
+ * timestamp in 1970. Two normalizers read this field and only one of them knew
+ * that, which is what this file now pins.
+ */
+describe('routePointsFromGpsSummary and the zero sentinel', () => {
+  it('drops t === 0 rather than reading it as 1970', () => {
+    const points = routePointsFromGpsSummary({
+      route: [
+        { lat: 30.1, lng: -97.7, t: 0 },
+        { lat: 30.2, lng: -97.8, t: 1_787_580_600_000 },
+      ],
+    });
+    expect(points).toEqual([
+      { lat: 30.1, lng: -97.7 },
+      { lat: 30.2, lng: -97.8, t: 1_787_580_600_000 },
+    ]);
+  });
+  /**
+   * The visible harm, and the reason the sentinel matters here rather than
+   * being a tidiness point. `RouteMap` falls back to `durationFromPoints(route)`
+   * when the stored `durationSeconds` is absent, and that reads the FIRST and
+   * LAST point's `t`. A zero at either end spans from 1970 to the real ping:
+   * about 56 years, rendered as a five-figure hour count on an operator's
+   * screen.
+   */
+  it('does not turn an unknown clock into a fifty-six-year visit', () => {
+    const points = routePointsFromGpsSummary({
+      route: [
+        { lat: 30.1, lng: -97.7, t: 0 },
+        { lat: 30.2, lng: -97.8, t: 1_787_580_600_000 },
+      ],
+    });
+    expect(durationFromPoints(points)).toBe(0);
+  });
+  /**
+   * A summary's points arrive in the order they were walked: both writers build
+   * `route` by mapping over an already-ordered list
+   * (`LocationTrackingService#downsamplePoints`, and the desktop's `downsample`),
+   * and Android's own composer renders `gpsSummary.route` as-is. Sorting here
+   * was not preserving that order, it was overriding it -- and sorting on
+   * `t ?? 0` put every unknown-clock point at the FRONT, which moved the start
+   * of the drawn polyline.
+   */
+  it('preserves the stored order instead of sorting on a partial clock', () => {
+    const points = routePointsFromGpsSummary({
+      route: [
+        { lat: 1, lng: 1, t: 300 },
+        { lat: 2, lng: 2, t: 0 },
+        { lat: 3, lng: 3, t: 100 },
+      ],
+    });
+    expect(points.map((p) => p.lat)).toEqual([1, 2, 3]);
+  });
+  it('is not fooled by a real coordinate of zero', () => {
+    expect(routePointsFromGpsSummary({ route: [{ lat: 0, lng: 0, t: 5 }] })).toEqual([
+      { lat: 0, lng: 0, t: 5 },
+    ]);
   });
 });
