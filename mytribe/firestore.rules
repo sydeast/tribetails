@@ -354,9 +354,38 @@ service cloud.firestore {
     }
 
     match /kin_care_reports/{reportId} {
-      allow read: if isAuntie()
-                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
-                  || testOwnsExisting();
+ // ISSUE #602: THERE IS NO KINFOLK BRANCH HERE, AND ITS ABSENCE IS THE
+ // ENFORCEMENT. Until 2026-08-26 this line also carried
+ //   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId)
+ // which handed a household the WHOLE report document, `gpsRoute` included --
+ // the coordinate trail `getMyKinTales` deliberately strips on the way out.
+ //
+ // It could not be patched in place. A rule gates a DOCUMENT, never a field, so
+ // no condition written here can withhold `gpsRoute` and still serve the
+ // KinTale. Only removing the grant closes it.
+ //
+ // WHAT REPLACES IT IS NOT NEW. `functions/src/portal/getMyKinTales.ts` already
+ // projects this collection field by field for the portal, and both shipping
+ // portal clients already load KinTales through that callable and nothing else
+ // (`mytribe/web/src/api/portal.ts`, `mytribe/src/commonMain/.../portal/PortalApi.kt`).
+ // The grant was REACHABLE, not used. Two guard tests keep it that way, one per
+ // client (`web/src/lib/reportDirectReads.test.ts`, `DirectReportReadTest.kt`).
+ //
+ // SAME MOVE AS `kin_care_sessions` BELOW (#584), `match /kinfolk/{kinfolkId}`
+ // above, and #377 on `the_411` before both.
+ //
+ // THE COMMENTS READ BELOW IS UNAFFECTED, and that is the half most likely to
+ // look broken. Its kinfolk branch resolves the parent report's `kinfolkId`
+ // through `get()`, and a rules `get()` is not itself subject to rules, so it
+ // never consulted this `allow read`. A household keeps reading the thread on
+ // their own KinTale. `test/rules/kinCareReportRead.test.ts` proves both halves.
+ //
+ // STILL REACHABLE-BUT-UNUSED, and left alone on purpose: the comments rule's
+ // own kinfolk branch. Comments are served by `getMyKinTaleComments` on both
+ // clients, so that grant is no more used than this one was -- but a comment
+ // carries no route, so removing it closes no leak, and a rules change is
+ // cheapest to review one collection at a time.
+      allow read: if isAuntie() || testOwnsExisting();
       allow create: if isAuntie() || testOwnsIncoming();
       allow update: if isAuntie() || testOwnsExisting();
       allow delete: if isAuntie() || testOwnsExisting();
@@ -438,10 +467,10 @@ service cloud.firestore {
  // callable does not need a client read grant, and keeping one only widens what
  // a curious or compromised client can take.
  //
- // NOT DONE HERE: `kin_care_reports` still carries the same kinfolk branch, and
- // a report document carries `gpsRoute` that `getMyKinTales` strips. That is the
- // identical hole one collection over, and it is tracked as #602 rather than
- // given a silent ride on this one.
+ // THE SAME HOLE ON `kin_care_reports` was named here when this shipped and has
+ // since been closed by #602, in the block above. The two collections now carry
+ // the same shape: operator and sandboxed test admin only, with every portal
+ // read going through a projecting callable.
  //
  // THE BREADCRUMBS READ BELOW IS UNAFFECTED. Its kinfolk branch resolves the
  // parent session's `kinfolkId` through `get()`, and a rules `get()` is not
