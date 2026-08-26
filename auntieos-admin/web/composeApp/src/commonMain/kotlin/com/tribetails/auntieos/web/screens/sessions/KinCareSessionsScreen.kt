@@ -994,7 +994,12 @@ internal fun buildGpsSummary(crumbs: List<Breadcrumb>): GpsSummary {
         startLng = first.lng,
         endLat = last.lat,
         endLng = last.lng,
-        route = downsampled.map { GpsPoint(lat = it.lat, lng = it.lng, t = parseIsoEpochMs(it.timestamp)) },
+        // `t = 0` is the wire's documented "clock unknown" (see GpsPoint), and the
+        // readers honour it as such (#610/#614). It is written HERE, at the one
+        // place that knows the parse failed, rather than defaulted inside the
+        // parser — so a shape this cannot read is a decision made in the open
+        // instead of a bug wearing a sentinel's clothes (#615).
+        route = downsampled.map { GpsPoint(lat = it.lat, lng = it.lng, t = parseBreadcrumbMillis(it.timestamp) ?: 0L) },
         computedAt = nowIso(),
     )
 }
@@ -1017,25 +1022,3 @@ private fun downsample(crumbs: List<Breadcrumb>, target: Int): List<Breadcrumb> 
     return out
 }
 
-/** Slim ISO-8601 → epoch ms. Returns 0 on parse failure (caller treats 0 as "unknown"). */
-private fun parseIsoEpochMs(iso: String): Long = runCatching {
-    if (iso.length < 19) return@runCatching 0L
-    val y  = iso.substring(0, 4).toInt()
-    val mo = iso.substring(5, 7).toInt()
-    val d  = iso.substring(8, 10).toInt()
-    val h  = iso.substring(11, 13).toInt()
-    val mi = iso.substring(14, 16).toInt()
-    val s  = iso.substring(17, 19).toInt()
-    val days = daysFromCivilLocal(y, mo, d)
-    days * 86_400_000L + h * 3_600_000L + mi * 60_000L + s * 1_000L
-}.getOrDefault(0L)
-
-private fun daysFromCivilLocal(y: Int, m: Int, d: Int): Long {
-    val yy = if (m <= 2) y - 1 else y
-    val era = if (yy >= 0) yy / 400 else (yy - 399) / 400
-    val yoe = (yy - era * 400).toLong()
-    val mp = if (m > 2) m - 3 else m + 9
-    val doy = (153 * mp + 2) / 5 + d - 1
-    val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-    return era * 146_097L + doe - 719_468L
-}

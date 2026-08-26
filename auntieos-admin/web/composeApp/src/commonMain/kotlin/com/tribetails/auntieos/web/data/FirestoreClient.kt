@@ -3326,7 +3326,18 @@ data class TrainingDocAttachment(
 @Serializable
 data class Breadcrumb(
     val _id: String = "",
-    val timestamp: String = "",   // ISO-8601, doubles as the natural sort key
+    /**
+     * The ping's clock, and the natural sort key.
+     *
+     * TWO WRITERS, TWO SHAPES. Android writes epoch millis as a NUMBER; the wasm
+     * web client retired in #513 wrote an ISO-8601 STRING. This field is typed
+     * `String`, so nothing that decodes a live Android breadcrumb straight into
+     * this model will succeed — see #615. Read it with
+     * [com.tribetails.auntieos.web.screens.sessions.parseBreadcrumbMillis], which
+     * takes either, and give any future `platformGetBreadcrumbs` actual a decoder
+     * that accepts both before wiring it up.
+     */
+    val timestamp: String = "",
     val lat: Double = 0.0,
     val lng: Double = 0.0,
     val accuracyMeters: Double = 0.0,
