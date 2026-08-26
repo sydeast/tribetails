@@ -434,9 +434,19 @@ export { listPendingBookingRequests } from './admin/pendingBookingRequests';
 // Sits beside rescheduleBooking because it owns the other half of the writes to
 // that document; both replaced a direct client patch.
 export { transitionBookingStatus } from './admin/transitionBookingStatus';
+// #397 L19: the last two writes to that same document that had no server owner.
+// `setVisitLifecycle` is the IN-VISIT clock (On my way / Arrived / Departed /
+// Undo arrival) the web admin had no path to at all; `updateKinCareSession` is
+// the descriptive edit (service, notes, duration, Kin roster). Between the four
+// callables now exported from this block, every field on a `kin_care_sessions`
+// row that a client may change has exactly one server-side owner.
+export { setVisitLifecycle } from './admin/setVisitLifecycle';
+export { updateKinCareSession } from './admin/updateKinCareSession';
 // #582: measures a recorded arrival against the household's stored coordinate
-// and stamps the DISTANCE on the visit. Beside transitionBookingStatus because
-// that callable is what enforces the result at COMPLETE.
+// and stamps the DISTANCE on the visit. It owns no status, so it sits after the
+// three callables that do: `setVisitLifecycle` records THAT an arrival
+// happened, this one records how far from the household it was recorded, and
+// `transitionBookingStatus` is where that measurement is enforced at COMPLETE.
 export { verifyVisitArrival } from './admin/verifyVisitArrival';
 // Punchlist B4: the write half of the shared vet catalog. `submitVetClinic`
 // (portal, create) had no update or delete counterpart on the server, so both

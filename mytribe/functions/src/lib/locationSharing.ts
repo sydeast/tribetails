@@ -33,15 +33,24 @@ import type { Firestore } from 'firebase-admin/firestore';
  * against a kinfolk losing the map on a Firestore blip. Neither is good; the
  * first is the one that matches what the operator last chose.
  *
- * KNOWN LIMIT, stated rather than papered over: a kinfolk can read their own
- * `kin_care_sessions/{id}` document directly under the existing rule, and that
- * document carries `gpsSummary`. Firestore rules are all-or-nothing per
- * document, so there is no way to mask one field without denying the visit
- * itself, which would break the portal outright. Closing that gap means moving
- * the portal's session reads behind a callable, which is a bigger change than
- * this one and is named in the PR as a follow-up. What this closes is every path
- * that a client cannot already reach without the operator's own rule allowing
- * the whole visit doc.
+ * THE KNOWN LIMIT IS CLOSED (#584, 2026-08-25). This comment used to end by
+ * admitting that a kinfolk could read their own `kin_care_sessions/{id}`
+ * document directly, `gpsSummary` and all, and that rules are all-or-nothing per
+ * document so nothing here could mask one field. That was accurate about rules
+ * and wrong about the cost: the assumption was that denying the document would
+ * "break the portal outright", and it does not. Neither shipping portal client
+ * ever read a session document directly - both load visits through
+ * `getMyVisits`, which is this projection - so the grant was reachable rather
+ * than used, and `firestore.rules` now drops its kinfolk branch on that
+ * collection. The document-level hole is gone; what remains here is the
+ * field-level policy, which is still the only place it can live.
+ *
+ * ONE COLLECTION OVER IS STILL OPEN. `kin_care_reports` keeps its kinfolk read
+ * branch, and a report document carries the `gpsRoute` that `getMyKinTales`
+ * below strips - so the same document-level hole exists there, for KinTale
+ * routes instead of visit routes. It is not fixed here because it is not the
+ * same collection and not the same portal surface. Tracked as #602, with the
+ * same inventory method and test shape this change used.
  */
 
 /** The unified settings doc every client writes (`business_settings/business_settings`). */

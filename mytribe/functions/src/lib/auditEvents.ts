@@ -231,6 +231,25 @@ export const AUDIT_EVENTS = {
   // because "who tried to complete a cancelled visit" is exactly the question
   // an audit trail exists to answer, and a success-only trail cannot.
   BOOKING_TRANSITION_REFUSED: 'BOOKING_TRANSITION_REFUSED',
+  // #397 L19: the IN-VISIT clock on one flat `kin_care_sessions` row
+  // (setVisitLifecycle callable): On my way / Arrived / Departed / Undo
+  // arrival. Kept apart from BOOKING_STATUS_TRANSITION above, which records the
+  // four OPERATOR decisions, because the two answer different questions after
+  // the fact: that one is "who approved, cancelled or completed this visit",
+  // this one is "when did the Auntie actually arrive and leave, and who said
+  // so". The payload carries whether the household was told, and why not when
+  // it was not, since a clock-in that notified nobody is a different event from
+  // one that did.
+  VISIT_LIFECYCLE_SET: 'VISIT_LIFECYCLE_SET',
+  // The same callable REFUSING: a missing session, an unreadable status, or an
+  // action illegal from the row's current status (clocking out of a visit
+  // nobody clocked into is the one this exists for). Same reasoning as
+  // BOOKING_TRANSITION_REFUSED: a success-only trail cannot answer "who tried".
+  VISIT_LIFECYCLE_REFUSED: 'VISIT_LIFECYCLE_REFUSED',
+  // #397 L19: an operator edited the descriptive fields of one visit
+  // (updateKinCareSession callable): serviceType, notes, duration, the Kin
+  // roster. Records the field NAMES written, never their values.
+  UPDATE_KINCARE_SESSION: 'UPDATE_KINCARE_SESSION',
   // #582: `verifyVisitArrival` measured a recorded arrival against the
   // household's stored coordinate. Written on EVERY outcome, including the ones
   // that verify nothing (no household coordinate, a fix too imprecise to be

@@ -26,7 +26,8 @@ const Args = z
     message: 'Provide batchId+visitId (preferred) or a legacy bookingId.',
   });
 
-type Args = z.infer<typeof Args>;
+/** Exported so `setVisitLifecycle` can name what it hands `dispatchVisitNotificationCore`. */
+export type Args = z.infer<typeof Args>;
 
 const EVENT_TO_KEY: Record<z.infer<typeof EventArg>, string> = {
   on_my_way: 'kincare.auntie.on_my_way',
@@ -35,12 +36,32 @@ const EVENT_TO_KEY: Record<z.infer<typeof EventArg>, string> = {
   report_sent: 'kincare.report.sent',
 };
 
-export async function dispatchVisitNotificationHandler(
-  req: CallableRequest<unknown>,
-): Promise<{ ok: true; dispatchIds: string[]; suppressed: boolean }> {
-  const args: Args = Args.parse(req.data);
-  const actorUid = req.auth!.uid;
+export interface DispatchVisitNotificationOutcome {
+  ok: true;
+  dispatchIds: string[];
+  suppressed: boolean;
+}
 
+/**
+ * The dispatch itself, lifted out of the callable wrapper so a SECOND server
+ * path can reach it (#397 L19).
+ *
+ * WHY IT WAS LIFTED. On Android the household message is a CLIENT decision:
+ * `HomeViewModel.onMyWay/arrived/departed` each call `VisitNotifier`, which
+ * calls the callable below. Nothing on `kin_care_sessions` triggers on a write,
+ * so a lifecycle transition made anywhere ELSE notifies nobody. The web admin's
+ * `setVisitLifecycle` therefore dispatches server-side, in the same call that
+ * moves the status, rather than asking the browser to make a second one that a
+ * closed tab or a failed round-trip would skip.
+ *
+ * `actorDisplayNameFallback` is what the callable used to read straight off
+ * `req.auth.token.name`; a non-callable caller passes its own or nothing.
+ */
+export async function dispatchVisitNotificationCore(
+  args: Args,
+  actorUid: string,
+  actorDisplayNameFallback?: string | undefined,
+): Promise<DispatchVisitNotificationOutcome> {
   const resolved = await resolveKinCareRef({
     familyId: args.familyId,
     batchId: args.batchId,
@@ -83,7 +104,7 @@ export async function dispatchVisitNotificationHandler(
     (recipientSnap.data() as { displayName?: string } | undefined)?.displayName ?? null;
   const auntieDisplayName =
     (actorSnap.data() as { displayName?: string } | undefined)?.displayName ??
-    req.auth?.token?.name ??
+    actorDisplayNameFallback ??
     'Your Auntie';
 
   const key = EVENT_TO_KEY[args.event];
@@ -128,6 +149,13 @@ export async function dispatchVisitNotificationHandler(
   });
 
   return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0 };
+}
+
+export async function dispatchVisitNotificationHandler(
+  req: CallableRequest<unknown>,
+): Promise<DispatchVisitNotificationOutcome> {
+  const args: Args = Args.parse(req.data);
+  return dispatchVisitNotificationCore(args, req.auth!.uid, req.auth?.token?.name);
 }
 
 export const dispatchVisitNotification = onCall(
