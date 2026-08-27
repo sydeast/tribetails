@@ -167,23 +167,21 @@ export const BOOKINGS_QUERY: CollectionSpec = {
 };
 
 /**
- * OUT OF SCOPE, flagged rather than silently dropped: the wasm's "Incoming
- * requests" panel (BookingScreen.kt:314-338) reads a SEPARATE
- * collection-GROUP query over
- * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`
+ * DELIBERATELY DOES NOT CARRY the wasm's "Incoming requests" panel
+ * (BookingScreen.kt:314-338), which reads a SEPARATE collection-GROUP query
+ * over `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`
  * (`client.incomingKinCaresStream()`) and lets the operator Approve/Cancel a
- * whole MyTribe request series via the `manageBookingSeries` callable.
- * Neither is ported here, for two independent reasons:
- *
- *   1. lib/firestore.ts's `CollectionSpec` wraps a single
- *      `collection(db, spec.path)` query; it has no collection-GROUP variant,
- *      so streaming the nested `kinCares` subcollection across every kinfolk
- *      would need a new capability added to that SHARED helper, not a
- *      screen-local workaround bolted onto this file.
- *   2. Approve/Cancel are WRITE actions that call the `manageBookingSeries`
- *      callable. This port is LIST ONLY per the brief: no BookingDetail
- *      dialog, no create/edit flow, no row actions.
- *
- * A future BookingDetail screen (or a dedicated "Incoming requests" screen) is
- * where both belong, once `CollectionSpec` grows collection-group support.
+ * whole MyTribe request series via the `manageBookingSeries` callable. This
+ * spec stays a flat, single-collection `kin_care_sessions` stream, and an
+ * envelope request never becomes a `kin_care_sessions` doc until it is
+ * approved, so it never appears in this list. That's fine: the same
+ * capability shipped, on the same screen, through `api/bookingRequests.ts`
+ * (issue #533) — `VisitRequestsSection` renders it alongside the reschedule
+ * and cancellation queues, reaching the nested `kinCares` data through the
+ * `listPendingBookingRequests` / `approveBookingRequest` /
+ * `declineBookingRequest` callables rather than a `CollectionSpec` listener.
+ * `CollectionSpec` still has no collection-group variant, and this is why it
+ * no longer needs one: the callable route already reaches that data, the
+ * same way `api/cancelRequests.ts` and `api/rescheduleRequests.ts` do for the
+ * other two request kinds.
  */

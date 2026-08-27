@@ -2012,7 +2012,10 @@ private fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) 
 
 /**
  * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built; never
- * faked as connected). When the connect flow ships, this becomes connect + settings + link.
+ * faked as connected). The #397 audit flagged these as invented scope and recommended
+ * deleting them; the operator OVERRULED that on 2026-08-26 ("these a[re] soon to be
+ * implementations") — they stay, as a ruled, planned backlog item, not an unexplained
+ * placeholder. When the connect flow ships, this becomes connect + settings + link.
  */
 @Composable
 private fun AddOnComingSoon(name: String, detail: String) {
