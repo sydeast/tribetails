@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { wrapHttp } from '../lib/wrapHttp';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveShareLink, type ScrubbedSharePayload } from '../lib/resolveShareLink';
+import { listPublicComments, type PublicComment } from './sharedKinTaleComments';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
 /**
@@ -173,6 +174,14 @@ const STYLE_BLOCK = `
     font-size:13px;font-weight:600;}
 
   .noteform{margin-top:24px;animation:rise .6s var(--ease) .22s both;}
+  .notelist{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:12px;}
+  .note{padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.55);border:1px solid rgba(20,40,80,.08);}
+  .note.family{background:rgba(120,150,255,.10);}
+  .noteby{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:4px;}
+  .notename{font-weight:600;}
+  .notewhen{font-family:var(--mono);font-size:11px;color:var(--navy-muted);}
+  .notebody{white-space:pre-wrap;overflow-wrap:anywhere;}
+  .noteserror{margin-top:12px;}
   .formgrid{display:flex;flex-direction:column;gap:14px;margin-top:4px;}
   .success-msg{display:flex;align-items:center;gap:10px;margin-top:14px;padding:13px 16px;border-radius:14px;
     background:rgba(10,133,149,.12);color:var(--teal);font-size:13.5px;font-weight:600;}
@@ -236,11 +245,31 @@ function genericMetaTags(): string {
 }
 
 // ── Ready ─────────────────────────────────────────────────────────────────
+/**
+ * One thread row. Every value that reaches the page goes through `escapeHtml`:
+ * the name and the body are typed by strangers, and this document is served to
+ * anyone holding the link.
+ *
+ * The date is rendered in UTC on purpose. The server has no idea what timezone
+ * the reader is in, and a wrong local time is worse than an explicit one.
+ */
+function renderComment(c: PublicComment): string {
+  const when =
+    c.createdAtMs === null
+      ? ''
+      : `<span class="notewhen">${escapeHtml(new Date(c.createdAtMs).toISOString().slice(0, 10))}</span>`;
+  return `        <li class="note${c.fromGuest ? '' : ' family'}">
+          <div class="noteby"><span class="notename">${escapeHtml(c.name)}</span>${when}</div>
+          <div class="notebody">${escapeHtml(c.body)}</div>
+        </li>`;
+}
 function renderReadyPage(opts: {
   shareId: string;
   taleId: string | null;
   payload: ScrubbedSharePayload;
   allowGuestComments: boolean;
+  comments: PublicComment[];
+  commentsFailed: boolean;
 }): string {
   const authorDisplayName = opts.payload.authorDisplayName?.trim() || 'Auntie';
   const body = opts.payload.body ?? '';
@@ -276,6 +305,28 @@ ${photos.map((url) => `        <div class="shot"><img src="${escapeHtml(url)}" l
   // control that cannot act is not drawn: the same rule `components/Buttons.tsx`
   // enforces on five admin screens. The server check stays exactly as it is, because
   // a hidden form is not a permission.
+  // ISSUE #624, operator ruling: guests see the thread. Rendered above the form,
+  // so someone who has just posted scrolls back INTO their own note rather than
+  // away from it, and a first-time reader meets the existing notes before the
+  // invitation to add one.
+  //
+  // Gated on the same flag as the form. A share that refuses new comments shows
+  // no comment surface at all: the alternative, a readable thread with no way to
+  // reply, is a shape nobody asked for. Splitting the two is a one-line change if
+  // that turns out to be wanted.
+  const threadBody = opts.commentsFailed
+    ? '<div class="inline-error noteserror">These notes could not be loaded just now. Nothing has been lost: refresh the page to try again.</div>'
+    : `<ol class="notelist">
+${opts.comments.map(renderComment).join('\n')}
+      </ol>`;
+  const threadHtml =
+    opts.allowGuestComments && (opts.comments.length > 0 || opts.commentsFailed)
+      ? `
+    <section class="glass card noteform">
+      <div class="sectlabel">Notes for the Family</div>
+      ${threadBody}
+    </section>`
+      : '';
   const commentSectionHtml = opts.allowGuestComments
     ? `    <section class="glass card noteform">
       <div class="sectlabel">Leave a Note for the Family</div>
@@ -398,6 +449,7 @@ ${galleryHtml}
       </div>
     </article>
 
+${threadHtml}
 ${commentSectionHtml}`;
 
   return renderDocument({ title: `A KinTale from ${authorDisplayName} — MyTribe`, metaTags, bodyHtml });
@@ -488,6 +540,24 @@ export async function getSharedKinTalePageHandler(req: MinimalReq, res: MinimalR
     return;
   }
 
+  // #624. Only read the thread when there is a tale id to read it under and the
+  // share accepts comments at all; a share with comments off renders no comment
+  // surface, so the query would be work nobody sees.
+  //
+  // A FAILED read is not an empty thread. Both would render as no notes, and the
+  // guest who just posted would read that as their note having vanished, so the
+  // failure is carried through and said out loud on the page. The recap itself
+  // still renders: losing the tale because its comments could not be listed
+  // would be a worse trade for the household that shared it.
+  let comments: PublicComment[] = [];
+  let commentsFailed = false;
+  if (result.allowGuestComments && result.sourceKinTaleId) {
+    try {
+      comments = await listPublicComments(result.sourceKinTaleId);
+    } catch {
+      commentsFailed = true;
+    }
+  }
   sendHtml(
     res,
     200,
@@ -496,6 +566,8 @@ export async function getSharedKinTalePageHandler(req: MinimalReq, res: MinimalR
       taleId: result.sourceKinTaleId,
       payload: result.scrubbedPayload,
       allowGuestComments: result.allowGuestComments,
+      comments,
+      commentsFailed,
     }),
   );
 }

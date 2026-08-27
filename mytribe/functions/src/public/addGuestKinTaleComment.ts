@@ -127,7 +127,11 @@ export interface MinimalRes {
 
 /**
  * HTTP function (NOT callable) for unauthenticated viewers of a shared KinTale
- * to post a comment. Path: `families/{tribeId}/kinTales/{taleId}/comments`.
+ * to post a comment. Path: `kin_care_reports/{taleId}/comments`, which is where
+ * the write below actually goes and where `getKinTaleComments` and the trigger
+ * `onKinTaleCommentCreate` both read. This line used to name
+ * `families/{tribeId}/kinTales/{taleId}/comments`, a path nothing in the repo
+ * touches (#624).
  *
  * Anti-abuse:
  * - shareToken must exist + not be revoked + not expired
