@@ -12,12 +12,13 @@ import type {
  *
  * A household asks for care in the portal, which writes a booking ENVELOPE at
  * `families/{kinfolkId}/bookings/{batchId}` with its visits underneath, all
- * `requested`. Until this file, nothing in the React admin read that back. The
+ * `requested`. Before this file, nothing in the React admin read that back. The
  * Bookings list streams the flat `kin_care_sessions` collection, and an envelope
- * visit only becomes a session once it is approved, so a pending request was
- * invisible here BY DESIGN (see the OUT-OF-SCOPE note in `api/bookings.ts`) and
+ * visit only becomes a session once it is approved, so a pending request stayed
+ * invisible there BY DESIGN (see `api/bookings.ts`'s header) and
  * `VisitRequestsSection` held only the reschedule and cancellation asks. A
- * household could ask for care and never be answered.
+ * household could ask for care and never be answered. THIS FILE is what closed
+ * that gap.
  *
  * Same reason as `cancelRequests.ts` and `rescheduleRequests.ts` for arriving
  * through a callable rather than `useCollection`: the requests live in the

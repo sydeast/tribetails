@@ -82,12 +82,20 @@ internal class RestAuthBackend(
         return AuthState.SignedIn(user.localId, user.email, user.displayName)
     }
 
+    // Operator ruling on issue #397 (2026-08-26): desktop kinfolk sign-in is
+    // email-and-password only. Magic link, provider (Google/Apple/etc.), and
+    // phone OTP were never configured for this Firebase project on ANY
+    // client — "I didn't setup any other signin methods" — so this is not a
+    // missing desktop port, it's the desktop client correctly refusing sign-in
+    // methods no kinfolk can use anywhere. These stay hard failures so a
+    // caller notices immediately if that ever changes.
+
     override suspend fun sendMagicLink(email: String) {
-        throw NotImplementedError("Magic-link sign-in not wired on desktop yet.")
+        throw NotImplementedError("Magic-link sign-in is not offered on desktop.")
     }
 
     override suspend fun signInWithMagicLink(email: String, link: String): AuthState.SignedIn {
-        throw NotImplementedError("Magic-link sign-in not wired on desktop yet.")
+        throw NotImplementedError("Magic-link sign-in is not offered on desktop.")
     }
 
     override suspend fun signInWithIdToken(
@@ -95,11 +103,11 @@ internal class RestAuthBackend(
         idToken: String,
         rawNonce: String?,
     ): AuthState.SignedIn {
-        throw NotImplementedError("Provider sign-in not wired on desktop yet ($provider).")
+        throw NotImplementedError("Provider sign-in is not offered on desktop ($provider).")
     }
 
     override suspend fun signInWithPhoneOtp(verificationId: String, smsCode: String): AuthState.SignedIn {
-        throw NotImplementedError("Phone OTP not wired on desktop yet.")
+        throw NotImplementedError("Phone OTP is not offered on desktop.")
     }
 
     override suspend fun signOut() {

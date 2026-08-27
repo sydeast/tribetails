@@ -62,9 +62,13 @@ function billingErrorText(err: unknown, action: string): string {
  *     control). No admin schema is seeded yet, so today this always falls
  *     through to the static fields below — the query exists so the screen
  *     doesn't need another code change once one is added. (The Compose
- *     screen additionally *renders* a schema-driven form when present;
- *     that dynamic-form renderer is out of scope for this port — see the
- *     final report for why.)
+ *     screen additionally *renders* a schema-driven form when present; this
+ *     port's dynamic-form renderer is accepted as out of scope by operator
+ *     ruling on issue #397, 2026-08-26, UNTIL custom account fields are
+ *     actually wanted. Since no `formSchemas/account` document is seeded
+ *     anywhere, both clients look identical to every kinfolk today; this
+ *     gap becomes real, and worth closing, only once an admin schema exists
+ *     to render.)
  *   - saveMyAccount persists, then getMyAccount is refetched to verify the
  *     write instead of trusting a silent client-side "Saved."
  *   - The photo picker is the shared <SignedImageUpload> component

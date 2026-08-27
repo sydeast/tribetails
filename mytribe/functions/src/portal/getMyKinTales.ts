@@ -374,17 +374,19 @@ const DEFAULT_TEMPLATE_CHECKLIST_ITEMS: TemplateChecklistItem[] = [
 ];
 
 /**
- * The task checklist (task-25, P4). CHECKED ITEMS ONLY — deliberately does
- * NOT attempt to render "not done": the live capture UI
+ * The task checklist (task-25, P4). CHECKED ITEMS ONLY, by operator ruling on
+ * issue #397 (2026-08-26): accepted as the intended client-facing behavior,
+ * not a gap to close. The reasoning still holds and is why it's the right
+ * call, not just the ruled one: the live capture UI
  * (`KinTaleReportViewModel.setChecklistResponse`, Android) only writes a
  * `fieldResponses` entry when the Auntie taps an item, so an item with no
  * entry is indistinguishable between "explicitly left undone" and "never
  * shown to her because a condition didn't apply" (e.g. a diabetic-only
- * medication item on a non-diabetic pet). Answering that would require
- * porting the template CONDITION engine (`KinTaleConditionEngine.kt` /
- * `KinTaleTemplateEngine.kt`) — a second concern, out of scope here; see
- * task-25-report.md. Only `boolValue === true` is a real claim, matching the
- * one existing sent-report renderer, `SentChecklistResolver.kt:46`
+ * medication item on a non-diabetic pet). Resolving that ambiguity would
+ * require porting the template CONDITION engine (`KinTaleConditionEngine.kt` /
+ * `KinTaleTemplateEngine.kt`) — a separate, larger effort the ruling did not
+ * ask for; see task-25-report.md. Only `boolValue === true` is a real claim,
+ * matching the one existing sent-report renderer, `SentChecklistResolver.kt:46`
  * (`checked = report.fieldResponses.values.filter { it.boolValue == true }`).
  *
  * Labels/order come from the report's own `templateId` (or the built-in

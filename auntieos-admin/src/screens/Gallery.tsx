@@ -57,10 +57,13 @@ import './Gallery.css';
  *              Android's `GalleryScreen.kt` has had exactly this flow the whole
  *              time; the web half was the missing part.
  *
+ *   CAPTION EDITING (#397 S3) is real too, but it lives in the shared
+ *   `MediaViewerDialog` a tile opens (see that component), not on the tile
+ *   itself: the caption text shown on the grid tile (`description` falling
+ *   back to `originalFileName`, via `lib/mediaFormat.ts#mediaCaption`) stays
+ *   read-only display copy.
+ *
  *   OUT OF SCOPE, flagged rather than silently dropped:
- *     - Caption editing. The caption shown is READ-ONLY (`description` falling
- *       back to `originalFileName`, via `lib/mediaFormat.ts#mediaCaption`); there
- *       is no write path from this screen.
  *     - A "tagged kin" FILTER. Android's `GalleryFilter` has three facets
  *       (household / type / month) and no fourth; inventing one here would put
  *       the two clients back out of step in the opposite direction.
