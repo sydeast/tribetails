@@ -221,8 +221,8 @@ internal fun formatDistance(meters: Double): String {
 
 internal fun durationMillis(crumbs: List<Breadcrumb>): Long {
     if (crumbs.size < 2) return 0L
-    val first = parseIsoMillis(crumbs.first().timestamp) ?: return 0L
-    val last  = parseIsoMillis(crumbs.last().timestamp)  ?: return 0L
+    val first = parseBreadcrumbMillis(crumbs.first().timestamp) ?: return 0L
+    val last  = parseBreadcrumbMillis(crumbs.last().timestamp)  ?: return 0L
     return (last - first).coerceAtLeast(0L)
 }
 
@@ -237,6 +237,34 @@ internal fun formatDuration(ms: Long): String {
         m > 0 -> "${m}m ${s}s"
         else  -> "${s}s"
     }
+}
+
+/**
+ * A breadcrumb's clock as epoch millis, or null when it carries none this
+ * understands.
+ *
+ * TWO WRITERS, TWO SHAPES, the same pair #607 found on the reader side. Android's
+ * `LocationPoint` writes `timestamp` as epoch millis; the wasm web client retired
+ * in #513 wrote it as an ISO string. [Breadcrumb.timestamp] is typed `String`
+ * here, so a number arrives as its digits — which is why a digits-only input is
+ * read as epoch millis before the ISO shape is tried.
+ *
+ * NULL, NEVER ZERO, on failure. Callers decide what an unknown clock means:
+ * [durationMillis] degrades to "-" and `buildGpsSummary` writes the wire's
+ * documented `t = 0` sentinel. Returning 0 from here would hand both of them a
+ * real instant (1970-01-01) and make a parse bug indistinguishable from a
+ * breadcrumb that genuinely never carried a clock. That is issue #615.
+ *
+ * Kept semantically identical to `parseIsoMs` in MyTribe's `BreadcrumbDecode.kt`
+ * and to the two TypeScript normalizers (#611, #614). Change one, change all.
+ */
+internal fun parseBreadcrumbMillis(raw: String): Long? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    // Android's shape. `toLongOrNull` rejects a leading '+', decimals and overflow,
+    // all of which are malformed rather than a clock worth trusting.
+    if (trimmed.all { it in '0'..'9' }) return trimmed.toLongOrNull()
+    return parseIsoMillis(trimmed)
 }
 
 /**
