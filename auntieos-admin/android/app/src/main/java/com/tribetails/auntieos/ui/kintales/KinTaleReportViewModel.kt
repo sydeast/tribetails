@@ -822,7 +822,13 @@ class KinTaleReportViewModel(
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSharing = true, shareError = null)
-            kinCareRepository.createShareLink(reportId = report.id, familyId = report.kinfolkId).fold(
+            // includePhotos passed EXPLICITLY rather than left to the default, so
+            // this call site says what it shares instead of inheriting it (#579).
+            kinCareRepository.createShareLink(
+                reportId = report.id,
+                familyId = report.kinfolkId,
+                includePhotos = true,
+            ).fold(
                 onSuccess = { result ->
                     _uiState.value = _uiState.value.copy(
                         isSharing = false,

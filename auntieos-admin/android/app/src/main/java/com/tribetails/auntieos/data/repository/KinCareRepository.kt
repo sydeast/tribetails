@@ -938,6 +938,16 @@ class KinCareRepository(
      * @param familyId   the recipient household (KinCareReport.kinfolkId); the
      *                   server requires it to match the report's kinfolkId.
      * @param includePhotos whether to bundle resolved media URLs into the share.
+     *   Defaults to TRUE, matching the desktop console, the React admin and the
+     *   kinfolk portal's own share dialog. ISSUE #579: this used to default to
+     *   `false` -- not as a decision, but by mirroring the callable schema's
+     *   `z.boolean().default(false)` -- and no caller passed it, so the same
+     *   KinTale shared from a phone and from a browser produced links with
+     *   different content and nothing in the UI said so. Photos are the point of
+     *   sharing a recap, and the server resolves them into the scrubbed payload
+     *   itself. There is no per-link toggle on the admin side by design: the
+     *   KinTale report mock puts a copy-share-link affordance on that header and
+     *   no photo switch.
      *
      * Fail-loud: a blank reportId/familyId rejects before the call; a callable
      * failure or a malformed payload surfaces as Result.failure (the caller
@@ -946,7 +956,7 @@ class KinCareRepository(
     suspend fun createShareLink(
         reportId: String,
         familyId: String,
-        includePhotos: Boolean = false,
+        includePhotos: Boolean = true,
     ): Result<ShareLinkResult> = runCatching {
         authGate.ensureAuthenticated()
         require(reportId.isNotBlank()) { "createShareLink: reportId required" }
