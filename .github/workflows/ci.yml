@@ -486,7 +486,17 @@ jobs:
     name: React admin Cypress
     needs: changes
     if: needs.changes.outputs.adminCy == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # Same runner selection as every other job in this file. Pinned to
+    # `ubuntu-latest` this job is GitHub-hosted and billed, and on 2026-08-27
+    # both Cypress jobs were the ONLY ones refused with "recent account
+    # payments have failed or your spending limit needs to be increased",
+    # while everything else ran on the self-hosted Macs and passed.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The deploy guard refuses a job with no cap: without this it inherits
+    # GitHub's 360 minutes, and a wedged emulator would bill six hours before
+    # anyone noticed. Local runs are 5s (admin) and 3s (portal), so 15m is
+    # headroom for a cold Cypress binary download, not a target.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: auntieos-admin
@@ -539,7 +549,17 @@ jobs:
     name: MyTribe portal Cypress
     needs: changes
     if: needs.changes.outputs.portalCy == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # Same runner selection as every other job in this file. Pinned to
+    # `ubuntu-latest` this job is GitHub-hosted and billed, and on 2026-08-27
+    # both Cypress jobs were the ONLY ones refused with "recent account
+    # payments have failed or your spending limit needs to be increased",
+    # while everything else ran on the self-hosted Macs and passed.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The deploy guard refuses a job with no cap: without this it inherits
+    # GitHub's 360 minutes, and a wedged emulator would bill six hours before
+    # anyone noticed. Local runs are 5s (admin) and 3s (portal), so 15m is
+    # headroom for a cold Cypress binary download, not a target.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: mytribe/web
