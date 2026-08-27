@@ -236,7 +236,12 @@ function genericMetaTags(): string {
 }
 
 // ── Ready ─────────────────────────────────────────────────────────────────
-function renderReadyPage(opts: { shareId: string; taleId: string | null; payload: ScrubbedSharePayload }): string {
+function renderReadyPage(opts: {
+  shareId: string;
+  taleId: string | null;
+  payload: ScrubbedSharePayload;
+  allowGuestComments: boolean;
+}): string {
   const authorDisplayName = opts.payload.authorDisplayName?.trim() || 'Auntie';
   const body = opts.payload.body ?? '';
   const photos = safePhotoUrls(opts.payload.photos);
@@ -265,23 +270,14 @@ ${photos.map((url) => `        <div class="shot"><img src="${escapeHtml(url)}" l
       </div>`
     : '';
 
-  const bodyHtml = `
-    <div class="center" style="margin-bottom:20px;">
-      <span class="badge"><span class="dot"></span>Family Share</span>
-    </div>
-
-    <article class="glass talehero">
-      <div class="banner">
-        <div class="kick">KinTale Narrative</div>
-        <h1>A KinTale from ${escapedAuthor}</h1>
-      </div>
-      <div class="body">
-        <div class="narrative">${bodyToHtml(body)}</div>
-${galleryHtml}
-      </div>
-    </article>
-
-    <section class="glass card noteform">
+  // ISSUE #625. `addGuestKinTaleComment` returns 403 when a share has
+  // `allowGuestComments` false. This page used to render the form regardless, so a
+  // guest on such a share typed a whole note and was refused only on submit. A
+  // control that cannot act is not drawn: the same rule `components/Buttons.tsx`
+  // enforces on five admin screens. The server check stays exactly as it is, because
+  // a hidden form is not a permission.
+  const commentSectionHtml = opts.allowGuestComments
+    ? `    <section class="glass card noteform">
       <div class="sectlabel">Leave a Note for the Family</div>
       <h3 class="title">Send a little love back <span class="heart">&#10084;</span></h3>
       <form id="guest-comment-form">
@@ -383,7 +379,26 @@ ${galleryHtml}
         }
       });
     })();
-    </script>`;
+    </script>`
+    : '';
+
+  const bodyHtml = `
+    <div class="center" style="margin-bottom:20px;">
+      <span class="badge"><span class="dot"></span>Family Share</span>
+    </div>
+
+    <article class="glass talehero">
+      <div class="banner">
+        <div class="kick">KinTale Narrative</div>
+        <h1>A KinTale from ${escapedAuthor}</h1>
+      </div>
+      <div class="body">
+        <div class="narrative">${bodyToHtml(body)}</div>
+${galleryHtml}
+      </div>
+    </article>
+
+${commentSectionHtml}`;
 
   return renderDocument({ title: `A KinTale from ${authorDisplayName} — MyTribe`, metaTags, bodyHtml });
 }
@@ -476,7 +491,12 @@ export async function getSharedKinTalePageHandler(req: MinimalReq, res: MinimalR
   sendHtml(
     res,
     200,
-    renderReadyPage({ shareId, taleId: result.sourceKinTaleId, payload: result.scrubbedPayload }),
+    renderReadyPage({
+      shareId,
+      taleId: result.sourceKinTaleId,
+      payload: result.scrubbedPayload,
+      allowGuestComments: result.allowGuestComments,
+    }),
   );
 }
 

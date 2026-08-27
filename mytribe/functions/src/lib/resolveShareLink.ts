@@ -26,6 +26,8 @@ type ShareLinkDoc = {
   scrubbedPayload: ScrubbedSharePayload;
   tribeId: string;
   sourceKinTaleId?: string;
+  /** Absent means allowed: `addGuestKinTaleComment` only refuses on an explicit `false`. */
+  allowGuestComments?: boolean;
 };
 
 export type ShareLinkResolution =
@@ -36,6 +38,13 @@ export type ShareLinkResolution =
       scrubbedPayload: ScrubbedSharePayload;
       sourceKinTaleId: string | null;
       tribeId: string;
+      /**
+       * Whether this share accepts guest comments. Surfaced beside the payload
+       * rather than inside it (#625) so `getSharedKinTalePage` can decide whether
+       * to draw the comment form, WITHOUT changing `payload`, whose JSON shape
+       * `getShareLink` is externally observed on and must keep byte-identical.
+       */
+      allowGuestComments: boolean;
     }
   | {
       ok: false;
@@ -86,5 +95,10 @@ export async function resolveShareLink(
     scrubbedPayload: data.scrubbedPayload,
     sourceKinTaleId,
     tribeId: data.tribeId,
+    // `!== false`, not truthiness: a share document written before this field
+    // existed carries no value and must keep accepting comments. That is the
+    // same test `addGuestKinTaleComment` applies server-side, and the two must
+    // not drift, or the page draws a form the callable will refuse.
+    allowGuestComments: data.allowGuestComments !== false,
   };
 }
