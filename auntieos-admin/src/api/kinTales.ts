@@ -38,7 +38,8 @@ import type { PagedCollectionSpec } from '../lib/usePagedCollection';
  * Only the fields a screen actually renders are modeled here (the
  * `directory.ts` "subset type, not a blind mirror" convention).
  * `templateId`/`fieldResponses` are modeled because the composer reopens a
- * draft's checklist from them; `petMoodSelections`/`formValues`/`gpsRoute`/
+ * draft's checklist from them, and `petMoodSelections`/`formValues` because
+ * `KinTaleDetail.tsx` now renders both (issue #397 item 5). `gpsRoute`/
  * `gpsSummary` and the orphan-triage fields
  * (`triageStatus`/`triagedAt`/`triagedBy`/`duplicateOfReportId`/
  * `archiveReason`) still are not, and belong to whichever screen first renders
@@ -101,6 +102,30 @@ export interface KinTaleEntry {
    * `lib/kinTaleChecklist.ts#decodeFieldResponses`.
    */
   fieldResponses?: unknown;
+  /**
+   * Per-kin mood: a map from `kinId` to a `moodOption.key` off the template this
+   * recap was captured under (Android `Models.kt:874`). `unknown` for the same
+   * reason `fieldResponses` is: a nested shape a cast would promise without
+   * checking. Decode through `lib/kinTaleMood.ts#petMoodRows`, which also does
+   * the template join that turns a bare key into "😊 Happy".
+   *
+   * Rendered by `KinTaleDetail.tsx`. Nothing in this admin WRITES it:
+   * `api/kinTalesWrite.ts#saveKinTaleDraft` merges rather than replaces, so a
+   * selection Android or the desktop console recorded survives a web edit.
+   */
+  petMoodSelections?: unknown;
+  /**
+   * Answers to admin-authored `form_schemas` fields placed on KinTales
+   * (`appliesTo: 'KINTALE'`, the Phase 14 mechanism): a FLAT map from
+   * `FormField.key` to its string answer (Android `Models.kt:905`). Distinct
+   * from `fieldResponses`, which is the TEMPLATE checklist. Decode through
+   * `lib/kinTaleCustomFields.ts#customFieldRows`, which resolves each key's
+   * label off the schema and drops what it cannot resolve.
+   *
+   * Rendered by `KinTaleDetail.tsx`; not written here, same merge-preserve note
+   * as `petMoodSelections` above.
+   */
+  formValues?: unknown;
   /** Free-text; defaults `'DRAFT'` on the source doc, see `lib/kinTaleFormat.ts#kinTaleState`. */
   status?: string | undefined;
   /** Same caveat as `visitDate`; blank until sent. */

@@ -135,6 +135,47 @@
   color: var(--color-text-faint);
 }
 
+/* ── pet mood ────────────────────────────────────────────────────────────────
+   The mock's `.moods` / `.mood` / `.mood .nm` trio
+   (ui-ideas/auntieos-kintale-report-2026-05-27.html): a wrapping row of pills,
+   each carrying the emoji+label in the body weight and the kin's name trailing
+   in the muted mono face. Sizes come from this app's tokens rather than the
+   mock's hardcoded pixels, so the pills sit at the same scale as the kin chips
+   directly above them. */
+
+.kintale-detail__moods {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.kintale-detail__mood {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.8rem;
+}
+.kintale-detail__mood-label {
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.kintale-detail__mood-kin {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  color: var(--color-text-dim);
+}
+.kintale-detail__mood-kin code {
+  font-family: var(--font-mono);
+  color: var(--color-text-faint);
+}
+
 /* ── photos ──────────────────────────────────────────────────────────────── */
 
 .kintale-detail__media-grid {

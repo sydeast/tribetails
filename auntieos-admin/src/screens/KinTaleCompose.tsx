@@ -49,10 +49,11 @@ import './KinTaleCompose.css';
  * STILL OUT OF SCOPE HERE, and living on other surfaces rather than cut: the
  * comment thread and the share link (`KinTaleDetail.tsx`, the read view);
  * authoring a template (`KinTaleTemplates.tsx`, which the template block links
- * to). Per-pet mood chips and custom `form_schemas` answers are not rendered by
- * any web surface yet; `saveKinTaleDraft`'s `{ merge: true }` preserves rather
- * than erases them when another platform wrote them, which is why this screen
- * can leave them alone safely.
+ * to). Per-pet mood chips and custom `form_schemas` answers are READ on the web
+ * (`KinTaleDetail.tsx` renders both, issue #397 item 5) but are still AUTHORED
+ * only on Android and the desktop console; `saveKinTaleDraft`'s `{ merge: true }`
+ * preserves rather than erases them when another platform wrote them, which is
+ * why this screen can leave them alone safely.
  *
  * TWO ENTRY MODES, mirroring how a real KinTale always starts:
  *  - EDIT: `kinTaleId` given. Loads the existing `kin_care_reports` row (off

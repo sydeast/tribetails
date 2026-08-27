@@ -33,7 +33,23 @@ vi.mock('../api/kinTaleDetail', () => ({
   createShareLink,
 }));
 
+const { listFormSchemas } = vi.hoisted(() => ({ listFormSchemas: vi.fn() }));
+vi.mock('../api/formSchemas', () => ({ listFormSchemas }));
+
+// `getFormSchema` and `saveFormSchema` live in the same module; only the read
+// half is used here, but the mock has to replace the module wholesale.
+const { getFormSchema, saveFormSchema } = vi.hoisted(() => ({
+  getFormSchema: vi.fn(),
+  saveFormSchema: vi.fn(),
+}));
+vi.mock('../api/formSchemasWrite', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/formSchemasWrite')>()),
+  getFormSchema,
+  saveFormSchema,
+}));
+
 import { KinTaleDetail } from './KinTaleDetail';
+import { type FormSchemaDetail } from '../api/formSchemasWrite';
 
 function report(over: Partial<KinTaleEntry> = {}): KinTaleEntry {
   return {
@@ -81,12 +97,40 @@ function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
   return writeText;
 }
 
-function mockStreams(opts: { reports?: Async<KinTaleEntry[]>; kin?: Async<Kin[]> }) {
+/**
+ * A raw `kintale_templates` doc, the shape `useCollection` hands back before
+ * `decodeKinTaleTemplate` runs. Mood options mirror the built-in default's
+ * first two, so a test can assert the real emoji+label join.
+ */
+function templateDoc(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    _id: 'tmpl1',
+    name: 'Dog walk',
+    petMoodEnabled: true,
+    moodOptions: [
+      { key: 'happy', label: 'Happy', emoji: '😊', order: 0 },
+      { key: 'sleepy', label: 'Sleepy', emoji: '😴', order: 7 },
+    ],
+    ...over,
+  };
+}
+
+function mockStreams(opts: {
+  reports?: Async<KinTaleEntry[]>;
+  kin?: Async<Kin[]>;
+  templates?: Async<Record<string, unknown>[]>;
+}) {
   const reportsState: Async<KinTaleEntry[]> = opts.reports ?? { status: 'ready', data: [report()] };
   const kinState: Async<Kin[]> = opts.kin ?? { status: 'ready', data: [kinRow()] };
-  useCollection.mockImplementation((spec: { path: string }) =>
-    spec.path === 'kin_care_reports' ? reportsState : kinState,
-  );
+  const templateState: Async<Record<string, unknown>[]> = opts.templates ?? {
+    status: 'ready',
+    data: [templateDoc()],
+  };
+  useCollection.mockImplementation((spec: { path: string }) => {
+    if (spec.path === 'kin_care_reports') return reportsState;
+    if (spec.path === 'kintale_templates') return templateState;
+    return kinState;
+  });
 }
 
 beforeEach(() => {
@@ -101,6 +145,8 @@ beforeEach(() => {
   // getter-only stand-in, so this has to be defined, not assigned. Re-installed
   // per test so the "clipboard denied" case below can swap in a rejecting one.
   stubClipboard(vi.fn().mockResolvedValue(undefined));
+  listFormSchemas.mockReset().mockResolvedValue([]);
+  getFormSchema.mockReset();
   mockStreams({});
 });
 
@@ -544,5 +590,172 @@ describe('KinTaleDetail: breadcrumbs', () => {
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
     await user.click(within(nav).getByRole('button', { name: 'KinTales' }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('KinTaleDetail: per-pet mood', () => {
+  it('draws one pill per kin, emoji + label from the template, kin name trailing', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tmpl1', petMoodSelections: { pet1: 'happy' } })],
+      },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    const panel = (await screen.findByRole('heading', { name: 'Pet mood' })).closest('.den-panel');
+    expect(panel).not.toBeNull();
+    expect(within(panel as HTMLElement).getByText('😊 Happy')).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getByText('Biscuit')).toBeInTheDocument();
+  });
+
+  it('shows the raw mood key when no template option matches, never dropping the pet', async () => {
+    // The live prod case: `test-kinfolk-001-report-1` stores `relaxed`, which
+    // is not one of the options any shipped template carries.
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tmpl1', petMoodSelections: { pet1: 'relaxed' } })],
+      },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    const panel = (await screen.findByRole('heading', { name: 'Pet mood' })).closest('.den-panel');
+    expect(within(panel as HTMLElement).getByText('relaxed')).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getByRole('listitem')).toHaveAttribute('data-resolved', 'false');
+  });
+
+  it('falls back to the kin id, never a fabricated name, when the kin does not resolve', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tmpl1', petMoodSelections: { ghostPet: 'happy' } })],
+      },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    const panel = (await screen.findByRole('heading', { name: 'Pet mood' })).closest('.den-panel');
+    expect(within(panel as HTMLElement).getByText('ghostPet')).toBeInTheDocument();
+  });
+
+  it('renders NO mood section when the template has petMoodEnabled off', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tmpl1', petMoodSelections: { pet1: 'happy' } })],
+      },
+      templates: { status: 'ready', data: [templateDoc({ petMoodEnabled: false })] },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText('A great day at the park');
+    expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
+    expect(screen.queryByText('😊 Happy')).not.toBeInTheDocument();
+  });
+
+  it('renders NO mood section when nothing was recorded, rather than an empty panel', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ templateId: 'tmpl1' })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText('A great day at the park');
+    expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
+  });
+
+  it('renders NO mood section when every recorded entry was malformed', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ templateId: 'tmpl1', petMoodSelections: { pet1: 4, pet2: '' } })],
+      },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText('A great day at the park');
+    expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
+  });
+});
+
+describe('KinTaleDetail: custom form_schemas answers', () => {
+  function schemaDetail(over: Partial<FormSchemaDetail> = {}): FormSchemaDetail {
+    return {
+      id: 's1',
+      name: 'KinTale extras',
+      description: null,
+      appliesTo: 'KINTALE',
+      version: 1,
+      sections: [
+        {
+          title: 'Departure',
+          description: null,
+          fields: [
+            {
+              key: 'gate',
+              label: 'Gate left latched?',
+              type: 'text',
+              required: false,
+              helperText: null,
+              placeholder: null,
+              options: null,
+              defaultValue: null,
+              group: null,
+            },
+          ],
+        },
+      ],
+      ...over,
+    };
+  }
+
+  it('renders a stored answer under its authored label', async () => {
+    listFormSchemas.mockResolvedValue([{ id: 's1', name: 'KinTale extras', appliesTo: 'KINTALE', version: 1, updatedAt: null, updatedBy: null }]);
+    getFormSchema.mockResolvedValue(schemaDetail());
+    mockStreams({
+      reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes, double-checked' } })] },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Gate left latched?')).toBeInTheDocument();
+    expect(screen.getByText('Yes, double-checked')).toBeInTheDocument();
+  });
+
+  it('drops an answer whose field no longer exists rather than printing the raw key', async () => {
+    listFormSchemas.mockResolvedValue([{ id: 's1', name: 'KinTale extras', appliesTo: 'KINTALE', version: 1, updatedAt: null, updatedBy: null }]);
+    getFormSchema.mockResolvedValue(schemaDetail());
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ formValues: { gate: 'Yes', retiredField: 'Orphaned answer' } })],
+      },
+    });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Gate left latched?')).toBeInTheDocument();
+    expect(screen.queryByText('retiredField')).not.toBeInTheDocument();
+    expect(screen.queryByText('Orphaned answer')).not.toBeInTheDocument();
+  });
+
+  it('says so plainly when no stored answer resolves, instead of showing raw keys', async () => {
+    listFormSchemas.mockResolvedValue([]);
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText(/no custom field on this den/i)).toBeInTheDocument();
+    expect(screen.queryByText('gate')).not.toBeInTheDocument();
+  });
+
+  it('renders NO custom fields panel, and calls no schema API, when the report stored none', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report()] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText('A great day at the park');
+    expect(screen.queryByRole('heading', { name: 'Custom fields' })).not.toBeInTheDocument();
+    expect(listFormSchemas).not.toHaveBeenCalled();
+  });
+
+  it('ignores schemas placed on anything other than a KinTale', async () => {
+    listFormSchemas.mockResolvedValue([
+      { id: 'kf1', name: 'Household intake', appliesTo: 'KINFOLK', version: 1, updatedAt: null, updatedBy: null },
+    ]);
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByText(/no custom field on this den/i);
+    expect(getFormSchema).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a schema load failure fail-loud, never a silent empty panel', async () => {
+    listFormSchemas.mockRejectedValue(new Error('permission-denied'));
+    mockStreams({ reports: { status: 'ready', data: [report({ formValues: { gate: 'Yes' } })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText(/custom fields failed to load: permission-denied/i)).toBeInTheDocument();
   });
 });
