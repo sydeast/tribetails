@@ -131,9 +131,21 @@ Two things do need attention:
 
 - **Playwright's browser dependencies.** The admin e2e job runs
   `playwright install --with-deps chromium`, and `--with-deps` shells out to
-  `apt-get`. The runner's user needs passwordless sudo, or those libraries need
-  installing once by hand. Without either, that job fails at the install step
-  rather than in a test.
+  `apt-get`.
+
+  **Install those libraries ONCE BY HAND. Do not give the runner user
+  passwordless sudo.** A self-hosted runner executes whatever a branch tells it
+  to, so passwordless sudo on this box turns any pull request into root on the
+  machine holding 21 TB of media. That is a bad trade for skipping one manual
+  step, and an earlier draft of this document recommended it without saying so.
+
+  ```bash
+  # Once, as a human. Then the job's --with-deps finds everything present.
+  sudo npx playwright install-deps chromium
+  ```
+
+  If `--with-deps` still tries to escalate and fails, change the workflow step
+  to plain `playwright install chromium`; the deps are already there.
 - **The Android SDK.** `ci.yml`'s header says it outright: *"A self-hosted
   runner needs the SDKs the ubuntu images ship with. The Android jobs read
   `$ANDROID_HOME`; set it in the runner's own `.env`."* Install the command-line
