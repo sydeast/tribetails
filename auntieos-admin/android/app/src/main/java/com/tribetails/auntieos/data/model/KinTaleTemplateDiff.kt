@@ -92,13 +92,19 @@ internal val KINTALE_TEMPLATE_SERVER_OWNED = setOf("id", "createdAt", "updatedAt
  * Fields another writer puts on `kintale_templates/{id}` that [KinTaleTemplate]
  * does not declare, and must not start declaring.
  *
- * - `deleted`  the desktop admin's SOFT DELETE.
- *   `platformDeleteKinTaleTemplate` (FirestoreInterop.jvm.kt) patches
- *   `deleted: true` rather than removing the document, so the template stays
- *   readable and recoverable. Android's editor does not filter on it, so a
- *   desktop-deleted template is still listed on the phone - and one edit there
- *   used to erase the flag outright, resurrecting the template for every
- *   surface that does honour it.
+ * - `deleted`  the desktop admin's former SOFT DELETE. NO LONGER WRITTEN by
+ *   anything, as of #616: `platformDeleteKinTaleTemplate` used to patch
+ *   `deleted: true` instead of removing the document, and since nothing in the
+ *   repo ever read the flag, a desktop-deleted template survived and stayed
+ *   listed on every client. That actual now issues a real document delete, the
+ *   same one Android has always issued.
+ *
+ *   It stays named here anyway. The set exists so a rebuild-from-form-state
+ *   cannot erase a field this model does not declare, and the protection is
+ *   worth keeping whether or not a sibling writer exists this week - see #601,
+ *   which found the identical dead flag on `media_files` and closed with zero
+ *   rows precisely because nothing had been able to write it for a while.
+ *   Do not read this entry as a live soft-delete convention: there is none.
  *
  * Declaring `deleted` would be the wrong fix. This editor has no delete-state
  * concept and no screen that sets it, so it could only ever write `false` -
