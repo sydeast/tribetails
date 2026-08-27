@@ -471,6 +471,31 @@ class KinTaleReportViewModelTest {
         assertFalse(vm.uiState.value.isSharing)
     }
 
+    /**
+     * ISSUE #579. The three clients disagreed on `includePhotos`: the desktop
+     * console and the React admin sent `true`, Android sent `false` -- not by
+     * decision, but because nothing passed the argument and the repository
+     * default mirrored the callable schema's `z.boolean().default(false)`. So the
+     * same KinTale shared from a phone and from a browser produced links with
+     * different content, and nothing in the UI told the operator which they had
+     * just made.
+     *
+     * Pinned with an EXPLICIT `true` rather than `any()`, which is what let the
+     * divergence sit unnoticed under a passing suite next door.
+     */
+    @Test
+    fun `requestShareLink shares the photos, matching desktop and the React admin`() = runTest(testDispatcher) {
+        val report = KinCareReport(id = "rep1", kinfolkId = "kf1", status = ReportStatus.SENT.name)
+        coEvery { mockKinCareRepo.createShareLink("rep1", "kf1", true) } returns
+            Result.success(KinCareRepository.ShareLinkResult("share123", "https://share/share123"))
+        val vm = buildViewModel()
+        loadExistingReport(vm, report)
+        vm.requestShareLink()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.createShareLink("rep1", "kf1", true) }
+        coVerify(exactly = 0) { mockKinCareRepo.createShareLink("rep1", "kf1", false) }
+        assertEquals("https://share/share123", vm.uiState.value.shareUrl)
+    }
     @Test
     fun `requestShareLink surfaces callable failure as shareError`() = runTest(testDispatcher) {
         val report = KinCareReport(id = "rep1", kinfolkId = "kf1", status = ReportStatus.SENT.name)
