@@ -3,8 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const docGet = vi.fn();
 const docUpdate = vi.fn();
 
+/** #624: the comment thread read. Empty unless a test says otherwise. */
+const commentsGet = vi.fn();
 vi.mock('../src/lib/firestoreAdmin', () => ({
-  db: () => ({ doc: () => ({ get: docGet, update: docUpdate }) }),
+  db: () => ({
+    doc: () => ({ get: docGet, update: docUpdate }),
+    collection: () => ({ orderBy: () => ({ limit: () => ({ get: commentsGet }) }) }),
+  }),
 }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn() }));
 vi.mock('argon2', () => ({ default: { verify: async (h: string, p: string) => h === `h:${p}` } }));
@@ -12,7 +17,14 @@ vi.mock('argon2', () => ({ default: { verify: async (h: string, p: string) => h 
 beforeEach(() => {
   docGet.mockReset();
   docUpdate.mockReset();
+  commentsGet.mockReset();
+  commentsGet.mockResolvedValue({ docs: [] });
 });
+
+/** A stored comment document, as `addGuestKinTaleComment` writes one. */
+function commentDoc(data: Record<string, unknown>) {
+  return { data: () => data };
+}
 
 interface CapturedRes {
   status: number;
@@ -217,6 +229,112 @@ describe('getSharedKinTalePage', () => {
       // The tale itself still renders in full.
       expect(captured.body).toContain('A KinTale from Auntie');
       expect(captured.body).toContain('hi');
+    });
+    it('renders the thread above the form, escaping every stranger-written value', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      commentsGet.mockResolvedValue({
+        docs: [
+          commentDoc({
+            authorRole: 'guest',
+            guestName: '<img src=x onerror=alert(1)>',
+            body: 'What a <b>sweet</b> pup',
+            guestEmailHash: 'ab12cd34',
+            createdAtMs: 1_780_000_000_000,
+          }),
+          commentDoc({ authorRole: 'kinfolk', authorUid: 'uid-abc', body: 'Thank you!' }),
+        ],
+      });
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-8' }, res);
+      expect(captured.body).toContain('Notes for the Family');
+      // Escaped, never live markup, and never the raw attacker string.
+      expect(captured.body).toContain('&lt;img src=x onerror=alert(1)&gt;');
+      expect(captured.body).not.toContain('<img src=x onerror=alert(1)>');
+      expect(captured.body).toContain('What a &lt;b&gt;sweet&lt;/b&gt; pup');
+      // A household member is the family, never a name and never a uid.
+      expect(captured.body).toContain('The family');
+      expect(captured.body).not.toContain('uid-abc');
+      // The email hash is a stable cross-tale identifier. It never ships.
+      expect(captured.body).not.toContain('ab12cd34');
+      // Thread precedes the form, so a guest who just posted scrolls into it.
+      expect(captured.body.indexOf('Notes for the Family')).toBeLessThan(
+        captured.body.indexOf('Leave a Note for the Family'),
+      );
+    });
+    it('shows no thread section at all when nobody has commented', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-9' }, res);
+      // An empty heading over nothing reads as a broken page.
+      expect(captured.body).not.toContain('Notes for the Family');
+      expect(captured.body).toContain('Leave a Note for the Family');
+    });
+    it('says so out loud when the thread cannot be read, and still renders the tale', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      commentsGet.mockRejectedValue(new Error('firestore unavailable'));
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-10' }, res);
+      // A failed read and an empty thread must not look the same: the guest who
+      // just posted would read the silent version as their note having vanished.
+      expect(captured.status).toBe(200);
+      expect(captured.body).toContain('could not be loaded');
+      expect(captured.body).toContain('A KinTale from Auntie');
+      // The failure is stated, never the underlying error.
+      expect(captured.body).not.toContain('firestore unavailable');
+    });
+    it('reads no thread at all for a share with guest comments off', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          allowGuestComments: false,
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-11' }, res);
+      // No comment surface at all, so the query is work nobody would see.
+      expect(commentsGet).not.toHaveBeenCalled();
+      expect(captured.body).not.toContain('Notes for the Family');
+      expect(captured.body).not.toContain('id="guest-comment-form"');
     });
     it('keeps the form on a share written before allowGuestComments existed', async () => {
       docGet.mockResolvedValue({
