@@ -191,6 +191,52 @@ describe('getSharedKinTalePage', () => {
       expect(captured.body).toContain('addGuestKinTaleComment');
       expect(captured.body).toContain('id="guest-comment-form"');
     });
+    it('omits the whole comment section when the share has guest comments off', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          allowGuestComments: false,
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-6' }, res);
+      // ISSUE #625: the callable 403s this share, so offering the form asked a
+      // guest to type a note that could only ever be refused on submit.
+      expect(captured.status).toBe(200);
+      expect(captured.body).not.toContain('id="guest-comment-form"');
+      expect(captured.body).not.toContain('Leave a Note for the Family');
+      expect(captured.body).not.toContain('addGuestKinTaleComment');
+      expect(captured.body).not.toContain('grecaptcha');
+      // The tale itself still renders in full.
+      expect(captured.body).toContain('A KinTale from Auntie');
+      expect(captured.body).toContain('hi');
+    });
+    it('keeps the form on a share written before allowGuestComments existed', async () => {
+      docGet.mockResolvedValue({
+        exists: true,
+        ref: { update: docUpdate },
+        data: () => ({
+          revoked: false,
+          expiresAt: futureExpiry,
+          passcodeHash: null,
+          tribeId: 'f1',
+          sourceKinTaleId: 'tale-1',
+          scrubbedPayload: { authorDisplayName: 'Auntie', body: 'hi', photos: [] },
+        }),
+      });
+      const { res, captured } = captureRes();
+      await callHandler({ method: 'GET', path: '/share-7' }, res);
+      // Absent is not the same as false, and the callable agrees: it refuses
+      // only on an explicit `=== false`. An older share keeps accepting notes.
+      expect(captured.body).toContain('id="guest-comment-form"');
+    });
   });
 
   describe('PasscodeGate', () => {
