@@ -55,10 +55,20 @@ import kotlinx.serialization.json.jsonPrimitive
  *  3. Ready — render payload
  *  4. NotFound / Expired — terminal error banner
  *
- * Guest comment thread is OUT OF SCOPE for the first cut — backend exists
- * (`addGuestKinTaleComment`) but reCAPTCHA v3 widget integration belongs
- * with the JS bridge (not yet wired). Comments shown only if payload
- * carries them; submission blocked w/ visible banner.
+ * GUEST COMMENT SUBMISSION SHIPS. This block used to say it was out of scope
+ * for the first cut, with reCAPTCHA "not yet wired" in the JS bridge. Both
+ * halves are wired and have been since before this comment was read again:
+ * `GuestCommentForm` below calls `executeRecaptcha("guest_comment")` through
+ * the jsMain actual in `Recaptcha.js.kt`, and `addGuestKinTaleComment` verifies
+ * the token server-side against reCAPTCHA Enterprise. The live guest surface is
+ * the SSR page `functions/src/share/getSharedKinTalePage.ts`, which carries the
+ * same form; this screen is the Compose equivalent.
+ *
+ * What is genuinely absent is the READ half: `ScrubbedSharePayload` has no
+ * comments field, so "comments shown only if payload carries them" resolves to
+ * never, and a guest who leaves a note cannot see it or anyone else's. Whether
+ * guests should see the thread at all is an open operator question, tracked as
+ * #624, not a gap to close on sight.
  *
  * Per `feedback_fail_loud_policy.md`: all failure paths show banners.
  */

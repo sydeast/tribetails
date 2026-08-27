@@ -133,7 +133,12 @@ export interface MinimalRes {
  * - shareToken must exist + not be revoked + not expired
  * - guestEmail hashed (sha256), never stored raw
  * - per-emailHash rate limit: 5 comments per rolling 60min
- * - reCAPTCHA token slot present (server-side verification is a follow-up task)
+ * - reCAPTCHA Enterprise token VERIFIED server-side by `verifyRecaptcha` above:
+ *   token validity, `action === RECAPTCHA_ACTION`, and a score floor of
+ *   RECAPTCHA_MIN_SCORE. This line used to call that verification "a follow-up
+ *   task", which the function directly above it already contradicted. The stale
+ *   claim nearly bought a second reCAPTCHA integration on top of a working one
+ *   (see the #397 comment sweep, #621 and #622).
  *
  * Fail-loud: every reject path returns a specific status code + message so the
  * client surfaces the cause to the user.
