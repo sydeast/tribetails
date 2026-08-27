@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KINTALES_QUERY, type KinTaleEntry } from '../api/kinTales';
 import { KIN_QUERY, type Kin } from '../api/directory';
+import { KINTALE_TEMPLATES_QUERY, decodeKinTaleTemplate, templateForDraft } from '../api/kinTaleTemplates';
+import { listFormSchemas } from '../api/formSchemas';
+import { getFormSchema, type FormSchemaDetail } from '../api/formSchemasWrite';
+import { petMoodRows } from '../lib/kinTaleMood';
+import { customFieldRows, decodeFormValues } from '../lib/kinTaleCustomFields';
 import {
   kinTaleHousehold,
   kinTaleState,
@@ -54,7 +59,17 @@ import './KinTaleDetail.css';
  * (`getKinTaleComments`/`addKinTaleComment`), and the "Share with kinfolk"
  * panel: a read-only view-as-kinfolk preview plus a `createShareLink` action
  * (issue #397 items S4, S5 and S6, which closed the last three gaps between
- * this screen and the other two admins).
+ * this screen and the other two admins), the PER-PET MOOD pills, and the
+ * answers to any admin-authored KinTale `form_schemas` (issue #397 item 5,
+ * which made this the FIRST web surface to render either: the desktop console
+ * draws mood pills but its wasm target was removed in #481, leaving it a JVM
+ * app, and the kinfolk portal's `getMyKinTales` already sends `petMoods` that
+ * no portal screen reads).
+ *
+ * THIS SCREEN WRITES NEITHER. Mood selections and custom answers are authored
+ * on Android and the desktop console; `api/kinTalesWrite.ts#saveKinTaleDraft`
+ * merges rather than replaces, so what those platforms recorded survives a web
+ * edit. Rendering them here changes no save path.
  *
  * THE PREVIEW IS DELIBERATELY NARROW. It renders the headline, the narrative
  * and the photos, and nothing else, because that is the whole of what a kinfolk
@@ -87,6 +102,12 @@ export interface KinTaleDetailProps {
 export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const kin = useCollection<Kin>(KIN_QUERY);
+  // Third bounded stream, and the same one `KinTaleCompose.tsx` already opens
+  // (no new listener CLASS, which is the rule this screen's doc comment states).
+  // Needed to honour the report's own `petMoodEnabled`: the mood section belongs
+  // to the template a recap was captured under, and a report carries only the
+  // template's id.
+  const templateRows = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
 
   return (
     <div className="screen kintale-detail">
@@ -108,7 +129,14 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
           if (!entry) {
             return <EmptyHint>No KinTale found with id &ldquo;{kinTaleId}&rdquo;.</EmptyHint>;
           }
-          return <KinTaleDetailBody entry={entry} kin={kin} {...(onEdit ? { onEdit } : {})} />;
+          return (
+            <KinTaleDetailBody
+              entry={entry}
+              kin={kin}
+              templateRows={templateRows}
+              {...(onEdit ? { onEdit } : {})}
+            />
+          );
         }}
       </AsyncRegion>
     </div>
@@ -120,12 +148,14 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
 interface KinTaleDetailBodyProps {
   entry: KinTaleEntry;
   kin: Async<Kin[]>;
+  /** Raw `kintale_templates` docs; decoded here, see `moods` below. */
+  templateRows: Async<Record<string, unknown>[]>;
   onEdit?: (kinTaleId: string) => void;
 }
 
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
-function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
+function KinTaleDetailBody({ entry, kin, templateRows, onEdit }: KinTaleDetailBodyProps) {
   // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
   // Firestore data, not a validation of it: `title` is absent on 89 of the 92
   // live kin_care_reports, and reading one blind throws through React's error
@@ -151,6 +181,64 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
   // Only a dispatched row carries a real channel; a draft's blank sentVia would
   // otherwise read as sentViaLabel's misleading "imported" default.
   const channel = sentVia.trim() !== '' ? sentViaLabel(sentVia) : null;
+
+  // ── per-pet mood ─────────────────────────────────────────────────────
+  //
+  // The template is the authority on whether this recap HAS a mood section at
+  // all, and a report carries only the template's id, so the section needs the
+  // template joined back on. `templateForDraft` over an empty list returns the
+  // built-in default, which is also what a blank `templateId` means, so a
+  // still-loading stream and a report on the built-in template resolve to the
+  // same thing rather than racing. All 92 live `kin_care_reports` carry a blank
+  // `templateId`, i.e. the built-in, which ships `petMoodEnabled: true`.
+  const templates = useMemo(
+    () => (templateRows.status === 'ready' ? templateRows.data.map(decodeKinTaleTemplate) : []),
+    [templateRows],
+  );
+  const template = templateForDraft(templates, entry.templateId ?? '');
+  const moods = petMoodRows(entry.petMoodSelections, template);
+
+  // ── custom fields (KINTALE-placed form_schemas) ──────────────────────
+  //
+  // Loaded only when the report actually stored answers. 91 of the 92 live
+  // reports carry no `formValues` at all, and two callables per open for a
+  // section that would render nothing is a round trip bought for no one. The
+  // schemas are fetched in two hops because that is the API the backend
+  // exposes: `listFormSchemas` returns summaries (which is where `appliesTo`
+  // lives) and `getFormSchema` returns the sections and fields the labels come
+  // from.
+  const formValues = useMemo(() => decodeFormValues(entry.formValues), [entry.formValues]);
+  const hasFormValues = Object.keys(formValues).length > 0;
+  const [schemas, setSchemas] = useState<Async<FormSchemaDetail[]>>({ status: 'loading' });
+
+  const loadSchemas = useCallback(() => {
+    let live = true;
+    if (!hasFormValues) {
+      setSchemas({ status: 'ready', data: [] });
+      return () => {
+        live = false;
+      };
+    }
+    setSchemas({ status: 'loading' });
+    listFormSchemas()
+      .then((all) =>
+        Promise.all(all.filter((s) => s.appliesTo === 'KINTALE').map((s) => getFormSchema(s.id))),
+      )
+      .then((full) => live && setSchemas({ status: 'ready', data: full }))
+      .catch(
+        (err: unknown) =>
+          live &&
+          setSchemas({
+            status: 'error',
+            message: `Custom fields failed to load: ${err instanceof Error ? err.message : 'Load failed'}`,
+            retry: loadSchemas,
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [hasFormValues]);
+  useEffect(() => loadSchemas(), [loadSchemas]);
 
   // ── comments ─────────────────────────────────────────────────────────
   const [comments, setComments] = useState<Async<KinTaleComment[]>>({ status: 'loading' });
@@ -498,6 +586,88 @@ function KinTaleDetailBody({ entry, kin, onEdit }: KinTaleDetailBodyProps) {
           <EmptyHint>No kin recorded on this recap.</EmptyHint>
         )}
       </DenPanel>
+
+      {/* PET MOOD, drawn from the report mock's own "Pet mood" block
+          (`ui-ideas/auntieos-kintale-report-2026-05-27.html:327-335`): one pill
+          per kin, `MoodOption.emoji + label`, with the kin's name trailing in
+          the muted mono style. The mock's SUGGESTION tag and its note that "the
+          default template ships petMoodEnabled=false" are both stale as of this
+          change: the flag defaults TRUE on all three clients
+          (`lib/kinTale/model.ts` DEFAULT_KINTALE_TEMPLATE, desktop
+          `KinTaleModels.kt:145`, android `KinTaleTemplate.kt:38`), and this is
+          the live rendering, so nothing here is marked as a suggestion.
+
+          NO SECTION when the template has moods off, when nothing was recorded,
+          or when every recorded entry was malformed. An empty "Pet mood" panel
+          would read as "no pet had a mood", which is a claim the data does not
+          make; the desktop read view refuses the same way ("Renders nothing when
+          there are no selections (no faked pills)").
+
+          The `petMoodEnabled` half is a DELIBERATE DIVERGENCE from that desktop
+          read view, which checks only the flag and the selections. Both
+          COMPOSERS check `petMoodEnabled` before offering the section at all
+          (android `KinTaleReportScreen.kt:295`, desktop `KinTaleComposeScreen.kt`),
+          so a template with moods off is one the auntie was never asked the
+          question under. Stale selections a previous template left behind are
+          not evidence the section belongs. */}
+      {moods.length > 0 && (
+        <DenPanel title="Pet mood" subtitle="How each pet was on this visit.">
+          <ul className="kintale-detail__moods">
+            {moods.map((row) => {
+              // Same kin resolution the list above uses, and the same refusal:
+              // an id that does not resolve renders as the id, never as a
+              // fabricated name. The stream still loading is that case too.
+              const found = (kin.status === 'ready' ? kin.data : []).find((k) => k._id === row.kinId);
+              const foundName = found?.name ?? '';
+              return (
+                <li key={row.kinId} className="kintale-detail__mood" data-resolved={row.resolved ? 'true' : 'false'}>
+                  <span className="kintale-detail__mood-label">{row.label}</span>
+                  <span className="kintale-detail__mood-kin">
+                    {found && foundName.trim() !== '' ? foundName : <code>{row.kinId}</code>}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </DenPanel>
+      )}
+
+      {/* CUSTOM FIELDS: answers to admin-authored `form_schemas` placed on
+          KinTales. NO MOCK COVERS THIS BLOCK (the report mock draws mood pills
+          but nothing for form_schemas answers), so it deliberately invents no
+          new visual language: it borrows Android's section title verbatim
+          ("Custom fields", `KinTaleReportScreen.kt:275`) and reuses the same
+          definition-list markup "Who this covers" already uses on this screen.
+
+          The panel exists only when the report stored answers, so a recap with
+          none costs no callable and shows no empty shell. A schema that fails
+          to load is surfaced, never swallowed, matching how the Android
+          composer treats the same failure. */}
+      {hasFormValues && (
+        <DenPanel title="Custom fields" subtitle="Answers to the KinTale form this Den authored.">
+          <AsyncRegion state={schemas} what="the custom fields" isEmpty={() => false} empty={null}>
+            {(data) => {
+              const rows = customFieldRows(entry.formValues, data);
+              // Every stored key failed to resolve to a field that still
+              // exists. Say that, rather than printing raw keys beside the
+              // answers as though they were the questions.
+              if (rows.length === 0) {
+                return <EmptyHint>No custom field on this Den&rsquo;s KinTale form matches what this recap recorded.</EmptyHint>;
+              }
+              return (
+                <dl className="kintale-detail__who">
+                  {rows.map((row) => (
+                    <div key={row.key} className="kintale-detail__who-row">
+                      <dt>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              );
+            }}
+          </AsyncRegion>
+        </DenPanel>
+      )}
 
       {mediaCount > 0 && (
         <DenPanel title="Photos" subtitle={`${mediaCount} attached.`}>
