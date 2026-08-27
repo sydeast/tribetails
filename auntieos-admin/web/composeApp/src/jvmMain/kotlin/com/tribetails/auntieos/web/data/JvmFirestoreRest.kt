@@ -417,6 +417,7 @@ internal object JvmFirestoreRest {
 
     /** Hard-delete a doc (REST DELETE). Returns true on success. */
     suspend fun deleteDoc(collection: String, id: String): Boolean {
+        JvmFirestoreFixtures.lastWrite = RestWrite("DELETE", collection, id)
         val token = jvmFirebaseIdToken() ?: return false
         val resp = http.delete("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -426,6 +427,7 @@ internal object JvmFirestoreRest {
 
     /** PATCH only the given fields of a doc (field-level update via updateMask). */
     suspend fun patchFields(collection: String, id: String, fields: Map<String, JsonElement>): Boolean {
+        JvmFirestoreFixtures.lastWrite = RestWrite("PATCH", collection, id, fields.keys.toSet())
         val token = jvmFirebaseIdToken() ?: return false
         val resp = http.patch("$BASE/$collection/$id") {
             header(HttpHeaders.Authorization, "Bearer $token")

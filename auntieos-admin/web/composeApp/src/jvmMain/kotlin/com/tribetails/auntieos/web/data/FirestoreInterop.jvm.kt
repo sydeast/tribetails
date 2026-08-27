@@ -64,6 +64,19 @@ object JvmFirestoreFixtures {
     var lastCallableName: String? = null
     var lastCallablePayloadJson: String? = null
 
+    /**
+     * ISSUE #616: the last direct-REST write [JvmFirestoreRest] was ASKED to
+     * perform, recorded before the auth token is fetched so it captures the
+     * intent even when a test has no token and the call goes no further.
+     *
+     * This is what lets a test say "the desktop delete issues a DELETE, and does
+     * not PATCH a `deleted` field" without a network. [lastCallableName] does the
+     * same job for the callable path; this is its direct-write twin, for the
+     * collections that are client-written by design (`kintale_templates` among
+     * them, per its `allow write: if isAuntie()` rule).
+     */
+    var lastWrite: RestWrite? = null
+
     /** True when ANY fixture is set, i.e. we are inside a screenshot test, not the live app. */
     val active: Boolean
         get() = kinfolk != null || allKin != null || sessions != null || reports != null ||
@@ -86,8 +99,17 @@ object JvmFirestoreFixtures {
         callableResponses = emptyMap(); incomingKinCares = null
         kinCareAssignments = emptyMap()
         lastCallableName = null; lastCallablePayloadJson = null
+        lastWrite = null
     }
 }
+/** One direct-REST write, as [JvmFirestoreFixtures.lastWrite] records it. */
+data class RestWrite(
+    val op: String,
+    val collection: String,
+    val id: String,
+    /** Field names carried by a PATCH; empty for a DELETE. */
+    val fields: Set<String> = emptySet(),
+)
 
 private val jsonOut = Json { encodeDefaults = true; ignoreUnknownKeys = true; isLenient = true }
 
@@ -419,8 +441,19 @@ internal actual suspend fun platformCreateKinTaleTemplate(template: KinTaleTempl
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("kintale_templates", jsonOut.encodeToString(template))) }.getOrElse { WriteResult.Err(it.message ?: "create failed") }
 internal actual suspend fun platformUpdateKinTaleTemplate(template: KinTaleTemplate): WriteResult<Unit> =
     runCatching { JvmFirestoreRest.setDoc("kintale_templates", template._id, jsonOut.encodeToString(template)); WriteResult.Ok(Unit) }.getOrElse { WriteResult.Err(it.message ?: "update failed") }
+// ISSUE #616. This was patchFields("kintale_templates", id, {"deleted": true}), a
+// soft-delete flag NOTHING in this repo reads: not the React admin's
+// `api/kinTaleTemplates.ts`, not `TemplateService.kt`, not Android's
+// `TemplateRepository.kt`. So the press reported success, the row stayed, and the
+// template kept showing up in every picker on every client. Same failure #577
+// fixed for the two media deletes eleven lines above, missed on this one.
+//
+// A hard delete is the sanctioned shape here, not a shortcut around a callable:
+// `kintale_templates` has no callable at all (`api/kinTaleTemplatesWrite.ts`
+// spells that out), and `allow write: if isAuntie()` in firestore.rules covers
+// delete. Android has always done exactly this (`AuntieRepository.kt`).
 internal actual suspend fun platformDeleteKinTaleTemplate(templateId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("kintale_templates", templateId, mapOf("deleted" to JsonPrimitive(true)))) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
+    if (JvmFirestoreRest.deleteDoc("kintale_templates", templateId)) WriteResult.Ok(Unit) else WriteResult.Err("delete failed")
 internal actual suspend fun platformRecordPayment(payment: Payment): WriteResult<String> =
     runCatching { WriteResult.Ok(JvmFirestoreRest.addDoc("payments", jsonOut.encodeToString(payment))) }.getOrElse { WriteResult.Err(it.message ?: "record failed") }
 /**
