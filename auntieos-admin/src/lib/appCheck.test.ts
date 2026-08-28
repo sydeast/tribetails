@@ -55,10 +55,29 @@ vi.mock('./sentry', () => ({ reportError }));
 
 const SITE_KEY = '6LtestKeyAAAAAtestKeytestKeytestKeyABCD';
 
+/**
+ * Every `import.meta.env` key `lib/firebase.ts` reads. Blanked before each load
+ * so a test's environment is what the test SAYS it is.
+ *
+ * `vi.unstubAllEnvs()` alone is not that. It restores the ambient value rather
+ * than deleting it, and Vite loads `auntieos-admin/.env` in the test mode too,
+ * so on a machine whose `.env` carries VITE_ADMIN_APPCHECK_SITE_KEY the "without
+ * a site key" case ran WITH one and reported `pending`. That file is gitignored,
+ * so CI has no key, stayed green, and the failure only appeared during a release
+ * on the operator's laptop. A test that asserts the absence of a variable has to
+ * establish the absence itself.
+ */
+const FIREBASE_ENV_KEYS = [
+  'VITE_ADMIN_APPCHECK_SITE_KEY',
+  'VITE_APPCHECK_DEBUG_TOKEN',
+  'VITE_E2E_EMULATOR',
+] as const;
+
 /** Fresh module instance, so `activateAppCheck`'s once-per-lifetime state resets. */
 async function loadFirebase(env: Record<string, string> = {}) {
   vi.resetModules();
   vi.unstubAllEnvs();
+  for (const k of FIREBASE_ENV_KEYS) vi.stubEnv(k, '');
   for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
   return import('./firebase');
 }
