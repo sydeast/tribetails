@@ -77,8 +77,13 @@ android {
         // upgrade, which `git rev-list --count` guarantees on a linear history.
         // versionName carries the short SHA so a tester's screenshot is
         // traceable to an exact commit.
+        //
+        // versionName used to repeat the commit count as well ("0.2.0.292-8d59807").
+        // App Distribution already prints versionCode beside the name, so that
+        // segment said the same thing twice and pushed the identifying SHA off
+        // the end of the label testers actually read.
         versionCode = gitCommitCount()
-        versionName = "0.2.0.${gitCommitCount()}-${gitShortSha()}"
+        versionName = "0.2.0-${gitShortSha()}"
 
         // GOOGLE_CALENDAR_ID + GOOGLE_SERVICE_ACCOUNT_EMAIL are now SERVER-ONLY
         // config (slice 8). The Google Calendar busy sync runs in the

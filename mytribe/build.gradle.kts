@@ -1,3 +1,4 @@
+import java.io.ByteArrayOutputStream
 import java.util.Properties
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
@@ -21,6 +22,39 @@ plugins {
 
 group = "com.kinfolk"
 version = "0.2.0"
+
+/**
+ * Version identity, derived from git so it cannot silently repeat. Copied from
+ * auntieos-admin/android/app/build.gradle.kts, which learned this the hard way:
+ * three App Distribution releases there all shipped as "0.2.0 (2)" with
+ * different code and different release notes, and testers could not tell them
+ * apart. This module still carried that hardcoded pair, so every kinfolk-portal
+ * build ever distributed has been "0.2.0 (2)" as well, and Android has never
+ * treated one as an upgrade over the last.
+ *
+ * Both helpers FALL BACK rather than failing the build: a source zip with no
+ * .git still has to compile. The fallbacks are deliberately obvious (0 / "nogit")
+ * so an un-versioned artifact is recognisable instead of masquerading as a real
+ * release.
+ */
+fun gitOutput(vararg args: String, fallback: String): String =
+    try {
+        val out = ByteArrayOutputStream()
+        val proc = ProcessBuilder(*args)
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+        proc.inputStream.copyTo(out)
+        if (proc.waitFor() == 0) out.toString().trim().ifEmpty { fallback } else fallback
+    } catch (_: Exception) {
+        fallback
+    }
+
+/** Monotonic across a linear history, which is what Android requires of versionCode. */
+fun gitCommitCount(): Int = gitOutput("git", "rev-list", "--count", "HEAD", fallback = "0").toIntOrNull() ?: 0
+
+/** Short SHA, so a tester's screenshot maps to an exact commit. */
+fun gitShortSha(): String = gitOutput("git", "rev-parse", "--short", "HEAD", fallback = "nogit")
 
 // Mirrors auntieos-admin/android/app/build.gradle.kts:41. local.properties is
 // gitignored and holds sdk.dir plus whatever a machine's own credentials are.
@@ -249,8 +283,15 @@ android {
         applicationId = "com.kinfolk.portal"
         minSdk = 34
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        // Derived from git, NOT hardcoded, and identical in shape to
+        // auntieos-admin/android so both APKs read the same way in App
+        // Distribution. versionCode is the commit count, which is monotonic on a
+        // linear history and is what Android requires to accept an upgrade;
+        // versionName carries the short SHA so a tester's screenshot maps to an
+        // exact commit. The count is NOT repeated in the name, because App
+        // Distribution already prints versionCode beside it.
+        versionCode = gitCommitCount()
+        versionName = "0.2.0-${gitShortSha()}"
 
         // The Maps SDK authenticates its OWN tile requests on the device, so a
         // public token has to reach the APK; there is no server-proxy option for
