@@ -719,10 +719,19 @@ export function bookingSubmission(
   state: WizardState,
   householdKinIds: readonly string[],
   overrideBusyConflict = false,
+  /**
+   * #644: the id this submission will be stored under, minted once by the
+   * dialog and reused by every attempt at it. Optional here only so the wizard
+   * unit tests can assert the rest of the payload without inventing one; the
+   * dialog always passes it, and without it the callable's retry would be
+   * unsafe.
+   */
+  idempotencyKey?: string,
 ): CreateMultiDateBookingRequestArgs {
   const kinIds = resolveKinIds(state, householdKinIds);
   return {
     kinfolkId: state.kinfolkId,
+    ...(idempotencyKey !== undefined && { idempotencyKey }),
     ...(kinIds.length > 0 && { kinIds }),
     ...(state.notes.trim() !== '' && { notes: state.notes.trim() }),
     pattern: state.mode === 'weekly' ? 'weekly' : 'individual',

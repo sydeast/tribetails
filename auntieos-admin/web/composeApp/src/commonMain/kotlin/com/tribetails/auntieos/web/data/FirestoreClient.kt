@@ -1295,9 +1295,23 @@ class FirestoreClient {
         pattern: String = "individual",
         weeklyDays: List<Int>? = null,
         kinIds: List<String>? = null,
+        /**
+         * #644: the id this submission will be stored under, minted once by the
+         * caller and reused by every attempt at it. Optional so an older caller
+         * still compiles; the server then mints its own id and dedupes nothing,
+         * which is the pre-#644 behaviour.
+         *
+         * This console does NOT retry automatically: its transport
+         * (`JvmFirestoreRest.callable`) reports a failure as a message string
+         * with no code, so it cannot tell a dropped request from a refusal, and
+         * a retry it cannot classify would be a guess. The key still matters
+         * here -- it is what makes the OPERATOR pressing Create again safe.
+         */
+        idempotencyKey: String? = null,
     ): WriteResult<MultiDateBookingResult> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
+            idempotencyKey?.let { put("idempotencyKey", JsonPrimitive(it)) }
             put("pattern", JsonPrimitive(pattern))
             if (!notes.isNullOrBlank()) put("notes", JsonPrimitive(notes))
             weeklyDays?.let { days -> put("weeklyDays", buildJsonArray { days.forEach { add(JsonPrimitive(it)) } }) }

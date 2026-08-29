@@ -71,7 +71,7 @@ beforeEach(() => {
   mocks.calendarListList.mockReset();
   mocks.revokeToken.mockReset();
   mocks.logEventFn.mockReset();
-  process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id-for-test';
+  process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
   process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret-for-test';
 });
 

@@ -85,3 +85,74 @@ describe('call', () => {
     expect(firebaseSignOut).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #644 / #630. The retry is the whole point of the idempotency key, and it is
+ * opt-in per call site because `functions/internal` cannot distinguish "never
+ * arrived" from "committed, reply lost". On the portal a wrong opt-in is the
+ * worse one: where the operator has auto-confirm on, a duplicated request
+ * becomes a second set of CONFIRMED sessions, not merely a second queue entry.
+ */
+describe('call, the opt-in retry', () => {
+  /** Rejects [failures] times with [code], then resolves with [data]. */
+  function failThenSucceed(failures: number, code: string, data: unknown) {
+    let seen = 0;
+    const fn = vi.fn((_payload: unknown) => {
+      seen += 1;
+      return seen <= failures
+        ? Promise.reject(new FirebaseError(code, code.replace('functions/', '')))
+        : Promise.resolve({ data });
+    });
+    vi.mocked(httpsCallable).mockReturnValue(fn as never);
+    return fn;
+  }
+
+  it('retries once on functions/internal when the caller opted in', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', { batchId: 'req_1_abcdef' });
+    await expect(call('requestBooking', {}, { idempotent: true })).resolves.toEqual({
+      batchId: 'req_1_abcdef',
+    });
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries ONCE, not until it works', async () => {
+    const fn = failThenSucceed(5, 'functions/internal', {});
+    await expect(call('requestBooking', {}, { idempotent: true })).rejects.toBeInstanceOf(
+      FirebaseError,
+    );
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('never retries a callable that did not opt in', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', {});
+    await expect(call('getMyHome', {})).rejects.toBeInstanceOf(FirebaseError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a deadline, even for an opted-in callable', async () => {
+    // The 20s timeout exists so a hang becomes a visible, household-driven
+    // retry. Doubling the wait silently would undo exactly that.
+    const fn = failThenSucceed(1, 'functions/deadline-exceeded', {});
+    await expect(call('requestBooking', {}, { idempotent: true })).rejects.toBeInstanceOf(
+      CallableTimeoutError,
+    );
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry other codes for an opted-in callable', async () => {
+    const fn = failThenSucceed(1, 'functions/already-exists', {});
+    await expect(call('requestBooking', {}, { idempotent: true })).rejects.toBeInstanceOf(
+      FirebaseError,
+    );
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the identical payload on the retry, key included', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', {});
+    const payload = { kinfolkId: 'kf1', idempotencyKey: 'req_1756400000000_a1b2c3' };
+    await call('requestBooking', payload, { idempotent: true });
+    // A retry that re-minted the key would be a fresh booking to the server.
+    expect(fn.mock.calls[0]?.[0]).toEqual(payload);
+    expect(fn.mock.calls[1]?.[0]).toEqual(payload);
+  });
+});

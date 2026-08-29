@@ -53,6 +53,7 @@ import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.portal.Kin
+import com.kinfolk.portal.portal.mintBookingIdempotencyKey
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.Service
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -112,6 +113,8 @@ fun BookingWizardScreen(
     var weekCount by remember { mutableStateOf(4) }
     var notes by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
+    /** #644: the submission signature this key was minted for, and the key. */
+    var submissionKey by remember { mutableStateOf<Pair<String, String>?>(null) }
     var submitError by remember { mutableStateOf<String?>(null) }
 
     /**
@@ -379,6 +382,20 @@ fun BookingWizardScreen(
                                     if (visits.isEmpty()) error("No visits to book. Check the days and weeks.")
                                     // The wizard groups its visits into one envelope; the
                                     // returned batchId is not used for nav, so just reload.
+                                    // #644: one key per submission, not per tap.
+                                    // Held while the booking is unchanged, so a
+                                    // household that taps Create Booking again
+                                    // after an error names the booking the first
+                                    // tap may already have made; re-minted the
+                                    // moment the booking changes, because a held
+                                    // key would replay the OLD booking and report
+                                    // it as the new one.
+                                    val signature = listOf(
+                                        kinfolkId, resolvedKinIds, pattern, weeklyDays.sorted(), visits, notes,
+                                    ).toString()
+                                    if (submissionKey?.first != signature) {
+                                        submissionKey = signature to mintBookingIdempotencyKey()
+                                    }
                                     portalApi.requestBookingMultiVisit(
                                         kinfolkId = kinfolkId,
                                         kinIds = resolvedKinIds,
@@ -386,7 +403,9 @@ fun BookingWizardScreen(
                                         weeklyDays = if (pattern == BookingPattern.Weekly) weeklyDays.sorted() else null,
                                         visits = visits,
                                         notes = notes.ifBlank { null },
+                                        idempotencyKey = submissionKey?.second,
                                     )
+                                    submissionKey = null
                                     onComplete()
                                 } catch (t: Throwable) {
                                     submitError = t.message ?: "Could not create booking"

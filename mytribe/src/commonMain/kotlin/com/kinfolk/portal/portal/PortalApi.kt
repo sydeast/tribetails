@@ -184,9 +184,12 @@ class PortalApi(private val fns: FunctionsClient) {
         endTimeMs: Long? = null,
         kinIds: List<String> = emptyList(),
         notes: String? = null,
+        /** #644: see [mintBookingIdempotencyKey]. Absent means today's behaviour. */
+        idempotencyKey: String? = null,
     ): String {
         val payload = buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
+            idempotencyKey?.let { put("idempotencyKey", it) }
             put("serviceType", serviceType)
             title?.let { put("title", it) }
             put("startTimeMs", startTimeMs)
@@ -210,10 +213,13 @@ class PortalApi(private val fns: FunctionsClient) {
         weeklyDays: List<Int>? = null,
         visits: List<BookingVisit>,
         notes: String? = null,
+        /** #644: see [mintBookingIdempotencyKey]. Absent means today's behaviour. */
+        idempotencyKey: String? = null,
     ): String {
         require(visits.isNotEmpty()) { "visits must be non-empty" }
         val payload = buildJsonObject {
             kinfolkId?.let { put("kinfolkId", it) }
+            idempotencyKey?.let { put("idempotencyKey", it) }
             put("kinIds", buildJsonArray { kinIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
             put("pattern", when (pattern) {
                 BookingPattern.Individual -> "individual"

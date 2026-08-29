@@ -9,6 +9,7 @@ import com.tribetails.auntieos.web.data.BookingSeriesAction
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.MultiDateBookingResult
 import com.tribetails.auntieos.web.data.NewBookingVisitInput
+import com.tribetails.auntieos.web.data.mintBookingIdempotencyKey
 import com.tribetails.auntieos.web.data.WriteResult
 
 class BookingViewModel(
@@ -137,8 +138,20 @@ class BookingViewModel(
         weeklyDays: List<Int>?,
     ): MultiDateBookingResult? {
         errorMessage = null
-        return when (val r = dataSource.createMultiDateBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)) {
+        // #644: one key per submission, not per press. Held while the booking
+        // being submitted is unchanged, so an operator who presses Create again
+        // after a failure names the booking the first attempt may already have
+        // made; re-minted the moment the booking itself changes, because a held
+        // key would then replay the OLD booking and report it as the new one.
+        val key = requestKeyFor(listOf(kinfolkId, pattern, notes, weeklyDays, visits).toString())
+        return when (
+            val r = dataSource.createMultiDateBookingRequest(
+                kinfolkId, visits, notes, pattern, weeklyDays,
+                idempotencyKey = key,
+            )
+        ) {
             is WriteResult.Ok -> {
+                pendingRequestKey = null
                 audit(
                     actionType = "CREATE_BOOKING",
                     description = "Created ${r.value.visitCount} visit(s) ($pattern) request for $kinfolkId",
@@ -151,6 +164,16 @@ class BookingViewModel(
                 null
             }
         }
+    }
+
+    /** #644: the submission signature this key was minted for, and the key. */
+    private var pendingRequestKey: Pair<String, String>? = null
+
+    private fun requestKeyFor(signature: String): String {
+        pendingRequestKey?.let { (held, key) -> if (held == signature) return key }
+        val minted = mintBookingIdempotencyKey()
+        pendingRequestKey = signature to minted
+        return minted
     }
 
     fun clearError() { errorMessage = null }
