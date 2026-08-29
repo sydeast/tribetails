@@ -48,3 +48,12 @@ packages/issue-recorder/dist/
 # a build here gets its own with GRADLE_USER_HOME=<worktree>/.gradle-home. About
 # a gigabyte of downloaded artifacts, never source.
 .gradle-home*/
+
+# Cypress run output: failure screenshots, videos and downloads, written under
+# each app's own `cypress/.artifacts/` (the `screenshotsFolder` keys in the two
+# cypress.config.ts files put them there rather than in the package root next to
+# dist/). Output, not input: CI uploads it as a build artifact and nothing
+# reads it back. `**/` for the reason spelled out above this: the pattern has to
+# match under both `auntieos-admin/` and `mytribe/web/`, and a slash-bearing
+# pattern without it would only match at the repo root, where neither exists.
+**/cypress/.artifacts/

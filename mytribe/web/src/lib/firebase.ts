@@ -1,8 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getFunctions } from 'firebase/functions';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { reportError } from './sentry';
 
 /**
@@ -150,6 +150,13 @@ async function probeAppCheck(instance: ReturnType<typeof initializeAppCheck>): P
 }
 
 export function activateAppCheck(): void {
+  // An e2e run is pinned to loopback. App Check is real network egress to
+  // Google, and its DEV debug-token exchange is a second one, so a harness run
+  // that is otherwise offline would still phone home. See E2E_EMULATOR_HOST.
+  if (E2E_EMULATOR_HOST !== '') {
+    appCheckStatus = 'unsupported';
+    return;
+  }
   if (appCheckInstance !== null || appCheckStatus === 'failed') return;
   if (typeof document === 'undefined') {
     appCheckStatus = 'unsupported';
@@ -175,6 +182,47 @@ export const firestore = getFirestore(app);
 /** All MyTribe callables are deployed in us-central1. */
 export const FUNCTIONS_REGION = 'us-central1';
 export const functions = getFunctions(app, FUNCTIONS_REGION);
+
+/**
+ * Emulator wiring for the Cypress harness (`cypress/`), and for nothing else.
+ *
+ * OPT-IN BY AN ENV VAR NOTHING IN THE DEPLOY PATH SETS. `VITE_E2E_EMULATOR` is
+ * written only by the `e2e:cy:server` script, and reaches only the dev server a
+ * run boots. A hosting build sees no such variable, so Vite substitutes
+ * `undefined` for the whole `import.meta.env` access at build time, the
+ * condition folds to a constant false, and Rollup drops the branch together
+ * with all three `connect*Emulator` imports.
+ *
+ * Re-run that check if this gate is ever rewritten to read a RUNTIME value: a
+ * runtime read cannot be folded, and the emulator path would then ship to
+ * production. Grep `dist/assets/*.js` for the ports, `VITE_E2E_EMULATOR` and
+ * `connectAuthEmulator` after building.
+ *
+ * THE PORTS ARE THE PORTAL'S OWN (9499 auth, 8485 firestore, 5499 functions),
+ * deliberately distinct from the admin's e2e set and from the defaults. A run
+ * that silently attached to somebody else's already-running emulator would read
+ * their seed data and report a green that meant nothing; distinct ports turn
+ * that into a connection refused.
+ *
+ * NOTHING LISTENS ON 5499. Callables are pinned to a dead port on purpose, so a
+ * spec that reaches an unstubbed callable fails loudly instead of resolving
+ * against production.
+ *
+ * It reads a HOST rather than a boolean, so CI can point it at a service
+ * container without this file learning about CI.
+ */
+export const E2E_EMULATOR_HOST = (import.meta.env.VITE_E2E_EMULATOR as string | undefined) ?? '';
+/** The functions port, dialled below, with nothing serving it. */
+export const E2E_FUNCTIONS_PORT = 5499;
+if (E2E_EMULATOR_HOST !== '') {
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[firebase] EMULATOR MODE: auth + firestore + functions pinned to ${E2E_EMULATOR_HOST}. Not production data.`,
+  );
+  connectAuthEmulator(auth, `http://${E2E_EMULATOR_HOST}:9499`, { disableWarnings: true });
+  connectFirestoreEmulator(firestore, E2E_EMULATOR_HOST, 8485);
+  connectFunctionsEmulator(functions, E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT);
+}
 
 /** Base URL for public onRequest endpoints (confirmSecureReset). */
 export const FUNCTIONS_HTTP_BASE = `https://${FUNCTIONS_REGION}-${firebaseConfig.projectId}.cloudfunctions.net`;

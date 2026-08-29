@@ -219,6 +219,64 @@ goldens, the `web/visual` harness and the CI gate. `seed.ts` is now the only
 `globalSetup` and every project here runs on the one database. Do not add a
 screenshot-comparison project back without an explicit operator instruction.
 
+## The Cypress suites (added 2026-08-16)
+
+There are two Cypress suites, one per web app, and each is a SMOKE suite: two
+tests, proving the app boots in a real browser and that sign-in works. That is
+the whole scope, by operator ruling on 2026-08-27.
+It was not always that scope. The first version walked all 21 admin screens,
+crawled the portal's links and drove named workflows. The operator's judgment,
+with the diff to back it: 46 assertions that an element was present or visible
+against 2 that anything actually happened. A suite shaped like that goes green
+while a callable times out and while every screen takes fifteen seconds, because
+it never asks whether the app DID anything or how long it took. Those tests were
+deleted rather than kept as false comfort.
+WHAT THIS LEAVES. Playwright stays narrow and deep: Fraunces renders, two
+cascade fights resolve, the gate admits an operator and refuses a kinfolk.
+Cypress proves the harness and the front door. NOTHING here verifies a feature,
+and nothing should be added to these files that claims to. A suite that tests
+behaviour has to be designed around round trips and their timing, and agreed
+before it is written.
+
+```bash
+npm --prefix auntieos-admin run e2e:cy    # admin
+npm --prefix mytribe/web run e2e:cy       # portal
+npm run e2e:cy                            # both, from the repo root
+```
+
+Each wraps `firebase emulators:exec` the same way `npm run e2e` does, boots its
+own vite dev server with `VITE_E2E_EMULATOR` set, and type-checks its specs
+first (`tsc -p cypress`). `e2e:cy:open` is the interactive form. No extra
+install step: the browser bundle comes down with `npm ci`.
+
+**The admin suite** (`auntieos-admin/cypress/`) reuses this harness's emulators,
+`e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them. It is one
+file, `smoke.cy.ts`, with two tests: the app is served and mounts in a browser,
+and an operator can sign in and land on `/home` with the rail rendered.
+**The portal suite** (`mytribe/web/cypress/`) is the first browser-level test the
+portal has ever had. Its ~500 vitest cases all run in jsdom, where the router
+never runs and no screen is mounted end to end. Same two tests, same scope.
+Its emulators are its own, on 9499/8485 with 5499 reserved and unserved
+(`mytribe/e2e.firebase.json`), so both suites can run at once without either
+seeing the other's seed. Callables are pinned to that dead port and answered by
+`cypress/support/callables.ts`, which stubs the ACCESS CHAIN only:
+`getMyAccess`, `getMyHome`, `setActiveTribe`, the three the router's guard
+cannot get past. Every other callable answers `UNIMPLEMENTED` and its screen
+renders a real error state; `unstubbedCallables()` reports which ones, so the
+gap shows up in the run log instead of being folded into a green. Fixtures are
+typed against `src/api/types.ts`, so a backend shape change breaks
+`npm run e2e:cy:tsc` rather than drifting quietly.
+
+The reason both suites stub rather than serve callables is the measurement in
+"Why the functions emulator is not started" below. It is the same functions
+codebase, so the same 18 triggers would fire on either seed.
+
+Both suites treat `console.error` as a test signal. A React screen that throws
+in an effect logs there and would otherwise pass. The allowlists are in each
+suite's `cypress/support/e2e.ts`, one entry per HARNESS condition with the
+reason written next to it. An entry describing an app behaviour is a bug being
+allowlisted.
+
 ## Not covered yet
 
 **Callable behaviour, entirely.** No server-side callable logic runs in this

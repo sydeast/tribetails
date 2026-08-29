@@ -46,6 +46,9 @@
     "seeds:check": "npm --prefix mytribe/functions run seeds:check",
 
     "e2e": "npm --prefix auntieos-admin run e2e",
+    "e2e:cy": "npm run e2e:cy:admin && npm run e2e:cy:portal",
+    "e2e:cy:admin": "npm --prefix auntieos-admin run e2e:cy",
+    "e2e:cy:portal": "npm --prefix mytribe/web run e2e:cy",
 
     "check": "npm run typecheck && npm run lint && npm run contracts:check && npm run seeds:check && npm test && npm run build",
 

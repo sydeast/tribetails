@@ -1,0 +1,23 @@
+{
+  "//": "Cypress transpiles specs WITHOUT type-checking them, so nothing would ever report a rotted selector helper, a stale fixture or a callable stub that no longer matches src/api/types.ts. `npm run e2e:cy:tsc` runs this and `npm run e2e:cy` runs that first. It does not extend the app's tsconfig because that one's `include` is src-only and its `types` array pulls in jest-dom, which has no business in a Cypress file. `include` reaches into ../src on purpose: the stubs and fixtures import the app's own interfaces, and type-checking that import is the whole mechanism that catches fixture drift.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["cypress", "node", "vite/client"]
+  },
+  "include": [".", "../cypress.config.ts"]
+}
