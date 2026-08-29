@@ -56,16 +56,61 @@ const BOTH_MODES_POLICY: GetBookingPolicyResult = {
   timeBlocks: [MIDDAY, EVENING],
 };
 
-/** A day cell, addressed by its printed day-of-month (unique within a month). */
+/**
+ * A day cell, addressed by its printed day-of-month.
+ *
+ * Unique within a month and ONLY within a month: `BookingMonthPicker` renders
+ * the anchor month's days and pads with blank spans, so nothing here says which
+ * month the "1" belongs to. Always reach a cell through `showMonthOf` or
+ * `pickDay` below, which put the picker on the right month first.
+ */
 function dayCell(d: Date) {
   return screen.getByRole('button', { name: String(d.getDate()) });
 }
 
-/** Clicks `d`'s cell, paging to the next month first when `d` lives there. */
-async function pickDay(user: ReturnType<typeof userEvent.setup>, d: Date) {
-  if (d.getMonth() !== TODAY.getMonth()) {
+/** `Month YYYY`, exactly as BookingMonthPicker prints it. */
+function monthLabel(d: Date): string {
+  return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
+/** How many months ahead of the current one `d` sits. */
+function monthsFromToday(d: Date): number {
+  return (d.getFullYear() - TODAY.getFullYear()) * 12 + (d.getMonth() - TODAY.getMonth());
+}
+
+/**
+ * Puts the picker on `d`'s month, FROM WHEREVER IT IS.
+ *
+ * #645: this used to page forward once when `d.getMonth() !== TODAY.getMonth()`,
+ * which reads the target against today and never against the month on screen.
+ * That is only correct while the picker happens to be sitting on the current
+ * month, so calling it twice for one next-month date paged twice. The second
+ * call in "the estimate follows the plan" was meant to un-pick 1 September and
+ * instead clicked 1 October, adding a fourth visit; the test then failed on a
+ * price, three steps from the cause. It only bit when the third date crossed a
+ * month boundary, so it was green all month and red on the 29th.
+ *
+ * Rewinding first is what makes this callable any number of times: "Previous
+ * month" is disabled at the current month, so it is a known position that needs
+ * no reading of the DOM to find.
+ */
+async function showMonthOf(user: ReturnType<typeof userEvent.setup>, d: Date) {
+  for (let guard = 0; guard < 24; guard += 1) {
+    const back = screen.getByRole('button', { name: 'Previous month' });
+    if ((back as HTMLButtonElement).disabled) break;
+    await user.click(back);
+  }
+  for (let i = 0; i < monthsFromToday(d); i += 1) {
     await user.click(screen.getByRole('button', { name: 'Next month' }));
   }
+  // Named here so a paging bug fails as a paging bug, rather than surfacing
+  // later as a wrong price or a mysteriously extra visit.
+  expect(screen.getByText(monthLabel(d))).toBeInTheDocument();
+}
+
+/** Clicks `d`'s cell, paging to its month first. Toggles, so a second call un-picks. */
+async function pickDay(user: ReturnType<typeof userEvent.setup>, d: Date) {
+  await showMonthOf(user, d);
   await user.click(dayCell(d));
 }
 
@@ -404,6 +449,21 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
     expect(await screen.findByText('$84.00')).toBeInTheDocument();
   });
 
+  it('un-picks a next-month date on the second click, rather than paging on again', async () => {
+    // #645 in one assertion. The estimate test above depends on this and reports
+    // it as a wrong price three steps later; this reports it as what it is.
+    const user = userEvent.setup();
+    renderWizard();
+    await selectServiceAndGoToStep3(user, 'Daily Visit');
+
+    const nextMonth = new Date(TODAY.getFullYear(), TODAY.getMonth() + 1, 10);
+    await pickDay(user, nextMonth);
+    expect(dayCell(nextMonth)).toHaveAttribute('aria-pressed', 'true');
+
+    await pickDay(user, nextMonth);
+    expect(dayCell(nextMonth)).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('counts both KinCares of a two-KinCare day', async () => {
     const user = userEvent.setup();
     renderWizard();
@@ -544,8 +604,7 @@ describe('BookingWizard: individual pattern', () => {
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    await user.click(screen.getByRole('button', { name: 'Next month' }));
-    await user.click(dayCell(nextMonth));
+    await pickDay(user, nextMonth);
 
     await goToReview(user);
     await user.click(screen.getByRole('button', { name: 'Create Booking' }));
@@ -643,8 +702,7 @@ describe('BookingWizard: C1 company holidays', () => {
     renderWizard();
     await selectServiceAndGoToStep3(user, 'Daily Visit');
 
-    await user.click(screen.getByRole('button', { name: 'Next month' }));
-    await user.click(screen.getByRole('button', { name: 'Next month' }));
+    await showMonthOf(user, twoMonthsOut);
     await vi.waitFor(() => expect(dayCell(twoMonthsOut)).toBeDisabled());
     expect(dayCell(twoMonthsOut)).toHaveAttribute('title', 'Closed: Staff retreat');
   });
