@@ -75,7 +75,7 @@ beforeEach(() => {
   mocks.eventsUpdate.mockReset().mockResolvedValue({ data: { id: 'gcal-event-1' } });
   mocks.eventsDelete.mockReset().mockResolvedValue({});
   mocks.logEventFn.mockReset();
-  process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id-for-test';
+  process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
   process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret-for-test';
 });
 

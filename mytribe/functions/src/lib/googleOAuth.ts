@@ -78,7 +78,86 @@ export function readGoogleOAuthConfig(): GoogleOAuthConfig {
       missing,
     });
   }
+  assertGoogleOAuthShape(clientId, clientSecret);
   return { clientId, clientSecret };
+}
+
+/** A Google OAuth web client id always ends this way. Documented and stable. */
+const GOOGLE_CLIENT_ID_SUFFIX = '.apps.googleusercontent.com';
+
+/**
+ * Short enough that no real Google client secret reaches it. Both vintages of
+ * the credential (the legacy 24-character value and the `GOCSPX-` prefixed one
+ * issued since 2021) clear this comfortably, so it catches a badly truncated
+ * paste without asserting a length this code cannot verify. See the note in
+ * [assertGoogleOAuthShape] on why no exact length is asserted.
+ */
+const GOOGLE_CLIENT_SECRET_MIN_LENGTH = 16;
+
+/**
+ * The shape of both values, in the spirit of `requireSid` in
+ * `admin/mintVoiceAccessToken.ts`.
+ *
+ * ── WHY PRESENCE IS NOT ENOUGH, ALREADY LEARNED ON THE OTHER INTEGRATION ─────
+ *
+ * `declaredSecrets.ts`'s release preflight asks whether a secret EXISTS. The
+ * check above asks whether it is NON-BLANK. On 2026-08-11 both answered yes for
+ * `TWIML_APP_SID` and the value was a 33-character stand-in that Twilio 404s;
+ * the phone could not register and nothing named the cause.
+ * `functions:secrets:set` echoes nothing as you type, so a paste that drops a
+ * character is invisible when it happens and stays invisible until a caller
+ * cannot be answered. This path had no equivalent guard (#627).
+ *
+ * ── WHAT IS ASSERTED, AND WHAT DELIBERATELY IS NOT ───────────────────────────
+ *
+ * The client id is checked hard: it must end in `.apps.googleusercontent.com`
+ * with something in front of it. That is Google's documented format, it cannot
+ * be wrong, and because the marker sits at the END it catches a truncated paste
+ * exactly.
+ *
+ * The client secret is checked for embedded whitespace (a value that picked up
+ * a newline or a stray space) and for a minimum length. It is NOT checked
+ * against an exact length or a required `GOCSPX-` prefix, even though the
+ * modern credential has one. Two vintages of this secret exist, the live value
+ * cannot be read from here to establish which one this project holds, and a
+ * hardcoded guess would reject a working credential on its next cold read. A
+ * gate that stops a functioning integration is worse than the gap it closes.
+ *
+ * So a one-character truncation of the SECRET still passes, and Google's
+ * `invalid_client` remains the first sign of that one case. Narrowing it needs
+ * the operator to confirm the credential's vintage; until then this catches the
+ * failures it can prove.
+ */
+function assertGoogleOAuthShape(clientId: string, clientSecret: string): void {
+  if (!clientId.endsWith(GOOGLE_CLIENT_ID_SUFFIX) || clientId === GOOGLE_CLIENT_ID_SUFFIX) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Google Calendar is misconfigured: GOOGLE_OAUTH_CLIENT_ID is not a Google OAuth client id. ` +
+        `Expected a value ending "${GOOGLE_CLIENT_ID_SUFFIX}", got ${clientId.length} ` +
+        `character${clientId.length === 1 ? '' : 's'} ending "${clientId.slice(-12)}". ` +
+        `A value missing the suffix is usually a truncated paste; re-copy it from the ` +
+        `Credentials page in Google Cloud Console for project auntieos-ttpc.`,
+      { code: 'malformed_secret', secret: 'GOOGLE_OAUTH_CLIENT_ID', actualLength: clientId.length },
+    );
+  }
+  if (/\s/.test(clientSecret) || clientSecret.length < GOOGLE_CLIENT_SECRET_MIN_LENGTH) {
+    const fault = /\s/.test(clientSecret)
+      ? 'it contains a space or newline'
+      : `it is only ${clientSecret.length} character${clientSecret.length === 1 ? '' : 's'} long`;
+    throw new HttpsError(
+      'failed-precondition',
+      `Google Calendar is misconfigured: GOOGLE_OAUTH_CLIENT_SECRET is not a usable client ` +
+        `secret, because ${fault}. Re-copy it from the Credentials page in Google Cloud Console ` +
+        `for project auntieos-ttpc and set it again with ` +
+        `firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET --project auntieos-ttpc, ` +
+        `then redeploy the functions.`,
+      {
+        code: 'malformed_secret',
+        secret: 'GOOGLE_OAUTH_CLIENT_SECRET',
+        actualLength: clientSecret.length,
+      },
+    );
+  }
 }
 
 /** The operator-facing setup instruction, in one place so every caller says the same thing. */
