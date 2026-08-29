@@ -69,7 +69,7 @@ beforeEach(() => {
   mocks.calendarListGet.mockReset();
   mocks.logEventFn.mockReset();
   (writeAuditEntry as unknown as { mockClear: () => void }).mockClear();
-  process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id-for-test';
+  process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
   process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret-for-test';
 });
 

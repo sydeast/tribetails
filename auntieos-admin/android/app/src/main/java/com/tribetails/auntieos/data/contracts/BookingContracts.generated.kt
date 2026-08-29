@@ -303,6 +303,8 @@ data class CreateMultiDateBookingRequestArgsCommunication(
 data class CreateMultiDateBookingRequestArgs(
     val kinfolkId: String,
     /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
+    /** Optional: omitted from the payload when null. */
     val kinIds: List<String>? = null,
     /** Optional: omitted from the payload when null. */
     val notes: String? = null,
@@ -327,6 +329,7 @@ data class CreateMultiDateBookingRequestArgs(
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         put("kinfolkId", kinfolkId)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
         if (kinIds != null) put("kinIds", kinIds)
         if (notes != null) put("notes", notes)
         if (pattern != null) put("pattern", pattern)
@@ -609,6 +612,8 @@ data class RequestBookingArgs(
     /** Optional: omitted from the payload when null. */
     val kinfolkId: String? = null,
     /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
+    /** Optional: omitted from the payload when null. */
     val kinIds: List<String>? = null,
     /** Optional: omitted from the payload when null. */
     val notes: String? = null,
@@ -640,6 +645,7 @@ data class RequestBookingArgs(
      */
     fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
         if (kinfolkId != null) put("kinfolkId", kinfolkId)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
         if (kinIds != null) put("kinIds", kinIds)
         if (notes != null) put("notes", notes)
         if (pattern != null) put("pattern", pattern)

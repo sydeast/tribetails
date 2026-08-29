@@ -1060,3 +1060,81 @@ describe('NewBookingDialog steps 4 and 5: invoice options and review', () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * #644: the key discipline, asserted where an operator can actually break it.
+ *
+ * The server dedupes on `idempotencyKey`, so what this dialog gets right or
+ * wrong decides whether a retry is a repair or a double booking. Two rules, and
+ * they pull in opposite directions:
+ *
+ *   - Retrying the SAME booking must reuse the key, or the second attempt is a
+ *     new booking to the server and the household gets two.
+ *   - Retrying an EDITED booking must not, or the server replays the first
+ *     attempt's booking and the operator is told an edit was saved that was
+ *     never sent.
+ */
+describe('NewBookingDialog booking idempotency key (#644)', () => {
+  /** The key off call N, or undefined if the payload carried none. */
+  function keyOf(callIndex: number): string | undefined {
+    return createMultiDateBookingRequest.mock.calls[callIndex]?.[0]?.idempotencyKey;
+  }
+
+  const create = () =>
+    userEvent.click(screen.getByRole('button', { name: /create \d+ visits?/i }));
+
+  it('sends a key in the id shape the server mints', async () => {
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await create();
+
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+    // A bare uuid would be refused by the callable's zod guard, so a wrong
+    // shape here is a booking that cannot be made at all.
+    expect(keyOf(0)).toMatch(/^req_\d{10,16}_[a-z0-9]{1,16}$/);
+  });
+
+  it('reuses the key when the operator retries the same booking after a failure', async () => {
+    createMultiDateBookingRequest.mockRejectedValueOnce(new Error('boom'));
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await create();
+    await screen.findByText(/createMultiDateBookingRequest failed/i);
+
+    await create();
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(2));
+    // If that first attempt had in fact committed and only lost its reply, this
+    // is what stops the second one becoming a second booking.
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('mints a NEW key once the operator changes the booking', async () => {
+    createMultiDateBookingRequest.mockRejectedValueOnce(new Error('boom'));
+    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 2 });
+    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await toDates();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await create();
+    await screen.findByText(/createMultiDateBookingRequest failed/i);
+
+    // Back to the dates step and add one, which is a different booking.
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await pickDay(/Tue, Aug 24/);
+    await toReview();
+    await create();
+
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(2));
+    // Holding the key here would be the dangerous bug: the server would replay
+    // the one-visit booking and report success for a two-visit one.
+    expect(keyOf(1)).not.toBe(keyOf(0));
+    expect(createMultiDateBookingRequest.mock.calls[1]![0].visits).toHaveLength(2);
+  });
+});

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createMultiDateBookingRequest } from '../api/bookingsWrite';
+import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
 import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
 import {
   KINFOLK_QUERY,
@@ -140,6 +141,20 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * #644: the id THIS submission will be stored under, held across attempts.
+   *
+   * A ref rather than state on purpose: it must not re-render anything, and it
+   * must survive the automatic retry inside `call()` as well as an operator who
+   * presses Create again after seeing an error. Both of those are the SAME
+   * submission, and reusing the key is what makes the server hand back the
+   * booking the first attempt made instead of writing a second one.
+   *
+   * Cleared by `update()` below whenever the operator changes the booking,
+   * which is the case a held key would get WRONG: a stale key would replay the
+   * first attempt's booking and report success for an edit that was never sent.
+   */
+  const submissionKey = useRef<string | null>(null);
   /**
    * True when the server's last refusal was a busy-block clash the operator has
    * NOT yet overridden, which is the only refusal `overrideBusyConflict` can get
@@ -337,6 +352,8 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
   function update(next: WizardState) {
     setBlockedNotice(null);
+    // #644: an edited booking is a NEW submission. See `submissionKey`.
+    submissionKey.current = null;
     setState(next);
   }
 
@@ -369,11 +386,18 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     setSaving(true);
     setError(null);
     setBusyOverridable(false);
+    // #644: minted on the first attempt at this booking and kept for any
+    // retry of it, automatic or operator-driven. "Create anyway" after a busy
+    // refusal is the same submission too -- nothing was written, so the key is
+    // free, and if the refusal had in fact been a lost reply the key is what
+    // keeps the override from booking it twice.
+    submissionKey.current ??= mintBookingIdempotencyKey();
     try {
       const result = await createMultiDateBookingRequest(
-        bookingSubmission(state, resolvedKinIds, overrideBusyConflict),
+        bookingSubmission(state, resolvedKinIds, overrideBusyConflict, submissionKey.current),
       );
       setSaving(false);
+      submissionKey.current = null;
       onCreated(result);
     } catch (err) {
       setSaving(false);

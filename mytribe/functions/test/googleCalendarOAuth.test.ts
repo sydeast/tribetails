@@ -115,7 +115,7 @@ describe('readGoogleOAuthConfig', () => {
   });
 
   it('half a client is still a failure, and says WHICH half', () => {
-    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id-for-test';
+    process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
     try {
       readGoogleOAuthConfig();
       throw new Error('expected a rejection');
@@ -127,12 +127,73 @@ describe('readGoogleOAuthConfig', () => {
   });
 
   it('reads both from the environment the runtime mounts them into', () => {
-    process.env.GOOGLE_OAUTH_CLIENT_ID = '  client-id-for-test  ';
+    process.env.GOOGLE_OAUTH_CLIENT_ID = '  1234567890-test.apps.googleusercontent.com  ';
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret-for-test';
     expect(readGoogleOAuthConfig()).toEqual({
-      clientId: 'client-id-for-test',
+      clientId: '1234567890-test.apps.googleusercontent.com',
       clientSecret: 'client-secret-for-test',
     });
+  });
+
+  // #627. Presence is not shape. Both of the values below are non-blank, so
+  // every check that existed before these tests passed them, and Google's own
+  // `invalid_client` was the first and only sign anything was wrong.
+  it('refuses a client id that is not a Google client id, and names it', () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleuserconten';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret-for-test';
+    try {
+      readGoogleOAuthConfig();
+      throw new Error('expected a rejection');
+    } catch (err) {
+      const e = err as { code?: string; message?: string; details?: { code?: string; secret?: string } };
+      expect(e.code).toBe('failed-precondition');
+      expect(e.details?.code).toBe('malformed_secret');
+      expect(e.details?.secret).toBe('GOOGLE_OAUTH_CLIENT_ID');
+      // The suffix sits at the END of a client id, so a truncated paste is
+      // exactly what this catches, and the message says so.
+      expect(e.message).toContain('.apps.googleusercontent.com');
+      expect(e.message).toContain('truncated paste');
+    }
+  });
+
+  it('refuses a client secret carrying a newline, and names that as the fault', () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'GOCSPX-first-half\nsecond-half';
+    try {
+      readGoogleOAuthConfig();
+      throw new Error('expected a rejection');
+    } catch (err) {
+      const e = err as { message?: string; details?: { secret?: string } };
+      expect(e.details?.secret).toBe('GOOGLE_OAUTH_CLIENT_SECRET');
+      expect(e.message).toContain('space or newline');
+    }
+  });
+
+  it('refuses a client secret far too short to be one, and reports its length', () => {
+    process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'GOCSPX-abc';
+    try {
+      readGoogleOAuthConfig();
+      throw new Error('expected a rejection');
+    } catch (err) {
+      const e = err as { message?: string; details?: { actualLength?: number } };
+      expect(e.details?.actualLength).toBe(10);
+      expect(e.message).toContain('only 10 characters long');
+    }
+  });
+
+  // The deliberate gap, asserted so it cannot be lost by accident. Two vintages
+  // of this credential exist (legacy, and `GOCSPX-` prefixed since 2021) and
+  // this code cannot read the live value to learn which one the project holds,
+  // so no exact length or required prefix is enforced. A legacy secret must
+  // keep working, which means a one-character truncation of a modern one still
+  // passes here. Narrowing it needs the operator to confirm the vintage.
+  it('accepts BOTH credential vintages rather than guessing which one is live', () => {
+    for (const secret of ['aBcDeFgHiJkLmNoPqRsTuV12', 'GOCSPX-aBcDeFgHiJkLmNoPqRsTuV12']) {
+      process.env.GOOGLE_OAUTH_CLIENT_ID = '1234567890-test.apps.googleusercontent.com';
+      process.env.GOOGLE_OAUTH_CLIENT_SECRET = secret;
+      expect(readGoogleOAuthConfig().clientSecret).toBe(secret);
+    }
   });
 });
 
@@ -141,7 +202,7 @@ describe('buildConsentUrl', () => {
     // Without prompt=consent Google returns a refresh token only on the very
     // first authorization for a client + account pair, so a reconnect would come
     // back with an access token that dies in an hour and no way to renew it.
-    const url = new URL(buildConsentUrl('client-id-for-test', 'state-abc'));
+    const url = new URL(buildConsentUrl('1234567890-test.apps.googleusercontent.com', 'state-abc'));
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('prompt')).toBe('consent');
     expect(url.searchParams.get('state')).toBe('state-abc');

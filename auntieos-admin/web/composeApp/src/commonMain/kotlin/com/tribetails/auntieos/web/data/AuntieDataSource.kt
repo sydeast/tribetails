@@ -77,6 +77,8 @@ interface AuntieDataSource {
         notes: String? = null,
         pattern: String = "individual",
         weeklyDays: List<Int>? = null,
+        /** #644: see FirestoreClient.createMultiDateBookingRequest. */
+        idempotencyKey: String? = null,
     ): WriteResult<MultiDateBookingResult> = WriteResult.Err("Multi-date booking is not available here.")
 
     // 16.5: incoming MyTribe booking-envelope requests (collectionGroup kinCares,

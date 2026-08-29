@@ -6,7 +6,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("multiplatform") version "2.4.10"
-    id("org.jetbrains.compose") version "1.11.1"
+    id("org.jetbrains.compose") version "1.12.0"
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
     // 9.3.1, up from 8.7.2, because androidx.core 1.19.0 declares "requires
@@ -16,7 +16,7 @@ plugins {
     // app was never in a release run. Raised WITH the dependencies that demand
     // it, and matched to auntieos-admin/android, which is already on 9.3.1.
     // Needs Gradle 9.x; the wrapper moves with it.
-    id("com.android.application") version "9.3.1"
+    id("com.android.application") version "9.3.2"
     id("com.google.gms.google-services") version "4.5.0"
 }
 
@@ -194,7 +194,7 @@ kotlin {
             //   Could not find com.google.firebase:firebase-auth:
             // (note the empty version). Pinning the BOM is the supported answer
             // and it also stops the three SDKs drifting apart from each other.
-            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.17.0"))
+            implementation(project.dependencies.platform("com.google.firebase:firebase-bom:34.18.0"))
             implementation("com.google.firebase:firebase-analytics-ktx:22.5.0")
             // Native Firebase Functions SDK — used by NativeAndroidFunctionsClient
             // to bypass gitlive 2.x's FirebaseEncoder, which throws
