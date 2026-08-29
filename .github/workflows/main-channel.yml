@@ -1,0 +1,291 @@
+name: Main channel
+
+# WHAT THIS EXISTS FOR: until now, merging changed nothing you could open.
+#
+# `ci.yml` runs tests and deploys nothing. `preview.yml` publishes a channel per
+# PULL REQUEST and deletes it when the PR closes. Production is only ever
+# updated by `scripts/release.sh`, run by hand. So between a merge and a
+# release, main was code that existed nowhere: on 2026-08-29 the live admin was
+# eleven merges and seventeen hours behind main, and there was no URL anywhere
+# that ran what main actually contained.
+#
+# This publishes main's HEAD to ONE fixed preview channel per app, refreshed on
+# every merge. It is the thing to walk before running a release, and the thing
+# Cypress points at when it is asked to test something other than localhost.
+#
+# WHAT IT IS NOT. A preview channel swaps the STATIC BUNDLE only. Firestore,
+# Auth and Functions behind these URLs are production, because `auntieos-ttpc`
+# is the only project that exists (both `.firebaserc` files). So:
+#
+#   - It answers "does main's UI work": routes, links, screens, navigation.
+#   - It does NOT answer "does main work end to end". Functions only reach
+#     production at release time, so a screen calling a callable that is on main
+#     but not yet deployed will fail here, correctly and confusingly.
+#   - It is NOT a sandbox. Anything that WRITES from these URLs writes to real
+#     households. Walk it; do not submit forms against it.
+#
+# A staging environment with its own data would need a second Firebase project,
+# which means a second set of ~280 Cloud Run services and a second bill. The
+# operator ruled that out on 2026-08-29, and the free substitute for clicking
+# things is the local emulator harness (`npm run e2e:cy:open`).
+
+on:
+  push:
+    branches: [main]
+    # The UNION of the two per-app filters below. A workflow-level `paths` gates
+    # the whole file, so the per-app split has to be the `changes` job; this
+    # only keeps the workflow from waking for a functions-only or Android-only
+    # merge, which is most of them.
+    paths:
+      - 'auntieos-admin/src/**'
+      - 'auntieos-admin/index.html'
+      - 'auntieos-admin/package.json'
+      - 'auntieos-admin/vite.config.ts'
+      - 'auntieos-admin/firebase.json'
+      - 'mytribe/web/src/**'
+      - 'mytribe/web/index.html'
+      - 'mytribe/web/public/**'
+      - 'mytribe/web/package.json'
+      - 'mytribe/web/vite.config.ts'
+      - 'mytribe/firebase.json'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/main-channel.yml'
+  # So the channel can be refreshed on demand without an empty commit, which is
+  # what you want when a release is imminent and the last web change was days
+  # ago.
+  workflow_dispatch:
+
+# ONE RUN AT A TIME, AND THE LATEST WINS. Unlike ci.yml's push group, cancelling
+# here is correct and deliberate: this job publishes "what main is now", so a
+# run superseded by a newer merge is publishing a commit that is already stale.
+# No release gate reads these runs (`scripts/release.sh` reads CI check runs on
+# the commit, and this workflow is not among them), so a cancelled run here
+# blocks nothing.
+concurrency:
+  group: main-channel
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed paths
+    timeout-minutes: 5
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    outputs:
+      admin: ${{ steps.filter.outputs.admin }}
+      portal: ${{ steps.filter.outputs.portal }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          # On a push, paths-filter diffs against the BEFORE commit of the push
+          # rather than a PR base. A `workflow_dispatch` has no diff at all, so
+          # both outputs come back false and nothing deploys, which is the
+          # opposite of what a manual refresh is for. `base` is set to the ref
+          # itself for that case; see the job `if`s, which force both apps on a
+          # manual run instead of trusting the filter.
+          filters: |
+            admin:
+              - 'auntieos-admin/src/**'
+              - 'auntieos-admin/index.html'
+              - 'auntieos-admin/package.json'
+              - 'auntieos-admin/vite.config.ts'
+              - 'auntieos-admin/firebase.json'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/main-channel.yml'
+            portal:
+              - 'mytribe/web/src/**'
+              - 'mytribe/web/index.html'
+              - 'mytribe/web/public/**'
+              - 'mytribe/web/package.json'
+              - 'mytribe/web/vite.config.ts'
+              - 'mytribe/firebase.json'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/main-channel.yml'
+
+  admin:
+    name: Publish admin main channel
+    needs: changes
+    # A manual run publishes both apps unconditionally: it is asked for when
+    # someone wants the channel refreshed, and a path filter has nothing to diff
+    # against on a workflow_dispatch.
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.admin == 'true'
+    # Sized off preview.yml's equivalent job, which measures about 1.3 min.
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: auntieos-admin
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          # Root lockfile: auntieos-admin is a workspace member with none of
+          # its own.
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+        working-directory: .
+
+      # NO UNIT SUITE HERE. `ci.yml` already ran the whole suite against this
+      # exact commit on the way in, and running it again would double the cost
+      # of every merge on a machine that now has one runner. `npm run build` is
+      # `tsc --noEmit && vite build`, so this still refuses to publish code that
+      # does not compile.
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
+          VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+          # The commit this channel was built from, so a Sentry event raised
+          # while walking it names the code it came from.
+          VITE_SENTRY_RELEASE: ${{ github.sha }}
+
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$SA" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to the main channel
+        if: steps.cred.outputs.present == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          projectId: auntieos-ttpc
+          entryPoint: auntieos-admin
+          # The hosting TARGET, not the site id, same as preview.yml: "app"
+          # resolves through auntieos-admin/.firebaserc. The site literally
+          # called "auntieos" is the SOTU status page.
+          target: app
+          # THE FIXED CHANNEL. One channel, reused forever, so the URL is stable
+          # enough to paste into a Cypress config and a bookmark. It also costs
+          # exactly one slot against the 50-channel-per-site cap that was hit on
+          # 2026-08-22, where 45 of 51 channels belonged to closed PRs.
+          channelId: main
+          # Long enough that the channel survives a quiet fortnight without the
+          # URL disappearing mid-release, and every merge pushes it out again.
+          expires: 30d
+          # PINNED for the reason preview.yml pins it: an unpinned action runs
+          # `npx firebase-tools@latest` and rewrites the shared npx cache under
+          # $HOME, which produced half-written modules when jobs overlapped
+          # (#588). One runner makes that less likely, not impossible.
+          firebaseToolsVersion: 15.18.0
+
+      - name: Report no channel
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::warning title=No main channel published::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so main's admin build was not published. The build above still ran."
+
+  portal:
+    name: Publish portal main channel
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.portal == 'true'
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: mytribe/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+        working-directory: .
+
+      - name: Build
+        run: npm run build
+        env:
+          # A DIFFERENT Sentry project from the admin's, which is why each app
+          # declares its own secret name rather than sharing one.
+          VITE_SENTRY_DSN: ${{ secrets.PORTAL_WEB_SENTRY_DSN }}
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.PORTAL_WEB_MAPBOX_PUBLIC_TOKEN }}
+          VITE_SENTRY_RELEASE: ${{ github.sha }}
+
+      - name: Check for the deploy credential
+        id: cred
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+        run: |
+          if [ -n "$SA" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to the main channel
+        if: steps.cred.outputs.present == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC }}
+          projectId: auntieos-ttpc
+          # mytribe/firebase.json is what maps the target to a site and carries
+          # the /share/** rewrite.
+          entryPoint: mytribe
+          # The target scripts/release.sh deploys to production, so this channel
+          # mirrors the live site. NOT `mytribe_beta`, which is a different site.
+          target: kinfolk_portal
+          channelId: main
+          expires: 30d
+          firebaseToolsVersion: 15.18.0
+
+      - name: Report no channel
+        if: steps.cred.outputs.present != 'true'
+        run: |
+          echo "::warning title=No main channel published::FIREBASE_SERVICE_ACCOUNT_AUNTIEOS_TTPC is not set, so main's portal build was not published. The build above still ran."
+
+  # The two URLs, printed once where they can be found, because a channel URL
+  # carries a per-site hash that nobody can guess and the run log is the only
+  # place it appears otherwise.
+  summary:
+    name: Main channel URLs
+    needs: [admin, portal]
+    if: always()
+    timeout-minutes: 5
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Write the summary
+        run: |
+          {
+            echo "## Main channel"
+            echo
+            echo "Main's HEAD, published as a hosting channel. **The backend is production.**"
+            echo "Walk these; do not submit forms against them."
+            echo
+            echo "| App | Channel |"
+            echo "| --- | --- |"
+            echo "| Admin | \`auntieos-ttpc\` site, channel \`main\` |"
+            echo "| Portal | \`kinfolk-portal\` site, channel \`main\` |"
+            echo
+            echo "The exact URLs are in each publish step's log, and in:"
+            echo
+            echo '```'
+            echo "firebase hosting:channel:list --project auntieos-ttpc --site auntieos-ttpc"
+            echo "firebase hosting:channel:list --project auntieos-ttpc --site kinfolk-portal"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
