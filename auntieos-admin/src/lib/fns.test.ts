@@ -152,3 +152,88 @@ describe('call, revoked-session reaction', () => {
     expect(reactToCallableError).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #644 / #630. The retry is the whole point of the idempotency key, and it is
+ * opt-in per call site because `functions/internal` cannot distinguish "never
+ * arrived" from "committed, reply lost". These assert the opt-in actually gates
+ * it: a callable that did not ask must never be retried, or #630's cheap fix
+ * silently double-writes across the ~174 callables that never claimed to dedupe.
+ */
+describe('call, the opt-in retry', () => {
+  /** Rejects [failures] times with [code], then resolves with [data]. */
+  function failThenSucceed(failures: number, code: string, data: unknown) {
+    let seen = 0;
+    const fn = vi.fn((_payload: unknown) => {
+      seen += 1;
+      return seen <= failures
+        ? Promise.reject(new FirebaseError(code, code.replace('functions/', '')))
+        : Promise.resolve({ data });
+    });
+    httpsCallable.mockReturnValue(fn);
+    return fn;
+  }
+
+  it('retries once on functions/internal when the caller opted in', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', { batchId: 'req_1_abcdef' });
+    await expect(
+      call('createMultiDateBookingRequest', {}, { idempotent: true }),
+    ).resolves.toEqual({ batchId: 'req_1_abcdef' });
+    expect(fn).toHaveBeenCalledTimes(2);
+    // The dropped attempt is not a session event, so the revocation classifier
+    // never sees it. It only hears about failures the caller is actually given.
+    expect(reactToCallableError).not.toHaveBeenCalled();
+  });
+
+  it('retries ONCE, not until it works', async () => {
+    const fn = failThenSucceed(5, 'functions/internal', {});
+    await expect(
+      call('createMultiDateBookingRequest', {}, { idempotent: true }),
+    ).rejects.toBeInstanceOf(FirebaseError);
+    expect(fn).toHaveBeenCalledTimes(2);
+    // The second failure IS reported, through the unchanged error path.
+    expect(reactToCallableError).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a callable that did not opt in', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', {});
+    await expect(call('listSupplies', {})).rejects.toBeInstanceOf(FirebaseError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a deadline, even for an opted-in callable', async () => {
+    // The 20s timeout exists so a hang becomes a visible, operator-driven
+    // retry. Doubling the wait silently would undo exactly that.
+    const fn = failThenSucceed(1, 'functions/deadline-exceeded', {});
+    await expect(
+      call('createMultiDateBookingRequest', {}, { idempotent: true }),
+    ).rejects.toBeInstanceOf(CallableTimeoutError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries in emulator mode: an unstubbed callable stays unstubbed', async () => {
+    emulatorHost = '127.0.0.1';
+    const fn = failThenSucceed(1, 'functions/internal', {});
+    await expect(
+      call('createMultiDateBookingRequest', {}, { idempotent: true }),
+    ).rejects.toBeInstanceOf(CallableNotStubbedError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry other codes for an opted-in callable', async () => {
+    const fn = failThenSucceed(1, 'functions/already-exists', {});
+    await expect(
+      call('createMultiDateBookingRequest', {}, { idempotent: true }),
+    ).rejects.toBeInstanceOf(FirebaseError);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the identical payload on the retry, key included', async () => {
+    const fn = failThenSucceed(1, 'functions/internal', {});
+    const payload = { kinfolkId: 'kf1', idempotencyKey: 'req_1756400000000_a1b2c3' };
+    await call('createMultiDateBookingRequest', payload, { idempotent: true });
+    // A retry that re-minted the key would be a fresh booking to the server.
+    expect(fn.mock.calls[0]?.[0]).toEqual(payload);
+    expect(fn.mock.calls[1]?.[0]).toEqual(payload);
+  });
+});

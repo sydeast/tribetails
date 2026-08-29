@@ -13,6 +13,7 @@ import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.ManageSeriesResult
+import com.tribetails.auntieos.data.repository.mintBookingIdempotencyKey
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
@@ -1885,6 +1886,20 @@ class EnhancedSchedulingViewModel(
             newRequestError = null,
             newRequestBusyOverridable = false,
         )
+        // #644: one key per submission, not per press. Held while the booking
+        // being submitted is unchanged, so the automatic retry inside the
+        // repository AND an operator pressing Create again both name the booking
+        // the first attempt may already have made. Re-minted the moment the
+        // booking itself changes, because a held key would otherwise replay the
+        // OLD booking and report it as the new one.
+        //
+        // `overrideBusyConflict` is deliberately NOT part of the signature: a
+        // refusal wrote nothing, so "Create anyway" is the same submission, and
+        // if that refusal had in fact been a lost reply the shared key is what
+        // stops the override booking it twice.
+        val idempotencyKey = requestKeyFor(
+            listOf(kinfolkId, visits, notes, pattern, weeklyDays, kinIds, billing, communication).toString(),
+        )
         viewModelScope.launch {
             bookingRepository.createMultiDateBookingRequest(
                 kinfolkId = kinfolkId,
@@ -1896,7 +1911,9 @@ class EnhancedSchedulingViewModel(
                 billing = billing,
                 communication = communication,
                 overrideBusyConflict = overrideBusyConflict,
+                idempotencyKey = idempotencyKey,
             ).onSuccess { result ->
+                pendingRequestKey = null
                 _state.value = _state.value.copy(
                     newRequestInFlight = false,
                     showNewRequestDialog = false,
@@ -1920,6 +1937,16 @@ class EnhancedSchedulingViewModel(
                 )
             }
         }
+    }
+
+    /** #644: the submission signature this key was minted for, and the key. */
+    private var pendingRequestKey: Pair<String, String>? = null
+
+    private fun requestKeyFor(signature: String): String {
+        pendingRequestKey?.let { (held, key) -> if (held == signature) return key }
+        val minted = mintBookingIdempotencyKey()
+        pendingRequestKey = signature to minted
+        return minted
     }
 
     fun selectBooking(booking: EnhancedBooking?) {

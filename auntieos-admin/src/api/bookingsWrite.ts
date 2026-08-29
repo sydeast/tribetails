@@ -206,9 +206,22 @@ export async function markBookingCompleted(bookingId: string, completedAtIso: st
 export async function createMultiDateBookingRequest(
   args: CreateMultiDateBookingRequestArgs,
 ): Promise<CreateMultiDateBookingRequestResult> {
+  if (!args.idempotencyKey) {
+    // #644: refused rather than silently sent unkeyed. The call below opts into
+    // a retry on `functions/internal`, and the ONE thing that makes that safe is
+    // the server deduping on this key. A caller that forgot it would get a
+    // silent double booking -- the exact outcome #630 refused to risk. The key
+    // is optional on `bookingSubmission` so the wizard's unit tests need not
+    // invent one, which is precisely why the guard belongs HERE, on the seam
+    // that turns the retry on. Same refusal as the portal's `requestBooking`.
+    throw new Error(
+      'createMultiDateBookingRequest needs an idempotencyKey. See lib/bookingIdempotency.ts.',
+    );
+  }
   return call<CreateMultiDateBookingRequestArgs, CreateMultiDateBookingRequestResult>(
     'createMultiDateBookingRequest',
     args,
+    { idempotent: true },
   );
 }
 

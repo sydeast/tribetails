@@ -141,7 +141,15 @@ export function requestBooking(req: RequestBookingArgs): Promise<RequestBookingR
   if (!req.visits || req.visits.length === 0) {
     throw new Error('No visits to book. Check the days and weeks.');
   }
-  return call<RequestBookingArgs, RequestBookingResult>('requestBooking', req);
+  if (!req.idempotencyKey) {
+    // #644: refused rather than silently sent unkeyed. This call opts into a
+    // retry on `functions/internal`, and the ONLY thing that makes that safe is
+    // the server deduping on this key. A caller that forgot it would get a
+    // silent double booking -- and where the operator has auto-confirm on, a
+    // second set of confirmed sessions. Fail here, loudly, in development.
+    throw new Error('requestBooking needs an idempotencyKey. See lib/bookingIdempotency.ts.');
+  }
+  return call<RequestBookingArgs, RequestBookingResult>('requestBooking', req, { idempotent: true });
 }
 
 // ── requestBookingCancellation (functions/src/portal/requestBookingCancellation.ts) ──

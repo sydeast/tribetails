@@ -28,8 +28,15 @@ class FirestoreAuntieDataSource(
         notes: String?,
         pattern: String,
         weeklyDays: List<Int>?,
+        idempotencyKey: String?,
     ): WriteResult<MultiDateBookingResult> =
-        client.createMultiDateBookingRequest(kinfolkId, visits, notes, pattern, weeklyDays)
+        // Named, not positional: `FirestoreClient` takes `kinIds` between
+        // `weeklyDays` and the key, so a positional call would file the booking
+        // id as a list of Kin.
+        client.createMultiDateBookingRequest(
+            kinfolkId, visits, notes, pattern, weeklyDays,
+            idempotencyKey = idempotencyKey,
+        )
     override fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> = client.incomingKinCaresStream()
     override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> =
         client.manageBookingSeries(action, kinfolkId, batchId)

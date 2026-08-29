@@ -154,6 +154,7 @@ export interface CreateMultiDateBookingRequestArgsCommunication {
  */
 export interface CreateMultiDateBookingRequestArgs {
   kinfolkId: string;
+  idempotencyKey?: string;
   kinIds?: string[];
   notes?: string;
   pattern?: 'individual' | 'weekly';
@@ -301,6 +302,7 @@ export interface RequestBookingArgsCommunication {
  */
 export interface RequestBookingArgs {
   kinfolkId?: string;
+  idempotencyKey?: string;
   kinIds?: string[];
   notes?: string;
   pattern?: 'individual' | 'weekly';

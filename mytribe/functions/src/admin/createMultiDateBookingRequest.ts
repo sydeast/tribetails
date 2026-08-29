@@ -12,6 +12,7 @@ import { writeEnvelope, resolveService, loadServicePriceBook, type NormalizedVis
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
+import { IdempotencyKeyArg, lookupIdempotentEnvelope } from '../lib/bookingIdempotency';
 
 /**
  * AO-25: admin-side multi-date / recurring booking request.
@@ -69,6 +70,13 @@ const VisitArgs = z.object({
  */
 const HandlerArgs = z.object({
   kinfolkId: z.string().min(1),
+  /**
+   * #644: the caller-minted booking id that makes retrying this callable safe.
+   * See `lib/bookingIdempotency.ts` for the whole argument. Optional, so the
+   * frozen legacy payload below still parses and the four clients can adopt it
+   * one at a time.
+   */
+  idempotencyKey: IdempotencyKeyArg,
   kinIds: z.array(z.string()).optional(),
   notes: z.string().max(1000).optional(),
   pattern: z.enum(['individual', 'weekly']).optional(),
@@ -122,6 +130,8 @@ const ExportedVisitArgs = z
 export const Args = z
   .object({
     kinfolkId: z.string().min(1),
+    /** #644. Optional here for the same reason it is optional on HandlerArgs. */
+    idempotencyKey: IdempotencyKeyArg,
     kinIds: z.array(z.string()).optional(),
     notes: z.string().max(1000).optional(),
     pattern: z.enum(['individual', 'weekly']).optional(),
@@ -156,6 +166,27 @@ export async function createMultiDateBookingRequestHandler(
   const kinSnap = await db().collection('kinfolk').doc(args.kinfolkId).get();
   if (!kinSnap.exists) {
     throw new HttpsError('not-found', `Kinfolk not found: ${args.kinfolkId}`);
+  }
+
+  // #644: a retry of a submission that already landed returns what it stored,
+  // and re-runs none of the guards below. See `lookupIdempotentEnvelope` for
+  // why re-running them is not merely wasteful: the operator's own retry after
+  // a visible error can trip the future-start check on a booking that is
+  // already written and fine.
+  const replayed = await lookupIdempotentEnvelope({
+    kinfolkId: args.kinfolkId,
+    key: args.idempotencyKey,
+    uid,
+  });
+  if (replayed) {
+    logEvent({
+      severity: 'info',
+      function: 'createMultiDateBookingRequest',
+      event: 'admin.booking.requested.deduped',
+      uid,
+      extra: { kinfolkId: args.kinfolkId, batchId: replayed.batchId, count: replayed.visitCount },
+    });
+    return validateResponse('createMultiDateBookingRequest', Result, replayed);
   }
 
   const now = Date.now();
@@ -201,8 +232,11 @@ export async function createMultiDateBookingRequestHandler(
     }),
   );
 
-  const batchId = `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
-  const { visitIds } = await writeEnvelope({
+  // #644: the caller's key IS the envelope id when it sent one. Without one
+  // this is the same server-minted id it has always been, and the dedupe read
+  // inside `writeEnvelope` can never hit.
+  const batchId = args.idempotencyKey ?? `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  const { visitIds, deduped } = await writeEnvelope({
     kinfolkId: args.kinfolkId,
     uid,
     batchId,
@@ -215,6 +249,26 @@ export async function createMultiDateBookingRequestHandler(
     billing: args.billing ?? null,
     ...(args.communication ? { communication: args.communication } : {}),
   });
+
+  if (deduped) {
+    // Lost a race with this submission's OWN other attempt: the fast path above
+    // missed because the winner had not committed yet, and the transaction
+    // guard caught it instead. The winner already wrote the audit row, so this
+    // attempt writes none -- a second BOOKING_SUBMITTED for one booking is the
+    // duplicate #644 exists to prevent.
+    logEvent({
+      severity: 'info',
+      function: 'createMultiDateBookingRequest',
+      event: 'admin.booking.requested.deduped',
+      uid,
+      extra: { kinfolkId: args.kinfolkId, batchId, count: visitIds.length, race: true },
+    });
+    return validateResponse('createMultiDateBookingRequest', Result, {
+      batchId,
+      visitIds,
+      visitCount: visitIds.length,
+    });
+  }
 
   logEvent({
     severity: 'info',
