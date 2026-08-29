@@ -15,6 +15,12 @@ import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { validateResponse } from '../lib/callableResponse';
+import {
+  IdempotencyKeyArg,
+  assertSameCaller,
+  lookupIdempotentEnvelope,
+  readEnvelopeVisitIds,
+} from '../lib/bookingIdempotency';
 import { mapServiceRates } from './getServiceCatalog';
 import {
   businessCalendarDate,
@@ -65,6 +71,8 @@ async function maybeAutoConfirm(kinfolkId: string, batchId: string, uid: string)
 /** Single-visit (legacy) shape, kept for backward compat. */
 const LegacyArgs = z.object({
   kinfolkId: z.string().optional(),
+  /** #644. See `lib/bookingIdempotency.ts`; absent means today's behaviour. */
+  idempotencyKey: IdempotencyKeyArg,
   serviceType: z.string().min(1),
   title: z.string().optional(),
   startTimeMs: z.number().int().positive(),
@@ -161,6 +169,8 @@ const CommunicationArgs = z
 
 const MultiArgs = z.object({
   kinfolkId: z.string().optional(),
+  /** #644. See `lib/bookingIdempotency.ts`; absent means today's behaviour. */
+  idempotencyKey: IdempotencyKeyArg,
   kinIds: z.array(z.string()).optional(),
   notes: z.string().max(1000).optional(),
   pattern: z.enum(['individual', 'weekly']).optional(),
@@ -220,6 +230,12 @@ const ExportedVisitArgs = z
 export const Args = z
   .object({
     kinfolkId: z.string().optional(),
+    /**
+     * #644: the caller-minted booking id that makes a retry safe. Optional on
+     * BOTH branch schemas above, so a generated client that omits it still
+     * parses -- which is what lets the four clients adopt it one at a time.
+     */
+    idempotencyKey: IdempotencyKeyArg,
     kinIds: z.array(z.string()).optional(),
     notes: z.string().max(1000).optional(),
     pattern: z.enum(['individual', 'weekly']).optional(),
@@ -640,7 +656,7 @@ export async function writeEnvelope(opts: {
   billing?: BookingBilling;
   /** Stated communication preference. Absent means both false, never "unknown". */
   communication?: BookingCommunication;
-}): Promise<{ batchId: string; visitIds: string[] }> {
+}): Promise<{ batchId: string; visitIds: string[]; deduped: boolean }> {
   const { kinfolkId, uid, batchId, pattern, weeklyDays, kinIds, notes, visits, assignee } = opts;
   // Resolved HERE rather than at each call site, so every writer, portal and
   // admin, persists the same concrete pair. A missing preference is a decision
@@ -671,10 +687,43 @@ export async function writeEnvelope(opts: {
   const { kinIds: kinIdUnion, kinNames } = await materializeKinRoster(kinfolkId, kinIds);
 
   const visitIds: string[] = [];
+  let storedEnvelope: Record<string, unknown> | undefined;
   await firestore.runTransaction(async (tx) => {
+    // Reset per attempt: Firestore re-runs this callback on contention, and the
+    // ids are minted inside it. Before the read below there was nothing to
+    // contend on and the array could only be filled once; now that this
+    // transaction reads, a re-run would otherwise return the previous attempt's
+    // ids appended to this one's.
+    visitIds.length = 0;
+    storedEnvelope = undefined;
+
+    // #644: THE DEDUPE, and the reason it lives inside the transaction rather
+    // than in a check-then-write before it. Two attempts at one submission can
+    // be in flight at once (the automatic retry racing a request that was slow
+    // rather than dropped); a read outside the transaction lets both see
+    // "absent" and both write. Firestore aborts the loser here instead.
+    //
+    // Reached at all only when the caller supplied an idempotencyKey — without
+    // one the batchId is freshly minted per call and this read always misses,
+    // which is exactly the pre-#644 behaviour.
+    const existing = await tx.get(parentRef);
+    if (existing.exists) {
+      const data = existing.data() ?? {};
+      assertSameCaller(data, uid);
+      storedEnvelope = data;
+      return;
+    }
+
+    // Minted BEFORE the envelope write so the envelope can carry them: #644's
+    // deduped reply has to return the same visit ids the first attempt did, and
+    // one denormalized array beats a subcollection scan on every retry.
+    const visitRefs = visits.map(() => parentRef.collection('kinCares').doc());
+    for (const ref of visitRefs) visitIds.push(ref.id);
+
     tx.set(parentRef, {
       familyId: kinfolkId,
       requestBatchId: batchId,
+      visitIds: [...visitIds],
       envelopeStatus: 'requested',
       requestedByUid: uid,
       pattern,
@@ -700,9 +749,8 @@ export async function writeEnvelope(opts: {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    for (const v of visits) {
-      const visitRef = parentRef.collection('kinCares').doc();
-      visitIds.push(visitRef.id);
+    visits.forEach((v, i) => {
+      const visitRef = visitRefs[i];
       tx.set(visitRef, {
         batchId,
         familyId: kinfolkId,
@@ -743,10 +791,20 @@ export async function writeEnvelope(opts: {
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
-    }
+    });
   });
 
-  return { batchId, visitIds };
+  if (storedEnvelope !== undefined) {
+    // #644: nothing was written. The reply is rebuilt from the envelope the
+    // first attempt stored, so a retry is indistinguishable to the caller from
+    // the success it never saw.
+    return {
+      batchId,
+      visitIds: await readEnvelopeVisitIds(kinfolkId, batchId, storedEnvelope),
+      deduped: true,
+    };
+  }
+  return { batchId, visitIds, deduped: false };
 }
 
 /**
@@ -784,6 +842,25 @@ export async function requestBookingHandler(
     const args = MultiArgs.parse(req.data);
     const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
+    // #644: a retry of a submission that already landed returns what it stored,
+    // without re-running a single guard below. Placed AFTER household
+    // resolution because the envelope path is scoped by household, and before
+    // everything else because none of it should run twice. See
+    // `lookupIdempotentEnvelope` for why a re-run is not merely wasteful.
+    const replayed = await lookupIdempotentEnvelope({ kinfolkId, key: args.idempotencyKey, uid });
+    if (replayed) {
+      logEvent({
+        severity: 'info', function: 'requestBooking',
+        event: 'portal.booking.requested.deduped', uid,
+        extra: { kinfolkId, batchId: replayed.batchId, count: replayed.visitCount },
+      });
+      return validateResponse('requestBooking', Result, {
+        batchId: replayed.batchId,
+        bookingIds: [replayed.batchId],
+        bookingId: replayed.batchId,
+      });
+    }
+
     const now = Date.now();
     if (args.visits.length > MAX_VISITS_PER_REQUEST) {
       throw new HttpsError(
@@ -818,7 +895,10 @@ export async function requestBookingHandler(
     // See companyHolidayConflict.ts's header for why this guard has none.
     await guardCompanyHolidayConflict({ firestore, visits: args.visits });
 
-    const batchId = `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    // #644: the caller's key IS the envelope id when it sent one. Without one
+    // this is the same server-minted id it has always been, and the dedupe read
+    // inside `writeEnvelope` can never hit.
+    const batchId = args.idempotencyKey ?? `req_${now}_${Math.random().toString(36).slice(2, 8)}`;
     const pattern = args.pattern ?? 'individual';
     // NOTE-56: resolve serviceName + priceCents from the canonical catalog. The
     // client-supplied `v.priceCents` is intentionally discarded here. The book is
@@ -849,7 +929,7 @@ export async function requestBookingHandler(
       }),
     );
 
-    await writeEnvelope({
+    const written = await writeEnvelope({
       kinfolkId,
       uid,
       batchId,
@@ -862,6 +942,21 @@ export async function requestBookingHandler(
       billing: args.billing ?? null,
       ...(args.communication ? { communication: args.communication } : {}),
     });
+
+    if (written.deduped) {
+      // Lost a race with this submission's OWN other attempt: the fast path
+      // above missed because the winner had not committed yet, and the
+      // transaction guard caught it instead. The winner has already audited and
+      // already run auto-confirm, so this attempt does neither and only reports
+      // what is stored. A second BOOKING_SUBMITTED row and a second approve
+      // pass are precisely the duplicates #644 exists to prevent.
+      logEvent({
+        severity: 'info', function: 'requestBooking',
+        event: 'portal.booking.requested.deduped', uid,
+        extra: { kinfolkId, batchId, count: written.visitIds.length, race: true },
+      });
+      return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+    }
 
     logEvent({
       severity: 'info', function: 'requestBooking',
@@ -899,6 +994,23 @@ export async function requestBookingHandler(
   // Household resolution: see the PR28b note above the isMulti dispatch.
   const kinfolkId = await resolveNonStaffKinfolkId(uid, args.kinfolkId);
 
+  // #644, same fast path as the multi branch. The legacy shape has no live
+  // caller today, but it writes the same envelope through the same writer, so
+  // leaving it out would mean one of the two branches could still double-book.
+  const replayedLegacy = await lookupIdempotentEnvelope({ kinfolkId, key: args.idempotencyKey, uid });
+  if (replayedLegacy) {
+    logEvent({
+      severity: 'info', function: 'requestBooking',
+      event: 'portal.booking.requested.deduped', uid,
+      extra: { kinfolkId, batchId: replayedLegacy.batchId, legacy: true },
+    });
+    return validateResponse('requestBooking', Result, {
+      batchId: replayedLegacy.batchId,
+      bookingIds: [replayedLegacy.batchId],
+      bookingId: replayedLegacy.batchId,
+    });
+  }
+
   if (args.endTimeMs && args.endTimeMs <= args.startTimeMs) {
     throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
   }
@@ -925,8 +1037,8 @@ export async function requestBookingHandler(
     visits: [{ startTimeMs: args.startTimeMs, endTimeMs: args.endTimeMs }],
   });
 
-  const batchId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  await writeEnvelope({
+  const batchId = args.idempotencyKey ?? `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const writtenLegacy = await writeEnvelope({
     kinfolkId,
     uid,
     batchId,
@@ -946,6 +1058,16 @@ export async function requestBookingHandler(
     ],
     assignee: await resolveDefaultAssignee(),
   });
+
+  if (writtenLegacy.deduped) {
+    // See the multi branch's own deduped return for why this audits nothing.
+    logEvent({
+      severity: 'info', function: 'requestBooking',
+      event: 'portal.booking.requested.deduped', uid,
+      extra: { kinfolkId, batchId, legacy: true, race: true },
+    });
+    return validateResponse('requestBooking', Result, { batchId, bookingIds: [batchId], bookingId: batchId });
+  }
 
   logEvent({ severity: 'info', function: 'requestBooking', event: 'portal.booking.requested', uid, extra: { kinfolkId, batchId } });
   await writeAuditEntry({

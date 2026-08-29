@@ -117,10 +117,21 @@ class BookingRepository(
         billing: CreateMultiDateBookingRequestArgsBilling? = null,
         communication: CreateMultiDateBookingRequestArgsCommunication? = null,
         overrideBusyConflict: Boolean = false,
+        /**
+         * #644: the id this submission will be stored under, minted once by the
+         * caller and reused by every attempt at it. It is also the ONLY thing
+         * that makes the retry below safe -- see the retry's own comment.
+         *
+         * Optional so a caller that has not adopted it still compiles and still
+         * behaves exactly as it did: the server mints its own id, dedupes
+         * nothing, and no retry is attempted.
+         */
+        idempotencyKey: String? = null,
     ): Result<MultiDateBookingResult> = runCatching {
         require(visits.isNotEmpty()) { "At least one visit is required." }
         val args = CreateMultiDateBookingRequestArgs(
             kinfolkId = kinfolkId,
+            idempotencyKey = idempotencyKey,
             kinIds = kinIds,
             notes = notes?.takeIf { it.isNotBlank() },
             pattern = pattern,
@@ -140,8 +151,9 @@ class BookingRepository(
             communication = communication,
             overrideBusyConflict = overrideBusyConflict,
         )
+        val payload = args.toPayload()
         val raw = try {
-            functions.getHttpsCallable("createMultiDateBookingRequest").call(args.toPayload()).awaitCallable().data
+            invokeCreateMultiDate(payload, retryOnInternal = idempotencyKey != null)
         } catch (e: FirebaseFunctionsException) {
             // Translate at the boundary so nothing above this line has to know
             // about Firebase types to tell a busy conflict (overridable) from a
@@ -164,6 +176,43 @@ class BookingRepository(
             visitCount = result.visitCount.toInt(),
         )
     }.onFailure { AuntieLog.e("BookingRepository.createMultiDateBookingRequest failed", it) }
+
+    /**
+     * #644 / #630: one retry, on INTERNAL only, and only for a keyed request.
+     *
+     * `INTERNAL` is what the SDK reports for a transport failure, which means
+     * this client cannot tell "the request never reached the container" (what
+     * #630 caught Cloud Run doing on a cold start) from "the booking was written
+     * and the reply was lost". Retrying repairs the first and duplicates the
+     * second -- unless the payload carries an `idempotencyKey`, which is what
+     * lets the server recognise the second attempt as the same submission and
+     * hand back the booking it already made.
+     *
+     * So `retryOnInternal` is not a tuning knob. It is false whenever the key is
+     * absent, because without the key the retry is exactly the double booking
+     * #630 refused to risk.
+     *
+     * Once, not until it works: a service that is genuinely down should surface
+     * as a failure the operator can see, not as a client that keeps trying.
+     * Every other code is rethrown untouched, a deadline included -- the caller
+     * is told, and retrying is their decision.
+     */
+    private suspend fun invokeCreateMultiDate(
+        payload: Map<String, Any?>,
+        retryOnInternal: Boolean,
+    ): Any? {
+        try {
+            return functions.getHttpsCallable("createMultiDateBookingRequest")
+                .call(payload).awaitCallable().data
+        } catch (e: FirebaseFunctionsException) {
+            if (!retryOnInternal || e.code != FirebaseFunctionsException.Code.INTERNAL) throw e
+            AuntieLog.w("createMultiDateBookingRequest dropped (INTERNAL); retrying once with the same key")
+        }
+        // The IDENTICAL payload, key included. A retry that re-minted the key
+        // would be a brand new booking as far as the server is concerned.
+        return functions.getHttpsCallable("createMultiDateBookingRequest")
+            .call(payload).awaitCallable().data
+    }
 
     suspend fun getBookings(
         startDate: String? = null,

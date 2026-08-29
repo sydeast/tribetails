@@ -209,6 +209,13 @@ export async function createMultiDateBookingRequest(
   return call<CreateMultiDateBookingRequestArgs, CreateMultiDateBookingRequestResult>(
     'createMultiDateBookingRequest',
     args,
+    // #644: safe to retry ONCE on a transport failure, and only because
+    // `args.idempotencyKey` is set -- the server dedupes on it and returns the
+    // first attempt's booking. Sending this without a key would restore exactly
+    // the double-booking #630 refused to risk, so the caller supplies one (see
+    // `lib/bookingIdempotency.ts`) and `bookingSubmission` refuses to build a
+    // payload without it.
+    { idempotent: true },
   );
 }
 

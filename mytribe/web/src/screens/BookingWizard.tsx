@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBookingPolicy, getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
+import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
 import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
 import { getMyKin } from '../api/portal';
@@ -360,6 +361,29 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       ? selectedDates.size
       : new Set(plannedVisits.map((v) => dateKey(new Date(v.startTimeMs)))).size;
 
+  /**
+   * #644: the id THIS submission will be stored under, held across attempts.
+   *
+   * One key per submission, not per press: it has to survive the automatic
+   * retry inside `call()` and a household that taps Book again after seeing an
+   * error, because both are the same booking and the server dedupes on it.
+   *
+   * Keyed off the PAYLOAD rather than reset by each editor. The admin's dialog
+   * clears its key in the one `update()` every edit passes through; this wizard
+   * has no such choke point (dates, Kin, pattern, notes and duration each set
+   * their own state), and a key that outlived an edit would be the dangerous
+   * failure: the server would replay the first booking and the household would
+   * be told an edit was saved that never left the device.
+   */
+  const submissionKey = useRef<{ signature: string; key: string } | null>(null);
+  function keyForSubmission(args: unknown): string {
+    const signature = JSON.stringify(args);
+    if (submissionKey.current?.signature !== signature) {
+      submissionKey.current = { signature, key: mintBookingIdempotencyKey() };
+    }
+    return submissionKey.current.key;
+  }
+
   const canAdvance = (() => {
     switch (step) {
       case 1:
@@ -379,16 +403,20 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       // The SAME array the rail, step 3 and Review have been showing.
       const visits = plannedVisits;
       if (visits.length === 0) throw new Error('No visits to book. Check the days and weeks.');
-      return requestBooking({
+      const args = {
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
         kinIds: resolvedKinIds,
         pattern,
         ...(pattern === 'weekly' ? { weeklyDays: [...weeklyDays].sort((a, b) => a - b) } : {}),
         visits,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
-      });
+      };
+      return requestBooking({ ...args, idempotencyKey: keyForSubmission(args) });
     },
     onSuccess: (result) => {
+      // #644: the submission is over, so the next one is a new booking and
+      // gets a new key.
+      submissionKey.current = null;
       void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
       props.onComplete(result);
     },
