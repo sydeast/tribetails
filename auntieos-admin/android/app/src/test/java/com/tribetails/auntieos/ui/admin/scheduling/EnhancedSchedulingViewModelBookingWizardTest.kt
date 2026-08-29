@@ -18,6 +18,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -32,6 +33,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -126,7 +128,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `the whole happy path reaches the repository with every wizard field`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.success(MultiDateBookingResult("batch1", listOf("v1", "v2"), 2))
 
@@ -149,6 +151,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
                     timeVisibility = true,
                 ),
                 overrideBusyConflict = false,
+                idempotencyKey = any(),
             )
         }
 
@@ -169,7 +172,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `covering every kin sends the whole roster, not an omitted field`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1))
 
@@ -185,7 +188,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
 
         coVerify {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), roster, any(), any(), any(),
+                any(), any(), any(), any(), any(), roster, any(), any(), any(), any(),
             )
         }
     }
@@ -194,7 +197,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `a household with no kin on file is sent as an omitted field, not an empty array`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1))
 
@@ -208,7 +211,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         )
         advanceUntilIdle()
 
-        coVerify { bookingRepo.createMultiDateBookingRequest(any(), any(), any(), any(), any(), null, any(), any(), any()) }
+        coVerify { bookingRepo.createMultiDateBookingRequest(any(), any(), any(), any(), any(), null, any(), any(), any(), any()) }
     }
 
     @Test
@@ -219,7 +222,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
             val inFlight = CompletableDeferred<Result<MultiDateBookingResult>>()
             coEvery {
                 bookingRepo.createMultiDateBookingRequest(
-                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 )
             } coAnswers { inFlight.await() }
             val vm = buildViewModel()
@@ -229,7 +232,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
             submit(vm, readySubmission())
             coVerify(exactly = 1) {
                 bookingRepo.createMultiDateBookingRequest(
-                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 )
             }
             // Closing is refused while in flight too: the request is already sent.
@@ -249,7 +252,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `a busy-conflict refusal is surfaced and offered as overridable`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.failure(
             BookingRequestRefusedException(
@@ -276,7 +279,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         runTest(testDispatcher) {
             coEvery {
                 bookingRepo.createMultiDateBookingRequest(
-                    any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 )
             } returns Result.failure(
                 BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "busy"),
@@ -288,7 +291,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
 
             coVerify {
                 bookingRepo.createMultiDateBookingRequest(
-                    any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true,
+                    any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true, idempotencyKey = any(),
                 )
             }
             assertFalse(
@@ -301,7 +304,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `Create anyway succeeds and closes the wizard`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true,
+                any(), any(), any(), any(), any(), any(), any(), any(), overrideBusyConflict = true, idempotencyKey = any(),
             )
         } returns Result.success(MultiDateBookingResult("batch1", listOf("v1", "v2"), 2))
 
@@ -314,11 +317,121 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         assertNull(vm.state.value.newRequestError)
     }
 
+    // -----------------------------------------------------------------------
+    // #644: the booking idempotency key
+    // -----------------------------------------------------------------------
+
+    /**
+     * The key is what makes a retry a repair instead of a second booking, so
+     * what this view model gets right or wrong decides whether #630's dropped
+     * request costs the household one booking or two. Two rules that pull
+     * against each other: retrying the SAME booking must reuse the key, and
+     * retrying a CHANGED one must not.
+     */
+    private fun captureKeys(failFirst: Boolean = false): MutableList<String?> {
+        val keys = mutableListOf<String?>()
+        coEvery {
+            bookingRepo.createMultiDateBookingRequest(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            )
+        } answers {
+            // Positional: `idempotencyKey` is the tenth parameter. Read off the
+            // call rather than captured into a slot, so a nullable argument
+            // records as the null it was.
+            keys.add(arg<String?>(9))
+            if (failFirst && keys.size == 1) {
+                Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "That window is busy."))
+            } else {
+                Result.success(MultiDateBookingResult("batch1", listOf("v1"), 1))
+            }
+        }
+        return keys
+    }
+
+    @Test
+    fun `every request carries a key in the id shape the server mints`() = runTest(testDispatcher) {
+        val keys = captureKeys()
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        // A bare uuid is refused by the callable's zod guard, so a wrong shape
+        // here is a booking that cannot be made at all.
+        assertTrue(keys.single()!!.matches(Regex("^req_[0-9]{10,16}_[a-z0-9]{1,16}$")))
+    }
+
+    @Test
+    fun `retrying the same booking reuses the key`() = runTest(testDispatcher) {
+        val keys = captureKeys(failFirst = true)
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        // If the first attempt had in fact committed and only lost its reply,
+        // this is what stops the second one becoming a second booking.
+        assertEquals(2, keys.size)
+        assertEquals(keys[0], keys[1])
+    }
+
+    @Test
+    fun `Create anyway keeps the key of the refusal it is overriding`() = runTest(testDispatcher) {
+        val keys = captureKeys(failFirst = true)
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+        // A busy refusal wrote nothing, so the override is the SAME submission
+        // -- and if that refusal had actually been a lost reply, the shared key
+        // is what stops the override booking it twice.
+        submit(vm, readySubmission().copy(overrideBusyConflict = true))
+        advanceUntilIdle()
+
+        assertEquals(keys[0], keys[1])
+    }
+
+    @Test
+    fun `a booking that succeeded does not lend its key to the next one`() = runTest(testDispatcher) {
+        val keys = captureKeys()
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+        // The first booking exists now. An identical second one is a real
+        // second booking the operator asked for, not a retry of the first.
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+
+        assertNotEquals(keys[0], keys[1])
+    }
+
+    @Test
+    fun `a changed booking gets a new key`() = runTest(testDispatcher) {
+        val keys = captureKeys(failFirst = true)
+        val vm = buildViewModel()
+        submit(vm, readySubmission())
+        advanceUntilIdle()
+        submit(vm, bookingSubmission(
+            BookingWizardState(kinfolkId = "kf1")
+                .withAllKinMode(false)
+                .toggleKin("kin-a")
+                .withServiceName("Dog Walking")
+                .toggleDate(monday)
+                .copy(emailConfirmation = true, timeVisibility = true, notes = "Gate code 5678"),
+            roster,
+        ))
+        advanceUntilIdle()
+
+        // Holding the key here would be the dangerous bug: the server would
+        // replay the FIRST booking and report it as the edited one.
+        assertEquals(2, keys.size)
+        assertNotEquals(keys[0], keys[1])
+    }
+
     @Test
     fun `a company-holiday refusal is surfaced but is NEVER overridable`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.failure(
             BookingRequestRefusedException(
@@ -343,7 +456,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `a refusal with no machine-readable code is not overridable`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.failure(BookingRequestRefusedException(null, "Kinfolk not found: kf1"))
 
@@ -359,7 +472,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `a transport failure with no message still fails loud`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.failure(RuntimeException())
 
@@ -375,7 +488,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     fun `opening the wizard clears a refusal left over from last time`() = runTest(testDispatcher) {
         coEvery {
             bookingRepo.createMultiDateBookingRequest(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
             )
         } returns Result.failure(BookingRequestRefusedException(BOOKING_BUSY_CONFLICT_CODE, "busy"))
 

@@ -164,7 +164,7 @@ describe('call, the opt-in retry', () => {
   /** Rejects [failures] times with [code], then resolves with [data]. */
   function failThenSucceed(failures: number, code: string, data: unknown) {
     let seen = 0;
-    const fn = vi.fn(() => {
+    const fn = vi.fn((_payload: unknown) => {
       seen += 1;
       return seen <= failures
         ? Promise.reject(new FirebaseError(code, code.replace('functions/', '')))
