@@ -39,6 +39,11 @@ const BLANK_CONNECTION = {
   calendarPushLastStatus: '',
   calendarPushLastPushed: 0,
   calendarPushLastError: '',
+  calendarAutoSyncLastRunAt: '',
+  calendarAutoSyncLastStatus: '',
+  calendarAutoSyncLastAction: '',
+  calendarAutoSyncLastSessionId: '',
+  calendarAutoSyncLastError: '',
 };
 
 /** Only the fields this section reads. The shell hands down the whole doc. */

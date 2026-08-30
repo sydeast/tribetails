@@ -73,6 +73,19 @@ export interface GoogleCalendarConnectionDoc {
   calendarPushLastStatus: string;
   calendarPushLastPushed: number;
   calendarPushLastError: string;
+  /**
+   * The automatic per-visit sync's receipt (issue #397). Deliberately a
+   * SEPARATE set from the bulk push's four fields: "the button I pressed
+   * failed" and "the visit I just confirmed never reached the calendar" are
+   * different sentences, and folding them together would let a successful
+   * manual push erase the evidence that automatic sync is broken.
+   */
+  calendarAutoSyncLastRunAt: string;
+  calendarAutoSyncLastStatus: string;
+  /** `created`, `updated`, `deleted` or `skipped`, so the panel says what happened. */
+  calendarAutoSyncLastAction: string;
+  calendarAutoSyncLastSessionId: string;
+  calendarAutoSyncLastError: string;
 }
 
 /**
@@ -96,6 +109,11 @@ export interface PublicGoogleCalendarConnection {
   calendarPushLastStatus: string;
   calendarPushLastPushed: number;
   calendarPushLastError: string;
+  calendarAutoSyncLastRunAt: string;
+  calendarAutoSyncLastStatus: string;
+  calendarAutoSyncLastAction: string;
+  calendarAutoSyncLastSessionId: string;
+  calendarAutoSyncLastError: string;
 }
 
 function str(raw: unknown): string {
@@ -136,6 +154,11 @@ export function connectionFromDoc(
     calendarPushLastStatus: str(r.calendarPushLastStatus),
     calendarPushLastPushed: num(r.calendarPushLastPushed),
     calendarPushLastError: str(r.calendarPushLastError),
+    calendarAutoSyncLastRunAt: str(r.calendarAutoSyncLastRunAt),
+    calendarAutoSyncLastStatus: str(r.calendarAutoSyncLastStatus),
+    calendarAutoSyncLastAction: str(r.calendarAutoSyncLastAction),
+    calendarAutoSyncLastSessionId: str(r.calendarAutoSyncLastSessionId),
+    calendarAutoSyncLastError: str(r.calendarAutoSyncLastError),
   };
 }
 
@@ -157,6 +180,11 @@ export function publicConnection(doc: GoogleCalendarConnectionDoc): PublicGoogle
     calendarPushLastStatus: doc.calendarPushLastStatus,
     calendarPushLastPushed: doc.calendarPushLastPushed,
     calendarPushLastError: doc.calendarPushLastError,
+    calendarAutoSyncLastRunAt: doc.calendarAutoSyncLastRunAt,
+    calendarAutoSyncLastStatus: doc.calendarAutoSyncLastStatus,
+    calendarAutoSyncLastAction: doc.calendarAutoSyncLastAction,
+    calendarAutoSyncLastSessionId: doc.calendarAutoSyncLastSessionId,
+    calendarAutoSyncLastError: doc.calendarAutoSyncLastError,
   };
 }
 
@@ -233,5 +261,45 @@ export function calendarPushStamp(
     calendarPushLastStatus: outcome.status,
     calendarPushLastPushed: outcome.status === 'ok' ? outcome.pushed : 0,
     calendarPushLastError: outcome.status === 'ok' ? '' : outcome.error,
+  };
+}
+
+/**
+ * The automatic-sync receipt (issue #397), stamped by the lifecycle trigger.
+ *
+ * WHY THE TRIGGER STAMPS THE CONNECTION DOCUMENT AND NOT ONLY THE VISIT. A
+ * trigger has nobody to return an error to. The visit row carries what went
+ * wrong with THAT visit, which is only findable by someone who already suspects
+ * that visit — and the operator's symptom is the opposite shape: the calendar
+ * looks fine and one visit is quietly missing from it. All three admin surfaces
+ * already poll `getGoogleCalendarConnection` for connection status, so a
+ * revoked grant or a failing calendar surfaces on the panel the operator opens
+ * anyway, without any of them learning a new query.
+ *
+ * `calendarAutoSyncLastAction` carries the SUCCESS shape too, not just
+ * failures. A panel that only ever shows automatic sync when it breaks gives
+ * the operator no way to confirm it is working, which is how a feature ends up
+ * being pressed manually forever by someone who does not trust it.
+ */
+export interface CalendarAutoSyncStamp {
+  calendarAutoSyncLastRunAt: string;
+  calendarAutoSyncLastStatus: 'ok' | 'error';
+  calendarAutoSyncLastAction: string;
+  calendarAutoSyncLastSessionId: string;
+  calendarAutoSyncLastError: string;
+}
+
+export function calendarAutoSyncStamp(
+  outcome:
+    | { status: 'ok'; sessionId: string; action: string }
+    | { status: 'error'; sessionId: string; error: string },
+  nowIso: string,
+): CalendarAutoSyncStamp {
+  return {
+    calendarAutoSyncLastRunAt: nowIso,
+    calendarAutoSyncLastStatus: outcome.status,
+    calendarAutoSyncLastAction: outcome.status === 'ok' ? outcome.action : '',
+    calendarAutoSyncLastSessionId: outcome.sessionId,
+    calendarAutoSyncLastError: outcome.status === 'ok' ? '' : outcome.error,
   };
 }

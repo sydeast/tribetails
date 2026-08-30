@@ -151,6 +151,19 @@ data class GoogleCalendarConnection(
     val calendarPushLastStatus: String = "",
     val calendarPushLastPushed: Int = 0,
     val calendarPushLastError: String = "",
+    /**
+     * The AUTOMATIC per-visit sync's receipt (issue #397), stamped by the
+     * `onKinCareSessionCalendarSync` trigger. Kept separate from the four
+     * `calendarPushLast*` fields above because a trigger has no caller to
+     * return an error to: this is the only place a failed automatic sync is
+     * ever reported, and a successful manual push must not overwrite it.
+     */
+    val calendarAutoSyncLastRunAt: String = "",
+    val calendarAutoSyncLastStatus: String = "",
+    /** `created`, `updated`, `deleted` or `skipped`. */
+    val calendarAutoSyncLastAction: String = "",
+    val calendarAutoSyncLastSessionId: String = "",
+    val calendarAutoSyncLastError: String = "",
 )
 
 // ── The last-push receipt ────────────────────────────────────────────────────
@@ -191,3 +204,60 @@ fun googleCalendarPushLabel(connection: GoogleCalendarConnection): String? {
     val visits = if (pushed == 1) "1 visit" else "$pushed visits"
     return "Last push $atStamp. Pushed $visits."
 }
+
+// ── The automatic-sync receipt (issue #397) ──────────────────────────────────
+/** What each action did, in the operator's words rather than the API's. */
+private fun autoSyncActionSentence(action: String): String = when (action) {
+    "created" -> "put a visit on the calendar"
+    "updated" -> "moved a visit already on the calendar"
+    "deleted" -> "took a cancelled visit off the calendar"
+    "skipped" -> "found nothing to change"
+    // A value we do not recognise is REPORTED, not hidden behind a guess. A
+    // card that silently rendered an unknown action as "nothing to change"
+    // would be inventing reassurance about a state nobody has seen.
+    else -> "finished with an unrecognised result (${if (action.isBlank()) "blank" else action})"
+}
+/**
+ * ONE line saying what automatic calendar sync last did, matching
+ * [googleCalendarPushLabel]'s conventions next door.
+ *
+ * Null when it has never run, which the card renders in its own words: "not
+ * yet" and "it failed" are different facts and must not share a sentence.
+ *
+ * An UNREADABLE status reads as a FAILURE, never as a success. A receipt we
+ * cannot parse is not evidence that anything worked, and reporting it as a
+ * success is how a broken integration goes unnoticed.
+ */
+fun googleCalendarAutoSyncLabel(connection: GoogleCalendarConnection): String? {
+    val stamp = connection.calendarAutoSyncLastRunAt.trim()
+    if (stamp.isEmpty()) return null
+    val atStamp = formatPushStamp(stamp)
+    if (connection.calendarAutoSyncLastStatus != "ok") {
+        return "Automatic sync last ran $atStamp, and it failed."
+    }
+    return "Automatic sync last ran $atStamp and ${autoSyncActionSentence(connection.calendarAutoSyncLastAction)}."
+}
+/**
+ * The visit a Retry button should be aimed at, or null when there is nothing to
+ * retry.
+ *
+ * A failed run with NO session id is deliberately not retryable. That happens
+ * when the failure was about the connection rather than about one visit (the
+ * chosen calendar became the free/busy calendar, say), and offering a Retry
+ * that reruns the same refusal would send the operator at the wrong fix.
+ */
+fun retryableAutoSyncSessionId(connection: GoogleCalendarConnection): String? {
+    if (connection.calendarAutoSyncLastRunAt.isBlank()) return null
+    if (connection.calendarAutoSyncLastStatus == "ok") return null
+    return connection.calendarAutoSyncLastSessionId.trim().ifBlank { null }
+}
+/**
+ * Automatic sync is live exactly when a calendar has been chosen, because
+ * choosing one is already the deliberate act that means "put our visits here".
+ * There is no separate on/off switch, on either client: a second switch would
+ * allow a state where a calendar is selected and visits silently never reach
+ * it, which is the exact complaint issue #397 exists to fix. Disconnecting is
+ * the off switch.
+ */
+fun autoSyncIsArmed(connection: GoogleCalendarConnection): Boolean =
+    connection.connected && connection.writeCalendarId.isNotBlank()
