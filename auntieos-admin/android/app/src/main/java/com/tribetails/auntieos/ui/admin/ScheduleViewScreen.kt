@@ -409,6 +409,11 @@ fun ScheduleViewScreen(
                             selectedBookingIds = emptySet()
                             selecting = false
                         },
+                        // The selection is NOT cleared here, unlike the three
+                        // transitions above: nothing has been written yet, and
+                        // an operator who backs out of the sheet must find their
+                        // picks still ticked rather than having to re-hunt them.
+                        onReschedule = { viewModel.openBulkReschedule(selectedBookingIds) },
                     )
                 }
             }
@@ -857,6 +862,29 @@ fun ScheduleViewScreen(
             )
         }
 
+        // #397 M16: the per-visit review sheet the bulk bar's Reschedule opens.
+        if (state.bulkRescheduleOpen) {
+            BulkRescheduleSheet(
+                targets = state.bulkRescheduleTargets,
+                skipped = state.bulkRescheduleSkipped,
+                results = state.bulkRescheduleResults,
+                inFlight = state.bulkRescheduleInFlight,
+                onConfirm = { entries -> viewModel.bulkRescheduleVisits(entries) },
+                onOverride = { bookingId -> viewModel.retryBulkRescheduleWithOverride(bookingId) },
+                onDismiss = {
+                    // Everything that landed leaves the selection; everything
+                    // that did not stays picked, so a retry is one press and not
+                    // a re-hunt through the calendar.
+                    val moved = state.bulkRescheduleResults
+                        .filter { it.status == BulkRescheduleStatus.MOVED }
+                        .map { it.bookingId }
+                        .toSet()
+                    if (moved.isNotEmpty()) selectedBookingIds = selectedBookingIds - moved
+                    viewModel.closeBulkReschedule()
+                },
+            )
+        }
+
         if (showTimeSlotDialog) {
             TimeSlotManagementDialog(
                 selectedDate = state.selectedDate,
@@ -954,6 +982,12 @@ private fun ScheduleControls(
  * Select-all toggle, the live selected count, and one button per transition
  * (Approve / Reject / Cancel) that fires batchUpdateBookings on the working set.
  * Actions disable while a batch is in flight or nothing is selected.
+ *
+ * RESCHEDULE IS THE ONE BUTTON HERE THAT OPENS A SHEET INSTEAD OF FIRING A WRITE
+ * (#397 M16). The other three are one transition applied to a list of ids; a
+ * reschedule needs a distinct new window PER visit, which no bar of one-press
+ * verbs can express, so this press hands the selection to [BulkRescheduleSheet]
+ * and the sheet is what supplies each visit's own time.
  */
 @Composable
 private fun BulkBookingActionBar(
@@ -962,6 +996,7 @@ private fun BulkBookingActionBar(
     allSelected: Boolean,
     onSelectAll: () -> Unit,
     onAction: (String) -> Unit,
+    onReschedule: () -> Unit,
 ) {
     val canAct = selectedCount > 0 && !inFlight
     DenPanel(title = "Bulk actions") {
@@ -989,6 +1024,182 @@ private fun BulkBookingActionBar(
                 PrimaryButton(label = "Approve", enabled = canAct, onClick = { onAction("APPROVE") })
                 GhostButton(label = "Reject", onClick = { if (canAct) onAction("REJECT") }, enabled = canAct)
                 GhostButton(label = "Cancel", onClick = { if (canAct) onAction("CANCEL") }, enabled = canAct)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GhostButton(label = "Reschedule", onClick = { if (canAct) onReschedule() }, enabled = canAct)
+            }
+        }
+    }
+}
+
+/**
+ * The per-visit review sheet (#397 M16): every selected visit with its OWN new
+ * date and time, prefilled with the window it holds now, confirmed once.
+ *
+ * IT IS NOT ONE DELTA APPLIED TO EVERYTHING. Five selected visits do not share a
+ * new window, so the sheet asks for one per visit and the ViewModel fires
+ * `rescheduleBooking` once per visit with that visit's own times. A row left at
+ * its prefilled time is not written at all: an audit entry and a household
+ * notification for a move nobody made is worse than doing nothing.
+ *
+ * NOTHING IS SILENTLY DROPPED. [skipped] holds the selected bookings that were
+ * never offered a field (a DRAFT has no visit to move) and says so before
+ * anything is written; the result list afterwards names every visit that was
+ * refused, with the server's own sentence, and offers the override the refusal
+ * carries. That offer is drawn only while [BulkRescheduleRow.override] is
+ * non-null, which the ViewModel clears after one try, so the same losing move is
+ * never offered twice, and a company closure never carries one at all.
+ */
+@Composable
+private fun BulkRescheduleSheet(
+    targets: List<BulkRescheduleTarget>,
+    skipped: List<BulkRescheduleRow>,
+    results: List<BulkRescheduleRow>,
+    inFlight: Boolean,
+    onConfirm: (List<BulkRescheduleEntry>) -> Unit,
+    onOverride: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = AuntieTheme.colors
+    // One draft per visit, seeded from its prefill. Keyed by the booking id, so
+    // a row's fields cannot end up attached to another household's visit.
+    val drafts = remember(targets) {
+        mutableStateMapOf<String, Pair<String, String>>().apply {
+            targets.forEach { put(it.bookingId, it.date to it.time) }
+        }
+    }
+    val showingResults = results.isNotEmpty()
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        AuntieCard(modifier = Modifier.fillMaxWidth(0.95f), containerColor = c.background) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = if (showingResults) bulkRescheduleSummary(results) else "Reschedule selected visits",
+                    style = AuntieTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = c.textPrimary,
+                )
+
+                if (showingResults) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(results, key = { it.bookingId }) { row ->
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = row.name,
+                                    style = AuntieTheme.typography.labelLarge,
+                                    color = when (row.status) {
+                                        BulkRescheduleStatus.MOVED -> c.textPrimary
+                                        BulkRescheduleStatus.REFUSED -> c.error
+                                        BulkRescheduleStatus.SKIPPED -> c.warning
+                                    },
+                                )
+                                Text(row.message, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                                row.override?.let { kind ->
+                                    Text(
+                                        com.tribetails.auntieos.data.repository.scheduleOverrideHint(kind),
+                                        style = AuntieTheme.typography.labelSmall,
+                                        color = c.textDim,
+                                    )
+                                    GhostButton(
+                                        label = "Move anyway",
+                                        enabled = !inFlight,
+                                        onClick = { if (!inFlight) onOverride(row.bookingId) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        "Every visit keeps its own time. Adjust the ones that are moving and leave the " +
+                            "rest, then confirm once. A visit left at the time it already has is not written.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                    if (targets.isEmpty()) {
+                        Text(
+                            "None of the selected bookings has a visit on the books to move.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.warning,
+                        )
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(targets, key = { it.bookingId }) { target ->
+                            val draft = drafts[target.bookingId] ?: (target.date to target.time)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(target.name, style = AuntieTheme.typography.labelLarge, color = c.textPrimary)
+                                Text(
+                                    "Now ${target.currentStart.ifBlank { "not set" }}",
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = c.textDim,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    AuntieField(
+                                        value = draft.first,
+                                        onValueChange = { drafts[target.bookingId] = it to draft.second },
+                                        label = "Date (YYYY-MM-DD)",
+                                        enabled = !inFlight,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    AuntieField(
+                                        value = draft.second,
+                                        onValueChange = { drafts[target.bookingId] = draft.first to it },
+                                        label = "Time (HH:MM)",
+                                        enabled = !inFlight,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (skipped.isNotEmpty() && !showingResults) {
+                    Text("NOT OFFERED A NEW TIME", style = AuntieTheme.typography.labelSmall, color = c.kinfolkOrange)
+                    skipped.forEach { row ->
+                        Text(
+                            "${row.name}: ${row.message}",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (showingResults) {
+                        PrimaryButton(label = "Done", enabled = !inFlight, onClick = onDismiss)
+                    } else {
+                        AuntieTextBtn(onClick = { if (!inFlight) onDismiss() }) { Text("Back") }
+                        Spacer(Modifier.width(8.dp))
+                        PrimaryButton(
+                            label = if (inFlight) "Moving…" else "Reschedule ${targets.size}",
+                            enabled = targets.isNotEmpty() && !inFlight,
+                            onClick = {
+                                onConfirm(
+                                    targets.map { target ->
+                                        val draft = drafts[target.bookingId] ?: (target.date to target.time)
+                                        BulkRescheduleEntry(target.bookingId, draft.first, draft.second)
+                                    },
+                                )
+                            },
+                        )
+                    }
+                }
             }
         }
     }

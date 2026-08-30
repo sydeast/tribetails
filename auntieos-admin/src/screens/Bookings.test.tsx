@@ -802,3 +802,60 @@ describe('Bookings deep link', () => {
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
   });
 });
+/**
+ * The mock's fourth bulk button (#397 M16). What this owns is the SCREEN's
+ * half: that the press opens the per-visit sheet rather than firing a
+ * transition, that the sheet is handed the visits that can move plus the
+ * reasons the others cannot, and that the result survives the sheet closing.
+ * The sheet's own behaviour has its own suite in
+ * `components/BulkRescheduleDialog.test.tsx`, and the planning logic in
+ * `lib/bookingReschedule.test.ts`.
+ */
+describe('Bookings bulk reschedule', () => {
+  const scheduledPair = [
+    entry({ _id: 's1', kinfolkName: 'Household One', status: 'SCHEDULED', startTime: '2026-07-16T09:00:00', endTime: '2026-07-16T10:00:00' }),
+    entry({ _id: 's2', kinfolkName: 'Household Two', status: 'SCHEDULED', startTime: '2026-07-16T14:00:00', endTime: '2026-07-16T15:00:00' }),
+  ];
+  it('opens a field per selected visit, and names a selected row it cannot move', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [...scheduledPair, entry({ _id: 's3', kinfolkName: 'Waiting Household', status: 'PENDING' })],
+    });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two', 'Waiting Household');
+    await userEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    expect(screen.getByLabelText('New time for Household One')).toHaveValue('09:00');
+    expect(screen.getByLabelText('New time for Household Two')).toHaveValue('14:00');
+    // The pending row never gets a field, and is never silently dropped either.
+    expect(screen.queryByLabelText('New time for Waiting Household')).toBeNull();
+    expect(screen.getByText('Not offered a new time:')).toBeInTheDocument();
+    // Scoped to the sheet: the "Pending" stat card carries the same phrase.
+    const sheet = screen.getByRole('dialog');
+    expect(within(sheet).getByText(/awaiting a reply/)).toBeInTheDocument();
+    // Opening a sheet is not a transition: nothing was written by the press.
+    expect(rescheduleBooking).not.toHaveBeenCalled();
+  });
+  it('keeps the visits that did not move selected, and keeps the result after the sheet closes', async () => {
+    rescheduleBooking.mockImplementation((id: string) =>
+      id === 's2' ? Promise.reject(new Error('permission-denied')) : Promise.resolve({ ok: true }),
+    );
+    useCollection.mockReturnValue({ status: 'ready', data: scheduledPair });
+    render(<Bookings />);
+    await pick('Household One', 'Household Two');
+    await userEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    for (const name of ['Household One', 'Household Two']) {
+      const field = screen.getByLabelText(`New time for ${name}`);
+      await userEvent.clear(field);
+      await userEvent.type(field, '11:30');
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Reschedule 2 visits' }));
+    expect(await screen.findByText('Moved 1 of 2 selected visits.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    // The banner outlives the sheet: an operator who closed it can still read
+    // which household did not move.
+    expect(screen.getByText('Moved 1 of 2 selected visits.')).toBeInTheDocument();
+    expect(screen.getByText(/permission-denied/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Select Household Two/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Select Household One/ })).not.toBeChecked();
+  });
+});

@@ -38,7 +38,16 @@ import {
   chunkEnvelopeIds,
   bulkOutcomeSummary,
   type BulkOutcome,
+  type BulkSkip,
 } from '../lib/bookingBulk';
+import {
+  planBulkReschedule,
+  bulkRescheduleSummary,
+  type BulkRescheduleOutcome,
+  type RescheduleTarget,
+} from '../lib/bookingReschedule';
+import { BulkRescheduleDialog } from '../components/BulkRescheduleDialog';
+import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import './Bookings.css';
 
 /**
@@ -262,11 +271,57 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  /**
+   * The open reschedule sheet's plan (#397 M16), or null when it is closed.
+   *
+   * RESCHEDULE DOES NOT GO THROUGH `confirmAction`, and cannot: that state is
+   * typed to the generated `BatchBookingAction`, which is the three transitions
+   * `batchUpdateBookings` accepts and nothing else. A reschedule is not a
+   * transition and not one press, it is a per-visit sheet, so the bar opens it
+   * instead of asking a yes/no question the operator has no way to answer yet.
+   */
+  const [reschedulePlan, setReschedulePlan] = useState<{
+    eligible: RescheduleTarget[];
+    skipped: BulkSkip[];
+  } | null>(null);
+  const [rescheduleOutcome, setRescheduleOutcome] = useState<BulkRescheduleOutcome | null>(null);
 
   function leaveSelectMode() {
     setSelecting(false);
     setSelectedIds(new Set());
     setConfirmAction(null);
+  }
+
+  /**
+   * Open the per-visit review sheet on the current selection.
+   *
+   * The plan is taken HERE, from the live rows, rather than inside the sheet:
+   * the sheet is handed visits that can really be moved plus the reasons the
+   * others were left out, so a selected row is never simply missing from it.
+   */
+  function openReschedule() {
+    if (rows.status !== 'ready') return;
+    setOutcome(null);
+    setRescheduleOutcome(null);
+    setConfirmAction(null);
+    setReschedulePlan(planBulkReschedule(rows.data, selectedIds));
+  }
+
+  /**
+   * The sheet closed. `null` means the operator backed out before confirming,
+   * so nothing was written and the selection is left exactly as it was.
+   *
+   * Otherwise everything that landed leaves the selection and everything that
+   * did not stays picked, which is the same rule `runBulk` follows: a retry is
+   * one press and not a re-hunt through the list.
+   */
+  function closeReschedule(result: BulkRescheduleOutcome | null) {
+    setReschedulePlan(null);
+    if (result === null) return;
+    setRescheduleOutcome(result);
+    setSelectedIds(
+      new Set([...result.failures.map((f) => f.id), ...result.skipped.map((s) => s.id)]),
+    );
   }
 
   function toggleRow(id: string) {
@@ -437,6 +492,12 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           empty. */}
       <VisitRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
+      {rescheduleOutcome !== null && (
+        <BulkRescheduleBanner
+          outcome={rescheduleOutcome}
+          onDismiss={() => setRescheduleOutcome(null)}
+        />
+      )}
 
       {bulkError !== null && (
         <Banner tone="error" title="The household's copy was not updated" onDismiss={() => setBulkError(null)}>
@@ -533,10 +594,19 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           onAsk={setConfirmAction}
           onBack={() => setConfirmAction(null)}
           onRun={(action) => void runBulk(action)}
+          onReschedule={openReschedule}
           onClear={() => {
             setSelectedIds(new Set());
             setConfirmAction(null);
           }}
+        />
+      )}
+
+      {reschedulePlan !== null && (
+        <BulkRescheduleDialog
+          targets={reschedulePlan.eligible}
+          skipped={reschedulePlan.skipped}
+          onClose={closeReschedule}
         />
       )}
 
@@ -706,14 +776,16 @@ interface BulkBarProps {
   onAsk: (action: BatchBookingAction) => void;
   onBack: () => void;
   onRun: (action: BatchBookingAction) => void;
+  /** Opens the per-visit review sheet. Not an action this bar can fire itself. */
+  onReschedule: () => void;
   onClear: () => void;
 }
 
 /**
- * The mock's floating bar: a live count, the three transitions, and a way to
- * back out of the selection. Rendered only while Select is on AND something is
- * picked, matching the mock's own `bar.classList.toggle('show', picked.length
- * > 0)`.
+ * The mock's floating bar: a live count, the three transitions, Reschedule, and
+ * a way to back out of the selection. Rendered only while Select is on AND
+ * something is picked, matching the mock's own `bar.classList.toggle('show',
+ * picked.length > 0)`.
  *
  * The mock labels this button "Clear", and `onClear` does exactly what that
  * says: `setSelectedIds(new Set())` plus dropping any pending confirm. It
@@ -722,13 +794,26 @@ interface BulkBarProps {
  * Labelled "Deselect all" instead, the same rename `ui-ideas/` never had to
  * make because nobody had put it next to two destructive-sounding verbs yet.
  *
- * The mock also draws a Reschedule button here. It is deliberately NOT built:
- * rescheduling many visits at once means picking a new time PER visit (they do
- * not share one), which is a different surface from a bar of one-press verbs,
- * and `rescheduleBooking` takes one session and one window. A button that
- * cannot mean anything for a selection of five is worse than its absence.
+ * RESCHEDULE IS THE ONE BUTTON HERE THAT ASKS A QUESTION INSTEAD OF ANSWERING
+ * ONE (#397 M16). This comment used to say the mock's fourth button could not
+ * be built, on the grounds that many visits do not share one new window and
+ * `rescheduleBooking` takes one session and one time. The mechanism was right
+ * and the conclusion was wrong: the operator's ruling is a per-visit review
+ * sheet, so the press opens `BulkRescheduleDialog` with a prefilled field per
+ * selected visit, and the sheet is what supplies the distinct window each call
+ * needs. It therefore goes nowhere near `confirming`, which is the yes/no step
+ * for the three one-press transitions.
  */
-function BulkBar({ count, confirming, running, onAsk, onBack, onRun, onClear }: BulkBarProps) {
+function BulkBar({
+  count,
+  confirming,
+  running,
+  onAsk,
+  onBack,
+  onRun,
+  onReschedule,
+  onClear,
+}: BulkBarProps) {
   return (
     <div className="bookings__bulkbar" role="group" aria-label="Bulk actions">
       <span className="bookings__bulkbar-count">
@@ -744,6 +829,7 @@ function BulkBar({ count, confirming, running, onAsk, onBack, onRun, onClear }: 
               <GhostButton key={action} label={label} onClick={() => onAsk(action)} />
             ),
           )}
+          <GhostButton label="Reschedule" onClick={onReschedule} disabled={running} />
           <span className="bookings__bulkbar-sep" />
           <GhostButton label="Deselect all" onClick={onClear} />
         </>
@@ -809,6 +895,70 @@ function BulkOutcomeBanner({ outcome, onDismiss }: { outcome: BulkOutcome; onDis
         </>
       )}
       {clean && <p className="bookings__bulk-result-head">Every selected booking was updated.</p>}
+    </Banner>
+  );
+}
+
+/**
+ * What the reschedule sheet did, kept on the screen after the sheet closes.
+ *
+ * A SECOND COPY OF THE RESULT, ON PURPOSE. The sheet shows the same per-visit
+ * verdicts while it is open, because that is where the override retry lives;
+ * this survives it being dismissed, so an operator who closed the sheet still
+ * has the list of which households did not move and why. Same shape and same
+ * split as the banner above: a failure was attempted and refused, a skip was
+ * never attempted at all.
+ */
+function BulkRescheduleBanner({
+  outcome,
+  onDismiss,
+}: {
+  outcome: BulkRescheduleOutcome;
+  onDismiss: () => void;
+}) {
+  const clean = outcome.failures.length === 0 && outcome.skipped.length === 0;
+  return (
+    <Banner
+      tone={outcome.failures.length > 0 ? 'error' : clean ? 'success' : 'warning'}
+      title={bulkRescheduleSummary(outcome)}
+      onDismiss={onDismiss}
+    >
+      {outcome.applied.length > 0 && (
+        <>
+          <p className="bookings__bulk-result-head">Moved:</p>
+          <ul className="bookings__bulk-result">
+            {outcome.applied.map((a) => (
+              <li key={a.id}>
+                <strong>{a.name}</strong>: now {bookingWhenLabel(a.startTime)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {outcome.failures.length > 0 && (
+        <>
+          <p className="bookings__bulk-result-head">Not moved:</p>
+          <ul className="bookings__bulk-result">
+            {outcome.failures.map((f) => (
+              <li key={f.id}>
+                <strong>{f.name}</strong>: {f.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {outcome.skipped.length > 0 && (
+        <>
+          <p className="bookings__bulk-result-head">Left where they are:</p>
+          <ul className="bookings__bulk-result">
+            {outcome.skipped.map((s) => (
+              <li key={s.id}>
+                <strong>{s.name}</strong>: {s.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </Banner>
   );
 }
