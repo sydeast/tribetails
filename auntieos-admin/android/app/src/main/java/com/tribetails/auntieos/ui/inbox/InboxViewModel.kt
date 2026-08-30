@@ -290,5 +290,29 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
         }
     }
 
+    /**
+     * Dismisses a voicemail: it never needed an answer. Parity with the web
+     * admin's Dismiss action, and the third ending a voicemail can have
+     * alongside a reply and a read mark.
+     *
+     * Refresh works the way `markVoicemailRead` above documents: the live
+     * `observeVoicemails` listener carries the new `replyStatus` back and the
+     * row restyles itself, so nothing is refetched and nothing is guessed at
+     * locally. A failure sets `_error` rather than emitting the success toast,
+     * because a voicemail the operator believes they closed and that is still
+     * `unread` is worse than one they know the app could not write.
+     */
+    fun markVoicemailDismissed(voicemailId: String) {
+        if (voicemailId.isBlank()) {
+            _error.value = "Cannot dismiss: this voicemail has no id"
+            return
+        }
+        viewModelScope.launch {
+            repository.markVoicemailDismissed(voicemailId)
+                .onSuccess { _actionResult.tryEmit("Dismissed") }
+                .onFailure { _error.value = it.message ?: "Failed to dismiss this voicemail" }
+        }
+    }
+
     fun clearError() { _error.value = null }
 }

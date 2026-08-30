@@ -188,7 +188,19 @@ export function voicemailEntry(row: VoicemailRow): InboxEntry {
     // Voicemails are inbound by definition; Android drops the pip for the same
     // reason rather than printing "received" on every row.
     direction: 'inbound',
-    statusHint: state === 'unread' ? 'unread' : state === 'replied' ? 'replied' : '',
+    // `dismissed` is carried through rather than flattened to `''` for two
+    // reasons: the row has to be able to say so (a dismissed voicemail nobody
+    // can tell from a read one is indistinguishable from one nobody has
+    // touched), and it is what gates the Dismiss action off in
+    // `ThreadActionsCard`, so the control cannot be pressed twice to no effect.
+    statusHint:
+      state === 'unread'
+        ? 'unread'
+        : state === 'replied'
+          ? 'replied'
+          : state === 'dismissed'
+            ? 'dismissed'
+            : '',
     mediaCount: 0,
     replyPhone: str(row.callerNumber).trim(),
     replyEmail: '',

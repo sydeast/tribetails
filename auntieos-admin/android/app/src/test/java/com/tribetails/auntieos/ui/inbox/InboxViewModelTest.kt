@@ -134,6 +134,48 @@ class InboxViewModelTest {
         coVerify(exactly = 0) { mockRepo.markVoicemailRead(any()) }
     }
 
+    /**
+     * S8. `dismissed` was on VoicemailLog and in every reader with no client
+     * able to write it, so the only exit from the waiting count was to call a
+     * robocall "read".
+     */
+    @Test
+    fun `markVoicemailDismissed writes the dismissed state, not the read one`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markVoicemailDismissed("vm1") } returns Result.success(Unit)
+
+        val vm = buildViewModel()
+        vm.markVoicemailDismissed("vm1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { mockRepo.markVoicemailDismissed("vm1") }
+        coVerify(exactly = 0) { mockRepo.markVoicemailRead(any()) }
+        assertNull(vm.error.value)
+    }
+
+    @Test
+    fun `markVoicemailDismissed surfaces a write failure rather than swallowing it`() = runTest(testDispatcher) {
+        coEvery { mockRepo.markVoicemailDismissed("vm1") } returns
+            Result.failure(RuntimeException("permission-denied"))
+
+        val vm = buildViewModel()
+        vm.markVoicemailDismissed("vm1")
+        advanceUntilIdle()
+
+        // A voicemail the operator believes they closed and that is really
+        // still unread is worse than one they know the app could not write.
+        assertNotNull(vm.error.value)
+    }
+
+    @Test
+    fun `markVoicemailDismissed refuses a blank id before touching the repository`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        vm.markVoicemailDismissed("   ")
+        advanceUntilIdle()
+
+        assertNotNull(vm.error.value)
+        coVerify(exactly = 0) { mockRepo.markVoicemailDismissed(any()) }
+    }
+
     @Test
     fun `sendSmsReply sets error when recipientPhone is blank`() = runTest(testDispatcher) {
         val vm = buildViewModel()

@@ -816,6 +816,21 @@ describe('Inbox channels', () => {
     expect(screen.getByText('missed')).toBeInTheDocument();
     expect(screen.getByText('waiting on a reply')).toBeInTheDocument();
   });
+  /**
+   * S8. A dismissed voicemail is MARKED, never removed: `mergeChannelEntries`
+   * shows everything that came in, and a row that silently vanished when an
+   * operator closed it out would be indistinguishable from one the listener
+   * never delivered.
+   */
+  it('marks a dismissed voicemail on its row instead of hiding it from the list', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ voicemails: ready([voicemail({ _id: 'vm-done', replyStatus: 'dismissed' })]) });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    expect(screen.getByText('The Alvarez Household')).toBeInTheDocument();
+    expect(screen.getByText('dismissed')).toBeInTheDocument();
+    expect(screen.queryByText('waiting on a reply')).toBeNull();
+  });
   it('renders a row for a caller who matched no household rather than dropping it', async () => {
     listConversations.mockResolvedValue([]);
     // twilioInboundVoicemail writes a literal null kinfolkId on a no-match.

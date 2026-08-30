@@ -294,10 +294,26 @@ internal actual suspend fun platformArchiveKin(id: String): WriteResult<Unit> =
 internal actual suspend fun platformPatchKinCare(id: String, patch: Map<String, String>): WriteResult<Unit> =
     if (JvmFirestoreRest.patchFields("kin_care_sessions", id, patch.mapValues { JsonPrimitive(it.value) })) WriteResult.Ok(Unit) else WriteResult.Err("patch failed")
 
+// ── voicemail reply state: `replyStatus`, and only `replyStatus` ────────────
+//
+// These three wrote `replied: true` and `read: true`, booleans on keys NOTHING
+// reads. The state field is `replyStatus` — declared on this file's own
+// `VoicemailLog`, mapped by this app's `InboxScreen.toEntry()`, written by the
+// React admin (`api/inboxChannelsWrite.ts`) and by Android
+// (`AuntieRepository.markVoicemailRead` / `markVoicemailReplied`), and seeded
+// by `twilioInboundVoicemail`. So this client's Mark read was a write that
+// changed nothing anyone could see, and its reply stamp lost the `replied`
+// state entirely while still succeeding. Same three keys as the other two
+// clients now, so a voicemail acted on anywhere reads the same everywhere.
+//
+// `repliedAt` is blank for read and for dismissed: neither is a reply, and a
+// reply timestamp on either would make the field a lie.
 internal actual suspend fun platformMarkVoicemailReplied(voicemailId: String, repliedAtIso: String, replyLogId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replied" to JsonPrimitive(true), "repliedAt" to JsonPrimitive(repliedAtIso), "replyLogId" to JsonPrimitive(replyLogId)))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("replied"), "repliedAt" to JsonPrimitive(repliedAtIso), "replyLogId" to JsonPrimitive(replyLogId)))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
 internal actual suspend fun platformMarkVoicemailRead(voicemailId: String): WriteResult<Unit> =
-    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("read" to JsonPrimitive(true)))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("read"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive("")))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
+internal actual suspend fun platformMarkVoicemailDismissed(voicemailId: String): WriteResult<Unit> =
+    if (JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("dismissed"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive("")))) WriteResult.Ok(Unit) else WriteResult.Err("update failed")
 
 internal actual fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>> =
     JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
