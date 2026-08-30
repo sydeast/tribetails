@@ -21,13 +21,13 @@ import './FormSchemaEditor.css';
  * read-only list, which already deletes via deleteFormSchema): this is what its
  * onNew / onSelect placeholders open.
  *
- * IT IS A WORKFLOW MODAL, one section per step (`components/WizardModal`), on
- * the operator's instruction of 2026-08-08: the 2026-08-06 layout review found
- * this and the KinTale template editor to be the two tallest screens in the set,
- * both of them long always-expanded single-column forms, and splitting the
- * sections across named steps is the chosen answer. The list stays behind the
- * modal (`routes/FormSchemasView.tsx`) instead of being replaced by the editor,
- * so backing out returns to exactly the row that was clicked.
+ * IT IS A WORKFLOW MODAL (`components/WizardModal`), on the operator's
+ * instruction of 2026-08-08: the 2026-08-06 layout review found this and the
+ * KinTale template editor to be the two tallest screens in the set, both of
+ * them long always-expanded single-column forms, and splitting the form
+ * across named steps is the chosen answer. The list stays behind the modal
+ * (`routes/FormSchemasView.tsx`) instead of being replaced by the editor, so
+ * backing out returns to exactly the row that was clicked.
  *
  * NOTHING IS FOLDED. The per-field helper text / placeholder / default / group
  * used to live behind a `<details>Advanced</details>`; they are drawn in full
@@ -45,32 +45,33 @@ import './FormSchemaEditor.css';
  * into `WizardModal.css` so the next consumer with a persistent panel inherits
  * it rather than restating it.
  *
- * SCOPE NARROWING FROM THE WASM SOURCE, disclosed here rather than silently:
- * FormSchemaEditorScreen.kt authors an arbitrary number of named SECTIONS,
- * each with its own field list. The backend contract (saveFormSchema.ts)
- * requires that structure, `sections: SectionSchema[]`, each section itself
- * requiring a non-empty `fields` array. This screen edits ONE flat field
- * list and wraps it in a single implicit section on save, because every
- * schema actually authored in this app to date is single-section (tribeProfile,
- * vetInfo, etc.) and a flat list is the simpler, faster-to-build surface the
- * task asked for. Loading a schema that genuinely has more than one section
- * merges their fields into one list and shows a visible warning banner
- * (never silently), see `flattenSections` below; saving from that state loses
- * the original section boundaries. If a schema with real multiple sections
- * needs editing, this screen is not yet the right tool for that edit.
+ * SECTIONS ARE REAL, not flattened (issue #397, M17). This screen used to edit
+ * one flat field list and wrap it in a single implicit section on save: a
+ * schema with more than one section had its fields merged into one list on
+ * load, with a visible warning banner, and saving from that state replaced the
+ * original section boundaries with a single one. That defect is fixed here.
+ * The wizard's second step is now "Sections": every section the schema
+ * actually has is drawn as its own card, in order, each with its own title,
+ * description, and field list, exactly the shape `saveFormSchema.ts`'s
+ * `sections: SectionSchema[]` contract requires and `getFormSchema.ts` hands
+ * back. A schema round-trips losslessly: load, edit, save, reload, section
+ * boundaries intact.
+ *
+ * MATCHES ANDROID, not a new model: `FormSchemaEditorViewModel.kt` holds
+ * `sections: List<FormSchemaSection>` directly (no flatten step at all), a
+ * blank new schema seeds ONE section with a blank title
+ * (`FormSchemaEditorViewModel.load(null)`), and duplicate field keys are
+ * checked WITHIN a section, never across sections, exactly like the backend's
+ * `SectionSchema.superRefine`. This screen mirrors all three: no flatten, one
+ * blank-titled section to start, and per-section key uniqueness. A schema
+ * whose two sections happen to reuse the same field key is not an error here,
+ * because the reference implementations do not treat it as one.
  */
-
-const DEFAULT_SECTION_TITLE = 'Fields';
 
 /** Field-key regex, ported verbatim from saveFormSchema.ts's Zod contract. */
 const KEY_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 /** Schema-id regex, ported verbatim from saveFormSchema.ts's Zod contract. */
 const ID_RE = /^[a-zA-Z][a-zA-Z0-9_.-]*$/;
-
-export interface SectionMeta {
-  title: string;
-  description: string | null;
-}
 
 /** True when `schemaId` means "create a fresh schema" rather than "edit id". Mirrors the wasm's isCreateMode. */
 export function isCreateMode(schemaId: string | undefined): boolean {
@@ -92,41 +93,15 @@ export function emptyField(): FormField {
 }
 
 /**
- * Flattens every field across every section into one ordered list.
+ * A brand-new section: blank title, no description, no fields yet.
  *
- * Round-trips losslessly for the common single-section case (keeps that
- * section's own title/description so an immediate load-then-save is a no-op
- * on the wire). A schema with zero or multiple sections falls back to a
- * fixed "Fields" title, since there is no longer one section's identity to
- * preserve; `wasMultiSection` tells the caller to warn rather than pretend
- * nothing changed.
+ * The blank title (not a "Fields" placeholder) is deliberate parity with
+ * Android's `FormSchemaEditorViewModel.load(null)`, which seeds
+ * `FormSchemaSection(title = "")`: the operator names the section, the same
+ * way the mock's "Section title *" marks it required rather than optional.
  */
-export function flattenSections(sections: FormSection[]): {
-  fields: FormField[];
-  meta: SectionMeta;
-  wasMultiSection: boolean;
-} {
-  if (sections.length === 0) {
-    return { fields: [], meta: { title: DEFAULT_SECTION_TITLE, description: null }, wasMultiSection: false };
-  }
-  if (sections.length === 1) {
-    const only = sections[0]!;
-    return {
-      fields: only.fields,
-      meta: { title: only.title || DEFAULT_SECTION_TITLE, description: only.description },
-      wasMultiSection: false,
-    };
-  }
-  return {
-    fields: sections.flatMap((s) => s.fields),
-    meta: { title: DEFAULT_SECTION_TITLE, description: null },
-    wasMultiSection: true,
-  };
-}
-
-/** The inverse of flattenSections: wraps a flat field list back into the one-section shape the backend requires. */
-export function buildSections(meta: SectionMeta, fields: FormField[]): FormSection[] {
-  return [{ title: meta.title, description: meta.description, fields }];
+export function emptySection(): FormSection {
+  return { title: '', description: null, fields: [] };
 }
 
 export interface FieldValidation {
@@ -161,10 +136,11 @@ export function validateField(field: FormField, seenKeys: ReadonlySet<string>): 
 /**
  * The schema's own identity problems: id and name.
  *
- * Split from the field-list half so the wizard can report each problem ON THE
- * STEP THAT OWNS THE FIELD, and so the rail can flag that step. A single flat
- * error list at the bottom of the form is what the pre-wizard screen had, and it
- * meant an operator scrolled past the broken field to find out it was broken.
+ * Split from the section-list half so the wizard can report each problem ON
+ * THE STEP THAT OWNS THE FIELD, and so the rail can flag that step. A single
+ * flat error list at the bottom of the form is what the pre-wizard screen had,
+ * and it meant an operator scrolled past the broken field to find out it was
+ * broken.
  */
 export function schemaMetaErrors(input: { id: string; name: string }): string[] {
   const errors: string[] = [];
@@ -178,26 +154,41 @@ export function schemaMetaErrors(input: { id: string; name: string }): string[] 
   return errors;
 }
 
-/** The field list's problems: the at-least-one rule, then every field's own, numbered. */
-export function fieldListErrors(fields: readonly FormField[]): string[] {
+/**
+ * One section's own problems: its title, then its own field list, numbered
+ * within the section. Duplicate keys are checked WITHIN this section only,
+ * mirroring `SectionSchema.superRefine` on the server (and Android's
+ * `FormSchemaValidator.validateField`, which resets `seenKeysInSection` per
+ * section) rather than across the whole schema.
+ */
+export function sectionErrors(section: FormSection, sectionNumber: number): string[] {
   const errors: string[] = [];
-  if (fields.length === 0) errors.push('At least one field is required.');
+  if (!section.title.trim()) errors.push(`Section ${sectionNumber}: Section title is required.`);
+  if (section.fields.length === 0) errors.push(`Section ${sectionNumber}: At least one field is required.`);
 
   const seen = new Set<string>();
-  fields.forEach((field, i) => {
+  section.fields.forEach((field, i) => {
     const v = validateField(field, seen);
-    if (v.keyError) errors.push(`Field ${i + 1}: ${v.keyError}`);
-    if (v.labelError) errors.push(`Field ${i + 1}: ${v.labelError}`);
-    if (v.optionsError) errors.push(`Field ${i + 1}: ${v.optionsError}`);
+    if (v.keyError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.keyError}`);
+    if (v.labelError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.labelError}`);
+    if (v.optionsError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.optionsError}`);
     const trimmedKey = field.key.trim();
     if (trimmedKey) seen.add(trimmedKey);
   });
   return errors;
 }
 
-/** Whole-schema validation: id/name/field-list invariants, ported from saveFormSchema.ts's SchemaInputSchema + SectionSchema. */
-export function validateSchema(input: { id: string; name: string; fields: FormField[] }): string[] {
-  return [...schemaMetaErrors(input), ...fieldListErrors(input.fields)];
+/** The section list's problems: the at-least-one-section rule, then every section's own, numbered. */
+export function sectionListErrors(sections: readonly FormSection[]): string[] {
+  const errors: string[] = [];
+  if (sections.length === 0) errors.push('At least one section is required.');
+  sections.forEach((section, i) => errors.push(...sectionErrors(section, i + 1)));
+  return errors;
+}
+
+/** Whole-schema validation: id/name/section invariants, ported from saveFormSchema.ts's SchemaInputSchema + SectionSchema. */
+export function validateSchema(input: { id: string; name: string; sections: FormSection[] }): string[] {
+  return [...schemaMetaErrors(input), ...sectionListErrors(input.sections)];
 }
 
 /** Reorders one step earlier. No-op at the top (idx 0) or out of range. */
@@ -258,15 +249,16 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
 
   const [loading, setLoading] = useState(!creating);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [multiSectionWarning, setMultiSectionWarning] = useState(false);
 
   const [id, setId] = useState(creating ? '' : (schemaId ?? '').trim());
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [appliesTo, setAppliesTo] = useState('NONE');
   const [version, setVersion] = useState(0);
-  const [sectionMeta, setSectionMeta] = useState<SectionMeta>({ title: DEFAULT_SECTION_TITLE, description: null });
-  const [fields, setFields] = useState<FormField[]>([]);
+  // Parity with Android's `load(null)`: a brand-new schema starts with ONE
+  // section, blank title, no fields, never zero sections. An existing schema
+  // loads whatever it actually has, verbatim, never merged or truncated.
+  const [sections, setSections] = useState<FormSection[]>(() => (creating ? [emptySection()] : []));
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -280,15 +272,12 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
     getFormSchema(targetId)
       .then((schema) => {
         if (!live) return;
-        const { fields: flat, meta, wasMultiSection } = flattenSections(schema.sections);
         setId(schema.id);
         setName(schema.name);
         setDescription(schema.description ?? '');
         setAppliesTo(schema.appliesTo);
         setVersion(schema.version);
-        setSectionMeta(meta);
-        setFields(flat);
-        setMultiSectionWarning(wasMultiSection);
+        setSections(schema.sections);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -336,8 +325,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
   }
 
   const metaErrors = schemaMetaErrors({ id, name });
-  const fieldErrors = fieldListErrors(fields);
-  const canSave = metaErrors.length === 0 && fieldErrors.length === 0 && !saving && !loading;
+  const sectionErrorsAll = sectionListErrors(sections);
+  const canSave = metaErrors.length === 0 && sectionErrorsAll.length === 0 && !saving && !loading;
   /**
    * Only a schema being CREATED starts quiet. A loaded one that is already
    * invalid was broken before this modal opened, so its errors describe the
@@ -346,22 +335,44 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
    */
   const untouched = (key: string) => creating && !touchedSteps.has(key);
 
-  function updateField(idx: number, transform: (f: FormField) => FormField) {
+  function updateSection(idx: number, transform: (s: FormSection) => FormSection) {
     touch();
-    setFields((prev) => prev.map((f, i) => (i === idx ? transform(f) : f)));
+    setSections((prev) => prev.map((s, i) => (i === idx ? transform(s) : s)));
+  }
+  function addSection() {
+    touch();
+    setSections((prev) => [...prev, emptySection()]);
+  }
+  function removeSection(idx: number) {
+    touch();
+    setSections((prev) => prev.filter((_, i) => i !== idx));
+  }
+  function reorderSections(next: (prev: FormSection[]) => FormSection[]) {
+    touch();
+    setSections(next);
   }
 
-  function addField() {
+  function updateField(sectionIdx: number, fieldIdx: number, transform: (f: FormField) => FormField) {
     touch();
-    setFields((prev) => [...prev, emptyField()]);
+    setSections((prev) =>
+      prev.map((s, i) =>
+        i === sectionIdx ? { ...s, fields: s.fields.map((f, j) => (j === fieldIdx ? transform(f) : f)) } : s,
+      ),
+    );
   }
-  function removeField(idx: number) {
+  function addField(sectionIdx: number) {
     touch();
-    setFields((prev) => prev.filter((_, i) => i !== idx));
+    setSections((prev) => prev.map((s, i) => (i === sectionIdx ? { ...s, fields: [...s.fields, emptyField()] } : s)));
   }
-  function reorderFields(next: (prev: FormField[]) => FormField[]) {
+  function removeField(sectionIdx: number, fieldIdx: number) {
     touch();
-    setFields(next);
+    setSections((prev) =>
+      prev.map((s, i) => (i === sectionIdx ? { ...s, fields: s.fields.filter((_, j) => j !== fieldIdx) } : s)),
+    );
+  }
+  function reorderFields(sectionIdx: number, next: (prev: FormField[]) => FormField[]) {
+    touch();
+    setSections((prev) => prev.map((s, i) => (i === sectionIdx ? { ...s, fields: next(s.fields) } : s)));
   }
 
   async function handleSave() {
@@ -374,7 +385,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       description: description.trim() ? description : null,
       appliesTo,
       version,
-      sections: buildSections(sectionMeta, fields),
+      sections,
     };
     try {
       const res = await saveFormSchema(schema);
@@ -416,7 +427,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
     );
   }
 
-  const seenKeys = new Set<string>();
+  const totalFields = sections.reduce((sum, s) => sum + s.fields.length, 0);
 
   const steps: WizardStep[] = [
     {
@@ -505,198 +516,50 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       ),
     },
     {
-      key: 'fields',
-      label: 'Fields',
-      heading: 'Fields',
-      blurb: 'One card per input. Order here is the order kinfolk see them.',
-      errors: fieldErrors,
-      pristine: untouched('fields'),
+      key: 'sections',
+      label: 'Sections',
+      heading: 'Sections',
+      blurb: 'Each section groups the fields a kinfolk fills in. Need at least one section, each with at least one field.',
+      errors: sectionErrorsAll,
+      pristine: untouched('sections'),
       body: (
         <>
-          <div className="fse__step-actions">
-            <PrimaryButton label="Add field" onClick={addField} />
-          </div>
-
-          {fields.length === 0 ? (
-            <p className="fse__hint">No fields yet. Click Add field to create one.</p>
+          {sections.length === 0 ? (
+            <p className="fse__hint">No sections yet. Use Add section to create one.</p>
           ) : (
-            <ul className="fse__fields">
-              {fields.map((field, idx) => {
-                const v = validateField(field, seenKeys);
-                if (field.key.trim()) seenKeys.add(field.key.trim());
-                const needsOptions = field.type === 'select' || field.type === 'multiselect';
-                return (
-                  <li key={idx} className="fse__field-card">
-                    <div className="fse__field-row">
-                      {/* Error text sits OUTSIDE each <label> on purpose: a <label>'s
-                          accessible name is computed from all of its text content, so an
-                          error message nested inside it would silently fold into the
-                          control's name (e.g. "KeyKey is required."). */}
-                      <div className="fse__field">
-                        <label className="fse__field-label">
-                          <span className="fse__label">Key</span>
-                          <input
-                            type="text"
-                            className="fse__input"
-                            value={field.key}
-                            onChange={(e) => updateField(idx, (f) => ({ ...f, key: e.target.value }))}
-                            placeholder="e.g. firstName"
-                            aria-invalid={v.keyError ? true : undefined}
-                          />
-                        </label>
-                        {v.keyError && <span className="fse__error">{v.keyError}</span>}
-                      </div>
-
-                      <div className="fse__field">
-                        <label className="fse__field-label">
-                          <span className="fse__label">Label</span>
-                          <input
-                            type="text"
-                            className="fse__input"
-                            value={field.label}
-                            onChange={(e) => updateField(idx, (f) => ({ ...f, label: e.target.value }))}
-                            onBlur={() =>
-                              // AO-49: auto-fill the key from the label ONLY when the
-                              // operator hasn't typed one, never clobbering a hand-set key.
-                              updateField(idx, (f) =>
-                                f.key.trim() === '' && deriveFieldKey(f.label) !== ''
-                                  ? { ...f, key: deriveFieldKey(f.label) }
-                                  : f,
-                              )
-                            }
-                            placeholder="e.g. First name"
-                            aria-invalid={v.labelError ? true : undefined}
-                          />
-                        </label>
-                        {v.labelError && <span className="fse__error">{v.labelError}</span>}
-                      </div>
-
-                      <label className="fse__field">
-                        <span className="fse__label">Type</span>
-                        <select
-                          className="fse__input"
-                          value={field.type}
-                          onChange={(e) =>
-                            updateField(idx, (f) => {
-                              const type = e.target.value as FieldType;
-                              const needsOpts = type === 'select' || type === 'multiselect';
-                              return { ...f, type, options: needsOpts ? (f.options ?? []) : null };
-                            })
-                          }
-                        >
-                          {FIELD_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="fse__field fse__field--checkbox">
-                        <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(e) => updateField(idx, (f) => ({ ...f, required: e.target.checked }))}
-                        />
-                        <span className="fse__label">Required</span>
-                      </label>
-
-                      <div className="fse__field-actions">
-                        <IconButton
-                          icon={<UpGlyph />}
-                          label={`Move ${field.label || field.key || 'field'} up`}
-                          onClick={() => reorderFields((prev) => moveUp(prev, idx))}
-                          disabled={idx === 0}
-                          size={32}
-                        />
-                        <IconButton
-                          icon={<DownGlyph />}
-                          label={`Move ${field.label || field.key || 'field'} down`}
-                          onClick={() => reorderFields((prev) => moveDown(prev, idx))}
-                          disabled={idx === fields.length - 1}
-                          size={32}
-                        />
-                        <IconButton
-                          icon={<TrashGlyph />}
-                          label={`Remove ${field.label || field.key || 'field'}`}
-                          onClick={() => removeField(idx)}
-                          destructive
-                          size={32}
-                        />
-                      </div>
-                    </div>
-
-                    {needsOptions && (
-                      <div className="fse__field fse__field--wide">
-                        <label className="fse__field-label">
-                          <span className="fse__label">Options (comma separated)</span>
-                          <input
-                            type="text"
-                            className="fse__input"
-                            value={(field.options ?? []).join(', ')}
-                            onChange={(e) =>
-                              updateField(idx, (f) => ({ ...f, options: csvToOptions(e.target.value) }))
-                            }
-                            placeholder="e.g. Dog, Cat, Other"
-                            aria-invalid={v.optionsError ? true : undefined}
-                          />
-                        </label>
-                        {v.optionsError && <span className="fse__error">{v.optionsError}</span>}
-                      </div>
-                    )}
-
-                    {/* Drawn, not folded. These four used to sit behind a
-                        `<details>Advanced</details>`; see the file header for
-                        the ruling that took it out. */}
-                    <div className="fse__grid">
-                      <label className="fse__field">
-                        <span className="fse__label">Helper text</span>
-                        <input
-                          type="text"
-                          className="fse__input"
-                          value={field.helperText ?? ''}
-                          onChange={(e) =>
-                            updateField(idx, (f) => ({ ...f, helperText: e.target.value || null }))
-                          }
-                        />
-                      </label>
-                      <label className="fse__field">
-                        <span className="fse__label">Placeholder</span>
-                        <input
-                          type="text"
-                          className="fse__input"
-                          value={field.placeholder ?? ''}
-                          onChange={(e) =>
-                            updateField(idx, (f) => ({ ...f, placeholder: e.target.value || null }))
-                          }
-                        />
-                      </label>
-                      <label className="fse__field">
-                        <span className="fse__label">Default value</span>
-                        <input
-                          type="text"
-                          className="fse__input"
-                          value={field.defaultValue ?? ''}
-                          onChange={(e) =>
-                            updateField(idx, (f) => ({ ...f, defaultValue: e.target.value || null }))
-                          }
-                        />
-                      </label>
-                      <label className="fse__field">
-                        <span className="fse__label">Group</span>
-                        <input
-                          type="text"
-                          className="fse__input"
-                          value={field.group ?? ''}
-                          onChange={(e) => updateField(idx, (f) => ({ ...f, group: e.target.value || null }))}
-                        />
-                      </label>
-                    </div>
-                  </li>
-                );
-              })}
+            <ul className="fse__sections">
+              {sections.map((section, sIdx) => (
+                <SectionCard
+                  key={sIdx}
+                  index={sIdx}
+                  isFirst={sIdx === 0}
+                  isLast={sIdx === sections.length - 1}
+                  section={section}
+                  // The inline title error is gated on the step being touched (or
+                  // loaded, never a blank create-mode form): the seeded blank
+                  // section exists before any keystroke, and an unconditional
+                  // "Section title is required." on an untouched form is exactly
+                  // the pre-emptive telling-off the 2026-08-09 screenshot review
+                  // caught (see the `pristine` doc on WizardStep).
+                  showTitleError={!untouched('sections')}
+                  onTitleChange={(v) => updateSection(sIdx, (s) => ({ ...s, title: v }))}
+                  onDescriptionChange={(v) => updateSection(sIdx, (s) => ({ ...s, description: v || null }))}
+                  onRemove={() => removeSection(sIdx)}
+                  onMoveUp={() => reorderSections((prev) => moveUp(prev, sIdx))}
+                  onMoveDown={() => reorderSections((prev) => moveDown(prev, sIdx))}
+                  onAddField={() => addField(sIdx)}
+                  onUpdateField={(fIdx, transform) => updateField(sIdx, fIdx, transform)}
+                  onRemoveField={(fIdx) => removeField(sIdx, fIdx)}
+                  onMoveFieldUp={(fIdx) => reorderFields(sIdx, (prev) => moveUp(prev, fIdx))}
+                  onMoveFieldDown={(fIdx) => reorderFields(sIdx, (prev) => moveDown(prev, fIdx))}
+                />
+              ))}
             </ul>
           )}
+
+          <div className="fse__step-actions">
+            <GhostButton label="Add section" onClick={addSection} />
+          </div>
         </>
       ),
     },
@@ -731,26 +594,40 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
           </dl>
 
           <h4 className="fse__review-heading">
-            {fields.length === 1 ? '1 field' : `${fields.length} fields`}
+            {totalFields === 1 ? '1 field' : `${totalFields} fields`}
+            {sections.length > 1 ? ` across ${sections.length} sections` : null}
           </h4>
-          {fields.length === 0 ? (
-            <p className="fse__hint">No fields yet. Add at least one on the Fields step.</p>
+
+          {sections.length === 0 ? (
+            <p className="fse__hint">No sections yet. Add at least one on the Sections step.</p>
           ) : (
-            /* Named, because the live preview beside this step renders the same
-               labels as real form controls: without a name on the list there is
-               no way for a reader (or a test) to say which "First name" is the
-               summary row and which is the previewed input. */
-            <ol className="fse__review-fields" aria-label="Fields in this schema">
-              {fields.map((f, i) => (
-                <li key={i}>
-                  <span className="fse__review-field-label">{f.label.trim() || 'Unnamed field'}</span>
-                  <span className="fse__review-field-meta">
-                    {f.key.trim() || 'no key'} · {f.type}
-                    {f.required ? ' · required' : ''}
-                  </span>
-                </li>
-              ))}
-            </ol>
+            sections.map((section, sIdx) => {
+              const sectionName = section.title.trim() || `Section ${sIdx + 1}`;
+              return (
+                <div key={sIdx} className="fse__review-section">
+                  <h5 className="fse__review-section-heading">{sectionName}</h5>
+                  {section.fields.length === 0 ? (
+                    <p className="fse__hint">No fields yet. Add at least one on the Sections step.</p>
+                  ) : (
+                    /* Named, because the live preview beside this step renders the same
+                       labels as real form controls: without a name on the list there is
+                       no way for a reader (or a test) to say which "First name" is the
+                       summary row and which is the previewed input. */
+                    <ol className="fse__review-fields" aria-label={`Fields in ${sectionName}`}>
+                      {section.fields.map((f, i) => (
+                        <li key={i}>
+                          <span className="fse__review-field-label">{f.label.trim() || 'Unnamed field'}</span>
+                          <span className="fse__review-field-meta">
+                            {f.key.trim() || 'no key'} · {f.type}
+                            {f.required ? ' · required' : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       ),
@@ -769,34 +646,316 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       finishLabel={saving ? 'Saving…' : 'Save schema'}
       finishBusy={saving}
       notice={
-        <>
-          {multiSectionWarning && (
-            <Banner tone="warning" title="Sections merged">
-              This schema had more than one section. They have been merged into one field list; saving will
-              replace the original sections with a single one.
-            </Banner>
-          )}
-          {saveError && (
-            <Banner tone="error" title="Save failed" onDismiss={() => setSaveError(null)}>
-              {saveError}
-            </Banner>
-          )}
-        </>
+        saveError && (
+          <Banner tone="error" title="Save failed" onDismiss={() => setSaveError(null)}>
+            {saveError}
+          </Banner>
+        )
       }
       aside={
-        /* Reads the SAME sectionMeta / fields state the steps write, so it
-           cannot drift from what Save would persist; there is no second copy of
-           the schema to keep in step. */
-        <SchemaPreview
-          sectionTitle={sectionMeta.title}
-          sectionDescription={sectionMeta.description}
-          fields={fields}
-        />
+        /* Reads the SAME `sections` state the steps write, so it cannot drift
+           from what Save would persist; there is no second copy of the schema
+           to keep in step. */
+        <SchemaPreview sections={sections} />
       }
     />
   );
 }
 
+interface SectionCardProps {
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  section: FormSection;
+  showTitleError: boolean;
+  onTitleChange: (value: string) => void;
+  onDescriptionChange: (value: string) => void;
+  onRemove: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onAddField: () => void;
+  onUpdateField: (fieldIdx: number, transform: (f: FormField) => FormField) => void;
+  onRemoveField: (fieldIdx: number) => void;
+  onMoveFieldUp: (fieldIdx: number) => void;
+  onMoveFieldDown: (fieldIdx: number) => void;
+}
+
+/**
+ * One section: its own title/description, its own field list, and the
+ * reorder/remove controls for the section itself. Mirrors
+ * `FormSchemaEditorScreen.kt#SectionCard` and the "Section {n}" card in
+ * `ui-ideas/auntieos-formschema-editor-2026-05-27.html`.
+ */
+function SectionCard({
+  index,
+  isFirst,
+  isLast,
+  section,
+  showTitleError,
+  onTitleChange,
+  onDescriptionChange,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+  onAddField,
+  onUpdateField,
+  onRemoveField,
+  onMoveFieldUp,
+  onMoveFieldDown,
+}: SectionCardProps) {
+  // Fresh per section, never hoisted across the whole step: duplicate-key
+  // checking is scoped to THIS section only (see `sectionErrors` above), so a
+  // key shared with a different section must not light up here either.
+  const seenKeys = new Set<string>();
+  const titleError = section.title.trim() ? null : 'Section title is required.';
+
+  return (
+    <li className="fse__section-card">
+      <div className="fse__section-header">
+        <span className="fse__section-tag">Section {index + 1}</span>
+        <div className="fse__section-actions">
+          <IconButton
+            icon={<UpGlyph />}
+            label={`Move ${section.title || `section ${index + 1}`} up`}
+            onClick={onMoveUp}
+            disabled={isFirst}
+            size={32}
+          />
+          <IconButton
+            icon={<DownGlyph />}
+            label={`Move ${section.title || `section ${index + 1}`} down`}
+            onClick={onMoveDown}
+            disabled={isLast}
+            size={32}
+          />
+          <IconButton
+            icon={<TrashGlyph />}
+            label={`Remove ${section.title || `section ${index + 1}`}`}
+            onClick={onRemove}
+            destructive
+            size={32}
+          />
+        </div>
+      </div>
+
+      <div className="fse__field">
+        <label className="fse__field-label">
+          <span className="fse__label">Section title</span>
+          <input
+            type="text"
+            className="fse__input"
+            value={section.title}
+            onChange={(e) => onTitleChange(e.target.value)}
+            aria-invalid={showTitleError && titleError ? true : undefined}
+          />
+        </label>
+        {showTitleError && titleError && <span className="fse__error">{titleError}</span>}
+      </div>
+
+      <label className="fse__field">
+        <span className="fse__label">Section description</span>
+        <input
+          type="text"
+          className="fse__input"
+          value={section.description ?? ''}
+          onChange={(e) => onDescriptionChange(e.target.value)}
+          placeholder="Optional"
+        />
+      </label>
+
+      <div className="fse__section-fields-row">
+        <h5 className="fse__section-fields-heading">
+          Fields ({section.fields.length})
+        </h5>
+      </div>
+
+      {section.fields.length === 0 ? (
+        <p className="fse__hint">No fields in this section yet.</p>
+      ) : (
+        <ul className="fse__fields">
+          {section.fields.map((field, idx) => {
+            const v = validateField(field, seenKeys);
+            if (field.key.trim()) seenKeys.add(field.key.trim());
+            const needsOptions = field.type === 'select' || field.type === 'multiselect';
+            return (
+              <li key={idx} className="fse__field-card">
+                <div className="fse__field-row">
+                  {/* Error text sits OUTSIDE each <label> on purpose: a <label>'s
+                      accessible name is computed from all of its text content, so an
+                      error message nested inside it would silently fold into the
+                      control's name (e.g. "KeyKey is required."). */}
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Key</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.key}
+                        onChange={(e) => onUpdateField(idx, (f) => ({ ...f, key: e.target.value }))}
+                        placeholder="e.g. firstName"
+                        aria-invalid={v.keyError ? true : undefined}
+                      />
+                    </label>
+                    {v.keyError && <span className="fse__error">{v.keyError}</span>}
+                  </div>
+
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Label</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.label}
+                        onChange={(e) => onUpdateField(idx, (f) => ({ ...f, label: e.target.value }))}
+                        onBlur={() =>
+                          // AO-49: auto-fill the key from the label ONLY when the
+                          // operator hasn't typed one, never clobbering a hand-set key.
+                          onUpdateField(idx, (f) =>
+                            f.key.trim() === '' && deriveFieldKey(f.label) !== ''
+                              ? { ...f, key: deriveFieldKey(f.label) }
+                              : f,
+                          )
+                        }
+                        placeholder="e.g. First name"
+                        aria-invalid={v.labelError ? true : undefined}
+                      />
+                    </label>
+                    {v.labelError && <span className="fse__error">{v.labelError}</span>}
+                  </div>
+
+                  <label className="fse__field">
+                    <span className="fse__label">Type</span>
+                    <select
+                      className="fse__input"
+                      value={field.type}
+                      onChange={(e) =>
+                        onUpdateField(idx, (f) => {
+                          const type = e.target.value as FieldType;
+                          const needsOpts = type === 'select' || type === 'multiselect';
+                          return { ...f, type, options: needsOpts ? (f.options ?? []) : null };
+                        })
+                      }
+                    >
+                      {FIELD_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="fse__field fse__field--checkbox">
+                    <input
+                      type="checkbox"
+                      checked={field.required}
+                      onChange={(e) => onUpdateField(idx, (f) => ({ ...f, required: e.target.checked }))}
+                    />
+                    <span className="fse__label">Required</span>
+                  </label>
+
+                  <div className="fse__field-actions">
+                    <IconButton
+                      icon={<UpGlyph />}
+                      label={`Move ${field.label || field.key || 'field'} up`}
+                      onClick={() => onMoveFieldUp(idx)}
+                      disabled={idx === 0}
+                      size={32}
+                    />
+                    <IconButton
+                      icon={<DownGlyph />}
+                      label={`Move ${field.label || field.key || 'field'} down`}
+                      onClick={() => onMoveFieldDown(idx)}
+                      disabled={idx === section.fields.length - 1}
+                      size={32}
+                    />
+                    <IconButton
+                      icon={<TrashGlyph />}
+                      label={`Remove ${field.label || field.key || 'field'}`}
+                      onClick={() => onRemoveField(idx)}
+                      destructive
+                      size={32}
+                    />
+                  </div>
+                </div>
+
+                {needsOptions && (
+                  <div className="fse__field fse__field--wide">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Options (comma separated)</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={(field.options ?? []).join(', ')}
+                        onChange={(e) =>
+                          onUpdateField(idx, (f) => ({ ...f, options: csvToOptions(e.target.value) }))
+                        }
+                        placeholder="e.g. Dog, Cat, Other"
+                        aria-invalid={v.optionsError ? true : undefined}
+                      />
+                    </label>
+                    {v.optionsError && <span className="fse__error">{v.optionsError}</span>}
+                  </div>
+                )}
+
+                {/* Drawn, not folded. These four used to sit behind a
+                    `<details>Advanced</details>`; see the file header for
+                    the ruling that took it out. */}
+                <div className="fse__grid">
+                  <label className="fse__field">
+                    <span className="fse__label">Helper text</span>
+                    <input
+                      type="text"
+                      className="fse__input"
+                      value={field.helperText ?? ''}
+                      onChange={(e) =>
+                        onUpdateField(idx, (f) => ({ ...f, helperText: e.target.value || null }))
+                      }
+                    />
+                  </label>
+                  <label className="fse__field">
+                    <span className="fse__label">Placeholder</span>
+                    <input
+                      type="text"
+                      className="fse__input"
+                      value={field.placeholder ?? ''}
+                      onChange={(e) =>
+                        onUpdateField(idx, (f) => ({ ...f, placeholder: e.target.value || null }))
+                      }
+                    />
+                  </label>
+                  <label className="fse__field">
+                    <span className="fse__label">Default value</span>
+                    <input
+                      type="text"
+                      className="fse__input"
+                      value={field.defaultValue ?? ''}
+                      onChange={(e) =>
+                        onUpdateField(idx, (f) => ({ ...f, defaultValue: e.target.value || null }))
+                      }
+                    />
+                  </label>
+                  <label className="fse__field">
+                    <span className="fse__label">Group</span>
+                    <input
+                      type="text"
+                      className="fse__input"
+                      value={field.group ?? ''}
+                      onChange={(e) => onUpdateField(idx, (f) => ({ ...f, group: e.target.value || null }))}
+                    />
+                  </label>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="fse__step-actions">
+        <PrimaryButton label="Add field" onClick={onAddField} />
+      </div>
+    </li>
+  );
+}
 
 function UpGlyph() {
   return (

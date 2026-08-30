@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { type FormField, type FormSchemaDetail } from '../api/formSchemasWrite';
+import { type FormField, type FormSection, type FormSchemaDetail } from '../api/formSchemasWrite';
 
 const { getFormSchema, saveFormSchema } = vi.hoisted(() => ({
   getFormSchema: vi.fn(),
@@ -17,12 +17,12 @@ vi.mock('../api/formSchemasWrite', async (orig) => ({
 import {
   FormSchemaEditor,
   isCreateMode,
-  flattenSections,
-  buildSections,
+  emptySection,
   validateField,
   validateSchema,
   schemaMetaErrors,
-  fieldListErrors,
+  sectionErrors,
+  sectionListErrors,
   moveUp,
   moveDown,
   emptyField,
@@ -44,6 +44,15 @@ function field(over: Partial<FormField> = {}): FormField {
   };
 }
 
+function section(over: Partial<FormSection> = {}): FormSection {
+  return {
+    title: 'Basics',
+    description: null,
+    fields: [field()],
+    ...over,
+  };
+}
+
 function schema(over: Partial<FormSchemaDetail> = {}): FormSchemaDetail {
   return {
     id: 'tribeProfile',
@@ -51,7 +60,7 @@ function schema(over: Partial<FormSchemaDetail> = {}): FormSchemaDetail {
     description: null,
     appliesTo: 'NONE',
     version: 3,
-    sections: [{ title: 'Basics', description: null, fields: [field()] }],
+    sections: [section()],
     ...over,
   };
 }
@@ -72,43 +81,9 @@ describe('isCreateMode (pure)', () => {
   });
 });
 
-describe('flattenSections (pure)', () => {
-  it('returns an empty field list and the default title for zero sections', () => {
-    const r = flattenSections([]);
-    expect(r).toEqual({ fields: [], meta: { title: 'Fields', description: null }, wasMultiSection: false });
-  });
-
-  it('preserves the single section title/description losslessly', () => {
-    const r = flattenSections([{ title: 'Basics', description: 'desc', fields: [field()] }]);
-    expect(r.meta).toEqual({ title: 'Basics', description: 'desc' });
-    expect(r.fields).toEqual([field()]);
-    expect(r.wasMultiSection).toBe(false);
-  });
-
-  it('falls back to a blank title when the single section title is blank', () => {
-    const r = flattenSections([{ title: '', description: null, fields: [] }]);
-    expect(r.meta.title).toBe('Fields');
-  });
-
-  it('merges multiple sections and flags wasMultiSection, dropping per-section titles', () => {
-    const a = field({ key: 'a' });
-    const b = field({ key: 'b' });
-    const r = flattenSections([
-      { title: 'Sec A', description: null, fields: [a] },
-      { title: 'Sec B', description: null, fields: [b] },
-    ]);
-    expect(r.fields).toEqual([a, b]);
-    expect(r.meta).toEqual({ title: 'Fields', description: null });
-    expect(r.wasMultiSection).toBe(true);
-  });
-});
-
-describe('buildSections (pure)', () => {
-  it('wraps a flat field list in exactly one section carrying the given meta', () => {
-    const fields = [field()];
-    expect(buildSections({ title: 'Fields', description: 'd' }, fields)).toEqual([
-      { title: 'Fields', description: 'd', fields },
-    ]);
+describe('emptySection (pure)', () => {
+  it('seeds a blank-titled section with no description and no fields', () => {
+    expect(emptySection()).toEqual({ title: '', description: null, fields: [] });
   });
 });
 
@@ -138,66 +113,89 @@ describe('validateField (pure)', () => {
   });
 });
 
-describe('validateSchema (pure)', () => {
-  it('requires a schema id', () => {
-    expect(validateSchema({ id: '', name: 'X', fields: [field()] })).toContain('Schema id is required.');
-  });
-  it('rejects a schema id that fails the backend regex', () => {
-    expect(validateSchema({ id: '1bad', name: 'X', fields: [field()] })).toEqual(
-      expect.arrayContaining([expect.stringMatching(/schema id must start with a letter/i)]),
-    );
-  });
-  it('requires a schema name', () => {
-    expect(validateSchema({ id: 'ok', name: '', fields: [field()] })).toContain('Schema name is required.');
-  });
-  it('requires at least one field', () => {
-    expect(validateSchema({ id: 'ok', name: 'X', fields: [] })).toContain('At least one field is required.');
-  });
-  it('flags a duplicate key across the field list, once, on the second occurrence', () => {
-    const errs = validateSchema({
-      id: 'ok',
-      name: 'X',
-      fields: [field({ key: 'dup' }), field({ key: 'dup' })],
-    });
-    expect(errs.filter((e) => /duplicate/i.test(e))).toHaveLength(1);
-  });
-  it('is empty for a fully valid schema', () => {
-    expect(validateSchema({ id: 'tribeProfile', name: 'Tribe Profile', fields: [field()] })).toEqual([]);
-  });
-});
-
-/**
- * The split exists so the wizard can put each problem on the STEP THAT OWNS THE
- * FIELD rather than in one flat banner at the bottom of a very long form.
- * `validateSchema` stays the concatenation of the two, so the whole-schema
- * contract above is unchanged.
- */
-describe('schemaMetaErrors / fieldListErrors (pure)', () => {
+describe('schemaMetaErrors (pure)', () => {
   it('keeps id and name problems on the schema step', () => {
     expect(schemaMetaErrors({ id: '', name: '' })).toEqual([
       'Schema id is required.',
       'Schema name is required.',
     ]);
   });
-
-  it('leaves field problems out of the schema step', () => {
+  it('rejects a schema id that fails the backend regex', () => {
+    expect(schemaMetaErrors({ id: '1bad', name: 'X' })).toEqual(
+      expect.arrayContaining([expect.stringMatching(/schema id must start with a letter/i)]),
+    );
+  });
+  it('is empty for a valid id and name', () => {
     expect(schemaMetaErrors({ id: 'ok', name: 'X' })).toEqual([]);
   });
+});
 
-  it('keeps the empty-list and per-field problems on the fields step', () => {
-    expect(fieldListErrors([])).toEqual(['At least one field is required.']);
-    expect(fieldListErrors([field({ label: '' })])).toEqual(['Field 1: Label is required.']);
+/**
+ * One section's own problems: title, empty-field-list, and every field's own,
+ * numbered WITHIN the section. Duplicate keys are scoped to the section, not
+ * the whole schema, mirroring `SectionSchema.superRefine` on the server and
+ * Android's `FormSchemaValidator` (which resets `seenKeysInSection` per
+ * section).
+ */
+describe('sectionErrors / sectionListErrors (pure)', () => {
+  it('flags a blank section title', () => {
+    expect(sectionErrors(section({ title: '' }), 1)).toContain('Section 1: Section title is required.');
+  });
+  it('flags an empty field list', () => {
+    expect(sectionErrors(section({ fields: [] }), 2)).toContain('Section 2: At least one field is required.');
+  });
+  it('numbers a per-field problem with both the section and the field', () => {
+    expect(sectionErrors(section({ fields: [field({ label: '' })] }), 1)).toEqual(
+      expect.arrayContaining(['Section 1, Field 1: Label is required.']),
+    );
+  });
+  it('is empty for a fully valid section', () => {
+    expect(sectionErrors(section(), 1)).toEqual([]);
   });
 
-  it('leaves id and name problems out of the fields step', () => {
-    expect(fieldListErrors([field()])).toEqual([]);
+  it('requires at least one section', () => {
+    expect(sectionListErrors([])).toContain('At least one section is required.');
   });
+  it("concatenates every section's own errors in order", () => {
+    const sections = [section({ title: '' }), section({ fields: [] })];
+    expect(sectionListErrors(sections)).toEqual([
+      ...sectionErrors(sections[0]!, 1),
+      ...sectionErrors(sections[1]!, 2),
+    ]);
+  });
+  it('does not flag the same key reused across two different sections', () => {
+    const errs = sectionListErrors([
+      section({ title: 'A', fields: [field({ key: 'shared' })] }),
+      section({ title: 'B', fields: [field({ key: 'shared' })] }),
+    ]);
+    expect(errs.filter((e) => /duplicate/i.test(e))).toEqual([]);
+  });
+  it('flags a duplicate key within the same section, once, on the second occurrence', () => {
+    const errs = sectionListErrors([
+      section({ fields: [field({ key: 'dup' }), field({ key: 'dup' })] }),
+    ]);
+    expect(errs.filter((e) => /duplicate/i.test(e))).toHaveLength(1);
+  });
+});
 
-  it('composes back into validateSchema, in the same order', () => {
-    const input = { id: '', name: '', fields: [field({ key: '' })] };
+describe('validateSchema (pure)', () => {
+  it('requires a schema id', () => {
+    expect(validateSchema({ id: '', name: 'X', sections: [section()] })).toContain('Schema id is required.');
+  });
+  it('requires a schema name', () => {
+    expect(validateSchema({ id: 'ok', name: '', sections: [section()] })).toContain('Schema name is required.');
+  });
+  it('requires at least one section', () => {
+    expect(validateSchema({ id: 'ok', name: 'X', sections: [] })).toContain('At least one section is required.');
+  });
+  it('is empty for a fully valid schema', () => {
+    expect(validateSchema({ id: 'tribeProfile', name: 'Tribe Profile', sections: [section()] })).toEqual([]);
+  });
+  it('composes schemaMetaErrors and sectionListErrors, in that order', () => {
+    const input = { id: '', name: '', sections: [section({ title: '' })] };
     expect(validateSchema(input)).toEqual([
       ...schemaMetaErrors(input),
-      ...fieldListErrors(input.fields),
+      ...sectionListErrors(input.sections),
     ]);
   });
 });
@@ -253,24 +251,30 @@ describe('emptyField (pure)', () => {
 });
 
 /**
- * The editor is a workflow modal with one section per step, so a test that
- * wants a field has to be standing on the step that owns it. These walk the
- * RAIL, which is the operator's own free-jump navigation, rather than pressing
- * Next repeatedly.
+ * The editor is a workflow modal, so a test that wants a field or a section
+ * has to be standing on the step that owns it. These walk the RAIL, which is
+ * the operator's own free-jump navigation, rather than pressing Next
+ * repeatedly.
  *
  * A step that is not current is asserted by ABSENCE FROM THE DOM, never by
  * `toBeVisible`: jsdom ships no user-agent stylesheet, so `toBeVisible` passes
  * on content a browser hides.
  */
-async function goToStep(label: 'Schema' | 'Fields' | 'Review') {
+async function goToStep(label: 'Schema' | 'Sections' | 'Review') {
   await userEvent.click(screen.getByRole('button', { name: new RegExp(`^\\d ${label}`) }));
 }
 
-/** Fills in a complete, valid one-field schema, ending on the Review step. */
+/**
+ * Fills in a complete, valid one-section, one-field schema, ending on the
+ * Review step. A NEW schema seeds one section already (blank title, no
+ * fields, parity with Android's `load(null)`), so this only has to name that
+ * section and add one field to it, never call "Add section".
+ */
 async function fillValidSchema() {
   await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
   await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
-  await goToStep('Fields');
+  await goToStep('Sections');
+  await userEvent.type(screen.getByLabelText(/section title/i), 'Basics');
   await userEvent.click(screen.getByRole('button', { name: /add field/i }));
   await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
   await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
@@ -285,12 +289,12 @@ describe('FormSchemaEditor: the workflow modal', () => {
     expect(screen.getByText('Step 1 of 3')).toBeInTheDocument();
   });
 
-  it('keeps each section on its own step, so the other steps are not in the DOM', async () => {
+  it('keeps the schema fields and the sections list on separate steps, so the other is not in the DOM', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByLabelText(/schema id/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add field/i })).toBeNull();
 
-    await goToStep('Fields');
+    await goToStep('Sections');
     expect(screen.getByRole('button', { name: /add field/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/schema id/i)).toBeNull();
   });
@@ -298,7 +302,7 @@ describe('FormSchemaEditor: the workflow modal', () => {
   it('keeps what was typed when the operator leaves the step and comes back', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/^name$/i), 'Tribe Profile');
-    await goToStep('Fields');
+    await goToStep('Sections');
     await goToStep('Schema');
     expect(screen.getByLabelText(/^name$/i)).toHaveValue('Tribe Profile');
   });
@@ -321,7 +325,7 @@ describe('FormSchemaEditor: the workflow modal', () => {
 
   it('draws helper text, placeholder, default and group in full, never behind a disclosure', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
     expect(screen.getByLabelText(/helper text/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/placeholder/i)).toBeInTheDocument();
@@ -344,22 +348,73 @@ describe('FormSchemaEditor: the workflow modal', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await fillValidSchema();
     expect(screen.getByText('1 field')).toBeInTheDocument();
-    // Scoped to the summary list: the live preview beside this step renders the
-    // same label as a real control, so an unscoped query matches both.
-    const summary = within(screen.getByRole('list', { name: 'Fields in this schema' }));
+    // Scoped to the section's own summary list: the live preview beside this
+    // step renders the same label as a real control, so an unscoped query
+    // matches both.
+    const summary = within(screen.getByRole('list', { name: 'Fields in Basics' }));
     expect(summary.getByText('First name')).toBeInTheDocument();
     expect(summary.getByText(/firstName · text/)).toBeInTheDocument();
   });
 });
 
+describe('FormSchemaEditor: sections', () => {
+  it('adds a section via Add section, and removes one via its remove button', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Sections');
+    expect(screen.getAllByLabelText(/section title/i)).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    expect(screen.getAllByLabelText(/section title/i)).toHaveLength(2);
+
+    await userEvent.click(screen.getAllByRole('button', { name: /remove section/i })[0]!);
+    expect(screen.getAllByLabelText(/section title/i)).toHaveLength(1);
+  });
+
+  it('recovers cleanly when the only section is removed: empty state, Add section still reachable', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Sections');
+    await userEvent.click(screen.getByRole('button', { name: /remove section/i }));
+
+    expect(screen.getByText('No sections yet. Use Add section to create one.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/section title/i)).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    expect(screen.getAllByLabelText(/section title/i)).toHaveLength(1);
+  });
+
+  it('reorders sections with the move-down control', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          { title: 'Sec A', description: null, fields: [field({ key: 'a' })] },
+          { title: 'Sec B', description: null, fields: [field({ key: 'b' })] },
+        ],
+      }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    const before = screen.getAllByLabelText(/section title/i) as HTMLInputElement[];
+    expect(before.map((i) => i.value)).toEqual(['Sec A', 'Sec B']);
+
+    await userEvent.click(screen.getByRole('button', { name: /move sec a down/i }));
+
+    const after = screen.getAllByLabelText(/section title/i) as HTMLInputElement[];
+    expect(after.map((i) => i.value)).toEqual(['Sec B', 'Sec A']);
+  });
+});
+
 describe('FormSchemaEditor: create mode', () => {
-  it('seeds a blank schema and does not call getFormSchema', async () => {
+  it('seeds a blank schema with one blank section and does not call getFormSchema', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(await screen.findByLabelText(/schema id/i)).toHaveValue('');
     expect(getFormSchema).not.toHaveBeenCalled();
+    await goToStep('Sections');
+    expect(screen.getAllByLabelText(/section title/i)).toHaveLength(1);
+    expect(screen.getByLabelText(/section title/i)).toHaveValue('');
   });
 
-  it('disables Save until id, name, and at least one valid field are present', async () => {
+  it('disables Save until id, name, section title, and at least one valid field are present', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await goToStep('Review');
     // On an untouched form Save is offered rather than greyed out, and pressing
@@ -375,14 +430,19 @@ describe('FormSchemaEditor: create mode', () => {
     await userEvent.type(screen.getByLabelText(/schema id/i), 'newSchema');
     await userEvent.type(screen.getByLabelText(/^name$/i), 'New Schema');
     await goToStep('Review');
+    expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // section title + field still missing
+
+    await goToStep('Sections');
+    await userEvent.type(screen.getByLabelText(/section title/i), 'Basics');
+    await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // no fields yet
 
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled(); // key/label blank
 
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.type(screen.getByLabelText(/^key$/i), 'firstName');
     await userEvent.type(screen.getByLabelText(/^label$/i), 'First name');
     await goToStep('Review');
@@ -391,7 +451,7 @@ describe('FormSchemaEditor: create mode', () => {
 
   it('auto-derives a blank field key from the label on blur (AO-49), never overwriting a typed key', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
 
     // Type a label, blur, the empty key is filled from it.
@@ -410,7 +470,7 @@ describe('FormSchemaEditor: create mode', () => {
     expect(screen.getByLabelText(/^key$/i)).toHaveValue('customKey');
   });
 
-  it('saves via saveFormSchema wrapping the field list in one section, and reports the new id', async () => {
+  it('saves via saveFormSchema with the section the operator built, and reports the new id', async () => {
     saveFormSchema.mockResolvedValue({ id: 'newSchema', version: 1 });
     const onSaved = vi.fn();
     render(<FormSchemaEditor onSaved={onSaved} onCancel={vi.fn()} />);
@@ -424,7 +484,7 @@ describe('FormSchemaEditor: create mode', () => {
     expect(sent.name).toBe('New Schema');
     expect(sent.sections).toEqual([
       {
-        title: 'Fields',
+        title: 'Basics',
         description: null,
         fields: [
           {
@@ -484,7 +544,10 @@ describe('FormSchemaEditor: create mode', () => {
  *
  * The rule these pin down: a step's problems appear once the operator has EDITED
  * that step, once they have ASKED TO SAVE, or straight away on a record that was
- * loaded rather than created. Never on the blank form itself.
+ * loaded rather than created. Never on the blank form itself. This now also
+ * covers the section the form seeds by default (M17): a brand-new schema's
+ * one blank-titled section must not greet the operator with "Section title is
+ * required." before they have touched the Sections step.
  */
 describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
   it('opens quiet: no banner on the step, no flag on the rail, no counter beside Next', () => {
@@ -492,29 +555,40 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
     expect(screen.queryByText('Fix on this step')).toBeNull();
     expect(screen.queryByText('Schema id is required.')).toBeNull();
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema');
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+    expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections');
     expect(screen.queryByRole('button', { name: /left to fix/ })).toBeNull();
   });
 
-  it('reports the schema step once it is typed in, and still says nothing about untouched fields', async () => {
+  it('opens quiet on the seeded section too: no inline "Section title is required." until the step is touched', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.queryByText('Section title is required.')).toBeNull();
+    await goToStep('Sections');
+    // Navigating to the step is not touching it: still nothing said.
+    expect(screen.queryByText('Section title is required.')).toBeNull();
+  });
+
+  it('reports the schema step once it is typed in, and still says nothing about untouched sections', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     await userEvent.type(screen.getByLabelText(/^name$/i), 'Tribe Profile');
 
     expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^1 Schema/ })).toHaveAccessibleName('1 Schema 1 thing to fix');
-    // The field list is still untouched, so "At least one field is required."
-    // would be describing nothing the operator has done.
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields');
+    // The sections step is still untouched, so its problems would be describing
+    // nothing the operator has done.
+    expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections');
     expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('1 thing left to fix');
   });
 
-  it('reports the fields step from the first field added, not before', async () => {
+  it('reports the sections step from the first field added, not before', async () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    await goToStep('Fields');
+    await goToStep('Sections');
     expect(screen.queryByText('Fix on this step')).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: /add field/i }));
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 2 things to fix');
+    // Adding a field to the seeded, still-untitled section touches the step, so
+    // all three of its problems are now spoken: the section title, the new
+    // field's key, and its label.
+    expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections 3 things to fix');
   });
 
   it('a Save attempt on the untouched form shows every problem, lands on the first, and saves nothing', async () => {
@@ -528,8 +602,9 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
     // Landed on the earliest problem in reading order, with it named.
     expect(screen.getByRole('heading', { name: 'Schema', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('Schema id is required.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName('2 Fields 1 thing to fix');
-    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('3 things left to fix');
+    // Section title required + at least one field required.
+    expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName('2 Sections 2 things to fix');
+    expect(screen.getByRole('button', { name: /left to fix/ })).toHaveTextContent('4 things left to fix');
   });
 
   it('an existing schema that is already broken says so on open, because that describes the record', async () => {
@@ -552,7 +627,7 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(await screen.findByDisplayValue('Tribe Profile')).toBeInTheDocument();
     expect(getFormSchema).toHaveBeenCalledWith('tribeProfile');
     expect(screen.getByLabelText(/schema id/i)).toBeDisabled();
-    await goToStep('Fields');
+    await goToStep('Sections');
     expect(screen.getByDisplayValue('firstName')).toBeInTheDocument();
   });
 
@@ -562,22 +637,106 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(await screen.findByText(/getFormSchema failed:.*not found/i)).toBeInTheDocument();
   });
 
-  it('warns and merges when the loaded schema has more than one section', async () => {
+  /**
+   * THE DEFECT THIS FIXES (issue #397, M17). This screen used to flatten every
+   * section's fields into one list on load and re-wrap them in a single
+   * implicit section on save, with a "Sections merged" warning banner. That
+   * banner, and the merge it described, are both gone: a loaded schema keeps
+   * every section it actually has.
+   */
+  it('loads a multi-section schema intact, one card per section, never merged', async () => {
     getFormSchema.mockResolvedValue(
       schema({
         sections: [
-          { title: 'Sec A', description: null, fields: [field({ key: 'a' })] },
-          { title: 'Sec B', description: null, fields: [field({ key: 'b' })] },
+          { title: 'Sec A', description: 'Desc A', fields: [field({ key: 'a', label: 'Field A' })] },
+          { title: 'Sec B', description: null, fields: [field({ key: 'b', label: 'Field B' })] },
         ],
       }),
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(await screen.findByText(/sections merged/i)).toBeInTheDocument();
-    await goToStep('Fields');
+    await screen.findByLabelText(/schema id/i);
+    expect(screen.queryByText(/sections merged/i)).toBeNull();
+
+    await goToStep('Sections');
+    expect(screen.getByDisplayValue('Sec A')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Sec B')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Desc A')).toBeInTheDocument();
     expect(screen.getByDisplayValue('a')).toBeInTheDocument();
     expect(screen.getByDisplayValue('b')).toBeInTheDocument();
-    // The warning is about the whole record, so it follows the operator across steps.
-    expect(screen.getByText(/sections merged/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The round-trip requirement itself: load a multi-section schema, make one
+   * edit, save, and assert the PAYLOAD (the state carrier saveFormSchema
+   * actually receives), not just what is on screen. Both sections, their
+   * titles, descriptions, order, and the untouched field all survive.
+   */
+  it('round-trips a multi-section schema losslessly: load, edit one field, save, boundaries intact', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          { title: 'Sec A', description: 'Desc A', fields: [field({ key: 'a', label: 'Field A' })] },
+          { title: 'Sec B', description: null, fields: [field({ key: 'b', label: 'Field B' })] },
+        ],
+      }),
+    );
+    saveFormSchema.mockResolvedValue({ id: 'tribeProfile', version: 4 });
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+
+    // One small edit, in section B only.
+    const labelInputs = screen.getAllByLabelText(/^label$/i);
+    await userEvent.clear(labelInputs[1]!);
+    await userEvent.type(labelInputs[1]!, 'Field B renamed');
+
+    await goToStep('Review');
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+
+    await waitFor(() => expect(saveFormSchema).toHaveBeenCalledTimes(1));
+    const sent = saveFormSchema.mock.calls[0]?.[0] as FormSchemaDetail;
+    expect(sent.sections).toEqual([
+      { title: 'Sec A', description: 'Desc A', fields: [field({ key: 'a', label: 'Field A' })] },
+      { title: 'Sec B', description: null, fields: [field({ key: 'b', label: 'Field B renamed' })] },
+    ]);
+  });
+
+  it('does not flag two sections sharing the same field key as a duplicate, matching the backend', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          { title: 'Sec A', description: null, fields: [field({ key: 'shared', label: 'Field A' })] },
+          { title: 'Sec B', description: null, fields: [field({ key: 'shared', label: 'Field B' })] },
+        ],
+      }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    expect(screen.queryByText(/duplicate/i)).toBeNull();
+    await goToStep('Review');
+    expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
+  });
+
+  it('flags a duplicate key within the same section', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          {
+            title: 'Sec A',
+            description: null,
+            fields: [field({ key: 'dup', label: 'Field A' }), field({ key: 'dup', label: 'Field A2' })],
+          },
+        ],
+      }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    // Appears twice: inline on the second field card, and again in the step's
+    // aggregate "Fix on this step" banner (an edit-mode record is not
+    // pristine, so both fire at once). Either is proof enough.
+    expect(screen.getAllByText(/duplicate key "dup"/i).length).toBeGreaterThan(0);
   });
 
   it('removes a field via its remove button', async () => {
@@ -594,7 +753,7 @@ describe('FormSchemaEditor: edit mode', () => {
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByLabelText(/schema id/i);
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.click(screen.getByRole('button', { name: /remove field a/i }));
     expect(screen.queryByDisplayValue('a')).toBeNull();
     expect(screen.getByDisplayValue('b')).toBeInTheDocument();
@@ -614,7 +773,7 @@ describe('FormSchemaEditor: edit mode', () => {
     );
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByLabelText(/schema id/i);
-    await goToStep('Fields');
+    await goToStep('Sections');
     const keyInputsBefore = screen.getAllByLabelText(/^key$/i) as HTMLInputElement[];
     expect(keyInputsBefore.map((i) => i.value)).toEqual(['a', 'b']);
 
@@ -628,19 +787,19 @@ describe('FormSchemaEditor: edit mode', () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByLabelText(/schema id/i);
-    await goToStep('Fields');
+    await goToStep('Sections');
     expect(screen.queryByLabelText(/options/i)).toBeNull();
 
     await userEvent.selectOptions(screen.getByLabelText(/^type$/i), 'select');
     expect(await screen.findByLabelText(/options/i)).toBeInTheDocument();
-    // The problem belongs to the Fields step, and the rail says so from anywhere.
-    expect(screen.getByRole('button', { name: /^2 Fields/ })).toHaveAccessibleName(
-      '2 Fields 1 thing to fix',
+    // The problem belongs to the Sections step, and the rail says so from anywhere.
+    expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName(
+      '2 Sections 1 thing to fix',
     );
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
 
-    await goToStep('Fields');
+    await goToStep('Sections');
     await userEvent.type(screen.getByLabelText(/options/i), 'Dog, Cat');
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
@@ -664,6 +823,7 @@ describe('FormSchemaEditor: edit mode', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /save schema/i })).toBeInTheDocument());
   });
 });
+
 /**
  * The live preview column. `page-specs/27-formschema-editor.md` item 3 has had
  * this pane gated dark behind `FF_FORMSCHEMA_LIVE_PREVIEW` for want of a render
@@ -689,6 +849,24 @@ describe('FormSchemaEditor: live preview', () => {
     expect(within(preview).getByLabelText('Home type').tagName).toBe('SELECT');
     expect(within(preview).getByRole('option', { name: 'House' })).toBeInTheDocument();
   });
+
+  it('renders every section as its own preview card', async () => {
+    getFormSchema.mockResolvedValue(
+      schema({
+        sections: [
+          { title: 'Basics', description: null, fields: [field({ key: 'a', label: 'Field A', required: false })] },
+          { title: 'Home access', description: null, fields: [field({ key: 'b', label: 'Field B', required: false })] },
+        ],
+      }),
+    );
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    expect(preview).toHaveTextContent('Basics');
+    expect(preview).toHaveTextContent('Home access');
+    expect(within(preview).getByLabelText('Field A')).toBeInTheDocument();
+    expect(within(preview).getByLabelText('Field B')).toBeInTheDocument();
+  });
+
   it('follows an edit to a field label without a save', async () => {
     getFormSchema.mockResolvedValue(
       schema({ sections: [{ title: 'Basics', description: null, fields: [field({ label: 'First name' })] }] }),
@@ -696,21 +874,23 @@ describe('FormSchemaEditor: live preview', () => {
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     const preview = await screen.findByRole('region', { name: 'Live preview' });
     expect(within(preview).getByLabelText('First name *')).toBeInTheDocument();
-    // The preview is the wizard's `aside`, so it sits BESIDE the Fields step
+    // The preview is the wizard's `aside`, so it sits BESIDE the Sections step
     // rather than being replaced by it. That is the whole claim: typing into a
     // field updates a pane the operator can still see while typing.
-    await goToStep('Fields');
+    await goToStep('Sections');
     const labelInput = screen.getAllByLabelText(/^label$/i)[0]!;
     await userEvent.clear(labelInput);
     await userEvent.type(labelInput, 'Given name');
     expect(within(preview).getByLabelText('Given name *')).toBeInTheDocument();
   });
+
   it('shows the empty prompt on a brand-new schema with no fields', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(
       within(screen.getByRole('region', { name: 'Live preview' })).getByText(/No fields yet/),
     ).toBeInTheDocument();
   });
+
   it('renders no preview at all while the schema is still loading', () => {
     getFormSchema.mockReturnValue(new Promise(() => {}));
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);

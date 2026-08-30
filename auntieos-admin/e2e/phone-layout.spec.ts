@@ -547,9 +547,10 @@ test('the form-schema wizard, its rail and its footer fit at 390px', async ({ pa
   await expect(page.getByText('Step 1 of 3')).toBeVisible();
   await expect(rail.getByRole('button')).toHaveCount(3);
   await assertOverlayFits(page, 'form-schema wizard step 1');
-  // The Fields step is the tall one: a field card carries eight controls, and
-  // it is the step the length complaint was actually about.
-  await page.getByRole('button', { name: /^2 Fields/ }).click();
+  // The Sections step is the tall one: a new schema seeds one section card,
+  // and a field card inside it carries eight controls, the step the length
+  // complaint was actually about.
+  await page.getByRole('button', { name: /^2 Sections/ }).click();
   await page.getByRole('button', { name: 'Add field' }).click();
   await expect(page.getByLabel('Helper text')).toBeVisible();
   await assertOverlayFits(page, 'form-schema wizard step 2 with a field card');
