@@ -88,6 +88,7 @@ import { CALENDAR_ID_INVALID_CODE, calendarIdProblem } from '../src/lib/calendar
 // on any difference including a trailing slash.
 import { SetTargetsArgs } from '../src/admin/googleCalendar/googleCalendarSelection';
 import { Args as PushVisitsArgs } from '../src/admin/googleCalendar/pushVisitsToGoogleCalendar';
+import { Args as SyncVisitArgs } from '../src/admin/googleCalendar/syncVisitToGoogleCalendar';
 // A3 booking status transitions (2026-08-01). Replaces a direct client
 // `updateDoc` on `kin_care_sessions` that both the React admin and Android
 // made, so two hand-built mirrors track this shape from the day it lands. The
@@ -309,6 +310,14 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     keys: ['enabledCalendarIds', 'writeCalendarId'],
   },
   pushVisitsToGoogleCalendar: { schema: PushVisitsArgs, keys: ['lookAheadDays'] },
+
+  // Issue #397, the per-visit sync. ONE key, and it must stay one. No calendar
+  // id, for the same reason the push takes none. And no `action`: a client that
+  // could say "delete" could take a live visit off the operator's calendar, and
+  // one that could say "create" could put a second copy of an existing visit on
+  // it. The stored session row decides between insert, update and delete, which
+  // is also what makes a retry press safe.
+  syncVisitToGoogleCalendar: { schema: SyncVisitArgs, keys: ['sessionId'] },
 
   // A3: the four operator status transitions on a flat `kin_care_sessions` row.
   // Frozen FROM BIRTH, for the same reason linkInvoiceSessions/recordPayment
@@ -563,6 +572,18 @@ describe('AO-8 callable contract drift guard (Google Calendar OAuth)', () => {
       connectionFromDoc({ connected: true, refreshToken: '1//tok', googleAccountEmail: 'a@b.com' }),
     );
     expect(Object.keys(view).sort()).toEqual([
+      // The five `calendarAutoSyncLast*` fields are the automatic per-visit
+      // sync's receipt, added with the lifecycle trigger in issue #397. They
+      // are stamped by `onKinCareSessionCalendarSync`, which has no caller to
+      // return an error to, and read by all three admin panels off the
+      // connection poll they already run. Kept separate from the
+      // `calendarPushLast*` four on purpose: a successful manual push must not
+      // erase the evidence that automatic sync is broken.
+      'calendarAutoSyncLastAction',
+      'calendarAutoSyncLastError',
+      'calendarAutoSyncLastRunAt',
+      'calendarAutoSyncLastSessionId',
+      'calendarAutoSyncLastStatus',
       'calendarPushLastError',
       'calendarPushLastPushed',
       'calendarPushLastRunAt',

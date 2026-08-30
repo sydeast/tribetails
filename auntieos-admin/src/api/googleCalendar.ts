@@ -41,6 +41,19 @@ export interface GoogleCalendarConnection {
   calendarPushLastStatus: string;
   calendarPushLastPushed: number;
   calendarPushLastError: string;
+  /**
+   * The AUTOMATIC per-visit sync's receipt (issue #397), stamped by the
+   * `onKinCareSessionCalendarSync` trigger. Separate from the four
+   * `calendarPushLast*` fields above because a trigger has no caller to return
+   * an error to: this is the only place a failed automatic sync is ever
+   * reported, and a successful manual push must not overwrite it.
+   */
+  calendarAutoSyncLastRunAt: string;
+  calendarAutoSyncLastStatus: string;
+  /** `created`, `updated`, `deleted` or `skipped`. */
+  calendarAutoSyncLastAction: string;
+  calendarAutoSyncLastSessionId: string;
+  calendarAutoSyncLastError: string;
 }
 
 export interface GoogleCalendarSummary {
@@ -130,4 +143,23 @@ export async function pushVisitsToGoogleCalendar(lookAheadDays = 30): Promise<Pu
 
 export async function disconnectGoogleCalendar(): Promise<DisconnectResult> {
   return call<Record<string, never>, DisconnectResult>('disconnectGoogleCalendar', {});
+}
+export interface SyncVisitResult {
+  sessionId: string;
+  action: 'created' | 'updated' | 'deleted' | 'skipped';
+  eventId: string;
+  reason: string;
+  syncedAt: string;
+}
+/**
+ * Brings ONE visit into line with the calendar. The retry for a visit the
+ * automatic sync could not write.
+ *
+ * NO ACTION IN THE REQUEST, and that is the contract rather than an omission:
+ * the server decides between create, update and delete from the stored visit,
+ * so a client cannot take a live visit off the operator's calendar or put a
+ * second copy of one on it. That also makes a second press safe.
+ */
+export async function syncVisitToGoogleCalendar(sessionId: string): Promise<SyncVisitResult> {
+  return call<{ sessionId: string }, SyncVisitResult>('syncVisitToGoogleCalendar', { sessionId });
 }

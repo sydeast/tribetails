@@ -226,10 +226,20 @@ describe('pushVisitsToGoogleCalendar', () => {
 
     const result = await pushVisitsToGoogleCalendarHandler(req());
 
-    // Clearing the stale id lets the NEXT run recreate it, rather than failing
-    // forever against an id Google has forgotten.
-    expect(writes.find((w) => w.path === 'kin_care_sessions/sess-1')?.data.googleEventId).toBe('');
-    expect(result.skipped[0].reason).toContain('recreated');
+    // CHANGED IN #397, and this is the behaviour change, not a relaxed
+    // assertion. This used to clear the stale id, report a skip saying the
+    // event would be "recreated on the next push", and wait. The push and the
+    // lifecycle trigger now share one decision table, and the trigger has no
+    // next run to wait for: a visit whose event the operator deleted by hand
+    // would have stayed off the calendar forever. So an id Google has forgotten
+    // is replaced on the spot, by the insert this update fell through to.
+    // Nothing about the old failure mode returns: the stale id is still gone.
+    expect(mocks.eventsInsert).toHaveBeenCalledTimes(1);
+    expect(result.pushed).toBe(1);
+    expect(result.skipped).toEqual([]);
+    expect(writes.find((w) => w.path === 'kin_care_sessions/sess-1')?.data.googleEventId).toBe(
+      'gcal-event-1',
+    );
   });
 
   it('REFUSES to write into the calendar the free/busy sync imports from', async () => {

@@ -23,6 +23,7 @@ import {
   readOAuthFailure,
   type GoogleOAuthSetupSignals,
 } from '../../lib/googleOAuthSetup';
+import { AutomaticCalendarSyncPanel } from './AutomaticCalendarSyncPanel';
 import { DenPanel, ServicePill } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
@@ -486,6 +487,11 @@ export function GoogleCalendarSection() {
               </p>
             )}
           </div>
+
+          {/* Issue #397. Its own file and its own state, so the automatic
+              sync's receipt and its retry do not thread through this
+              component's already busy connect/select/push machinery. */}
+          <AutomaticCalendarSyncPanel connection={connection} onSynced={load} />
 
           <div className="settingsEdit__subsection">
             <div className="settingsEdit__saveRow">

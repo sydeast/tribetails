@@ -32,6 +32,11 @@ const BLANK: GoogleCalendarConnection = {
   calendarPushLastStatus: '',
   calendarPushLastPushed: 0,
   calendarPushLastError: '',
+  calendarAutoSyncLastRunAt: '',
+  calendarAutoSyncLastStatus: '',
+  calendarAutoSyncLastAction: '',
+  calendarAutoSyncLastSessionId: '',
+  calendarAutoSyncLastError: '',
 };
 
 const CONNECTED = {
