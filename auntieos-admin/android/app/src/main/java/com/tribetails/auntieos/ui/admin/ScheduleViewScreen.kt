@@ -1073,7 +1073,15 @@ private fun BulkRescheduleSheet(
     }
     val showingResults = results.isNotEmpty()
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // A back press or an outside tap reaches this dismiss, which no button's
+    // `enabled` can gate. Dismissing mid-run would close the sheet while the
+    // remaining visits are still being written, and the refusals those writes
+    // come back with would land in state nothing renders: the operator would be
+    // told nothing about writes that really happened.
+    Dialog(
+        onDismissRequest = { if (!inFlight) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         AuntieCard(modifier = Modifier.fillMaxWidth(0.95f), containerColor = c.background) {
             Column(
                 modifier = Modifier.padding(20.dp),

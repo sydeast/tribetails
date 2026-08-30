@@ -159,11 +159,24 @@ export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkReschedu
 
   const count = targets.length;
 
+  /**
+   * Escape and a backdrop click reach `Dialog`'s own dismiss, which the footer
+   * buttons' `disabled` cannot gate. A dismiss mid-run would unmount the sheet
+   * while the remaining visits are still being written, and the refusals those
+   * writes come back with would have nowhere to render: the operator would be
+   * told nothing about writes that really happened. Same guard, and the same
+   * reason, as `closeIfIdle` in BookingActions.tsx.
+   */
+  function closeIfIdle(result: BulkRescheduleOutcome | null) {
+    if (running) return;
+    onClose(result);
+  }
+
   if (outcome !== null) {
     return (
       <Dialog
         title="Reschedule results"
-        onClose={() => onClose(outcome)}
+        onClose={() => closeIfIdle(outcome)}
         footer={<PrimaryButton label="Done" onClick={() => onClose(outcome)} disabled={running} />}
       >
         <Banner
@@ -242,7 +255,7 @@ export function BulkRescheduleDialog({ targets, skipped, onClose }: BulkReschedu
   return (
     <Dialog
       title="Reschedule selected visits"
-      onClose={() => onClose(null)}
+      onClose={() => closeIfIdle(null)}
       size="wide"
       footer={
         <>

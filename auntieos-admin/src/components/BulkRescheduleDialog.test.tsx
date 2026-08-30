@@ -185,6 +185,34 @@ describe('BulkRescheduleDialog', () => {
     expect(screen.getByText(/already been cancelled/)).toBeInTheDocument();
   });
 
+  it('an override that lands turns the row into a move', async () => {
+    rescheduleBooking.mockRejectedValueOnce(
+      refusal('booking_busy_conflict', 'That window is imported as busy.'),
+    );
+    open([WREN]);
+    await retype('New time for The Wrens', '11:30');
+    await user.click(screen.getByRole('button', { name: 'Reschedule 1 visit' }));
+    await user.click(await screen.findByRole('button', { name: 'Move over the busy block' }));
+    expect(rescheduleBooking.mock.calls[1]![3]).toEqual({ busy: true });
+    expect(screen.getByText('Moved 1 of 1 selected visit.')).toBeInTheDocument();
+    expect(screen.queryByText('Not moved:')).toBeNull();
+  });
+  it('Escape mid-run does not close the sheet, so no landed write goes unreported', async () => {
+    // The footer buttons disable while a run is in flight; Escape and a
+    // backdrop click reach the Dialog's own dismiss and would otherwise unmount
+    // the sheet with writes still going out.
+    let release: (() => void) | undefined;
+    rescheduleBooking.mockImplementationOnce(
+      () => new Promise<{ ok: true }>((resolve) => { release = () => resolve({ ok: true }); }),
+    );
+    open([WREN]);
+    await retype('New time for The Wrens', '11:30');
+    await user.click(screen.getByRole('button', { name: 'Reschedule 1 visit' }));
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    release?.();
+    expect(await screen.findByText('Moved 1 of 1 selected visit.')).toBeInTheDocument();
+  });
   it('backing out writes nothing and reports no outcome', async () => {
     open([WREN]);
     await user.click(screen.getByRole('button', { name: 'Back' }));
