@@ -18,10 +18,12 @@ import { PrimaryButton, GhostButton, IconButton } from '../../components/Buttons
 import { Toggle } from '../../components/Toggle';
 import {
   effectiveHomeSections,
+  homeLayoutModeLabel,
   homeSectionLabel,
   moveHomeSectionDown,
   moveHomeSectionUp,
   portalHomeSummary,
+  RESET_HOME_SECTIONS,
 } from '../../lib/settingsFormat';
 import { type ImageDecoder } from '../../lib/brandAssetFile';
 import { LogoUploadField } from './LogoUploadField';
@@ -771,70 +773,95 @@ interface HomeLayoutEditorProps {
  * ISSUE #397 M10: the Home layout editor. Reorder (up/down, no drag-and-drop
  * library), show/hide, and per-section limit, over `effectiveHomeSections` —
  * which materializes the implicit "empty = canonical order, everything on"
- * default into real rows so there is always something on screen to edit, and
- * appends any catalogue section a partial saved array had dropped, disabled,
- * so it stays reachable.
+ * default into real DISPLAY rows so there is always something on screen to
+ * edit, and appends any catalogue section a partial saved array had dropped,
+ * disabled, so it stays reachable. `effectiveHomeSections` is read-only here:
+ * it never becomes the value written back, only what each row shows.
  *
- * Writes the WHOLE materialized row list back through `onChange` on every
- * edit, converting an implicit default into an explicit one the moment an
- * operator actually touches it — never before, so opening the panel and doing
- * nothing stays a no-op for `dirty` (see `MyTribePortalSection`, which compares
- * `JSON.stringify(portal)` against the loaded value untouched).
+ * ONE-WAY-DOOR GUARD. A real edit (toggle/limit/reorder) writes the WHOLE
+ * materialized row list back through `onChange`, converting the implicit
+ * default into an explicit array the moment an operator touches anything —
+ * never merely by opening the panel, so opening and pressing Save with
+ * nothing touched stays a no-op for `dirty` (see `MyTribePortalSection`, which
+ * compares `JSON.stringify(portal)` against the loaded value untouched: `home`
+ * is only ever replaced by an `onChange` call, and none of the row handlers
+ * below fire on render). "Reset to default layout" is the way back out of
+ * that explicit state: it writes `RESET_HOME_SECTIONS` (`[]`), the same empty
+ * array the portal reads as "no config at all", not a full canonical list that
+ * merely looks the same today.
  */
 function HomeLayoutEditor({ home, busy, onChange }: HomeLayoutEditorProps) {
   const rows = effectiveHomeSections(home.sections);
+  const isDefault = home.sections.length === 0;
 
   function updateRow(index: number, patch: Partial<HomeSectionCfg>) {
     onChange({ sections: rows.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
   }
 
   return (
-    <ul className="settingsEdit__homeList">
-      {rows.map((row, index) => {
-        const label = homeSectionLabel(row.id);
-        return (
-          <li key={row.id ?? `unnamed-${index}`} className="settingsEdit__homeRow">
-            <div className="settingsEdit__homeMove">
-              <IconButton
-                icon={<UpGlyph />}
-                label={`Move ${label} up`}
-                onClick={() => onChange({ sections: moveHomeSectionUp(rows, index) })}
-                disabled={busy || index === 0}
-                size={28}
-              />
-              <IconButton
-                icon={<DownGlyph />}
-                label={`Move ${label} down`}
-                onClick={() => onChange({ sections: moveHomeSectionDown(rows, index) })}
-                disabled={busy || index === rows.length - 1}
-                size={28}
-              />
-            </div>
-            <span className="settingsEdit__homeRowLabel">{label}</span>
-            <Toggle
-              label={`Show ${label} on Home`}
-              checked={row.enabled}
-              disabled={busy}
-              onChange={(next) => updateRow(index, { enabled: next })}
-            />
-            <label className="settingsEdit__homeLimit">
-              <span className="settingsEdit__fieldLabel">Limit</span>
-              <input
-                type="number"
-                min={0}
-                className="settingsEdit__input settingsEdit__input--narrow"
-                value={row.limit}
+    <>
+      <div className="settingsEdit__homeModeRow">
+        <span
+          className={[
+            'settingsEdit__homeModeBadge',
+            isDefault ? 'settingsEdit__homeModeBadge--default' : 'settingsEdit__homeModeBadge--custom',
+          ].join(' ')}
+        >
+          {homeLayoutModeLabel(home)}
+        </span>
+        <GhostButton
+          label="Reset to default layout"
+          onClick={() => onChange({ sections: [...RESET_HOME_SECTIONS] })}
+          disabled={busy || isDefault}
+        />
+      </div>
+      <ul className="settingsEdit__homeList">
+        {rows.map((row, index) => {
+          const label = homeSectionLabel(row.id);
+          return (
+            <li key={row.id ?? `unnamed-${index}`} className="settingsEdit__homeRow">
+              <div className="settingsEdit__homeMove">
+                <IconButton
+                  icon={<UpGlyph />}
+                  label={`Move ${label} up`}
+                  onClick={() => onChange({ sections: moveHomeSectionUp(rows, index) })}
+                  disabled={busy || index === 0}
+                  size={28}
+                />
+                <IconButton
+                  icon={<DownGlyph />}
+                  label={`Move ${label} down`}
+                  onClick={() => onChange({ sections: moveHomeSectionDown(rows, index) })}
+                  disabled={busy || index === rows.length - 1}
+                  size={28}
+                />
+              </div>
+              <span className="settingsEdit__homeRowLabel">{label}</span>
+              <Toggle
+                label={`Show ${label} on Home`}
+                checked={row.enabled}
                 disabled={busy}
-                onChange={(e) => {
-                  const parsed = Number.parseInt(e.target.value, 10);
-                  updateRow(index, { limit: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 });
-                }}
+                onChange={(next) => updateRow(index, { enabled: next })}
               />
-            </label>
-          </li>
-        );
-      })}
-    </ul>
+              <label className="settingsEdit__homeLimit">
+                <span className="settingsEdit__fieldLabel">Limit</span>
+                <input
+                  type="number"
+                  min={0}
+                  className="settingsEdit__input settingsEdit__input--narrow"
+                  value={row.limit}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    updateRow(index, { limit: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 });
+                  }}
+                />
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

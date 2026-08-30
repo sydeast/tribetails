@@ -220,6 +220,95 @@ class BusinessSettingsDiffTest {
         assertEquals(listOf("roster", "upNext"), reordered.homeSections().map { it.id })
     }
 
+    // ── One-way-door guard (issue #397 M10 follow-up) ──────────────────────────
+    //
+    // `HomeLayoutPanel` (AdminSettingsScreen.kt) seeds its draft from the RAW
+    // `settings.homeSections()`, never from `effectiveHomeSections(...)` (that
+    // materialized list is for DISPLAY only, computed fresh every recomposition
+    // and never assigned into the draft). These pin that split at the layer
+    // that actually decides whether Firestore gets written: simulating the
+    // panel's own "open", "reset", and "real edit" paths end to end through
+    // `withHomeSections` + `businessSettingsFieldChanges`, exactly as the panel
+    // would produce them.
+
+    /**
+     * PIN 1: opening a stored (non-default) layout and pressing Save with
+     * nothing touched leaves the stored value unchanged. The panel's draft
+     * starts identical to `settings.homeSections()` -- re-encoding that same,
+     * untouched list must diff to nothing, whatever it contains.
+     */
+    @Test
+    fun `opening a custom layout and saving with no edits writes nothing`() {
+        val stored = loaded.withHomeSections(
+            listOf(
+                PortalHomeSection("liveVisit", true, 0),
+                PortalHomeSection("upNext", false, 0),
+                PortalHomeSection("tales", true, 0),
+                PortalHomeSection("roster", true, 0),
+                PortalHomeSection("quickStart", true, 0),
+            )
+        )
+        val untouchedDraft = stored.homeSections() // exactly HomeLayoutPanel's `baseline`/initial `rows`
+        val edited = stored.withHomeSections(untouchedDraft)
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(stored, edited))
+    }
+
+    /** Same PIN 1, for the already-default (never configured) starting point. */
+    @Test
+    fun `opening an already-default layout and saving with no edits writes nothing`() {
+        val untouchedDraft = loaded.homeSections() // `[]`
+        val edited = loaded.withHomeSections(untouchedDraft)
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, edited))
+    }
+
+    /**
+     * PIN 2: "Reset to default layout" returns the document to the empty array
+     * the portal reads as its own implicit default, and it is a REAL, writable
+     * change when the stored layout is not already that.
+     */
+    @Test
+    fun `Reset to default layout writes the empty array, not a canonical list dressed up to look like it`() {
+        val stored = loaded.withHomeSections(listOf(PortalHomeSection("upNext", true, 5)))
+        val edited = stored.withHomeSections(emptyList())
+        val changes = businessSettingsFieldChanges(stored, edited)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        assertEquals(emptyList<PortalHomeSection>(), edited.homeSections())
+    }
+
+    /**
+     * The flip side of PIN 2: resetting a layout that is ALREADY the default
+     * must not itself register as a change -- otherwise the operator would see
+     * "unsaved changes" for pressing a button that did nothing.
+     */
+    @Test
+    fun `resetting an already-default layout is not a change`() {
+        val edited = loaded.withHomeSections(emptyList())
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, edited))
+    }
+
+    /**
+     * PIN 3: a real edit (materialized, then patched, exactly as
+     * `HomeLayoutPanel` reassigns its draft on a toggle/limit/reorder) still
+     * persists -- the one-way-door fix must not have made genuine edits inert.
+     */
+    @Test
+    fun `a real edit made from the materialized display rows still persists`() {
+        // The five canonical ids, standing in for what `effectiveHomeSections`
+        // would have materialized from an empty starting draft -- this test
+        // does not depend on `ui.admin.HOME_SECTION_CATALOG` (a different
+        // package/layer), only on the shape a materialized-then-edited row
+        // list takes.
+        val canonicalIds = listOf("liveVisit", "upNext", "tales", "roster", "quickStart")
+        val materializedThenToggled = canonicalIds.map { id ->
+            PortalHomeSection(id, enabled = id != "roster", limit = 0)
+        }
+        val edited = loaded.withHomeSections(materializedThenToggled)
+        val changes = businessSettingsFieldChanges(loaded, edited)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        val roster = edited.homeSections().first { it.id == "roster" }
+        assertEquals(false, roster.enabled)
+    }
+
     // ── Drift guard ──────────────────────────────────────────────────────────
 
     /**

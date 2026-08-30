@@ -12,9 +12,11 @@ import {
   portalHomeSummary,
   effectiveHomeSections,
   homeSectionLabel,
+  homeLayoutModeLabel,
   moveHomeSectionUp,
   moveHomeSectionDown,
   HOME_SECTION_CATALOG,
+  RESET_HOME_SECTIONS,
   lastSavedLabel,
 } from './settingsFormat';
 
@@ -194,6 +196,30 @@ describe('moveHomeSectionUp / moveHomeSectionDown', () => {
 
   it('round-trips: moving up then down returns the original order', () => {
     expect(moveHomeSectionDown(moveHomeSectionUp(rows, 2), 1)).toEqual(rows);
+  });
+});
+
+// ISSUE #397 M10 follow-up: the one-way-door guard. `homeLayoutModeLabel` is
+// what lets the operator tell the two states apart, and `RESET_HOME_SECTIONS`
+// is the literal value that gets the document back to the portal's own
+// implicit default -- not a canonical list built to look the same.
+describe('homeLayoutModeLabel', () => {
+  it('is "Default layout" for an empty (unconfigured) sections array', () => {
+    expect(homeLayoutModeLabel({ sections: [] })).toBe('Default layout');
+  });
+
+  it('is "Custom layout" for any non-empty array, even one that matches the canonical defaults', () => {
+    const canonicalLooking = HOME_SECTION_CATALOG.map((s) => ({ id: s.id, enabled: true, limit: 0 }));
+    expect(homeLayoutModeLabel({ sections: canonicalLooking })).toBe('Custom layout');
+  });
+});
+
+describe('RESET_HOME_SECTIONS', () => {
+  it('is the empty array the portal reads as its own implicit default', () => {
+    expect(RESET_HOME_SECTIONS).toEqual([]);
+    // Resetting a fully custom layout collapses it back to "Default layout",
+    // not a canonical array dressed up to look like one.
+    expect(homeLayoutModeLabel({ sections: [...RESET_HOME_SECTIONS] })).toBe('Default layout');
   });
 });
 

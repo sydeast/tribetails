@@ -95,4 +95,31 @@ class HomeLayoutConfigTest {
         assertEquals(abc, abc.replacedAt(-1, abc[0]))
         assertEquals(abc, abc.replacedAt(abc.size, abc[0]))
     }
+
+    // ── One-way-door guard (issue #397 M10 follow-up) ──────────────────────
+
+    @Test
+    fun `homeLayoutModeLabel is Default layout only for an empty list`() {
+        assertEquals("Default layout", homeLayoutModeLabel(emptyList()))
+    }
+
+    @Test
+    fun `homeLayoutModeLabel is Custom layout for any non-empty list, even one matching canonical defaults`() {
+        val canonicalLooking = HOME_SECTION_CATALOG.map { PortalHomeSection(it.id, enabled = true, limit = 0) }
+        assertEquals("Custom layout", homeLayoutModeLabel(canonicalLooking))
+        assertEquals("Custom layout", homeLayoutModeLabel(abc))
+    }
+
+    @Test
+    fun `RESET_HOME_SECTIONS is the empty list the portal reads as its own implicit default`() {
+        assertEquals(emptyList<PortalHomeSection>(), RESET_HOME_SECTIONS)
+        assertEquals("Default layout", homeLayoutModeLabel(RESET_HOME_SECTIONS))
+        // Materializing the reset value for DISPLAY still shows the full
+        // canonical, everything-enabled list -- resetting never leaves the
+        // editor showing a blank screen.
+        assertEquals(
+            HOME_SECTION_CATALOG.map { PortalHomeSection(it.id, enabled = true, limit = 0) },
+            effectiveHomeSections(RESET_HOME_SECTIONS),
+        )
+    }
 }

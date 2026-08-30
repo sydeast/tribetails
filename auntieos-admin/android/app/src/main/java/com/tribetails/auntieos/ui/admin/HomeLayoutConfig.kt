@@ -73,3 +73,26 @@ fun List<PortalHomeSection>.replacedAt(index: Int, value: PortalHomeSection): Li
     if (index < 0 || index >= size) return this
     return toMutableList().also { it[index] = value }
 }
+
+/**
+ * ISSUE #397 M10 FOLLOW-UP: the one-way-door guard, mirroring
+ * `homeLayoutModeLabel` / `RESET_HOME_SECTIONS` in the React admin
+ * (`auntieos-admin/src/lib/settingsFormat.ts`).
+ *
+ * "Default layout" (an empty [sections], the portal's own implicit default)
+ * or "Custom layout" (an explicit array is saved, however close its contents
+ * are to canonical). The operator must be able to tell these apart by
+ * looking, not by inferring it from whether every toggle happens to read on.
+ */
+fun homeLayoutModeLabel(sections: List<PortalHomeSection>): String =
+    if (sections.isEmpty()) "Default layout" else "Custom layout"
+
+/**
+ * The value "Reset to default layout" writes: the empty list the portal (on
+ * both clients) reads as "no config at all" -- canonical order, every
+ * section shown, unlimited. A reset writes this literal empty list rather
+ * than a full canonical list that merely LOOKS like the default, so the
+ * document goes back to genuinely unconfigured rather than to a custom
+ * config that happens to match today's defaults.
+ */
+val RESET_HOME_SECTIONS: List<PortalHomeSection> = emptyList()

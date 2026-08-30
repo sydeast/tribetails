@@ -202,6 +202,28 @@ export function homeSectionLabel(id: string | undefined): string {
 }
 
 /**
+ * "Default layout" (an empty `sections` array, the portal's own implicit
+ * default) or "Custom layout" (an explicit array is saved, however close its
+ * contents are to canonical). This is the one-way-door guard: the operator
+ * must be able to tell these two states apart by looking, not by inferring it
+ * from whether every toggle happens to read "on". See `RESET_HOME_SECTIONS`
+ * and the Reset control in `HomeLayoutEditor`.
+ */
+export function homeLayoutModeLabel(home: PortalHome): string {
+  return home.sections.length === 0 ? 'Default layout' : 'Custom layout';
+}
+/**
+ * The value "Reset to default layout" writes: the empty array the portal (on
+ * both clients) reads as "no config at all" -- canonical order, every section
+ * shown, unlimited. A RESET writes this literal empty array rather than a
+ * full canonical list that merely LOOKS like the default, so the document
+ * goes back to genuinely unconfigured, not to a custom config that happens to
+ * match today's defaults (and would stop tracking them if the canonical order
+ * ever changed).
+ */
+export const RESET_HOME_SECTIONS: readonly HomeSectionCfg[] = [];
+
+/**
  * The rows the Home layout editor renders, derived from the persisted
  * `sections` array without mutating it.
  *

@@ -1857,12 +1857,25 @@ private fun BookingBehaviorPanel(
  * once, on Save, with the WHOLE edited [BusinessSettings]; the diff mechanism
  * in `BusinessSettingsDiff.kt` is what turns that into a single-field write.
  *
- * DIFF, NOT REBUILD: [rows] is read through `settings.homeSections()` /
- * written through `settings.withHomeSections(...)`, which patches only
- * `mytribePortal.home.sections` and carries every sibling key (`logoUrl`,
- * `themeId`, `banner`, `chat`) forward unread and unchanged (see
- * `withHomeSections` in LocationModels.kt). This panel never constructs a
- * `BusinessSettings` from scratch.
+ * DIFF, NOT REBUILD: the write goes through `settings.withHomeSections(...)`,
+ * which patches only `mytribePortal.home.sections` and carries every sibling
+ * key (`logoUrl`, `themeId`, `banner`, `chat`) forward unread and unchanged
+ * (see `withHomeSections` in LocationModels.kt). This panel never constructs
+ * a `BusinessSettings` from scratch.
+ *
+ * ONE-WAY-DOOR GUARD (issue #397 M10 follow-up). [rows] holds the RAW draft
+ * (starts as `settings.homeSections()`, the STORED value, never the
+ * materialized one) — `effectiveHomeSections(rows)` is computed fresh on
+ * every recomposition purely to decide what [displayRows] to draw, and is
+ * never itself assigned into [rows]. That split is what makes opening this
+ * panel and pressing Save with nothing touched a genuine no-op: [dirty]
+ * compares [rows] against [baseline], both the untouched stored value, so
+ * `AuntieSaveBar` never enables Save until a row handler below actually
+ * reassigns [rows]. A real edit reassigns [rows] to the fully materialized,
+ * patched [displayRows] (order is holistic — there is no smaller diff of a
+ * reordered array), and "Reset to default layout" reassigns it to
+ * [RESET_HOME_SECTIONS] (`[]`) — the same empty list the portal reads as its
+ * own implicit default, not a canonical list that merely looks the same.
  */
 @Composable
 private fun HomeLayoutPanel(
@@ -1870,17 +1883,36 @@ private fun HomeLayoutPanel(
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
     val dims = AuntieTheme.dims
-    val baseline = remember(settings) { effectiveHomeSections(settings.homeSections()) }
+    val baseline = remember(settings) { settings.homeSections() }
     var rows by remember(settings) { mutableStateOf(baseline) }
     var saving by remember { mutableStateOf(false) }
     val dirty = rows != baseline
+    val displayRows = effectiveHomeSections(rows)
+    val isDefault = rows.isEmpty()
 
     DenPanel(
         title = "Home layout",
         subtitle = "Reorder, show or hide, and cap how many items each Home section lists for kinfolk. A limit of 0 is unlimited.",
     ) {
         Column {
-            rows.forEachIndexed { index, row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                AuntieStatusPill(
+                    label = homeLayoutModeLabel(rows),
+                    tone = if (isDefault) AuntieStatusTone.Muted else AuntieStatusTone.Orange,
+                )
+                GhostButton(
+                    label = "Reset to default layout",
+                    onClick = { rows = RESET_HOME_SECTIONS },
+                    enabled = !isDefault,
+                )
+            }
+            Spacer(Modifier.height(dims.space3))
+
+            displayRows.forEachIndexed { index, row ->
                 val label = homeSectionLabel(row.id)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1890,15 +1922,15 @@ private fun HomeLayoutPanel(
                     AuntieIconButton(
                         icon = Lucide.ArrowUp,
                         contentDescription = "Move $label up",
-                        onClick = { rows = moveHomeSectionUp(rows, index) },
+                        onClick = { rows = moveHomeSectionUp(displayRows, index) },
                         enabled = index > 0,
                         size = 32.dp,
                     )
                     AuntieIconButton(
                         icon = Lucide.ArrowDown,
                         contentDescription = "Move $label down",
-                        onClick = { rows = moveHomeSectionDown(rows, index) },
-                        enabled = index < rows.lastIndex,
+                        onClick = { rows = moveHomeSectionDown(displayRows, index) },
+                        enabled = index < displayRows.lastIndex,
                         size = 32.dp,
                     )
                     Text(label, modifier = Modifier.weight(1f), style = AuntieTheme.typography.bodyMedium)
@@ -1906,7 +1938,7 @@ private fun HomeLayoutPanel(
                         value = row.limit.toString(),
                         onValueChange = { text ->
                             val n = parseWholeNumber(text, 0, 999) ?: 0
-                            rows = rows.replacedAt(index, row.copy(limit = n))
+                            rows = displayRows.replacedAt(index, row.copy(limit = n))
                         },
                         label = "Limit",
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1914,7 +1946,7 @@ private fun HomeLayoutPanel(
                     )
                     AuntieToggle(
                         checked = row.enabled,
-                        onCheckedChange = { next -> rows = rows.replacedAt(index, row.copy(enabled = next)) },
+                        onCheckedChange = { next -> rows = displayRows.replacedAt(index, row.copy(enabled = next)) },
                     )
                 }
             }

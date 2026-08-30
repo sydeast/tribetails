@@ -293,3 +293,33 @@
 .settingsEdit__input--narrow {
   width: 4.5rem;
 }
+/* ── Home layout mode row (issue #397 M10 follow-up) ─────────────────────
+   States the current mode ("Default layout" / "Custom layout") next to the
+   one control that undoes a custom save: "Reset to default layout". The
+   badge and the Reset button read the SAME `isDefault` flag, so they can
+   never disagree about which state the panel is in. */
+.settingsEdit__homeModeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.settingsEdit__homeModeBadge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+.settingsEdit__homeModeBadge--default {
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+}
+.settingsEdit__homeModeBadge--custom {
+  color: var(--color-background);
+  background: var(--color-primary);
+}
+
