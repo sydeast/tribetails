@@ -116,27 +116,47 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
       { name: 'TWILIO_ACCOUNT_SID', required: true, purpose: 'Identifies the Twilio account messages are sent from.' },
       { name: 'TWILIO_AUTH_TOKEN', required: true, purpose: 'Signs sends, and verifies the delivery-status callback.' },
       { name: 'TWILIO_FROM_NUMBER', required: true, purpose: 'The number kinfolk see. A send with no from number fails.' },
-      // The Voice SDK set. Not required for SMS, so an unset one must not read
-      // as an outage, but every one is needed before the admin app can answer.
+      // ── THE VOICE SDK SET ────────────────────────────────────────────────
+      //
+      // All four exist on this account and the live connect ("press 3 to talk
+      // to me right now") runs on them today. This block used to say the
+      // feature was waiting on them; it is not, and the comment is not left
+      // behind to mislead the next sweep.
+      //
+      // They are NOT uniformly required, and flattening them to one flag would
+      // trade one wrong answer for another. `mintVoiceAccessToken` throws
+      // without the API key pair and mints perfectly well without the other
+      // two, so that is exactly how they are marked. See PR #355, which
+      // removed a demand for a TwiML Application that nothing uses.
       {
         name: 'TWILIO_API_KEY_SID',
-        required: false,
-        purpose: 'Signs the admin app voice token. Revokable on its own, so voice can be cut off without rotating the account auth token.',
+        required: true,
+        purpose:
+          'Signs the admin app voice token. Without it mintVoiceAccessToken throws, no device can ' +
+          'register, and press 3 reaches nobody. Revokable on its own, so voice can be cut off ' +
+          'without rotating the account auth token.',
       },
       {
         name: 'TWILIO_API_KEY_SECRET',
-        required: false,
-        purpose: 'The other half of the voice signing key. Twilio shows it once at creation and never again.',
+        required: true,
+        purpose:
+          'The other half of the voice signing key, and required for the same reason. Twilio shows ' +
+          'it once at creation and never again.',
       },
       {
         name: 'TWIML_APP_SID',
         required: false,
-        purpose: 'The TwiML Application whose Voice URL answers the admin app leg of a screened call.',
+        purpose:
+          'The TwiML Application used when a device PLACES a call. Genuinely optional: the admin ' +
+          'app has no outbound calling, and the INBOUND leg it answers is directed by the url ' +
+          'parameter on the REST call twilioVoice places, not by this application.',
       },
       {
         name: 'PUSH_CREDENTIAL_SID',
         required: false,
-        purpose: 'Lets Twilio wake the admin app for an incoming call. Without it, calling works only while the app is open.',
+        purpose:
+          'Lets Twilio wake the admin app for an incoming call. Optional because without it the ' +
+          'SDK still rings while the app is open; what is lost is the wake from the background.',
       },
     ],
     externalStep:
@@ -144,7 +164,12 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
       'console.twilio.com. Without it messages still send, and every one of them stays "sent" forever ' +
       'because nothing reports back that it arrived. The inbound VOICE line is separate: the ' +
       "number's \"A call comes in\" webhook must point at the twilioVoice function, and " +
-      'TWILIO_VOICE_BASE_URL must name that exact URL, or every call is refused with a 403.',
+      'TWILIO_VOICE_BASE_URL must name that exact URL, or every call is refused with a 403. ' +
+      'TWILIO_INBOUND_VOICEMAIL_URL must likewise name the twilioInboundVoicemail function: with ' +
+      'it unset, twilioVoice records voicemails with NO callback, so the audio sits in the Twilio ' +
+      'console and no message ever reaches the Inbox. Both are plain env values in ' +
+      'mytribe/functions/.env, not secrets, and the functions must be redeployed after either is ' +
+      'added.',
     ownedBySection: '',
   },
   {

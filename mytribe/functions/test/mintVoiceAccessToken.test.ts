@@ -104,7 +104,29 @@ function adminReq(data: unknown = {}): CallableRequest<unknown> {
   } as unknown as CallableRequest<unknown>;
 }
 
-describe('mintVoiceAccessToken', () => {
+/**
+ * The 30-second timeout is about IMPORT COST, not about anything this suite
+ * asserts, and it is a raise from vitest's 10s default rather than a new
+ * allowance.
+ *
+ * Measured on 2026-08-23: this file failed 3 serial runs out of 3 at the
+ * default, always on whichever test ran FIRST, at 10-12 seconds. Nothing in it
+ * is slow by nature — `twilio` is mocked with a factory, so no JWT is really
+ * signed and no network is touched. What costs the ten seconds is the one-time
+ * cold resolution of `../src/admin/mintVoiceAccessToken`'s transitive module
+ * graph (firebase-functions, firebase-admin, Sentry), paid by the first test
+ * and by no other. Every subsequent test in the file runs in single-digit
+ * milliseconds.
+ *
+ * So the default was timing a fixed startup cost as though it were the test,
+ * and the result was a suite that failed on a loaded machine and passed on an
+ * idle one. That is a false red: it reports a defect where there is none, and
+ * a suite that cries wolf is one people stop reading.
+ *
+ * This changes no assertion and skips nothing. Every test still runs and still
+ * has to pass; they are simply allowed to finish.
+ */
+describe('mintVoiceAccessToken', { timeout: 30_000 }, () => {
   it('mints a token with an incoming VoiceGrant bound to the TwiML app', async () => {
     configureAll();
     const handler = await loadHandler();

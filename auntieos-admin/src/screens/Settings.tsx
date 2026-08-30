@@ -14,6 +14,7 @@ import {
   BUSINESS_PROFILE_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
+import { PhoneLineSection } from './settings/PhoneLineSection';
 import { CalendarSection } from './settings/CalendarSection';
 import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
@@ -66,6 +67,7 @@ import './Settings.css';
 type SectionId =
   | 'businessProfile'
   | 'businessHours'
+  | 'phoneLine'
   | 'timeOff'
   | 'kinCare'
   | 'payments'
@@ -80,6 +82,9 @@ type SectionId =
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'businessProfile', label: 'Business profile' },
   { id: 'businessHours', label: 'Business hours' },
+  // Directly after Business hours, because the live transfer is gated on them:
+  // the first question an operator has after turning it off is when it applies.
+  { id: 'phoneLine', label: 'Phone line' },
   { id: 'timeOff', label: 'Time off' },
   { id: 'kinCare', label: 'KinCare types' },
   { id: 'payments', label: 'Payments' },
@@ -295,6 +300,9 @@ function renderDataSection(
       );
     case 'businessHours':
       return <BusinessHoursEditor data={data} onSave={persist} />;
+    // ISSUE #397: the press-3 live transfer, on or off.
+    case 'phoneLine':
+      return <PhoneLineSection data={data} onSave={persist} />;
     case 'timeOff':
       return <TimeOffEditor data={data} onSave={persist} />;
     case 'kinCare':

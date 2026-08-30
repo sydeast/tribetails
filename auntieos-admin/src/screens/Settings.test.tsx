@@ -135,6 +135,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   calendarSyncLastError: '',
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
+  voiceLiveTransferEnabled: true, // issue #397; TRUE is this field's default
   logoUrl: '',
   logoRemovedAt: '',
   brandWordmark: '',
@@ -209,12 +210,15 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 11. Was 13: the 2026-07-31 calendar-tab merge took two calendar features
-    // down to one tab, then mark 16 of the 2026-08-17 walk folded Weather area
-    // and Booking behavior into Business profile ("it does not need to be its
-    // own page with so little fields"). Integrations still sits last, because
-    // it reports on outside services rather than editing anything.
-    expect(tabs).toHaveLength(11);
+    // 12. Was 13, then 11: the 2026-07-31 calendar-tab merge took two calendar
+    // features down to one tab, then mark 16 of the 2026-08-17 walk folded
+    // Weather area and Booking behavior into Business profile ("it does not
+    // need to be its own page with so little fields"). Issue #397 then added
+    // Phone line, the press-3 live transfer, next to Business hours because it
+    // is gated on them. Integrations still sits last, because it reports on
+    // outside services rather than editing anything.
+    expect(tabs).toHaveLength(12);
+    expect(screen.getByRole('tab', { name: /phone line/i })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /weather area/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /booking behavior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();

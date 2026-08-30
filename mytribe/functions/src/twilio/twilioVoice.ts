@@ -5,7 +5,12 @@ import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { guardVoice } from './twilioSignature';
-import { resolveBusinessOpenNow, type BusinessOpenState } from '../lib/businessHours';
+import {
+  loadBusinessHoursSettings,
+  resolveBusinessOpenFromSettings,
+  resolveLiveTransferEnabled,
+  type BusinessOpenState,
+} from '../lib/businessHours';
 import { sendCallInvitePush } from './voicePush';
 import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
 import { sanitizePlainText } from '../lib/richText';
@@ -57,22 +62,42 @@ import { sanitizePlainText } from '../lib/richText';
  *
  * ── PRESS 3 ───────────────────────────────────────────────────────────────────
  *
- * Press 3 currently takes a message. It is NOT yet a live connect, and that is
- * deliberate rather than unfinished: the screening path it used to reach is
- * verifiably non-functional on this account (no TwiML Application exists, and
- * the Voice SDK token endpoint 404s), so a caller pressing 3 could not have
- * reached a person even if the flow had let them try. Offering "talk to me now"
- * and then failing is worse than offering a message, so the greeting says what
- * actually happens. Restoring the live connect is the next change, and this
- * comment should be deleted with it.
+ * Press 3 is a LIVE CONNECT to the operator's admin app, restored in PR #351
+ * and narrowed in PR #355. The caller is asked who is calling, that answer is
+ * pushed to her devices as context, her Twilio Voice SDK client is rung, and
+ * the two are bridged in a per-call conference. `client:auntie` is the only
+ * destination this file dials: there is no PSTN branch and no operator-entered
+ * number anywhere in the voice path, so no configuration of this app can point
+ * the business line at a personal one.
+ *
+ * It is gated three ways, and each gate still lands the caller somewhere they
+ * can leave a message:
+ *
+ *   HOURS      offered only while the business is open. The after-hours
+ *              greeting never mentions 3, and `/route` re-reads the hours, so a
+ *              3 pressed as the business closes cannot ring her at midnight.
+ *   TOGGLE     `business_settings.voiceLiveTransferEnabled` (issue #397). Off
+ *              means the greeting offers only the voicemail, and a 3 pressed
+ *              anyway falls to the retry. Absent means ON; see
+ *              `resolveLiveTransferEnabled`.
+ *   REACHABLE  if her client cannot be rung at all, the caller goes straight to
+ *              voicemail rather than into a conference nobody can join.
  *
  * ── ROUTES ────────────────────────────────────────────────────────────────────
  *
- *   POST /           entry. Resolves hours, greets, gathers one digit.
- *   POST /route      the digit. 3 or 4 -> voicemail, anything else -> retry.
- *   POST /retry      one more chance during open hours, then the text nudge.
- *   POST /voicemail  <Record>, both callbacks wired.
- *   POST /goodbye    the text nudge, then hang up.
+ *   POST /               entry. Resolves hours and the toggle, greets, gathers a digit.
+ *   POST /route          the digit. 3 -> live connect (when offered), 4 -> voicemail,
+ *                        anything else -> retry.
+ *   POST /retry          one more chance, then the text nudge.
+ *   POST /screen         asks who is calling, in speech.
+ *   POST /screen-connect rings her client and parks the caller in the conference.
+ *   POST /connect        her leg. Joins the conference as the moderator.
+ *   POST /hold           what the caller hears while she decides.
+ *   POST /screen-status  her leg's status callback. Ends the conference on a
+ *                        no-answer, busy, failed or canceled leg.
+ *   POST /missed         she did not pick up. Offers the voicemail again.
+ *   POST /voicemail      <Record>, both callbacks wired.
+ *   POST /goodbye        the text nudge, then hang up.
  *
  * ── ACTIVATION ────────────────────────────────────────────────────────────────
  *
@@ -105,14 +130,22 @@ const VOICEMAIL_CALLBACK_ENV = 'TWILIO_INBOUND_VOICEMAIL_URL';
  * are none: `auntieos-admin/twilio-service/assets/` is empty and all six URLs
  * 404. The live flow used text-to-speech, which is what actually reached
  * callers, so that is what is reproduced here.
- *
- * OPEN_GREETING is the one line that is NOT verbatim. The original offered
- * "press 3 to talk to me right now", which was never true on this account.
  */
 const SPEECH = {
   OPEN_GREETING:
     "Hey, you've reached Tribe Tails Pet Care, this is Auntie's line. " +
     'Press 3 to talk to me right now, or press 4 to leave me a voicemail.',
+  /**
+   * The same greeting with the live connect turned off (issue #397).
+   *
+   * It does not mention 3, and it does not apologise for the absence either.
+   * A caller has no idea the option ever existed, and "I am not taking calls
+   * right now" invites them to wonder when she will be; the voicemail is the
+   * whole offer, so the line makes it the whole sentence.
+   */
+  OPEN_GREETING_VOICEMAIL_ONLY:
+    "Hey, you've reached Tribe Tails Pet Care, this is Auntie's line. " +
+    "Press 4 to leave me a voicemail and I'll get back to you.",
   /** Asked before ringing the operator, so she sees who it is before answering. */
   SCREEN_PROMPT:
     "Alright, after the tone, tell me your name and what you're calling about, " +
@@ -272,8 +305,39 @@ async function recordInboundCall(body: Record<string, string>, state: BusinessOp
 // Routes
 // ---------------------------------------------------------------------------
 
+/**
+ * The two questions this file asks `business_settings`, from ONE read.
+ *
+ * The greeting and every keypress both need the hours and the live-transfer
+ * toggle, and loading the same document twice inside one phone call would spend
+ * a second round trip out of Twilio's 15-second webhook budget to learn nothing
+ * new. Both answers fail OPEN on an unreadable document, for the reasons each
+ * of the two resolvers gives.
+ */
+async function resolveVoiceState(nowMs: number): Promise<{
+  hours: BusinessOpenState;
+  liveTransfer: boolean;
+}> {
+  const settings = await loadBusinessHoursSettings(db());
+  return {
+    hours: resolveBusinessOpenFromSettings(settings, nowMs),
+    liveTransfer: resolveLiveTransferEnabled(settings),
+  };
+}
+
+/**
+ * Whether this caller, right now, is offered a live person.
+ *
+ * The greeting and `/route` must agree on this or the phone lies: a greeting
+ * that offers 3 while `/route` refuses it reads to the caller as a line that
+ * ignored them. One expression, called from both.
+ */
+function liveConnectOffered(hours: BusinessOpenState, liveTransfer: boolean): boolean {
+  return hours.open && liveTransfer;
+}
+
 async function handleEntry(req: Request, res: Response, body: Record<string, string>): Promise<void> {
-  const state = await resolveBusinessOpenNow(db(), Date.now());
+  const { hours: state, liveTransfer } = await resolveVoiceState(Date.now());
 
   // Every uncertain answer is logged at a severity that will actually be
   // noticed. The failure this file replaces was silent for months precisely
@@ -294,30 +358,48 @@ async function handleEntry(req: Request, res: Response, body: Record<string, str
 
   await recordInboundCall(body, state);
 
+  if (!state.open) {
+    sendTwiml(res, gatherOneDigit(req, SPEECH.CLOSED_GREETING, '/goodbye'));
+    return;
+  }
+  // Open, so the only remaining question is whether she is taking live calls.
+  // A greeting that offered 3 with the toggle off would be the same shape of
+  // lie the Studio flow told: an option the caller can hear and cannot use.
   sendTwiml(
     res,
-    state.open
-      ? gatherOneDigit(req, SPEECH.OPEN_GREETING, '/retry')
-      : gatherOneDigit(req, SPEECH.CLOSED_GREETING, '/goodbye'),
+    gatherOneDigit(
+      req,
+      liveConnectOffered(state, liveTransfer)
+        ? SPEECH.OPEN_GREETING
+        : SPEECH.OPEN_GREETING_VOICEMAIL_ONLY,
+      '/retry',
+    ),
   );
 }
 
 /**
  * The pressed digit.
  *
- * 3 is the live connect, and it is only offered during open hours: the
- * after-hours greeting never mentions it, so a 3 pressed then falls to the
- * retry rather than ringing the operator at midnight.
+ * 3 is the live connect, and it is offered only when the business is open AND
+ * the operator has left the transfer on. Neither is carried over from the
+ * greeting: both are re-read on every keypress, so a 3 pressed after closing
+ * time, or after she flipped the toggle mid-call, falls to the retry instead of
+ * ringing a phone that should not ring.
  */
-function handleRoute(req: Request, res: Response, body: Record<string, string>, open: boolean): void {
+function handleRoute(
+  req: Request,
+  res: Response,
+  body: Record<string, string>,
+  offered: boolean,
+): void {
   const digits = (body.Digits || '').trim();
   logEvent({
     severity: 'info',
     function: 'twilioVoice',
     event: 'twilioVoice.route',
-    extra: { sid: (body.CallSid || '').trim(), digits, open },
+    extra: { sid: (body.CallSid || '').trim(), digits, liveConnectOffered: offered },
   });
-  if (digits === '3' && open) {
+  if (digits === '3' && offered) {
     sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/screen'))}</Redirect>`);
     return;
   }
@@ -385,13 +467,31 @@ async function handleScreenConnect(
 
   const dialed = await dialOperator(req, sid, conference);
 
-  // Nobody was told AND nobody was rung: holding the caller would be a lie.
-  if (push.delivered === 0 && !dialed) {
+  // ── THE DIALED LEG IS WHAT MAKES THE CONFERENCE JOINABLE ───────────────────
+  //
+  // This used to fall back only when the push ALSO failed
+  // (`push.delivered === 0 && !dialed`), which read as "nobody was told and
+  // nobody was rung". It is the wrong test, because the two are not
+  // alternatives. The push is CONTEXT ONLY: it carries the caller's name to her
+  // screen. What she actually answers is a Twilio `CallInvite`, and that invite
+  // exists only because `calls.create` above placed a leg to her client
+  // (`CallInviteManager.answer` calls `invite.accept(...)`; the admin app has no
+  // `Voice.connect` and cannot originate anything).
+  //
+  // So a delivered push with a failed dial put the caller into a conference
+  // that NOTHING could ever join, while her phone showed an incoming call she
+  // could tap and never connect. That is the dead line this fallback exists to
+  // prevent, and it was reachable any time the Twilio REST API faulted.
+  //
+  // The dial is now the sole condition. A failed push with a successful dial
+  // still connects: she gets a call with no context, which is worse than a
+  // labelled call and far better than no call.
+  if (!dialed) {
     logEvent({
       severity: 'error',
       function: 'twilioVoice',
       event: 'twilioVoice.screen.unreachable',
-      extra: { sid },
+      extra: { sid, pushDelivered: push.delivered },
     });
     sendTwiml(res, `<Redirect method="POST">${xmlEscape(selfUrl(req, '/voicemail'))}</Redirect>`);
     return;
@@ -601,12 +701,12 @@ export async function twilioVoiceHandler(req: Request, res: Response): Promise<v
       await handleEntry(req, res, body);
       return;
     case '/route': {
-      // Hours are resolved again rather than carried from the greeting. It is
-      // one extra read per keypress, and it means a 3 pressed after closing
-      // time cannot ring the operator because the caller was mid-call when the
-      // business shut.
-      const state = await resolveBusinessOpenNow(db(), Date.now());
-      handleRoute(req, res, body, state.open);
+      // Hours AND the toggle are resolved again rather than carried from the
+      // greeting. It is one extra read per keypress, and it means a 3 pressed
+      // after closing time, or after the operator turned the transfer off,
+      // cannot ring her merely because the caller was mid-call when it changed.
+      const { hours, liveTransfer } = await resolveVoiceState(Date.now());
+      handleRoute(req, res, body, liveConnectOffered(hours, liveTransfer));
       return;
     }
     case '/retry':

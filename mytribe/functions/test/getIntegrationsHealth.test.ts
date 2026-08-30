@@ -63,6 +63,15 @@ const FAKE = {
   TWILIO_ACCOUNT_SID: 'ACfakefakefakefakefakefakefakefake',
   TWILIO_AUTH_TOKEN: 'fakefakefakefakefakefakefakefake',
   TWILIO_FROM_NUMBER: '+15550000000',
+  // ISSUE #397: the Voice SDK signing key, required since press 3 became a
+  // live connect. Shaped like a real one (SK + 32 hex) because
+  // `mintVoiceAccessToken` checks the shape, not merely the presence.
+  // The other two Voice values, TWIML_APP_SID and PUSH_CREDENTIAL_SID, are
+  // deliberately ABSENT here: they are optional by design (see the catalog
+  // entry), and their absence is what proves an unset optional secret does not
+  // report the whole integration as broken.
+  TWILIO_API_KEY_SID: 'SKfakefakefakefakefakefakefakefake',
+  TWILIO_API_KEY_SECRET: 'fakeVoiceApiKeySecretValue123456',
   SMTP2GO_API_KEY: 'api-FAKEfakeFAKEfakeFAKEfake',
   EMAIL_FROM: 'auntie@tribetails.invalid',
   CLOUDINARY_CLOUD_NAME: 'fake-cloud',
@@ -187,6 +196,41 @@ describe('getIntegrationsHealth, a missing secret', () => {
   it('does not drag an unrelated integration down with it', async () => {
     const res = await run({ env: envWith({ TWILIO_AUTH_TOKEN: undefined }) });
     expect(row(res, 'smtp2go').status).not.toBe('missing');
+  });
+
+  /**
+   * ISSUE #397. The four Voice SDK secrets are not one group with one answer,
+   * and this pins the split so a future tidy-up cannot quietly flatten it.
+   *
+   * The rule is the CODE's rule, not a preference: `mintVoiceAccessToken`
+   * throws without the API key pair, and mints a perfectly valid grant without
+   * the other two. Marking all four required would report a red Twilio row —
+   * SMS, voice and all — over a TwiML Application that nothing in this repo
+   * calls, which is the demand PR #355 removed.
+   */
+  it('a missing voice API KEY is missing: press 3 cannot reach anyone without it', async () => {
+    const res = await run({ env: envWith({ TWILIO_API_KEY_SID: undefined }) });
+    const twilio = row(res, 'twilio');
+    expect(twilio.status).toBe('missing');
+    expect(twilio.summary).toContain('TWILIO_API_KEY_SID');
+  });
+
+  it('a missing TWIML_APP_SID is NOT missing: nothing in this app places a call', async () => {
+    // Absent in FAKE already, so the healthy baseline proves it. Stated
+    // outright anyway, because "the fixture happens to omit it" is not a rule
+    // anybody can read.
+    const res = await run({ env: envWith({}) });
+    const twilio = row(res, 'twilio');
+    expect(twilio.secrets.find((s) => s.name === 'TWIML_APP_SID')?.resolves).toBe(false);
+    expect(twilio.status).not.toBe('missing');
+  });
+
+  it('a missing PUSH_CREDENTIAL_SID is NOT missing: it only costs the background wake', async () => {
+    const res = await run({ env: envWith({}) });
+    const twilio = row(res, 'twilio');
+    expect(twilio.secrets.find((s) => s.name === 'PUSH_CREDENTIAL_SID')?.resolves).toBe(false);
+    expect(twilio.status).not.toBe('missing');
+    expect(twilio.remediation).toBe('');
   });
 
   it('names every missing secret at once rather than one at a time', async () => {

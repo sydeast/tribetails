@@ -31,17 +31,22 @@ import { logEvent } from '../lib/logger';
  *      ability to answer the business's phone, the narrower gate is the right
  *      one.
  *
- * ── WHY IT IS SAFE TO DEPLOY BEFORE THE SECRETS EXIST ─────────────────────────
+ * ── THE SECRETS EXIST NOW ─────────────────────────────────────────────────────
  *
- * The four Twilio values below have never existed in this project. The callable
- * is built anyway and throws `failed-precondition` NAMING THE MISSING SECRET,
- * so Android shows a specific, actionable banner rather than the silent `null`
- * `VoiceTokenManager.fetchToken` returns today against the 404ing endpoint.
+ * This header used to say the four Twilio values below "have never existed in
+ * this project", and that the callable had been built ahead of them. Both were
+ * true when written and neither is true now: all four are in Secret Manager,
+ * bound to this function, and the live connect runs on them.
+ *
+ * What survives that change is the ERROR SHAPE, and it earns its keep. Every
+ * missing or malformed value still throws `failed-precondition` NAMING THE
+ * SECRET, so a credential that is later revoked or re-pasted badly surfaces as
+ * a specific, actionable banner rather than as a device that quietly stops
+ * registering.
  *
  * Note `lib/declaredSecrets.ts`: the release preflight REFUSES a deploy when a
- * declared secret was never created in Secret Manager. That is intentional and
- * it applies to this file, so all four must be created before the next release,
- * even if their values are placeholders.
+ * declared secret was never created in Secret Manager, which is what keeps all
+ * four present for every future release rather than only for this one.
  */
 
 /**
