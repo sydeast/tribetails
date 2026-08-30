@@ -43,6 +43,11 @@ const BLANK_GOOGLE_CONNECTION = {
   calendarPushLastStatus: '',
   calendarPushLastPushed: 0,
   calendarPushLastError: '',
+  calendarAutoSyncLastRunAt: '',
+  calendarAutoSyncLastStatus: '',
+  calendarAutoSyncLastAction: '',
+  calendarAutoSyncLastSessionId: '',
+  calendarAutoSyncLastError: '',
 };
 
 // Notifications and Tags are their own self-loading editors, exercised by

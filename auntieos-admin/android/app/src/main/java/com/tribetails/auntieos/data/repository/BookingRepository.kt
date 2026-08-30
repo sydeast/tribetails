@@ -696,6 +696,33 @@ class BookingRepository(
         )
     }.onFailure { AuntieLog.e("Error pushing visits to Google Calendar", it) }
 
+    /**
+     * Brings ONE visit into line with the calendar (issue #397): the retry for a
+     * visit the automatic lifecycle sync could not write.
+     *
+     * NO ACTION IN THE REQUEST, and that is the contract rather than an
+     * omission. The server decides between create, update and delete from the
+     * stored visit, so a client cannot take a live visit off the operator's
+     * calendar or put a second copy of one on it. It is also what makes a
+     * second press safe: pressing Retry twice produces one event, not two.
+     */
+    suspend fun syncVisitToGoogleCalendar(sessionId: String): Result<GoogleCalendarVisitSyncResult> = runCatching {
+        AuntieLog.i("Syncing visit $sessionId to Google Calendar")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("syncVisitToGoogleCalendar")
+            .call(mapOf("sessionId" to sessionId))
+            .awaitCallable()
+            .data as? Map<String, Any?>
+            ?: error("syncVisitToGoogleCalendar: non-map payload")
+        GoogleCalendarVisitSyncResult(
+            sessionId = raw["sessionId"] as? String ?: sessionId,
+            action = raw["action"] as? String ?: "",
+            eventId = raw["eventId"] as? String ?: "",
+            reason = raw["reason"] as? String ?: "",
+            syncedAt = raw["syncedAt"] as? String ?: "",
+        )
+    }.onFailure { AuntieLog.e("Error syncing visit to Google Calendar", it) }
+
     private fun bookingTimesOverlap(
         start1: String, end1: String,
         start2: String, end2: String
@@ -1379,6 +1406,19 @@ data class GoogleCalendarPushResult(
 )
 
 /**
+ * What syncing ONE visit did (issue #397). `action` is `created`, `updated`,
+ * `deleted` or `skipped`; `reason` is non-empty only on a skip, and carries the
+ * server's own wording for what the operator must fix.
+ */
+data class GoogleCalendarVisitSyncResult(
+    val sessionId: String,
+    val action: String,
+    val eventId: String,
+    val reason: String,
+    val syncedAt: String,
+)
+
+/**
  * Normalizes a raw `connection` map into [GoogleCalendarConnection], naming
  * every field rather than trusting the map shape at each call site above.
  * Never reads a `refreshToken` key: the server projection this decodes never
@@ -1405,5 +1445,14 @@ private fun decodeGoogleCalendarConnection(raw: Any?): GoogleCalendarConnection 
         calendarPushLastStatus = c["calendarPushLastStatus"] as? String ?: "",
         calendarPushLastPushed = (c["calendarPushLastPushed"] as? Number)?.toInt() ?: 0,
         calendarPushLastError = c["calendarPushLastError"] as? String ?: "",
+        // Issue #397. Decoded even though every field defaults to "": a field
+        // present on the wire and absent from this decoder is invisible, and
+        // the whole point of these five is that a failed automatic sync is
+        // reported nowhere else.
+        calendarAutoSyncLastRunAt = c["calendarAutoSyncLastRunAt"] as? String ?: "",
+        calendarAutoSyncLastStatus = c["calendarAutoSyncLastStatus"] as? String ?: "",
+        calendarAutoSyncLastAction = c["calendarAutoSyncLastAction"] as? String ?: "",
+        calendarAutoSyncLastSessionId = c["calendarAutoSyncLastSessionId"] as? String ?: "",
+        calendarAutoSyncLastError = c["calendarAutoSyncLastError"] as? String ?: "",
     )
 }

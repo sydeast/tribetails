@@ -184,6 +184,14 @@ data class GoogleCalendarUiState(
     val pushing: Boolean = false,
     // Sessions the last push could not push, and why (no end time, etc).
     val pushSkipped: List<GoogleCalendarPushSkip> = emptyList(),
+    // Issue #397, retrying ONE visit the automatic lifecycle sync could not
+    // write. Separate from `pushing` so a retry cannot disable the bulk Push
+    // button or vice versa: they are different recoveries for different
+    // problems, and an operator may reasonably reach for either.
+    val retryingVisitSync: Boolean = false,
+    // The outcome of the last retry, in the server's words. Cleared when a new
+    // retry starts, so a stale success cannot sit above a fresh failure.
+    val visitSyncNote: String? = null,
     val disconnecting: Boolean = false,
     // Routed straight from the server's own message wherever one exists (a
     // thrown HttpsError's .message, or a stamped connectLastError/revokeError).
@@ -2153,6 +2161,65 @@ class EnhancedSchedulingViewModel(
                     refreshGoogleCalendarConnectionOnly()
                 }
         }
+    }
+
+    /**
+     * Retries ONE visit the automatic lifecycle sync could not write (issue
+     * #397).
+     *
+     * WHY THIS EXISTS AT ALL. `onKinCareSessionCalendarSync` deliberately does
+     * not rethrow, because Firestore would retry it and retrying a calendar
+     * write whose first attempt may already have created an event is how one
+     * visit becomes four. Recovery is therefore a human act, and this is it.
+     * Without it the only way to retry would be to edit the booking into
+     * re-triggering itself, which is asking an operator to fake a change to a
+     * real visit to work around our plumbing.
+     *
+     * The connection is re-read either way, exactly as the bulk push does: the
+     * server stamps the outcome, and that stamp is what the card shows after a
+     * transient banner is gone or the screen is reopened.
+     */
+    fun retryGoogleCalendarVisitSync(sessionId: String) {
+        val gcal = _state.value.googleCalendar
+        if (gcal.retryingVisitSync || sessionId.isBlank()) return
+        gcalUpdate { it.copy(retryingVisitSync = true, visitSyncNote = null, error = null) }
+        viewModelScope.launch {
+            bookingRepository.syncVisitToGoogleCalendar(sessionId)
+                .onSuccess { result ->
+                    gcalUpdate {
+                        it.copy(
+                            retryingVisitSync = false,
+                            // A SKIP is reported as a skip, never as a success.
+                            // "Nothing was written" and "it is on the calendar"
+                            // are different facts, and the reason names what
+                            // the operator has to fix.
+                            visitSyncNote = if (result.action == "skipped") {
+                                "Nothing was written for that visit. ${result.reason}"
+                            } else {
+                                "That visit is on the calendar now (${result.action})."
+                            },
+                        )
+                    }
+                    refreshGoogleCalendarConnectionOnly()
+                }
+                .onFailure { e ->
+                    // FAIL LOUD with the SERVER's message: it names the actual
+                    // remedy (reconnect, pick another calendar, add an end
+                    // time), and a friendly "Couldn't sync" would delete the
+                    // only text that says what to do next.
+                    gcalUpdate {
+                        it.copy(
+                            retryingVisitSync = false,
+                            error = e.message ?: "Couldn't sync that visit to Google Calendar.",
+                        )
+                    }
+                    refreshGoogleCalendarConnectionOnly()
+                }
+        }
+    }
+
+    fun clearGoogleCalendarVisitSyncNote() {
+        gcalUpdate { it.copy(visitSyncNote = null) }
     }
 
     /**
