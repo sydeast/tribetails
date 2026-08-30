@@ -1,12 +1,10 @@
 import { useId } from 'react';
-import type { FormField } from '../api/formSchemasWrite';
+import type { FormField, FormSection } from '../api/formSchemasWrite';
 import './SchemaPreview.css';
 
 export interface SchemaPreviewProps {
-  sectionTitle: string;
-  sectionDescription: string | null;
-  /** The in-flight field list, exactly as the editor holds it. */
-  fields: readonly FormField[];
+  /** The in-flight section list, exactly as the editor holds it. One card per section, in order. */
+  sections: readonly FormSection[];
 }
 
 /**
@@ -50,30 +48,47 @@ export interface SchemaPreviewProps {
  * wifi password is deliberately NOT mirrored: masking is about who may read a
  * stored value, and there is no stored value here. Showing an ordinary empty
  * box is the accurate picture of the control's shape.
+ *
+ * ONE CARD PER SECTION (issue #397, M17). This used to take a single section's
+ * `sectionTitle` / `sectionDescription` / `fields`, because the editor only
+ * ever held one section. Now that the editor holds the schema's real
+ * `sections: FormSection[]`, the preview renders every one of them, in order,
+ * the same way `DynamicFormFields` draws a multi-section schema for the
+ * Android live preview.
  */
-export function SchemaPreview({ sectionTitle, sectionDescription, fields }: SchemaPreviewProps) {
+export function SchemaPreview({ sections }: SchemaPreviewProps) {
   return (
     <section className="schema-preview" aria-label="Live preview">
       <span className="schema-preview__label">Live preview</span>
 
-      <div className="schema-preview__card">
-        <h4 className="schema-preview__section-title">{sectionTitle}</h4>
-        {sectionDescription ? (
-          <p className="schema-preview__section-description">{sectionDescription}</p>
-        ) : null}
-
-        {fields.length === 0 ? (
+      {sections.length === 0 ? (
+        <div className="schema-preview__card">
           <p className="schema-preview__empty">
             No fields yet. Each one you add appears here the way a kinfolk sees it.
           </p>
-        ) : (
-          <div className="schema-preview__fields">
-            {fields.map((field, idx) => (
-              <PreviewField key={idx} field={field} />
-            ))}
+        </div>
+      ) : (
+        sections.map((section, sIdx) => (
+          <div className="schema-preview__card" key={sIdx}>
+            <h4 className="schema-preview__section-title">{section.title}</h4>
+            {section.description ? (
+              <p className="schema-preview__section-description">{section.description}</p>
+            ) : null}
+
+            {section.fields.length === 0 ? (
+              <p className="schema-preview__empty">
+                No fields yet. Each one you add appears here the way a kinfolk sees it.
+              </p>
+            ) : (
+              <div className="schema-preview__fields">
+                {section.fields.map((field, idx) => (
+                  <PreviewField key={idx} field={field} />
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        ))
+      )}
     </section>
   );
 }
