@@ -117,7 +117,29 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.booking.confirm': [
     {
-      trigger: 'A visit is confirmed or approved (its status changes to confirmed/approved).',
+      // #536: ONE per approved request, not one per visit. Both approve paths
+      // come through this core: the manageBookingSeries callable both admin
+      // clients use, and requestBooking's auto-confirm for repeat kinfolk.
+      trigger:
+        'An operator books a whole care request, or auto-confirm books it for a repeat household (#536). ONE per request, naming every date. Sends nothing when a visit failed and the envelope is left retryable, or when the envelope was already confirmed.',
+      source: 'src/admin/approveBookingSeriesCore.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'serviceName',
+        'startTimeMs',
+        'startTimeMsList',
+        'visitCount',
+      ],
+    },
+    {
+      // Still live, and deliberately: batchUpdateBookings APPROVE confirms
+      // INDIVIDUAL visits (the React Bookings bulk bar, Android's Notifications
+      // quick-approve) with no envelope dispatch behind them. It writes no
+      // `requestApprovedAt` stamp, so this arm still fires for it.
+      trigger:
+        'A single visit is confirmed or approved on its own (its status changes to confirmed/approved without the envelope-approval stamp).',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
     },
@@ -308,7 +330,31 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'assignment.assigned': [
     {
-      trigger: 'An Auntie is assigned to a visit that had nobody on it.',
+      // #536, operator ruling 2026-08-23: the Auntie hears ONCE per approved
+      // envelope, naming every date, while her per-visit schedule records stay
+      // individual (each visit still gets its own kin_care_sessions row). Sent
+      // per distinct assignee, because assignAuntie can split an envelope
+      // between two Aunties and each is owed her own dates.
+      trigger:
+        'A whole care request is booked and its visits land on the assigned Auntie\'s schedule (#536). ONE per Auntie per request.',
+      source: 'src/admin/approveBookingSeriesCore.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'assignedAuntieUid',
+        'serviceName',
+        'startTimeMs',
+        'startTimeMsList',
+        'visitCount',
+      ],
+    },
+    {
+      // Still live for a genuine single-visit assignment (admin/assignAuntie).
+      // It no longer fires on a visit CREATE: writeEnvelope stamps the same
+      // default assignee on every child, so a four-day request handed the
+      // Auntie four "a visit is yours" messages for work nobody had approved.
+      trigger: 'An Auntie is assigned to an existing visit that had nobody on it.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',

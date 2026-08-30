@@ -6,6 +6,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { materializeKinRoster } from '../lib/kinRoster';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
+import { enqueueNotification } from '../notifications/dispatcher';
+import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 
 /**
  * Shared APPROVE core for a booking series (parent envelope
@@ -28,6 +30,14 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
  * a closure AFTER a request was submitted but BEFORE it is approved, and this
  * is the moment a real `kin_care_sessions` doc -- the thing Auntie Time and
  * billing actually read -- gets created.
+ *
+ * #536: IT ALSO OWNS THE "your request is booked" NOTIFICATIONS, one per
+ * ENVELOPE. `onBookingsWrite` is registered per VISIT, so a four-day request
+ * approved here used to dispatch `kincare.booking.confirm` four times to the
+ * household AND, through `secondaryResolver: 'businessAdmins'`, four times to
+ * the office. Same defect #532 fixed on the request side and #533 on the
+ * decline side. See the dispatch block at the bottom of this file for why the
+ * dispatch lives in this core rather than in a trigger on the envelope.
  */
 
 /** kinCares stores start/end as Firestore Timestamps; kin_care_sessions stores
@@ -56,6 +66,26 @@ export interface ApproveBookingSeriesResult {
   envelopeStatus: 'confirmed' | 'requested';
   /** false when the parent envelope does not exist (nothing approved). */
   found: boolean;
+  /**
+   * #536: visits this call actually moved INTO `confirmed`. A re-approve of an
+   * already-confirmed envelope reports 0 here even though `affectedVisits` is
+   * the full count, which is what stops a second household notification.
+   */
+  newlyConfirmed: number;
+  /**
+   * #536: true when this call dispatched the one per-envelope
+   * `kincare.booking.confirm`. The admin surfaces read it so their success
+   * copy can say whether the household actually heard anything, rather than
+   * claiming it on every outcome.
+   */
+  householdNotified: boolean;
+}
+
+/** One confirmed visit, as the envelope-level dispatches below need it. */
+interface ConfirmedVisit {
+  visitId: string;
+  startTimeMs: number | null;
+  assignedAuntieUid: string | null;
 }
 
 export async function approveBookingSeriesCore(opts: {
@@ -68,7 +98,15 @@ export async function approveBookingSeriesCore(opts: {
   const parentRef = db().doc(`families/${kinfolkId}/bookings/${batchId}`);
   const parentSnap = await parentRef.get();
   if (!parentSnap.exists) {
-    return { affectedVisits: 0, sessionsCreated: 0, failedVisits: 0, envelopeStatus: 'requested', found: false };
+    return {
+      affectedVisits: 0,
+      sessionsCreated: 0,
+      failedVisits: 0,
+      envelopeStatus: 'requested',
+      found: false,
+      newlyConfirmed: 0,
+      householdNotified: false,
+    };
   }
 
   const childSnap = await parentRef.collection('kinCares').get();
@@ -87,10 +125,25 @@ export async function approveBookingSeriesCore(opts: {
 
   let sessionsCreated = 0;
   let failedVisits = 0;
+  /**
+   * #536: every visit this call left `confirmed`, which is what the envelope
+   * dispatch NAMES. It is the whole booking, not the delta.
+   *
+   * The delta below decides WHETHER to send; this decides WHAT it says, and the
+   * two must not be the same list. A partial failure commits the visits that
+   * worked, so on the operator's retry those children read `confirmed` already
+   * and only the repaired one is new. Building the message from the delta would
+   * hand a household whose four-day request finally went through a single
+   * confirmation naming one date.
+   */
+  const confirmedVisits: ConfirmedVisit[] = [];
+  /** How many of them this call actually MOVED into `confirmed`. */
+  let newlyConfirmedCount = 0;
 
   for (const doc of childSnap.docs) {
     const id = doc.id;
     const data = doc.data() as Record<string, unknown>;
+    const wasConfirmed = data.status === 'confirmed';
     const childRef = parentRef.collection('kinCares').doc(id);
     const sessionRef = db().collection('kin_care_sessions').doc(`vis_${id}`);
 
@@ -171,9 +224,43 @@ export async function approveBookingSeriesCore(opts: {
         sessionsCreated += 1;
       }
       await childRef.set(
-        { status: 'confirmed', sessionId: sessionRef.id, sourceBookingId: id, updatedAt: FieldValue.serverTimestamp() },
+        {
+          status: 'confirmed',
+          sessionId: sessionRef.id,
+          sourceBookingId: id,
+          updatedAt: FieldValue.serverTimestamp(),
+          // #536: the stamp that tells `onBookingsWrite` this particular
+          // `-> confirmed` write is part of a WHOLE-ENVELOPE approval, whose
+          // notification is dispatched once at the bottom of this function.
+          //
+          // A STAMP, NOT THE `requested -> confirmed` TRANSITION, for the same
+          // reason #533 stamped the decline: that transition has a second,
+          // opposite meaning. `admin/batchUpdateBookings` APPROVE writes
+          // `status: 'confirmed'` straight onto individual `kinCares` docs --
+          // it is what the React admin's Bookings bulk bar and Android's
+          // Notifications quick-approve send -- and those confirmations are
+          // genuinely per-visit and have no envelope dispatch behind them.
+          // Gating on the bare transition would silence them.
+          //
+          // Rewritten on every approve (including a re-approve), which is what
+          // lets the trigger tell a NEW envelope approval from an unrelated
+          // later edit: it compares the value, not its presence. Deliberately
+          // NOT in CHANGE_WATCH_FIELDS -- a watched stamp would fire
+          // `kincare.changed` on every re-approve.
+          requestApprovedAt: FieldValue.serverTimestamp(),
+        },
         { merge: true },
       );
+      const startMs = Date.parse(toIso(data.startTime));
+      confirmedVisits.push({
+        visitId: id,
+        startTimeMs: Number.isFinite(startMs) ? startMs : null,
+        assignedAuntieUid:
+          typeof data.assignedAuntieUid === 'string' && data.assignedAuntieUid
+            ? data.assignedAuntieUid
+            : null,
+      });
+      if (!wasConfirmed) newlyConfirmedCount += 1;
     } catch (err) {
       failedVisits += 1;
       logEvent({
@@ -221,5 +308,142 @@ export async function approveBookingSeriesCore(opts: {
     extra: { batchId, affectedVisits: succeeded, failedVisits, sessionsCreated, actorRole },
   });
 
-  return { affectedVisits: succeeded, sessionsCreated, failedVisits, envelopeStatus, found: true };
+  // ── #536: the answer to the request, told ONCE ───────────────────────────
+  //
+  // WHY HERE AND NOT IN A TRIGGER. `envelopeStatus` reaching `confirmed` is
+  // written by this core AND by `onKinCareRollup`, so a trigger on the parent
+  // envelope would either double-fire or need a flag to tell the two writers
+  // apart. That is the reasoning already recorded in `manageBookingSeries.ts`
+  // for the decline dispatch, and it holds identically here. This core also
+  // already knows the whole child set and the counts, which a trigger would
+  // have to re-read.
+  //
+  // BOTH APPROVE PATHS COME THROUGH HERE: the `manageBookingSeries` callable
+  // that both admin clients call, and `requestBooking`'s `maybeAutoConfirm`.
+  // An auto-confirmed multi-visit request has always sent N confirmations, and
+  // this is the one line that fixes both.
+  //
+  // THE GATE, and it is #533's, deliberately. `failedVisits === 0` because a
+  // partial failure leaves the envelope `requested` on purpose so the operator
+  // retries (see the parent write above); dispatching now would send one
+  // notification per ATTEMPT, which is #532's defect wearing a different hat.
+  // `newlyConfirmedCount > 0` because a re-approve of an envelope that is
+  // already confirmed changed nothing and owes nobody news. The admin copy on
+  // both clients says which of these happened rather than claiming the
+  // household was told either way.
+  //
+  // THE GATE IS THE DELTA; THE MESSAGE IS THE WHOLE BOOKING. Those are two
+  // different lists and mixing them was a real bug. A partial failure commits
+  // the visits that worked, so on the retry those children already read
+  // `confirmed` and only the repaired one is new. Sending the delta would have
+  // given a household whose four-day request finally went through one
+  // confirmation naming one date. `confirmedVisits` is every child the loop
+  // left confirmed, which under `failedVisits === 0` is the whole envelope.
+  const shouldNotify = failedVisits === 0 && newlyConfirmedCount > 0;
+  // Reports what actually went out, not what was attempted: the dispatch is
+  // caught below so a notification failure cannot roll back the approval, and
+  // an admin toast that says "the household has been told" on the back of a
+  // swallowed error is exactly the kind of claim this issue is about.
+  let householdNotified = false;
+  const startTimeMsList = confirmedVisits
+    .map((v) => v.startTimeMs)
+    .filter((ms): ms is number => ms != null)
+    .sort((a, b) => a - b);
+
+  if (shouldNotify) {
+    // The household (and, via secondaryResolver: 'businessAdmins', the office).
+    // `bookingId` is the ENVELOPE, not a visit: this message is about the whole
+    // request, and `manageBookingSeries` rules on a batchId. The enricher turns
+    // `startTimeMsList` into `{{bookingDates}}` (#532), so one message names
+    // every date.
+    try {
+      const recipientUid = await resolveKinfolkUid(kinfolkId);
+      await enqueueNotification({
+        key: 'kincare.booking.confirm',
+        recipientUid: recipientUid ?? '',
+        data: {
+          kinfolkId,
+          batchId,
+          bookingId: batchId,
+          serviceName: (parentSnap.data()?.serviceName as string | undefined) ?? null,
+          startTimeMs: startTimeMsList[0] ?? null,
+          startTimeMsList,
+          visitCount: confirmedVisits.length,
+        },
+        targetType: 'booking',
+        targetId: batchId,
+      });
+      householdNotified = true;
+    } catch (err) {
+      // The approval itself succeeded and is audited. A failed notification
+      // must not roll that back, but it must not be silent either: a household
+      // whose booking was confirmed and who never heard is the defect.
+      logEvent({
+        severity: 'warn',
+        function: 'approveBookingSeriesCore',
+        event: 'notification.dispatch.failed',
+        uid: actorUid,
+        extra: { kinfolkId, batchId, key: 'kincare.booking.confirm', err: (err as Error)?.message },
+      });
+    }
+
+    // The assigned Auntie. OPERATOR RULING 2026-08-23: she gets ONE summary
+    // message per envelope, while the per-visit SCHEDULE records stay
+    // individual -- every visit still lands separately on her schedule surface
+    // (its own `kin_care_sessions/vis_{visitId}` doc, written above). Message
+    // noise goes down; schedule fidelity is kept.
+    //
+    // Grouped by uid rather than assumed to be one Auntie: `writeEnvelope`
+    // stamps the SAME default assignee on every child, but `admin/assignAuntie`
+    // is per-visit, so a half-reassigned envelope really does owe two people
+    // their own dates. Each still hears once.
+    // Over `confirmedVisits`, not the delta, for the same reason the household's
+    // list is: on a retry her summary must still cover the whole booking she is
+    // about to work, not the one visit that had failed.
+    const byAuntie = new Map<string, number[]>();
+    for (const v of confirmedVisits) {
+      if (!v.assignedAuntieUid || v.startTimeMs == null) continue;
+      const list = byAuntie.get(v.assignedAuntieUid) ?? [];
+      list.push(v.startTimeMs);
+      byAuntie.set(v.assignedAuntieUid, list);
+    }
+    for (const [auntieUid, msList] of byAuntie) {
+      try {
+        await enqueueNotification({
+          key: 'assignment.assigned',
+          recipientUid: auntieUid,
+          data: {
+            kinfolkId,
+            batchId,
+            bookingId: batchId,
+            assignedAuntieUid: auntieUid,
+            serviceName: (parentSnap.data()?.serviceName as string | undefined) ?? null,
+            startTimeMs: msList[0] ?? null,
+            startTimeMsList: [...msList].sort((a, b) => a - b),
+            visitCount: msList.length,
+          },
+          targetType: 'booking',
+          targetId: batchId,
+        });
+      } catch (err) {
+        logEvent({
+          severity: 'warn',
+          function: 'approveBookingSeriesCore',
+          event: 'notification.dispatch.failed',
+          uid: actorUid,
+          extra: { kinfolkId, batchId, key: 'assignment.assigned', auntieUid, err: (err as Error)?.message },
+        });
+      }
+    }
+  }
+
+  return {
+    affectedVisits: succeeded,
+    sessionsCreated,
+    failedVisits,
+    envelopeStatus,
+    found: true,
+    newlyConfirmed: newlyConfirmedCount,
+    householdNotified,
+  };
 }

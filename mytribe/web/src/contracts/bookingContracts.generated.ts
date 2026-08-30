@@ -263,6 +263,8 @@ export interface ManageBookingSeriesResult {
   affectedVisits: number;
   sessionsCreated: number;
   failedVisits: number;
+  householdNotified: boolean;
+  newlyConfirmed: number;
 }
 
 // ---------- requestBooking ----------

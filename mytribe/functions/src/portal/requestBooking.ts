@@ -591,6 +591,16 @@ export async function requestBookingHandler(
 }
 
 export const requestBooking = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    // #536: maybeAutoConfirm runs approveBookingSeriesCore, which now dispatches
+    // `kincare.booking.confirm` in-process. That key carries
+    // `secondaryResolver: 'businessAdmins'`, and lib/businessAdmins reads
+    // AUNTIE_OPERATOR_UIDS to answer (and self-heal) an empty
+    // businessSettings/admins roster, so the office copy of an auto-confirmed
+    // booking needs the binding here too.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+  },
   wrapCallable('requestBooking', requestBookingHandler),
 );

@@ -336,5 +336,90 @@ class EnhancedSchedulingViewModelTest {
         assertNotNull(err)
         assertTrue(err!!.contains("3"))
         assertTrue(err.contains("2"))
+        // #536: nothing is dispatched on a partial failure, so the operator has
+        // to know the household is still waiting.
+        assertTrue(err.contains("household has not been told"))
+    }
+
+    // #536. Approving a four-day request sent the household one message PER
+    // VISIT and this screen said nothing about it either way. It now sends
+    // exactly one, and the screen reports the server's own answer.
+    @Test
+    fun `approveSeries says the household was told once`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                    affectedVisits = 4, newlyConfirmed = 4, householdNotified = true,
+                ),
+            )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.approveSeries(vm.state.value.incomingSeries.single())
+        advanceUntilIdle()
+        val msg = vm.state.value.seriesActionMessage
+        assertNotNull(msg)
+        assertTrue(msg!!.contains("told once, with every date"))
+    }
+
+    @Test
+    fun `re-approving a booked request does not claim the household was told again`() =
+        runTest(testDispatcher) {
+            seedIncomingSeries()
+            coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+                Result.success(
+                    com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                        affectedVisits = 4, newlyConfirmed = 0, householdNotified = false,
+                    ),
+                )
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.approveSeries(vm.state.value.incomingSeries.single())
+            advanceUntilIdle()
+            val msg = vm.state.value.seriesActionMessage
+            assertNotNull(msg)
+            assertTrue(msg!!.contains("already booked"))
+            assertTrue(!msg.contains("told once"))
+        }
+
+    @Test
+    fun `a booking whose message failed tells the operator to reach them another way`() =
+        runTest(testDispatcher) {
+            seedIncomingSeries()
+            coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1") } returns
+                Result.success(
+                    com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                        affectedVisits = 4, newlyConfirmed = 4, householdNotified = false,
+                    ),
+                )
+            val vm = buildViewModel()
+            advanceUntilIdle()
+            vm.approveSeries(vm.state.value.incomingSeries.single())
+            advanceUntilIdle()
+            val msg = vm.state.value.seriesActionMessage
+            assertNotNull(msg)
+            assertTrue(msg!!.contains("did not go out"))
+        }
+
+    // CANCEL confirms nothing, so `newlyConfirmed` is always 0 on that path. Its
+    // wording must not fall into the re-approve branch and call a decline
+    // "already booked".
+    @Test
+    fun `cancelling a series reports the decline the household heard`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries("CANCEL", "kf1", "b1") } returns
+            Result.success(
+                com.tribetails.auntieos.data.repository.ManageSeriesResult(
+                    affectedVisits = 4, newlyConfirmed = 0, householdNotified = true,
+                ),
+            )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.cancelSeries(vm.state.value.incomingSeries.single())
+        advanceUntilIdle()
+        val msg = vm.state.value.seriesActionMessage
+        assertNotNull(msg)
+        assertTrue(msg!!.contains("told once, with every date"))
+        assertTrue(!msg.contains("already booked"))
     }
 }

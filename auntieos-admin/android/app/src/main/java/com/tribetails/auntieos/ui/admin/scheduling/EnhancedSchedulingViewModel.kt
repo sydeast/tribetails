@@ -12,6 +12,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.ManageSeriesResult
 import com.tribetails.auntieos.data.repository.BookingRepository
 import com.tribetails.auntieos.data.repository.GoogleCalendarPushSkip
 import com.tribetails.auntieos.data.repository.GoogleCalendarSummary
@@ -322,6 +323,37 @@ class EnhancedSchedulingViewModel(
     /** Cancel a whole incoming series. */
     fun cancelSeries(series: IncomingSeries) = runSeriesAction(series, "CANCEL")
 
+    /**
+     * What the household actually heard about this decision (#536), for the
+     * success message only. The partial-failure branch says its own thing.
+     *
+     * Approving a four-day request used to send one message PER VISIT and this
+     * screen said nothing about it either way, which left the React admin
+     * claiming "the household has been told" while Android said nothing. Both
+     * now report the server's own answer: one message naming every date, or an
+     * honest account of why none went.
+     *
+     * ONE CONSTRAINT ON THE CANCEL BRANCH. `cancelSeries` here is fed only from
+     * the incoming-requests stream, which is `requested` visits, so a CANCEL
+     * from this screen is always a DECLINE and `householdNotified` really does
+     * report the one `kincare.request.declined`. Cancelling an ALREADY
+     * CONFIRMED series is a different event: the callable dispatches nothing and
+     * `onBookingsWrite` sends `kincare.booking.cancel` per visit instead, so
+     * `householdNotified` would be false while the household was told. Do not
+     * reuse this on a confirmed-series cancel without giving that case its own
+     * wording.
+     *
+     * Internal so its wording is unit-testable without a ViewModel.
+     */
+    internal fun householdLine(action: String, res: ManageSeriesResult): String = when {
+        action == "APPROVE" && res.newlyConfirmed == 0 ->
+            "It was already booked, so nothing new was sent."
+        res.householdNotified ->
+            "The household was told once, with every date."
+        else ->
+            "The message to the household did not go out, so tell them another way."
+    }
+
     private fun runSeriesAction(series: IncomingSeries, action: String) {
         if (_state.value.seriesActionBatchId != null) return
         _state.value = _state.value.copy(seriesActionBatchId = series.batchId, seriesActionMessage = null, incomingError = null)
@@ -334,15 +366,20 @@ class EnhancedSchedulingViewModel(
                         // FAIL LOUD on a partial failure: the backend leaves the
                         // envelope 'requested' for the failed visits. Surface it as
                         // an error, not a clean success message.
+                        //
+                        // #536: it also dispatches NOTHING in this case, so the
+                        // household is still waiting. Say so: an operator who
+                        // reads a partial failure as "they were told about the
+                        // ones that worked" stops chasing it.
                         _state.value = _state.value.copy(
                             seriesActionBatchId = null,
                             seriesActionMessage = null,
-                            incomingError = "$verb $who: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. Retry after resolving.",
+                            incomingError = "$verb $who: ${res.affectedVisits} succeeded, ${res.failedVisits} failed and stay pending. The household has not been told. Retry after resolving.",
                         )
                     } else {
                         _state.value = _state.value.copy(
                             seriesActionBatchId = null,
-                            seriesActionMessage = "$verb $who: ${res.affectedVisits} visit(s).",
+                            seriesActionMessage = "$verb $who: ${res.affectedVisits} visit(s). ${householdLine(action, res)}",
                         )
                     }
                 }

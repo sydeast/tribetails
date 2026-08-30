@@ -35,6 +35,17 @@ type BookingDoc = {
    * `kincare.booking.cancel`.
    */
   requestDeclinedAt?: unknown;
+  /**
+   * #536: stamped by admin/approveBookingSeriesCore on every visit it confirms
+   * as part of a WHOLE-ENVELOPE approval. It tells this trigger the household
+   * is hearing `kincare.booking.confirm` once for the request, from the core,
+   * rather than once per visit from here.
+   *
+   * NOT in CHANGE_WATCH_FIELDS on purpose: the core rewrites it on every
+   * approve, and a watched stamp would fire `kincare.changed` on a re-approve
+   * that changed nothing a household would recognise.
+   */
+  requestApprovedAt?: unknown;
 };
 
 /**
@@ -122,6 +133,27 @@ function fieldChanged(
 }
 
 /**
+ * True when THIS write is the one that stamped `requestApprovedAt` (#536): i.e.
+ * `admin/approveBookingSeriesCore` just confirmed this visit as part of a whole
+ * envelope approval, and has dispatched the household's one notification itself.
+ *
+ * Compares the VALUE, not its presence. The core rewrites a fresh
+ * `serverTimestamp()` on every approve, so an envelope that was approved,
+ * cancelled, then approved again carries a stamp from the FIRST approval on
+ * `before`. A presence test would read that as "already told" and silence a
+ * confirmation that really is new.
+ *
+ * Exported for unit tests.
+ */
+export function approveStampedByThisWrite(
+  before: BookingDoc | undefined,
+  after: BookingDoc,
+): boolean {
+  if (!after.requestApprovedAt) return false;
+  return fieldChanged(before, after, 'requestApprovedAt');
+}
+
+/**
  * Pure decision table for staff assignment notifications (vendor-parity
  * 2026-07-02). Returns the assignment.* dispatches a bookings write implies:
  *   - assignedAuntieUid set/changed  -> assignment.assigned to the new auntie
@@ -178,7 +210,7 @@ export function assignmentDispatches(
  * Watches every per-visit write under
  * `families/{kinfolkId}/bookings/{batchId}/kinCares/{visitId}`. Notifications
  * are keyed on the per-visit `status` (BookingStatus):
- *   - create with status=requested              -> NOTHING; see #532 below
+ *   - create with status=requested              -> NOTHING; see #532/#536 below
  *   - any -> confirmed/approved                 -> kincare.booking.confirm (both)
  *   - any -> cancelled                          -> kincare.booking.cancel (both)
  *   - any -> unavailable                        -> kincare.unavailable (business)
@@ -191,6 +223,14 @@ export function assignmentDispatches(
  * per VISIT, so a four-day request dispatched it four times. It now comes from
  * onBookingEnvelopeCreate, on the parent `bookings/{batchId}` doc, once per
  * request. Do not put a per-visit dispatch of it back here.
+ *
+ * #536: neither is `assignment.assigned` on a CREATE. `writeEnvelope` stamps the
+ * SAME default assignee on every child, so a four-day request put four "a visit
+ * is yours" messages in the Auntie's hands for work nobody had approved yet.
+ * Operator ruling 2026-08-23: she gets ONE summary, at APPROVAL, dispatched by
+ * `admin/approveBookingSeriesCore`, while the per-visit schedule records stay
+ * individual. So a create now genuinely dispatches nothing, which is what the
+ * #532 comment below always claimed and, until this change, was not true of.
  */
 export const onBookingsWrite = onDocumentWritten(
   {
@@ -244,11 +284,26 @@ export const onBookingsWrite = onDocumentWritten(
       }
     };
 
+    const changedFieldsAll = CHANGE_WATCH_FIELDS.filter((f) => fieldChanged(before, after, f));
+
+    // #532/#536: a REQUEST being written is envelope news, not visit news, and
+    // this trigger runs once per visit. `kincare.requested` moved to
+    // onBookingEnvelopeCreate and the Auntie's summary moved to
+    // approveBookingSeriesCore, so a bare create now dispatches NOTHING at all.
+    //
+    // This return sits ABOVE every dispatch, not just the status arms. It used
+    // to sit below the assignment loop, which meant `writeEnvelope`'s default
+    // assignee fired `assignment.assigned` once per child -- four "a visit is
+    // yours" messages for one unapproved request. Nothing else above here was
+    // ever live on a create (a fresh visit carries no cancel or reschedule ask),
+    // so moving it up changes exactly that one behaviour. Do not put a
+    // per-visit dispatch back above this line.
+    if (isCreate && afterStatus === 'requested') return;
+
     // Vendor-parity (2026-07-02): staff assignment notifications, decided by the
     // pure table above; independent of the kinfolk/business status flow below.
     // The resolver reads assignedAuntieUid from the dispatch data, so each
     // dispatch names the auntie whose copy it is.
-    const changedFieldsAll = CHANGE_WATCH_FIELDS.filter((f) => fieldChanged(before, after, f));
     for (const d of assignmentDispatches(before, after, changedFieldsAll)) {
       await dispatch(d.key, { ...d.extra, assignedAuntieUid: d.auntieUid });
     }
@@ -272,17 +327,27 @@ export const onBookingsWrite = onDocumentWritten(
         reason: after.rescheduleRequestReason ?? null,
       });
     }
-    // #532: a visit create used to dispatch `kincare.requested` here. It does NOT
-    // any more. This trigger is registered per VISIT, so a four-day request sent
-    // the office four copies of one request. The key now comes from
-    // onBookingEnvelopeCreate, once per envelope. A bare create falls through
-    // every arm below (`beforeStatus` is null, so the transition arm matches
-    // nothing) and dispatches nothing, which is the invariant its test asserts.
-    if (isCreate && afterStatus === 'requested') return;
-
     if (beforeStatus !== afterStatus) {
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
-        await dispatch('kincare.booking.confirm');
+        // #536. An ENVELOPE approval is one answer to one request, and this
+        // trigger is registered per visit, so a four-day approval sent the
+        // household four "your booking is confirmed" messages -- and, through
+        // `secondaryResolver: 'businessAdmins'`, four to the office too. The
+        // envelope-grained message is dispatched by
+        // `admin/approveBookingSeriesCore`, which is also the auto-confirm path
+        // `requestBooking` takes.
+        //
+        // The test is the explicit `requestApprovedAt` stamp, NOT the
+        // `requested -> confirmed` transition, because that transition has a
+        // second meaning with no envelope dispatch behind it:
+        // `admin/batchUpdateBookings` APPROVE writes `status: 'confirmed'`
+        // straight onto individual `kinCares` docs (the React admin's Bookings
+        // bulk bar, and Android's Notifications quick-approve). Those are
+        // genuinely per-visit confirmations and gating on the bare transition
+        // would silence every one of them.
+        if (!approveStampedByThisWrite(before, after)) {
+          await dispatch('kincare.booking.confirm');
+        }
       } else if (afterStatus === 'cancelled') {
         // #533. A DECLINED request is not a cancelled visit. Those visits were
         // never on the household's schedule, so "your visit was cancelled"

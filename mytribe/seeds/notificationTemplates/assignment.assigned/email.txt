@@ -1,6 +1,8 @@
 Subject: A KinCare visit is yours
 
-Good news: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}} just landed on your schedule.
+Good news: a {{serviceType}} for {{kinName}} just landed on your schedule.
+
+When: {{bookingDates}}
 
 Give the visit details a look so you're set before you head out.
 

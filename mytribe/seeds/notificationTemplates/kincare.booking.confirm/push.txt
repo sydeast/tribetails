@@ -1,1 +1,1 @@
-Your booking is confirmed. {{kinName}}'s {{serviceType}} is set for {{bookingDate}}. Tap for the details.
+Your booking is confirmed. {{kinName}}'s {{serviceType}}: {{bookingDates}}. Tap for the details.

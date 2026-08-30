@@ -357,6 +357,14 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
  * times. Approving creates the `kin_care_sessions` rows, which is what makes the
  * visits appear on the Bookings list and the schedule; declining books nothing
  * and sends the household the operator's reason once.
+ *
+ * #536: THE COPY REPORTS THE SERVER'S ANSWER, IT DOES NOT ASSUME IT. Every clean
+ * approve used to end with "the household has been told", which undercounted:
+ * one approval sent one message per visit, so a four-day request told them four
+ * times. Now it really is once, and the same toast has to stop claiming it in
+ * the two cases where nothing was sent at all: a partial failure (the request
+ * stays retryable and the household is still waiting) and a re-approve of a
+ * request that was already booked. `householdNotified` reports what went out.
  */
 async function submitNewRequest(
   kinfolkId: string,
@@ -365,16 +373,23 @@ async function submitNewRequest(
   note: string,
 ): Promise<string> {
   if (decision === 'decline') {
-    await declineBookingRequest(kinfolkId, batchId, note);
-    return 'Declined. Nothing was booked and the household gets your reason.';
+    const declined = await declineBookingRequest(kinfolkId, batchId, note);
+    return declined.householdNotified
+      ? 'Declined. Nothing was booked and the household has your reason.'
+      : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.';
   }
   const res = await approveBookingRequest(kinfolkId, batchId);
   if (res.failedVisits > 0) {
-    return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through, so try again.`;
+    return `Booked ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`;
   }
-  return res.affectedVisits === 1
-    ? 'Approved. The visit is on the schedule and the household has been told.'
-    : `Approved. All ${String(res.affectedVisits)} visits are on the schedule and the household has been told.`;
+  if (res.newlyConfirmed === 0) {
+    return 'Already booked. Nothing changed, so the household was not told again.';
+  }
+  const visits =
+    res.affectedVisits === 1 ? 'The visit is' : `All ${String(res.affectedVisits)} visits are`;
+  return res.householdNotified
+    ? `Booked. ${visits} on the schedule and the household has been told once, with every date.`
+    : `Booked. ${visits} on the schedule, but the message to the household did not go out, so tell them another way.`;
 }
 
 async function submitReschedule(

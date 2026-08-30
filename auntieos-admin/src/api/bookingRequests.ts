@@ -48,6 +48,11 @@ export function listPendingBookingRequests(
  * Approves a whole request: every visit becomes `confirmed` and gets its
  * `kin_care_sessions` row, so it appears on the Bookings list and the schedule.
  * Idempotent server-side, so a double-click cannot double-book.
+ *
+ * #536: the household hears ONCE, naming every date, not once per visit. The
+ * result carries `householdNotified` and `newlyConfirmed` so the toast can say
+ * what actually happened: a re-approve confirms nothing and tells nobody, and a
+ * partial failure leaves the request retryable with the household still waiting.
  */
 export function approveBookingRequest(
   kinfolkId: string,

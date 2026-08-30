@@ -46,6 +46,28 @@ export const Result = z
     sessionsCreated: z.number().int().nonnegative(),
     /** Visits whose write failed and were skipped (fail-loud; 0 = full success). */
     failedVisits: z.number().int().nonnegative(),
+    /**
+     * #536: whether the household actually heard about this decision, and how
+     * many visits it was about.
+     *
+     * Both admin clients used to say "the household has been told" on every
+     * clean APPROVE. That was true in the weakest sense and wrong in the
+     * useful one: a four-visit approval told them four times, and a partial
+     * failure or a re-approve told them nothing while the toast said
+     * otherwise. Approving now sends ONE message, from
+     * `approveBookingSeriesCore`, and these two fields are what let a toast
+     * describe what happened instead of guessing.
+     *
+     * `householdNotified` reports what WENT OUT, not what was attempted: the
+     * dispatch is caught so a notification failure cannot roll back a booking
+     * that is already made and audited.
+     *
+     * Both are always present on APPROVE. CANCEL reports its own decline
+     * dispatch the same way, so a decline toast can stop guessing too.
+     */
+    householdNotified: z.boolean(),
+    /** Visits this call actually moved into `confirmed` (0 on a re-approve). */
+    newlyConfirmed: z.number().int().nonnegative(),
   })
   .strict();
 
@@ -87,6 +109,8 @@ export async function manageBookingSeriesHandler(
       affectedVisits: r.affectedVisits,
       sessionsCreated: r.sessionsCreated,
       failedVisits: r.failedVisits,
+      householdNotified: r.householdNotified,
+      newlyConfirmed: r.newlyConfirmed,
     });
   }
 
@@ -200,6 +224,9 @@ export async function manageBookingSeriesHandler(
   // decline. That is #532's defect on the deny path. It also stops us telling a
   // household their request was declined while it is still sitting there
   // retryable: the decision has not actually been carried out yet.
+  // #536: reported back so the decline toast on both clients can say what
+  // actually went out rather than assuming, the same way APPROVE now does.
+  let householdNotified = false;
   if (isDecliningRequest && failedVisits === 0) {
     try {
       const recipientUid = await resolveKinfolkUid(args.kinfolkId);
@@ -219,6 +246,7 @@ export async function manageBookingSeriesHandler(
         targetType: 'booking',
         targetId: args.batchId,
       });
+      householdNotified = true;
     } catch (err) {
       // The decision itself already succeeded and is audited. A failed
       // notification must not roll that back, but it must not be silent either:
@@ -245,10 +273,25 @@ export async function manageBookingSeriesHandler(
     affectedVisits: succeeded,
     sessionsCreated: 0,
     failedVisits,
+    householdNotified,
+    // CANCEL confirms nothing. The field is required so a client never has to
+    // branch on which action it asked for before reading the shape back.
+    newlyConfirmed: 0,
   });
 }
 
 export const manageBookingSeries = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    // #536: APPROVE now dispatches `kincare.booking.confirm` in-process, via
+    // approveBookingSeriesCore. That key carries
+    // `secondaryResolver: 'businessAdmins'`, and lib/businessAdmins reads
+    // AUNTIE_OPERATOR_UIDS to answer (and self-heal) an empty
+    // businessSettings/admins roster. Without the binding the office copy would
+    // resolve to nobody and die quietly in the dispatch catch. Same reasoning
+    // and same binding as onBookingsWrite / onBookingEnvelopeCreate.
+    secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'],
+  },
   wrapAdminCallable('manageBookingSeries', manageBookingSeriesHandler),
 );

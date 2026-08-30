@@ -85,7 +85,12 @@ describe('enrichTemplateData: invoice.new (the canonical gap)', () => {
 });
 
 describe('enrichTemplateData: bookings', () => {
-  it('kincare.booking.confirm: maps serviceName→serviceType, formats date/time, names from family + booking', async () => {
+  // #536: this key is now dispatched once per approved ENVELOPE and renders
+  // `bookingDates`, not the single `bookingDate`/`bookingTime` pair. The
+  // single-visit shape below is what `admin/batchUpdateBookings` still sends
+  // (one visit, `startTimeMs` only, no list), and the enricher's fallback is
+  // what keeps it reading as a date rather than going blank.
+  it('kincare.booking.confirm: maps serviceName→serviceType, renders one date from a lone startTimeMs, names from family + booking', async () => {
     // Jul 4 2026 18:30 UTC = 14:30 America/New_York (EDT, UTC-4).
     const startMs = Date.UTC(2026, 6, 4, 18, 30);
     const ctx = buildDbMock({
@@ -112,9 +117,36 @@ describe('enrichTemplateData: bookings', () => {
     expect(out.serviceType).toBe('Dog Walk');
     expect(out.kinfolkName).toBe('The Rivera Home');
     expect(out.kinName).toBe('Rex, Bella');
-    expect(out.bookingDate).toMatch(/Jul/);
-    expect(out.bookingTime).toMatch(/2:30/);
-    expect(out.bookingTime).toMatch(/PM/i);
+    expect(out.bookingDates).toMatch(/Jul/);
+    expect(out.bookingDates).toMatch(/4/);
+    // A one-visit confirmation reads as a bare date, never "1 visit, ...".
+    expect(out.bookingDates).not.toMatch(/visit/i);
+  });
+
+  it('kincare.booking.confirm: an approved four-visit envelope names all four dates in ONE render (#536)', async () => {
+    const day = (d: number) => Date.UTC(2026, 8, d, 14, 0);
+    const ctx = buildDbMock({
+      docs: {
+        'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' },
+        'business_settings/business_settings': { timeZone: 'America/New_York' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const out = await enrichTemplateData('kincare.booking.confirm', 'cli1', {
+      kinfolkId: 'fam1',
+      batchId: 'b1',
+      // The envelope, not a visit: this message answers the whole request.
+      bookingId: 'b1',
+      serviceName: 'Dog Walk',
+      startTimeMs: day(4),
+      startTimeMsList: [day(4), day(5), day(6), day(7)],
+      visitCount: 4,
+    });
+
+    expect(out.bookingDates).toContain('4 visits');
+    expect(out.bookingDates).toMatch(/Sep 4/);
+    expect(out.bookingDates).toMatch(/Sep 7/);
   });
 
   it('kincare.requested (business audience): kinfolkName comes from the family, NOT the staff recipient', async () => {

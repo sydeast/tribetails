@@ -43,7 +43,13 @@ const DEFAULT_TIME_ZONE = 'America/New_York';
  * (link, score, count, incidentId, ip, ...).
  */
 export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
-  'assignment.assigned': ['bookingDate', 'bookingTime', 'kinName', 'serviceType'],
+  // #536: the Auntie's copy is ONE message per approved envelope (operator
+  // ruling 2026-08-23), so it names every date through `bookingDates` rather
+  // than the single `bookingDate`/`bookingTime` pair one visit had. Her
+  // per-visit schedule records are untouched; only the messaging collapsed.
+  // `assignment.changed` below stays per-visit (reassigned, unassigned,
+  // cancelled, edited) and keeps `bookingDate`.
+  'assignment.assigned': ['bookingDates', 'kinName', 'serviceType'],
   'assignment.changed': ['bookingDate', 'kinName', 'serviceType'],
   'account.welcome.kinfolk': ['kinfolkName'],
   'auth.account.locked': ['email'],
@@ -67,7 +73,14 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.auntie.departed': ['serviceType'],
   'kincare.auntie.on_my_way': ['serviceType'],
   'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.booking.confirm': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
+  // #536: a booking approval answers a whole REQUEST, so this key is dispatched
+  // once per envelope by admin/approveBookingSeriesCore and names every date
+  // through `bookingDates`. `admin/batchUpdateBookings` still confirms single
+  // visits and sends the same key with only `startTimeMs`; the enricher falls
+  // back to it, so a one-visit confirmation still reads "Fri, Sep 4". The cost
+  // of the merge is the exact clock time, which a multi-visit message could not
+  // have stated truthfully anyway.
+  'kincare.booking.confirm': ['bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
   'kincare.cancel.requested': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   // `note` is emitter-supplied, like the dispute fields above: it is the
   // operator's own words, carried on the dispatch, with no entity to hydrate
