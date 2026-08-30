@@ -1,0 +1,197 @@
+name: Nightly release
+
+# ONE RELEASE A NIGHT, CARRYING EVERYTHING MERGED THAT DAY.
+#
+# The problem this closes: merging deployed nothing. `ci.yml` runs tests,
+# `main-channel.yml` publishes main's HEAD to a hosting channel, and production
+# moved only when someone ran `scripts/release.sh` by hand. On 2026-08-29 the
+# live sites were fifteen merges and seventeen hours behind main.
+#
+# WHY NIGHTLY AND NOT ON MERGE. A release deploys ~280 functions in batches of
+# 25 with a 30 second settle between them, because of the Cloud Run quota wall
+# this project has already hit. That is roughly an hour before hosting and
+# Android are touched. Eleven merges in a day, as happened on 2026-08-29, would
+# be eleven hours of deploys stacked end to end. And the obvious fix is worse
+# than the problem: cancelling a superseded release mid-flight leaves production
+# running half the new functions. So this batches a day's merges into one run
+# and never cancels itself. See `concurrency` below.
+#
+# NOTHING HERE BYPASSES A GUARD. `release.sh` still refuses on a red or missing
+# CI verdict for the commit, still runs the secret preflight, still refuses when
+# the Android builds have no audience. `RELEASE_YES=1` suppresses the
+# interactive prompts and nothing else; the script's own header says so.
+
+on:
+  schedule:
+    # 08:00 UTC is 03:00 America/Chicago in CDT. GitHub's scheduler is
+    # best-effort and drifts under load, which is fine for a nightly.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'What to run (overrides the NIGHTLY_RELEASE variable)'
+        type: choice
+        default: preflight
+        options: [preflight, full]
+
+# NEVER CANCEL A RELEASE. This is the one workflow in the repo where
+# `cancel-in-progress: true` would be actively dangerous: a cancelled channel
+# deploy is nothing, but a cancelled function batch leaves production serving
+# some new functions and some old. A second run arriving while one is mid-flight
+# waits its turn instead.
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release main to production
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # A full release is about an hour. Three hours leaves room for a slow
+    # functions deploy without letting a wedged one hold the runner all day.
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release.sh tags the released commit and prunes merged branches, so
+          # it needs history and a token that can push.
+          fetch-depth: 0
+
+      # THE SWITCH, AND IT IS OFF UNTIL YOU TURN IT ON.
+      #
+      # `vars.NIGHTLY_RELEASE` is a repository variable with three positions:
+      #
+      #   unset / anything else  do nothing. This is the default, so merging
+      #                          this workflow does not start deploying.
+      #   preflight              run the preflight and STOP. Proves the runner
+      #                          can authenticate, that the secrets resolve and
+      #                          that CI's verdict is green, without deploying.
+      #   on                     the real thing.
+      #
+      # Run it in `preflight` for a few nights first. The runner is the
+      # operator's own Mac and inherits whatever Firebase and gcloud login that
+      # machine holds; nobody has ever proved a release works unattended from
+      # it, and preflight is how that gets proved without production as the
+      # test subject.
+      #
+      # A manual run's `mode` input wins over the variable, so you can force a
+      # preflight or a full release without touching settings.
+      - name: Decide what this run does
+        id: decide
+        env:
+          SWITCH: ${{ vars.NIGHTLY_RELEASE }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          mode="${INPUT_MODE:-}"
+          if [ -z "$mode" ]; then
+            case "$SWITCH" in
+              on) mode="full" ;;
+              preflight) mode="preflight" ;;
+              *) mode="off" ;;
+            esac
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Mode: $mode"
+
+      # Nothing merged since the last release means nothing to ship. Releasing
+      # an unchanged commit would still take an hour, still churn ~280 Cloud Run
+      # revisions, and still notify every Android tester about a build identical
+      # to the one they have.
+      - name: Skip when nothing has merged since the last release
+        id: newness
+        if: steps.decide.outputs.mode != 'off'
+        run: |
+          last_tag="$(git tag --list 'release/*' --sort=-creatordate | head -1)"
+          if [ -z "$last_tag" ]; then
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "No release tag found; treating as new."
+            exit 0
+          fi
+          last_sha="$(git rev-list -n1 "$last_tag")"
+          head_sha="$(git rev-parse HEAD)"
+          echo "last release: $last_tag ($(git rev-parse --short "$last_sha"))"
+          echo "main head:    $(git rev-parse --short "$head_sha")"
+          if [ "$last_sha" = "$head_sha" ]; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing merged since the last release."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "$(git rev-list --count "$last_sha".."$head_sha") commit(s) to ship."
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        if: steps.decide.outputs.mode != 'off' && steps.newness.outputs.new == 'true'
+        run: npm ci
+
+      # THE RUN ITSELF.
+      #
+      # Not piped through anything. Piping the release through `tail` has broken
+      # it before: the script writes state and reads its own output, and a pipe
+      # changes both its exit status and what it can see. It runs from the repo
+      # root because it resolves every path from there.
+      #
+      # The env below is the same set the runbook uses for a full ship:
+      #
+      #   RELEASE_YES                     no prompts. Preconditions still apply.
+      #   RELEASE_INCLUDE_ADMIN_FUNCTIONS also ship the AuntieOS functions
+      #                                   codebases. Off by default, which is how
+      #                                   anything behind an /api/ rewrite came
+      #                                   to run stale for weeks.
+      #   RELEASE_PREDEPLOY_KEEP=0        do not prune revisions before the
+      #                                   deploy. Batching is what fixes the
+      #                                   quota wall; pruning does not, and it
+      #                                   costs time on every run.
+      #
+      # RELEASE_SKIP_CI_GATE is deliberately NOT set. The CI verdict for the
+      # commit being shipped is the whole safety of an unattended release.
+      - name: Preflight only
+        if: steps.decide.outputs.mode == 'preflight' && steps.newness.outputs.new == 'true'
+        env:
+          RELEASE_YES: '1'
+          RELEASE_PREFLIGHT_ONLY: '1'
+          RELEASE_INCLUDE_ADMIN_FUNCTIONS: '1'
+        run: npm run deploy
+
+      - name: Release to production
+        if: steps.decide.outputs.mode == 'full' && steps.newness.outputs.new == 'true'
+        env:
+          RELEASE_YES: '1'
+          RELEASE_INCLUDE_ADMIN_FUNCTIONS: '1'
+          RELEASE_PREDEPLOY_KEEP: '0'
+        run: npm run deploy
+
+      - name: Summary
+        if: always()
+        env:
+          MODE: ${{ steps.decide.outputs.mode }}
+          NEW: ${{ steps.newness.outputs.new }}
+        run: |
+          {
+            echo "## Nightly release"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Mode | \`${MODE:-off}\` |"
+            echo "| Anything to ship | \`${NEW:-n/a}\` |"
+            echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
+            echo
+            if [ "${MODE:-off}" = "off" ]; then
+              echo "Nothing ran. Set the repository variable \`NIGHTLY_RELEASE\` to"
+              echo "\`preflight\` to prove this works, then to \`on\` to let it ship:"
+              echo
+              echo '```'
+              echo "gh variable set NIGHTLY_RELEASE --body preflight"
+              echo '```'
+            elif [ "${NEW:-}" = "false" ]; then
+              echo "Nothing has merged since the last release tag, so nothing shipped."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
