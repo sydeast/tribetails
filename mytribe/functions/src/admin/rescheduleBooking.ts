@@ -12,6 +12,7 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { validateResponse } from '../lib/callableResponse';
+import { mirrorSessionTimesToEnvelope } from '../lib/visitTimeMirror';
 
 /**
  * 1E §A.9: server-bound reschedule of a kin_care_sessions doc. Shared by Schedule
@@ -77,7 +78,17 @@ export async function rescheduleBookingHandler(
   const ref = db().doc(`kin_care_sessions/${args.sessionId}`);
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', `Session '${args.sessionId}' not found.`);
-  const prev = snap.data() as { startTime?: string; endTime?: string } | undefined;
+  const prev = snap.data() as
+    | {
+        startTime?: string;
+        endTime?: string;
+        // #648: stamped by approveBookingSeriesCore on every session it makes.
+        // Absent on an AuntieOS-native visit, which is a real case, not a fault.
+        kinfolkId?: unknown;
+        kinCareBatchId?: unknown;
+        kinCareVisitId?: unknown;
+      }
+    | undefined;
 
   const candidate = [
     { startTimeMs: Date.parse(args.startTime), endTimeMs: Date.parse(args.endTime) },
@@ -103,6 +114,22 @@ export async function rescheduleBookingHandler(
     auditContext: { sessionId: args.sessionId },
   });
 
+  // #648: THE HOUSEHOLD'S COPY MOVES FIRST, and the ordering is copied from
+  // `resolveBookingRescheduleRequest`, which writes the visit before the
+  // session for the same reason. If this throws, nothing has moved anywhere and
+  // the caller is told; if it succeeded and the session write below throws, the
+  // household sees the truth and the office's schedule can be re-driven. The
+  // opposite order fails the other way round, which is the failure this issue
+  // exists about.
+  const mirror = await mirrorSessionTimesToEnvelope({
+    sessionId: args.sessionId,
+    session: prev,
+    startIso: args.startTime,
+    endIso: args.endTime,
+    uid,
+    fn: 'rescheduleBooking',
+  });
+
   await ref.set(
     { startTime: args.startTime, endTime: args.endTime, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
     { merge: true },
@@ -120,6 +147,11 @@ export async function rescheduleBookingHandler(
       toStart: args.startTime,
       fromEnd: prev?.endTime ?? null,
       toEnd: args.endTime,
+      // #648: whether the household's copy moved with it, and why not when it
+      // did not. Before this, a reschedule that reached only the office looked
+      // identical in the trail to one that reached both.
+      envelopeMirrored: mirror.mirrored,
+      envelopeSkipReason: mirror.skipped,
     },
   });
 
@@ -128,7 +160,11 @@ export async function rescheduleBookingHandler(
     function: 'rescheduleBooking',
     event: 'admin.booking.rescheduled',
     uid,
-    extra: { sessionId: args.sessionId, toStart: args.startTime },
+    extra: {
+      sessionId: args.sessionId,
+      toStart: args.startTime,
+      envelopeMirrored: mirror.mirrored,
+    },
   });
 
   return validateResponse('rescheduleBooking', Result, { ok: true, sessionId: args.sessionId });
