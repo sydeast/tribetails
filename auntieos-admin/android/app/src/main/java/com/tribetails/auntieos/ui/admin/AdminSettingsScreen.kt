@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +41,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -73,6 +75,9 @@ import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.ExternalLink
+import com.composables.icons.lucide.ArrowUp
+import com.composables.icons.lucide.ArrowDown
+import com.composables.icons.lucide.ClipboardList
 import com.tribetails.auntieos.ui.components.AuntieIconButton
 import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.PawPrint
@@ -85,6 +90,7 @@ import com.composables.icons.lucide.Stethoscope
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
 import com.tribetails.auntieos.data.model.TrackingAccuracy
+import com.tribetails.auntieos.data.model.PortalHomeSection
 import com.tribetails.auntieos.ui.NavigationSettingsPanel
 import com.tribetails.auntieos.ui.branding.brandingDirty
 import com.tribetails.auntieos.ui.branding.withBranding
@@ -101,6 +107,7 @@ import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieRadio
+import com.tribetails.auntieos.ui.components.AuntieSaveBar
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSettingRow
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
@@ -154,6 +161,7 @@ import com.tribetails.auntieos.data.model.normalizeTagName
 import com.tribetails.auntieos.data.model.removeTag
 import com.tribetails.auntieos.data.model.withHouseholdTagDefs
 import com.tribetails.auntieos.data.model.withPetTagDefs
+import com.tribetails.auntieos.data.model.withHomeSections
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.TagChip
 import com.tribetails.auntieos.ui.components.color
@@ -218,6 +226,11 @@ internal enum class SettingsSection(
     BookingBehavior("Booking behavior", "Auto-confirm and drag-to-snap", Lucide.Check),
     Integrations("Integrations", "Connected services and their status", Lucide.Webhook),
     Tags("Tags", "Household and pet tag banks", Lucide.Tag),
+    // ISSUE #397 M10: the kinfolk PORTAL's Home layout (not this app's own
+    // nav, which is the `Navigation` section above). Reorder, show/hide, and
+    // cap each section on `business_settings.mytribePortal.home.sections` —
+    // the array a kinfolk's Home screen actually renders.
+    PortalHomeLayout("Home layout", "Reorder the kinfolk portal's Home sections", Lucide.ClipboardList),
     VetClinics("Vet clinics", "The shared vet clinic bank", Lucide.Stethoscope),
 }
 
@@ -560,6 +573,14 @@ fun AdminSettingsScreen(
                         SettingsSection.Tags -> TagVocabularyPanel(
                             settings = uiState.businessSettings,
                             isLoading = uiState.isLoading,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
+
+                        // ISSUE #397 M10: the kinfolk portal's Home layout,
+                        // sharing `updateBusinessSettings`'s diff-and-save with
+                        // every other slice of this doc.
+                        SettingsSection.PortalHomeLayout -> HomeLayoutPanel(
+                            settings = uiState.businessSettings,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
@@ -1816,6 +1837,100 @@ private fun BookingBehaviorPanel(
                         onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
                     )
                 },
+            )
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Home layout (issue #397 M10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The kinfolk portal's Home layout: reorder, show/hide, and cap each of the
+ * five fixed sections (`HOME_SECTION_CATALOG`). A DEDICATED Save/Cancel bar,
+ * not `onSettingsChange` fired per keystroke/per-toggle like
+ * [BookingBehaviorPanel] above — a reorder is several quick taps in a row, and
+ * a network round trip per tap would make the arrows feel laggy for no
+ * benefit, since nothing here needs to be seen by another surface mid-edit.
+ * `onSettingsChange` (=`viewModel.updateBusinessSettings`) is called exactly
+ * once, on Save, with the WHOLE edited [BusinessSettings]; the diff mechanism
+ * in `BusinessSettingsDiff.kt` is what turns that into a single-field write.
+ *
+ * DIFF, NOT REBUILD: [rows] is read through `settings.homeSections()` /
+ * written through `settings.withHomeSections(...)`, which patches only
+ * `mytribePortal.home.sections` and carries every sibling key (`logoUrl`,
+ * `themeId`, `banner`, `chat`) forward unread and unchanged (see
+ * `withHomeSections` in LocationModels.kt). This panel never constructs a
+ * `BusinessSettings` from scratch.
+ */
+@Composable
+private fun HomeLayoutPanel(
+    settings: com.tribetails.auntieos.data.model.BusinessSettings,
+    onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
+) {
+    val dims = AuntieTheme.dims
+    val baseline = remember(settings) { effectiveHomeSections(settings.homeSections()) }
+    var rows by remember(settings) { mutableStateOf(baseline) }
+    var saving by remember { mutableStateOf(false) }
+    val dirty = rows != baseline
+
+    DenPanel(
+        title = "Home layout",
+        subtitle = "Reorder, show or hide, and cap how many items each Home section lists for kinfolk. A limit of 0 is unlimited.",
+    ) {
+        Column {
+            rows.forEachIndexed { index, row ->
+                val label = homeSectionLabel(row.id)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                ) {
+                    AuntieIconButton(
+                        icon = Lucide.ArrowUp,
+                        contentDescription = "Move $label up",
+                        onClick = { rows = moveHomeSectionUp(rows, index) },
+                        enabled = index > 0,
+                        size = 32.dp,
+                    )
+                    AuntieIconButton(
+                        icon = Lucide.ArrowDown,
+                        contentDescription = "Move $label down",
+                        onClick = { rows = moveHomeSectionDown(rows, index) },
+                        enabled = index < rows.lastIndex,
+                        size = 32.dp,
+                    )
+                    Text(label, modifier = Modifier.weight(1f), style = AuntieTheme.typography.bodyMedium)
+                    AuntieField(
+                        value = row.limit.toString(),
+                        onValueChange = { text ->
+                            val n = parseWholeNumber(text, 0, 999) ?: 0
+                            rows = rows.replacedAt(index, row.copy(limit = n))
+                        },
+                        label = "Limit",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(84.dp),
+                    )
+                    AuntieToggle(
+                        checked = row.enabled,
+                        onCheckedChange = { next -> rows = rows.replacedAt(index, row.copy(enabled = next)) },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(dims.space4))
+            AuntieSaveBar(
+                dirty = dirty,
+                saveEnabled = dirty && !saving,
+                onCancel = { rows = baseline },
+                onSave = {
+                    saving = true
+                    onSettingsChange(settings.withHomeSections(rows))
+                    saving = false
+                },
+                dirtyLabel = "Unsaved Home layout",
+                savedLabel = "Home layout saved",
             )
         }
     }

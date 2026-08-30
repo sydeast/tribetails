@@ -6,15 +6,23 @@ import {
   PAYMENT_METHOD_CATALOGUE,
   PAYMENT_METHOD_FEE_SCHEDULE,
   type BusinessSettings,
+  type HomeSectionCfg,
   type MyTribePortalConfig,
   type PaymentMethodRow,
   type PaymentOptionSetting,
+  type PortalHome,
 } from '../../api/settings';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
-import { PrimaryButton, GhostButton } from '../../components/Buttons';
+import { PrimaryButton, GhostButton, IconButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
-import { portalHomeSummary } from '../../lib/settingsFormat';
+import {
+  effectiveHomeSections,
+  homeSectionLabel,
+  moveHomeSectionDown,
+  moveHomeSectionUp,
+  portalHomeSummary,
+} from '../../lib/settingsFormat';
 import { type ImageDecoder } from '../../lib/brandAssetFile';
 import { LogoUploadField } from './LogoUploadField';
 // The `settingsEdit__*` class vocabulary these sections use lives here. It is
@@ -572,7 +580,7 @@ function PaymentOptionRow({
   );
 }
 
-// ── MyTribe portal (theme id, banner, chat; Home layout stays deferred) ─────
+// ── MyTribe portal (theme id, banner, chat, Home layout) ────────────────────
 
 interface MyTribePortalSectionProps {
   data: BusinessSettings;
@@ -589,11 +597,13 @@ interface MyTribePortalSectionProps {
  * loaded`) rather than a Save per field. `portal` seeds once from `data` at mount,
  * same non-clobbering rationale as `TextFieldsSection` above. The patch sends the
  * WHOLE `mytribePortal` object (not per-field), which is safe under `merge: true`:
- * it deep-merges the nested map, and `portal` already carries `home` unchanged
- * (never mutated here), so a save can never blank out the Home layout a sibling
- * surface configured. The Home layout stays view-only (no drag-reorder editor in
- * this repo yet); it is shown, read-only, at the foot of the panel so the merge
- * did not lose the summary the old overview rendered.
+ * it deep-merges the nested map.
+ *
+ * ISSUE #397 M10: the Home layout is a REAL editor now (`HomeLayoutEditor`
+ * below), reordering and editing `portal.home.sections` through this same
+ * `edit()` — it is one more field on `portal`, not a second save path. Order
+ * IS the array order (see `HomeSectionCfg`), so a reorder is written as a
+ * reordered array, nothing more exotic.
  */
 export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: MyTribePortalSectionProps) {
   const [portal, setPortal] = useState<MyTribePortalConfig>(() => data.mytribePortal);
@@ -726,9 +736,14 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
       <div className="settingsEdit__subsection">
         <span className="settingsEdit__fieldLabel">Home layout</span>
         <p className="settingsEdit__readonlyValue">{portalHomeSummary(portal.home)}</p>
+        <HomeLayoutEditor
+          home={portal.home}
+          busy={busy}
+          onChange={(home) => edit({ ...portal, home })}
+        />
         <p className="settingsEdit__hint">
-          The Home layout&rsquo;s drag-to-reorder editor isn&rsquo;t built here yet, so this stays
-          view-only. Everything above saves for real.
+          Use the arrows to reorder. Turning a section off removes it from the kinfolk portal&rsquo;s
+          Home screen; the limit caps how many items it lists there, and 0 means unlimited.
         </p>
       </div>
 
@@ -743,6 +758,99 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
         {justSaved && !dirty ? <span className="settingsEdit__savedNote">Saved</span> : null}
       </div>
     </DenPanel>
+  );
+}
+
+interface HomeLayoutEditorProps {
+  home: PortalHome;
+  busy: boolean;
+  onChange: (home: PortalHome) => void;
+}
+
+/**
+ * ISSUE #397 M10: the Home layout editor. Reorder (up/down, no drag-and-drop
+ * library), show/hide, and per-section limit, over `effectiveHomeSections` —
+ * which materializes the implicit "empty = canonical order, everything on"
+ * default into real rows so there is always something on screen to edit, and
+ * appends any catalogue section a partial saved array had dropped, disabled,
+ * so it stays reachable.
+ *
+ * Writes the WHOLE materialized row list back through `onChange` on every
+ * edit, converting an implicit default into an explicit one the moment an
+ * operator actually touches it — never before, so opening the panel and doing
+ * nothing stays a no-op for `dirty` (see `MyTribePortalSection`, which compares
+ * `JSON.stringify(portal)` against the loaded value untouched).
+ */
+function HomeLayoutEditor({ home, busy, onChange }: HomeLayoutEditorProps) {
+  const rows = effectiveHomeSections(home.sections);
+
+  function updateRow(index: number, patch: Partial<HomeSectionCfg>) {
+    onChange({ sections: rows.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
+  }
+
+  return (
+    <ul className="settingsEdit__homeList">
+      {rows.map((row, index) => {
+        const label = homeSectionLabel(row.id);
+        return (
+          <li key={row.id ?? `unnamed-${index}`} className="settingsEdit__homeRow">
+            <div className="settingsEdit__homeMove">
+              <IconButton
+                icon={<UpGlyph />}
+                label={`Move ${label} up`}
+                onClick={() => onChange({ sections: moveHomeSectionUp(rows, index) })}
+                disabled={busy || index === 0}
+                size={28}
+              />
+              <IconButton
+                icon={<DownGlyph />}
+                label={`Move ${label} down`}
+                onClick={() => onChange({ sections: moveHomeSectionDown(rows, index) })}
+                disabled={busy || index === rows.length - 1}
+                size={28}
+              />
+            </div>
+            <span className="settingsEdit__homeRowLabel">{label}</span>
+            <Toggle
+              label={`Show ${label} on Home`}
+              checked={row.enabled}
+              disabled={busy}
+              onChange={(next) => updateRow(index, { enabled: next })}
+            />
+            <label className="settingsEdit__homeLimit">
+              <span className="settingsEdit__fieldLabel">Limit</span>
+              <input
+                type="number"
+                min={0}
+                className="settingsEdit__input settingsEdit__input--narrow"
+                value={row.limit}
+                disabled={busy}
+                onChange={(e) => {
+                  const parsed = Number.parseInt(e.target.value, 10);
+                  updateRow(index, { limit: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0 });
+                }}
+              />
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function UpGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 15l6-6 6 6" />
+    </svg>
+  );
+}
+
+function DownGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
   );
 }
 

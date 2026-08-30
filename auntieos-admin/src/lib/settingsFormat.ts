@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
 import { str } from './coerce';
-import type { PortalHome } from '../api/settings';
+import type { HomeSectionCfg, PortalHome } from '../api/settings';
 
 /**
  * Pure Settings-overview formatting, kept out of the screen so the mapping
@@ -177,6 +177,75 @@ export function portalHomeSummary(home: PortalHome): string {
   if (total === 0) return 'Default layout (no custom sections configured)';
   const enabled = home.sections.filter((s) => s.enabled).length;
   return `${enabled} of ${total} sections shown`;
+}
+
+/**
+ * M10 (issue #397): the Home sections a kinfolk portal actually knows how to
+ * render, one-for-one with `CANONICAL_HOME_ORDER` in
+ * `mytribe/web/src/lib/portalFormat.ts` and the Kotlin `CANONICAL_HOME_ORDER`
+ * in HomeScreen.kt — three independent copies of the same fixed id list
+ * because none of the three clients share a source tree. A change to one
+ * canonical order is a change to all three.
+ */
+export const HOME_SECTION_CATALOG: readonly { id: string; label: string }[] = [
+  { id: 'liveVisit', label: 'Live visit' },
+  { id: 'upNext', label: 'Up next' },
+  { id: 'tales', label: 'Recent KinTales' },
+  { id: 'roster', label: 'Tribe roster' },
+  { id: 'quickStart', label: 'Quick start' },
+];
+
+/** The operator-facing name for a section id, or the raw id itself for one this catalogue doesn't know (a legacy or future row must still be nameable, never hidden). */
+export function homeSectionLabel(id: string | undefined): string {
+  if (!id) return 'Unnamed section';
+  return HOME_SECTION_CATALOG.find((s) => s.id === id)?.label ?? id;
+}
+
+/**
+ * The rows the Home layout editor renders, derived from the persisted
+ * `sections` array without mutating it.
+ *
+ * `resolveHomeLayout` (the portal's own read side, ported in both
+ * `mytribe/web/src/lib/portalFormat.ts` and HomeScreen.kt) treats an EMPTY
+ * array as "no config at all": the canonical order, every section shown,
+ * unlimited. This mirrors that first branch so the editor opens showing
+ * exactly what a kinfolk would see today, not a blank list — otherwise the
+ * very first thing an operator could do here is toggle something off that
+ * was already showing, with no honest starting point to toggle back to.
+ *
+ * A NON-empty array is different: any catalogue id it omits is a section the
+ * portal already never shows (an omitted row, not merely an off one). Those
+ * missing rows are appended here, disabled, so they stay reachable — a
+ * persisted field a past edit dropped must still be one this editor can turn
+ * back on, never a row silently unreachable from every client.
+ */
+export function effectiveHomeSections(sections: readonly HomeSectionCfg[]): HomeSectionCfg[] {
+  if (sections.length === 0) {
+    return HOME_SECTION_CATALOG.map((s) => ({ id: s.id, enabled: true, limit: 0 }));
+  }
+  const present = new Set(sections.map((s) => s.id));
+  const missing = HOME_SECTION_CATALOG.filter((s) => !present.has(s.id)).map((s) => ({
+    id: s.id,
+    enabled: false,
+    limit: 0,
+  }));
+  return [...sections, ...missing];
+}
+
+/** Reorders one step earlier. No-op at the top or out of range. */
+export function moveHomeSectionUp<T>(rows: readonly T[], index: number): T[] {
+  if (index <= 0 || index >= rows.length) return [...rows];
+  const copy = [...rows];
+  const above = copy[index - 1]!;
+  const at = copy[index]!;
+  copy[index - 1] = at;
+  copy[index] = above;
+  return copy;
+}
+
+/** Reorders one step later. No-op at the bottom or out of range. */
+export function moveHomeSectionDown<T>(rows: readonly T[], index: number): T[] {
+  return moveHomeSectionUp(rows, index + 1);
 }
 
 // ── Meta ─────────────────────────────────────────────────────────────────────

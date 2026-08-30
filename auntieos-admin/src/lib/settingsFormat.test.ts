@@ -10,6 +10,11 @@ import {
   companyHolidayRows,
   specialHourRows,
   portalHomeSummary,
+  effectiveHomeSections,
+  homeSectionLabel,
+  moveHomeSectionUp,
+  moveHomeSectionDown,
+  HOME_SECTION_CATALOG,
   lastSavedLabel,
 } from './settingsFormat';
 
@@ -124,6 +129,71 @@ describe('portalHomeSummary', () => {
 
   it('reports the default layout when no sections are configured', () => {
     expect(portalHomeSummary({ sections: [] })).toBe('Default layout (no custom sections configured)');
+  });
+});
+
+describe('homeSectionLabel', () => {
+  it('names every catalogue id', () => {
+    for (const s of HOME_SECTION_CATALOG) {
+      expect(homeSectionLabel(s.id)).toBe(s.label);
+    }
+  });
+
+  it('falls back to the raw id for an unknown or future section', () => {
+    expect(homeSectionLabel('futureSection')).toBe('futureSection');
+  });
+
+  it('names an id-less row rather than rendering it uneditable', () => {
+    expect(homeSectionLabel(undefined)).toBe('Unnamed section');
+  });
+});
+
+describe('effectiveHomeSections', () => {
+  it('materializes the canonical order, everything enabled and unlimited, when sections is empty', () => {
+    expect(effectiveHomeSections([])).toEqual(
+      HOME_SECTION_CATALOG.map((s) => ({ id: s.id, enabled: true, limit: 0 })),
+    );
+  });
+
+  it('leaves a full, already-configured array untouched', () => {
+    const configured = HOME_SECTION_CATALOG.map((s) => ({ id: s.id, enabled: false, limit: 2 }));
+    expect(effectiveHomeSections(configured)).toEqual(configured);
+  });
+
+  it('appends a catalogue section a partial array omitted, disabled, so it stays reachable', () => {
+    const partial = [{ id: 'upNext', enabled: true, limit: 5 }];
+    const result = effectiveHomeSections(partial);
+    expect(result[0]).toEqual({ id: 'upNext', enabled: true, limit: 5 });
+    const rest = result.slice(1);
+    expect(rest).toHaveLength(HOME_SECTION_CATALOG.length - 1);
+    expect(rest.every((r) => r.enabled === false && r.limit === 0)).toBe(true);
+  });
+
+  it('keeps an unknown/legacy id rather than dropping it', () => {
+    const legacy = [{ id: 'retiredSection', enabled: true, limit: 0 }];
+    const result = effectiveHomeSections(legacy);
+    expect(result[0]).toEqual({ id: 'retiredSection', enabled: true, limit: 0 });
+    expect(result).toHaveLength(1 + HOME_SECTION_CATALOG.length);
+  });
+});
+
+describe('moveHomeSectionUp / moveHomeSectionDown', () => {
+  const rows = ['a', 'b', 'c'];
+
+  it('swaps one step in each direction', () => {
+    expect(moveHomeSectionUp(rows, 1)).toEqual(['b', 'a', 'c']);
+    expect(moveHomeSectionDown(rows, 1)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('is a no-op at either edge or out of range', () => {
+    expect(moveHomeSectionUp(rows, 0)).toEqual(rows);
+    expect(moveHomeSectionDown(rows, rows.length - 1)).toEqual(rows);
+    expect(moveHomeSectionUp(rows, -1)).toEqual(rows);
+    expect(moveHomeSectionDown(rows, rows.length)).toEqual(rows);
+  });
+
+  it('round-trips: moving up then down returns the original order', () => {
+    expect(moveHomeSectionDown(moveHomeSectionUp(rows, 2), 1)).toEqual(rows);
   });
 });
 

@@ -10,8 +10,8 @@
   margin: 0;
 }
 
-/* Read-only value shown inside an otherwise-editable panel (MyTribe Home
-   layout summary, a deferred sub-section that has no editor here yet). */
+/* Read-only value shown inside an otherwise-editable panel (the MyTribe Home
+   layout's live "N of M sections shown" summary, above its editable rows). */
 .settingsEdit__readonlyValue {
   margin: 0.15rem 0 0;
   font-size: var(--type-body-md-size);
@@ -244,4 +244,52 @@
    silence and no way to tell it from success. */
 .settingsEdit__hint--warn {
   color: var(--color-warning);
+}
+
+/* ── Home layout editor (issue #397 M10) ──────────────────────────────────
+   One row per Home section: reorder arrows, the section name, the show/hide
+   switch, and its limit, in that reading order — up/down first because that
+   is the control an operator reaches for most, the limit last because it is
+   the one most people leave alone. */
+.settingsEdit__homeList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settingsEdit__homeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+.settingsEdit__homeRow:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.settingsEdit__homeMove {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settingsEdit__homeRowLabel {
+  flex: 1;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.settingsEdit__homeLimit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settingsEdit__input--narrow {
+  width: 4.5rem;
 }

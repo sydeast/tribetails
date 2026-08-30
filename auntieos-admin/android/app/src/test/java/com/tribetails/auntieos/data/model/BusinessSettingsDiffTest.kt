@@ -161,6 +161,65 @@ class BusinessSettingsDiffTest {
         assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(legacy, edited))
     }
 
+    // ── MyTribe portal Home layout (issue #397 M10): compared decoded, written raw ──
+
+    /**
+     * Re-encoding an unchanged Home layout is not a change, the same rule the
+     * tag vocabularies rely on above: opening the Home layout panel and
+     * pressing Save with nothing touched must never fire a write.
+     */
+    @Test
+    fun `re-encoding an unchanged Home layout is not a change`() {
+        val withLayout = loaded.withHomeSections(listOf(PortalHomeSection("upNext", true, 5)))
+        val edited = withLayout.withHomeSections(withLayout.homeSections())
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(withLayout, edited))
+    }
+
+    @Test
+    fun `a real Home layout edit writes the raw mytribePortal object`() {
+        val edited = loaded.withHomeSections(listOf(PortalHomeSection("upNext", true, 5)))
+        val changes = businessSettingsFieldChanges(loaded, edited)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        assertEquals(edited.mytribePortal, changes["mytribePortal"])
+    }
+
+    /**
+     * THE DIFF-NOT-REBUILD CASE, pinned at the differ level: android's write
+     * must carry every sibling `mytribePortal` key forward untouched, so a
+     * layout edit here can never be the write that quietly drops the React
+     * admin's logo, theme, banner, or chat configuration.
+     */
+    @Test
+    fun `a Home layout edit preserves sibling mytribePortal keys the React admin owns`() {
+        val stored = loaded.copy(
+            mytribePortal = mapOf(
+                "logoUrl" to "https://example.com/logo.png",
+                "themeId" to "sunset",
+                "banner" to mapOf("enabled" to true, "message" to "Closed for the holiday"),
+                "home" to mapOf("sections" to emptyList<Any>()),
+            )
+        )
+        val edited = stored.withHomeSections(listOf(PortalHomeSection("upNext", true, 0)))
+        val changes = businessSettingsFieldChanges(stored, edited)
+        val written = changes["mytribePortal"] as Map<*, *>
+        assertEquals("https://example.com/logo.png", written["logoUrl"])
+        assertEquals("sunset", written["themeId"])
+        assertEquals(mapOf("enabled" to true, "message" to "Closed for the holiday"), written["banner"])
+    }
+
+    @Test
+    fun `reordering two already-configured sections is a real, writable change`() {
+        val stored = loaded.withHomeSections(
+            listOf(PortalHomeSection("upNext", true, 0), PortalHomeSection("roster", true, 0))
+        )
+        val reordered = stored.withHomeSections(
+            listOf(PortalHomeSection("roster", true, 0), PortalHomeSection("upNext", true, 0))
+        )
+        val changes = businessSettingsFieldChanges(stored, reordered)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        assertEquals(listOf("roster", "upNext"), reordered.homeSections().map { it.id })
+    }
+
     // ── Drift guard ──────────────────────────────────────────────────────────
 
     /**
