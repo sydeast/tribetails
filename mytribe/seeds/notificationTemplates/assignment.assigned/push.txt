@@ -1,1 +1,1 @@
-New visit assigned. {{serviceType}} for {{kinName}}, {{visitCount}} in all, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.
+New KinCare assigned. {{kinName}}'s {{serviceType}}, {{visitCount}} in all, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.

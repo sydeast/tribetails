@@ -515,6 +515,17 @@ async function dispatchAuntieSummaries(args: {
           // The ENVELOPE, like the household's copy: this message answers a whole
           // request. `visitId` is deliberately absent, because there is no one
           // visit this is about.
+          //
+          // KNOWN GAP, inherited rather than introduced, and NOT widened here.
+          // `Navigation.kt:notificationTargetRoute` and the React admin's
+          // `sessionIdForVisit` both turn a `booking` targetId into `vis_{id}`
+          // and open that session, which resolves for a VISIT id and not for a
+          // batch id. `kincare.booking.confirm` has shipped envelope-grained
+          // since #565 and has the same gap, so the "open linked item" quick
+          // action no-ops on both. Picking one of her days to point at instead
+          // would be a lie about what the message is about; the right fix is a
+          // route that opens an envelope, which is its own piece of work and
+          // needs an operator ruling on what that screen shows.
           bookingId: batchId,
           assignedAuntieUid: auntieUid,
           serviceName: envelope?.['serviceName'] ?? null,

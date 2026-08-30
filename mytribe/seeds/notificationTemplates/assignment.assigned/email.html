@@ -15,14 +15,14 @@
 </head>
 <body>
     <div class="container">
-        <div class="header"><h2>A KinCare visit is yours</h2></div>
+        <div class="header"><h2>{{kinName}}'s KinCare is yours</h2></div>
         <div class="content">
-            <p>Good news: a {{serviceType}} for {{kinName}} just landed on your schedule. Here are the days:</p>
+            <p>Good news: {{kinName}}'s {{serviceType}} just landed on your schedule. Here are the days:</p>
             <ul class="visits">{{#each visits}}
                 <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}
             </ul>
-            <p>Give the visit details a look so you're set before you head out.</p>
-            <p><a class="button" href="{{portalUrl}}">See the visits</a></p>
+            <p>Give the details a look so you're set before you head out.</p>
+            <p><a class="button" href="{{portalUrl}}">See your schedule</a></p>
         </div>
         <div class="footer">Tribe Tails Pet Care. Your Kin's Favorite Auntie.</div>
     </div>
