@@ -88,6 +88,73 @@ fun encodeTagDefs(defs: List<TagDef>): List<Map<String, Any>> = defs.map { def -
     )
 }
 
+// --- MyTribe portal Home layout (issue #397 M10) ---
+//
+// `business_settings.mytribePortal.home.sections`: the operator-editable order
+// of the kinfolk portal's Home screen. Mirrors `HomeSectionCfg` (React admin
+// `src/api/settings.ts`) and `PortalHomeSection` (mytribe/functions/src/portal/
+// getMyHome.ts). `limit` 0 means unlimited. This client models ONLY this one
+// sub-field of `mytribePortal` (not `logoUrl`/`themeId`/`banner`/`chat`, which
+// have no editor here); [BusinessSettings.mytribePortal] is held raw (the same
+// Class A posture as [householdTags]/[petTags] above) so a save from here can
+// patch `home.sections` without knowing about, or disturbing, the sibling
+// fields the React admin owns.
+
+/**
+ * A single Home section config: `{ id, enabled, limit }`. Order is the array
+ * order — this IS the persisted layout, not a display hint.
+ */
+@Keep
+data class PortalHomeSection(
+    var id: String = "",
+    var enabled: Boolean = true,
+    var limit: Int = 0,
+)
+
+/**
+ * Decode `mytribePortal.home.sections` from the raw `mytribePortal` value held
+ * on [BusinessSettings.mytribePortal]. Same Class A posture as [decodeTagDefs]:
+ * a malformed or missing row is dropped, never thrown, because a hand-edited
+ * doc must never blank the whole Settings read. Row order is preserved.
+ */
+fun decodeHomeSections(raw: Any?): List<PortalHomeSection> {
+    val portal = raw as? Map<*, *> ?: return emptyList()
+    val home = portal["home"] as? Map<*, *> ?: return emptyList()
+    val rows = home["sections"] as? List<*> ?: return emptyList()
+    val out = ArrayList<PortalHomeSection>(rows.size)
+    for (row in rows) {
+        val r = row as? Map<*, *> ?: continue
+        val id = r["id"] as? String ?: ""
+        val enabled = r["enabled"] as? Boolean ?: true
+        val limit = (r["limit"] as? Number)?.toInt() ?: 0
+        out.add(PortalHomeSection(id = id, enabled = enabled, limit = limit))
+    }
+    return out
+}
+
+/**
+ * Encode a Home layout back onto a raw `mytribePortal` map, replacing ONLY the
+ * `home.sections` key. Every other key already on [raw] — `logoUrl`,
+ * `logoRemovedAt`, `themeId`, `banner`, `chat` — survives unread and unchanged.
+ *
+ * THIS IS THE DIFF-NOT-REBUILD GUARD for this field: android does not model
+ * those sibling keys, so a naive `mapOf("home" to ...)` return value would be a
+ * save that silently wipes them the moment `SetOptions.merge()` writes this
+ * field's whole value (merge protects fields OUTSIDE this map, not the ones
+ * INSIDE it — see `BusinessSettingsDiff.kt`'s file header). Copying [raw]
+ * forward first, key for key, is what keeps this a patch of one sub-field
+ * rather than a rebuild of the object around it.
+ */
+fun encodeHomeSections(raw: Any?, sections: List<PortalHomeSection>): Map<String, Any?> {
+    val portal = LinkedHashMap<String, Any?>()
+    (raw as? Map<*, *>)?.forEach { (k, v) -> if (k is String) portal[k] = v }
+    val home = LinkedHashMap<String, Any?>()
+    (portal["home"] as? Map<*, *>)?.forEach { (k, v) -> if (k is String) home[k] = v }
+    home["sections"] = sections.map { mapOf("id" to it.id, "enabled" to it.enabled, "limit" to it.limit) }
+    portal["home"] = home
+    return portal
+}
+
 /**
  * Decode a profile's `tags` field: keep only the String entries, drop everything
  * else, default empty. Mirrors kinfolkProfile.ts / kinView.ts. Deliberately

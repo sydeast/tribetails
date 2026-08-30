@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { BusinessSettings } from '../api/settings';
 
@@ -324,15 +324,14 @@ describe('Settings, Calendar is one section holding both capabilities', () => {
     ).toBeInTheDocument();
   });
 
-  it('MyTribe portal keeps the Home layout view-only while its other fields save', async () => {
+  it('MyTribe portal shows the Home layout summary alongside its other editable fields', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
     const panel = await openSection('MyTribe portal');
     expect(within(panel).getByText('Home layout')).toBeInTheDocument();
-    expect(within(panel).getByText(/isn.t built here yet/i)).toBeInTheDocument();
-    // But the editable fields are here.
+    expect(within(panel).getByText('Default layout (no custom sections configured)')).toBeInTheDocument();
     expect(within(panel).getByLabelText('Theme id')).toBeEnabled();
   });
 });
@@ -617,6 +616,209 @@ describe('Settings — MyTribe portal editor', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
     expect(within(panel).getByLabelText('Theme id')).toHaveValue('default');
     expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+});
+
+// ISSUE #397 M10: the Home layout editor. `mt.home.sections` defaults to `[]`
+// on DEFAULT_BUSINESS_SETTINGS, which the editor materializes into the full
+// canonical row list (see `effectiveHomeSections`) so there's always something
+// on screen to reorder, toggle, and cap — and so a reorder/toggle/limit edit
+// starting from that empty default writes back the WHOLE five-row array, not
+// a diff of one.
+describe('Settings — MyTribe portal Home layout editor', () => {
+  it('shows a row for every catalogue section, even with no config saved yet', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+
+    for (const label of ['Live visit', 'Up next', 'Recent KinTales', 'Tribe roster', 'Quick start']) {
+      expect(within(panel).getByText(label)).toBeInTheDocument();
+    }
+    // Top and bottom rows can't move further in their own direction.
+    expect(within(panel).getByRole('button', { name: 'Move Live visit up' })).toBeDisabled();
+    expect(within(panel).getByRole('button', { name: 'Move Quick start down' })).toBeDisabled();
+  });
+
+  it('reordering with the down arrow moves the section, and Save writes the new order', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+
+    await userEvent.click(within(panel).getByRole('button', { name: 'Move Live visit down' }));
+    const rows = within(panel).getAllByRole('listitem');
+    expect(rows[0]).toHaveTextContent('Up next');
+    expect(rows[1]).toHaveTextContent('Live visit');
+
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      mytribePortal: expect.objectContaining({
+        home: {
+          sections: [
+            { id: 'upNext', enabled: true, limit: 0 },
+            { id: 'liveVisit', enabled: true, limit: 0 },
+            { id: 'tales', enabled: true, limit: 0 },
+            { id: 'roster', enabled: true, limit: 0 },
+            { id: 'quickStart', enabled: true, limit: 0 },
+          ],
+        },
+      }),
+    });
+  });
+
+  it('turning a section off is a real, savable edit', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+
+    await userEvent.click(within(panel).getByRole('switch', { name: 'Show Tribe roster on Home' }));
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+
+    const changes = saveBusinessSettings.mock.calls[0]?.[0] as {
+      mytribePortal: { home: { sections: Array<{ id: string; enabled: boolean }> } };
+    };
+    const roster = changes.mytribePortal.home.sections.find((s) => s.id === 'roster');
+    expect(roster).toEqual({ id: 'roster', enabled: false, limit: 0 });
+  });
+
+  it('setting a limit round-trips through Save', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+
+    const upNextRow = within(panel).getByText('Up next').closest('li') as HTMLElement;
+    const limitInput = within(upNextRow).getByLabelText('Limit');
+    await userEvent.clear(limitInput);
+    await userEvent.type(limitInput, '5');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+
+    const changes = saveBusinessSettings.mock.calls[0]?.[0] as {
+      mytribePortal: { home: { sections: Array<{ id: string; limit: number }> } };
+    };
+    const upNext = changes.mytribePortal.home.sections.find((s) => s.id === 'upNext');
+    expect(upNext).toEqual({ id: 'upNext', enabled: true, limit: 5 });
+  });
+
+  it('appends a catalogue section a partial saved array had dropped, disabled and reachable', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: { sections: [{ id: 'upNext', enabled: true, limit: 5 }] },
+        },
+      }),
+    );
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+
+    // upNext is the only configured row; every other catalogue section is
+    // still on screen (disabled), never silently unreachable.
+    expect(within(panel).getByRole('switch', { name: 'Show Up next on Home' })).toBeChecked();
+    expect(within(panel).getByRole('switch', { name: 'Show Live visit on Home' })).not.toBeChecked();
+    expect(within(panel).getByRole('switch', { name: 'Show Quick start on Home' })).not.toBeChecked();
+  });
+  // ISSUE #397 M10 follow-up: an editor with no way back to the default is a
+  // one-way door. These four pin the fix -- a visible mode, a Reset control
+  // that genuinely restores the portal's implicit default (an empty array,
+  // not a full canonical list dressed up to look like one), and proof that
+  // merely opening this panel and saving is never itself a write.
+  it('states the layout mode so it is never a guess: default with nothing configured, custom once something is', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    let panel = await openSection('MyTribe portal');
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Custom layout')).not.toBeInTheDocument();
+    // Nothing to reset back to yet.
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeDisabled();
+    getBusinessSettings.mockReset();
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: { sections: [{ id: 'upNext', enabled: true, limit: 5 }] },
+        },
+      }),
+    );
+    cleanup();
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    panel = await openSection('MyTribe portal');
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Default layout')).not.toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeEnabled();
+  });
+  it('opening the panel and pressing Save with nothing touched never calls the save API, whatever the starting layout', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: { sections: [{ id: 'upNext', enabled: false, limit: 3 }] },
+        },
+      }),
+    );
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    // Rendering the full catalogue (upNext plus the four appended-disabled
+    // rows) must not itself register as an edit.
+    const saveButton = within(panel).getByRole('button', { name: /^save$/i });
+    expect(saveButton).toBeDisabled();
+    await userEvent.click(saveButton);
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+  });
+  it('Reset to default layout writes the empty array back, not a canonical list that only looks like it', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: {
+            sections: [
+              { id: 'liveVisit', enabled: true, limit: 0 },
+              { id: 'upNext', enabled: false, limit: 0 },
+              { id: 'tales', enabled: true, limit: 0 },
+              { id: 'roster', enabled: true, limit: 0 },
+              { id: 'quickStart', enabled: true, limit: 0 },
+            ],
+          },
+        },
+      }),
+    );
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Reset to default layout' }));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith({
+      mytribePortal: expect.objectContaining({ home: { sections: [] } }),
+    });
+  });
+  it('Cancel after Reset restores the layout that was actually saved', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({
+        mytribePortal: {
+          ...DEFAULT_BUSINESS_SETTINGS.mytribePortal,
+          home: { sections: [{ id: 'upNext', enabled: true, limit: 5 }] },
+        },
+      }),
+    );
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Reset to default layout' }));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    expect(within(panel).getByRole('switch', { name: 'Show Up next on Home' })).toBeChecked();
   });
 });
 describe('Settings: Integrations is a report, and its Google row hands off', () => {
