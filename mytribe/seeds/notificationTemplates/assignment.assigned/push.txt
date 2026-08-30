@@ -1,1 +1,1 @@
-New visit assigned. {{serviceType}} for {{kinName}} on {{bookingDate}}. Tap for details.
+New visit assigned. {{serviceType}} for {{kinName}}, {{visitCount}} in all, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.

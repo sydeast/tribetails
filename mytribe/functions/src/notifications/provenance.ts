@@ -353,7 +353,37 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'assignment.assigned': [
     {
-      trigger: 'An Auntie is assigned to a visit that had nobody on it.',
+      // #536: ONE per approved request, not one per visit. `writeEnvelope`
+      // stamps the same default assignee on every child, so the per-visit
+      // trigger below sent an Auntie four "a visit is yours" messages for one
+      // four-day request, before anybody had approved it. It no longer
+      // dispatches anything on a request create; her summary comes from the
+      // approve core, which knows the whole child set and who is on each visit.
+      trigger:
+        'A whole booking request is approved, and an Auntie is on one or more of its visits (admin APPROVE, or the portal auto-confirm).',
+      source: 'src/admin/approveBookingSeriesCore.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'assignedAuntieUid',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'removed',
+        'removedCount',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+      ],
+    },
+    {
+      // Still per visit, and still correct: somebody was put on ONE existing
+      // visit, which is one piece of news. The structured date fields carry the
+      // single day so the enumerating seed renders for this emitter too.
+      trigger: 'An Auntie is assigned to a single existing visit that had nobody on it.',
       source: 'src/triggers/onBookingsWrite.ts',
       dataKeys: [
         'kinfolkId',
@@ -363,6 +393,14 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'serviceName',
         'startTimeMs',
         'assignedAuntieUid',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'removed',
+        'removedCount',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
       ],
     },
   ],

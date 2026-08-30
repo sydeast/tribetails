@@ -49,7 +49,25 @@ import type { Audience } from './types';
  * (link, score, count, incidentId, ip, ...).
  */
 export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
-  'assignment.assigned': ['bookingDate', 'bookingTime', 'kinName', 'serviceType'],
+  // #536, the assignment half: an approved REQUEST is one piece of news for the
+  // Auntie too, so her copy enumerates the days it covers instead of naming one.
+  // Same structured, emitter-supplied shape the confirmation below carries
+  // (notifications/visitDates.ts); `portalUrl` is AuntieOS for her, not the
+  // kinfolk portal she has no account on. `bookingDate` / `bookingTime` left the
+  // seed with the single-visit wording; both emitters still SEND them so the
+  // already-imported Firestore template renders until the operator re-imports.
+  'assignment.assigned': [
+    'kinName',
+    'nextVisit.date',
+    'nextVisit.time',
+    'nextVisit.weekday',
+    'portalUrl',
+    'serviceType',
+    'visitCount',
+    'visits',
+  ],
+  // Stays per visit, and stays on `{{bookingDate}}`: reassigned, unassigned,
+  // cancelled and edited are all genuinely news about ONE visit.
   'assignment.changed': ['bookingDate', 'kinName', 'serviceType'],
   'account.welcome.kinfolk': ['kinfolkName'],
   'auth.account.locked': ['email'],

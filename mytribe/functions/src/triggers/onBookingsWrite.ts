@@ -272,6 +272,15 @@ export function assignmentDispatches(
  * per VISIT, so a four-day request dispatched it four times. It now comes from
  * onBookingEnvelopeCreate, on the parent `bookings/{batchId}` doc, once per
  * request. Do not put a per-visit dispatch of it back here.
+ *
+ * #536, the assignment half: neither is `assignment.assigned` on a CREATE.
+ * `writeEnvelope` stamps the SAME default assignee on every child, so a four-day
+ * request put four "a visit is yours" messages in an Auntie's hands for work
+ * nobody had approved yet. She now hears once, at APPROVAL, from
+ * `admin/approveBookingSeriesCore`, naming her own days. Her per-visit schedule
+ * records are untouched: every visit still gets its own
+ * `kin_care_sessions/vis_{visitId}` doc. Message noise went down; schedule
+ * fidelity did not.
  */
 export const onBookingsWrite = onDocumentWritten(
   {
@@ -325,13 +334,39 @@ export const onBookingsWrite = onDocumentWritten(
       }
     };
 
+    const changedFieldsAll = CHANGE_WATCH_FIELDS.filter((f) => fieldChanged(before, after, f));
+
+    // #532/#536: a REQUEST being written is ENVELOPE news, and this trigger runs
+    // once per visit. `kincare.requested` moved to onBookingEnvelopeCreate and
+    // the Auntie's summary moved to approveBookingSeriesCore, so a bare create
+    // now dispatches NOTHING AT ALL.
+    //
+    // This return sits ABOVE every dispatch, and that placement is the fix. It
+    // used to sit below the assignment loop, so `writeEnvelope`'s default
+    // assignee fired `assignment.assigned` once per child: four "a visit is
+    // yours" messages for one request nobody had approved. Nothing else above
+    // here was ever live on a create (a fresh visit carries no cancellation ask
+    // and no reschedule ask), so moving it up changes exactly that one
+    // behaviour, and makes the #532 comment's "dispatches nothing" true for the
+    // first time. Do not put a per-visit dispatch back above this line.
+    if (isCreate && afterStatus === 'requested') return;
+
     // Vendor-parity (2026-07-02): staff assignment notifications, decided by the
     // pure table above; independent of the kinfolk/business status flow below.
     // The resolver reads assignedAuntieUid from the dispatch data, so each
     // dispatch names the auntie whose copy it is.
-    const changedFieldsAll = CHANGE_WATCH_FIELDS.filter((f) => fieldChanged(before, after, f));
+    //
+    // #536: `assignment.assigned` carries the structured visit shape now, since
+    // its seed enumerates days like the household's confirmation does. This is a
+    // SINGLE-visit assignment -- somebody was put on one existing visit -- so the
+    // list is that one day, exactly as the per-visit confirm below builds it. The
+    // envelope-grained copy is the approve core's, not this one's.
+    // `assignment.changed` keeps `{{bookingDate}}`: reassigned, unassigned,
+    // cancelled and edited are all genuinely one-visit news.
     for (const d of assignmentDispatches(before, after, changedFieldsAll)) {
-      await dispatch(d.key, { ...d.extra, assignedAuntieUid: d.auntieUid });
+      const extra =
+        d.key === 'assignment.assigned' ? await visitDateFieldsFor(after, visitId) : {};
+      await dispatch(d.key, { ...extra, ...d.extra, assignedAuntieUid: d.auntieUid });
     }
 
     // The cancellation ask and the answer to it, decided by the pure table
@@ -353,14 +388,6 @@ export const onBookingsWrite = onDocumentWritten(
         reason: after.rescheduleRequestReason ?? null,
       });
     }
-    // #532: a visit create used to dispatch `kincare.requested` here. It does NOT
-    // any more. This trigger is registered per VISIT, so a four-day request sent
-    // the office four copies of one request. The key now comes from
-    // onBookingEnvelopeCreate, once per envelope. A bare create falls through
-    // every arm below (`beforeStatus` is null, so the transition arm matches
-    // nothing) and dispatches nothing, which is the invariant its test asserts.
-    if (isCreate && afterStatus === 'requested') return;
-
     if (beforeStatus !== afterStatus) {
       if (afterStatus === 'confirmed' || afterStatus === 'approved') {
         // #536. A whole-request approval is ONE answer to ONE question. This

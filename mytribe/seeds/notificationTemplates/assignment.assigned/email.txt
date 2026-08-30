@@ -1,7 +1,9 @@
 Subject: A KinCare visit is yours
 
-Good news: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}} just landed on your schedule.
+Good news: a {{serviceType}} for {{kinName}} just landed on your schedule. Here are the days:
 
+{{#each visits}}  {{this.weekday}}, {{this.date}} at {{this.time}}
+{{/each}}
 Give the visit details a look so you're set before you head out.
 
 Tribe Tails Pet Care. Your Kin's Favorite Auntie.
