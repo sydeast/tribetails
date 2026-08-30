@@ -94,6 +94,22 @@ data class SchedulingState(
     // Surfaced as a fail-loud banner/toast; null when no batch has run.
     val bulkBookingMessage: String? = null,
     val bulkBookingInFlight: Boolean = false,
+    // #397 M16: the bulk RESCHEDULE sheet. Its own state rather than a fourth
+    // arm of the batch above, because it is not a transition and not one press:
+    // it is a review sheet with a field per visit, and it reports per visit.
+    val bulkRescheduleOpen: Boolean = false,
+    // One row per selected visit that can be moved, prefilled with the window it
+    // holds now.
+    val bulkRescheduleTargets: List<BulkRescheduleTarget> = emptyList(),
+    // Selected rows the sheet does NOT offer a field, each with the reason. Shown
+    // in the sheet before anything is written, so a selected booking is never
+    // simply missing from it.
+    val bulkRescheduleSkipped: List<BulkRescheduleRow> = emptyList(),
+    val bulkRescheduleInFlight: Boolean = false,
+    // Empty while the sheet is still a review; one row per selected visit once
+    // it has run. Never a single count: a partial run has to name which
+    // households did not move.
+    val bulkRescheduleResults: List<BulkRescheduleRow> = emptyList(),
     // Stage 3 / 16.5: incoming MyTribe booking requests grouped into envelopes
     // (one row per batchId). Approve/cancel the whole series via manageBookingSeries.
     val incomingSeries: List<IncomingSeries> = emptyList(),
@@ -223,6 +239,115 @@ internal fun buildRescheduleTimes(date: String, time: String, originalStart: Str
     }.getOrNull()?.takeIf { it > 0 } ?: 30
     val end = start.plusMinutes(durMin.toLong())
     return start.format(fmt) to end.format(fmt)
+}
+
+// ── #397 M16: bulk reschedule, as a per-visit review sheet ───────────────────
+//
+// ONE NEW TIME PER VISIT, WHICH IS THE ENTIRE DESIGN. The bulk bar's other three
+// buttons are one-press transitions and `batchUpdateBookings` applies them to a
+// list of ids. A reschedule cannot work that way: five selected visits do not
+// share a new window, and one delta across all of them would move a Tuesday
+// morning and a Friday evening by the same two hours. So the press opens a sheet
+// that lists every selected visit with its OWN date and time, prefilled with the
+// window it holds now, and the confirm fires `rescheduleBooking` once per visit
+// with that visit's own window. Same callable, same guards, same overrides as
+// the single move next to it, because it IS the single move, run per row.
+
+/** One selected booking as the sheet offers it: prefilled, and adjustable on its own. */
+data class BulkRescheduleTarget(
+    /** The `enhanced_bookings` id, which is what this screen selects by. */
+    val bookingId: String,
+    /** Household name for the sheet and the result. Never an id. */
+    val name: String,
+    /** `yyyy-MM-dd` prefill, blank when the stored start does not parse. */
+    val date: String,
+    /** `HH:mm` prefill, blank when the stored start does not parse. */
+    val time: String,
+    /** The window it holds now, so the row can say what is being moved. */
+    val currentStart: String,
+)
+
+/** What the operator left in one row of the sheet. */
+data class BulkRescheduleEntry(
+    val bookingId: String,
+    val date: String,
+    val time: String,
+)
+
+/**
+ * What became of one selected visit.
+ *
+ * SKIPPED AND REFUSED ARE DIFFERENT FACTS and are never folded together: a skip
+ * was never attempted (wrong status, unchanged time, unreadable input), a
+ * refusal was attempted and the server said no. Collapsing them would tell an
+ * operator that a visit "failed" when nothing was ever sent for it.
+ */
+enum class BulkRescheduleStatus { MOVED, REFUSED, SKIPPED }
+
+data class BulkRescheduleRow(
+    val bookingId: String,
+    val name: String,
+    val status: BulkRescheduleStatus,
+    val message: String,
+    /**
+     * Non-null ONLY when this refusal is one the operator may knowingly go past
+     * and has not already tried to. A company closure never sets it: its guard
+     * has no override parameter on the server, so the offer would be a button
+     * that cannot work.
+     */
+    val override: ScheduleOverrideKind? = null,
+)
+
+/**
+ * Whether a booking in this state has a visit on the books to move.
+ *
+ * ACCEPTED ONLY, and that matters here more than it does for the bar's other
+ * three buttons: this screen's `selectableIds` deliberately includes DRAFT
+ * bookings so they can be approved in bulk, and a DRAFT has no
+ * `kin_care_sessions` row at all (approval is what creates one). Offering it a
+ * date field would be offering a move with nothing to move. Pure; unit-tested.
+ */
+internal fun bulkRescheduleApplies(status: BookingStatus): Boolean = status == BookingStatus.ACCEPTED
+
+/** Why a selected booking is not offered a new time, in the operator's words. */
+internal fun bulkRescheduleSkipReason(status: BookingStatus): String = when (status) {
+    BookingStatus.DRAFT ->
+        "It is still awaiting a reply, so it has no visit on the books to move. Confirm it first."
+    BookingStatus.COMPLETED -> "It has already been completed."
+    BookingStatus.REJECTED -> "It has already been cancelled."
+    // Exhaustive over the enum, never an `else`: a status added to
+    // BookingStatus must come back here and be given its own sentence rather
+    // than inheriting a vague one.
+    BookingStatus.ACCEPTED -> ""
+}
+
+/** `yyyy-MM-dd` out of a stored local start, or blank when it does not parse. Pure. */
+internal fun rescheduleDatePrefill(startDateTime: String): String =
+    if (startDateTime.length >= 10 && runCatching { LocalDate.parse(startDateTime.take(10)) }.isSuccess) {
+        startDateTime.take(10)
+    } else {
+        ""
+    }
+
+/** `HH:mm` out of a stored local start, or blank when it does not parse. Pure. */
+internal fun rescheduleTimePrefill(startDateTime: String): String =
+    if (startDateTime.length >= 16 && startDateTime[10] == 'T' &&
+        runCatching { LocalTime.parse(startDateTime.substring(11, 16)) }.isSuccess
+    ) {
+        startDateTime.substring(11, 16)
+    } else {
+        ""
+    }
+
+/**
+ * The headline over the per-visit result list. Always names both numbers,
+ * because "Moved 4 visits" beside a selection of six is the sentence an operator
+ * reads as done. Pure; unit-tested.
+ */
+internal fun bulkRescheduleSummary(rows: List<BulkRescheduleRow>): String {
+    val moved = rows.count { it.status == BulkRescheduleStatus.MOVED }
+    val noun = if (rows.size == 1) "visit" else "visits"
+    return "Moved $moved of ${rows.size} selected $noun."
 }
 
 /**
@@ -1058,6 +1183,222 @@ class EnhancedSchedulingViewModel(
         _state.value = _state.value.copy(bulkBookingMessage = null)
     }
 
+    // ── #397 M16: bulk reschedule ────────────────────────────────────────────
+
+    /**
+     * The window each row of the open sheet resolved to, kept so an override
+     * retry re-sends the SAME window rather than recomputing it from fields the
+     * operator may have since edited.
+     *
+     * Held here rather than in [SchedulingState] for the same reason
+     * [pendingScheduleRetry] is: the screen never renders it. What the screen
+     * renders is [BulkRescheduleRow.override], which is what decides whether an
+     * offer is drawn at all.
+     */
+    private val pendingBulkMoves = mutableMapOf<String, Pair<String, String>>()
+
+    /**
+     * Open the per-visit review sheet on the current selection.
+     *
+     * The split into "offered a field" and "not offered one, and here is why"
+     * happens HERE, before the sheet draws: a booking the operator ticked must
+     * never be silently absent from the sheet. `selectableIds` on this screen
+     * deliberately includes DRAFT bookings, and a DRAFT has no visit to move, so
+     * this is a normal case rather than an edge one.
+     */
+    fun openBulkReschedule(bookingIds: Set<String>) {
+        val byId = _state.value.bookings.associateBy { it.id }
+        val targets = mutableListOf<BulkRescheduleTarget>()
+        val skipped = mutableListOf<BulkRescheduleRow>()
+
+        for (id in bookingIds) {
+            val booking = byId[id]
+            if (booking == null) {
+                skipped += BulkRescheduleRow(
+                    bookingId = id,
+                    name = id,
+                    status = BulkRescheduleStatus.SKIPPED,
+                    message = "It is no longer on this calendar, so nothing was written.",
+                )
+                continue
+            }
+            val name = booking.kinfolkName.ifBlank { booking.kinfolkId.ifBlank { booking.id } }
+            if (!bulkRescheduleApplies(booking.status)) {
+                skipped += BulkRescheduleRow(
+                    bookingId = id,
+                    name = name,
+                    status = BulkRescheduleStatus.SKIPPED,
+                    message = bulkRescheduleSkipReason(booking.status),
+                )
+                continue
+            }
+            targets += BulkRescheduleTarget(
+                bookingId = id,
+                name = name,
+                date = rescheduleDatePrefill(booking.startDateTime),
+                time = rescheduleTimePrefill(booking.startDateTime),
+                currentStart = booking.startDateTime,
+            )
+        }
+
+        pendingBulkMoves.clear()
+        _state.value = _state.value.copy(
+            bulkRescheduleOpen = true,
+            bulkRescheduleTargets = targets,
+            bulkRescheduleSkipped = skipped,
+            bulkRescheduleResults = emptyList(),
+            bulkRescheduleInFlight = false,
+        )
+    }
+
+    /** Close the sheet and forget it. Nothing already written is undone by this. */
+    fun closeBulkReschedule() {
+        pendingBulkMoves.clear()
+        _state.value = _state.value.copy(
+            bulkRescheduleOpen = false,
+            bulkRescheduleTargets = emptyList(),
+            bulkRescheduleSkipped = emptyList(),
+            bulkRescheduleResults = emptyList(),
+            bulkRescheduleInFlight = false,
+        )
+    }
+
+    /**
+     * Move every visit whose row the operator actually changed, one at a time,
+     * each to ITS OWN window.
+     *
+     * SEQUENTIAL, not parallel: each row is a callable write plus a household
+     * notification, and firing forty at once on one press is how a bulk surface
+     * turns into a load test. A refusal in the middle stops nothing after it,
+     * which is the whole reason the result is a list rather than a verdict.
+     *
+     * THREE KINDS OF ROW NEVER REACH THE SERVER, and each is reported by name:
+     * one left blank, one left at exactly the time it already had (a write for a
+     * move nobody made would still fire an audit entry and a notification), and
+     * one whose date and time cannot be turned into a real instant.
+     */
+    fun bulkRescheduleVisits(entries: List<BulkRescheduleEntry>) {
+        if (_state.value.bulkRescheduleInFlight) return
+        val targets = _state.value.bulkRescheduleTargets.associateBy { it.bookingId }
+        val bookings = _state.value.bookings.associateBy { it.id }
+        _state.value = _state.value.copy(bulkRescheduleInFlight = true)
+
+        viewModelScope.launch {
+            val rows = mutableListOf<BulkRescheduleRow>()
+            pendingBulkMoves.clear()
+
+            for (entry in entries) {
+                val target = targets[entry.bookingId] ?: continue
+                val booking = bookings[entry.bookingId]
+                if (booking == null) {
+                    rows += BulkRescheduleRow(
+                        bookingId = entry.bookingId,
+                        name = target.name,
+                        status = BulkRescheduleStatus.SKIPPED,
+                        message = "It is no longer on this calendar, so nothing was written.",
+                    )
+                    continue
+                }
+                val date = entry.date.trim()
+                val time = entry.time.trim()
+                if (date.isBlank() || time.isBlank()) {
+                    rows += BulkRescheduleRow(
+                        bookingId = entry.bookingId,
+                        name = target.name,
+                        status = BulkRescheduleStatus.SKIPPED,
+                        message = "No new date and time were entered, so this visit was left where it is.",
+                    )
+                    continue
+                }
+                if (date == target.date && time == target.time) {
+                    rows += BulkRescheduleRow(
+                        bookingId = entry.bookingId,
+                        name = target.name,
+                        status = BulkRescheduleStatus.SKIPPED,
+                        message = "Its time is unchanged, so nothing was written.",
+                    )
+                    continue
+                }
+                val times = buildRescheduleTimes(date, time, booking.startDateTime, booking.endDateTime)
+                if (times == null) {
+                    rows += BulkRescheduleRow(
+                        bookingId = entry.bookingId,
+                        name = target.name,
+                        status = BulkRescheduleStatus.SKIPPED,
+                        message = "$date $time is not a real date and time, so this visit was left where it is.",
+                    )
+                    continue
+                }
+                pendingBulkMoves[entry.bookingId] = times
+                rows += rowFor(target, applyVisitMove(booking, times.first, times.second, override = null))
+            }
+
+            _state.value = _state.value.copy(
+                bulkRescheduleInFlight = false,
+                bulkRescheduleResults = rows + _state.value.bulkRescheduleSkipped,
+            )
+            loadBookingsForDateRange()
+        }
+    }
+
+    /**
+     * Re-send ONE refused visit with the override that refusal offered.
+     *
+     * OFFERED ONCE. The retry passes `alreadyOverridden = true` through
+     * [applyVisitMove], so `overridableScheduleRefusal` returns null on a second
+     * refusal and the row loses its button. That is the same rule
+     * [retryScheduleWriteWithOverride] follows for the single move, and it is
+     * why a company closure (which has no override at all) can never grow one
+     * here.
+     */
+    fun retryBulkRescheduleWithOverride(bookingId: String) {
+        if (_state.value.bulkRescheduleInFlight) return
+        val row = _state.value.bulkRescheduleResults.firstOrNull { it.bookingId == bookingId } ?: return
+        val kind = row.override ?: return
+        val times = pendingBulkMoves[bookingId] ?: return
+        val booking = _state.value.bookings.firstOrNull { it.id == bookingId } ?: return
+        val target = _state.value.bulkRescheduleTargets.firstOrNull { it.bookingId == bookingId } ?: return
+
+        _state.value = _state.value.copy(bulkRescheduleInFlight = true)
+        viewModelScope.launch {
+            val moved = rowFor(target, applyVisitMove(booking, times.first, times.second, override = kind))
+            _state.value = _state.value.copy(
+                bulkRescheduleInFlight = false,
+                bulkRescheduleResults = _state.value.bulkRescheduleResults.map {
+                    if (it.bookingId == bookingId) moved else it
+                },
+            )
+            loadBookingsForDateRange()
+        }
+    }
+
+    /** One attempted move, as the sheet reports it. */
+    private fun rowFor(target: BulkRescheduleTarget, outcome: VisitMoveOutcome): BulkRescheduleRow = when (outcome) {
+        is VisitMoveOutcome.Moved -> BulkRescheduleRow(
+            bookingId = target.bookingId,
+            name = target.name,
+            status = BulkRescheduleStatus.MOVED,
+            // A move whose envelope patch failed is still a move, and the
+            // sentence saying this calendar is stale rides along with it rather
+            // than being dropped for being inconvenient.
+            message = outcome.staleWarning ?: "Moved.",
+        )
+        is VisitMoveOutcome.Refused -> BulkRescheduleRow(
+            bookingId = target.bookingId,
+            name = target.name,
+            status = BulkRescheduleStatus.REFUSED,
+            message = outcome.message,
+            override = outcome.override,
+        )
+        // Nothing linked, or two things linked. Never sent, so never a refusal.
+        is VisitMoveOutcome.NotAttempted -> BulkRescheduleRow(
+            bookingId = target.bookingId,
+            name = target.name,
+            status = BulkRescheduleStatus.SKIPPED,
+            message = outcome.message,
+        )
+    }
+
     /**
      * Reschedule the selected booking via the Stage-1 rescheduleBooking callable (§A.9).
      * End is preserved from the original visit duration (fallback 30m). Fail-loud on a
@@ -1123,33 +1464,101 @@ class EnhancedSchedulingViewModel(
             scheduleWriteOverride = null,
         )
         viewModelScope.launch {
-            val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
-                failScheduleWrite("Could not look up the visit behind this booking: ${e.message}")
-                return@launch
+            when (val outcome = applyVisitMove(booking, startIso, endIso, override)) {
+                is VisitMoveOutcome.NotAttempted -> failScheduleWrite(outcome.message)
+                is VisitMoveOutcome.Moved -> {
+                    _state.value = _state.value.copy(
+                        scheduleWriteInFlight = false,
+                        scheduleWriteError = outcome.staleWarning,
+                        scheduleWriteOverride = null,
+                        dragState = null,
+                        selectedBooking = if (closeDetail) null else _state.value.selectedBooking,
+                    )
+                    loadBookingsForDateRange()
+                }
+                is VisitMoveOutcome.Refused -> {
+                    _state.value = _state.value.copy(
+                        scheduleWriteInFlight = false,
+                        scheduleWriteError = outcome.message,
+                        scheduleWriteOverride = outcome.override,
+                        dragState = null,
+                    )
+                    pendingScheduleRetry = PendingScheduleWrite.Move(booking, startIso, endIso, closeDetail)
+                }
             }
-            if (sessionIds.isEmpty()) {
-                failScheduleWrite(
-                    "No scheduled visit is linked to this booking, so there is nothing to move. " +
-                        "Confirm the booking first: approving it is what creates the visit.",
-                )
-                return@launch
-            }
-            if (sessionIds.size > 1) {
-                failScheduleWrite(
-                    "This booking has ${sessionIds.size} visits linked to it, and moving them all to " +
-                        "the same window would stack them. Move each visit from its own record.",
-                )
-                return@launch
-            }
-            val sessionId = sessionIds.first()
+        }
+    }
 
-            kinCareRepository.rescheduleBooking(
-                sessionId = sessionId,
-                startTime = startIso,
-                endTime = endIso,
-                overrideBusyConflict = override == ScheduleOverrideKind.BUSY,
-                overrideVisitConflict = override == ScheduleOverrideKind.VISIT,
-            ).onSuccess {
+    /**
+     * What became of one attempted move. Three outcomes, never two: a move that
+     * was never sent (nothing linked, or two things linked) is not a refusal,
+     * and a refusal is not a failure of this app.
+     */
+    private sealed interface VisitMoveOutcome {
+        /**
+         * The callable wrote the new window. [staleWarning] is non-null when the
+         * envelope patch that follows it did NOT land, which is a fail-loud
+         * sentence rather than a silent success: the visit really moved and this
+         * calendar is now drawing the old slot.
+         */
+        data class Moved(val staleWarning: String?) : VisitMoveOutcome
+        /** The server said no, with its own sentence and the override it offers (or none). */
+        data class Refused(val message: String, val override: ScheduleOverrideKind?) : VisitMoveOutcome
+        /** Nothing reached the server, and the reason is not the server's to give. */
+        data class NotAttempted(val message: String) : VisitMoveOutcome
+    }
+
+    /**
+     * Move ONE booking's visit. The whole write, with no screen state in it:
+     * the linked-session lookup, the callable, the envelope patch, and the audit
+     * entry.
+     *
+     * SHARED BY THE SINGLE MOVE AND THE BULK SHEET ON PURPOSE (#397 M16). The
+     * detail sheet's Reschedule, the agenda's drag and one row of the bulk sheet
+     * are the same write, and the three reasons [moveVisit] documents (the wrong
+     * collection's id, the envelope never following, no way past a refusal) are
+     * all fixed exactly once here. A bulk loop with its own copy of this
+     * sequence would be a fourth place for them to come back.
+     *
+     * THE ENVELOPE PATCH IS A DIFF, NOT A REBUILD, and must stay one.
+     * [BookingRepository.updateBookingTimes] writes the two fields that moved;
+     * [BookingRepository.updateBooking] rebuilds the whole document from an
+     * in-memory model and would wipe every field this screen never loaded. It is
+     * also still needed after PR #650: that change made `rescheduleBooking` move
+     * the `kin_care_sessions` row AND the household's `kinCares` envelope copy,
+     * and `enhanced_bookings` is a third document the server does not touch.
+     */
+    private suspend fun applyVisitMove(
+        booking: EnhancedBooking,
+        startIso: String,
+        endIso: String,
+        override: ScheduleOverrideKind?,
+    ): VisitMoveOutcome {
+        val sessionIds = findLinkedSessionIds(booking.id).getOrElse { e ->
+            return VisitMoveOutcome.NotAttempted("Could not look up the visit behind this booking: ${e.message}")
+        }
+        if (sessionIds.isEmpty()) {
+            return VisitMoveOutcome.NotAttempted(
+                "No scheduled visit is linked to this booking, so there is nothing to move. " +
+                    "Confirm the booking first: approving it is what creates the visit.",
+            )
+        }
+        if (sessionIds.size > 1) {
+            return VisitMoveOutcome.NotAttempted(
+                "This booking has ${sessionIds.size} visits linked to it, and moving them all to " +
+                    "the same window would stack them. Move each visit from its own record.",
+            )
+        }
+        val sessionId = sessionIds.first()
+
+        return kinCareRepository.rescheduleBooking(
+            sessionId = sessionId,
+            startTime = startIso,
+            endTime = endIso,
+            overrideBusyConflict = override == ScheduleOverrideKind.BUSY,
+            overrideVisitConflict = override == ScheduleOverrideKind.VISIT,
+        ).fold(
+            onSuccess = {
                 // The visit moved; the envelope this screen draws has to follow,
                 // or the calendar keeps showing the old slot.
                 val patched = bookingRepository.updateBookingTimes(booking.id, startIso, endIso)
@@ -1165,29 +1574,22 @@ class EnhancedSchedulingViewModel(
                     // would point at a document the reschedule did not author.
                     targetCollection = "kin_care_sessions",
                 )
-                _state.value = _state.value.copy(
-                    scheduleWriteInFlight = false,
-                    scheduleWriteError = patched.exceptionOrNull()?.let {
+                VisitMoveOutcome.Moved(
+                    staleWarning = patched.exceptionOrNull()?.let {
                         // Fail loud rather than quietly: the visit really did
                         // move, and this screen is now showing a stale window.
                         "The visit moved, but this calendar could not be updated to match: ${it.message}. Refresh to see the new time."
                     },
-                    scheduleWriteOverride = null,
-                    dragState = null,
-                    selectedBooking = if (closeDetail) null else _state.value.selectedBooking,
                 )
-                loadBookingsForDateRange()
-            }.onFailure { e ->
+            },
+            onFailure = { e ->
                 val code = (e as? BookingRequestRefusedException)?.code
-                _state.value = _state.value.copy(
-                    scheduleWriteInFlight = false,
-                    scheduleWriteError = e.message ?: "That visit could not be moved.",
-                    scheduleWriteOverride = overridableScheduleRefusal(code, alreadyOverridden = override != null),
-                    dragState = null,
+                VisitMoveOutcome.Refused(
+                    message = e.message ?: "That visit could not be moved.",
+                    override = overridableScheduleRefusal(code, alreadyOverridden = override != null),
                 )
-                pendingScheduleRetry = PendingScheduleWrite.Move(booking, startIso, endIso, closeDetail)
-            }
-        }
+            },
+        )
     }
 
     /** One refusal that never reached the server: same banner, never a retry button. */
