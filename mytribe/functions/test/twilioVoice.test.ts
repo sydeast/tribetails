@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   docs: new Map<string, Record<string, unknown>>(),
   /** Documents addressed by full path via db().doc(path), e.g. business_settings. */
   pathDocs: new Map<string, Record<string, unknown>>(),
+  /** Every path `db().doc(path).get()` was called with, in order. Counts reads per request. */
+  pathReads: [] as string[],
   /** Make the settings read throw, to exercise the fail-open path. */
   settingsReadThrows: false,
   validateRequest: vi.fn(),
@@ -78,6 +80,7 @@ vi.mock('../src/lib/firestoreAdmin', () => {
     db: () => ({
       doc: (path: string) => ({
         get: () => {
+          mocks.pathReads.push(path);
           if (mocks.settingsReadThrows) return Promise.reject(new Error('firestore boom'));
           const stored = mocks.pathDocs.get(path);
           return Promise.resolve({
@@ -130,6 +133,7 @@ beforeEach(() => {
   mocks.sets.length = 0;
   mocks.docs.clear();
   mocks.pathDocs.clear();
+  mocks.pathReads.length = 0;
   mocks.settingsReadThrows = false;
   mocks.validateRequest.mockReset();
   mocks.logEvent.mockReset();
@@ -544,6 +548,109 @@ describe('twilioVoice — routing', () => {
   });
 });
 
+/**
+ * ISSUE #397: the operator's on/off switch for "press 3 to talk to me now".
+ *
+ * The assertions are about WHAT THE CALLER HEARS and what a keypress then does,
+ * for the same reason the hours assertions are. The failure worth catching is a
+ * greeting that offers an option the handler will refuse, which reaches the
+ * caller as a phone line that ignored them.
+ */
+describe('twilioVoice — the live-transfer toggle', () => {
+  /** Open hours, transfer explicitly turned off. */
+  function transferOff(): void {
+    configureAuthentic();
+    mocks.pathDocs.set(SETTINGS_PATH, { ...LIVE_SETTINGS, voiceLiveTransferEnabled: false });
+  }
+
+  it('an ABSENT field still offers the live connect, so no existing line goes quiet', async () => {
+    // LIVE_SETTINGS carries no voiceLiveTransferEnabled, exactly like every
+    // settings document written before this toggle existed.
+    configureAuthentic();
+    const captured = await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(captured.text).toContain(spoken('Press 3 to talk to me right now'));
+  });
+
+  it('turned OFF, the greeting never mentions 3', async () => {
+    transferOff();
+    const captured = await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(captured.text).not.toContain(spoken('Press 3'));
+    expect(captured.text).toContain(spoken('Press 4 to leave me a voicemail'));
+  });
+
+  it('turned OFF, a 3 pressed anyway falls to the retry rather than ringing her', async () => {
+    transferOff();
+    const captured = await call('/route', { CallSid: CALL_SID, Digits: '3' }, OPEN_INSTANT);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/retry</Redirect>`);
+    expect(captured.text).not.toContain('/screen');
+  });
+
+  it('turned OFF, press 4 still takes a message', async () => {
+    // The toggle withdraws the live connect and nothing else. A caller who
+    // wanted to leave a message must not lose that too.
+    transferOff();
+    const captured = await call('/route', { CallSid: CALL_SID, Digits: '4' }, OPEN_INSTANT);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
+  });
+
+  it('turned ON explicitly, 3 still reaches the screening prompt', async () => {
+    configureAuthentic();
+    mocks.pathDocs.set(SETTINGS_PATH, { ...LIVE_SETTINGS, voiceLiveTransferEnabled: true });
+    const captured = await call('/route', { CallSid: CALL_SID, Digits: '3' }, OPEN_INSTANT);
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/screen</Redirect>`);
+  });
+
+  it('AFTER HOURS the closed greeting is identical, on or off', async () => {
+    // Being shut already withdraws the live connect. The toggle must not
+    // introduce a second, differently-worded after-hours greeting.
+    transferOff();
+    const off = await call('/', { CallSid: CALL_SID }, CLOSED_INSTANT);
+    configureAuthentic();
+    const on = await call('/', { CallSid: CALL_SID }, CLOSED_INSTANT);
+    expect(off.text).toContain(spoken("We're closed right now"));
+    expect(off.text).toBe(on.text);
+  });
+
+  it('is re-read on the keypress, so a flip MID-CALL is honoured', async () => {
+    // The greeting offered 3. She turns the transfer off while the caller is
+    // still listening to it. The digit must not ring a phone that should not.
+    configureAuthentic();
+    const greeting = await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(greeting.text).toContain(spoken('Press 3 to talk to me right now'));
+
+    mocks.pathDocs.set(SETTINGS_PATH, { ...LIVE_SETTINGS, voiceLiveTransferEnabled: false });
+    const pressed = await call('/route', { CallSid: CALL_SID, Digits: '3' }, OPEN_INSTANT);
+    expect(pressed.text).toContain(`<Redirect method="POST">${BASE}/retry</Redirect>`);
+  });
+
+  it('FAILS OPEN: an unreadable settings document still offers the live connect', async () => {
+    // Same policy as the hours. Being unable to read our own configuration is
+    // not evidence that she stopped answering her phone.
+    configureAuthentic();
+    mocks.settingsReadThrows = true;
+    const captured = await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(captured.text).toContain(spoken('Press 3 to talk to me right now'));
+  });
+
+  it('reads the toggle from the LEGACY singleton doc too', async () => {
+    configureAuthentic();
+    mocks.pathDocs.delete(SETTINGS_PATH);
+    mocks.pathDocs.set(LEGACY_SETTINGS_PATH, { ...LIVE_SETTINGS, voiceLiveTransferEnabled: false });
+    const captured = await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(captured.text).not.toContain(spoken('Press 3'));
+  });
+
+  it('reads the settings document ONCE per request, not once per question', async () => {
+    // The greeting needs the hours AND the toggle. Two reads inside one phone
+    // call would spend a round trip out of Twilio's 15-second webhook budget
+    // to learn nothing new.
+    configureAuthentic();
+    mocks.pathReads.length = 0;
+    await call('/', { CallSid: CALL_SID }, OPEN_INSTANT);
+    expect(mocks.pathReads.filter((p) => p === SETTINGS_PATH)).toHaveLength(1);
+  });
+});
+
 describe('twilioVoice — screening', () => {
   const CONF = `conf_${CALL_SID}`;
 
@@ -624,6 +731,25 @@ describe('twilioVoice — screening', () => {
     mocks.sendCallInvitePush.mockResolvedValue({ delivered: 0, attempted: 1, pruned: 0 });
     const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
     expect(captured.text).toContain('Conference');
+  });
+
+  it('THE DEAD LINE: a delivered push with a FAILED dial goes to voicemail', async () => {
+    // The discriminating case, and the one this used to get wrong. The old
+    // fallback required BOTH the push and the dial to fail, so a push that
+    // landed while calls.create threw parked the caller in a conference that
+    // nothing could join: the invite her app accepts is CREATED BY the dialed
+    // leg, and the admin app cannot originate a call of its own. Her screen
+    // showed a call she could tap and never connect, and the caller heard hold
+    // music until they gave up.
+    configureAuthentic();
+    mocks.sendCallInvitePush.mockResolvedValue({ delivered: 2, attempted: 2, pruned: 0 });
+    mocks.callsCreate.mockRejectedValue(new Error('twilio down'));
+    const captured = await call('/screen-connect', { CallSid: CALL_SID, SpeechResult: 'hi' });
+    expect(captured.text).toContain(`<Redirect method="POST">${BASE}/voicemail</Redirect>`);
+    expect(captured.text).not.toContain('Conference');
+    expect(mocks.logEvent.mock.calls.map((c) => c[0])).toContainEqual(
+      expect.objectContaining({ severity: 'error', event: 'twilioVoice.screen.unreachable' }),
+    );
   });
 
   it('sanitizes the spoken transcript before it is carried anywhere', async () => {

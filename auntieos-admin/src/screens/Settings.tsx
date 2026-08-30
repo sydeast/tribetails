@@ -14,6 +14,7 @@ import {
   BUSINESS_PROFILE_FIELDS,
 } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
+import { PhoneLineSection } from './settings/PhoneLineSection';
 import { TimeZoneSection } from './settings/TimeZoneSection';
 import { BookingRulesSection } from './settings/BookingRulesSection';
 import { VisitsTrackingSection } from './settings/VisitsTrackingSection';
@@ -63,12 +64,13 @@ import './Settings.css';
  * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
  * to react to. `Notifications` and `Tags` are their own self-loading editors
  * (`NotificationGate`, `TagsEditor`), so they do not depend on this doc and are
- * rendered directly; the other ten sections read this loaded `data`.
+ * rendered directly; the other eleven sections read this loaded `data`.
  */
 
 type SectionId =
   | 'businessProfile'
   | 'businessHours'
+  | 'phoneLine'
   | 'timeOff'
   | 'kinCare'
   | 'bookingRules'
@@ -85,6 +87,10 @@ type SectionId =
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'businessProfile', label: 'Business profile' },
   { id: 'businessHours', label: 'Business hours' },
+  // ISSUE #397. Directly after Business hours, because the live transfer is
+  // gated on them: the first question an operator has after turning it off is
+  // when it applies.
+  { id: 'phoneLine', label: 'Phone line' },
   { id: 'timeOff', label: 'Time off' },
   { id: 'kinCare', label: 'KinCare types' },
   // ISSUE #519: two sections for the twenty `business_settings` fields the three
@@ -315,6 +321,9 @@ function renderDataSection(
       );
     case 'businessHours':
       return <BusinessHoursEditor data={data} onSave={persist} />;
+    // ISSUE #397: the press-3 live transfer, on or off.
+    case 'phoneLine':
+      return <PhoneLineSection data={data} onSave={persist} />;
     case 'timeOff':
       return <TimeOffEditor data={data} onSave={persist} />;
     case 'kinCare':

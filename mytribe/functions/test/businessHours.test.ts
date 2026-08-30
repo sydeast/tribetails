@@ -4,6 +4,7 @@ import {
   hasSpecialHours,
   parseClosureList,
   resolveBusinessOpen,
+  resolveLiveTransferEnabled,
   zonedNow,
   type BusinessHoursSettings,
 } from '../src/lib/businessHours';
@@ -331,5 +332,39 @@ describe('parseClosureList', () => {
     expect(parseClosureList(['2026-01-01|New Year', 7, null, undefined])).toHaveLength(1);
     expect(parseClosureList(undefined)).toEqual([]);
     expect(parseClosureList('nope')).toEqual([]);
+  });
+});
+
+/**
+ * ISSUE #397. The whole rule is "only an explicit false turns it off", and it
+ * is spelled out case by case because the value this reads is raw document
+ * data: nothing validates the field on the way in, so a legacy document or a
+ * hand-edit in the Firebase console can put anything at all there.
+ */
+describe('resolveLiveTransferEnabled', () => {
+  it('is ON when the field is absent, so no document written before it goes quiet', () => {
+    expect(resolveLiveTransferEnabled({})).toBe(true);
+    expect(resolveLiveTransferEnabled({ timeZone: 'America/Chicago' })).toBe(true);
+  });
+
+  it('is ON when the settings could not be read at all', () => {
+    // Fail-open, matching the hours. Not knowing is not a reason to stop
+    // connecting callers.
+    expect(resolveLiveTransferEnabled(null)).toBe(true);
+  });
+
+  it('is OFF only for an explicit boolean false', () => {
+    expect(resolveLiveTransferEnabled({ voiceLiveTransferEnabled: false })).toBe(false);
+    expect(resolveLiveTransferEnabled({ voiceLiveTransferEnabled: true })).toBe(true);
+  });
+
+  it('treats a NON-BOOLEAN as on rather than guessing what it meant', () => {
+    // A string "false" is the shape a hand-edited console value takes, and it
+    // is exactly the value that must not silently disable the phone. Turning
+    // the line off is an explicit act, so it takes an explicit boolean.
+    const cases: unknown[] = ['false', 'off', 0, '', null, [], {}];
+    for (const value of cases) {
+      expect(resolveLiveTransferEnabled({ voiceLiveTransferEnabled: value })).toBe(true);
+    }
   });
 });
