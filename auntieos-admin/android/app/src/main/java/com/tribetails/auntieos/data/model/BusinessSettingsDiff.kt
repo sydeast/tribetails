@@ -145,6 +145,19 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
         write = { it.petTags },
         compare = { it.petTagDefs() },
     ),
+    // --- MyTribe portal Home layout (issue #397 M10) ---
+    // Same split as the tag vocabularies just above, and for the same reason:
+    // this client only edits `home.sections` (`withHomeSections`), never
+    // `logoUrl`/`themeId`/`banner`/`chat`, so comparing the RAW `mytribePortal`
+    // value would call re-encoding an untouched layout a change (or comparing
+    // a stray unmodelled sibling key an edit here never touched). Comparing the
+    // decoded Home layout means only an actual reorder/toggle/limit edit
+    // writes, and the value it writes is the raw map [withHomeSections]
+    // produced, which carries every sibling key forward untouched.
+    "mytribePortal" to SettingsDiffField(
+        write = { it.mytribePortal },
+        compare = { it.homeSections() },
+    ),
 )
 
 /**

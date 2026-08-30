@@ -284,6 +284,14 @@ data class BusinessSettings(
     // [withPetTagDefs] so the color `css` string round-trips unchanged.
     var householdTags: Any? = null,
     var petTags: Any? = null,
+    // --- MyTribe portal (issue #397 M10: Home layout only) ---
+    // The shared kinfolk-portal config wire object. Held raw (Class A, same
+    // posture as [householdTags]/[petTags] above): this client models only the
+    // `home.sections` sub-field it edits ([homeSections]/[withHomeSections] in
+    // Models.kt), never `logoUrl`/`themeId`/`banner`/`chat`, which have no
+    // editor here. Holding the whole thing raw is what lets a save patch just
+    // `home.sections` without needing to know, or disturb, those sibling keys.
+    var mytribePortal: Any? = null,
     var updatedAt: String = "",
     var updatedBy: String = "" // Admin user who made the change
 ) {
@@ -296,6 +304,9 @@ data class BusinessSettings(
 
     /** The pet tag vocabulary, malformed rows dropped. Never throws. */
     fun petTagDefs(): List<TagDef> = decodeTagDefs(petTags)
+
+    /** The kinfolk portal Home layout, malformed/missing rows dropped. Never throws. */
+    fun homeSections(): List<PortalHomeSection> = decodeHomeSections(mytribePortal)
 }
 
 /** Copy [BusinessSettings] replacing the household tag vocabulary. */
@@ -305,6 +316,15 @@ fun BusinessSettings.withHouseholdTagDefs(defs: List<TagDef>): BusinessSettings 
 /** Copy [BusinessSettings] replacing the pet tag vocabulary. */
 fun BusinessSettings.withPetTagDefs(defs: List<TagDef>): BusinessSettings =
     this.copy(petTags = encodeTagDefs(defs))
+
+/**
+ * Copy [BusinessSettings] replacing the Home layout, leaving every other
+ * `mytribePortal` key (`logoUrl`, `themeId`, `banner`, `chat`) exactly as this
+ * copy already held it. See [encodeHomeSections] for why this is a patch, not
+ * a rebuild.
+ */
+fun BusinessSettings.withHomeSections(sections: List<PortalHomeSection>): BusinessSettings =
+    this.copy(mytribePortal = encodeHomeSections(mytribePortal, sections))
 
 /** Copy [BusinessSettings] setting [defaultBookingMode] from a typed [BookingMode]. */
 fun BusinessSettings.withBookingMode(mode: BookingMode): BusinessSettings =
