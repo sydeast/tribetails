@@ -40,6 +40,7 @@ import com.tribetails.auntieos.ui.admin.scheduling.CALENDAR_SYNC_SA_EMAIL
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.EnhancedSchedulingViewModel
 import com.tribetails.auntieos.ui.admin.scheduling.GOOGLE_OAUTH_SECRET_NAMES
+import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarAutoSyncCard
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarConnection
 import com.tribetails.auntieos.ui.admin.scheduling.GoogleCalendarUiState
 import com.tribetails.auntieos.ui.admin.scheduling.ScheduleWriteBanner
@@ -107,6 +108,19 @@ fun SchedulingOptionsScreen(
                         onPush = { schedulingViewModel.pushGoogleCalendarVisits() },
                         onDisconnect = { schedulingViewModel.disconnectGoogleCalendar() },
                         onDismissError = { schedulingViewModel.clearGoogleCalendarError() },
+                    )
+                }
+            }
+
+            // Issue #397. Its own card in its own file, so the automatic sync's
+            // receipt and its retry do not thread through the already large
+            // connect card above.
+            item {
+                AuntieCard {
+                    GoogleCalendarAutoSyncCard(
+                        state = schedulingState.googleCalendar,
+                        onRetryVisit = { schedulingViewModel.retryGoogleCalendarVisitSync(it) },
+                        onDismissNote = { schedulingViewModel.clearGoogleCalendarVisitSyncNote() },
                     )
                 }
             }

@@ -1420,6 +1420,77 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * Issue #397: the OAuth half of Google Calendar, which this Compose client had
+     * no surface for at all. `syncGoogleCalendarBusyEvents` above is a
+     * DIFFERENT feature — it READS availability as a service account and needs
+     * no sign-in. These five WRITE our visits onto the operator's own calendar,
+     * and writing needs the operator's consent, which is what the connect flow
+     * collects.
+     *
+     * NO REFRESH TOKEN EVER REACHES THIS CLIENT. The connection document is
+     * denied to every client by `firestore.rules`, and the callables answer
+     * with a projection that has the token stripped. Nothing here should ever
+     * grow a field for one.
+     *
+     * FAIL LOUD, no mapping: the server's own messages name the two secrets an
+     * operator still owes, the exact `firebase functions:secrets:set` command,
+     * and the redirect URI to register. A friendly "could not connect" here
+     * would delete the only text that says what to do next.
+     */
+    suspend fun getGoogleCalendarConnection(): WriteResult<GoogleCalendarConnectionView> =
+        callAndDecode("getGoogleCalendarConnection", "{}") { decodeGoogleCalendarConnection(it) }
+
+    /**
+     * Mints a one-time state nonce server-side and hands back the consent URL.
+     * The URL is OPENED, never fetched: it is a page a human signs in on.
+     */
+    suspend fun startGoogleCalendarConnect(): WriteResult<String> =
+        callAndDecode("startGoogleCalendarConnect", "{}") {
+            callableJson.parseToJsonElement(it).jsonObject["authUrl"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }
+
+    suspend fun disconnectGoogleCalendar(): WriteResult<GoogleCalendarConnectionView> =
+        callAndDecode("disconnectGoogleCalendar", "{}") { decodeGoogleCalendarConnection(it) }
+
+    /**
+     * Sends the next [lookAheadDays] of visits. NO CALENDAR ID IN THE REQUEST:
+     * the target is the one the operator saved, so no client can aim a
+     * household's visits somewhere else.
+     */
+    suspend fun pushVisitsToGoogleCalendar(lookAheadDays: Int = 30): WriteResult<Int> {
+        val payload = buildJsonObject { put("lookAheadDays", JsonPrimitive(lookAheadDays)) }
+        return callAndDecode(
+            "pushVisitsToGoogleCalendar",
+            callableJson.encodeToString(JsonObject.serializer(), payload),
+        ) { callableJson.parseToJsonElement(it).jsonObject["pushed"]?.jsonPrimitive?.intOrNull ?: 0 }
+    }
+
+    /**
+     * Brings ONE visit into line with the calendar: the retry for a visit the
+     * automatic lifecycle sync could not write. No action in the request — the
+     * server decides create/update/delete from the stored visit, which is also
+     * what makes a second press safe.
+     */
+    suspend fun syncVisitToGoogleCalendar(sessionId: String): WriteResult<GoogleCalendarVisitSync> {
+        val payload = buildJsonObject { put("sessionId", JsonPrimitive(sessionId)) }
+        return callAndDecode(
+            "syncVisitToGoogleCalendar",
+            callableJson.encodeToString(JsonObject.serializer(), payload),
+        ) { decodeGoogleCalendarVisitSync(it) }
+    }
+
+    /** Invoke + decode, with a decode failure reported as an error rather than as an empty success. */
+    private suspend fun <T> callAndDecode(
+        name: String,
+        payloadJson: String,
+        decode: (String) -> T,
+    ): WriteResult<T> = when (val r = platformInvokeCallable(name, payloadJson)) {
+        is WriteResult.Err -> WriteResult.Err(r.message)
+        is WriteResult.Ok -> runCatching { WriteResult.Ok(decode(r.value)) }
+            .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+    }
+
     // ---- Booking-envelope ingestion + write-back (gated by mytribe.booking.envelope) ----
     /** Incoming per-visit KinCare requests (collectionGroup kinCares, status == 'requested'). */
     fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> = platformIncomingKinCaresStream()
@@ -2026,6 +2097,79 @@ private val importedCountJson = Json { ignoreUnknownKeys = true; isLenient = tru
  */
 internal fun decodeImportedCount(dataJson: String): Int =
     importedCountJson.parseToJsonElement(dataJson).jsonObject["imported"]?.jsonPrimitive?.intOrNull ?: 0
+
+/**
+ * The Google Calendar OAuth connection as a client is allowed to see it
+ * (issue #397). Mirrors `PublicGoogleCalendarConnection` on the server and the
+ * two other clients' copies; the shape is frozen in
+ * `mytribe/functions/test/callableContract.test.ts`.
+ *
+ * NO `refreshToken` FIELD, BY CONSTRUCTION. A refresh token is a standing
+ * credential: whoever holds one can edit the operator's real calendar until the
+ * grant is revoked. The server's projection never carries one, and adding a
+ * field for it here would be the one change that could surface it.
+ */
+data class GoogleCalendarConnectionView(
+    val connected: Boolean = false,
+    val googleAccountEmail: String = "",
+    val writeCalendarId: String = "",
+    val connectLastStatus: String = "",
+    val connectLastError: String = "",
+    val calendarPushLastRunAt: String = "",
+    val calendarPushLastStatus: String = "",
+    val calendarPushLastPushed: Int = 0,
+    val calendarPushLastError: String = "",
+    /** The AUTOMATIC per-visit sync's receipt. The only report a trigger can make. */
+    val calendarAutoSyncLastRunAt: String = "",
+    val calendarAutoSyncLastStatus: String = "",
+    val calendarAutoSyncLastAction: String = "",
+    val calendarAutoSyncLastSessionId: String = "",
+    val calendarAutoSyncLastError: String = "",
+)
+
+/** What syncing ONE visit did. `reason` is non-empty only on a skip. */
+data class GoogleCalendarVisitSync(
+    val sessionId: String = "",
+    val action: String = "",
+    val reason: String = "",
+)
+
+private fun JsonObject.str(key: String): String = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+/**
+ * Decodes the `{ connection: {...}, ... }` body of the connection callables.
+ * `disconnectGoogleCalendar` and `getGoogleCalendarConnection` both wrap the
+ * projection under `connection`, so both come through here.
+ */
+internal fun decodeGoogleCalendarConnection(dataJson: String): GoogleCalendarConnectionView {
+    val root = importedCountJson.parseToJsonElement(dataJson).jsonObject
+    val c = root["connection"]?.jsonObject ?: root
+    return GoogleCalendarConnectionView(
+        connected = c["connected"]?.jsonPrimitive?.booleanOrNull ?: false,
+        googleAccountEmail = c.str("googleAccountEmail"),
+        writeCalendarId = c.str("writeCalendarId"),
+        connectLastStatus = c.str("connectLastStatus"),
+        connectLastError = c.str("connectLastError"),
+        calendarPushLastRunAt = c.str("calendarPushLastRunAt"),
+        calendarPushLastStatus = c.str("calendarPushLastStatus"),
+        calendarPushLastPushed = c["calendarPushLastPushed"]?.jsonPrimitive?.intOrNull ?: 0,
+        calendarPushLastError = c.str("calendarPushLastError"),
+        calendarAutoSyncLastRunAt = c.str("calendarAutoSyncLastRunAt"),
+        calendarAutoSyncLastStatus = c.str("calendarAutoSyncLastStatus"),
+        calendarAutoSyncLastAction = c.str("calendarAutoSyncLastAction"),
+        calendarAutoSyncLastSessionId = c.str("calendarAutoSyncLastSessionId"),
+        calendarAutoSyncLastError = c.str("calendarAutoSyncLastError"),
+    )
+}
+
+internal fun decodeGoogleCalendarVisitSync(dataJson: String): GoogleCalendarVisitSync {
+    val o = importedCountJson.parseToJsonElement(dataJson).jsonObject
+    return GoogleCalendarVisitSync(
+        sessionId = o.str("sessionId"),
+        action = o.str("action"),
+        reason = o.str("reason"),
+    )
+}
 
 /**
  * Outcome of the `batchUpdateBookings` admin callable: how many visits moved to

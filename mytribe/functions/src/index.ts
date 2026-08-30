@@ -474,6 +474,12 @@ export {
   setGoogleCalendarTargets,
 } from './admin/googleCalendar/googleCalendarSelection';
 export { pushVisitsToGoogleCalendar } from './admin/googleCalendar/pushVisitsToGoogleCalendar';
+// The per-visit half (issue #397): the retry path for a visit the automatic
+// lifecycle sync could not write, and the manual one for a visit the operator
+// wants on the calendar now. Idempotent, so a second press is safe. The trigger
+// that normally does this without being asked is `onKinCareSessionCalendarSync`,
+// in the triggers block below.
+export { syncVisitToGoogleCalendar } from './admin/googleCalendar/syncVisitToGoogleCalendar';
 export { sendExternalMessage, suppressExternalRecipient } from './admin/sendExternalMessage';
 export { smtp2goEventWebhook, twilioStatusCallback } from './admin/engagementWebhooks';
 export { listRecentSends } from './admin/listRecentSends';
@@ -565,6 +571,12 @@ export { onInviteRequestCreate } from './triggers/onInviteRequestCreate';
 export { onClientsWrite } from './triggers/onClientsWrite';
 export { onBookingsWrite } from './triggers/onBookingsWrite';
 export { onKinCareRollup } from './triggers/onKinCareRollup';
+// A SECOND trigger on `kin_care_sessions`, alongside `onKinCareRollup`, and for
+// the same reason `onInvoiceAutoApply` sits alongside `onInvoicesWrite`: they
+// watch the same documents to answer different questions. The rollup keeps our
+// own derived counts; this one writes to a third party's calendar and its
+// failure mode is an operator's day being wrong. Issue #397.
+export { onKinCareSessionCalendarSync } from './triggers/onKinCareSessionCalendarSync';
 export { onBookingEnvelopeCreate } from './triggers/onBookingEnvelopeCreate';
 export { onFamilyKinWrite } from './triggers/onFamilyKinWrite';
 export { onFlatKinWrite } from './triggers/onFlatKinWrite';
