@@ -221,22 +221,24 @@ screenshot-comparison project back without an explicit operator instruction.
 
 ## The Cypress suites (added 2026-08-16)
 
-There are two Cypress suites, one per web app, and each is a SMOKE suite: two
-tests, proving the app boots in a real browser and that sign-in works. That is
-the whole scope, by operator ruling on 2026-08-27.
-It was not always that scope. The first version walked all 21 admin screens,
-crawled the portal's links and drove named workflows. The operator's judgment,
-with the diff to back it: 46 assertions that an element was present or visible
-against 2 that anything actually happened. A suite shaped like that goes green
-while a callable times out and while every screen takes fifteen seconds, because
-it never asks whether the app DID anything or how long it took. Those tests were
-deleted rather than kept as false comfort.
+There are two Cypress suites, one per web app. Each began as a SMOKE suite: two
+tests, proving the app boots in a real browser and that sign-in works, by
+operator ruling on 2026-08-27. The admin suite grew past that on 2026-09-01,
+under the condition that ruling set: a feature spec is designed in session,
+around round trips and their timing, and agreed before it is written. The
+portal suite is still the two smoke tests.
+The 2026-08-27 ruling had a diff behind it. The first version walked all 21
+admin screens, crawled the portal's links and drove named workflows: 46
+assertions that an element was present or visible against 2 that anything
+actually happened. A suite shaped like that goes green while a callable times
+out and while every screen takes fifteen seconds, because it never asks whether
+the app DID anything or how long it took. Those tests were deleted rather than
+kept as false comfort, and nothing of that shape comes back.
 WHAT THIS LEAVES. Playwright stays narrow and deep: Fraunces renders, two
 cascade fights resolve, the gate admits an operator and refuses a kinfolk.
-Cypress proves the harness and the front door. NOTHING here verifies a feature,
-and nothing should be added to these files that claims to. A suite that tests
-behaviour has to be designed around round trips and their timing, and agreed
-before it is written.
+Cypress proves the harness and the front door, and, for the admin, the screens
+listed below. A test added to either suite asserts that something changed and
+how long it took, or it does not go in.
 
 ```bash
 npm --prefix auntieos-admin run e2e:cy    # admin
@@ -256,14 +258,27 @@ browser, and an operator can sign in and land on `/home` with the rail rendered.
 `account.cy.ts` (added 2026-09-01) is the first feature spec, designed in
 session before it was written, and it is the shape any further one has to take:
 every test asserts a state change on a round trip through the emulator, timed.
-Profile edit saves through the real `isAuntie()` rules and is read back after a
-`cy.reload()`; a blank display name is refused with nothing written; the
-notifications button changes the route; and the password is changed through the
-real Security panel, proven by signing out and back in with the new one. Values
-are stamped per run so the file survives being re-run under `cypress open`
-against a database the seed did not just wipe. It is also the first consumer of
-the `console.error` recorder: an unexpected line on any of its screens fails the
-test that visited it.
+A wrong password is refused at the front door with the mapped line. Profile
+edit saves through the real `isAuntie()` rules and is read back after a
+`cy.reload()`, including a name with quotes, an HTML tag and an emoji, which
+must come back as text; a blank display name is refused with nothing written;
+padding is trimmed. The notifications button changes the route. On the Security
+panel: a short new password and a malformed new email leave their buttons
+disabled; a wrong current password is refused on both forms and the original
+still signs in; a real password change is proven by signing out and back in
+with the new one. Values are stamped per run so the file survives being re-run
+under `cypress open` against a database the seed did not just wipe. It is also
+the first consumer of the `console.error` recorder: an unexpected line on any
+of its screens fails the test that visited it.
+`my-notifications.cy.ts` (added 2026-09-01) is the one file in the admin suite
+that intercepts callables, by operator ruling the same day. Both sides of My
+Notifications are callables, and this harness pins callables at a dead port on
+purpose, so the two reads and the save are answered by `cy.intercept` with the
+WIRE shape the callable would return, run through the app's real decoders. What
+it proves is the screen: a flipped switch is the one field the save sends, an
+explicit `false` rather than an absent key; a refused save keeps the draft and
+re-arms Save; Discard restores the draft without a round trip; a channel the
+business forces cannot be flipped. Persistence is the deployed host's to prove.
 The password test runs ONLY against the fixture admin (`usingFixtureAdmin()` in
 `cypress/support/commands.ts`). It rotates the account's password, so an
 `after()` hook restores the fixture one over the auth emulator's owner REST
