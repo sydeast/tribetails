@@ -1,5 +1,6 @@
 import { defineConfig } from 'cypress';
-import seed from './e2e/seed';
+import seed, { setPassword } from './e2e/seed';
+import { ADMIN } from './e2e/fixtures/accounts';
 
 /**
  * Cypress config for the AuntieOS admin.
@@ -41,6 +42,7 @@ const PORT = 5174; // matches vite.config.ts's dev port and playwright.config.ts
 let seeded: Promise<void> | null = null;
 
 export default defineConfig({
+  projectId: '2khvut',
   e2e: {
     baseUrl: `http://127.0.0.1:${PORT}`,
     specPattern: 'cypress/e2e/**/*.cy.ts',
@@ -66,6 +68,16 @@ export default defineConfig({
         async seedOnce() {
           seeded ??= seed();
           await seeded;
+          return null;
+        },
+        /**
+         * Puts the fixture admin's password back after `account.cy.ts` has
+         * changed it through the real Security panel. A task, not a form
+         * round-trip, so it still runs when the spec died halfway and left a
+         * password nobody knows. Returns null for the same reason `seedOnce` does.
+         */
+        async resetAdminPassword() {
+          await setPassword(ADMIN.email, ADMIN.password);
           return null;
         },
       });

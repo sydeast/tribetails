@@ -221,22 +221,24 @@ screenshot-comparison project back without an explicit operator instruction.
 
 ## The Cypress suites (added 2026-08-16)
 
-There are two Cypress suites, one per web app, and each is a SMOKE suite: two
-tests, proving the app boots in a real browser and that sign-in works. That is
-the whole scope, by operator ruling on 2026-08-27.
-It was not always that scope. The first version walked all 21 admin screens,
-crawled the portal's links and drove named workflows. The operator's judgment,
-with the diff to back it: 46 assertions that an element was present or visible
-against 2 that anything actually happened. A suite shaped like that goes green
-while a callable times out and while every screen takes fifteen seconds, because
-it never asks whether the app DID anything or how long it took. Those tests were
-deleted rather than kept as false comfort.
+There are two Cypress suites, one per web app. Each began as a SMOKE suite: two
+tests, proving the app boots in a real browser and that sign-in works, by
+operator ruling on 2026-08-27. The admin suite grew past that on 2026-09-01,
+under the condition that ruling set: a feature spec is designed in session,
+around round trips and their timing, and agreed before it is written. The
+portal suite is still the two smoke tests.
+The 2026-08-27 ruling had a diff behind it. The first version walked all 21
+admin screens, crawled the portal's links and drove named workflows: 46
+assertions that an element was present or visible against 2 that anything
+actually happened. A suite shaped like that goes green while a callable times
+out and while every screen takes fifteen seconds, because it never asks whether
+the app DID anything or how long it took. Those tests were deleted rather than
+kept as false comfort, and nothing of that shape comes back.
 WHAT THIS LEAVES. Playwright stays narrow and deep: Fraunces renders, two
 cascade fights resolve, the gate admits an operator and refuses a kinfolk.
-Cypress proves the harness and the front door. NOTHING here verifies a feature,
-and nothing should be added to these files that claims to. A suite that tests
-behaviour has to be designed around round trips and their timing, and agreed
-before it is written.
+Cypress proves the harness and the front door, and, for the admin, the screens
+listed below. A test added to either suite asserts that something changed and
+how long it took, or it does not go in.
 
 ```bash
 npm --prefix auntieos-admin run e2e:cy    # admin
@@ -250,9 +252,40 @@ first (`tsc -p cypress`). `e2e:cy:open` is the interactive form. No extra
 install step: the browser bundle comes down with `npm ci`.
 
 **The admin suite** (`auntieos-admin/cypress/`) reuses this harness's emulators,
-`e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them. It is one
-file, `smoke.cy.ts`, with two tests: the app is served and mounts in a browser,
-and an operator can sign in and land on `/home` with the rail rendered.
+`e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them.
+`smoke.cy.ts` is the two-test front door: the app is served and mounts in a
+browser, and an operator can sign in and land on `/home` with the rail rendered.
+`account.cy.ts` (added 2026-09-01) is the first feature spec, designed in
+session before it was written, and it is the shape any further one has to take:
+every test asserts a state change on a round trip through the emulator, timed.
+A wrong password is refused at the front door with the mapped line. Profile
+edit saves through the real `isAuntie()` rules and is read back after a
+`cy.reload()`, including a name with quotes, an HTML tag and an emoji, which
+must come back as text; a blank display name is refused with nothing written;
+padding is trimmed. The notifications button changes the route. On the Security
+panel: a short new password and a malformed new email leave their buttons
+disabled; a wrong current password is refused on both forms and the original
+still signs in; a real password change is proven by signing out and back in
+with the new one. Values are stamped per run so the file survives being re-run
+under `cypress open` against a database the seed did not just wipe. It is also
+the first consumer of the `console.error` recorder: an unexpected line on any
+of its screens fails the test that visited it.
+`my-notifications.cy.ts` (added 2026-09-01) is the one file in the admin suite
+that intercepts callables, by operator ruling the same day. Both sides of My
+Notifications are callables, and this harness pins callables at a dead port on
+purpose, so the two reads and the save are answered by `cy.intercept` with the
+WIRE shape the callable would return, run through the app's real decoders. What
+it proves is the screen: a flipped switch is the one field the save sends, an
+explicit `false` rather than an absent key; a refused save keeps the draft and
+re-arms Save; Discard restores the draft without a round trip; a channel the
+business forces cannot be flipped. Persistence is the deployed host's to prove.
+The password test runs ONLY against the fixture admin (`usingFixtureAdmin()` in
+`cypress/support/commands.ts`). It rotates the account's password, so an
+`after()` hook restores the fixture one over the auth emulator's owner REST
+surface (`resetAdminPassword` task, `setPassword` in `e2e/seed.ts`). Under the
+deployed-host overrides below it is skipped: a real admin's password rotated by
+a spec, with the reset pointed at an emulator that is not there, is an operator
+locked out.
 **The portal suite** (`mytribe/web/cypress/`) is the first browser-level test the
 portal has ever had. Its ~500 vitest cases all run in jsdom, where the router
 never runs and no screen is mounted end to end. Same two tests, same scope.
@@ -276,6 +309,88 @@ in an effect logs there and would otherwise pass. The allowlists are in each
 suite's `cypress/support/e2e.ts`, one entry per HARNESS condition with the
 reason written next to it. An entry describing an app behaviour is a bug being
 allowlisted.
+
+## Pointing a Cypress run at a deployed host (added 2026-08-30)
+
+`baseUrl` in `cypress.config.ts` is the emulator (`http://127.0.0.1:5174`) and
+stays that way. A deployed run is an OVERRIDE for one invocation, never an edit
+to the file: a checked-in prod `baseUrl` means the next person's `npm run e2e:cy`
+boots emulators, seeds them, and then drives the live site against them, which is
+how a green is earned somewhere nobody meant to look.
+
+The emulator fixture account (`e2e/fixtures/accounts.ts`) exists only in the auth
+emulator, so a deployed run also needs a real account. `cy.signIn()` takes both
+halves from the environment and falls back to the fixture when neither is set;
+setting only one is an error rather than a fallback, because a prod run that
+quietly used the fixture would fail at the form and read as an app defect.
+
+```bash
+cd auntieos-admin
+CYPRESS_baseUrl=https://auntie.tribetails.com \
+CYPRESS_E2E_ADMIN_EMAIL=e2e-admin@tribetails.com \
+CYPRESS_E2E_ADMIN_PW="$(gcloud secrets versions access latest --secret=e2e-admin-password)" \
+npx cypress run
+```
+
+WHAT A DEPLOYED RUN COVERS (2026-09-01). `smoke.cy.ts`, and `account.cy.ts`
+minus its password block. Anything that changes the account it signs in with,
+or that answers a callable with a fixture, skips itself when the run is not
+authenticating as the emulator fixture (`usingFixtureAdmin()`): the password
+block because a rotated real admin with the REST reset pointed at an absent
+emulator is an operator locked out, and all of `my-notifications.cy.ts` because
+its intercept pattern matches the emulator's callable path, not
+`us-central1-<project>.cloudfunctions.net`, so against prod the real catalog
+would come back and every fixture-row assertion would fail on content. An
+unstubbed notifications variant is not written.
+
+No `firebase emulators:exec`, no vite server, no seed. Which is also the limit of
+what such a run can assert: the seeded fixtures are not there, so exact-count
+assertions and the `SEEDED_BOOKINGS` rows mean nothing against a deployed host.
+Navigation and sign-in are the honest scope.
+
+### Provisioning the deployed admin account
+
+One-off, operator-run, because it writes to the live project.
+
+Generate the password into a variable rather than inline in the `--password`
+argument: a subshell substitution never shows it, and a password nobody read is
+a password nobody can put in Secret Manager.
+
+```bash
+cd mytribe/functions
+PW="$(openssl rand -base64 24)"
+
+GOOGLE_CLOUD_PROJECT=auntieos-ttpc node scripts/grant-admin-claim.mjs \
+  --email e2e-admin@tribetails.com --password "$PW"
+
+printf '%s' "$PW" | gcloud secrets create e2e-admin-password \
+  --data-file=- --project=auntieos-ttpc
+```
+
+The script creates the account if it is missing and merges `admin: true` into
+whatever claims it already has, so it is re-runnable. Secret Manager is the only
+place that password lives; it must never reach this repo.
+
+Two consequences of creating any auth user in the live project, neither of them a
+problem but both worth knowing before the account turns up in a list somewhere:
+
+- `onAuthUserCreate` writes `clients/{uid}`, so the e2e admin also shows up as a
+  client row with no tribe membership.
+- That write fires `onClientsWrite` -> `syncKinfolkClaim`, which spreads existing
+  claims rather than replacing them (`lib/kinfolkClaim.ts`), so `admin: true`
+  survives. DELETING `clients/{uid}` does not: the delete arm calls
+  `setCustomUserClaims(uid, null)` and strips every claim the account has. If the
+  row is ever cleaned up, re-run the script.
+
+### The sandboxed alternative
+
+A `testTribeId` claim admits a user to the same UI with no `admin` claim, scoped
+by firestore rules to one kinfolk household, and MyTribe's `isStaff()` refuses it
+on every admin callable (`src/lib/gate.ts` explains why the asymmetry is the
+safety property). That is the stronger choice IF the deployed suite ever grows
+past navigation into anything that writes, and it needs a sandbox kinfolk doc in
+the live project to point at. `admin: true` is what is provisioned today because
+the suite is two navigation tests.
 
 ## Not covered yet
 
