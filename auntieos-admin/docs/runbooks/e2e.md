@@ -332,6 +332,17 @@ CYPRESS_E2E_ADMIN_PW="$(gcloud secrets versions access latest --secret=e2e-admin
 npx cypress run
 ```
 
+WHAT A DEPLOYED RUN COVERS (2026-09-01). `smoke.cy.ts`, and `account.cy.ts`
+minus its password block. Anything that changes the account it signs in with,
+or that answers a callable with a fixture, skips itself when the run is not
+authenticating as the emulator fixture (`usingFixtureAdmin()`): the password
+block because a rotated real admin with the REST reset pointed at an absent
+emulator is an operator locked out, and all of `my-notifications.cy.ts` because
+its intercept pattern matches the emulator's callable path, not
+`us-central1-<project>.cloudfunctions.net`, so against prod the real catalog
+would come back and every fixture-row assertion would fail on content. An
+unstubbed notifications variant is not written.
+
 No `firebase emulators:exec`, no vite server, no seed. Which is also the limit of
 what such a run can assert: the seeded fixtures are not there, so exact-count
 assertions and the `SEEDED_BOOKINGS` rows mean nothing against a deployed host.

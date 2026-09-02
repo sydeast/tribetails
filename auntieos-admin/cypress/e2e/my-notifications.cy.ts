@@ -1,3 +1,4 @@
+import { usingFixtureAdmin } from '../support/commands';
 import { takeConsoleErrors } from '../support/e2e';
 
 /**
@@ -16,6 +17,14 @@ import { takeConsoleErrors } from '../support/e2e';
  * THE FIXTURE IS THE WIRE SHAPE, not the decoded one: it is what the callable
  * would have returned, run through the app's real decoders. A fixture in the
  * decoded shape would pass while the decoder was broken.
+ *
+ * EMULATOR RUNS ONLY. The intercept pattern matches the emulator's
+ * `/<project>/us-central1/<name>` path, not `us-central1-<project>
+ * .cloudfunctions.net`, so against a deployed host the stubs would never fire,
+ * the real catalog would come back, and every assertion on the fixture rows
+ * would fail on content. An unstubbed variant that asserts against a deployed
+ * catalog is not written; the file skips itself under the deployed-host
+ * overrides (docs/runbooks/e2e.md, "Pointing a Cypress run at a deployed host").
  */
 
 const CALLABLE = (name: string) => `**/us-central1/${name}`;
@@ -83,6 +92,10 @@ function openMyNotifications() {
 }
 
 describe('my notifications', () => {
+  before(function () {
+    if (!usingFixtureAdmin()) this.skip();
+  });
+
   afterEach(() => {
     expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
   });

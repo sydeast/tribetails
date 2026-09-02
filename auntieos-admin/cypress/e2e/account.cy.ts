@@ -223,7 +223,11 @@ describe('account', () => {
       if (!usingFixtureAdmin()) this.skip();
     });
 
-    after(() => {
+    after(function () {
+      // Mocha still runs this hook when `before` skipped the block, and on a
+      // deployed host the task would dial an emulator that is not there and
+      // mark the whole file red from the hook. Same gate, same reason.
+      if (!usingFixtureAdmin()) return;
       // Over REST, not through the form. Operator's call (2026-09-01): the
       // form path would prove the reverse rotation works, but it only runs if
       // the rotation itself succeeded, which is exactly when a restore matters
