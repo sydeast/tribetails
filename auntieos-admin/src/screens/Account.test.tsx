@@ -18,6 +18,8 @@ const { changeEmail, changePassword, sendReset } = vi.hoisted(() => ({
 vi.mock('../lib/auth', () => ({ useAuth, changeEmail, changePassword, sendReset }));
 vi.mock('@tanstack/react-router', () => ({ useRouteContext, useNavigate }));
 vi.mock('../api/account', () => ({ getUserProfile }));
+const { uploadUserPhoto } = vi.hoisted(() => ({ uploadUserPhoto: vi.fn() }));
+vi.mock('../api/accountPhoto', () => ({ uploadUserPhoto }));
 
 import { Account, AccountRouteView } from './Account';
 
@@ -59,6 +61,7 @@ beforeEach(() => {
   useRouteContext.mockReturnValue({ access: { status: 'admin' } });
   getUserProfile.mockResolvedValue(profile());
   navigate.mockReset();
+  uploadUserPhoto.mockReset();
 });
 
 describe('Account screen', () => {
@@ -133,5 +136,67 @@ describe('AccountRouteView', () => {
     await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
     await user.click(screen.getByRole('button', { name: /open my notification settings/i }));
     expect(navigate).toHaveBeenCalledWith({ to: '/my-notifications' });
+  });
+});
+
+describe('Account screen: profile photo', () => {
+  // The file-level beforeEach re-arms getUserProfile but never clears its
+  // call log, and the assertions below count re-reads.
+  beforeEach(() => getUserProfile.mockClear());
+  function pngFile(): File {
+    return new File([new Uint8Array([137, 80, 78, 71])], 'me.png', { type: 'image/png' });
+  }
+  it('offers a Change photo control that opens an image-only file picker', async () => {
+    render(<Account />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    const input = screen.getByLabelText('Change photo') as HTMLInputElement;
+    expect(input.type).toBe('file');
+    expect(input.accept).toBe('image/*');
+  });
+  it('uploads the picked file for the signed-in uid, then re-reads the profile', async () => {
+    uploadUserPhoto.mockResolvedValue('https://res.cloudinary.com/demo/new.jpg');
+    getUserProfile
+      .mockResolvedValueOnce(profile())
+      .mockResolvedValueOnce(profile({ photoUrl: 'https://res.cloudinary.com/demo/new.jpg' }));
+    render(<Account />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    expect(uploadUserPhoto).toHaveBeenCalledWith('op-1', expect.any(File), expect.any(Function));
+    // The screen shows what Firestore now holds, not what the upload returned.
+    expect(getUserProfile).toHaveBeenCalledTimes(2);
+    expect(await screen.findByRole('img', { name: 'Auntie Nora' })).toHaveAttribute(
+      'src',
+      'https://res.cloudinary.com/demo/new.jpg',
+    );
+  });
+  it('keeps the old photo and says why when the upload fails', async () => {
+    uploadUserPhoto.mockRejectedValue(new Error('Cloudinary upload failed (HTTP 500)'));
+    getUserProfile.mockResolvedValue(profile({ photoUrl: 'https://res.cloudinary.com/demo/old.jpg' }));
+    render(<Account />);
+    await screen.findByRole('img', { name: 'Auntie Nora' });
+    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cloudinary upload failed (HTTP 500)');
+    expect(screen.getByRole('img', { name: 'Auntie Nora' })).toHaveAttribute(
+      'src',
+      'https://res.cloudinary.com/demo/old.jpg',
+    );
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+  });
+  it('disables the picker and names the stage while an upload is in flight', async () => {
+    let finish: (url: string) => void = () => {};
+    uploadUserPhoto.mockImplementation(
+      (_uid: string, _file: File, onStage: (s: string) => void) =>
+        new Promise<string>((resolve) => {
+          onStage('uploading');
+          finish = resolve;
+        }),
+    );
+    render(<Account />);
+    await screen.findByText('Auntie Nora', { selector: '.account__identity-name' });
+    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    expect(screen.getByLabelText('Change photo')).toBeDisabled();
+    expect(screen.getByText(/uploading/i)).toBeInTheDocument();
+    finish('https://res.cloudinary.com/demo/new.jpg');
+    expect(await screen.findByLabelText('Change photo')).toBeEnabled();
   });
 });

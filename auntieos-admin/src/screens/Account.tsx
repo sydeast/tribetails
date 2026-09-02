@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useRouteContext } from '@tanstack/react-router';
 import { useAuth } from '../lib/auth';
 import { getUserProfile, type UserProfile } from '../api/account';
@@ -7,7 +7,9 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
-import { PrimaryButton } from '../components/Buttons';
+import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { uploadUserPhoto } from '../api/accountPhoto';
+import { type UploadStage } from '../api/mediaUpload';
 import { EditProfileDialog } from '../components/EditProfileDialog';
 import { SecurityPanel } from '../components/SecurityPanel';
 import {
@@ -58,6 +60,13 @@ export function Account({ onOpenNotifications }: AccountProps) {
 
   const [profile, setProfile] = useState<Async<UserProfile>>({ status: 'loading' });
   const [editing, setEditing] = useState(false);
+  // The photo control's own state. Kept off the profile's Async state on
+  // purpose: a failed upload must leave the loaded profile (and its current
+  // photo) exactly where it was, with a banner next to it, never a reload
+  // into a loading state that blanks the avatar.
+  const [photoStage, setPhotoStage] = useState<UploadStage | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const load = useCallback(() => {
     if (uid === '') return;
     let live = true;
@@ -78,6 +87,24 @@ export function Account({ onOpenNotifications }: AccountProps) {
     };
   }, [uid]);
   useEffect(() => load(), [load]);
+
+  async function handlePhotoFile(file: File | null) {
+    if (file === null || photoStage !== null || uid === '') return;
+    setPhotoError(null);
+    setPhotoStage('signing');
+    try {
+      await uploadUserPhoto(uid, file, setPhotoStage);
+      // Re-read rather than trust the returned URL: the screen shows what
+      // `users/{uid}` holds, which is the only thing the next visit will show.
+      load();
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : 'Upload failed.');
+    } finally {
+      setPhotoStage(null);
+      // Or picking the same file again after a failure fires no change event.
+      if (photoInputRef.current) photoInputRef.current.value = '';
+    }
+  }
 
   return (
     <div className="screen">
@@ -120,7 +147,32 @@ export function Account({ onOpenNotifications }: AccountProps) {
                   <div className="account__identity-text">
                     <span className="account__identity-name">{name}</span>
                     {p.title.trim() !== '' && <span className="account__identity-title">{p.title}</span>}
+                    {/* The same control Android's AccountSettingsScreen puts on the
+                        avatar: pick an image, it becomes users/{uid}.photoUrl. The
+                        input carries the accessible name; the button is its
+                        visible face and opens the same picker. */}
+                    <div className="account__photo">
+                      <input
+                        ref={photoInputRef}
+                        type="file"
+                        accept="image/*"
+                        aria-label="Change photo"
+                        className="account__photo-input"
+                        disabled={photoStage !== null}
+                        onChange={(e) => void handlePhotoFile(e.target.files?.[0] ?? null)}
+                      />
+                      <GhostButton
+                        label={photoStage === null ? 'Change photo' : photoStageLabel(photoStage)}
+                        onClick={() => photoInputRef.current?.click()}
+                        disabled={photoStage !== null}
+                      />
+                    </div>
                   </div>
+                  {photoError !== null && (
+                    <Banner tone="error" title="Couldn't change your photo">
+                      {photoError}
+                    </Banner>
+                  )}
                 </div>
 
                 <DenPanel
@@ -192,6 +244,18 @@ export function Account({ onOpenNotifications }: AccountProps) {
       )}
     </div>
   );
+}
+
+/** Button copy while an upload is in flight; the stages are `api/mediaUpload`'s. */
+function photoStageLabel(stage: UploadStage): string {
+  switch (stage) {
+    case 'signing':
+      return 'Preparing…';
+    case 'uploading':
+      return 'Uploading…';
+    case 'saving':
+      return 'Saving…';
+  }
 }
 
 interface FieldProps {

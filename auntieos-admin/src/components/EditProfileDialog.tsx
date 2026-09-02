@@ -22,8 +22,9 @@ interface EditProfileDialogProps {
  *
  * Editable fields match the wasm SettingsScreen's profile card exactly:
  * displayName, firstName, lastName, phone, title, bio. uid/email/photoUrl are
- * NOT editable here (uid is the doc key, email is Firebase Auth's, photoUrl has
- * no upload UI yet), matching accountWrite.ts's UserProfilePatch.
+ * NOT editable here (uid is the doc key, email is Firebase Auth's, photoUrl is
+ * the Account screen's own Change photo control via api/accountPhoto.ts),
+ * matching accountWrite.ts's UserProfilePatch.
  *
  * Disabled-while-busy, fail-loud on save error (FormSchemas.tsx's confirmDelete
  * convention): the fieldset locks, the Dialog cannot be dismissed mid-save, and
