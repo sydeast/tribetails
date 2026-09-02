@@ -491,7 +491,11 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
 
   it('declining sends the reason to the household', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
-    declineBookingRequest.mockResolvedValue({ affectedVisits: 4, failedVisits: 0 });
+    declineBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      householdNotified: true,
+    });
     render(<VisitRequestsSection />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
@@ -508,7 +512,39 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
         'Fully booked that weekend.',
       ),
     );
-    expect(await screen.findByText(/Nothing was booked/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/the household has your answer and your reason/),
+    ).toBeInTheDocument();
+  });
+
+  it('says so when the decline went through and the MESSAGE did not', async () => {
+    // `manageBookingSeries` decides the request and THEN dispatches, and a
+    // dispatch that throws never rolls the decision back. So the request really
+    // is turned down while the household is still waiting on an answer, which is
+    // the silence #533 exists to end. This toast used to promise them their
+    // reason either way. Android has read this field since #536
+    // (`EnhancedSchedulingViewModel.householdLine`); this client had not caught
+    // up, and an operator who is not told cannot phone them instead.
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    declineBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      householdNotified: false,
+    });
+    render(<VisitRequestsSection />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    await userEvent.type(
+      screen.getByLabelText('Why you cannot take it'),
+      'Fully booked that weekend.',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Send the decline' }));
+
+    expect(
+      await screen.findByText(
+        /the message to the household did not go out, so tell them another way/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('a broken request queue is reported, never shown as an empty queue', async () => {

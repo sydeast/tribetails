@@ -6,10 +6,17 @@ import { db } from '../lib/firestoreAdmin';
  * Implements steps 1 and 3 of
  * `docs/superpowers/specs/2026-08-23-visit-date-rendering-design.md`: the shared
  * reader, the formatter, and the structured data shape that `kincare.booking.confirm`
- * now carries (#536). The remaining steps in that spec (adopting the shape on
- * `kincare.requested` / `kincare.request.declined`, the "what was removed" diff
- * store, the envelope-grained reminder, and the Auntie's `assignment.*` copy)
- * are deliberately NOT here: each needs an operator answer the spec names.
+ * now carries (#536), and step 6 for `assignment.assigned`: the Auntie hears
+ * about an approved request ONCE, naming her own days, on the same no-summarising
+ * rule. The spec listed step 6 as needing an operator answer first; the operator
+ * gave it on 2026-08-29, ordering the assignment half landed.
+ *
+ * The remaining steps (adopting the shape on `kincare.requested` /
+ * `kincare.request.declined`, the "what was removed" diff store, and the
+ * envelope-grained reminder) are deliberately NOT here: each still needs an
+ * operator answer the spec names. `assignment.changed` also stays per visit and
+ * keeps `{{bookingDate}}`: reassigned, unassigned and cancelled are genuinely
+ * one-visit news.
  *
  * WHY A STRUCTURED ARRAY AND NOT A RENDERED STRING. `{{bookingDates}}` (#534)
  * hands the template a pre-formatted blob: "4 visits, Sep 4 to Sep 7". The
@@ -40,13 +47,32 @@ import { db } from '../lib/firestoreAdmin';
  */
 export const DEFAULT_TIME_ZONE = 'America/New_York';
 
-/** Where SMS and push send a recipient who cannot be given the whole list. */
+/** Where SMS and push send a HOUSEHOLD who cannot be given the whole list. */
 export const PORTAL_URL = 'https://kinfolk.tribetails.com';
 
-/** One visit of an envelope, reduced to the two things the formatter needs. */
+/**
+ * The same landing place for an AUNTIE (#536, the assignment half).
+ *
+ * Her SMS and push cannot enumerate either, so they point somewhere the whole
+ * list is readable. That place is NOT the kinfolk portal: she has no account
+ * there and it is the household's view of the household's booking. AuntieOS is
+ * where her schedule lives, and it is the origin `lib/cors.ts` and
+ * `notifications/fallbackTemplate.ts` already name as the office's own.
+ */
+export const AUNTIE_SCHEDULE_URL = 'https://auntie.tribetails.com';
+
+/**
+ * One visit of an envelope, reduced to what the formatter needs.
+ *
+ * `assignedAuntieUid` is carried but never formatted: the Auntie's copy of an
+ * approval names only HER days (#536), and `admin/assignAuntie` is per visit, so
+ * a half-reassigned envelope really does owe two people two different lists.
+ */
 export interface EnvelopeVisit {
   visitId: string;
   startTimeMs: number;
+  /** Null when nobody is on the visit; absent when the caller did not read it. */
+  assignedAuntieUid?: string | null;
 }
 
 /** One visit as a template author consumes it. No formatting left to do. */
@@ -173,7 +199,20 @@ export function renderVisit(visit: EnvelopeVisit, tz: string): RenderedVisit {
  * is defined as the earliest one and an unsorted list would name the wrong day
  * on the two channels that only get to name one.
  */
-export function buildVisitDateData(visits: EnvelopeVisit[], tz: string): VisitDateData {
+export function buildVisitDateData(
+  visits: EnvelopeVisit[],
+  tz: string,
+  /**
+   * Where THIS recipient reads the whole list, when the channel cannot carry it.
+   *
+   * Defaults to the household's portal because every caller before #536's
+   * assignment half was writing to a household. The Auntie's copy passes
+   * `AUNTIE_SCHEDULE_URL` instead: same token, same shape, a link she can
+   * actually open. The token keeps the spec's name (`portalUrl`) so one template
+   * idiom covers both audiences.
+   */
+  linkUrl: string = PORTAL_URL,
+): VisitDateData {
   const sorted = [...visits].sort((a, b) => a.startTimeMs - b.startTimeMs);
   const rendered = sorted.map((v) => renderVisit(v, tz));
   const first = rendered[0];
@@ -183,7 +222,7 @@ export function buildVisitDateData(visits: EnvelopeVisit[], tz: string): VisitDa
     nextVisit: first ? { weekday: first.weekday, date: first.date, time: first.time } : null,
     removed: [],
     removedCount: 0,
-    portalUrl: PORTAL_URL,
+    portalUrl: linkUrl,
   };
 }
 
@@ -238,7 +277,12 @@ export async function loadEnvelopeVisits(
     if (NOT_HAPPENING.has(status)) continue;
     const ms = startMillisOf(data['startTime']);
     if (ms == null) continue;
-    out.push({ visitId: doc.id, startTimeMs: ms });
+    const auntie = data['assignedAuntieUid'];
+    out.push({
+      visitId: doc.id,
+      startTimeMs: ms,
+      assignedAuntieUid: typeof auntie === 'string' && auntie ? auntie : null,
+    });
   }
   return out.sort((a, b) => a.startTimeMs - b.startTimeMs);
 }

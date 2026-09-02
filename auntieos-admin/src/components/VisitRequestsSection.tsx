@@ -374,8 +374,18 @@ async function submitNewRequest(
   note: string,
 ): Promise<string> {
   if (decision === 'decline') {
-    await declineBookingRequest(kinfolkId, batchId, note);
-    return 'Declined. Nothing was booked and the household gets your reason.';
+    // READ what the server did rather than asserting it, the way the approve
+    // branch below already does. `manageBookingSeries` has returned
+    // `householdNotified` on the CANCEL path since #536, and Android has read it
+    // since (`EnhancedSchedulingViewModel.householdLine`, its `action ==
+    // "CANCEL"` arm). This client was the one still promising the household
+    // "gets your reason" on the back of a dispatch that may have thrown. A
+    // request turned down in silence is what #533 exists to end, and an operator
+    // who is not told about the silence cannot phone them instead.
+    const declined = await declineBookingRequest(kinfolkId, batchId, note);
+    return declined.householdNotified
+      ? 'Declined. Nothing was booked and the household has your answer and your reason.'
+      : 'Declined. Nothing was booked, but the message to the household did not go out, so tell them another way.';
   }
   const res = await approveBookingRequest(kinfolkId, batchId);
   if (res.failedVisits > 0) {

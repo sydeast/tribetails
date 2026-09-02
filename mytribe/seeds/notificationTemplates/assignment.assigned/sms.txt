@@ -1,1 +1,1 @@
-Tribe Tails: a {{serviceType}} for {{kinName}} on {{bookingDate}} at {{bookingTime}} was assigned to you.
+Tribe Tails: {{kinName}}'s {{serviceType}} is yours, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}

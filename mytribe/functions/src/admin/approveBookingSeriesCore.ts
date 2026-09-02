@@ -9,6 +9,7 @@ import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import {
+  AUNTIE_SCHEDULE_URL,
   buildVisitDateData,
   formatBookingDate,
   formatBookingTime,
@@ -48,6 +49,11 @@ import {
  * answer to one question. That is #532's defect on the approve side, and it
  * predates the admin queue: `requestBooking`'s `maybeAutoConfirm` has always
  * taken this path, so an auto-confirmed multi-visit request sent N copies too.
+ *
+ * AND THE ASSIGNED AUNTIE'S SUMMARY, also once. `writeEnvelope` stamps the same
+ * default assignee on every child, so the per-visit trigger sent her four "a
+ * visit is yours" messages for the same long weekend, before anyone had approved
+ * it. She hears here instead, when the work is real, and only about her own days.
  *
  * The dispatch lives HERE rather than on a trigger over the envelope's
  * `envelopeStatus`, for the reason `manageBookingSeries` records for the decline
@@ -322,7 +328,28 @@ export async function approveBookingSeriesCore(opts: {
 
 /**
  * The household's ONE answer to their request (#536), plus the office's copy via
- * the key's `businessAdmins` secondary resolver.
+ * the key's `businessAdmins` secondary resolver, plus ONE summary for each Auntie
+ * the approved visits belong to.
+ *
+ * THE AUNTIE'S COPY, and why it is here rather than on the per-visit trigger.
+ * `writeEnvelope` stamps the same default assignee on every child of a request,
+ * so `onBookingsWrite` used to send her `assignment.assigned` once per child --
+ * four "a visit is yours" messages for a long weekend, for work nobody had
+ * approved yet. That trigger no longer dispatches anything on a request create;
+ * she hears here instead, when the work is real, naming her own days. Her
+ * per-visit SCHEDULE records are untouched: the loop above still writes one
+ * `kin_care_sessions/vis_{visitId}` doc per visit, so every day still lands
+ * separately on her schedule surface. Message noise went down; schedule fidelity
+ * did not.
+ *
+ * GROUPED BY UID, not assumed to be one Auntie. `admin/assignAuntie` is per
+ * visit, so a half-reassigned envelope genuinely owes two people two different
+ * lists. Each still hears exactly once, about her own dates. An envelope with
+ * nobody on it tells the household and nobody else.
+ *
+ * Both dispatches ride the SAME claim below, so a double-clicked approve cannot
+ * double-send her either. Each is caught on its own: a household dispatch that
+ * throws must not cost the Auntie her copy, and vice versa.
  *
  * IDEMPOTENCY. `confirmNotifiedAtMs` is CLAIMED in a transaction on the envelope
  * before anything is enqueued, and the claim is what decides who sends. Firestore
@@ -382,31 +409,45 @@ async function dispatchSeriesConfirmation(args: {
     const firstMs = visits[0]?.startTimeMs ?? null;
     const recipientUid = await resolveKinfolkUid(kinfolkId);
 
-    await enqueueNotification({
-      key: 'kincare.booking.confirm',
-      recipientUid: recipientUid ?? '',
-      data: {
-        kinfolkId,
-        batchId,
-        // `bookingId` is the ENVELOPE here, not a visit: this message is about
-        // the whole request, the same grain `kincare.requested` moved to in #532.
-        bookingId: batchId,
-        serviceName: envelope?.['serviceName'] ?? null,
-        startTimeMs: firstMs,
-        ...dateData,
-        // Template back-compat, and the one reason these two are still sent.
-        // The seeds no longer reference them, but the Firestore documents in
-        // production do until the operator re-imports `kincare.booking.confirm`
-        // with it named in `overwriteIds`. Emitter-supplied values always win in
-        // `enrichTemplateData`, so the old template keeps naming the first day
-        // instead of rendering blanks in the gap between deploy and re-import.
-        bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
-        bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
-      },
-      targetType: 'booking',
-      targetId: batchId,
-    });
-    return true;
+    let householdNotified = false;
+    try {
+      await enqueueNotification({
+        key: 'kincare.booking.confirm',
+        recipientUid: recipientUid ?? '',
+        data: {
+          kinfolkId,
+          batchId,
+          // `bookingId` is the ENVELOPE here, not a visit: this message is about
+          // the whole request, the same grain `kincare.requested` moved to in #532.
+          bookingId: batchId,
+          serviceName: envelope?.['serviceName'] ?? null,
+          startTimeMs: firstMs,
+          ...dateData,
+          // Template back-compat, and the one reason these two are still sent.
+          // The seeds no longer reference them, but the Firestore documents in
+          // production do until the operator re-imports `kincare.booking.confirm`
+          // with it named in `overwriteIds`. Emitter-supplied values always win in
+          // `enrichTemplateData`, so the old template keeps naming the first day
+          // instead of rendering blanks in the gap between deploy and re-import.
+          bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
+          bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
+        },
+        targetType: 'booking',
+        targetId: batchId,
+      });
+      householdNotified = true;
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'approveBookingSeriesCore',
+        event: 'notification.dispatch.failed',
+        uid: actorUid,
+        extra: { kinfolkId, batchId, key: 'kincare.booking.confirm', err: (err as Error)?.message },
+      });
+    }
+
+    await dispatchAuntieSummaries({ kinfolkId, batchId, visits, tz, envelope, actorUid });
+    return householdNotified;
   } catch (err) {
     logEvent({
       severity: 'warn',
@@ -421,5 +462,98 @@ async function dispatchSeriesConfirmation(args: {
       },
     });
     return false;
+  }
+}
+
+/**
+ * ONE `assignment.assigned` per Auntie the approved envelope belongs to (#536).
+ *
+ * Runs off the live child set the household's message was built from, so a visit
+ * cancelled between the request and the approval is never on anyone's list, and
+ * the days she is told about are the days the household was told about.
+ *
+ * NOT gated on `householdNotified`. Her copy is about her schedule, not about
+ * whether the household heard; a failed kinfolk dispatch does not make her
+ * assignment less real. Each dispatch is caught on its own for the same reason:
+ * one Auntie's failure must not cost the other hers.
+ *
+ * `newlyConfirmed` is deliberately NOT the list. On a retry after a partial
+ * failure, only the repaired visit is new, but the booking she is about to work
+ * is the whole envelope. Telling her about one day of four would be worse than
+ * the fan-out this replaced.
+ */
+async function dispatchAuntieSummaries(args: {
+  kinfolkId: string;
+  batchId: string;
+  visits: Array<{ visitId: string; startTimeMs: number; assignedAuntieUid?: string | null }>;
+  tz: string;
+  envelope: Record<string, unknown> | undefined;
+  actorUid: string;
+}): Promise<void> {
+  const { kinfolkId, batchId, visits, tz, envelope, actorUid } = args;
+
+  const byAuntie = new Map<string, typeof visits>();
+  for (const v of visits) {
+    if (!v.assignedAuntieUid) continue;
+    const list = byAuntie.get(v.assignedAuntieUid) ?? [];
+    list.push(v);
+    byAuntie.set(v.assignedAuntieUid, list);
+  }
+
+  for (const [auntieUid, hers] of byAuntie) {
+    const dateData = buildVisitDateData(hers, tz, AUNTIE_SCHEDULE_URL);
+    // `hers` is never empty here -- an Auntie only appears in the map because a
+    // visit named her -- so this is her first day, not a guess.
+    const firstMs = hers.length > 0 ? Math.min(...hers.map((v) => v.startTimeMs)) : null;
+    try {
+      await enqueueNotification({
+        key: 'assignment.assigned',
+        recipientUid: auntieUid,
+        data: {
+          kinfolkId,
+          batchId,
+          // The ENVELOPE, like the household's copy: this message answers a whole
+          // request. `visitId` is deliberately absent, because there is no one
+          // visit this is about.
+          //
+          // KNOWN GAP, inherited rather than introduced, and NOT widened here.
+          // `Navigation.kt:notificationTargetRoute` and the React admin's
+          // `sessionIdForVisit` both turn a `booking` targetId into `vis_{id}`
+          // and open that session, which resolves for a VISIT id and not for a
+          // batch id. `kincare.booking.confirm` has shipped envelope-grained
+          // since #565 and has the same gap, so the "open linked item" quick
+          // action no-ops on both. Picking one of her days to point at instead
+          // would be a lie about what the message is about; the right fix is a
+          // route that opens an envelope, which is its own piece of work and
+          // needs an operator ruling on what that screen shows.
+          bookingId: batchId,
+          assignedAuntieUid: auntieUid,
+          serviceName: envelope?.['serviceName'] ?? null,
+          startTimeMs: firstMs,
+          ...dateData,
+          // Same back-compat reason as the household's copy: the Firestore
+          // template in production still names `{{bookingDate}}` until the
+          // operator re-imports `assignment.assigned`.
+          bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
+          bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
+        },
+        targetType: 'booking',
+        targetId: batchId,
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'approveBookingSeriesCore',
+        event: 'notification.dispatch.failed',
+        uid: actorUid,
+        extra: {
+          kinfolkId,
+          batchId,
+          key: 'assignment.assigned',
+          auntieUid,
+          err: (err as Error)?.message,
+        },
+      });
+    }
   }
 }
