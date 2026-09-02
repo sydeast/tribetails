@@ -23,9 +23,17 @@ name: Nightly release
 
 on:
   schedule:
-    # 08:00 UTC is 03:00 America/Chicago in CDT. GitHub's scheduler is
-    # best-effort and drifts under load, which is fine for a nightly.
-    - cron: '0 8 * * *'
+    # 01:00 UTC is 20:00 America/Chicago the previous evening in CDT, and 19:00
+    # in CST once DST ends. Evening, not the small hours, because the only
+    # runner is a Mac that sleeps overnight. The 08:00 UTC schedule this
+    # replaces fired at 03:00 local and failed on both 2026-08-31 and
+    # 2026-09-01 with "the self-hosted runner lost communication with the
+    # server", each time at exactly ten minutes in. A release scheduled for an
+    # hour when nobody's machine is awake is not a release.
+    #
+    # GitHub's scheduler is best-effort and drifts under load, which is fine
+    # for a nightly.
+    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       mode:
