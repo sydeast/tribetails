@@ -41,6 +41,7 @@ const PORT = 5174; // matches vite.config.ts's dev port and playwright.config.ts
 let seeded: Promise<void> | null = null;
 
 export default defineConfig({
+  projectId: '2khvut',
   e2e: {
     baseUrl: `http://127.0.0.1:${PORT}`,
     specPattern: 'cypress/e2e/**/*.cy.ts',

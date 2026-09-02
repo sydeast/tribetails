@@ -277,6 +277,77 @@ suite's `cypress/support/e2e.ts`, one entry per HARNESS condition with the
 reason written next to it. An entry describing an app behaviour is a bug being
 allowlisted.
 
+## Pointing a Cypress run at a deployed host (added 2026-08-30)
+
+`baseUrl` in `cypress.config.ts` is the emulator (`http://127.0.0.1:5174`) and
+stays that way. A deployed run is an OVERRIDE for one invocation, never an edit
+to the file: a checked-in prod `baseUrl` means the next person's `npm run e2e:cy`
+boots emulators, seeds them, and then drives the live site against them, which is
+how a green is earned somewhere nobody meant to look.
+
+The emulator fixture account (`e2e/fixtures/accounts.ts`) exists only in the auth
+emulator, so a deployed run also needs a real account. `cy.signIn()` takes both
+halves from the environment and falls back to the fixture when neither is set;
+setting only one is an error rather than a fallback, because a prod run that
+quietly used the fixture would fail at the form and read as an app defect.
+
+```bash
+cd auntieos-admin
+CYPRESS_baseUrl=https://auntie.tribetails.com \
+CYPRESS_E2E_ADMIN_EMAIL=e2e-admin@tribetails.com \
+CYPRESS_E2E_ADMIN_PW="$(gcloud secrets versions access latest --secret=e2e-admin-password)" \
+npx cypress run
+```
+
+No `firebase emulators:exec`, no vite server, no seed. Which is also the limit of
+what such a run can assert: the seeded fixtures are not there, so exact-count
+assertions and the `SEEDED_BOOKINGS` rows mean nothing against a deployed host.
+Navigation and sign-in are the honest scope.
+
+### Provisioning the deployed admin account
+
+One-off, operator-run, because it writes to the live project.
+
+Generate the password into a variable rather than inline in the `--password`
+argument: a subshell substitution never shows it, and a password nobody read is
+a password nobody can put in Secret Manager.
+
+```bash
+cd mytribe/functions
+PW="$(openssl rand -base64 24)"
+
+GOOGLE_CLOUD_PROJECT=auntieos-ttpc node scripts/grant-admin-claim.mjs \
+  --email e2e-admin@tribetails.com --password "$PW"
+
+printf '%s' "$PW" | gcloud secrets create e2e-admin-password \
+  --data-file=- --project=auntieos-ttpc
+```
+
+The script creates the account if it is missing and merges `admin: true` into
+whatever claims it already has, so it is re-runnable. Secret Manager is the only
+place that password lives; it must never reach this repo.
+
+Two consequences of creating any auth user in the live project, neither of them a
+problem but both worth knowing before the account turns up in a list somewhere:
+
+- `onAuthUserCreate` writes `clients/{uid}`, so the e2e admin also shows up as a
+  client row with no tribe membership.
+- That write fires `onClientsWrite` -> `syncKinfolkClaim`, which spreads existing
+  claims rather than replacing them (`lib/kinfolkClaim.ts`), so `admin: true`
+  survives. DELETING `clients/{uid}` does not: the delete arm calls
+  `setCustomUserClaims(uid, null)` and strips every claim the account has. If the
+  row is ever cleaned up, re-run the script.
+
+### The sandboxed alternative
+
+A `testTribeId` claim admits a user to the same UI with no `admin` claim, scoped
+by firestore rules to one kinfolk household, and MyTribe's `isStaff()` refuses it
+on every admin callable (`src/lib/gate.ts` explains why the asymmetry is the
+safety property). That is the stronger choice IF the deployed suite ever grows
+past navigation into anything that writes, and it needs a sandbox kinfolk doc in
+the live project to point at. `admin: true` is what is provisioned today because
+the suite is two navigation tests.
+
 ## Not covered yet
 
 **Callable behaviour, entirely.** No server-side callable logic runs in this
