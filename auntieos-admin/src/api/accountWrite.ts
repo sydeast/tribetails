@@ -8,7 +8,8 @@ import { db } from '../lib/firebase';
  *
  * The fields the profile editor can change. A strict subset of UserProfile:
  * `uid` is the doc key (never patched), `email` belongs to Firebase Auth, and
- * `photoUrl` has no upload UI yet, so none of the three are here.
+ * `photoUrl` is written by `saveUserPhotoUrl` below on behalf of the Account
+ * screen's photo control (api/accountPhoto.ts), so none of the three are here.
  */
 export interface UserProfilePatch {
   displayName: string;
@@ -62,7 +63,9 @@ export async function saveUserProfile(uid: string, patch: UserProfilePatch): Pro
  * `photoUrl`, so a dialog save can never clear a photo the operator uploaded a
  * moment earlier. Same merge write as `saveUserProfile`, same doc, same rules.
  * The value is whatever `media_files.storageUrl` holds for the upload (see
- * `api/accountPhoto.ts`), so Android and web read one shape off `users/{uid}`.
+ * `api/accountPhoto.ts`): Cloudinary's `secure_url`. Android writes its
+ * transformed delivery URL to the same field; both are plain image URLs and
+ * either client renders either.
  */
 export async function saveUserPhotoUrl(uid: string, url: string): Promise<void> {
   const id = uid.trim();
