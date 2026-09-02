@@ -669,7 +669,7 @@ private fun NotificationRow(
 
             Text(
                 text = buildString {
-                    if (entry.actorName.isNotBlank()) append("${entry.actorName} · ")
+                    entry.actorName?.takeIf { it.isNotBlank() }?.let { append("$it · ") }
                     append(entry.category.ifBlank { "uncategorized" })
                 },
                 style = typo.bodySmall,
