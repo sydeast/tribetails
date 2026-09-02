@@ -51,7 +51,15 @@ vi.mock('twilio', () => {
       return 'jwt-for-' + String(this.record.opts.identity);
     }
   }
-  return { jwt: { AccessToken } };
+  // Shaped like the REAL module, which is the whole point of this line.
+  // twilio 6.x is CommonJS, so `await import('twilio')` gives back only
+  // `default` and `module.exports`; `jwt` hangs off the default. This mock
+  // used to return `{ jwt: { AccessToken } }`, a shape twilio has never had,
+  // and so these eight tests passed green for as long as the handler was
+  // destructuring `{ jwt }` and throwing on every real call
+  // (MYTRIBE-FUNCTIONS-F). A mock that is more generous than the module it
+  // stands in for tests nothing.
+  return { default: { jwt: { AccessToken } } };
 });
 
 const SECRET_ENV = [
