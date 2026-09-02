@@ -54,3 +54,24 @@ export async function saveUserProfile(uid: string, patch: UserProfilePatch): Pro
     { merge: true },
   );
 }
+
+/**
+ * Saves the operator's own profile photo URL, and nothing else.
+ *
+ * Deliberately NOT a field on `UserProfilePatch`: the edit dialog never carries
+ * `photoUrl`, so a dialog save can never clear a photo the operator uploaded a
+ * moment earlier. Same merge write as `saveUserProfile`, same doc, same rules.
+ * The value is whatever `media_files.storageUrl` holds for the upload (see
+ * `api/accountPhoto.ts`), so Android and web read one shape off `users/{uid}`.
+ */
+export async function saveUserPhotoUrl(uid: string, url: string): Promise<void> {
+  const id = uid.trim();
+  if (id === '') throw new Error('saveUserPhotoUrl requires a uid');
+  const photoUrl = url.trim();
+  if (photoUrl === '') throw new Error('saveUserPhotoUrl requires a url');
+  await setDoc(
+    doc(db, 'users', id),
+    { photoUrl, updatedAt: new Date().toISOString() },
+    { merge: true },
+  );
+}

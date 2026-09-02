@@ -81,7 +81,12 @@ import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
  * The full Kotlin enum has more members still (HOUSEHOLD/INVOICE/TRAINING/
  * USER); those stay unmodeled until something uploads to them.
  */
-export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS' | 'TRIBAL_INTEL' | 'VISIT_LOG';
+/**
+ * `USER` is the operator's own avatar (`users/{uid}.photoUrl`), added 2026-09-01
+ * for the web Account screen. Android has sent it since `MediaEntityType.USER`
+ * existed and the signer has no entity whitelist, only folder rules.
+ */
+export type UploadEntityType = 'KINFOLK' | 'KIN' | 'BUSINESS' | 'TRIBAL_INTEL' | 'VISIT_LOG' | 'USER';
 
 /**
  * The fixed entityId Android's `AdminSettingsViewModel#uploadLogo` uses for
