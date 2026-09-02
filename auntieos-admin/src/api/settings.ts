@@ -441,6 +441,25 @@ export interface BusinessSettings {
   calendarSyncLastError: string;
   autoConfirmRepeatKinfolk: boolean;
   snapRescheduleTo15Min: boolean;
+  /**
+   * ISSUE #397: whether the phone line offers "press 3 to talk to me right
+   * now".
+   *
+   * DEFAULTS TRUE, unlike every other boolean on this document, and the
+   * exception is deliberate. The live connect path has been in the deployed
+   * `twilioVoice` handler since PR #351 and no settings document has ever
+   * carried this field, so defaulting it false would read as "the operator
+   * turned it off" and withdraw the offer without anybody asking.
+   * `mytribe/functions/src/lib/businessHours.ts`'s `resolveLiveTransferEnabled`
+   * is the server-side authority and applies the identical rule: only an
+   * explicit `false` turns it off.
+   *
+   * It records INTENT, not reachability. Whether a caller pressing 3 actually
+   * gets through also needs the Twilio Voice credentials and the number's
+   * "A call comes in" webhook, neither of which this app can read. See
+   * `PhoneLineSection`, which says so on the screen.
+   */
+  voiceLiveTransferEnabled: boolean;
   logoUrl: string;
   /** ISO instant of the last clear of `logoUrl`, or ''. See `MyTribePortalConfig.logoRemovedAt` for why this exists. */
   logoRemovedAt: string;
@@ -551,6 +570,8 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   calendarSyncLastError: '',
   autoConfirmRepeatKinfolk: false,
   snapRescheduleTo15Min: false,
+  // TRUE by design; see the field's comment on the interface.
+  voiceLiveTransferEnabled: true,
   logoUrl: '',
   logoRemovedAt: '',
   brandWordmark: '',
@@ -763,6 +784,12 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     calendarSyncLastError: pickString(r.calendarSyncLastError, d.calendarSyncLastError),
     autoConfirmRepeatKinfolk: (r.autoConfirmRepeatKinfolk as boolean) ?? d.autoConfirmRepeatKinfolk,
     snapRescheduleTo15Min: (r.snapRescheduleTo15Min as boolean) ?? d.snapRescheduleTo15Min,
+    // `!== false` rather than the `?? default` the booleans above use, so this
+    // mirrors the server exactly: `resolveLiveTransferEnabled` turns the line
+    // off for an explicit boolean false and for nothing else. A stray string
+    // or number in this field must read as ON in the admin UI too, or the
+    // switch would show off while the phone still offered the transfer.
+    voiceLiveTransferEnabled: r.voiceLiveTransferEnabled !== false,
     logoUrl: pickString(r.logoUrl, d.logoUrl),
     logoRemovedAt: pickString(r.logoRemovedAt, d.logoRemovedAt),
     brandWordmark: pickString(r.brandWordmark, d.brandWordmark),

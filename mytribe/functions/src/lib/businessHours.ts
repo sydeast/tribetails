@@ -127,6 +127,43 @@ export interface BusinessHoursSettings {
   timeZone?: unknown;
   companyHolidays?: unknown;
   specialHours?: unknown;
+  /**
+   * ISSUE #397: whether "press 3 to talk to me right now" is offered at all.
+   *
+   * It lives on THIS document, and is read by THIS module, for one reason: the
+   * phone handler already loads this doc once per greeting and once per
+   * keypress, and a second Firestore read on a path with a 15-second Twilio
+   * webhook budget would buy nothing. `resolveLiveTransferEnabled` is the
+   * reader; see its comment for why absent means on.
+   */
+  voiceLiveTransferEnabled?: unknown;
+}
+
+/**
+ * Whether the operator is currently taking live calls.
+ *
+ * ABSENT IS ON, and only an explicit `false` turns it off. Every settings
+ * document written before this toggle existed has no field here, and the live
+ * connect path has been in the deployed handler since PR #351; defaulting
+ * those documents to off would withdraw the offer without anybody asking for
+ * it. A failed settings read (`null`) is on for the same reason the hours fail
+ * OPEN: being unable to read our own configuration is not evidence that the
+ * operator has stopped answering her phone.
+ *
+ * THIS IS INTENT, NOT A VERDICT. It is the only half of the question this repo
+ * owns. Whether a caller actually reaches a person also depends on the Twilio
+ * voice credentials and on the number's "A call comes in" webhook, neither of
+ * which lives in this codebase and neither of which this function can see. On
+ * means "offer it", never "it is known to work".
+ *
+ * The consequence of the fail-open, stated plainly: if Firestore is unreachable
+ * the caller is still offered the transfer, and the transfer then falls to
+ * voicemail through the paths it already falls through when nobody picks up.
+ * That is a worse-case of one unnecessary ring, against a worst case in the
+ * other direction of a phone that quietly stops connecting anyone.
+ */
+export function resolveLiveTransferEnabled(settings: BusinessHoursSettings | null): boolean {
+  return settings?.voiceLiveTransferEnabled !== false;
 }
 
 /** Raw document values can be anything; `mergeBusinessSettings` never descends into the hours map. */
@@ -337,7 +374,23 @@ export async function resolveBusinessOpenNow(
   firestore: Firestore,
   nowMs: number,
 ): Promise<BusinessOpenState> {
-  const settings = await loadBusinessHoursSettings(firestore);
+  return resolveBusinessOpenFromSettings(await loadBusinessHoursSettings(firestore), nowMs);
+}
+
+/**
+ * The same answer, from settings a caller has ALREADY loaded.
+ *
+ * Split out of `resolveBusinessOpenNow` so a caller that needs more than the
+ * hours out of this document — `twilioVoice`, which also needs
+ * `voiceLiveTransferEnabled` — can read it once and ask both questions, rather
+ * than loading the same document twice inside one phone call. The null branch
+ * lives here rather than at each call site so "we could not read our settings"
+ * keeps exactly one definition of what it means.
+ */
+export function resolveBusinessOpenFromSettings(
+  settings: BusinessHoursSettings | null,
+  nowMs: number,
+): BusinessOpenState {
   if (!settings) {
     return {
       open: true,
