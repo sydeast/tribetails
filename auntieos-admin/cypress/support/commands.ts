@@ -13,7 +13,7 @@ import { ADMIN } from '../../e2e/fixtures/accounts';
  * HALF-SET IS AN ERROR, NOT A FALLBACK. Silently dropping back to the fixture
  * when only one variable is exported would authenticate a prod run with an
  * account prod has never heard of, and the run would fail at the form with a
- * bad-credentials banner — which reads as an app defect rather than as the
+ * bad-credentials banner, which reads as an app defect rather than as the
  * export the operator forgot.
  */
 function adminCredentials(): { email: string; password: string } {
@@ -29,6 +29,17 @@ function adminCredentials(): { email: string; password: string } {
 }
 
 /**
+ * True when the run is authenticating as the seeded emulator account rather than
+ * as a deployed one. A spec that MUTATES the account it signs in with (the
+ * password change in `account.cy.ts`) must only ever do that to the fixture:
+ * the emulator is wiped on the next seed and `resetAdminPassword` can put the
+ * password back over REST, neither of which is true of a deployed admin.
+ */
+export function usingFixtureAdmin(): boolean {
+  return adminCredentials().email === ADMIN.email;
+}
+
+/**
  * The commands the specs in this suite are written on top of.
  *
  * Every one of them is an assertion helper rather than a convenience wrapper.
@@ -38,8 +49,8 @@ function adminCredentials(): { email: string; password: string } {
  */
 
 /**
- * Signs the operator in THROUGH THE REAL FORM, and only if a session is not
- * already live.
+ * Signs in THROUGH THE REAL FORM as the given account, and only if a session
+ * is not already live.
  *
  * NOT `cy.session()`, and the reason is specific rather than stylistic: the
  * Firebase Auth web SDK persists its session to IndexedDB
@@ -57,8 +68,12 @@ function adminCredentials(): { email: string; password: string } {
  * exercised: `SignIn.doSignIn` calls `resolveAccess(user, true)`, which force-
  * refreshes the ID token and reads the custom claim. A fabricated session skips
  * claim propagation entirely, which is the portal's O-37 lesson.
+ *
+ * THE SHORT-CIRCUIT DOES NOT CHECK WHO IS SIGNED IN. A live session for any
+ * account satisfies it. A spec that needs to prove a specific credential works
+ * (a just-changed password) has to sign out first, or it proves nothing.
  */
-Cypress.Commands.add('signIn', () => {
+Cypress.Commands.add('signInAs', (email: string, password: string) => {
   cy.visit('/home', { failOnStatusCode: true });
 
   // WAIT FOR A RENDERED SCREEN, NOT FOR A URL. The route guard is async (it
@@ -74,7 +89,6 @@ Cypress.Commands.add('signIn', () => {
   cy.get('.shell__rail, .signin__card', { timeout: 30_000 }).should('exist');
   cy.get('body').then(($body) => {
     if ($body.find('.shell__rail').length > 0) return; // already signed in
-    const { email, password } = adminCredentials();
     cy.get('.signin__form input[type="email"]').type(email);
     cy.get('.signin__form input[type="password"]').type(password, { log: false });
     cy.contains('.signin__form button', 'Sign in').click();
@@ -85,11 +99,33 @@ Cypress.Commands.add('signIn', () => {
   });
 });
 
+/** `signInAs` with the run's admin credentials (fixture, or the env override). */
+Cypress.Commands.add('signIn', () => {
+  const { email, password } = adminCredentials();
+  cy.signInAs(email, password);
+});
+
+/**
+ * Signs out through the topbar button and waits for the form to come back.
+ *
+ * `signOut` in `src/lib/auth.ts` reloads the page after clearing the session,
+ * so the guard runs again and lands on `/signin`. Waiting for the card rather
+ * than the URL for the same reason `signInAs` does: the URL is not settled
+ * until the guard has decided.
+ */
+Cypress.Commands.add('signOut', () => {
+  cy.contains('.shell__topbar button', 'Sign out').click();
+  cy.get('.signin__card', { timeout: 30_000 }).should('exist');
+  cy.get('.shell__rail').should('not.exist');
+});
+
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Cypress {
     interface Chainable {
       signIn(): Chainable<void>;
+      signInAs(email: string, password: string): Chainable<void>;
+      signOut(): Chainable<void>;
     }
   }
 }

@@ -143,6 +143,44 @@ async function createUser(
   return localId;
 }
 
+/**
+ * Resets one seeded account's password, by email, without touching its uid or
+ * its claims.
+ *
+ * FOR THE CYPRESS ACCOUNT SPEC, which changes the admin's password through the
+ * real Security panel and must hand every later spec file the fixture password
+ * back. Restoring through the form again would leave a mid-spec failure holding
+ * a password nobody knows; a REST reset from an `after()` task survives that.
+ * Same owner-bearer surface `createUser` already uses, so no new plumbing.
+ *
+ * `accounts:lookup` rather than remembering the uid from the seed: the seed ran
+ * in this process at most once and may not have run at all (`cypress open`
+ * against a database a crashed run left behind), so the email is the only
+ * stable handle.
+ */
+export async function setPassword(email: string, password: string): Promise<void> {
+  const lookup = await seedFetch(
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:lookup`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...OWNER },
+      body: JSON.stringify({ email: [email] }),
+    },
+    `lookup ${email}`,
+  );
+  const users = lookup.users as Array<{ localId?: string }> | undefined;
+  const localId = users?.[0]?.localId;
+  if (!localId) throw new Error(`setPassword: no auth-emulator account for ${email}`);
+  await seedFetch(
+    `${AUTH}/identitytoolkit.googleapis.com/v1/accounts:update`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...OWNER },
+      body: JSON.stringify({ localId, password }),
+    },
+    `password ${email}`,
+  );
+}
 /** JS value -> Firestore REST `Value`. Only the shapes this seed writes. */
 function enc(v: unknown): Record<string, unknown> {
   if (v === null) return { nullValue: null };

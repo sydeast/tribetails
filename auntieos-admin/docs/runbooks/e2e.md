@@ -250,9 +250,27 @@ first (`tsc -p cypress`). `e2e:cy:open` is the interactive form. No extra
 install step: the browser bundle comes down with `npm ci`.
 
 **The admin suite** (`auntieos-admin/cypress/`) reuses this harness's emulators,
-`e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them. It is one
-file, `smoke.cy.ts`, with two tests: the app is served and mounts in a browser,
-and an operator can sign in and land on `/home` with the rail rendered.
+`e2e.firebase.json` and `e2e/seed.ts` rather than forking any of them.
+`smoke.cy.ts` is the two-test front door: the app is served and mounts in a
+browser, and an operator can sign in and land on `/home` with the rail rendered.
+`account.cy.ts` (added 2026-09-01) is the first feature spec, designed in
+session before it was written, and it is the shape any further one has to take:
+every test asserts a state change on a round trip through the emulator, timed.
+Profile edit saves through the real `isAuntie()` rules and is read back after a
+`cy.reload()`; a blank display name is refused with nothing written; the
+notifications button changes the route; and the password is changed through the
+real Security panel, proven by signing out and back in with the new one. Values
+are stamped per run so the file survives being re-run under `cypress open`
+against a database the seed did not just wipe. It is also the first consumer of
+the `console.error` recorder: an unexpected line on any of its screens fails the
+test that visited it.
+The password test runs ONLY against the fixture admin (`usingFixtureAdmin()` in
+`cypress/support/commands.ts`). It rotates the account's password, so an
+`after()` hook restores the fixture one over the auth emulator's owner REST
+surface (`resetAdminPassword` task, `setPassword` in `e2e/seed.ts`). Under the
+deployed-host overrides below it is skipped: a real admin's password rotated by
+a spec, with the reset pointed at an emulator that is not there, is an operator
+locked out.
 **The portal suite** (`mytribe/web/cypress/`) is the first browser-level test the
 portal has ever had. Its ~500 vitest cases all run in jsdom, where the router
 never runs and no screen is mounted end to end. Same two tests, same scope.
