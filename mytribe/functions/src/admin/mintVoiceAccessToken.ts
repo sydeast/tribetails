@@ -203,8 +203,18 @@ export async function mintVoiceAccessTokenHandler(
   // is charged to the cold start of all ~227 functions in index.js; six SDKs
   // were moved out of that graph on 2026-08-04 after it OOMed at 257MiB against
   // a 256MiB limit. See lib/runtimeOptions.ts.
-  const { jwt } = await import('twilio');
-  const AccessToken = jwt.AccessToken;
+  // `{ default: twilio }`, NOT `{ jwt }`. twilio 6.x is CommonJS, so Node's
+  // cjs-module-lexer synthesises exactly two named exports for it, `default`
+  // and `module.exports`; every other property, `jwt` included, is reachable
+  // only through the default. Destructuring `jwt` directly yields undefined
+  // and the next line throws "Cannot read properties of undefined (reading
+  // 'AccessToken')" (MYTRIBE-FUNCTIONS-F). tsconfig sets module=nodenext, so
+  // this stays a real dynamic import rather than being lowered to require(),
+  // which is why the mistake survives compilation. The other two dynamic
+  // twilio imports in this codebase, engagementWebhooks.ts and
+  // twilioSignature.ts, already take the default.
+  const { default: twilio } = await import('twilio');
+  const AccessToken = twilio.jwt.AccessToken;
   const VoiceGrant = AccessToken.VoiceGrant;
 
   const grant = new VoiceGrant({
