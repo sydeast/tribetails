@@ -270,8 +270,8 @@ with the new one. Values are stamped per run so the file survives being re-run
 under `cypress open` against a database the seed did not just wipe. It is also
 the first consumer of the `console.error` recorder: an unexpected line on any
 of its screens fails the test that visited it.
-`my-notifications.cy.ts` (added 2026-09-01) is the one file in the admin suite
-that intercepts callables, by operator ruling the same day. Both sides of My
+`my-notifications.cy.ts` (added 2026-09-01) intercepts callables, by operator
+ruling the same day. Both sides of My
 Notifications are callables, and this harness pins callables at a dead port on
 purpose, so the two reads and the save are answered by `cy.intercept` with the
 WIRE shape the callable would return, run through the app's real decoders. What
@@ -279,6 +279,15 @@ it proves is the screen: a flipped switch is the one field the save sends, an
 explicit `false` rather than an absent key; a refused save keeps the draft and
 re-arms Save; Discard restores the draft without a round trip; a channel the
 business forces cannot be flipped. Persistence is the deployed host's to prove.
+
+`account-photo.cy.ts` (added 2026-09-02, PR #660) drives the Account screen's
+Change photo control with a 1x1 PNG. The two hops the emulator does not have,
+the `/api/cloudinary/sign-upload` hosting rewrite and Cloudinary itself, are
+answered by `cy.intercept`; the `media_files` doc and the `users/{uid}.photoUrl`
+write are real, and the reload at the end is what proves them. The returned
+URL is a `data:` URI because `Avatar` swaps to initials on an image that fails
+to load. Emulator runs only: on a deployed host it would write that URI into
+the real e2e admin's profile, so it skips itself under the overrides.
 The password test runs ONLY against the fixture admin (`usingFixtureAdmin()` in
 `cypress/support/commands.ts`). It rotates the account's password, so an
 `after()` hook restores the fixture one over the auth emulator's owner REST
@@ -340,7 +349,8 @@ block because a rotated real admin with the REST reset pointed at an absent
 emulator is an operator locked out, and all of `my-notifications.cy.ts` because
 its intercept pattern matches the emulator's callable path, not
 `us-central1-<project>.cloudfunctions.net`, so against prod the real catalog
-would come back and every fixture-row assertion would fail on content. An
+would come back and every fixture-row assertion would fail on content, and `account-photo.cy.ts`
+because it would write a `data:` URI into a real admin's profile. An
 unstubbed notifications variant is not written.
 
 No `firebase emulators:exec`, no vite server, no seed. Which is also the limit of

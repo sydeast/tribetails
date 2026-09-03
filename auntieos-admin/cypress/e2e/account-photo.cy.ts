@@ -1,3 +1,4 @@
+import { usingFixtureAdmin } from '../support/commands';
 import { takeConsoleErrors } from '../support/e2e';
 
 /**
@@ -15,6 +16,12 @@ import { takeConsoleErrors } from '../support/e2e';
  * THE FAKE URL IS A `data:` URI ON PURPOSE. `Avatar` swaps to initials when
  * its image fails to load, so a made-up https URL would make the `<img>`
  * vanish and fail this test on a healthy app. A data URI loads everywhere.
+ *
+ * EMULATOR RUNS ONLY. Against a deployed host the intercepts still fire, so the
+ * real Firestore write would put that `data:` URI into the real e2e admin's
+ * profile and add a `media_files` row pointing at a Cloudinary asset that does
+ * not exist. The file skips itself under the deployed-host overrides
+ * (docs/runbooks/e2e.md, "Pointing a Cypress run at a deployed host").
  */
 
 /** A 1x1 transparent PNG. `fixturesFolder` is off, so the bytes live here. */
@@ -27,6 +34,10 @@ const STAMP = Date.now().toString(36);
 const PUBLIC_ID = `tribetails/user/e2e/photo-${STAMP}`;
 
 describe('account photo', () => {
+  before(function () {
+    if (!usingFixtureAdmin()) this.skip();
+  });
+
   afterEach(() => {
     expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
   });
