@@ -679,8 +679,9 @@ private fun SubMetaColumn(report: KinCareReport) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (report.serviceType.isNotBlank()) {
-                Text(report.serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            val serviceType = report.serviceType.orEmpty()
+            if (serviceType.isNotBlank()) {
+                Text(serviceType, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 Text("·", style = AuntieTheme.typography.bodySmall, color = c.textFaint)
             }
             Text(visitTimestamp(report), style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -830,7 +831,7 @@ internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<K
         compareBy<KinCareReport> { it.kinfolkName.lowercase() }.thenByDescending { sortKey(it) },
     )
     ReportSort.Service -> reports.sortedWith(
-        compareBy<KinCareReport> { it.serviceType.lowercase() }.thenByDescending { sortKey(it) },
+        compareBy<KinCareReport> { it.serviceType.orEmpty().lowercase() }.thenByDescending { sortKey(it) },
     )
 }
 
@@ -895,7 +896,7 @@ internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
     return r.kinfolkName.lowercase().contains(q) ||
-        r.serviceType.lowercase().contains(q) ||
+        r.serviceType.orEmpty().lowercase().contains(q) ||
         r.bodyCopy.lowercase().contains(q)
 }
 

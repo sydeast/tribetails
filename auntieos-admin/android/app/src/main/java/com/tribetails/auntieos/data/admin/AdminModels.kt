@@ -137,7 +137,11 @@ data class NotificationEntry(
     // Blank on rows dispatched before AO-28, so the row falls back to `key`.
     var title: String = "",
     var description: String = "",
-    var actorName: String = "",
+    // Nullable per the Class B decode rule: dispatcher.ts omits `actorName` for
+    // system-originated notifications and older rows store it as an explicit
+    // null, so a non-null String setter throws under toObject() and blanks the
+    // entire notifications query. Crashed /home on 0.2.0.810 (AUNTIEOS-ADMIN-1Q).
+    var actorName: String? = "",
     // R5 entity detail. Null when the server resolved nothing for this
     // notification (or on a doc written before the split), which the row reads
     // as "this card has nothing to open".

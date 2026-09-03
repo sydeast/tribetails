@@ -727,7 +727,10 @@ data class Payment(
     /** The whole sum collected from the client, the gross tip included. */
     var amount: Double = 0.0,
     /** STAFF ONLY. Never rendered on a kinfolk-facing surface. */
-    var notes: String = "",
+    // Nullable per the Class B decode rule: migrated payments store `notes`
+    // as an explicit null, and a non-null String setter throws under
+    // toObject(), blanking the whole payments query (AUNTIEOS-ADMIN-1S).
+    var notes: String? = "",
     // Confident payment->invoice link (parity with web Payment). Populated by the
     // Record-Payment-on-invoice-detail flow + match_payments_to_invoices.py.
     var invoiceId: String = "",
@@ -917,7 +920,10 @@ data class KinCareReport(
     var kinIds: List<String> = emptyList(),
 
     // Auto-prefilled from the session (so the report is self-contained)
-    var serviceType: String = "",
+    // Nullable per the Class B decode rule: reports created before the
+    // session prefill store `serviceType` as null, and a non-null String
+    // setter throws under toObject() (AUNTIEOS-ADMIN-1R).
+    var serviceType: String? = "",
     var visitDate: String = "",
     // Nullable: prefilled from the session, which may be null (Class B decode crash).
     var arrivedAt: String? = "",

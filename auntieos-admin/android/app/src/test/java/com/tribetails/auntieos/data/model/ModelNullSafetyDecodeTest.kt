@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.data.model
 
+import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.google.firebase.Timestamp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -81,6 +82,32 @@ class ModelNullSafetyDecodeTest {
         setVia(d, "setKinfolkId", String::class.java, null)
         setVia(d, "setKinfolkName", String::class.java, null)
         setVia(d, "setApprovedAt", String::class.java, null)
+    }
+
+    // Three fields the 0.2.0+2 sweep missed, all still crashing on 0.2.0.810.
+    // Same mechanism as the cases above: the doc stores an explicit null, the
+    // non-null setter's intrinsic throws, and toObject() blanks the whole query.
+
+    @Test fun `NotificationEntry accepts null actorName`() {
+        // AUNTIEOS-ADMIN-1Q: crashed /home. dispatcher.ts omits actorName for
+        // system-originated rows, so getNotifications() decoded nothing.
+        val n = NotificationEntry(actorName = null)
+        assertEquals(null, n.actorName)
+        setVia(n, "setActorName", String::class.java, null)
+    }
+
+    @Test fun `Payment accepts null notes`() {
+        // AUNTIEOS-ADMIN-1S: migrated payments store notes as an explicit null.
+        val p = Payment(notes = null)
+        assertEquals(null, p.notes)
+        setVia(p, "setNotes", String::class.java, null)
+    }
+
+    @Test fun `KinCareReport accepts null serviceType`() {
+        // AUNTIEOS-ADMIN-1R: reports written before the session prefill.
+        val r = KinCareReport(serviceType = null)
+        assertEquals(null, r.serviceType)
+        setVia(r, "setServiceType", String::class.java, null)
     }
 
     // ── Class A: Timestamp OR String (mixed) -> Any? ─────────────────────────

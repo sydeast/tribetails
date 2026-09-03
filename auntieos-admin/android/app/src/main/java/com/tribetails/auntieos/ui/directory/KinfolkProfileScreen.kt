@@ -304,7 +304,7 @@ fun KinfolkProfileScreen(
                         meta = feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false),
                         emptyMsg = "No KinTales sent to this kinfolk yet.",
                         lines = state.recentTales.map { r ->
-                            (r.title.ifBlank { r.serviceType.ifBlank { "KinTale" } }) to
+                            (r.title.ifBlank { r.serviceType.orEmpty().ifBlank { "KinTale" } }) to
                                 (r.sentAt.orEmpty().ifBlank { r.visitDate }).take(10)
                         },
                         // K1 (A8): tap a recent tale to open its report.
