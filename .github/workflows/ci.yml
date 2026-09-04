@@ -519,7 +519,7 @@ jobs:
       # which the npm cache does not cover. Keyed on the lockfile so a version
       # bump misses the cache and everything else hits it.
       - name: Cache Cypress binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/Cypress
           key: cypress-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -575,7 +575,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Cache Cypress binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/Cypress
           key: cypress-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
