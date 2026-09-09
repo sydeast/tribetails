@@ -52,7 +52,7 @@ object AuntieLog {
      * AUNTIEOS-ADMIN-19 / AUNTIEOS-ADMIN-W: a transport failure (device offline,
      * cannot reach our servers) or an FCM/Play-Services "push isn't available on
      * this device" failure is not an application defect, so it does not get a
-     * Sentry error event — that would report every offline read as a bug for as
+     * Sentry error event: that would report every offline read as a bug for as
      * long as the device stays offline. It still gets a breadcrumb, carrying the
      * exception's own class and message, so it is visible on the timeline of a
      * *real* error reported moments later from the same session.

@@ -26,12 +26,13 @@ import java.net.UnknownHostException
  * client-side network failure two ways: an [java.io.InterruptedIOException]
  * (which [SocketTimeoutException] extends) becomes `DEADLINE_EXCEEDED`; anything
  * else, including [UnknownHostException], becomes `INTERNAL`. `UNAVAILABLE`
- * instead comes from an HTTP 503 response actually reaching the device, i.e. the
- * callable backend itself reporting trouble, which the task's own issue list
- * still calls out as a transport code to swallow. A bare `INTERNAL` or
- * `DEADLINE_EXCEEDED` with no [IOException] cause is left alone: that is the
- * server actually throwing (a real callable bug), not the network dropping the
- * call.
+ * instead comes from an HTTP 503 response actually reaching the device: the
+ * callable backend itself reporting trouble. That is treated as transport here
+ * too, since a 503 is the same "nothing this app does will get through right
+ * now" experience as no network at all, and no client-side retry fixes it
+ * either. A bare `INTERNAL` or `DEADLINE_EXCEEDED` with no [IOException] cause
+ * is left alone: that is the server actually throwing (a real callable bug),
+ * not the network dropping the call.
  */
 fun isTransportFailure(error: Throwable?): Boolean {
     if (error == null) return false
@@ -59,7 +60,7 @@ fun isTransportFailure(error: Throwable?): Boolean {
  * `IOException("MISSING_INSTANCEID_SERVICE")`; `GmsRpc` reports the same
  * condition as `IOException("SERVICE_NOT_AVAILABLE")`. Neither is an
  * `UnknownHostException` or a timeout, so [isTransportFailure] does not catch
- * it, and neither is fixable by retrying — the device has no Instance ID
+ * it, and neither is fixable by retrying: the device has no Instance ID
  * service to ask. `MainActivity.refreshFcmToken` and
  * `VoiceTokenManager.resolveFcmToken` use this to log and skip push
  * registration instead of reporting to Sentry.

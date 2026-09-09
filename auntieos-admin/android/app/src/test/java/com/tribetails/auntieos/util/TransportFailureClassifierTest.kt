@@ -19,7 +19,7 @@ import org.junit.Test
  * `UnknownHostException` -> `SocketTimeoutException` -> `SocketException`
  * under a top-level `FirebaseFunctionsException: INTERNAL`). [isTransportFailure]
  * is the line between "the network dropped this call" and "the server actually
- * threw", pinned here so a bare `INTERNAL` — a real server-side failure — is
+ * threw", pinned here so a bare `INTERNAL` (a real server-side failure) is
  * never silently swallowed alongside it.
  *
  * AUNTIEOS-ADMIN-W: an AOSP emulator with no Play Services fails FCM token
