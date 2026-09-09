@@ -7,6 +7,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.AuthGate
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.fcmTokenFlow
+import com.tribetails.auntieos.util.isFcmUnavailable
 import com.tribetails.auntieos.util.saveFcmToken
 import com.twilio.voice.RegistrationException
 import com.twilio.voice.RegistrationListener
@@ -566,7 +567,17 @@ object VoiceTokenManager {
             context.saveFcmToken(fetched)
             fetched
         } catch (e: Exception) {
-            AuntieLog.e("Could not get FCM token from Firebase", e)
+            // AUNTIEOS-ADMIN-W: no Play Services on this device (an AOSP
+            // emulator, mainly) means no FCM token exists to fetch, and no
+            // retry changes that. Voice registration already treats "" as
+            // nothing to register with, so this call already skips
+            // registration; the only change here is not reporting a Sentry
+            // error for a device shape the app cannot do anything about.
+            if (isFcmUnavailable(e)) {
+                AuntieLog.i("FCM unavailable on this device (${e.message}); voice registration skipped")
+            } else {
+                AuntieLog.e("Could not get FCM token from Firebase", e)
+            }
             ""
         }
     }

@@ -40,19 +40,32 @@ object AuntieLog {
 
     fun w(message: String, throwable: Throwable? = null) {
         Log.w(TAG, message, throwable)
-        if (throwable != null) {
-            Sentry.captureException(throwable)
-        } else {
-            Sentry.captureMessage(message, SentryLevel.WARNING)
-        }
+        report(message, throwable, SentryLevel.WARNING)
     }
 
     fun e(message: String, throwable: Throwable? = null) {
         Log.e(TAG, message, throwable)
-        if (throwable != null) {
-            Sentry.captureException(throwable)
-        } else {
-            Sentry.captureMessage(message, SentryLevel.ERROR)
+        report(message, throwable, SentryLevel.ERROR)
+    }
+
+    /**
+     * AUNTIEOS-ADMIN-19 / AUNTIEOS-ADMIN-W: a transport failure (device offline,
+     * cannot reach our servers) or an FCM/Play-Services "push isn't available on
+     * this device" failure is not an application defect, so it does not get a
+     * Sentry error event — that would report every offline read as a bug for as
+     * long as the device stays offline. It still gets a breadcrumb, carrying the
+     * exception's own class and message, so it is visible on the timeline of a
+     * *real* error reported moments later from the same session.
+     */
+    private fun report(message: String, throwable: Throwable?, level: SentryLevel) {
+        when {
+            throwable == null -> Sentry.captureMessage(message, level)
+            isTransportFailure(throwable) || isFcmUnavailable(throwable) -> {
+                Sentry.addBreadcrumb(
+                    "$message (${throwable.javaClass.simpleName}: ${throwable.message})"
+                )
+            }
+            else -> Sentry.captureException(throwable)
         }
     }
 }
