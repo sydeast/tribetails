@@ -47,6 +47,40 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 MAX_ALLOWED=60
 
 # ---------------------------------------------------------------------------
+# job_ceiling <workflow file> <job>: the ceiling that job is held to.
+#
+# This is the "and then raised here" half of the sentence above, and it is a
+# named list rather than a raised MAX_ALLOWED because a job in it is still
+# capped: it is checked against the number beside it, so a nightly release that
+# grows a second hour still fails this test. Everything not named keeps the
+# single-digit-minutes ceiling the rest of the repo lives under.
+#
+# Adding an entry means writing the argument in the workflow file first. The
+# one entry here:
+#
+#   nightly-release.yml / release   A release deploys ~280 functions in batches
+#                                   of 25 with a 30 second settle between them,
+#                                   because of the Cloud Run quota wall this
+#                                   project has already hit. That is roughly an
+#                                   hour before hosting and Android are touched,
+#                                   and nightly-release.yml argues its 180 in a
+#                                   comment on the line itself. MAX_ALLOWED is
+#                                   here to catch a ceiling nobody chose; this
+#                                   one was chosen.
+#
+# Without this the guard failed every pull request that touched the `scripts`
+# filter from the day nightly-release.yml merged, which is how it was found: two
+# dependabot action bumps went red on a test whose own subject they never
+# touched.
+# ---------------------------------------------------------------------------
+job_ceiling() {
+  case "$1 $2" in
+    'nightly-release.yml release') echo 180 ;;
+    *)                             echo "$MAX_ALLOWED" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # job_timeouts <file>: one "job<TAB>timeout" line per job, timeout empty if the
 # job declares none.
 #
@@ -87,10 +121,17 @@ for f in "$WORKFLOWS"/*.yml; do
       bad "$name: job '$job' has no timeout-minutes, so it inherits GitHub's 360"
     elif ! printf '%s' "$t" | grep -Eq '^[0-9]+$'; then
       bad "$name: job '$job' has a non-numeric timeout-minutes '$t'"
-    elif [ "$t" -le 0 ] || [ "$t" -gt "$MAX_ALLOWED" ]; then
-      bad "$name: job '$job' has timeout-minutes $t, outside 1..$MAX_ALLOWED"
     else
-      ok "$name: $job is capped at ${t}m"
+      ceiling="$(job_ceiling "$name" "$job")"
+      if [ "$t" -le 0 ] || [ "$t" -gt "$ceiling" ]; then
+        bad "$name: job '$job' has timeout-minutes $t, outside 1..$ceiling"
+      elif [ "$ceiling" != "$MAX_ALLOWED" ]; then
+        # Say the exception out loud. A named ceiling that silently stopped
+        # being applied would read exactly like one that still was.
+        ok "$name: $job is capped at ${t}m, against its own ${ceiling}m ceiling"
+      else
+        ok "$name: $job is capped at ${t}m"
+      fi
     fi
   done <<EOF
 $(job_timeouts "$f")
