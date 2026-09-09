@@ -155,6 +155,12 @@ const CLOUDINARY_API_SECRET = defineSecret('CLOUDINARY_API_SECRET');
 // Mapbox secret access token. Held server-side so the public web bundle
 // never ships a Mapbox key. The /api/mapbox/sign-search rewrite proxies
 // admin-authenticated lookups through this function.
+//
+// ALWAYS READ IT THROUGH .trim(). A secret version added with `echo` rather
+// than `printf` stores a trailing newline; Secret Manager returns the bytes as
+// stored, URLSearchParams percent-encodes it as %0A, and Mapbox answers 401 on
+// a credential that is otherwise entirely valid. Same defect and same fix as
+// mytribe/functions/src/portal/mapboxSearch.ts (MYTRIBE-FUNCTIONS-D).
 const MAPBOX_ACCESS_TOKEN = defineSecret('MAPBOX_ACCESS_TOKEN');
 
 // Anthropic API key for the Auntie copy generator (`generate`), replacing the
@@ -712,7 +718,7 @@ exports.searchMapbox = onRequest(
     const decodedToken = await requireAdminToken(req, res, 'searchMapbox');
     if (!decodedToken) return;
 
-    const accessToken = MAPBOX_ACCESS_TOKEN.value();
+    const accessToken = MAPBOX_ACCESS_TOKEN.value().trim();
     if (!accessToken) {
       res.status(500).json({ error: 'mapbox_access_token_not_configured' });
       return;
@@ -783,7 +789,7 @@ exports.retrieveMapbox = onRequest(
     const decodedToken = await requireAdminToken(req, res, 'retrieveMapbox');
     if (!decodedToken) return;
 
-    const accessToken = MAPBOX_ACCESS_TOKEN.value();
+    const accessToken = MAPBOX_ACCESS_TOKEN.value().trim();
     if (!accessToken) {
       res.status(500).json({ error: 'mapbox_access_token_not_configured' });
       return;
