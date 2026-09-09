@@ -16,7 +16,7 @@ plugins {
     // app was never in a release run. Raised WITH the dependencies that demand
     // it, and matched to auntieos-admin/android, which is already on 9.3.1.
     // Needs Gradle 9.x; the wrapper moves with it.
-    id("com.android.application") version "9.3.2"
+    id("com.android.application") version "9.4.0"
     id("com.google.gms.google-services") version "4.5.0"
 }
 
@@ -125,7 +125,7 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             // Coil 3 multiplatform image loader for AsyncImage on Account avatar + KinTale media.
             // Per-platform network engines wired below (okhttp for android, ktor3 for js).
-            implementation("io.coil-kt.coil3:coil-compose:3.5.0")
+            implementation("io.coil-kt.coil3:coil-compose:3.6.1")
             // Routing (D-ROUTE1, chosen 2026-06-01): AndroidX Compose Navigation.
             // Spike confirmed it resolves + compiles on js(IR)/jvm/android with
             // Compose 1.10.1 / Kotlin 2.2.20. Migration off the hand-rolled TabShell
@@ -215,10 +215,10 @@ kotlin {
             implementation("androidx.activity:activity-compose:1.13.0")
             implementation("androidx.biometric:biometric:1.1.0")
             implementation("androidx.core:core-ktx:1.19.0")
-            implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
+            implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.1")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.53.0")
+            implementation("io.sentry:sentry-android:8.54.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
@@ -251,7 +251,7 @@ kotlin {
         jsMain.dependencies {
             // Coil 3 ktor3 fetcher for the kinfolk web portal. Brought into jsMain only;
             // jvmMain still uses ktor 2.x for the Firebase REST shim and stays untouched.
-            implementation("io.coil-kt.coil3:coil-network-ktor3:3.5.0")
+            implementation("io.coil-kt.coil3:coil-network-ktor3:3.6.1")
             implementation("io.ktor:ktor-client-js:3.5.2")
         }
     }
