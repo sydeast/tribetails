@@ -11,7 +11,6 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  *
  * Fails loud if:
  *   - the catalog row has no sms template id (a misconfigured row)
- *   - recipient has no phone
  *   - Twilio rejects (will surface error.code + status; outer wrapTrigger
  *     captures to Sentry)
  * Soft-skips (returns { skipped }) if:
@@ -19,6 +18,12 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  *     is NO generic fallback here: a segment costs money and content-free text
  *     is not worth paying for (operator ruling 2026-08-23). See
  *     notifications/fallbackTemplate.ts.
+ *   - the recipient has no phone on file. A household that never gave us a
+ *     number is a normal data state, not a fault, and it is the same PERMANENT
+ *     undeliverable condition `emailChannel` already skips on for a missing
+ *     email (MYTRIBE-FUNCTIONS-8). Throwing made every such notification a
+ *     Sentry issue plus a Cloud Functions retry of something no retry can fix
+ *     (MYTRIBE-FUNCTIONS-C, 19 events).
  *
  * Phone format expectation: E.164 (`+15551234567`). Documents missing the
  * leading `+` are passed through to Twilio which will reject with a 21211
@@ -53,7 +58,11 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
 
   const phone = await lookupRecipientPhone(recipientUid);
   if (!phone) {
-    throw new Error(`smsChannel(${def.key}): recipient ${recipientUid} has no phone on file`);
+    // Fail-soft: undeliverable, not an error. Do NOT throw (no Sentry, no
+    // retry). The fan-out handler stamps `status: 'skipped'` with this reason
+    // on the channel subdoc and logs a warning, so the office can still see
+    // that this household is unreachable by SMS.
+    return { skipped: true, skipReason: 'recipient_no_phone' };
   }
 
   const body = stripUnresolvedTokens(

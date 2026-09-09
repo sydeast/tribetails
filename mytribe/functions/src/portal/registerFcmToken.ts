@@ -7,9 +7,38 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
+/**
+ * A device platform, spelled the way the clients actually send it: a base
+ * platform, plus an optional suffix naming which of our apps is on the device.
+ *
+ * This replaces the enum `['android', 'web', 'jvm']`, which the AuntieOS admin
+ * Android app satisfied ('android') and the kinfolk portal did not. The
+ * portal's Kotlin `pushPlatform` is declared per target and reads
+ * 'android-mytribe' / 'web-mytribe' / 'desktop-mytribe'
+ * (mytribe/src/*Main/kotlin/com/kinfolk/portal/push/PushToken.*.kt), so every
+ * portal registration was rejected by Zod and the device silently never got a
+ * push (MYTRIBE-FUNCTIONS-A). The SERVER moved rather than the clients because
+ * the Android app already in the field cannot be updated remotely, and a
+ * dropped token registration is the one outcome worse than a noisy one.
+ *
+ * The suffix is stored as sent rather than normalised away: which app a token
+ * belongs to is exactly what "why did this device not get it" needs, and
+ * nothing reads the field to branch on (pushChannel finds devices with
+ * `where('uid','==',...)`; the value is otherwise only logged).
+ *
+ * Still a closed grammar, so a typo or a junk payload is still refused.
+ */
+const PLATFORM_PATTERN = /^(android|ios|web|jvm|desktop)(-[a-z0-9]+)*$/;
+
 const Args = z.object({
   token: z.string().min(10),
-  platform: z.enum(['android', 'web', 'jvm']),
+  platform: z
+    .string()
+    .max(40)
+    .regex(
+      PLATFORM_PATTERN,
+      "platform must be android, ios, web, jvm or desktop, optionally with an app suffix (e.g. 'android-mytribe')",
+    ),
   appVersion: z.string().max(40).optional(),
 });
 

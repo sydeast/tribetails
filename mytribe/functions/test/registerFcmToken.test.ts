@@ -17,14 +17,39 @@ describe('registerFcmTokenHandler', () => {
     await expect(registerFcmTokenHandler({ data: { token: 'tok-123456789', platform: 'web' }, auth: undefined } as any)).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
-  it('rejects unknown platform', async () => {
+  it('rejects a platform outside the grammar', async () => {
+    // 'desktop' used to be the example here. It is a legitimate base platform
+    // now (the KMP jvm target registers as 'desktop-mytribe'), so the rejection
+    // case has to be something genuinely unknown.
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { registerFcmTokenHandler } = await import('../src/portal/registerFcmToken');
     await expect(
-      registerFcmTokenHandler({ data: { token: 'tok-123456789', platform: 'desktop' }, auth: { uid: 'u1' } } as any),
+      registerFcmTokenHandler({ data: { token: 'tok-123456789', platform: 'toaster' }, auth: { uid: 'u1' } } as any),
     ).rejects.toThrow();
+    await expect(
+      registerFcmTokenHandler({ data: { token: 'tok-123456789', platform: 'Android-MyTribe' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toThrow();
+    expect(ctx.writes).toEqual([]);
   });
+
+  it.each(['android', 'web', 'android-mytribe', 'web-mytribe', 'desktop-mytribe'])(
+    'accepts %s, the platform strings the shipped clients actually send, stored verbatim',
+    async (platform) => {
+      // MYTRIBE-FUNCTIONS-A: the kinfolk portal's Android build sends
+      // 'android-mytribe', which the old enum refused, so the shipped app
+      // registered no token at all and got no push. That app cannot be updated
+      // remotely, so the server accepts what it sends.
+      const ctx = buildDbMock();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { registerFcmTokenHandler } = await import('../src/portal/registerFcmToken');
+      const token = `token-${platform}-0123456789`;
+      await registerFcmTokenHandler({ data: { token, platform }, auth: { uid: 'u1' } } as any);
+      const w = ctx.writes.find((w) => w.path === `fcm_tokens/${token}`);
+      expect(w!.data.platform).toBe(platform);
+      expect(w!.data.uid).toBe('u1');
+    },
+  );
 
   it('writes token doc keyed by token', async () => {
     const ctx = buildDbMock();
