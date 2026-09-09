@@ -104,12 +104,16 @@ describe('sendSmsChannel', () => {
     ).rejects.toThrow(/catalog has no sms template id/);
   });
 
-  it('throws if phone missing from both clients/ and staff/', async () => {
+  it('SKIPS rather than throwing when phone is missing from both clients/ and staff/', async () => {
+    // MYTRIBE-FUNCTIONS-C: a household that never gave us a number is a normal
+    // data state. This used to throw, which raised 19 Sentry events nobody can
+    // act on and stamped the channel row `failed`. Same fail-soft shape
+    // emailChannel uses for a recipient with no email.
     const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text: 'hi' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(
-      sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} }),
-    ).rejects.toThrow(/no phone on file/);
+    const res = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res).toEqual({ skipped: true, skipReason: 'recipient_no_phone' });
+    expect(mocks.messagesCreate).not.toHaveBeenCalled();
   });
 
   it('falls back to staff/ when clients/ has no phone', async () => {

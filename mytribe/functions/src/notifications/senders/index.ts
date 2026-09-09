@@ -15,7 +15,9 @@ export interface ChannelSendResult {
    * Set true when the channel could not deliver for a PERMANENT, non-error
    * reason that must NOT throw (so it is neither Sentry-captured nor retried by
    * Cloud Functions). Example: the recipient has no email on file, so an email
-   * notification is simply undeliverable to them. The fan-out handler stamps the
+   * notification is simply undeliverable to them, and the same goes for a
+   * household with no phone number and SMS ('recipient_no_phone', the throw that
+   * was MYTRIBE-FUNCTIONS-C). The fan-out handler stamps the
    * channel subdoc `status: 'skipped'` and logs a warning (fail-soft, visible,
    * never silent). Genuine failures (provider error, misconfigured catalog row)
    * still throw.
