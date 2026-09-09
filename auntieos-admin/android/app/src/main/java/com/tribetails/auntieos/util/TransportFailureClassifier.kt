@@ -10,19 +10,28 @@ import java.net.UnknownHostException
  * True when [error] is the device being offline or unable to reach our servers,
  * rather than a real defect in the app or the backend.
  *
- * AUNTIEOS-ADMIN-19: every dashboard read goes through [AuntieRepository] and
- * lands failures in [AuntieLog.e]/[AuntieLog.w], which reports every throwable
- * to Sentry. On a phone with no signal, a Firestore or callable read fails with
- * an `INTERNAL` (or `UNAVAILABLE`) [FirebaseFunctionsException] wrapping an
- * [UnknownHostException] or [SocketTimeoutException] against
+ * AUNTIEOS-ADMIN-19: every read or callable failure goes through
+ * [AuntieRepository] (or a caller like it) and lands in [AuntieLog.e]/[AuntieLog.w],
+ * which reports every throwable to Sentry. On a phone with no signal, a
+ * Firestore or callable call fails with a [FirebaseFunctionsException] wrapping
+ * the underlying network failure against
  * `us-central1-auntieos-ttpc.cloudfunctions.net`. That fired a Sentry error on
- * every failed read for as long as the device stayed offline — indistinguishable
- * from a real backend defect, and loud enough to bury the errors that are real.
+ * every failed call for as long as the device stayed offline, indistinguishable
+ * from a real backend defect and loud enough to bury the errors that are real.
  * [AuntieLog] uses this to downgrade those to a breadcrumb; the app's existing
  * `isOffline` banner (see `HomeUiState`) is what should tell the user, not Sentry.
  *
- * A bare `INTERNAL` with no [IOException] cause is left alone: that is the
- * server actually throwing, not the network dropping the call.
+ * `FirebaseFunctions`'s own `onFailure` handler (`FirebaseFunctions.kt`, the
+ * `call$5` OkHttp callback named in the AUNTIEOS-ADMIN-19 stack trace) maps a
+ * client-side network failure two ways: an [java.io.InterruptedIOException]
+ * (which [SocketTimeoutException] extends) becomes `DEADLINE_EXCEEDED`; anything
+ * else, including [UnknownHostException], becomes `INTERNAL`. `UNAVAILABLE`
+ * instead comes from an HTTP 503 response actually reaching the device, i.e. the
+ * callable backend itself reporting trouble, which the task's own issue list
+ * still calls out as a transport code to swallow. A bare `INTERNAL` or
+ * `DEADLINE_EXCEEDED` with no [IOException] cause is left alone: that is the
+ * server actually throwing (a real callable bug), not the network dropping the
+ * call.
  */
 fun isTransportFailure(error: Throwable?): Boolean {
     if (error == null) return false
@@ -31,7 +40,8 @@ fun isTransportFailure(error: Throwable?): Boolean {
         is FirebaseFunctionsException -> {
             when (error.code) {
                 FirebaseFunctionsException.Code.UNAVAILABLE -> true
-                FirebaseFunctionsException.Code.INTERNAL -> error.cause is IOException
+                FirebaseFunctionsException.Code.INTERNAL,
+                FirebaseFunctionsException.Code.DEADLINE_EXCEEDED -> error.cause is IOException
                 else -> false
             }
         }

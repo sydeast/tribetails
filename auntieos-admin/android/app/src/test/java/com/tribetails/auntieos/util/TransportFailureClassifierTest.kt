@@ -85,6 +85,28 @@ class TransportFailureClassifierTest {
     }
 
     @Test
+    fun `FirebaseFunctionsException DEADLINE_EXCEEDED wrapping SocketTimeoutException is a transport failure`() {
+        // FirebaseFunctions' own onFailure handler maps an InterruptedIOException
+        // (SocketTimeoutException's parent) to DEADLINE_EXCEEDED, not INTERNAL --
+        // a pure connect/read timeout with no DNS failure first never reaches the
+        // INTERNAL branch at all.
+        val error = mockk<FirebaseFunctionsException>()
+        every { error.code } returns FirebaseFunctionsException.Code.DEADLINE_EXCEEDED
+        every { error.cause } returns SocketTimeoutException("timeout")
+
+        assertTrue(isTransportFailure(error))
+    }
+
+    @Test
+    fun `a bare FirebaseFunctionsException DEADLINE_EXCEEDED with no IOException cause is a real failure`() {
+        val error = mockk<FirebaseFunctionsException>()
+        every { error.code } returns FirebaseFunctionsException.Code.DEADLINE_EXCEEDED
+        every { error.cause } returns null
+
+        assertFalse(isTransportFailure(error))
+    }
+
+    @Test
     fun `a bare FirebaseFunctionsException INTERNAL with no IOException cause is a real failure`() {
         // The server itself throwing (a bug, a bad callable) also surfaces as
         // INTERNAL. Without a network-shaped cause, this must stay reported.
