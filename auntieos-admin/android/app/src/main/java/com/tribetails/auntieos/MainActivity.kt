@@ -30,6 +30,7 @@ import com.tribetails.auntieos.util.saveFcmToken
 import com.tribetails.auntieos.util.saveFontScale
 import com.tribetails.auntieos.util.saveThemeMode
 import com.tribetails.auntieos.util.themeModeFlow
+import com.tribetails.auntieos.util.isFcmUnavailable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -273,7 +274,18 @@ class MainActivity : ComponentActivity() {
                 AuntieOSApp.instance.repository.saveDeviceToken(token)
             }
         }.addOnFailureListener { e ->
-            AuntieLog.e("Failed to refresh FCM token", e)
+            // AUNTIEOS-ADMIN-W: on a device with no Play Services (an AOSP
+            // emulator, mainly) this fails with IOException
+            // "MISSING_INSTANCEID_SERVICE"/"SERVICE_NOT_AVAILABLE" every launch.
+            // There is no token to register in that case and no retry fixes it,
+            // so this logs and skips registration (saveDeviceToken above is
+            // simply never reached) rather than reporting a Sentry error for a
+            // device shape the app cannot do anything about.
+            if (isFcmUnavailable(e)) {
+                AuntieLog.i("FCM unavailable on this device (${e.message}); skipping push registration")
+            } else {
+                AuntieLog.e("Failed to refresh FCM token", e)
+            }
         }
     }
 }
