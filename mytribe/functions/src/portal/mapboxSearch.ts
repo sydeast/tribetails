@@ -9,6 +9,16 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * Mapbox secret access token. Held server-side so the kinfolk app bundle never
  * ships a Mapbox key. Mirrors the AuntieOS-side `MAPBOX_ACCESS_TOKEN` secret
  *, they can share the same value.
+ *
+ * ALWAYS READ IT THROUGH `.trim()`. A secret version added with `echo` rather
+ * than `printf` stores a trailing newline, and Secret Manager hands the bytes
+ * back exactly as stored. `URLSearchParams` then percent-encodes it, so the
+ * request carries `access_token=pk.%E2%80%A6%0A`, Mapbox does not recognise the
+ * token, and answers 401 with a perfectly valid credential in the secret. That
+ * is MYTRIBE-FUNCTIONS-D: 29 `mapbox_401`s in under two minutes from one
+ * operator typing into the address field, while `getLocalWeather`,
+ * `optimizeRoute`, `verifyVisitArrival` and `onKinfolkAddressWrite`, every one
+ * of which already trimmed, kept working off the same secret.
  */
 const MAPBOX_ACCESS_TOKEN = defineSecret('MAPBOX_ACCESS_TOKEN');
 
@@ -50,7 +60,7 @@ export async function mapboxSearchHandler(
     throw new HttpsError('invalid-argument', 'sessionToken required');
   }
 
-  const token = MAPBOX_ACCESS_TOKEN.value();
+  const token = MAPBOX_ACCESS_TOKEN.value().trim();
   if (!token) throw new HttpsError('failed-precondition', 'mapbox_signing_not_configured');
 
   const params = new URLSearchParams({
@@ -84,7 +94,7 @@ export async function mapboxRetrieveHandler(
     throw new HttpsError('invalid-argument', 'sessionToken required');
   }
 
-  const token = MAPBOX_ACCESS_TOKEN.value();
+  const token = MAPBOX_ACCESS_TOKEN.value().trim();
   if (!token) throw new HttpsError('failed-precondition', 'mapbox_signing_not_configured');
 
   const params = new URLSearchParams({

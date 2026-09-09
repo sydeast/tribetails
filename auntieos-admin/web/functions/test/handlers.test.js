@@ -684,6 +684,59 @@ describe('searchMapbox handler (onRequest)', () => {
   });
 });
 
+// ===========================================================================
+// The stored secret is trimmed before it reaches Mapbox (MYTRIBE-FUNCTIONS-D)
+//
+// `gcloud secrets versions add --data-file=-` fed by `echo` stores a trailing
+// newline, and Secret Manager returns the bytes exactly as stored. `URL`
+// percent-encodes it to %0A, so Mapbox is handed a token it never issued and
+// answers 401 on a credential that is otherwise perfectly valid. These assert
+// on the token that went OUT, because with the upstream stubbed the handler
+// answers 200 either way and the newline is invisible in the response.
+// ===========================================================================
+describe('Mapbox proxies trim the stored secret', () => {
+  const tokenOn = (url) => new URL(url).searchParams.get('access_token');
+  it('searchMapbox strips a trailing newline from the secret', async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = 'sk.mapbox-secret\n';
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    let calledUrl;
+    global.fetch = async (url) => {
+      calledUrl = String(url);
+      return { ok: true, status: 200, json: async () => ({ suggestions: [] }) };
+    };
+    const res = makeRes();
+    await idx.searchMapbox(makeReq({ headers: ADMIN_BEARER, body: { query: '123 Main', sessionToken: 'sess-1' } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(tokenOn(calledUrl), 'sk.mapbox-secret');
+    assert.ok(!calledUrl.includes('%0A'), 'the newline reached Mapbox percent-encoded');
+  });
+  it('retrieveMapbox strips a trailing newline from the secret', async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = 'sk.mapbox-secret\n';
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    let calledUrl;
+    global.fetch = async (url) => {
+      calledUrl = String(url);
+      return { ok: true, status: 200, json: async () => ({ features: [{ properties: {} }] }) };
+    };
+    const res = makeRes();
+    await idx.retrieveMapbox(makeReq({ headers: ADMIN_BEARER, body: { mapboxId: 'dXJuOm1ieA', sessionToken: 'sess-1' } }), res);
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(tokenOn(calledUrl), 'sk.mapbox-secret');
+    assert.ok(!calledUrl.includes('%0A'), 'the newline reached Mapbox percent-encoded');
+  });
+  it('a whitespace-only secret reads as unconfigured rather than being sent upstream', async () => {
+    process.env.MAPBOX_ACCESS_TOKEN = '\n';
+    installAdmin({ auth: authReturning({ uid: 'admin-1', admin: true }) });
+    let fetched = false;
+    global.fetch = async () => { fetched = true; return { ok: true, status: 200, json: async () => ({}) }; };
+    const res = makeRes();
+    await idx.searchMapbox(makeReq({ headers: ADMIN_BEARER, body: { query: '123 Main', sessionToken: 'sess-1' } }), res);
+    assert.strictEqual(res.statusCode, 500);
+    assert.strictEqual(res.jsonBody.error, 'mapbox_access_token_not_configured');
+    assert.strictEqual(fetched, false);
+  });
+});
+
 // sendMessage (onRequest) tests REMOVED 2026-07-23 with the handler.
 //
 // Worth recording why, because the suite was actively misleading. Five tests
