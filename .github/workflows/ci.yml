@@ -485,7 +485,11 @@ jobs:
   admin-cypress:
     name: React admin Cypress
     needs: changes
-    if: needs.changes.outputs.adminCy == 'true' || github.event_name == 'workflow_dispatch'
+    # CYPRESS_DISABLED is a repo variable, not a secret. Setting it to 1 skips
+    # this job on every event, dispatch included, so the operator can park
+    # Cypress for a moment without a workflow edit. Delete the variable to
+    # restore it. The parens matter: && binds tighter than || in expressions.
+    if: (needs.changes.outputs.adminCy == 'true' || github.event_name == 'workflow_dispatch') && vars.CYPRESS_DISABLED != '1'
     # Same runner selection as every other job in this file. Pinned to
     # `ubuntu-latest` this job is GitHub-hosted and billed, and on 2026-08-27
     # both Cypress jobs were the ONLY ones refused with "recent account
@@ -548,7 +552,11 @@ jobs:
   portal-cypress:
     name: MyTribe portal Cypress
     needs: changes
-    if: needs.changes.outputs.portalCy == 'true' || github.event_name == 'workflow_dispatch'
+    # CYPRESS_DISABLED is a repo variable, not a secret. Setting it to 1 skips
+    # this job on every event, dispatch included, so the operator can park
+    # Cypress for a moment without a workflow edit. Delete the variable to
+    # restore it. The parens matter: && binds tighter than || in expressions.
+    if: (needs.changes.outputs.portalCy == 'true' || github.event_name == 'workflow_dispatch') && vars.CYPRESS_DISABLED != '1'
     # Same runner selection as every other job in this file. Pinned to
     # `ubuntu-latest` this job is GitHub-hosted and billed, and on 2026-08-27
     # both Cypress jobs were the ONLY ones refused with "recent account
