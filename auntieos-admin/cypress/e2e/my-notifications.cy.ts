@@ -1,5 +1,4 @@
 import { usingFixtureAdmin } from '../support/commands';
-import { takeConsoleErrors } from '../support/e2e';
 
 /**
  * My Notifications (`/my-notifications`): the operator's own receive switches.
@@ -96,9 +95,8 @@ describe('my notifications', () => {
     if (!usingFixtureAdmin()) this.skip();
   });
 
-  afterEach(() => {
-    expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
-  });
+  // The support file's global afterEach reads and asserts on `console.error`
+  // for every test in every spec; nothing extra is needed here.
 
   it('sends exactly the switch that was flipped, and nothing else', () => {
     stubCallables();

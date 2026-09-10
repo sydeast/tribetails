@@ -1,4 +1,5 @@
 import './commands';
+import { unstubbedCallables } from './callables';
 
 /**
  * Loaded before every spec file in the portal suite.
@@ -71,13 +72,29 @@ beforeEach(() => {
  * Clearing is what lets a crawl assert per page rather than accumulating one
  * screen's failure onto every screen visited after it.
  */
-export function takeConsoleErrors(): string[] {
+function takeConsoleErrors(): string[] {
   const unexpected = consoleErrors.filter(
     (line) => !EXPECTED_CONSOLE_ERRORS.some((pattern) => pattern.test(line)),
   );
   consoleErrors = [];
   return unexpected;
 }
+
+/**
+ * The other half of this file's stated job: a screen that logs an error fails
+ * the test that visited it. Global rather than per-spec, so every spec file
+ * gets this for free, including smoke.cy.ts, which used to boot the app and
+ * sign in without ever reading what the console recorded.
+ *
+ * Also reports which callables went unstubbed this test, per
+ * `callables.ts`'s own rule: a gap here is expected (the stub set is
+ * deliberately small), so it is logged rather than failing the test.
+ */
+afterEach(() => {
+  expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
+  const gaps = unstubbedCallables();
+  if (gaps.length > 0) cy.log(`unstubbed callables this test: ${gaps.join(', ')}`);
+});
 
 before(() => {
   cy.task('seedOnce');

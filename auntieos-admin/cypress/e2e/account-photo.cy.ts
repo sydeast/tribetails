@@ -1,5 +1,4 @@
 import { usingFixtureAdmin } from '../support/commands';
-import { takeConsoleErrors } from '../support/e2e';
 
 /**
  * The operator's profile photo on `/account`: pick a file, it lands on the
@@ -38,9 +37,8 @@ describe('account photo', () => {
     if (!usingFixtureAdmin()) this.skip();
   });
 
-  afterEach(() => {
-    expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
-  });
+  // The support file's global afterEach reads and asserts on `console.error`
+  // for every test in every spec; nothing extra is needed here.
 
   it('uploads a picked image, shows it, and it survives a reload', () => {
     cy.intercept('POST', '**/api/cloudinary/sign-upload', (req) => {
