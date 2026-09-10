@@ -183,16 +183,17 @@ describe('resolveBookingCancellationRequestHandler', () => {
     expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toHaveLength(0);
   });
 
-  it('refuses a decline with no reason', async () => {
+  it('declines with no note, since the office does not owe a reason (#700)', async () => {
     const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { resolveBookingCancellationRequestHandler } = await import('../src/admin/cancelRequests');
-    await expect(
-      resolveBookingCancellationRequestHandler(
-        callableRequest({ ...acceptArgs, decision: 'decline' }, operator),
-      ),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
-    expect(ctx.writes).toHaveLength(0);
+    const res = await resolveBookingCancellationRequestHandler(
+      callableRequest({ ...acceptArgs, decision: 'decline' }, operator),
+    );
+    expect(res).toMatchObject({ decision: 'decline', sessionUpdated: false });
+    const write = ctx.writes.find((w) => w.path === VISIT);
+    expect(write?.data?.['cancelRequestStatus']).toBe('declined');
+    expect(write?.data?.['cancelResponseNote']).toBeNull();
   });
 
   it('refuses an unknown decision', async () => {

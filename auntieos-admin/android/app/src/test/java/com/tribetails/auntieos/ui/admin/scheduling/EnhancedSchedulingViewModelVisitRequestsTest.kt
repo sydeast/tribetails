@@ -15,15 +15,18 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -36,9 +39,9 @@ import org.junit.Test
  * written to the visit since 2026-07-02 and no admin surface, web or Android,
  * ever looked at it, so the household was told their request was sent and the
  * office never saw it. What is asserted here is that the queue loads, that a
- * broken read of one queue cannot hide the other, that a decline without a
- * reason never reaches the server, and that a REFUSED decision leaves the row
- * on screen rather than quietly dropping it.
+ * broken read of one queue cannot hide the other, that a decline with no note
+ * still reaches the server (#700: the office does not owe a reason), and that
+ * a REFUSED decision leaves the row on screen rather than quietly dropping it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class EnhancedSchedulingViewModelVisitRequestsTest {
@@ -130,6 +133,24 @@ class EnhancedSchedulingViewModelVisitRequestsTest {
         val state = buildViewModel().state.value
         assertEquals(listOf("Cancel", "Reschedule"), state.visitRequests.map { it.kindLabel() })
         assertNull(state.visitRequestsError)
+    }
+
+    @Test
+    fun `visitRequestsLoading reserves the panel until both queues settle (#698)`() = runTest(testDispatcher) {
+        // `loadVisitRequests` runs as its own fire-and-forget call in `init`,
+        // separate from `isLoading` (which only covers `loadInitialData`), so a
+        // cold-start read used to pop the panel in seconds after the rest of the
+        // screen had already settled with no sign it was still coming.
+        val cancelDeferred = CompletableDeferred<Result<List<CancelRequestDto>>>()
+        coEvery { visitRequestRepo.listCancelRequests(any()) } coAnswers { cancelDeferred.await() }
+
+        val vm = buildViewModel()
+        assertTrue(vm.state.value.visitRequestsLoading)
+
+        cancelDeferred.complete(Result.success(emptyList()))
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.visitRequestsLoading)
     }
 
     @Test
@@ -239,18 +260,30 @@ class EnhancedSchedulingViewModelVisitRequestsTest {
         }
 
     @Test
-    fun `a decline with no reason never reaches the server`() = runTest(testDispatcher) {
-        coEvery { visitRequestRepo.listCancelRequests(any()) } returns Result.success(listOf(cancelDto()))
+    fun `a decline with no note still reaches the server, since the office does not owe a reason`() =
+        runTest(testDispatcher) {
+            coEvery { visitRequestRepo.listCancelRequests(any()) } returns Result.success(listOf(cancelDto()))
+            coEvery {
+                visitRequestRepo.resolveCancellationRequest(any(), any(), any(), any(), any())
+            } returns Result.success(
+                ResolveBookingCancellationRequestResult(
+                    ok = true,
+                    visitId = "v1",
+                    decision = "decline",
+                    status = "confirmed",
+                    sessionUpdated = false,
+                    rescheduleRequestClosed = false,
+                ),
+            )
 
-        val vm = buildViewModel()
-        vm.resolveVisitRequest(vm.state.value.visitRequests.single(), "decline", "   ")
+            val vm = buildViewModel()
+            vm.resolveVisitRequest(vm.state.value.visitRequests.single(), "decline", "   ")
 
-        coVerify(exactly = 0) {
-            visitRequestRepo.resolveCancellationRequest(any(), any(), any(), any(), any())
+            coVerify {
+                visitRequestRepo.resolveCancellationRequest("fam-1", "b1", "v1", "decline", null)
+            }
+            assertTrue(vm.state.value.visitRequests.isEmpty())
         }
-        assertTrue(vm.state.value.visitRequestsError!!.contains("Say why"))
-        assertEquals(1, vm.state.value.visitRequests.size)
-    }
 
     @Test
     fun `a decline sends the trimmed reason`() = runTest(testDispatcher) {

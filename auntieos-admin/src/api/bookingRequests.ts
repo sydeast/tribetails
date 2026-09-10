@@ -69,20 +69,22 @@ export function approveBookingRequest(
 
 /**
  * Declines a whole request. Nothing is booked, and the household is told once,
- * with the operator's reason, through `kincare.request.declined`.
+ * through `kincare.request.declined`.
  *
- * The `note` is not decoration. A request turned down with no reason is the
- * same silence #533 is about, one step later.
+ * #700: the office does not owe the household a reason, so `note` is optional
+ * extra text an operator can choose to add on top of the decline. An empty
+ * note is withheld from the call entirely rather than sent as `''`, matching
+ * `rescheduleRequests.ts` and `cancelRequests.ts`.
  */
 export function declineBookingRequest(
   kinfolkId: string,
   batchId: string,
-  note: string,
+  note?: string,
 ): Promise<ManageBookingSeriesResult> {
   return call<ManageBookingSeriesArgs, ManageBookingSeriesResult>('manageBookingSeries', {
     action: 'CANCEL',
     kinfolkId,
     batchId,
-    note,
+    ...(note && note.trim() ? { note: note.trim() } : {}),
   });
 }

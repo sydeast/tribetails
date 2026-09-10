@@ -478,8 +478,10 @@ fun ScheduleViewScreen(
             //    exist. Above the stat row and the agenda because it is work
             //    waiting on a human, not a view of the schedule: a household
             //    asked to move or cancel a visit and nothing happens until
-            //    someone here answers. Renders nothing when both queues are
-            //    empty, which is most days.
+            //    someone here answers. #698: reserves its own panel while
+            //    `loadVisitRequests` is still in flight, rather than popping in
+            //    seconds after the rest of the screen has already settled, and
+            //    says so plainly when both queues come back empty.
             state.visitRequestsError?.let { msg ->
                 item {
                     AuntieBanner(
@@ -500,11 +502,17 @@ fun ScheduleViewScreen(
                     ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
                 }
             }
-            if (state.visitRequests.isNotEmpty()) {
+            if (state.visitRequestsLoading) {
+                item {
+                    DenPanel(title = "Change requests", subtitle = "Checking for requests…") {
+                        AuntieLinearProgress(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            } else if (state.visitRequests.isNotEmpty()) {
                 item {
                     DenPanel(
                         title = "Change requests",
-                        subtitle = "Households asked to move or cancel these visits. Accepting writes the change to the schedule and to their portal; declining leaves the visit alone and sends them your reason.",
+                        subtitle = "Households asked to move or cancel these visits. Accepting writes the change to the schedule and to their portal; declining leaves the visit alone and lets them know your answer.",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             state.visitRequests.forEach { row ->
@@ -519,6 +527,10 @@ fun ScheduleViewScreen(
                             }
                         }
                     }
+                }
+            } else if (state.visitRequestsError == null) {
+                item {
+                    DenPanel(title = "Change requests", subtitle = "No visit requests waiting.") {}
                 }
             }
 
@@ -2617,10 +2629,10 @@ fun AddEventDialog(onDismiss: () -> Unit, onAdd: (Event) -> Unit) {
 /**
  * One row in the change-request queue (#438, #399 item 2).
  *
- * Accept is one tap; DECLINE IS NOT, because a decline needs a reason. Tapping
- * Decline opens the reason field inline rather than firing, so an operator
- * cannot send a household a "no" with nothing attached, which is what the
- * server refuses anyway, and finding that out after a round trip is worse.
+ * Accept is one tap; Decline opens an inline note field first, since a note
+ * needs a text box rather than firing straight away. #700: the note is
+ * optional, not a gate. The office does not owe the household a reason, so
+ * "Send the decline" is never held back on it.
  */
 @Composable
 private fun VisitRequestRowCard(
@@ -2662,7 +2674,7 @@ private fun VisitRequestRowCard(
                 PrimaryButton(
                     label = if (inFlight) "Working…" else "Send the decline",
                     onClick = { onResolve("decline", note) },
-                    enabled = !actionsLocked && note.isNotBlank(),
+                    enabled = !actionsLocked,
                 )
                 GhostButton(
                     label = "Never mind",

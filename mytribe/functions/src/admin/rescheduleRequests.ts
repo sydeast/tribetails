@@ -40,7 +40,12 @@ export const Args = z.object({
   batchId: z.string().min(1).max(200),
   visitId: z.string().min(1).max(200),
   decision: DECISION,
-  /** Shown to the household beside the decision. Required for a decline: "no" with no reason is not an answer. */
+  /**
+   * #700: optional on every decision, including a decline. The office does not
+   * owe the household a reason; this is only the extra, custom text an
+   * operator can choose to add on top of the decline the household already
+   * sees.
+   */
   note: z.string().trim().max(500).optional(),
 });
 
@@ -73,9 +78,6 @@ export async function resolveBookingRescheduleRequestHandler(
       });
     }
     throw err;
-  }
-  if (args.decision === 'decline' && !args.note) {
-    throw new HttpsError('invalid-argument', 'Say why the new time does not work, so the household knows what to propose next.');
   }
 
   const visitRef = db().doc(

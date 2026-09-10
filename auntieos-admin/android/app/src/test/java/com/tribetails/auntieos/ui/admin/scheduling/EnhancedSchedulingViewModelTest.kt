@@ -420,7 +420,7 @@ class EnhancedSchedulingViewModelTest {
         assertNotNull(msg)
         // Its OWN line: "with every date" belongs to the confirmation, which
         // enumerates the days. The decline template does not, yet.
-        assertTrue(msg!!.contains("your answer and your reason"))
+        assertTrue(msg!!.contains("The household has your answer."))
         assertFalse(msg.contains("already booked"))
         assertFalse(msg.contains("with every date"))
     }

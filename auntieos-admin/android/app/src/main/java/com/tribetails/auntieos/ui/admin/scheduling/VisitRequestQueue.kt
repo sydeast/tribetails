@@ -95,8 +95,11 @@ fun VisitRequestRow.acceptLabel(): String = when (this) {
     is VisitRequestRow.Reschedule -> "Move the visit"
 }
 
-/** The label on the note field for a decline; a decline always needs a reason. */
-fun VisitRequestRow.declineNoteLabel(): String = when (this) {
-    is VisitRequestRow.Cancel -> "Why it is staying"
-    is VisitRequestRow.Reschedule -> "Why the time does not work"
-}
+/**
+ * The label on the note field for a decline.
+ *
+ * #700: optional on every kind. The office does not owe the household a
+ * reason; this is only the extra, custom text an operator can choose to add
+ * on top of the decline the household already sees.
+ */
+fun VisitRequestRow.declineNoteLabel(): String = "Anything to add for the household (optional)"

@@ -35,11 +35,13 @@ export function listCancelRequests(limit?: number): Promise<ListCancelRequestsRe
  * ACCEPTING CANCELS THE VISIT: the server writes the household's kinCares doc
  * and the flat `kin_care_sessions` row together, so this screen and the portal
  * cannot end up disagreeing about whether a visit is still happening.
- * Declining changes nothing about the visit and records the reason, which the
- * household reads on its own booking screen and is emailed.
+ * Declining changes nothing about the visit and records the optional note,
+ * which the household reads on its own booking screen and is emailed.
  *
- * A decline needs a note. The server refuses one without it, and the dialog
- * enforces it too, so the operator finds out before the round trip.
+ * #700: the note is optional on a decline too. The office does not owe the
+ * household a reason; `note` is only the extra, custom text an operator can
+ * choose to add on top of the decline. An empty note is withheld from the call
+ * entirely rather than sent as `''`.
  */
 export function resolveBookingCancellationRequest(
   kinfolkId: string,
