@@ -367,8 +367,14 @@ class BusinessRulesPanelsTest {
 
     @Test
     fun `a loaded default whose mode is already off keeps its real label, not 'not a known value'`() {
+        // SPECIFIC_TIME is the loaded (but now disabled) default, and TIME_BLOCK is
+        // the one allowed mode. Both stay in the list: SPECIFIC_TIME because the
+        // current default is always shown under its real label, TIME_BLOCK because
+        // it is the enabled mode the operator can switch to.
         val out = bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = true)
-        assertEquals(listOf("SPECIFIC_TIME" to "A specific time (11:15 AM)"), out)
+        assertEquals(BOOKING_MODE_WIRE, out)
+        assertTrue(out.contains("SPECIFIC_TIME" to "A specific time (11:15 AM)"))
+        assertTrue(out.none { (_, label) -> label.contains("not a known value") })
     }
 
     // ── diff-vs-rebuild: the trap this codebase is known for ────────────────
