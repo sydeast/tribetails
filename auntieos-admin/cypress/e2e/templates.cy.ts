@@ -56,11 +56,18 @@ const TEMPLATE: TemplateFixture = {
 };
 
 function stubTemplatesCallables() {
-  cy.intercept('POST', CALLABLE('listTemplatesPage'), {
+  // `api/templates.ts#listTemplatesPage` and `#listTemplateCategories` are
+  // the CLIENT function names; the callable each one actually invokes (the
+  // name that lands in the URL) is `listTemplates` and `listCategories`
+  // respectively, one level down. Stubbing the client name here matched
+  // nothing, left both callables unstubbed, and the screen never got past
+  // its loading state (see the request path both dead-end at:
+  // docs/runbooks/e2e.md's dead-port pin).
+  cy.intercept('POST', CALLABLE('listTemplates'), {
     statusCode: 200,
     body: { result: { templates: [TEMPLATE], nextCursor: null } },
   });
-  cy.intercept('POST', CALLABLE('listTemplateCategories'), {
+  cy.intercept('POST', CALLABLE('listCategories'), {
     statusCode: 200,
     body: { result: { categories: [], schemaVersion: 1 } },
   });
