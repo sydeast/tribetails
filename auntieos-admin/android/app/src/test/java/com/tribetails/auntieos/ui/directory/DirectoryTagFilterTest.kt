@@ -177,6 +177,40 @@ class DirectoryTagFilterTest {
         assertTrue(vm.directoryState.value.displayedKinfolk.isEmpty())
     }
 
+    /**
+     * The sequence this change makes reachable: filter by a tag, delete that tag
+     * in Settings, pull to refresh. No row carries it any more, so the dropdown
+     * hides itself; a filter left standing would strand the list on an empty
+     * result with no control left to clear it.
+     */
+    @Test
+    fun `a reload drops a tag filter no loaded household can satisfy`() = runTest(testDispatcher) {
+        val repository = mockk<AuntieRepository>(relaxed = true)
+        val invoiceRepository = mockk<InvoiceRepository>(relaxed = true)
+        val kinCareRepository = mockk<KinCareRepository>(relaxed = true)
+        coEvery { repository.getAllKin() } returns Result.success(emptyList())
+        coEvery { kinCareRepository.getKinCareSessions() } returns Result.success(emptyList())
+        coEvery { repository.getKinfolk() } returns Result.success(
+            listOf(household("1", "John", listOf("VIP")), household("2", "Jane")),
+        )
+        val vm = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
+        advanceUntilIdle()
+
+        vm.setTagFilter("VIP")
+        advanceUntilIdle()
+        assertEquals(1, vm.directoryState.value.displayedKinfolk.size)
+
+        // The cascade lands: nothing carries "VIP" any more.
+        coEvery { repository.getKinfolk() } returns Result.success(
+            listOf(household("1", "John"), household("2", "Jane")),
+        )
+        vm.loadDirectory()
+        advanceUntilIdle()
+
+        assertEquals(TAG_FILTER_ALL, vm.directoryState.value.tagFilter)
+        assertEquals(2, vm.directoryState.value.displayedKinfolk.size)
+    }
+
     @Test
     fun `clearing the tag filter puts every row back`() = runTest(testDispatcher) {
         val vm = viewModelOver(listOf(household("1", "John", listOf("VIP")), household("2", "Jane")))

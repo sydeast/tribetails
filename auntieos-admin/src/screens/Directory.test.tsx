@@ -434,4 +434,37 @@ describe('Directory screen, tag filter', () => {
     render(<Directory />);
     expect(screen.queryByLabelText('Filter kinfolk by tag')).toBeNull();
   });
+
+  /**
+   * The sequence this PR makes reachable: filter by a tag here, delete that tag
+   * in Settings, and the live stream drops every assignment. The picker hides
+   * itself, so a filter left standing would strand the list on an empty result
+   * with no control left to clear it.
+   */
+  it('falls back to every row when the filtered tag stops existing', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook', tags: ['VIP'] }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    const { rerender } = render(<Directory />);
+    await userEvent.selectOptions(screen.getByLabelText('Filter kinfolk by tag'), 'VIP');
+    expect(screen.queryByText('Amy Adams')).toBeNull();
+
+    // The cascade lands: no household carries "VIP" any more.
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    rerender(<Directory />);
+
+    expect(screen.queryByLabelText('Filter kinfolk by tag')).toBeNull();
+    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
+    expect(screen.getByText('Amy Adams')).toBeInTheDocument();
+  });
 });

@@ -502,6 +502,15 @@ class DirectoryViewModel(
                     lastVisitByKinfolkId    = com.tribetails.auntieos.domain.lastVisitByKinfolk(sessions),
                     kintaleCountByKinfolkId = com.tribetails.auntieos.domain.kintaleCountByKinfolk(sessions),
                     isLoading               = false,
+                    // #713: a tag filter no loaded row can satisfy any more falls
+                    // back to "All tags". Deleting the tag the operator was
+                    // filtering by empties the option list, which hides the
+                    // dropdown, and without this the list would sit on an empty
+                    // result with no control left to clear it.
+                    tagFilter               = _directoryState.value.tagFilter.takeIf { wanted ->
+                        directoryTagOptions(all.map { it.tagNames() })
+                            .any { it.equals(wanted, ignoreCase = true) }
+                    } ?: TAG_FILTER_ALL,
                 )
                 applyFilters()
             }.onFailure { e ->

@@ -360,6 +360,19 @@ export function Directory({
     [kinState],
   );
 
+  /**
+   * A tag filter that no row can satisfy any more falls back to "All tags".
+   *
+   * This PR is what makes that reachable: filter the Directory by "VIP", delete
+   * "VIP" in Settings, and the live stream drops every assignment. The option
+   * list empties, the picker hides itself, and without this the list would sit
+   * on "Nothing here is tagged VIP" with no control left to clear it. Derived
+   * rather than reset in an effect, so there is no window where the state and
+   * the rendered list disagree.
+   */
+  const activeKinfolkTag = kinfolkTagOptions.includes(kinfolkTag) ? kinfolkTag : TAG_FILTER_ALL;
+  const activeKinTag = kinTagOptions.includes(kinTag) ? kinTag : TAG_FILTER_ALL;
+
   function selectTab(next: DirectoryTab) {
     setTab(next);
     setQuery(''); // ports `onTabChange { vm.clearSearch() }`
@@ -541,7 +554,7 @@ export function Directory({
             <span className="directory__sort-label">Tag</span>
             <select
               className="directory__sort-select"
-              value={tab === 'kinfolk' ? kinfolkTag : kinTag}
+              value={tab === 'kinfolk' ? activeKinfolkTag : activeKinTag}
               onChange={(e) =>
                 tab === 'kinfolk' ? setKinfolkTag(e.target.value) : setKinTag(e.target.value)
               }
@@ -595,9 +608,9 @@ export function Directory({
           empty={<p className="directory__hint">No kinfolk on file yet.</p>}
         >
           {(rows) => {
-            const visible = filterSortKinfolk(rows, query, sort, kinfolkTag);
+            const visible = filterSortKinfolk(rows, query, sort, activeKinfolkTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">{noMatchHint(query, kinfolkTag)}</p>;
+              return <p className="directory__hint">{noMatchHint(query, activeKinfolkTag)}</p>;
             }
             return (
               <EntityCardGrid label="Kinfolk" minCardWidth="290px" align="start">
@@ -627,9 +640,9 @@ export function Directory({
           empty={<p className="directory__hint">No kin on file yet.</p>}
         >
           {(rows) => {
-            const visible = filterSortKin(rows, query, sort, kinTag);
+            const visible = filterSortKin(rows, query, sort, activeKinTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">{noMatchHint(query, kinTag)}</p>;
+              return <p className="directory__hint">{noMatchHint(query, activeKinTag)}</p>;
             }
             return (
               <EntityCardGrid label="Kin" minCardWidth="290px" align="start">

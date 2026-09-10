@@ -85,6 +85,18 @@ fun DirectoryScreen(
     // because household tags and Kin tags are separate vocabularies: carrying
     // one across would narrow the other list to nothing.
     var kinTag by remember { mutableStateOf(TAG_FILTER_ALL) }
+    val kinfolkTagOptions = remember(state.allKinfolk) {
+        directoryTagOptions(state.allKinfolk.map { it.tagNames() })
+    }
+    val kinTagOptions = remember(state.kinByKinfolkId) {
+        directoryTagOptions(state.kinByKinfolkId.values.flatten().map { it.tagNames() })
+    }
+    // A Kin tag filter no loaded row can satisfy any more falls back to "All
+    // tags". Deleting the tag being filtered by empties the option list, which
+    // hides the dropdown; without this the list would sit on an empty result
+    // with no control left to clear it. The Kinfolk tab's equivalent reset lives
+    // on the view model, beside the state it is resetting.
+    val activeKinTag = if (kinTagOptions.any { it.equals(kinTag, ignoreCase = true) }) kinTag else TAG_FILTER_ALL
 
     // #14: bulk portal-invite state + Toast feedback.
     val inviteBusy by viewModel.inviteBusy.collectAsState()
@@ -196,16 +208,10 @@ fun DirectoryScreen(
                     // dead control, and one shown while the roster is still
                     // loading would claim "no tags" about rows it has not read.
                     item {
-                        val tagOptions = if (selectedTab == 0) {
-                            directoryTagOptions(state.allKinfolk.map { it.tagNames() })
-                        } else {
-                            directoryTagOptions(
-                                state.kinByKinfolkId.values.flatten().map { it.tagNames() },
-                            )
-                        }
+                        val tagOptions = if (selectedTab == 0) kinfolkTagOptions else kinTagOptions
                         if (!state.isLoading && tagOptions.isNotEmpty()) {
                             AuntieDropdownField(
-                                value = if (selectedTab == 0) state.tagFilter else kinTag,
+                                value = if (selectedTab == 0) state.tagFilter else activeKinTag,
                                 options = listOf(TAG_FILTER_ALL) + tagOptions,
                                 onSelect = { picked ->
                                     if (selectedTab == 0) {
@@ -231,7 +237,7 @@ fun DirectoryScreen(
                         kinSection(
                             state = state,
                             kinSearch = kinSearch,
-                            kinTag = kinTag,
+                            kinTag = activeKinTag,
                             onKinClick = onKinClick,
                         )
                     }
