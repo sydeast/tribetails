@@ -634,7 +634,10 @@ function NotificationRow({
         checked={selected}
         onChange={(e) => onToggleSelect(e.target.checked)}
       />
-      <div className="notif-row__body">
+      <div
+        className={canOpen ? 'notif-row__body notif-row__body--openable' : 'notif-row__body'}
+        onClick={canOpen ? () => setOpen((v) => !v) : undefined}
+      >
         {householdName !== '' || targetLabel !== '' || archived ? (
           <span className="notif-row__context">
             {householdName !== '' ? <span className="notif-row__who">{householdName}</span> : null}
@@ -643,23 +646,29 @@ function NotificationRow({
           </span>
         ) : null}
 
-        {/* THE HEADLINE IS THE DISCLOSURE CONTROL when there is something to
-            disclose, so the whole title is the hit target rather than a small
-            chevron beside it. A row whose server-side `detail` resolved nothing
-            renders a plain heading and no control at all: a button that opens
-            onto an empty box is worse than no button, the same rule
-            `applicableNotificationActions` applies to the Open CTA. */}
+        {/* ISSUE #705: the whole card body is the disclosure control, not just
+            the title, so clicking the summary or description (where an
+            operator naturally clicks) opens the card. The button itself carries
+            no handler of its own: a click on it bubbles to the body's onClick
+            above, and a native <button> dispatches that same bubbling click on
+            Enter/Space, so keyboard activation still works without a second
+            handler that would fire twice. A row whose server-side `detail`
+            resolved nothing renders a plain heading and no control at all: a
+            control that opens onto an empty box is worse than no control, the
+            same rule `applicableNotificationActions` applies to the Open CTA. */}
         {canOpen ? (
           <button
             type="button"
             className="notif-row__key notif-row__key--button"
             aria-expanded={open}
             aria-controls={detailId}
-            onClick={() => setOpen((v) => !v)}
           >
             {title}
-            <span aria-hidden="true" className="notif-row__caret">
-              {open ? '▾' : '▸'}
+            <span
+              aria-hidden="true"
+              className={open ? 'notif-row__caret notif-row__caret--open' : 'notif-row__caret'}
+            >
+              ▸
             </span>
           </button>
         ) : (

@@ -929,3 +929,52 @@ describe('Notifications card detail', () => {
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
   });
 });
+
+/**
+ * ISSUE #705. Verbatim: "The notification boxes still don't open." Only the
+ * title text carried an onClick; the summary line, the description and the
+ * rest of the card body were inert, so the operator clicking where they
+ * naturally would (the summary) got nothing.
+ */
+describe('Notifications card body click (issue #705)', () => {
+  it('opens the detail when the summary line is clicked, not just the title', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    expect(screen.queryByText('Requested by')).toBeNull();
+    await userEvent.click(screen.getByText('Rex · Mon, Jun 15 · 2:30 PM'));
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('opens the detail when the description is clicked', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [detailed({ description: 'A KinCare visit needs your review.' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByText('A KinCare visit needs your review.'));
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('toggles once per click rather than firing twice, even when the title itself is clicked', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    const opener = screen.getByRole('button', { name: /A KinCare visit was assigned/ });
+    await userEvent.click(opener);
+    expect(opener).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('does not toggle when a card with nothing to disclose is clicked', async () => {
+    mockStreams({ status: 'ready', data: [entry({ title: 'Something happened' })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByText('Something happened'));
+    expect(screen.queryByRole('button', { name: /Something happened/ })).toBeNull();
+  });
+
+  it('does not toggle when a quick-action button inside the card is clicked', async () => {
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(screen.queryByText('Requested by')).toBeNull();
+  });
+});

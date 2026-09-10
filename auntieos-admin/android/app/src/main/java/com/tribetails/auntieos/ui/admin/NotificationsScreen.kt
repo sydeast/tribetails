@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -545,6 +546,10 @@ private fun NotificationRow(
     val typo = AuntieTheme.typography
     val unread = isNotificationUnread(entry)
     val actions = applicableNotificationActions(entry)
+    // Computed here, not inside the Column's content, because issue #705 needs
+    // it to decide the Column's OWN modifier (whether the whole body toggles).
+    val detailRows = notificationDetailRows(entry)
+    val canOpenDetail = detailRows.isNotEmpty()
 
     val border = if (unread) c.accent.copy(alpha = 0.4f) else c.border
 
@@ -570,8 +575,25 @@ private fun NotificationRow(
             size = 42.dp,
         )
 
+        // ISSUE #705: the whole body is the disclosure control when there is
+        // something to disclose, not only the headline. A tap on a descendant
+        // that has its own clickable (a quick-action button, the detail toggle
+        // if it still had one) is consumed there and never reaches this
+        // modifier, which is what keeps the CTAs below from also toggling the
+        // card. A row with nothing to disclose gets no click handler at all: a
+        // control that opens onto an empty box is worse than no control, the
+        // same rule applicableNotificationActions applies to the Open CTA.
+        val bodyModifier = if (canOpenDetail) {
+            Modifier
+                .weight(1f)
+                .clickable { onToggleDetail() }
+                .semantics { this.role = Role.Button }
+        } else {
+            Modifier.weight(1f)
+        }
+
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = bodyModifier,
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             // Context first (issue #20): who this is about, and what it points
@@ -594,19 +616,8 @@ private fun NotificationRow(
                     }
                 }
             }
-            // R5: the headline doubles as the disclosure control when the server
-            // resolved detail for this card, so the whole title is the hit target
-            // rather than a small chevron. A row with nothing to disclose renders
-            // a plain heading: a control that opens onto an empty box is worse
-            // than no control, the same rule applicableNotificationActions applies
-            // to the Open CTA.
-            val detailRows = notificationDetailRows(entry)
-            if (detailRows.isNotEmpty()) {
+            if (canOpenDetail) {
                 Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { onToggleDetail() }
-                        .semantics { this.role = Role.Button },
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -615,10 +626,13 @@ private fun NotificationRow(
                         style = typo.titleMedium,
                         color = c.textPrimary,
                     )
+                    // Rotates the same glyph rather than swapping it, so the
+                    // affordance reads as one control changing state.
                     Text(
-                        text = if (detailOpen) "▾" else "▸",
+                        text = "▸",
                         style = typo.bodySmall,
                         color = c.textDim,
+                        modifier = Modifier.rotate(if (detailOpen) 90f else 0f),
                     )
                 }
             } else {

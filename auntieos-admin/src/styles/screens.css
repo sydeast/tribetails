@@ -218,6 +218,12 @@
   gap: 0.2rem;
   min-width: 0;
 }
+/* Issue #705: the whole body is the disclosure control when the row has
+   something to disclose, so the cursor says so everywhere on the card, not
+   only over the title. */
+.notif-row__body--openable {
+  cursor: pointer;
+}
 
 /* Context line: who this is about, and what it points at. The row leads with
    this because "which household" is the first thing an operator triaging the
@@ -313,8 +319,15 @@
   color: var(--color-accent);
 }
 .notif-row__caret {
+  display: inline-block;
   font-size: 0.7rem;
   color: var(--color-text-dim);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+/* Rotates the same glyph rather than swapping it, so the affordance reads as
+   one control changing state instead of two different icons (issue #705). */
+.notif-row__caret--open {
+  transform: rotate(90deg);
 }
 .notif-row__meta {
   font-size: 0.82rem;

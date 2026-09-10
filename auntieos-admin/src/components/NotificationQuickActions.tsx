@@ -56,7 +56,10 @@ export function NotificationQuickActions({
   const actions = applicableNotificationActions(entry);
 
   return (
-    <div className="notif-row__actions">
+    // The card body toggles its detail on any click (issue #705). This bar
+    // sits inside that body, so a click on any of its buttons must not also
+    // bubble up and toggle the card.
+    <div className="notif-row__actions" onClick={(e) => e.stopPropagation()}>
       {actions.bookingId !== '' ? (
         <>
           <PrimaryButton
