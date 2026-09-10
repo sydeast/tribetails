@@ -225,19 +225,21 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 12. It was 11: the 2026-07-31 calendar-tab merge took two calendar
-    // features down to one tab, then mark 16 of the 2026-08-17 walk folded
-    // Weather area and Booking behavior into Business profile ("it does not
-    // need to be its own page with so little fields"). Issue #519 then added
-    // the two sections for the twenty fields the clients decoded and none of
-    // them edited: Booking rules and Visits and tracking, making 13. Issue #397
-    // then added Phone line, the press-3 live transfer, next to Business hours
-    // because it is gated on them, making 14. Issue #712 then folded the
-    // separate Branding tab back into Business profile, back down to 13. Issue
-    // #711 then folded Visits and tracking into KinCare Settings (renamed from
-    // KinCare types), down to 12. Integrations still sits last, because it
-    // reports on outside services rather than editing anything.
-    expect(tabs).toHaveLength(12);
+    // 11. It was 11 originally too, by coincidence: the 2026-07-31
+    // calendar-tab merge took two calendar features down to one tab, then
+    // mark 16 of the 2026-08-17 walk folded Weather area and Booking behavior
+    // into Business profile ("it does not need to be its own page with so
+    // little fields"). Issue #519 then added the two sections for the twenty
+    // fields the clients decoded and none of them edited: Booking rules and
+    // Visits and tracking, making 13. Issue #397 then added Phone line, the
+    // press-3 live transfer, next to Business hours because it is gated on
+    // them, making 14. Issue #712 then folded the separate Branding tab back
+    // into Business profile, back down to 13. Issue #711 then folded Visits
+    // and tracking into KinCare Settings (renamed from KinCare types), down
+    // to 12. Issue #715 then folded the Calendar tab into Integrations, down
+    // to 11. Integrations still sits last, because it reports on outside
+    // services rather than editing anything.
+    expect(tabs).toHaveLength(11);
     expect(within(tablist).getByRole('tab', { name: 'Booking rules' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'KinCare Settings' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Phone line' })).toBeInTheDocument();
@@ -247,6 +249,7 @@ describe('Settings — section nav shell', () => {
     expect(screen.queryByRole('tab', { name: 'Branding' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Visits and tracking' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'KinCare types' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Calendar' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -285,18 +288,47 @@ describe('Settings — section nav shell', () => {
   });
 });
 
-describe('Settings, Calendar is one section holding both capabilities', () => {
+// ISSUE #715: Calendar lives inside Integrations now. Opening it is a click
+// on the Google Calendar row's toggle, in place, rather than a tab switch.
+const HEALTH_WITH_GOOGLE = {
+  checkedAt: '2026-07-31T12:00:00.000Z',
+  declaredKnown: true,
+  declaredError: '',
+  integrations: [
+    {
+      key: 'googleCalendar',
+      name: 'Google Calendar',
+      purpose: 'Writes visits onto the calendar.',
+      status: 'configured' as const,
+      summary: 'No Google account has been connected yet.',
+      secrets: [],
+      liveness: { outcome: 'fail' as const, detail: 'Not connected.' },
+      remediation: '',
+      externalStep: '',
+      ownedBySection: 'googleCalendar',
+    },
+  ],
+};
+
+async function openCalendarFromIntegrations(): Promise<HTMLElement> {
+  const panel = await openSection('Integrations');
+  await userEvent.click(await within(panel).findByRole('button', { name: 'Open Google Calendar settings' }));
+  return panel;
+}
+
+describe('Settings, Calendar lives inside Integrations holding both capabilities', () => {
   // INVERTED on 2026-07-25. This case used to assert the opposite ("shows the id
   // read-only with a reason, no editable control"), which pinned a wrong belief
   // rather than a behaviour: the free/busy sync runs as a service account inside
   // the Cloud Function and never needed the Google sign-in the old hint blamed.
-  it('edits the calendar id and saves it through the shell, from the shell-mounted section', async () => {
+  it('edits the calendar id and saves it through the shell, opened in place from Integrations', async () => {
     getBusinessSettings.mockResolvedValue(withOverrides({ calendarSyncId: '' }));
     saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-07-25T10:00:00.000Z', updatedBy: 'a@b.c' });
+    getIntegrationsHealth.mockResolvedValue(HEALTH_WITH_GOOGLE);
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
-    const panel = await openSection('Calendar');
+    const panel = await openCalendarFromIntegrations();
     const field = within(panel).getByLabelText('Calendar ID');
     await userEvent.type(field, 'team@group.calendar.google.com');
     await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
@@ -308,13 +340,15 @@ describe('Settings, Calendar is one section holding both capabilities', () => {
     });
   });
 
-  it('carries BOTH capabilities in the one panel, each under its own sub-heading', async () => {
-    // The operator complaint this merge answers: two tabs for one question.
+  it('carries BOTH capabilities inline, each under its own sub-heading', async () => {
+    // The operator complaint this merge answers: Calendar needs to be under
+    // Integrations, not a tab of its own.
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    getIntegrationsHealth.mockResolvedValue(HEALTH_WITH_GOOGLE);
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
-    const panel = await openSection('Calendar');
+    const panel = await openCalendarFromIntegrations();
     expect(within(panel).getByText('Free/busy import')).toBeInTheDocument();
     expect(within(panel).getByText('Editable calendars')).toBeInTheDocument();
     // The import's editor and the OAuth half's action, in the same tabpanel.
@@ -328,16 +362,19 @@ describe('Settings, Calendar is one section holding both capabilities', () => {
     // The two halves read different documents, so one being unreadable must not
     // black out the other. Merging the tabs must not merge the failure modes.
     getBusinessSettings.mockRejectedValue(new Error('permission-denied'));
+    getIntegrationsHealth.mockResolvedValue(HEALTH_WITH_GOOGLE);
     render(<Settings />);
     await screen.findByText(/permission-denied/i);
 
-    const panel = await openSection('Calendar');
+    const panel = await openCalendarFromIntegrations();
     expect(within(panel).queryByLabelText('Calendar ID')).not.toBeInTheDocument();
     expect(
       await within(panel).findByRole('button', { name: /connect google calendar/i }),
     ).toBeInTheDocument();
   });
+});
 
+describe('Settings: MyTribe portal editor extras', () => {
   it('MyTribe portal shows the Home layout summary alongside its other editable fields', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
@@ -559,7 +596,7 @@ describe('Settings — Business profile absorbed the two thin sections', () => {
 
 // ISSUE #712: "Branding should be under the business profile." The Logo and
 // Branding panels moved from their own nav tab into this one.
-describe('Settings — Business profile absorbed Branding', () => {
+describe('Settings: Business profile absorbed Branding', () => {
   it('shows the Logo and Branding panels inside the Business profile tab', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);
@@ -894,46 +931,29 @@ describe('Settings — MyTribe portal Home layout editor', () => {
     expect(within(panel).getByRole('switch', { name: 'Show Up next on Home' })).toBeChecked();
   });
 });
-describe('Settings: Integrations is a report, and its Google row hands off', () => {
-  const HEALTH = {
-    checkedAt: '2026-07-31T12:00:00.000Z',
-    declaredKnown: true,
-    declaredError: '',
-    integrations: [
-      {
-        key: 'googleCalendar',
-        name: 'Google Calendar',
-        purpose: 'Writes visits onto the calendar.',
-        status: 'configured' as const,
-        summary: 'No Google account has been connected yet.',
-        secrets: [],
-        liveness: { outcome: 'fail' as const, detail: 'Not connected.' },
-        remediation: '',
-        externalStep: '',
-        // The whole point of the field: this row reports, and the section named
-        // here is the one that actually connects. 'googleCalendar' is the
-        // RETIRED id on purpose: an older deployed server may still send it,
-        // and the alias in Settings.tsx must land it on the merged Calendar tab.
-        ownedBySection: 'googleCalendar',
-      },
-    ],
-  };
+describe('Settings: Integrations is a report, and its Google row opens Calendar in place', () => {
   it('does not ask the server until the section is opened', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    getIntegrationsHealth.mockResolvedValue(HEALTH);
+    getIntegrationsHealth.mockResolvedValue(HEALTH_WITH_GOOGLE);
     render(<Settings />);
     await screen.findByLabelText('Business name');
     expect(getIntegrationsHealth).not.toHaveBeenCalled();
     await openSection('Integrations');
     expect(getIntegrationsHealth).toHaveBeenCalledTimes(1);
   });
-  it('the Google row really moves the operator to the section that owns the connect flow', async () => {
+  it('the Google row expands the Calendar panels in place, still inside Integrations', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
-    getIntegrationsHealth.mockResolvedValue(HEALTH);
+    getIntegrationsHealth.mockResolvedValue(HEALTH_WITH_GOOGLE);
     render(<Settings />);
     await screen.findByLabelText('Business name');
-    await openSection('Integrations');
+    const panel = await openSection('Integrations');
     await userEvent.click(await screen.findByRole('button', { name: 'Open Google Calendar settings' }));
-    expect(screen.getByRole('tab', { name: 'Calendar' })).toHaveAttribute('aria-selected', 'true');
+    // No separate tab to switch to any more: the row's own tab stays selected,
+    // and the calendar controls are inline in the SAME tabpanel.
+    expect(screen.getByRole('tab', { name: 'Integrations' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(panel).getByLabelText('Calendar ID')).toBeInTheDocument();
+    expect(
+      await within(panel).findByRole('button', { name: /connect google calendar/i }),
+    ).toBeInTheDocument();
   });
 });

@@ -74,10 +74,10 @@
    wider rhythm this screen already uses to separate its nav column from its
    panel column (`--space-6` on `.settings__layout`). A section with only one
    DenPanel is unaffected: gap has nothing to do with a single child.
-   `:not([hidden])` matters here, not just for tidiness: `Settings.tsx` keeps
-   every visited section mounted and toggles the OTHERS off with the `hidden`
+   `:not([hidden])` is required, not decorative: `Settings.tsx` keeps every
+   visited section mounted and toggles the OTHERS off with the `hidden`
    attribute, which only works through the UA stylesheet's `[hidden] {
-   display: none}` — an author `display: flex` on the same element overrides
+   display: none}`. An author `display: flex` on the same element overrides
    that regardless of specificity, and would leave every previously-visited
    section rendered and stacked underneath the active one. */
 .settings__panel:not([hidden]) {
