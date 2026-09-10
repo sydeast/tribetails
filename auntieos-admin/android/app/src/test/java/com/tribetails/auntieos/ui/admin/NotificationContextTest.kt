@@ -93,30 +93,80 @@ class NotificationContextTest {
         assertEquals("(no key)", notificationHeadline(NotificationEntry(id = "n1")))
     }
 
-    // ── create-quote widening ────────────────────────────────────────────────
+    // ── issue #706: Approve/Deny and Create quote narrowed by the dispatch key ──
+    //
+    // RULING (operator: "most of these don't need most of these ctas"). Every
+    // booking-flavoured row used to offer Approve/Deny, and any row naming a
+    // household offered Create quote, regardless of what the event was or what
+    // had already happened to it. Mirrors the web build's
+    // `lib/notificationActions.test.ts` table exactly.
 
-    @Test fun `create-quote follows the derived household, not just a kinfolk target`() {
-        // An invoice notification that names its household can still be quoted.
-        val invoice = NotificationEntry(
+    @Test fun `approve-deny offers only on a still-pending booking request`() {
+        val pending = NotificationEntry(id = "n1", key = "kincare.requested", targetType = "booking", targetId = "bk-1")
+        assertTrue(applicableNotificationActions(pending).canApproveDeny)
+    }
+
+    @Test fun `approve-deny is withheld from a reschedule or cancellation ask`() {
+        // Both resolve through a different callable than APPROVE/REJECT.
+        val reschedule = NotificationEntry(id = "n1", key = "kincare.reschedule.requested", targetType = "booking", targetId = "bk-1")
+        assertFalse(applicableNotificationActions(reschedule).canApproveDeny)
+        val cancel = NotificationEntry(id = "n2", key = "kincare.cancel.requested", targetType = "booking", targetId = "bk-1")
+        assertFalse(applicableNotificationActions(cancel).canApproveDeny)
+    }
+
+    @Test fun `approve-deny is withheld once the booking is already confirmed`() {
+        val confirmed = NotificationEntry(id = "n1", key = "kincare.booking.confirm", targetType = "booking", targetId = "bk-1")
+        assertFalse(applicableNotificationActions(confirmed).canApproveDeny)
+    }
+
+    @Test fun `create-quote offers on a denied quote or an uninvoiced booking request`() {
+        val denied = NotificationEntry(
             id = "n1",
+            key = "quote.denied",
             targetType = "invoice",
             targetId = "inv-1",
             data = mapOf("kinfolkId" to "kf-9"),
         )
-        assertTrue(applicableNotificationActions(invoice).canCreateQuote)
-        assertEquals("kf-9", notificationKinfolkId(invoice))
+        assertTrue(applicableNotificationActions(denied).canCreateQuote)
+
+        val requested = NotificationEntry(
+            id = "n2",
+            key = "kincare.requested",
+            targetType = "booking",
+            targetId = "bk-1",
+            data = mapOf("kinfolkId" to "kf-9"),
+        )
+        assertTrue(applicableNotificationActions(requested).canCreateQuote)
     }
 
-    @Test fun `create-quote disappears when no household can be identified`() {
-        val tale = NotificationEntry(id = "n1", targetType = "kintale", targetId = "t-1")
+    @Test fun `create-quote is withheld once a quote was accepted, or a request already has an invoice`() {
+        val accepted = NotificationEntry(
+            id = "n1",
+            key = "quote.accepted",
+            targetType = "invoice",
+            targetId = "inv-1",
+            data = mapOf("kinfolkId" to "kf-9"),
+        )
+        assertFalse(applicableNotificationActions(accepted).canCreateQuote)
+
+        val invoiced = NotificationEntry(
+            id = "n2",
+            key = "kincare.requested",
+            targetType = "booking",
+            targetId = "bk-1",
+            data = mapOf("kinfolkId" to "kf-9", "invoiceId" to "inv-2"),
+        )
+        assertFalse(applicableNotificationActions(invoiced).canCreateQuote)
+    }
+
+    @Test fun `create-quote disappears when no household can be identified, even on a qualifying key`() {
+        val tale = NotificationEntry(id = "n1", key = "quote.denied", targetType = "kintale", targetId = "t-1")
         assertFalse(applicableNotificationActions(tale).canCreateQuote)
     }
 
-    @Test fun `the entry overload keeps the open and approve-deny rules unchanged`() {
+    @Test fun `the entry overload leaves the open rule unchanged`() {
         val booking = NotificationEntry(id = "n1", targetType = "booking", targetId = "bk-1")
-        val actions = applicableNotificationActions(booking)
-        assertTrue(actions.canOpen)
-        assertTrue(actions.canApproveDeny)
+        assertTrue(applicableNotificationActions(booking).canOpen)
 
         val unknown = NotificationEntry(id = "n2", targetType = "payout", targetId = "p-1")
         assertFalse(applicableNotificationActions(unknown).canOpen)

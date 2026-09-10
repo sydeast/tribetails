@@ -206,19 +206,27 @@ describe('notificationsForArchived', () => {
  * buttons, so the count and the buttons cannot disagree.
  */
 describe('actionableNotificationCount', () => {
-  it('counts rows whose quick actions offer a decision (a booking with a target)', () => {
+  it('counts rows whose quick actions offer a decision (a pending booking request)', () => {
     expect(
       actionableNotificationCount([
-        entry({ _id: 'a', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' }),
         entry({ _id: 'b', targetType: 'invoice', targetId: 'i1' }),
       ]),
     ).toBe(1);
+  });
+  it('does not count a booking notification whose event is not the pending-request key', () => {
+    expect(
+      actionableNotificationCount([
+        entry({ _id: 'a', key: 'kincare.booking.confirm', targetType: 'booking', targetId: 'b1' }),
+      ]),
+    ).toBe(0);
   });
   it('counts an actionable row that is already read, because the two are unrelated', () => {
     expect(
       actionableNotificationCount([
         entry({
           _id: 'a',
+          key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b1',
           readAt: ts('2026-07-16T10:00:00Z'),
@@ -228,7 +236,9 @@ describe('actionableNotificationCount', () => {
   });
   it('does not count a booking notification with no target id, which shows no buttons', () => {
     expect(
-      actionableNotificationCount([entry({ _id: 'a', targetType: 'booking', targetId: '' })]),
+      actionableNotificationCount([
+        entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: '' }),
+      ]),
     ).toBe(0);
   });
   it('does not count a row with no target at all', () => {
@@ -239,6 +249,7 @@ describe('actionableNotificationCount', () => {
       actionableNotificationCount([
         entry({
           _id: 'a',
+          key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b1',
           archivedAt: ts('2026-07-16T10:00:00Z'),

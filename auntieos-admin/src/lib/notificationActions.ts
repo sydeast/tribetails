@@ -1,4 +1,4 @@
-import { str } from './coerce';
+import { rec, str } from './coerce';
 import { normalizedTargetType, notificationKinfolkId } from './notificationContext';
 import { sessionIdForVisit } from '../api/bookings';
 import { type NotificationEntry } from '../api/notifications';
@@ -106,21 +106,65 @@ export interface NotificationActionSet {
   quote: NotificationRoute | null;
 }
 
+/**
+ * The one catalog key that means "a booking request is waiting on a decision"
+ * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a
+ * KinCare visit"). Fired once, at the moment of the ask, by
+ * onBookingEnvelopeCreate.ts.
+ */
+const PENDING_BOOKING_REQUEST_KEY = 'kincare.requested';
+
+/** The household turned a quote down; a new quote is the natural follow-up. */
+const QUOTE_DENIED_KEY = 'quote.denied';
+
+/**
+ * RULING (issue #706, operator: "most of these don't need most of these
+ * ctas"). Every booking-flavoured row used to offer Approve/Deny, and any row
+ * naming a household offered Create quote, regardless of what the event was or
+ * what had already happened to it. Narrowed per event below.
+ *
+ * APPROVE/DENY calls `batchUpdateBookings` with APPROVE/REJECT, and that is
+ * only the right callable for a FRESH request: `kincare.reschedule.requested`
+ * resolves through `resolveBookingRescheduleRequest`, and
+ * `kincare.cancel.requested` resolves through the #438 accept/decline path.
+ * Offering Approve/Deny on either would fire the wrong callable at the entity.
+ * A notification doc carries no live visit status to re-check ("is this still
+ * pending?"), so pendency is read off the dispatch key itself:
+ * `kincare.requested` only ever fires once, at the moment of the ask, which is
+ * the moment nothing has ruled on it yet. A request an admin has since decided
+ * keeps offering Approve/Deny on its original card until the row is archived
+ * or read away; that is not silently wrong, because `bookingAction` in
+ * Notifications.tsx fails loud on a stale click (`batchUpdateBookings`
+ * resolving `failed[]` or `updated === 0` lands in the error banner, never a
+ * fake success).
+ *
+ * CREATE QUOTE is offered for a quote or a booking request that has no
+ * invoice yet: `quote.denied` (the quote itself was rejected, no bill exists)
+ * or `kincare.requested` (a fresh ask, nothing billed) PROVIDED the entry does
+ * not already reference an invoice (`targetType === 'invoice'`, or
+ * `data.invoiceId`). `quote.accepted` is excluded because that quote already
+ * became the bill. Every other event, including a declined request or an
+ * assignment change, gets none of this: an already-decided or non-billing
+ * event has nothing left to approve, deny or quote. The button still
+ * disappears when no household is identifiable, same as before.
+ */
 export function applicableNotificationActions(entry: NotificationEntry): NotificationActionSet {
   const type = normalizedTargetType(entry.targetType);
   const targetId = str(entry.targetId).trim();
+  const key = str(entry.key).trim();
 
-  // DELIBERATE WIDENING of the archive rule, disclosed rather than silent.
-  // `NotificationActions.kt` offered Create quote only when targetType ==
-  // 'kinfolk', because targetId was the only household reference it read. This
-  // build derives the household from `data.kinfolkId` too (see
-  // notificationContext.ts), so an invoice or booking notification that names
-  // its household can also spawn a quote for it. The button still disappears
-  // entirely when no household is identifiable, which is the property the
-  // archive's rule was really protecting.
+  const isPendingBookingRequest =
+    key === PENDING_BOOKING_REQUEST_KEY && type === 'booking' && targetId !== '';
+
+  const hasInvoiceReference = type === 'invoice' || str(rec(entry.data)['invoiceId']).trim() !== '';
+  const isQuoteDenial = key === QUOTE_DENIED_KEY;
+  const isUninvoicedBookingRequest = key === PENDING_BOOKING_REQUEST_KEY && !hasInvoiceReference;
+  const kinfolkId = notificationKinfolkId(entry);
+  const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
+
   return {
     open: notificationTargetRoute(entry.targetType, entry.targetId),
-    bookingId: type === 'booking' ? targetId : '',
-    quote: notificationQuoteRoute(notificationKinfolkId(entry)),
+    bookingId: isPendingBookingRequest ? targetId : '',
+    quote: quoteEligible ? notificationQuoteRoute(kinfolkId) : null,
   };
 }

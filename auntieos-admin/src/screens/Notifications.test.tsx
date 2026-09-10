@@ -216,6 +216,47 @@ describe('Notifications screen', () => {
     await waitFor(() => expect(btn).not.toBeDisabled());
   });
 
+  // ISSUE #707. Verbatim: "Marking Read greys everything out, but after a few
+  // minutes all ctas and active again." The 10s+ callable disabled all six
+  // buttons; now only Mark read shows the wait, with a small inline indicator
+  // rather than the row looking frozen.
+  it('shows an inline pending indicator on Mark read and leaves the other CTAs live while it runs', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
+    let release!: () => void;
+    markNotificationRead.mockReturnValue(
+      new Promise<void>((r) => {
+        release = () => r();
+      }),
+    );
+    render(<Notifications />);
+    const markRead = screen.getByRole('button', { name: /mark read/i });
+    await userEvent.click(markRead);
+    expect(markRead).toBeDisabled();
+    expect(markRead.querySelector('.notif-row__pending')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Archive' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Deny' })).not.toBeDisabled();
+    release();
+    await waitFor(() => expect(markRead).not.toBeDisabled());
+  });
+
+  // The regression this issue's fix could introduce: guarding by row id alone
+  // (instead of row id AND write kind) would make Archive a silent no-op
+  // while Mark read is still running for the same row, because the guard
+  // would see the row as "already has a pending write" and refuse the click
+  // outright. Archive must actually run.
+  it('archives a row while its own mark-read call is still in flight', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'n1' })] });
+    markNotificationRead.mockReturnValue(new Promise<void>(() => {}));
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /mark read/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(archiveNotification).toHaveBeenCalledWith('n1');
+  });
+
   it('fails loud (dismissible banner) when a single mark-read call rejects', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'n1' })] });
     markNotificationRead.mockRejectedValue(new Error('permission-denied'));
@@ -399,10 +440,11 @@ describe('Notifications stat strip', () => {
     mockStreams({
       status: 'ready',
       data: [
-        entry({ _id: 'n1', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' }),
         entry({ _id: 'n2', targetType: 'invoice', targetId: 'i1' }),
         entry({
           _id: 'n3',
+          key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b2',
           readAt: fakeTs('2026-07-16T10:00:00Z'),
@@ -711,18 +753,37 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
   });
 
+  // ISSUE #706: Approve/Deny only offers on a still-pending booking request
+  // (key `kincare.requested`). See notificationActions.test.ts for the full
+  // per-key table.
   it('Approve calls batchUpdateBookings with the booking id and APPROVE', async () => {
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
   });
 
   it('Deny calls batchUpdateBookings with the booking id and REJECT', async () => {
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'REJECT');
+  });
+
+  it('offers no Approve/Deny on a booking notification whose event has already been decided', () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.booking.confirm', targetType: 'booking', targetId: 'b1' })],
+    });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
   it('fails loud when the booking batch resolves with a per-id failure, not a fake success', async () => {
@@ -732,7 +793,10 @@ describe('Notifications quick actions (issue #20)', () => {
       updated: 0,
       failed: [{ id: 'b1', error: 'not found' }],
     });
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
@@ -740,7 +804,10 @@ describe('Notifications quick actions (issue #20)', () => {
 
   it('fails loud when the booking call rejects', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('permission-denied'));
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
@@ -750,7 +817,9 @@ describe('Notifications quick actions (issue #20)', () => {
     const onNavigate = vi.fn();
     mockStreams({
       status: 'ready',
-      data: [entry({ targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } })],
+      data: [
+        entry({ key: 'quote.denied', targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } }),
+      ],
     });
     render(<Notifications onNavigate={onNavigate} />);
     await userEvent.click(screen.getByRole('button', { name: 'Create quote' }));
@@ -758,6 +827,15 @@ describe('Notifications quick actions (issue #20)', () => {
       to: '/invoices',
       search: { composeQuoteForKinfolkId: 'k9' },
     });
+  });
+
+  it('offers no Create quote on a plain invoice notification, even with a household in data', () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'invoice.new', targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } })],
+    });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
   });
 
   it('archives a row: calls the callable, and the row leaves the feed once archivedAt lands', async () => {
@@ -885,10 +963,83 @@ describe('Notifications card detail', () => {
    * must not disturb them.
    */
   it('keeps the entity CTAs working while the card is open', async () => {
-    mockStreams({ status: 'ready', data: [detailed()] });
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
+  });
+});
+
+/**
+ * ISSUE #705. Verbatim: "The notification boxes still don't open." Only the
+ * title text carried an onClick; the summary line, the description and the
+ * rest of the card body were inert, so the operator clicking where they
+ * naturally would (the summary) got nothing.
+ */
+describe('Notifications card body click (issue #705)', () => {
+  it('opens the detail when the summary line is clicked, not just the title', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    expect(screen.queryByText('Requested by')).toBeNull();
+    await userEvent.click(screen.getByText('Rex · Mon, Jun 15 · 2:30 PM'));
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('opens the detail when the description is clicked', async () => {
+    mockStreams({
+      status: 'ready',
+      data: [detailed({ description: 'A KinCare visit needs your review.' })],
+    });
+    render(<Notifications />);
+    await userEvent.click(screen.getByText('A KinCare visit needs your review.'));
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('toggles once per click rather than firing twice, even when the title itself is clicked', async () => {
+    mockStreams({ status: 'ready', data: [detailed()] });
+    render(<Notifications />);
+    const opener = screen.getByRole('button', { name: /A KinCare visit was assigned/ });
+    await userEvent.click(opener);
+    expect(opener).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Requested by')).toBeInTheDocument();
+  });
+
+  it('does not toggle when a card with nothing to disclose is clicked', async () => {
+    mockStreams({ status: 'ready', data: [entry({ title: 'Something happened' })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByText('Something happened'));
+    expect(screen.queryByRole('button', { name: /Something happened/ })).toBeNull();
+  });
+
+  it('does not toggle when a quick-action button inside the card is clicked', async () => {
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(screen.queryByText('Requested by')).toBeNull();
+  });
+});
+
+/**
+ * ISSUE #707, the other half. Verbatim: the only visual difference between a
+ * read and an unread row was a faint accent border on the unread one, so a
+ * read row looked exactly like every other row rather than looking read.
+ */
+describe('Notifications read-row styling (issue #707)', () => {
+  it('marks a read row with its own class, distinct from unread', () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        entry({ _id: 'unread' }),
+        entry({ _id: 'read', readAt: fakeTs('2026-07-16T10:00:00Z') }),
+      ],
+    });
+    const { container } = render(<Notifications />);
+    const rows = container.querySelectorAll('li.notif-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveClass('notif-row--unread');
+    expect(rows[0]).not.toHaveClass('notif-row--read');
+    expect(rows[1]).toHaveClass('notif-row--read');
+    expect(rows[1]).not.toHaveClass('notif-row--unread');
   });
 });
