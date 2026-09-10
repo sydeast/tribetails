@@ -153,6 +153,26 @@ describe('CoveragePackageBuilder tiers (issue #694)', () => {
     expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
   });
 
+  it('seeds the tiers against the KinCare menu, not the shipped dead pin (merging after #728)', async () => {
+    // DEFAULT_COVERAGE_RULES pins `d2`, an id from the deleted builder-owned menu.
+    // #728 made the service NAME the duration id, so a seed that skipped
+    // alignPinnedToDurations would carry `d2` straight into a visit: a $0 "no
+    // duration set" line the operator never asked for.
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const stored = JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!);
+    const knownIds = new Set(Object.keys(SETTINGS.serviceRates));
+    expect(stored.packages.length).toBeGreaterThan(0);
+    for (const pkg of stored.packages) {
+      expect(pkg.visits.length).toBeGreaterThan(0);
+      for (const visit of pkg.visits) {
+        expect(visit.durationId).not.toBe('d2');
+        expect(visit.durationId).not.toBe('');
+        expect(knownIds.has(visit.durationId)).toBe(true);
+      }
+    }
+  });
+
   it('still offers a custom package beside them', async () => {
     render(<CoveragePackageBuilder />);
     await packageNames();
