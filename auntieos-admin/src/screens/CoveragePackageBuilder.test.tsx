@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { todayIso } from '../lib/coveragePackage';
+import { DEFAULT_COVERAGE_RULES, todayIso } from '../lib/coveragePackage';
 
 const getBusinessSettings = vi.fn();
 vi.mock('../api/settings', () => ({
@@ -129,5 +129,98 @@ describe('CoveragePackageBuilder start date (issue #693)', () => {
     render(<CoveragePackageBuilder />);
     const start = await screen.findByLabelText(/^start$/i);
     expect((start as HTMLInputElement).value).toBe('2026-12-24');
+  });
+});
+
+/**
+ * Issue #694, "Return the Lean, Balance, and Premium auto creation along with
+ * the ability to create a custom package". The tiers were auto-built cards
+ * (69a233c), then optional seed buttons (48dd58a), then nothing at all once
+ * cd1aaab made a "degenerate" config build no pattern. The operator's own rules
+ * are that config, so the Packages panel offered only "+ New package".
+ */
+async function packageNames(): Promise<string[]> {
+  const inputs = await screen.findAllByLabelText('Package name');
+  return inputs.map((el) => (el as HTMLInputElement).value);
+}
+function storeQuote(quote: Record<string, unknown>): void {
+  window.localStorage.setItem('tt-coverage-quote-v1', JSON.stringify(quote));
+}
+
+describe('CoveragePackageBuilder tiers (issue #694)', () => {
+  it('opens a fresh quote with Lean, Balance and Premium already built', async () => {
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
+  });
+
+  it('seeds the tiers against the KinCare menu, not the shipped dead pin (merging after #728)', async () => {
+    // DEFAULT_COVERAGE_RULES pins `d2`, an id from the deleted builder-owned menu.
+    // #728 made the service NAME the duration id, so a seed that skipped
+    // alignPinnedToDurations would carry `d2` straight into a visit: a $0 "no
+    // duration set" line the operator never asked for.
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    const stored = JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!);
+    const knownIds = new Set(Object.keys(SETTINGS.serviceRates));
+    expect(stored.packages.length).toBeGreaterThan(0);
+    for (const pkg of stored.packages) {
+      expect(pkg.visits.length).toBeGreaterThan(0);
+      for (const visit of pkg.visits) {
+        expect(visit.durationId).not.toBe('d2');
+        expect(visit.durationId).not.toBe('');
+        expect(knownIds.has(visit.durationId)).toBe(true);
+      }
+    }
+  });
+
+  it('still offers a custom package beside them', async () => {
+    render(<CoveragePackageBuilder />);
+    await packageNames();
+    expect(screen.getByRole('button', { name: /new package/i })).toBeTruthy();
+  });
+
+  it('builds the three tiers for the config that used to build none', async () => {
+    // The operator's live rules: an 11:00-14:00 day inside a 6h max gap, no
+    // pinned visit. This is the case cd1aaab called degenerate.
+    storeQuote({
+      clientName: '',
+      startDate: '',
+      endDate: '',
+      overnightDurationId: '',
+      rules: { wakeStart: '11:00', wakeEnd: '14:00', maxGapHours: 6, pinnedTimes: [] },
+      packages: [],
+    });
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Lean', 'Balance', 'Premium']);
+    // Each degraded card says why, rather than silently pricing one visit.
+    expect(screen.getAllByText(/fits inside the 6h max gap/)).toHaveLength(3);
+  });
+
+  it('does not grow the tiers back on a quote whose tiers were deleted', async () => {
+    storeQuote({
+      clientName: 'Rex',
+      startDate: '',
+      endDate: '',
+      overnightDurationId: '',
+      rules: DEFAULT_COVERAGE_RULES,
+      packages: [],
+      tiersSeeded: true,
+    });
+    render(<CoveragePackageBuilder />);
+    await screen.findByLabelText(/client \(optional\)/i);
+    expect(screen.queryAllByLabelText('Package name')).toHaveLength(0);
+  });
+
+  it('keeps a hand-built package and adds the tiers beside it', async () => {
+    storeQuote({
+      clientName: '',
+      startDate: '',
+      endDate: '',
+      overnightDurationId: '',
+      rules: DEFAULT_COVERAGE_RULES,
+      packages: [{ id: 'mine', name: 'Rex week', visits: [] }],
+    });
+    render(<CoveragePackageBuilder />);
+    expect(await packageNames()).toEqual(['Rex week', 'Lean', 'Balance', 'Premium']);
   });
 });

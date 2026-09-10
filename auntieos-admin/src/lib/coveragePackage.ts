@@ -5,7 +5,7 @@
  * multi-day pet-sitting stay by BUILDING one or more named packages: each package
  * is a template of visits (any mix of lengths/times), with per-night overnights,
  * an optional per-day override, and an optional discount. Suggestions seed a
- * package from a rule (Lean / Balanced / Generous); every seeded visit is then
+ * package from a rule (Lean / Balance / Premium); every seeded visit is then
  * freely editable — there is no requirement for a pinned visit or an auto-filled
  * gap, so an operator can simply pick services for a client.
  *
@@ -81,6 +81,12 @@ export interface Package {
   readonly overnightBufferHours: number;
   readonly discountLabel: string;
   readonly discountPct: number;
+  /**
+   * One line on the card saying this package's tier could not meet the client's
+   * rules as written and what it did instead. '' on a hand-built package and on
+   * a tier that met them.
+   */
+  readonly note: string;
 }
 
 /** One visit inside a generated SUGGESTION (pinned or gap-filling check-in). */
@@ -93,13 +99,18 @@ export interface Touchpoint {
   readonly price: number;
 }
 
-/** A suggested day schedule at one price point (a seed for a new package). */
+/** One tier's day schedule at one price point (Lean, Balance or Premium). */
 export interface DayPattern {
   readonly id: string;
   readonly strategyLabel: string;
   readonly touchpoints: readonly Touchpoint[];
   readonly dayTotal: number;
   readonly signature: string;
+  /**
+   * One line saying the rules could not be met as written and what this tier did
+   * instead. '' when the tier satisfies the wake window and the max-gap rule.
+   */
+  readonly note: string;
 }
 
 /** What an overnight covers on a given day. */
@@ -162,7 +173,7 @@ export interface PriceContext {
 // ── defaults ────────────────────────────────────────────────────────────────
 
 /** The shipped default menu. Only the 12hr is a true overnight; the 2hr and 6hr
- *  are long daytime stays (they can fill gaps, so "Generous" reaches for the 6hr). */
+ *  are long daytime stays (they can fill gaps, so "Premium" reaches for the 6hr). */
 export const DEFAULT_DURATIONS: readonly Duration[] = [
   { id: 'd1', label: '15-min visit', minutes: 15, price: 15, kind: 'visit' },
   { id: 'd2', label: '30-min visit', minutes: 30, price: 25, kind: 'visit' },
@@ -271,6 +282,7 @@ export const PACKAGE_DEFAULTS: Omit<Package, 'id' | 'name'> = {
   overnightBufferHours: 2,
   discountLabel: '',
   discountPct: 0,
+  note: '',
 };
 
 /** Fill a partial (persisted) package up to a full one. */
@@ -364,7 +376,7 @@ export function formatGap(mins: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-// ── suggestions ───────────────────────────────────────────────────────────────
+// ── tiers ─────────────────────────────────────────────────────────────────────
 
 type FillStrategy = 'cheapest' | 'mid' | 'richest';
 const FILL_STRATEGIES: readonly FillStrategy[] = ['cheapest', 'mid', 'richest'];
@@ -376,16 +388,41 @@ function pick<T>(pool: readonly T[], strategy: FillStrategy): T | undefined {
   return pool[Math.floor((pool.length - 1) / 2)];
 }
 
+/**
+ * The operator's names for the three tiers (issue #694, "Return the Lean,
+ * Balance, and Premium auto creation").
+ *
+ * The STRATEGY KEYS below (`cheapest` / `mid` / `richest`) are what a pattern's
+ * `id` carries and are never renamed: they are the stable value, and these are
+ * only their labels. The mid tier used to read "Balanced" and the richest one
+ * "Generous".
+ */
 function strategyLabel(strategy: FillStrategy): string {
   if (strategy === 'cheapest') return 'Lean';
-  if (strategy === 'richest') return 'Generous';
-  return 'Balanced';
+  if (strategy === 'richest') return 'Premium';
+  return 'Balance';
 }
 
+/** The wake window every tier falls back to when the client's own is unusable. */
+const FALLBACK_WAKE_START = 7 * 60;
+const FALLBACK_WAKE_END = 22 * 60;
+
 /**
- * Suggest a starting day: fill any gap wider than the rule with one repeated
- * duration, at three price points. Only a SEED — every visit it produces is
- * editable afterwards, which is the whole point of the package model.
+ * Build the three tiers, Lean / Balance / Premium: fill any gap wider than the
+ * client's max-gap rule with one repeated duration, at three price points. Only
+ * a SEED: every visit produced is editable afterwards, which is the whole point
+ * of the package model.
+ *
+ * ALWAYS THREE, WHENEVER THERE IS A PRICED VISIT TO SELL (issue #694). This used
+ * to drop a tier two ways, and the operator's own menu hit both: a wake window no
+ * wider than the max gap with no pinned visit produced no touchpoints at all, and
+ * near-identical tiers deduped into one. So the Packages screen offered nothing
+ * but "New package". Now a tier that cannot satisfy the rules DEGRADES to the
+ * closest thing it can build (one check-in in the middle of the day, in a length
+ * that fits the window) and says so in `note`, and nothing is deduped: three
+ * tiers that happen to price the same are still three cards the operator edits
+ * apart. The one precondition left is a priced visit duration; with none there is
+ * no tier to build and the list is empty.
  */
 export function buildDayPatterns(
   durations: readonly Duration[],
@@ -393,12 +430,19 @@ export function buildDayPatterns(
   maxGapHours: number,
   wakeStart: string,
   wakeEnd: string,
-  dedupe = true,
 ): DayPattern[] {
   const maxGapMin = maxGapHours * 60;
-  const wakeStartMin = timeToMinutes(wakeStart);
-  const wakeEndMin = timeToMinutes(wakeEnd);
-  if (wakeStartMin === null || wakeEndMin === null || wakeEndMin <= wakeStartMin) return [];
+  const rawStart = timeToMinutes(wakeStart);
+  const rawEnd = timeToMinutes(wakeEnd);
+  const windowUsable = rawStart !== null && rawEnd !== null && rawEnd > rawStart;
+  const wakeStartMin = windowUsable ? rawStart! : FALLBACK_WAKE_START;
+  const wakeEndMin = windowUsable ? rawEnd! : FALLBACK_WAKE_END;
+  // A window that does not end after it starts cannot be honoured, and refusing
+  // to build was the same as showing the operator nothing. Build on the shipped
+  // 7:00 AM to 10:00 PM day and say which day was used.
+  const windowNote = windowUsable
+    ? ''
+    : 'Day window is not set (the end is not after the start), so this uses 7:00 AM to 10:00 PM.';
 
   const pinned = pinnedTimes
     .map((p) => ({ ...p, minutes: timeToMinutes(p.time) }))
@@ -406,7 +450,7 @@ export function buildDayPatterns(
     .sort((a, b) => a.minutes - b.minutes);
 
   const eligibleDurations = durations.filter((d) => d.price > 0 && d.kind === 'visit');
-  if (eligibleDurations.length === 0 && pinned.length === 0) return [];
+  if (eligibleDurations.length === 0) return [];
 
   const anchors = [wakeStartMin, ...pinned.map((p) => p.minutes), wakeEndMin].sort((a, b) => a - b);
 
@@ -456,18 +500,43 @@ export function buildDayPatterns(
       }
     }
 
+    // The rules asked for nobody on site: the day is no wider than the max gap
+    // and the client pinned no visit. Returning nothing here is what left the
+    // Packages screen with no tiers at all. Degrade instead: one check-in in the
+    // middle of the day, in the longest length this strategy would pick that
+    // still fits inside the window, and say so on the card.
+    let note = windowNote;
+    if (touchpoints.length === 0) {
+      const windowSize = wakeEndMin - wakeStartMin;
+      const fits = sortedByPrice.filter((d) => d.minutes <= windowSize);
+      const only = pick(fits.length ? fits : [sortedByPrice[0]!], strategy)!;
+      const at = Math.round((wakeStartMin + wakeEndMin) / 2);
+      touchpoints.push({ type: 'flex', label: 'Check-in', time: at, durationId: only.id, durationLabel: only.label, price: only.price });
+      const gapNote = `The ${formatGap(windowSize)} day fits inside the ${maxGapHours}h max gap, so this tier is one check-in at ${minutesToTime(at)}.`;
+      note = note === '' ? gapNote : `${note} ${gapNote}`;
+    }
     touchpoints.sort((a, b) => a.time - b.time);
-    // A suggestion with no visits is useless as a seed (a degenerate window with no
-    // pinned visits) — emit nothing rather than a phantom $0 "Lean" seed button.
-    if (touchpoints.length === 0) continue;
+
     const dayTotal = touchpoints.reduce((s, t) => s + t.price, 0);
     const signature = touchpoints.map((t) => `${t.durationId}@${Math.round(t.time)}`).join('|');
-    if (dedupe && patterns.some((p) => p.signature === signature)) continue;
-
-    patterns.push({ id: strategy, strategyLabel: strategyLabel(strategy), touchpoints, dayTotal, signature });
+    // Deliberately NOT deduped: two tiers that price the same are still two cards
+    // the operator renames and edits apart, and collapsing them is half of why
+    // the three tiers stopped appearing.
+    patterns.push({ id: strategy, strategyLabel: strategyLabel(strategy), touchpoints, dayTotal, signature, note });
   }
 
   return patterns.sort((a, b) => a.dayTotal - b.dayTotal);
+}
+
+/**
+ * The three tiers as ready-to-edit packages, which is how the operator asked for
+ * them: auto-created for every quote alongside the custom package, not as seed
+ * buttons they have to find and press (issue #694).
+ */
+export function packagesFromPatterns(patterns: readonly DayPattern[]): Package[] {
+  return patterns.map((p) =>
+    normalizePackage({ id: uid(), name: p.strategyLabel, visits: visitsFromPattern(p), note: p.note }),
+  );
 }
 
 /** Seed a package's visit template from a suggestion. */

@@ -36,6 +36,13 @@ class CoveragePackageTest {
         assertEquals("overnight", migrated[1].kind)
     }
 
+    /**
+     * Issue #694. The operator's live rules are an 11:00-14:00 day inside a 6h max
+     * gap with no pinned visit, the config cd1aaab called degenerate and made
+     * build nothing, so the Packages screen offered only "New package".
+     */
+    private fun degenerate() = buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "11:00", "14:00")
+
     @Test
     fun `durationsFromServiceRates reads the KinCare types as the visit menu`() {
         val rates = mapOf("30Minute" to "25", "Half-Day 6Hrs" to "100", "Overnight" to "150", "Consultation" to "")
@@ -77,14 +84,81 @@ class CoveragePackageTest {
     }
 
     @Test
+    fun `seeding tiers off a KinCare menu leaves no visit lacking a duration`() {
+        // DEFAULT_COVERAGE_RULES pins `d2`, an id from the deleted builder-owned
+        // menu. #728 made the service NAME the duration id, so `d2` resolves in no
+        // real menu. Seeding tiers straight off DEFAULT_COVERAGE_RULES (skipping
+        // alignPinnedToDurations) would carry that dead pin into every tier as a
+        // touchpoint with no matching Duration: a $0 "no duration set" visit.
+        val menu = durationsFromServiceRates(mapOf("30Minute" to "25", "60Minute" to "45", "Overnight" to "150"))
+        val rules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, menu)
+        val patterns = buildDayPatterns(menu, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd)
+        val packages = packagesFromPatterns(patterns)
+        assertEquals(3, packages.size)
+        val knownIds = menu.map { it.id }.toSet()
+        for (p in packages) {
+            assertTrue(p.visits.isNotEmpty())
+            for (visit in p.visits) {
+                assertTrue(visit.durationId.isNotEmpty())
+                assertTrue(knownIds.contains(visit.durationId))
+            }
+        }
+    }
+
+    @Test
     fun `todayIso is the device's calendar date`() {
         assertEquals("2026-09-09", todayIso(java.time.LocalDate.of(2026, 9, 9)))
     }
 
     @Test
-    fun `buildDayPatterns is empty for a degenerate window and drops empty suggestions`() {
-        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "14:00", "11:00").isEmpty())
-        assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "11:00", "14:00").isEmpty())
+    fun `buildDayPatterns builds all three tiers for the config that used to build none`() {
+        val patterns = degenerate()
+        assertEquals(3, patterns.size)
+        assertEquals(listOf("cheapest", "mid", "richest"), patterns.map { it.id })
+        assertEquals(listOf("Lean", "Balance", "Premium"), patterns.map { it.strategyLabel })
+        for (p in patterns) {
+            assertEquals(1, p.touchpoints.size)
+            assertTrue(p.note.contains("fits inside the 6h max gap"))
+            assertTrue(p.note.contains("12:30 PM")) // the middle of an 11:00-14:00 day
+            // A length that cannot fit the 3h day is never the one it degrades to.
+            assertTrue(DEFAULT_DURATIONS.first { it.id == p.touchpoints[0].durationId }.minutes <= 180.0)
+        }
+    }
+
+    @Test
+    fun `buildDayPatterns falls back to the shipped day when the window is reversed`() {
+        val patterns = buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "14:00", "11:00")
+        assertEquals(3, patterns.size)
+        for (p in patterns) assertTrue(p.note.contains("7:00 AM to 10:00 PM"))
+    }
+
+    @Test
+    fun `buildDayPatterns carries no note when the tier meets the rules`() {
+        for (p in buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 3.0, "07:00", "22:00")) assertEquals("", p.note)
+    }
+
+    @Test
+    fun `buildDayPatterns keeps three tiers even when they price the same`() {
+        // One priced visit type: every strategy picks it, and the three used to
+        // dedupe down to a single card.
+        val one = listOf(Duration("v", "Drop-in", 30.0, 25.0, "visit"))
+        assertEquals(listOf("Lean", "Balance", "Premium"), buildDayPatterns(one, emptyList(), 6.0, "11:00", "14:00").map { it.strategyLabel })
+    }
+
+    @Test
+    fun `buildDayPatterns builds nothing when there is no priced visit to sell`() {
+        val unpriced = listOf(Duration("v", "Drop-in", 30.0, 0.0, "visit"), Duration("o", "Overnight", 720.0, 150.0, "overnight"))
+        assertTrue(buildDayPatterns(unpriced, emptyList(), 6.0, "07:00", "22:00").isEmpty())
+    }
+
+    @Test
+    fun `packagesFromPatterns turns the tiers into editable packages carrying the note`() {
+        val packages = packagesFromPatterns(degenerate())
+        assertEquals(listOf("Lean", "Balance", "Premium"), packages.map { it.name })
+        assertEquals(1, packages[0].visits.size)
+        assertTrue(packages[0].note.isNotEmpty())
+        // Distinct ids, so the operator can delete or edit one without the others.
+        assertEquals(3, packages.map { it.id }.toSet().size)
     }
 
     @Test
@@ -151,12 +225,12 @@ class CoveragePackageTest {
 
     @Test
     fun `quoteText renders a client-facing per-day quote`() {
-        val p = pkg(visits = listOf(Visit("v", 12 * 60, "d3", "Lunch"))).copy(name = "Balanced")
+        val p = pkg(visits = listOf(Visit("v", 12 * 60, "d3", "Lunch"))).copy(name = "Balance")
         val priced = pricePackage(p, PriceContext(2, 1, DEFAULT_DURATIONS, overnight))
         val text = quoteText(QuoteInput("Rex", "2026-07-01", 2, p, priced))
         assertTrue(text.contains("TribeTails — Coverage Package"))
         assertTrue(text.contains("Prepared for: Rex"))
-        assertTrue(text.contains("Balanced · 2 days"))
+        assertTrue(text.contains("Balance · 2 days"))
         assertTrue(text.contains("Lunch (45-min visit)"))
         assertTrue(text.contains("Total"))
     }

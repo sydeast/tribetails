@@ -78,6 +78,7 @@ import com.tribetails.auntieos.domain.gapWarnings
 import com.tribetails.auntieos.domain.minutesToInput
 import com.tribetails.auntieos.domain.minutesToTime
 import com.tribetails.auntieos.domain.normalizePackage
+import com.tribetails.auntieos.domain.packagesFromPatterns
 import com.tribetails.auntieos.domain.pricePackage
 import com.tribetails.auntieos.domain.quoteText
 import com.tribetails.auntieos.domain.timeToMinutes
@@ -138,14 +139,15 @@ fun CoveragePackageScreen(
 
     // Session quote state (rules are PER-CLIENT — never in the saved config).
     var rules by remember { mutableStateOf(DEFAULT_COVERAGE_RULES) }
-    // The shipped default pins a length id from the deleted builder-owned menu, so
-    // repoint it at a real KinCare type as soon as the menu arrives.
-    LaunchedEffect(durations) { rules = alignPinnedToDurations(rules, durations) }
     var clientName by remember { mutableStateOf("") }
     // A fresh quote opens on today rather than blank (issue #693).
     var startDate by remember { mutableStateOf(todayIso()) }
     var endDate by remember { mutableStateOf("") }
     var packages by remember { mutableStateOf<List<Package>>(emptyList()) }
+    // Whether this quote has had its Lean / Balance / Premium tiers built. A flag
+    // rather than "the list is empty" because deleting all three is a decision,
+    // and the tiers must not grow back the next time the menu arrives.
+    var tiersSeeded by remember { mutableStateOf(false) }
     var overnightDurationId by remember { mutableStateOf("") }
     var detailId by remember { mutableStateOf<String?>(null) }
     var datePickerFor by remember { mutableStateOf<DateTarget?>(null) }
@@ -194,16 +196,44 @@ fun CoveragePackageScreen(
 
     val suggestions = buildDayPatterns(durations, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd)
 
-    fun newPackage(name: String, visits: List<Visit>) {
-        val pkg = normalizePackage(id = uid(), name = name, visits = visits)
+    // The menu arrives asynchronously. Repoint the shipped default pin (it names a
+    // length id from the deleted builder-owned menu, and #728 made the service
+    // NAME the id, so the pin only resolves against the real KinCare types once
+    // they load) and then, once, build the three tiers from the repointed rules
+    // (issue #694). Both live in one effect so the seed never runs against a pin
+    // that has not been aligned yet: keyed on `durations` alone the seed would also
+    // rebuild the tiers under an operator who had already edited or deleted them.
+    LaunchedEffect(durations) {
+        rules = alignPinnedToDurations(rules, durations)
+        if (!tiersSeeded && durations.isNotEmpty()) {
+            val aligned = buildDayPatterns(durations, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd)
+            packages = packages + packagesFromPatterns(aligned)
+            tiersSeeded = true
+        }
+    }
+
+    fun newPackage(name: String, visits: List<Visit>, note: String = "") {
+        val pkg = normalizePackage(id = uid(), name = name, visits = visits, note = note)
         packages = packages + pkg
         detailId = pkg.id
         formError = null
     }
     fun startNewQuote() {
-        packages = emptyList(); detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
-        // Rules are per-client, so reset them for the next one, repointed at the menu.
-        rules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations)
+        detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
+        // Rules are per-client, so reset them for the next one, repointed at the menu
+        // (#728 made the service NAME the duration id, so the shipped pin needs realigning).
+        val freshRules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations)
+        rules = freshRules
+        // The next quote opens the way this one did: the three tiers already built.
+        packages = packagesFromPatterns(
+            buildDayPatterns(
+                durations,
+                freshRules.pinnedTimes,
+                freshRules.maxGapHours,
+                freshRules.wakeStart,
+                freshRules.wakeEnd,
+            ),
+        )
     }
 
     val ctx = PriceContext(days, nights, durations, overnightDuration)
@@ -327,18 +357,18 @@ fun CoveragePackageScreen(
             // ── packages ─────────────────────────────────────────────────────
             DenPanel(
                 title = "Packages",
-                subtitle = "Build one or more options. Mix any visit lengths — a 15-min lunch check-in with a 60-min evening, however you like.",
+                subtitle = "Lean, Balance and Premium are built from this client's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like.",
                 trailing = { PrimaryButton(label = "New package", onClick = { newPackage("Package ${packages.size + 1}", visitsFromPinned(rules.pinnedTimes)) }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.background, modifier = Modifier.size(14.dp)) }) },
             ) {
                 if (suggestions.isNotEmpty()) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
                         suggestions.forEach { s ->
-                            GhostButton(label = "${s.strategyLabel} ($${money(s.dayTotal)}/day)", leading = { Icon(Lucide.Sparkles, contentDescription = null, tint = c.primary, modifier = Modifier.size(12.dp)) }, onClick = { newPackage(s.strategyLabel, visitsFromPattern(s)) })
+                            GhostButton(label = "Add ${s.strategyLabel} ($${money(s.dayTotal)}/day)", leading = { Icon(Lucide.Sparkles, contentDescription = null, tint = c.primary, modifier = Modifier.size(12.dp)) }, onClick = { newPackage(s.strategyLabel, visitsFromPattern(s), s.note) })
                         }
                     }
                 }
                 if (packages.isEmpty()) {
-                    EmptyHint("Start from a suggestion or an empty package, then change any visit's time and length. No pinned visit required.")
+                    EmptyHint("Every tier here was deleted. Add one back above, or start an empty package and change any visit's time and length.")
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         packages.forEach { pkg ->
@@ -435,6 +465,12 @@ private fun PackageCard(
             AuntieField(value = pkg.name, onValueChange = { v -> onPatch { it.copy(name = v) } }, placeholder = "Package name", modifier = Modifier.weight(1f))
             AuntieIconBtn(onClick = onDuplicate) { Icon(Lucide.Copy, contentDescription = "Duplicate", tint = c.textDim, modifier = Modifier.size(16.dp)) }
             AuntieIconBtn(onClick = onRemove) { Icon(Lucide.Trash2, contentDescription = "Delete package", tint = c.textDim, modifier = Modifier.size(16.dp)) }
+        }
+
+        // One line saying this tier could not meet the client's rules as written
+        // and what it built instead (issue #694).
+        if (pkg.note.isNotBlank()) {
+            Text(pkg.note, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
 
         SectionLabel("Every day of the stay")

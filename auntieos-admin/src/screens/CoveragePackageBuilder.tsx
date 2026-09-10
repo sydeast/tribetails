@@ -12,6 +12,7 @@ import {
   minutesToInput,
   minutesToTime,
   normalizePackage,
+  packagesFromPatterns,
   pricePackage,
   quoteText,
   timeToMinutes,
@@ -121,6 +122,14 @@ interface StoredQuote {
   /** Per-client rules travel with the quote — never in the saved global config. */
   rules: CoverageRules;
   packages: Package[];
+  /**
+   * Whether this quote has already had its Lean / Balance / Premium tiers built
+   * (issue #694). It is a separate flag rather than "the list is empty" because
+   * deleting all three is a decision, and a quote must not grow them back on the
+   * next reload. A quote saved before this flag existed has none, and gets its
+   * tiers once.
+   */
+  tiersSeeded: boolean;
 }
 
 function loadQuote(): Partial<StoredQuote> {
@@ -137,6 +146,11 @@ function loadQuote(): Partial<StoredQuote> {
   }
 }
 
+/** The three tiers for one menu and one set of client rules. */
+function patternsFor(durations: readonly Duration[], rules: CoverageRules): DayPattern[] {
+  return buildDayPatterns(durations, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd);
+}
+
 function Builder({ settings }: BuilderProps) {
   // The menu is the operator's KinCare types, read-only here and edited in Settings.
   const durations = useMemo<readonly Duration[]>(
@@ -151,10 +165,18 @@ function Builder({ settings }: BuilderProps) {
   // starts on or after today, and a blank date prices nothing (issue #693).
   const [startDate, setStartDate] = useState(stored.startDate ?? todayIso());
   const [endDate, setEndDate] = useState(stored.endDate ?? '');
-  const [rules, setRules] = useState<CoverageRules>(() =>
-    alignPinnedToDurations(stored.rules ?? DEFAULT_COVERAGE_RULES, durations),
-  );
-  const [packages, setPackages] = useState<Package[]>(stored.packages ?? []);
+  // Rules pin visits by duration id, and #728 made the service NAME the id, so a
+  // rule saved under the old ids must be repointed before anything reads it.
+  const initialRules = alignPinnedToDurations(stored.rules ?? DEFAULT_COVERAGE_RULES, durations);
+  const [rules, setRules] = useState<CoverageRules>(initialRules);
+  // Every quote opens with the three tiers already built, beside whatever the
+  // operator has hand-built (issue #694). Seeded once per quote, so deleting one
+  // sticks.
+  const [packages, setPackages] = useState<Package[]>(() => {
+    const existing = stored.packages ?? [];
+    if (stored.tiersSeeded === true) return existing;
+    return [...existing, ...packagesFromPatterns(patternsFor(durations, initialRules))];
+  });
   const [overnightDurationId, setOvernightDurationId] = useState(
     stored.overnightDurationId ?? durations.find((d) => d.kind === 'overnight')?.id ?? '',
   );
@@ -172,7 +194,7 @@ function Builder({ settings }: BuilderProps) {
   // Persist the quote on every change (survives a reload; "Start new quote" clears it).
   // The per-client rules travel here, NOT in the saved global config.
   useEffect(() => {
-    const quote: StoredQuote = { clientName, startDate, endDate, overnightDurationId, rules, packages };
+    const quote: StoredQuote = { clientName, startDate, endDate, overnightDurationId, rules, packages, tiersSeeded: true };
     try {
       window.localStorage.setItem(QUOTE_KEY, JSON.stringify(quote));
     } catch {
@@ -229,18 +251,15 @@ function Builder({ settings }: BuilderProps) {
 
   // ── packages ────────────────────────────────────────────────────────────────
 
-  const suggestions = useMemo(
-    () => buildDayPatterns(durations, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd),
-    [durations, rules],
-  );
+  const suggestions = useMemo(() => patternsFor(durations, rules), [durations, rules]);
 
-  const newPackage = (name: string, visits: Visit[]) => {
-    const pkg = normalizePackage({ id: uid(), name, visits });
+  const newPackage = (name: string, visits: Visit[], note = '') => {
+    const pkg = normalizePackage({ id: uid(), name, visits, note });
     setPackages((prev) => [...prev, pkg]);
     setDetailId(pkg.id);
     setError('');
   };
-  const addFromSuggestion = (pattern: DayPattern) => newPackage(pattern.strategyLabel, visitsFromPattern(pattern));
+  const addFromSuggestion = (pattern: DayPattern) => newPackage(pattern.strategyLabel, visitsFromPattern(pattern), pattern.note);
   const addBlankPackage = () => newPackage(`Package ${packages.length + 1}`, visitsFromPinned(rules.pinnedTimes));
   const duplicatePackage = (id: string) => {
     const src = packages.find((p) => p.id === id);
@@ -337,13 +356,16 @@ function Builder({ settings }: BuilderProps) {
     );
 
   const startNewQuote = () => {
-    setPackages([]);
+    // Rules are per-client, so reset them for the next one, repointed at the menu
+    // (#728 made the service NAME the duration id, so the shipped pin needs realigning).
+    const freshRules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations);
+    // The next quote opens the way this one did: the three tiers already built.
+    setPackages(packagesFromPatterns(patternsFor(durations, freshRules)));
     setDetailId(null);
     setClientName('');
     setStartDate(todayIso()); // same default a fresh load opens on
     setEndDate('');
-    // Rules are per-client, so reset them for the next one, repointed at the menu.
-    setRules(alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations));
+    setRules(freshRules);
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -507,11 +529,11 @@ function Builder({ settings }: BuilderProps) {
       {/* Packages */}
       <DenPanel
         title="Packages"
-        subtitle="Build one or more options for this client. Mix any visit lengths — a 15-min lunch check-in with a 60-min evening, however you like."
+        subtitle="Lean, Balance and Premium are built from this client's rules the moment a quote opens; build your own beside them. Mix any visit lengths, a 15-min lunch check-in with a 60-min evening, however you like."
         trailing={
           <span className="cpb__seedRow">
             {suggestions.map((s) => (
-              <GhostButton key={s.id} label={`${s.strategyLabel} ($${s.dayTotal.toFixed(0)}/day)`} leading={<SparklesGlyph />} onClick={() => addFromSuggestion(s)} />
+              <GhostButton key={s.id} label={`Add ${s.strategyLabel} ($${s.dayTotal.toFixed(0)}/day)`} leading={<SparklesGlyph />} onClick={() => addFromSuggestion(s)} />
             ))}
             <PrimaryButton label="New package" leading={<PlusGlyph />} onClick={addBlankPackage} />
           </span>
@@ -520,7 +542,7 @@ function Builder({ settings }: BuilderProps) {
       >
         {packages.length === 0 ? (
           <p className="cpb__hint">
-            Start from a suggestion or an empty package, then change any visit's time and length. No pinned visit required.
+            Every tier here was deleted. Add one back above, or start an empty package and change any visit's time and length.
           </p>
         ) : (
           <div className="cpb__pkgGrid">
@@ -531,6 +553,8 @@ function Builder({ settings }: BuilderProps) {
                   <IconButton icon={<CopyGlyph />} label="Duplicate package" size={30} onClick={() => duplicatePackage(pkg.id)} />
                   <IconButton icon={<TrashGlyph />} label="Delete package" destructive size={30} onClick={() => removePackage(pkg.id)} />
                 </div>
+
+                {pkg.note ? <p className="cpb__pkgNote">{pkg.note}</p> : null}
 
                 <p className="cpb__pkgSectionLabel">Every day of the stay</p>
                 <div className="cpb__visitList">
