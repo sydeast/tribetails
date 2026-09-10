@@ -137,6 +137,57 @@ describe('BookingRulesSection', () => {
     expect(onSave.mock.calls[0]?.[0]?.timeBlocks?.[0]?.id).toBe('midday');
   });
 
+  // -- #710: turning off the default mode should not need a second edit ------
+
+  it('auto-selects the remaining mode as default when the current default is turned off', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings({ defaultBookingMode: 'SPECIFIC_TIME' })} onSave={onSave} />);
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
+
+    expect(screen.getByLabelText('New bookings start as')).toHaveValue('TIME_BLOCK');
+    expect(screen.queryByText(/Specific times are turned off/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({
+      defaultBookingMode: 'TIME_BLOCK',
+      allowSpecificTimeBooking: false,
+    });
+  });
+
+  it('auto-selects specific time as default when time blocks are turned off', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings({ defaultBookingMode: 'TIME_BLOCK' })} onSave={onSave} />);
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle booking into a time block' }));
+
+    expect(screen.getByLabelText('New bookings start as')).toHaveValue('SPECIFIC_TIME');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
+
+  it('keeps a loaded default visible under its real label even when its mode is already off', () => {
+    render(
+      <BookingRulesSection
+        data={settings({ defaultBookingMode: 'SPECIFIC_TIME', allowSpecificTimeBooking: false })}
+        onSave={onSave}
+      />,
+    );
+    expect(screen.getByRole('option', { name: 'A specific time (11:15 AM)' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /not a known value/ })).not.toBeInTheDocument();
+  });
+
+  it('only offers enabled modes in the default-mode picker', async () => {
+    const user = userEvent.setup();
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle booking at a specific time' }));
+
+    expect(
+      screen.queryByRole('option', { name: 'A specific time (11:15 AM)' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('blocks the save and says why when both modes are turned off', async () => {
     const user = userEvent.setup();
     render(<BookingRulesSection data={settings()} onSave={onSave} />);
@@ -149,6 +200,11 @@ describe('BookingRulesSection', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
+    // The default still names a real mode, so it keeps its real label instead
+    // of being mislabelled "(not a known value)".
+    expect(
+      screen.queryByRole('option', { name: /not a known value/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('surfaces a save failure instead of swallowing it', async () => {
