@@ -59,7 +59,7 @@ import './Settings.css';
  * to react to. `Notifications`, `Tags` and `Integrations` are their own
  * self-loading editors (`NotificationGate`, `TagsEditor`,
  * `IntegrationsSection`), so they do not depend on this doc and are rendered
- * directly; the other ten sections read this loaded `data`.
+ * directly; the other nine sections read this loaded `data`.
  */
 
 type SectionId =
@@ -69,7 +69,6 @@ type SectionId =
   | 'timeOff'
   | 'kinCare'
   | 'bookingRules'
-  | 'visitsTracking'
   | 'payments'
   | 'mytribe'
   | 'notifications'
@@ -86,15 +85,19 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   // when it applies.
   { id: 'phoneLine', label: 'Phone line' },
   { id: 'timeOff', label: 'Time off' },
-  { id: 'kinCare', label: 'KinCare types' },
-  // ISSUE #519: two sections for the twenty `business_settings` fields the three
-  // admin clients decoded and none of them edited. They are two rather than one
-  // because they answer different questions: `bookingRules` is what a booking is
-  // allowed to be, `visitsTracking` is what happens once you are out on it. The
-  // split matches how Android already groups them (Business operations holds the
-  // tracking + visit defaults; the booking config had no home at all).
+  // ISSUE #711: "There are settings all over the place and are not grouped by
+  // topic very well. 'Visits & Tracking' is Just KinCare settings. So put it
+  // under the KinCare 'Types' which needs to be changed to KinCare Settings."
+  // ISSUE #519 had split the twenty `business_settings` fields the three admin
+  // clients decoded and none of them edited into two sections on the
+  // reasoning that they answered different questions: `bookingRules` is what
+  // a booking is ALLOWED to be, the visit-day fields are what happens once you
+  // are out on it. That second question is a KinCare question, per the
+  // operator's ruling above, so its answer moved in with the KinCare types
+  // editor rather than staying its own tab. `bookingRules` is unaffected: it
+  // still answers the first question, on its own.
+  { id: 'kinCare', label: 'KinCare Settings' },
   { id: 'bookingRules', label: 'Booking rules' },
-  { id: 'visitsTracking', label: 'Visits and tracking' },
   { id: 'payments', label: 'Payments' },
   { id: 'mytribe', label: 'MyTribe portal' },
   { id: 'notifications', label: 'Notifications' },
@@ -320,12 +323,19 @@ function renderDataSection(
       return <PhoneLineSection data={data} onSave={persist} />;
     case 'timeOff':
       return <TimeOffEditor data={data} onSave={persist} />;
+    // ISSUE #711: KinCare Settings holds both the types/rates editor and the
+    // visit-day tracking settings now, each its own DenPanel (so each keeps
+    // its own heading, the `KinCareRatesEditor` title and the
+    // `VisitsTrackingSection` title) under the one renamed nav entry.
     case 'kinCare':
-      return <KinCareRatesEditor data={data} onSave={persist} />;
+      return (
+        <>
+          <KinCareRatesEditor data={data} onSave={persist} />
+          <VisitsTrackingSection data={data} onSave={persist} />
+        </>
+      );
     case 'bookingRules':
       return <BookingRulesSection data={data} onSave={persist} />;
-    case 'visitsTracking':
-      return <VisitsTrackingSection data={data} onSave={persist} />;
     // ISSUE #409: a real toggle per method, replacing the three free-text
     // boxes whose only off switch was deleting the handle. Operator, walk
     // mark 17: "make it a true toggle for different payment option".

@@ -225,7 +225,7 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 13. It was 11: the 2026-07-31 calendar-tab merge took two calendar
+    // 12. It was 11: the 2026-07-31 calendar-tab merge took two calendar
     // features down to one tab, then mark 16 of the 2026-08-17 walk folded
     // Weather area and Booking behavior into Business profile ("it does not
     // need to be its own page with so little fields"). Issue #519 then added
@@ -233,17 +233,20 @@ describe('Settings — section nav shell', () => {
     // them edited: Booking rules and Visits and tracking, making 13. Issue #397
     // then added Phone line, the press-3 live transfer, next to Business hours
     // because it is gated on them, making 14. Issue #712 then folded the
-    // separate Branding tab back into Business profile, back down to 13.
-    // Integrations still sits last, because it reports on outside services
-    // rather than editing anything.
-    expect(tabs).toHaveLength(13);
+    // separate Branding tab back into Business profile, back down to 13. Issue
+    // #711 then folded Visits and tracking into KinCare Settings (renamed from
+    // KinCare types), down to 12. Integrations still sits last, because it
+    // reports on outside services rather than editing anything.
+    expect(tabs).toHaveLength(12);
     expect(within(tablist).getByRole('tab', { name: 'Booking rules' })).toBeInTheDocument();
-    expect(within(tablist).getByRole('tab', { name: 'Visits and tracking' })).toBeInTheDocument();
+    expect(within(tablist).getByRole('tab', { name: 'KinCare Settings' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Phone line' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /weather area/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /booking behavior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Branding' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Visits and tracking' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'KinCare types' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -607,16 +610,31 @@ describe('Settings — real editors wire through the shared persist', () => {
     });
   });
 
-  it('KinCare types: adding a rate row saves the folded serviceRates map', async () => {
+  // ISSUE #711: KinCare Settings now holds both the types/rates editor and
+  // Visits and tracking, so the Save this test clicks has to be scoped to
+  // the types/rates panel specifically (the tab has two Save buttons now).
+  it('KinCare Settings: adding a rate row saves the folded serviceRates map', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
     render(<Settings />);
     await screen.findByLabelText('Business name');
-    const panel = await openSection('KinCare types');
-    await userEvent.type(within(panel).getByPlaceholderText('e.g. Drop-in visit'), 'Walk');
-    await userEvent.click(within(panel).getByRole('button', { name: /^add$/i }));
-    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    const panel = await openSection('KinCare Settings');
+    const nameField = within(panel).getByPlaceholderText('e.g. Drop-in visit');
+    const ratesPanel = panelOwning(nameField);
+    await userEvent.type(nameField, 'Walk');
+    await userEvent.click(within(ratesPanel).getByRole('button', { name: /^add$/i }));
+    await userEvent.click(within(ratesPanel).getByRole('button', { name: /^save$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {} });
+  });
+
+  it('KinCare Settings holds both the types/rates editor and Visits and tracking, each headed', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('KinCare Settings');
+    expect(within(panel).getByText('KinCare types')).toBeInTheDocument();
+    expect(within(panel).getByText('Visits and tracking')).toBeInTheDocument();
+    expect(within(panel).getByRole('switch', { name: /toggle gps tracking for all visits/i })).toBeInTheDocument();
   });
 });
 
