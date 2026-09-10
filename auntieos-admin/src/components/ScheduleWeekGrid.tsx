@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
 import {
   GRID_END_HOUR,
@@ -80,6 +80,13 @@ interface ScheduleWeekGridProps {
   snapMinutes: number;
   /** The session currently being written, so its block reads as in-flight and cannot be grabbed again. */
   pendingSessionId: string | null;
+  /**
+   * Bumped by the parent to ask the grid to scroll its first busy block into
+   * view, e.g. after the operator clicks the "Busy blocks" stat card (#697).
+   * A counter rather than a boolean so a second click on the same day (the
+   * grid already scrolled there) still fires the effect.
+   */
+  scrollToBusyRequestId?: number;
   onSelectDay: (day: string) => void;
   onOpenSession: (sessionId: string) => void;
   onDrop: (drop: ScheduleDrop) => void;
@@ -125,12 +132,24 @@ export function ScheduleWeekGrid({
   busyByDate,
   snapMinutes,
   pendingSessionId,
+  scrollToBusyRequestId,
   onSelectDay,
   onOpenSession,
   onDrop,
 }: ScheduleWeekGridProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+
+  // #697: the click that asked for this lands on the day (`onSelectDay`
+  // upstream), the scroll here just brings that day's first busy block into
+  // the visible area, since the week grid scrolls sideways below 900px
+  // (`ScheduleWeekGrid.css`) and a block a few columns over is otherwise off
+  // screen. Skipped on request id 0 (the initial render, nothing asked for).
+  useEffect(() => {
+    if (!scrollToBusyRequestId) return;
+    const firstBusyBlock = bodyRef.current?.querySelector('.schedule-grid__busy');
+    firstBusyBlock?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }, [scrollToBusyRequestId]);
 
   /**
    * Width of one day column, for turning sideways travel into a day shift.

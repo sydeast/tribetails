@@ -309,6 +309,29 @@ export function Schedule({ onSelect }: ScheduleProps) {
     const byDate = groupBlockedSlotsByDate(data);
     return daysInView.reduce((sum, day) => sum + (byDate.get(day)?.length ?? 0), 0);
   });
+  const busyCardClickable = busyInViewCount.kind === 'value' && busyInViewCount.value > 0;
+
+  // #697: bumped each time the "Busy blocks" card is clicked, so
+  // ScheduleWeekGrid knows to scroll its first busy block into view even when
+  // the day it lands on was already selected (a plain state change would not
+  // re-fire the grid's effect in that case).
+  const [busyScrollRequestId, setBusyScrollRequestId] = useState(0);
+
+  /**
+   * "Busy blocks" was a dead count with no way to reach the days it counted
+   * (issue #697). Clicking it selects the first day in the current range that
+   * carries a busy slot; ScheduleWeekGrid separately scrolls that day's first
+   * busy block into view, and MonthGrid always marks every busy day so the
+   * count can be traced to dates without a click at all.
+   */
+  function selectFirstBusyDay() {
+    if (busyState.status !== 'ready') return;
+    const byDate = groupBlockedSlotsByDate(busyState.data);
+    const firstBusyDay = daysInView.find((day) => (byDate.get(day)?.length ?? 0) > 0);
+    if (firstBusyDay === undefined) return;
+    setSelected(firstBusyDay);
+    setBusyScrollRequestId((n) => n + 1);
+  }
 
   return (
     <div className="screen">
@@ -334,9 +357,14 @@ export function Schedule({ onSelect }: ScheduleProps) {
         <StatCard
           label="Busy blocks"
           value={busyInViewCount}
-          trend="Google Calendar + manually blocked"
+          trend={
+            busyCardClickable
+              ? 'Google Calendar + manually blocked. Click to jump to the busy days.'
+              : 'Google Calendar + manually blocked'
+          }
           tone="orange"
-          feature={busyInViewCount.kind === 'value' && busyInViewCount.value > 0}
+          feature={busyCardClickable}
+          {...(busyCardClickable && { onClick: selectFirstBusyDay })}
         />
       </div>
 
@@ -384,6 +412,52 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   onNext={() => setSelected(shiftRange(selected, view, 1))}
                 />
 
+                {/*
+                 * #695: this panel used to sit after the week/month grid, off
+                 * the bottom of the screen behind a 540px time grid until the
+                 * operator scrolled to it. "Move the Today block up one" reads
+                 * here as above the grid, directly under the Day/Week/Month
+                 * controls, still inside the Schedule panel: the minimal move
+                 * that puts "Today" on screen without touching the grid the
+                 * separate month-view rebuild (#696) owns. `collapsible` lets
+                 * the operator shrink it back down on a day with a long list,
+                 * so it does not push the grid itself off screen.
+                 */}
+                <DenPanel
+                  title={sessionDayLabel(selected, todayIso)}
+                  subtitle="Kin Care visits on this day."
+                  className="schedule__agenda-panel"
+                  collapsible
+                >
+                  {unblockError !== null && (
+                    <Banner tone="error" title="Couldn’t remove that block">
+                      <p>{unblockError}</p>
+                    </Banner>
+                  )}
+                  {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
+                    <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
+                  ) : (
+                    <ul className="schedule__agenda-list">
+                      {selectedSessions.map((entry) => (
+                        <AgendaRow
+                          key={entry._id}
+                          entry={entry}
+                          onSelect={onSelect ?? setOpenSessionId}
+                        />
+                      ))}
+                      {selectedBusy.map((slot) => (
+                        <BusyRow
+                          key={slot._id}
+                          slot={slot}
+                          pending={unblockingId === slot._id}
+                          busy={unblockingId !== null}
+                          onUnblock={() => void unblock(slot._id)}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </DenPanel>
+
                 {legend.length > 0 && <ScheduleLegend serviceTypes={legend} />}
 
                 {busyState.status === 'error' && (
@@ -417,6 +491,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                     busyByDate={busyByDate}
                     snapMinutes={snapMinutes}
                     pendingSessionId={pendingSessionId}
+                    scrollToBusyRequestId={busyScrollRequestId}
                     onSelectDay={setSelected}
                     onOpenSession={onSelect ?? setOpenSessionId}
                     onDrop={handleDrop}
@@ -430,43 +505,10 @@ export function Schedule({ onSelect }: ScheduleProps) {
                     today={todayIso}
                     selected={selected}
                     byDay={byDay}
+                    busyByDate={busyByDate}
                     onSelectDay={setSelected}
                   />
                 )}
-
-                <DenPanel
-                  title={sessionDayLabel(selected, todayIso)}
-                  subtitle="Kin Care visits on this day."
-                  className="schedule__agenda-panel"
-                >
-                  {unblockError !== null && (
-                    <Banner tone="error" title="Couldn’t remove that block">
-                      <p>{unblockError}</p>
-                    </Banner>
-                  )}
-                  {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
-                    <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
-                  ) : (
-                    <ul className="schedule__agenda-list">
-                      {selectedSessions.map((entry) => (
-                        <AgendaRow
-                          key={entry._id}
-                          entry={entry}
-                          onSelect={onSelect ?? setOpenSessionId}
-                        />
-                      ))}
-                      {selectedBusy.map((slot) => (
-                        <BusyRow
-                          key={slot._id}
-                          slot={slot}
-                          pending={unblockingId === slot._id}
-                          busy={unblockingId !== null}
-                          onUnblock={() => void unblock(slot._id)}
-                        />
-                      ))}
-                    </ul>
-                  )}
-                </DenPanel>
 
                 {openSession !== undefined && (
                   <BookingDetailModal
@@ -590,15 +632,18 @@ interface MonthGridProps {
   today: string;
   selected: string;
   byDay: Map<string, ScheduleSessionEntry[]>;
+  /** Google Calendar + manually blocked windows, by local date (#697). */
+  busyByDate: Map<string, BusySlotEntry[]>;
   onSelectDay: (day: string) => void;
 }
 
-function MonthGrid({ days, anchorMonth, today, selected, byDay, onSelectDay }: MonthGridProps) {
+function MonthGrid({ days, anchorMonth, today, selected, byDay, busyByDate, onSelectDay }: MonthGridProps) {
   return (
     <div className="schedule__month" role="group" aria-label="Month">
       {days.map((day) => {
         const count = sessionCountForDay(byDay, day);
         const inMonth = day.slice(0, 7) === anchorMonth;
+        const busy = (busyByDate.get(day)?.length ?? 0) > 0;
         return (
           <button
             key={day}
@@ -611,6 +656,10 @@ function MonthGrid({ days, anchorMonth, today, selected, byDay, onSelectDay }: M
           >
             <span className="schedule__day-number">{Number(day.slice(8, 10))}</span>
             {count > 0 && <span className="schedule__day-count">{count}</span>}
+            {/* #697: the month grid used to draw nothing for a busy day, so the
+                "Busy blocks" count could not be traced to a date. Same faint,
+                dashed tone as the week grid's `schedule-grid__busy` block. */}
+            {busy && <span className="schedule__day-busy" title="Busy" />}
           </button>
         );
       })}

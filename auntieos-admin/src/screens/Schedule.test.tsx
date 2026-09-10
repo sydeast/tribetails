@@ -4,7 +4,7 @@ import { render, screen, within, waitFor, fireEvent, act } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
-import { localDateIso, weekDays } from '../lib/scheduleFormat';
+import { localDateIso, weekDays, monthGridDays } from '../lib/scheduleFormat';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
@@ -533,7 +533,10 @@ describe('Schedule screen', () => {
       mockCollections({ busy: { status: 'ready', data: [busySlot({ date: '2026-07-16' })] } });
       render(<Schedule onSelect={vi.fn()} />);
       expect(screen.getByText('BLOCKED')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Busy/i })).toBeNull();
+      // Scoped to the agenda: since #697 the "Busy blocks" StatCard is itself a
+      // clickable button when there is a busy day to jump to, so an unscoped
+      // query here would match that card instead of the row this test is about.
+      expect(within(agenda()).queryByRole('button', { name: /Busy/i })).toBeNull();
     });
   });
 
@@ -680,6 +683,108 @@ describe('Schedule screen', () => {
     const card = screen.getByText('Week sessions').closest('.den-stat, button.den-stat--button');
     expect(card).not.toBeNull();
     expect(within(card as HTMLElement).getByText('-')).toBeInTheDocument();
+  });
+
+  /**
+   * #695: "Today" used to render after the week/month grid, off screen behind
+   * a 540px time grid until the operator scrolled. It now sits directly under
+   * the Day/Week/Month controls, above the grid, inside the same Schedule panel.
+   */
+  it('renders the Today agenda panel above the week grid, directly under the Day/Week/Month controls (#695)', () => {
+    withFixedToday(() => {
+      mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
+      render(<Schedule />);
+      const controls = document.querySelector('.schedule__controls') as HTMLElement;
+      const agendaPanel = agenda();
+      const grid = document.querySelector('.schedule-grid') as HTMLElement;
+      expect(controls).toBeInTheDocument();
+      expect(agendaPanel).toBeInTheDocument();
+      expect(grid).toBeInTheDocument();
+      // DOCUMENT_POSITION_FOLLOWING: the argument comes AFTER the node compared against.
+      expect(controls.compareDocumentPosition(agendaPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(agendaPanel.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  });
+
+  it('renders the Today agenda panel above the month grid too', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
+    render(<Schedule />);
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+    const agendaPanel = agenda();
+    const monthGrid = screen.getByRole('group', { name: 'Month' });
+    expect(agendaPanel.compareDocumentPosition(monthGrid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('the Today agenda panel is collapsible, so a long day’s list does not have to push the grid down (#695)', () => {
+    withFixedToday(() => {
+      mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
+      render(<Schedule />);
+      const toggle = within(agenda()).getByRole('button', { name: /Today/ });
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(within(agenda()).getByText('The Whitfields')).toBeInTheDocument();
+
+      fireEvent.click(toggle);
+
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(within(agenda()).queryByText('The Whitfields')).toBeNull();
+    });
+  });
+
+  /**
+   * #697: the "Busy blocks" stat card used to render a bare count with no
+   * `onClick`, and nothing on the month grid marked which days it counted.
+   */
+  it('the Busy blocks card is not clickable when there is nothing to jump to', () => {
+    mockCollections({ busy: { status: 'ready', data: [] } });
+    render(<Schedule />);
+    const card = screen.getByText('Busy blocks').closest('.den-stat, button.den-stat--button') as HTMLElement;
+    expect(card.tagName).toBe('DIV');
+  });
+
+  it('clicking the Busy blocks card selects the first busy day in the visible range and scrolls its block into view (#697)', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    // Computed off the REAL "today" (not clock-pinned): pick any OTHER day in
+    // the current real week, the "selecting a day" test's own technique above.
+    const todayIsoReal = localDateIso(new Date());
+    const days = weekDays(todayIsoReal);
+    const busyDay = days.find((d) => d !== todayIsoReal) ?? (days[0] as string);
+
+    mockCollections({
+      sessions: { status: 'ready', data: [sessionEntry({})] },
+      busy: { status: 'ready', data: [busySlot({ date: busyDay })] },
+    });
+    render(<Schedule />);
+
+    const card = screen.getByRole('button', { name: /busy blocks/i });
+    await user.click(card);
+
+    // Selecting the busy day moves the agenda off "Today" (it is a DIFFERENT
+    // day than the real today by construction above).
+    expect(screen.queryByRole('heading', { name: 'Today', level: 2 })).toBeNull();
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('draws a busy marker on every month-grid day that carries a busy slot, and none on a clean day (#697)', async () => {
+    const todayIsoReal = localDateIso(new Date());
+    const monthDays = monthGridDays(todayIsoReal);
+    const busyDayA = monthDays[3] as string;
+    const busyDayB = monthDays[9] as string;
+    const cleanDay = monthDays.find((d) => d !== busyDayA && d !== busyDayB) as string;
+
+    mockCollections({
+      sessions: { status: 'ready', data: [sessionEntry({})] },
+      busy: {
+        status: 'ready',
+        data: [busySlot({ _id: 'b1', date: busyDayA }), busySlot({ _id: 'b2', date: busyDayB })],
+      },
+    });
+    render(<Schedule />);
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+
+    expect(within(screen.getByRole('button', { name: busyDayA })).getByTitle('Busy')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: busyDayB })).getByTitle('Busy')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: cleanDay })).queryByTitle('Busy')).toBeNull();
   });
 });
 
