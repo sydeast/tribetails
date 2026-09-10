@@ -14,6 +14,7 @@ import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { GhostButton } from '../../components/Buttons';
 import { CalendarSection } from './CalendarSection';
+import { LoadingRow } from '../../components/LoadingRow';
 import './IntegrationsSection.css';
 
 /**
@@ -113,7 +114,7 @@ export function IntegrationsSection({ settings, onSaveCalendar }: Props) {
           state={state}
           what="integrations"
           isEmpty={(data) => data.integrations.length === 0}
-          loading={<p className="settingsEdit__hint">Checking integrations&hellip;</p>}
+          loading={<LoadingRow label="Checking integrations…" className="settingsEdit__hint" />}
           empty={<p className="settingsEdit__hint">The server reported no integrations to check.</p>}
         >
           {(data) => (

@@ -154,6 +154,48 @@ describe('GoogleCalendarSection, the setup checklist', () => {
   });
 });
 
+describe('GoogleCalendarSection, the pending state (issue #714)', () => {
+  it('shows the spinner and not the not-connected checklist while the connection is still loading', async () => {
+    // THE REPORTED BUG. getGoogleCalendarConnection cold-starts at 8-10s, and
+    // this panel used to read `connection?.connected !== true` for whether to
+    // show the not-connected checklist, which is also true while `connection`
+    // is still null. So for the whole cold start the panel showed "no Google
+    // account is connected" and "Setup is done once..." next to a plain hint
+    // sentence with nothing moving, indistinguishable from a genuinely broken
+    // connection.
+    let resolveConnection: (value: unknown) => void = () => {};
+    api.getGoogleCalendarConnection.mockImplementation(
+      () => new Promise((resolve) => { resolveConnection = resolve; }),
+    );
+
+    render(<GoogleCalendarSection />);
+
+    expect(await screen.findByRole('img', { name: 'Reading the connection…' })).toBeInTheDocument();
+    expect(screen.getByText('Reading the connection…')).toBeInTheDocument();
+    expect(screen.queryByText(/set both secret values/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no google account is connected yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect google calendar/i })).not.toBeInTheDocument();
+
+    resolveConnection(connectionResult(BLANK));
+
+    expect(await screen.findByText(/no google account is connected yet/i)).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Reading the connection…' })).not.toBeInTheDocument();
+  });
+
+  it('still shows the checklist once the load genuinely fails, and stops the spinner', async () => {
+    // A real failure is not the loading state the fix targets: the checklist's
+    // whole job is to say which step a failure like this points at. And a
+    // failure must not leave the spinner running forever (AsyncRegion.test.tsx
+    // names that bug elsewhere: "never leaves a spinner running after a
+    // failure"), which is what `connection === null` alone would do here,
+    // since a rejected load never sets `connection` to anything else.
+    api.getGoogleCalendarConnection.mockRejectedValue(new Error('internal: function not found.'));
+    render(<GoogleCalendarSection />);
+    expect(await screen.findByText(/the functions this feature needs are not reachable/i)).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Reading the connection…' })).not.toBeInTheDocument();
+  });
+});
+
 describe('GoogleCalendarSection, before anything is connected', () => {
   it('surfaces the setup instruction from the server VERBATIM instead of a friendly summary', async () => {
     // That text is the whole point: it says which secret is missing and the

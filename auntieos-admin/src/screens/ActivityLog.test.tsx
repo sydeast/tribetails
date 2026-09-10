@@ -86,6 +86,23 @@ describe('ActivityLog', () => {
     await userEvent.click(screen.getByRole('button', { name: /re-verify/i }));
     await waitFor(() => expect(verifyActivityLogChain).toHaveBeenCalledTimes(2));
   });
+
+  it('shows the spinner while verifyActivityLogChain cold-starts (issue #714)', async () => {
+    let resolveVerify: (value: VerifyResult) => void = () => {};
+    verifyActivityLogChain.mockReset().mockImplementation(
+      () => new Promise((resolve) => { resolveVerify = resolve; }),
+    );
+    render(<ActivityLog />);
+
+    expect(await screen.findByRole('img', { name: 'Verifying…' })).toBeInTheDocument();
+    expect(screen.queryByText(/chain verified/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/chain broken/i)).not.toBeInTheDocument();
+
+    resolveVerify(OK);
+
+    expect(await screen.findByText(/chain verified/i)).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Verifying…' })).not.toBeInTheDocument();
+  });
 });
 /**
  * R5 on the Activity Log, verbatim: "the Activity Log is seriously lacking, cant

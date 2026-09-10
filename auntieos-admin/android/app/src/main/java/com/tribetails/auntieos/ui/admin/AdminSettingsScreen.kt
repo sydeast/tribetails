@@ -118,6 +118,7 @@ import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
@@ -2052,11 +2053,18 @@ private fun IntegrationsPanel(
                 }
 
                 health == null -> {
-                    Text(
-                        if (loading) "Checking integrations..." else "The integrations check has not run yet.",
-                        style = AuntieTheme.typography.bodySmall,
-                        color = c.textDim,
-                    )
+                    // Issue #714: getIntegrationsHealth cold-starts at up to 8.9s.
+                    // A spinner is the only cue that this line is still waiting
+                    // on the server rather than reporting a check that never ran.
+                    if (loading) {
+                        LoadingHint("Checking integrations...")
+                    } else {
+                        Text(
+                            "The integrations check has not run yet.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
                 }
 
                 else -> {

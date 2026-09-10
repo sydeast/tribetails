@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -44,6 +45,7 @@ import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSearchField
+import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.DenPanel
@@ -295,15 +297,24 @@ internal fun ChainIntegrityPanel(
                     style = AuntieTheme.typography.titleSmall,
                     color = c.textPrimary,
                 )
-                Text(
-                    text  = chainVerdictLine(verifyState),
-                    style = AuntieTheme.typography.mono,
-                    color = when (verifyState) {
-                        is ChainVerifyUiState.Error -> c.error
-                        is ChainVerifyUiState.Done  -> if (verifyState.result.ok) c.textDim else c.error
-                        else -> c.textDim
-                    },
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Issue #714: verifyActivityLogChain cold-starts at up to
+                    // 8.3s. Before this the row only changed the Re-verify
+                    // button's label, so 8 seconds went by with nothing moving.
+                    if (verifying) {
+                        AuntieSpinner(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = c.textDim)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        text  = chainVerdictLine(verifyState),
+                        style = AuntieTheme.typography.mono,
+                        color = when (verifyState) {
+                            is ChainVerifyUiState.Error -> c.error
+                            is ChainVerifyUiState.Done  -> if (verifyState.result.ok) c.textDim else c.error
+                            else -> c.textDim
+                        },
+                    )
+                }
             }
         }
 

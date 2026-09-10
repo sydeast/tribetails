@@ -358,3 +358,23 @@ describe('IntegrationsSection re-checks on demand', () => {
     await waitFor(() => expect(api.getIntegrationsHealth).toHaveBeenCalledTimes(2));
   });
 });
+
+describe('IntegrationsSection, the pending state (issue #714)', () => {
+  it('shows the spinner while getIntegrationsHealth cold-starts, not a bare hint', async () => {
+    let resolveHealth: (value: IntegrationsHealthResult) => void = () => {};
+    api.getIntegrationsHealth.mockReset();
+    api.getIntegrationsHealth.mockImplementation(
+      () => new Promise((resolve) => { resolveHealth = resolve; }),
+    );
+
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
+
+    expect(await screen.findByRole('img', { name: 'Checking integrations…' })).toBeInTheDocument();
+    expect(screen.queryByText('Twilio')).not.toBeInTheDocument();
+
+    resolveHealth(result());
+
+    expect(await screen.findByText('Twilio')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Checking integrations…' })).not.toBeInTheDocument();
+  });
+});
