@@ -19,21 +19,19 @@ import { SEEDED_BOOKINGS } from './fixtures/accounts';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/bookings');
-  await expect(page.getByRole('tablist', { name: 'Filter bookings' })).toBeVisible();
+  // The three status sections are the filter now (#704): there is no tab row
+  // to wait on. This waits on the list toolbar they render under instead, the
+  // same "the Bookings chunk's markup has landed" signal the tablist used to
+  // give.
+  await expect(page.getByRole('group', { name: 'Bookings list' })).toBeVisible();
 });
 
 test('the seeded visits arrive through the real rules and listener', async ({ page }) => {
-  const list = page.locator('.bookings__list');
-  // The two finished visits sit in History, which opens on request, so they are
-  // not in the DOM until this press. Everything after it is the same assertion
-  // this test has always made.
-  await page.getByRole('button', { name: 'Show 2 finished' }).click();
-
-  // Four since 2026-08-01, when `SEEDED_BOOKINGS.today` was added so that
-  // Schedule's agenda (which lists the SELECTED day, defaulting to today) has a
-  // row to render at all. The loop below is what carries the weight; the count
-  // is here so an unexpected EXTRA row is a failure too.
-  await expect(list.locator('li')).toHaveCount(4);
+  // All three sections are open at once (#704), so every seeded row is
+  // already in the DOM with no section to open first. Same total assertion
+  // this test has always made, summed across the three section lists rather
+  // than read off one flat list.
+  await expect(page.locator('.bookings__list li')).toHaveCount(4);
 
   for (const seeded of Object.values(SEEDED_BOOKINGS)) {
     await expect(page.getByText(seeded.kinfolkName, { exact: true })).toBeVisible();
@@ -43,54 +41,74 @@ test('the seeded visits arrive through the real rules and listener', async ({ pa
 test('the three status sections count the real rows they hold', async ({ page }) => {
   // The browser-side half of `groupBookingsByStatus`. The unit tests classify
   // literals written in a test file; this classifies documents Firestore
-  // returned, through the real listener, with production's mixed status casing
-  // in them ('SCHEDULED', 'completed', 'CANCELLED').
+  // returned, through the real listener, with production's mixed status
+  // casing in them ('SCHEDULED', 'completed', 'CANCELLED'). The count lives in
+  // the section's own heading chip now, not a stat card above the list
+  // (#704).
   const pending = page.getByRole('group', { name: /^Pending approval/ });
   const scheduled = page.getByRole('group', { name: /^Scheduled/ });
   const history = page.getByRole('group', { name: /^History/ });
 
-  // Nothing seeded is DRAFT or PENDING, so this section proves the empty case:
-  // it keeps its heading and says what it is waiting for.
+  // Nothing seeded is DRAFT or PENDING, so this section proves the empty
+  // case honestly: a zero count, no rows.
   await expect(pending.locator('.bookings__section-count')).toHaveText('0');
-  await expect(pending.getByText('Nothing is waiting on a reply.')).toBeVisible();
 
   await expect(scheduled.locator('.bookings__section-count')).toHaveText('2');
   await expect(scheduled.locator('li')).toHaveCount(2);
 
-  // The count is honest while the rows are still collapsed: that is the whole
-  // point of putting it in the heading.
+  // History is open like the other two now (#704): its rows sit on screen
+  // immediately, not behind a "Show N finished" press, and its heading count
+  // matches them with no interaction first.
   await expect(history.locator('.bookings__section-count')).toHaveText('2');
-  await expect(history.locator('li')).toHaveCount(0);
-  await history.getByRole('button', { name: 'Show 2 finished' }).click();
   await expect(history.locator('li')).toHaveCount(2);
 });
 
-test('a status chip collapses the screen to that one section', async ({ page }) => {
-  await page.getByRole('tab', { name: 'Cancelled' }).click();
-  await expect(page.getByRole('group', { name: /^History/ })).toBeVisible();
-  await expect(page.getByRole('group', { name: /^Pending approval/ })).toHaveCount(0);
-  await expect(page.getByRole('group', { name: /^Scheduled/ })).toHaveCount(0);
-  // Asked for by name, so History is open: a second press to see what the chip
-  // already named would be asking twice.
-  await expect(page.getByText(SEEDED_BOOKINGS.cancelled.kinfolkName, { exact: true })).toBeVisible();
+test('the section toolbar Select enters select mode', async ({ page }) => {
+  // #701: Select sits on the list toolbar now, immediately above the sections
+  // whose rows it picks, not only in the page header. Pressing it is what
+  // reveals a real row's checkbox.
+  const listBar = page.getByRole('group', { name: 'Bookings list' });
+  const toggle = listBar.getByRole('button', { name: 'Select', exact: true });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+
+  await toggle.click();
+
+  // Both controls report the one mode, because there is only one mode (#701).
+  for (const control of await page.getByRole('button', { name: 'Select', exact: true }).all()) {
+    await expect(control).toHaveAttribute('aria-pressed', 'true');
+  }
+  await expect(
+    page.getByRole('checkbox', {
+      name: new RegExp(`Select ${SEEDED_BOOKINGS.scheduled.kinfolkName}`),
+    }),
+  ).toBeVisible();
 });
 
 test('a lowercase status is still classified as completed', async ({ page }) => {
   // `kin_care_sessions.status` casing is UNENFORCED: the seed writes
   // 'SCHEDULED', 'completed' and 'CANCELLED' because production holds all
-  // three shapes. A filter that compared raw strings would drop the lowercase
-  // visit silently, and on the invoicing path that means not billing for work
-  // that was done. This is the browser-side half of that guarantee.
-  await page.getByRole('tab', { name: 'Completed' }).click();
-
-  const list = page.locator('.bookings__list');
-  await expect(list.locator('li')).toHaveCount(1);
-  await expect(page.getByText(SEEDED_BOOKINGS.completed.kinfolkName, { exact: true })).toBeVisible();
+  // three shapes. A classifier that compared raw strings would drop the
+  // lowercase visit silently, and on the invoicing path that means not
+  // billing for work that was done. This is the browser-side half of that
+  // guarantee, read straight off the always-open History section.
+  const history = page.getByRole('group', { name: /^History/ });
+  const row = history
+    .locator('.bookings__row')
+    .filter({ hasText: SEEDED_BOOKINGS.completed.kinfolkName });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByText('COMPLETED', { exact: true })).toBeVisible();
 });
 
-test('a filter that matches nothing says so instead of showing an empty panel', async ({ page }) => {
-  await page.getByRole('tab', { name: 'Draft' }).click();
-  await expect(page.getByText('Nothing matches this filter.')).toBeVisible();
+test('the empty-section copy names what the section is waiting for', async ({ page }) => {
+  // Nothing seeded is DRAFT or PENDING, so Pending approval is the section
+  // that proves the empty case: it keeps its heading and its own honest
+  // count, and says what it is waiting for instead of an empty panel with no
+  // explanation.
+  const pending = page.getByRole('group', { name: /^Pending approval/ });
+  await expect(pending.locator('.bookings__section-count')).toHaveText('0');
+  await expect(pending.locator('li')).toHaveCount(0);
+  await expect(pending.getByText('Nothing is waiting on a reply.')).toBeVisible();
 });
 
 test('a real booking row takes the hover fill', async ({ page }) => {
