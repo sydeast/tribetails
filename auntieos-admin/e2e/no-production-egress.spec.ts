@@ -56,7 +56,9 @@ test('no request in an authenticated run leaves the emulator', async ({ page }) 
   await page.waitForTimeout(5000);
 
   await page.goto('/bookings');
-  await expect(page.getByRole('tablist', { name: 'Filter bookings' })).toBeVisible();
+  // The filter tab row is gone (#704): the list toolbar is the equivalent
+  // "the Bookings chunk has landed" signal `bookings.spec.ts` now waits on.
+  await expect(page.getByRole('group', { name: 'Bookings list' })).toBeVisible();
   await page.waitForTimeout(2000);
 
   expect(

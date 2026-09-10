@@ -47,6 +47,16 @@ function render(ui: ReactElement) {
   return rtlRender(<ToastProvider>{ui}</ToastProvider>);
 }
 
+/**
+ * #704: the queue reads as ONE compact banner above the Bookings sections and
+ * opens on request, so an empty-most-days queue no longer pushes the first
+ * status section most of a screen down. Every test that reads a ROW opens it
+ * first; the loading, empty and failed-read states have no rows and no toggle,
+ * and are asserted exactly as they were.
+ */
+async function openQueue() {
+  await userEvent.click(await screen.findByRole('button', { name: /^Review \d+$/ }));
+}
 const CURRENT_MS = new Date(2026, 7, 20, 9, 0).getTime();
 const PROPOSED_MS = new Date(2026, 8, 1, 15, 0).getTime();
 
@@ -169,10 +179,26 @@ describe('VisitRequestsSection', () => {
     expect(container.querySelectorAll('.visit-requests')).toHaveLength(1);
   });
 
+  it('#704: reads as one compact banner with its count, and the rows open on request', async () => {
+    listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    render(<VisitRequestsSection />);
+
+    // Nothing is hidden: the banner states the count out loud before a press.
+    expect(await screen.findByText('2 WAITING')).toBeInTheDocument();
+    expect(screen.queryByText('Evening sit')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
+
+    const review = screen.getByRole('button', { name: 'Review 2' });
+    await userEvent.click(review);
+    expect(screen.getByText('Evening sit')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-pressed', 'true');
+  });
   it('shows both kinds of ask in one queue, oldest first', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     expect(await screen.findByText('Evening sit')).toBeInTheDocument();
     expect(screen.getByText('Morning drop-in')).toBeInTheDocument();
@@ -188,6 +214,7 @@ describe('VisitRequestsSection', () => {
   it('shows the cancellation ask with the visit it would take off and the reason', async () => {
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     expect(await screen.findByText('Evening sit')).toBeInTheDocument();
     expect(screen.getByText('Nutmeg')).toBeInTheDocument();
@@ -208,6 +235,7 @@ describe('VisitRequestsSection', () => {
       rescheduleRequestClosed: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     expect(await screen.findByRole('dialog', { name: /cancel this visit/i })).toBeInTheDocument();
@@ -230,6 +258,7 @@ describe('VisitRequestsSection', () => {
       rescheduleRequestClosed: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel it' }));
@@ -248,6 +277,7 @@ describe('VisitRequestsSection', () => {
       rescheduleRequestClosed: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
@@ -269,6 +299,7 @@ describe('VisitRequestsSection', () => {
       rescheduleRequestClosed: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
@@ -299,6 +330,7 @@ describe('VisitRequestsSection', () => {
       sessionUpdated: true,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     expect(await screen.findByRole('dialog', { name: /move this visit/i })).toBeInTheDocument();
@@ -320,6 +352,7 @@ describe('VisitRequestsSection', () => {
       sessionUpdated: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
@@ -336,6 +369,7 @@ describe('VisitRequestsSection', () => {
       new Error('There is no cancellation request waiting on this visit.'),
     );
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel it' }));
@@ -358,6 +392,7 @@ describe('VisitRequestsSection', () => {
     listRescheduleRequests.mockRejectedValue(new Error('permission-denied'));
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     expect(await screen.findByText('Evening sit')).toBeInTheDocument();
     expect(screen.getByText(/reschedule requests: permission-denied/i)).toBeInTheDocument();
@@ -415,6 +450,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
   it('shows a pending request that no other queue would surface', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     expect(await screen.findByText('New request')).toBeInTheDocument();
     expect(screen.getByText('Dog Walk')).toBeInTheDocument();
@@ -426,6 +462,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
   it('reads a multi-visit request as a count and a span, not four rows', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     expect(await screen.findByText(/4 visits,/)).toBeInTheDocument();
     expect(screen.getAllByText('New request')).toHaveLength(1);
@@ -436,6 +473,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       requests: [newBooking({ visitCount: 1, lastStartTimeMs: CURRENT_MS })],
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await screen.findByText('New request');
     expect(screen.queryByText(/1 visits/)).toBeNull();
@@ -450,6 +488,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: true,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
@@ -472,6 +511,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
@@ -492,6 +532,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
@@ -511,6 +552,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
@@ -524,6 +566,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     approveBookingRequest.mockRejectedValue(new Error('the callable refused'));
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
@@ -541,6 +584,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: true,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
@@ -557,6 +601,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: true,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
@@ -590,6 +635,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
       householdNotified: false,
     });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
@@ -619,6 +665,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     render(<VisitRequestsSection />);
+    await openQueue();
 
     await screen.findByText('New request');
     const kinds = screen

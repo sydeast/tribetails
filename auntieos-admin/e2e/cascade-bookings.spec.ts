@@ -42,10 +42,11 @@ async function resolveColorToken(
 test.beforeEach(async ({ page }) => {
   await page.goto('/bookings');
   // Not just "the URL changed": the route's chunk and ITS STYLESHEET have to
-  // have landed before any rule below can win or lose anything. The filter
-  // tablist is the same signal `bookings.spec.ts` waits on, and it is rendered
-  // by the Bookings chunk, so seeing it means the chunk arrived.
-  await expect(page.getByRole('tablist', { name: 'Filter bookings' })).toBeVisible();
+  // have landed before any rule below can win or lose anything. The list
+  // toolbar is the same signal `bookings.spec.ts` waits on now that the
+  // filter tab row is gone (#704), and it is rendered by the Bookings chunk,
+  // so seeing it means the chunk arrived.
+  await expect(page.getByRole('group', { name: 'Bookings list' })).toBeVisible();
 });
 
 test('.bookings__row-main--static:hover cancels the hover fill it is declared to cancel', async ({

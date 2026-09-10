@@ -47,6 +47,26 @@ vi.mock('../api/bookingsWrite', () => ({
 }));
 
 /**
+ * The screen reads `business_settings` once, for the KinCare catalog and the
+ * time blocks its rows name (#704). Mocked here the way Schedule.test.tsx mocks
+ * the same call, so this suite never reaches a real Firestore read. The default
+ * below is the OPERATOR'S REAL CATALOG SHAPE (rate keys like `30Minute`, named
+ * morning and midday blocks), because that is what makes the raw `visit_60` and
+ * `60Mins` labels on the live screen resolvable at all.
+ */
+const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
+vi.mock('../api/settings', () => ({ getBusinessSettings }));
+
+const TEST_SETTINGS = {
+  serviceRates: { '30Minute': '25', '60Minute': '45' },
+  serviceDurations: {},
+  timeBlocks: [
+    { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
+    { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true },
+  ],
+};
+
+/**
  * The detail sheet is stubbed, exactly as Schedule.test.tsx stubs it: its own
  * behaviour (fact rows, address read, the 3h note lock, reschedule, optimistic
  * assign) is covered directly in `components/BookingDetailModal.test.tsx`, and
@@ -128,28 +148,28 @@ beforeEach(() => {
   batchUpdateBookings
     .mockReset()
     .mockResolvedValue({ ok: true, action: 'APPROVE', updated: 0, failed: [] });
+  getBusinessSettings.mockReset().mockResolvedValue(TEST_SETTINGS);
 });
 
 /**
- * Reveal the History section. Completed and cancelled rows start behind its
- * count button (see `Bookings status sections` below), so a test about one of
- * them has to open it first or it is asserting against rows that are not in the
- * DOM at all.
+ * The Select toggle, of which there are now TWO on the screen and ONE mode
+ * behind them (#701): one in the page heading, one on the list toolbar directly
+ * above the sections it picks rows from. `index` says which control to press.
  */
-async function openHistory() {
-  await userEvent.click(screen.getByRole('button', { name: /^Show \d+ finished$/ }));
+function selectToggle(index = 0): HTMLElement {
+  return screen.getAllByRole('button', { name: 'Select' })[index] as HTMLElement;
 }
 
 /** Turn Select on, then tick the checkbox for each named household. */
 async function pick(...names: string[]) {
-  await userEvent.click(screen.getByRole('button', { name: 'Select' }));
+  await userEvent.click(selectToggle());
   for (const name of names) {
     await userEvent.click(screen.getByRole('checkbox', { name: new RegExp(`Select ${name}`) }));
   }
 }
 
 describe('Bookings screen', () => {
-  it('renders a streamed row with its household, service, when, and status chip', () => {
+  it('renders a streamed row with its household, service, when, and status chip', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
     render(<Bookings />);
     // Scope by the row container: the row is a real <button> now that Bookings
@@ -157,8 +177,13 @@ describe('Bookings screen', () => {
     // "opens BookingActions" tests below for the interactive assertions.
     const row = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
-    expect(within(row).getByText(/Dog Walking/)).toBeInTheDocument();
-    expect(within(row).getByText(/Jul 16, 9:00 AM/)).toBeInTheDocument();
+    // ONE line built by one formatter: service, the visit's own date, then the
+    // operator's named window (09:00 sits inside the Morning block above).
+    // Awaited because the window comes from the one-shot `business_settings`
+    // read: before it lands the row honestly shows the clock time instead.
+    expect(
+      await within(row).findByText('Dog Walking · Jul 16 · Morning block'),
+    ).toBeInTheDocument();
     expect(within(row).getByText('SCHEDULED')).toBeInTheDocument();
   });
 
@@ -174,7 +199,7 @@ describe('Bookings screen', () => {
     expect(screen.getByText(/Visit ·/)).toBeInTheDocument();
   });
 
-  it('folds CANCELLED / CANCELED / REJECTED into one CANCELLED chip', async () => {
+  it('folds CANCELLED / CANCELED / REJECTED into one CANCELLED chip', () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [
@@ -184,14 +209,12 @@ describe('Bookings screen', () => {
       ],
     });
     render(<Bookings />);
-    await openHistory();
     expect(screen.getAllByText('CANCELLED')).toHaveLength(3);
   });
 
-  it('an unrecognized status renders its own honest UNKNOWN chip, never a fabricated known state', async () => {
+  it('an unrecognized status renders its own honest UNKNOWN chip, never a fabricated known state', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'WEIRD_STATUS' })] });
     render(<Bookings />);
-    await openHistory();
     expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
   });
 
@@ -215,35 +238,47 @@ describe('Bookings screen', () => {
     expect(screen.getByText(/no bookings yet/i)).toBeInTheDocument();
   });
 
-  it('filter tabs narrow the visible rows without hiding the others behind a false empty', async () => {
+  it('#704: the heading is the mock\'s plain "Bookings" with its sub-copy, and carries Select and New booking', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Bookings' })).toBeInTheDocument();
+    expect(screen.getByText('Pending requests and scheduled visits')).toBeInTheDocument();
+    // The old heading read "Every visit." with a longer, differently-worded sub.
+    expect(screen.queryByText(/^Every/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'New booking' })).toBeInTheDocument();
+    expect(selectToggle()).toBeInTheDocument();
+  });
+
+  it('#704: Select is a toggle that reports an on state, not a button that renames itself', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    expect(selectToggle()).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(selectToggle());
+    // BOTH controls report the mode, because there is only one mode (#701).
+    for (const toggle of screen.getAllByRole('button', { name: 'Select' })) {
+      expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    }
+  });
+
+  it('#704: there is no filter tab row, and every status still renders under its own section', () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [
         entry({ _id: 'a', kinfolkName: 'Row A', status: 'DRAFT' }),
         entry({ _id: 'b', kinfolkName: 'Row B', status: 'SCHEDULED' }),
+        entry({ _id: 'c', kinfolkName: 'Row C', status: 'COMPLETED' }),
       ],
     });
     render(<Bookings />);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.queryByRole('tablist')).toBeNull();
+    // Nothing became unreachable in the removal: all three are on screen at once.
     expect(screen.getByText('Row A')).toBeInTheDocument();
     expect(screen.getByText('Row B')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('tab', { name: 'Draft' }));
-    expect(screen.getByText('Row A')).toBeInTheDocument();
-    expect(screen.queryByText('Row B')).toBeNull();
+    expect(screen.getByText('Row C')).toBeInTheDocument();
   });
 
-  it('shows a "nothing matches" hint (not the top-level empty state) when a filter excludes every row', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [entry({ status: 'SCHEDULED' })],
-    });
-    render(<Bookings />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Cancelled' }));
-    expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no bookings yet/i)).toBeNull();
-  });
-
-  it('the Pending stat combines DRAFT and PENDING, mirroring BookingScreen.kt\'s "Pending approval"', () => {
+  it('#704: the Pending / Scheduled / History stat strip is gone, its numbers being the section chips', () => {
     useCollection.mockReturnValue({
       status: 'ready',
       data: [
@@ -253,13 +288,32 @@ describe('Bookings screen', () => {
       ],
     });
     render(<Bookings />);
-    // "Pending" is ambiguous by plain text, the same word also labels the
-    // filter tab, so this scopes to the stat card's own label span.
-    const pending = screen
-      .getByText('Pending', { selector: '.den-stat-label' })
-      .closest('.den-stat, button.den-stat--button');
-    expect(pending).not.toBeNull();
-    expect(within(pending as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(document.querySelectorAll('.den-stat-label')).toHaveLength(0);
+    // DRAFT and PENDING still count as one bucket, mirroring BookingScreen.kt's
+    // "Pending approval"; the chip on the section heading is where it is stated.
+    const pending = screen.getByRole('group', { name: /^Pending approval/ });
+    expect(within(pending).getByText('2')).toBeInTheDocument();
+  });
+
+  it('#704: each card wears a left accent stripe in its own status colour', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({ _id: 'a', kinfolkName: 'Waiting Wren', status: 'PENDING' }),
+        entry({ _id: 'b', kinfolkName: 'Booked Devlin', status: 'SCHEDULED' }),
+        entry({ _id: 'c', kinfolkName: 'Finished Sparrow', status: 'COMPLETED' }),
+        entry({ _id: 'd', kinfolkName: 'Called Off Mercer', status: 'CANCELLED' }),
+      ],
+    });
+    render(<Bookings />);
+    function accentOf(name: string): HTMLElement {
+      const row = screen.getByText(name).closest('.bookings__row') as HTMLElement;
+      return row.querySelector('.bookings__row-accent') as HTMLElement;
+    }
+    expect(accentOf('Waiting Wren').className).toContain('bookings__row-accent--pending');
+    expect(accentOf('Booked Devlin').className).toContain('bookings__row-accent--scheduled');
+    expect(accentOf('Finished Sparrow').className).toContain('bookings__row-accent--completed');
+    expect(accentOf('Called Off Mercer').className).toContain('bookings__row-accent--cancelled');
   });
 
   it('clicking a row calls an externally-supplied onSelectBooking with the booking id, instead of opening the built-in overlay', async () => {
@@ -388,7 +442,7 @@ describe('Bookings bulk actions', () => {
   it('Select reveals one checkbox per row, and the bar stays hidden until something is picked', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
-    await userEvent.click(screen.getByRole('button', { name: 'Select' }));
+    await userEvent.click(selectToggle());
     expect(screen.getAllByRole('checkbox')).toHaveLength(2);
     expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
   });
@@ -420,7 +474,7 @@ describe('Bookings bulk actions', () => {
     useCollection.mockReturnValue({ status: 'ready', data: pendingPair });
     render(<Bookings />);
     await pick('Household One');
-    await userEvent.click(screen.getByRole('button', { name: 'Done selecting' }));
+    await userEvent.click(selectToggle());
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect(screen.queryByRole('group', { name: 'Bulk actions' })).toBeNull();
   });
@@ -541,8 +595,6 @@ describe('Bookings bulk actions', () => {
       ],
     });
     render(<Bookings />);
-    // The completed row lives in History, which is collapsed until asked for.
-    await openHistory();
     await pick('Household One', 'Done Household');
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await userEvent.click(screen.getByRole('button', { name: /Yes, approve 2/ }));
@@ -711,13 +763,30 @@ describe('Bookings status sections', () => {
     expect(within(sectionNamed('Pending approval')).getByText('Waiting Wren')).toBeInTheDocument();
     expect(within(sectionNamed('Scheduled')).getByText('Booked Devlin')).toBeInTheDocument();
   });
-  it('keeps History behind its count until asked, so the live rows are not buried', async () => {
+  it('#704: all three sections are on screen, History open rather than behind "Show N finished"', () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    expect(screen.queryByText('Finished Sparrow')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Show 2 finished' }));
+    for (const label of ['Pending approval', 'Scheduled', 'History']) {
+      expect(sectionNamed(label)).toBeInTheDocument();
+    }
     expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
     expect(screen.getByText('Called Off Mercer')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /finished$/ })).toBeNull();
+  });
+
+  it('#704: a long History is PAGED, not collapsed, and Load more says how many are left', async () => {
+    const history = Array.from({ length: 30 }, (_v, i) =>
+      entry({ _id: `h${String(i)}`, kinfolkName: `Past ${String(i)}`, status: 'COMPLETED' }),
+    );
+    useCollection.mockReturnValue({ status: 'ready', data: history });
+    render(<Bookings />);
+    // The heading still states the WHOLE section, so a paged list never
+    // understates what is under it.
+    expect(within(sectionNamed('History')).getByText('30')).toBeInTheDocument();
+    expect(within(sectionNamed('History')).getAllByRole('listitem')).toHaveLength(25);
+    await userEvent.click(screen.getByRole('button', { name: 'Load 5 more' }));
+    expect(within(sectionNamed('History')).getAllByRole('listitem')).toHaveLength(30);
+    expect(screen.queryByRole('button', { name: /^Load \d+ more$/ })).toBeNull();
   });
   it('says what an empty section is waiting for instead of leaving a bare heading', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [mixed[1] as BookingEntry] });
@@ -726,35 +795,15 @@ describe('Bookings status sections', () => {
       within(sectionNamed('Pending approval')).getByText(/nothing is waiting on a reply/i),
     ).toBeInTheDocument();
   });
-  it('collapses to the one section a status chip names', async () => {
+  it('#701: the Select toggle on the list header turns select mode on, next to the rows it picks', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });
     render(<Bookings />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Scheduled' }));
-    expect(screen.getByRole('group', { name: /^Scheduled/ })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: /^Pending approval/ })).toBeNull();
-    expect(screen.queryByRole('group', { name: /^History/ })).toBeNull();
-  });
-  it('opens History outright when a chip asks for it, never behind a second press', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: mixed });
-    render(<Bookings />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Completed' }));
-    expect(screen.getByText('Finished Sparrow')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Show \d+ finished$/ })).toBeNull();
-  });
-  it('still says "Nothing matches this filter" when a chip excludes every row', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: mixed });
-    render(<Bookings />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Draft' }));
-    expect(screen.getByText(/nothing matches this filter/i)).toBeInTheDocument();
-  });
-  it('the section counts and the stat cards read from the same grouping', () => {
-    useCollection.mockReturnValue({ status: 'ready', data: mixed });
-    render(<Bookings />);
-    const historyStat = screen
-      .getByText('History', { selector: '.den-stat-label' })
-      .closest('.den-stat, button.den-stat--button');
-    expect(within(historyStat as HTMLElement).getByText('2')).toBeInTheDocument();
-    expect(within(sectionNamed('History')).getByText('2')).toBeInTheDocument();
+    const listBar = screen.getByRole('group', { name: 'Bookings list' });
+    const onTheList = within(listBar).getByRole('button', { name: 'Select' });
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    await userEvent.click(onTheList);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(mixed.length);
+    expect(onTheList).toHaveAttribute('aria-pressed', 'true');
   });
   it('can still bulk-pick a row that now sits inside a section', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: mixed });

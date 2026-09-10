@@ -101,6 +101,18 @@ a.auntie-btn--ghost:hover {
   color: var(--color-text-faint);
 }
 
+/* Toggle ON. Reversed out, the way the mocks paint `.seltoggle.on`, so the mode
+   reads from across the screen and not only from the button's label. */
+.auntie-btn--ghost.auntie-is-on {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+button.auntie-btn--ghost.auntie-is-on:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-background);
+}
+
 /* ── In-flight spinner ───────────────────────────────────────────────────── */
 
 .auntie-btn__spinner {

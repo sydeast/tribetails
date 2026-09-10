@@ -6,6 +6,7 @@ import {
   NUMBER_FIELDS,
   clampToOptions,
   defaultBlockEnd,
+  resolveTimeBlock,
   formatOptionList,
   isUsableTimeZone,
   optionsIncluding,
@@ -294,5 +295,43 @@ describe('firstActiveOverlap / compareBlocksByStart', () => {
   it('orders by start, then end, then label', () => {
     const rows = [b('z', '11:00', '15:00'), b('a', '09:00', '10:00'), b('m', '11:00', '12:00')];
     expect([...rows].sort(compareBlocksByStart).map((r) => r.id)).toEqual(['a', 'm', 'z']);
+  });
+});
+
+/**
+ * #704: the resolver the Bookings row names a visit's window with. Ports
+ * Android's `TimeBlockResolver`, so these are its rules, not new ones.
+ */
+describe('resolveTimeBlock', () => {
+  const blocks = [
+    { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
+    { id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true },
+    { id: 'parked', label: 'Parked', startTime: '15:00', endTime: '18:00', active: false },
+  ];
+  const at = (h: number, m = 0) => resolveTimeBlock(h * 60 + m, blocks)?.label ?? null;
+
+  it('names the active block the minute falls inside', () => {
+    expect(at(9, 30)).toBe('Morning');
+    expect(at(14)).toBe('Midday');
+  });
+
+  it('treats the window as start-inclusive and end-exclusive, so touching blocks do not tie', () => {
+    // The same half-open rule `firstActiveOverlap` above relies on: 11:00 is the
+    // start of Midday, not the last minute of Morning.
+    expect(at(11)).toBe('Midday');
+    expect(at(8)).toBe('Morning');
+  });
+
+  it('skips an inactive block rather than labelling a visit with a window nothing can book into', () => {
+    expect(at(16)).toBeNull();
+  });
+
+  it('answers null outside every window, never the nearest one', () => {
+    expect(at(6)).toBeNull();
+    expect(at(23)).toBeNull();
+  });
+
+  it('skips a half-written row instead of reading it as an open-ended window', () => {
+    expect(resolveTimeBlock(600, [{ id: 'half', label: 'Half', active: true }])).toBeNull();
   });
 });

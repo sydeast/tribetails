@@ -9,6 +9,10 @@
   No em dashes. Mirrors real BookingListScreen: sections Pending Approval (DRAFT/PENDING) ->
   Approve/Reject, Scheduled (SCHEDULED) -> Cancel, History (other). Card shows kinfolkName,
   "<KinCare type> · <date>", status pill, note preview. New Booking button. Palette from AuntieColors.kt.
+  AMENDED 2026-09-10 (issue #701). This concept put Select in the page header alone. Operator:
+  "Select needs to be near the fucking block it's used for". A second Select now sits on the list
+  toolbar directly above the sections it picks rows from; both drive the same mode.
+
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -70,6 +74,9 @@
   .seltoggle{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:"Hanken Grotesk";font-weight:600;font-size:13.5px;padding:11px 15px;border-radius:13px;cursor:pointer;transition:.16s var(--ease)}
   .seltoggle:hover{background:var(--navy-3)}
   .seltoggle.on{background:var(--cream);color:var(--navy);border-color:var(--cream)}
+  /* #701: the list's own toolbar, so Select sits beside the rows it acts on. */
+  .listbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .listbar .hint{flex:1;color:var(--cream-dim);font-size:13px}
   .selbox{flex:0 0 auto;display:none;place-items:center}
   body.selecting .selbox{display:grid}
   .selbox input{width:20px;height:20px;accent-color:var(--orange);cursor:pointer}
@@ -105,6 +112,10 @@
       <button class="add">＋ New booking</button>
     </div>
 
+    <div class="listbar">
+      <span class="hint">Pending: newest request first. Scheduled: soonest visit first. History: most recent first.</span>
+      <button class="seltoggle" id="selToggleList">&#9745; Select</button>
+    </div>
     <div class="sec d1">
       <h3>Pending approval <span class="ct">2</span></h3>
       <div class="bk">
@@ -208,12 +219,14 @@
     }
     boxes.forEach(b=>b.addEventListener('change',sync));
     document.getElementById('clearSel').addEventListener('click',()=>{boxes.forEach(b=>b.checked=false);sync();});
-    const selToggle=document.getElementById('selToggle');
-    selToggle.addEventListener('click',()=>{
+    // #701: two Select controls, one mode. Both report the same on state, so the
+    // header can never say Select is on while the list toolbar says it is off.
+    const selToggles=[document.getElementById('selToggle'),document.getElementById('selToggleList')];
+    selToggles.forEach(t=>t.addEventListener('click',()=>{
       const on=document.body.classList.toggle('selecting');
-      selToggle.classList.toggle('on',on);
+      selToggles.forEach(other=>other.classList.toggle('on',on));
       if(!on){boxes.forEach(b=>b.checked=false);sync();}
-    });
+    }));
     const mesh=document.querySelector('.mesh');
     addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
       mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});

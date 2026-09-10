@@ -1,18 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
+  bookingMetaLine,
   bookingSortTimeMs,
   bookingState,
   bookingStateInfo,
-  bookingWhen,
   initialsFor,
+  EMPTY_BOOKING_CATALOG,
+  type BookingCatalog,
   type BookingState,
 } from '../lib/bookingFormat';
+import { getBusinessSettings } from '../api/settings';
 import { useCollection, useDocById } from '../lib/firestore';
-import { asyncScalar } from '../lib/async';
-import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
@@ -52,37 +53,22 @@ import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import './Bookings.css';
 
 /**
- * The Den filter tabs. Every predicate is a POSITIVE membership test against
- * the enumerated `BookingState` (never a negation of another bucket, per the
- * AO-12-style discipline in lib/bookingFormat.ts). There is deliberately no
- * "Unknown" tab: an unrecognized/blank status row still renders (visible
- * under "All", with its own honestly-labeled UNKNOWN chip), it is simply not
- * promoted to a dedicated tab, the same treatment invoiceFormat.ts's "zero"
- * state gets in Invoices.tsx's FILTERS.
+ * THERE ARE NO FILTER TABS ON THIS SCREEN, and their absence is the ruling
+ * rather than an omission (#704).
+ *
+ * An All / Draft / Pending / Scheduled / Completed / Cancelled tab row used to
+ * sit above the sections, each chip collapsing the screen to the one section
+ * that held it. The mock
+ * (`ui-ideas/auntieos-manage-bookings-2026-05-27-cardsShouldOpenDisplayingFullerDetails.html`)
+ * has no such row: the three status sections ARE the filter, they are all open
+ * at once, and each carries its own count. A chip row on top of them asked the
+ * operator to pick a status twice to read one list.
+ *
+ * Nothing became unreachable in the removal. Every state the tabs named still
+ * renders, under the section that owns it, with its own chip: DRAFT and PENDING
+ * under "Pending approval", SCHEDULED under "Scheduled", COMPLETED / CANCELLED
+ * and any unrecognized status under "History" (see SECTIONS below).
  */
-type FilterKey = 'all' | 'draft' | 'pending' | 'scheduled' | 'completed' | 'cancelled';
-
-interface FilterDef {
-  key: FilterKey;
-  label: string;
-  test: (state: BookingState) => boolean;
-  /**
-   * The one status section this chip lives inside, or `null` for "All". Picking
-   * a chip collapses the screen to that section: a "Completed" chip that still
-   * drew an empty "Pending approval" heading above its rows would be asking the
-   * operator to read two headings to learn one thing.
-   */
-  section: BookingSectionKey | null;
-}
-
-const FILTERS: readonly FilterDef[] = [
-  { key: 'all', label: 'All', test: () => true, section: null },
-  { key: 'draft', label: 'Draft', test: (s) => s === 'draft', section: 'pending' },
-  { key: 'pending', label: 'Pending', test: (s) => s === 'pending', section: 'pending' },
-  { key: 'scheduled', label: 'Scheduled', test: (s) => s === 'scheduled', section: 'scheduled' },
-  { key: 'completed', label: 'Completed', test: (s) => s === 'completed', section: 'history' },
-  { key: 'cancelled', label: 'Cancelled', test: (s) => s === 'cancelled', section: 'history' },
-];
 
 // ── status sections ─────────────────────────────────────────────────────────
 
@@ -110,15 +96,16 @@ interface SectionDef {
  * The mock's three headings, and the ONE place a status is mapped to a bucket.
  *
  * Every predicate is a POSITIVE membership test against the enumerated
- * `BookingState`, the same discipline FILTERS above keeps. `unknown` is filed
- * under History deliberately: a row whose status this tree does not recognize
- * still has to appear somewhere, and the History stat card has counted it since
- * this screen shipped. A section set that covered five of the six states would
- * make a real booking invisible, which is the failure mode `lib/bookingFormat.ts`
- * exists to prevent.
+ * `BookingState`, never a negation of another bucket (the AO-12-style
+ * discipline in lib/bookingFormat.ts). `unknown` is filed under History
+ * deliberately: a row whose status this tree does not recognize still has to
+ * appear somewhere, and History's own count has included it since this screen
+ * shipped. A section set that covered five of the six states would make a real
+ * booking invisible, which is the failure mode `lib/bookingFormat.ts` exists to
+ * prevent.
  *
  * `pending` holds DRAFT and PENDING together: both are pre-visit states that
- * have not become a scheduled visit, which is what the "Pending" stat card and
+ * have not become a scheduled visit, which is what this section's own count and
  * BookingScreen.kt's "Pending approval" have always meant.
  */
 const SECTIONS: readonly SectionDef[] = [
@@ -209,17 +196,16 @@ export function groupBookingsByStatus(rows: readonly BookingEntry[]): BookingSec
 }
 
 /**
- * The count one section carries, for the stat strip above the list.
+ * How many History rows are drawn before "Load more".
  *
- * The strip reads through the SAME grouping the headings do, so a stat card and
- * the heading under it cannot drift apart; before this they were three separate
- * filter expressions that happened to agree. Non-null: `groupBookingsByStatus`
- * returns one entry per SECTIONS member and `key` is a member, TS just cannot
- * see that through `.find()` (the same reason FILTERS.find() below is asserted).
+ * History is where the volume is (96 of the 100 rows on the live screen) and it
+ * used to sit behind a single "Show N finished" press, which is not what the
+ * mock does: its History section is OPEN like the other two (#704). Open and
+ * unbounded would put ninety-six cards under the two sections that need
+ * answering, so the section is open and PAGED, the same "Load more" the
+ * Invoices, Sessions and KinTales lists already use for their long tails.
  */
-function sectionSize(rows: readonly BookingEntry[], key: BookingSectionKey): number {
-  return groupBookingsByStatus(rows).find((s) => s.key === key)!.rows.length;
-}
+const HISTORY_PAGE_SIZE = 25;
 
 interface BookingsProps {
   /**
@@ -263,7 +249,15 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * `kin_care_sessions` collection through the bounded, server-ordered listener
  * (BOOKINGS_QUERY, createdAt desc, capped 200), then classifies every row
  * through the enumerated `bookingState` (never by negation, see
- * lib/bookingFormat.ts) for both the summary stat strip and the filter tabs.
+ * lib/bookingFormat.ts) into the mock's three status sections.
+ *
+ * LAID OUT AS THE MOCK LAYS IT OUT (#704): a plain "Bookings" heading carrying
+ * Select and New booking, the visit-requests queue as one compact banner, then
+ * Pending approval / Scheduled / History straight after, each with its own
+ * count and all three open. What used to sit between the heading and the first
+ * section (a Pending / Scheduled / History stat strip and a six-chip filter tab
+ * row) is gone: the strip's three numbers ARE the section counts, and the tabs
+ * asked for a status the sections already separate.
  *
  * SELECTING A ROW opens `BookingDetailModal`, the same full detail sheet the
  * Schedule agenda opens (household link, service address, requested services,
@@ -291,11 +285,9 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
 export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
-  const [filter, setFilter] = useState<FilterKey>('all');
-  // History opens on request and stays open. It is the biggest section by far
-  // and the least urgent, so it starts behind its own count rather than pushing
-  // the live bookings off the first screen.
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // History is open like every other section, and grows a page at a time. It
+  // used to be closed behind "Show N finished", which the mock does not do.
+  const [historyShown, setHistoryShown] = useState(HISTORY_PAGE_SIZE);
   // The overlay's own selection state, used only when no external
   // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
   // deep link so `/bookings?bookingId=<id>` opens the sheet on arrival.
@@ -309,6 +301,40 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   // says so rather than leaving the operator to wonder.
   const [showCreate, setShowCreate] = useState(false);
   const [createNotice, setCreateNotice] = useState<string | null>(null);
+
+  /**
+   * The operator's KinCare catalog and booking windows, for the one meta line
+   * under each name (`lib/bookingFormat.ts#bookingMetaLine`). One-shot read of
+   * `business_settings`, the same `getBusinessSettings` + `live`-guard shape
+   * Schedule.tsx and NewBookingDialog.tsx already use.
+   *
+   * FAILS QUIET, on purpose, and the empty catalog is an honest degrade rather
+   * than a hidden fault: with no rates map a row shows the raw `serviceType` it
+   * stores, which is exactly what every row showed before #704, and with no
+   * time blocks it names the clock time instead of the window. Neither is a
+   * fabricated value, and neither is worth a banner over a list that reads
+   * correctly without it. A read this screen genuinely depends on
+   * (BOOKINGS_QUERY) still surfaces its own failure through AsyncRegion.
+   */
+  const [catalog, setCatalog] = useState<BookingCatalog>(EMPTY_BOOKING_CATALOG);
+  useEffect(() => {
+    let live = true;
+    getBusinessSettings()
+      .then((settings) => {
+        if (!live) return;
+        setCatalog({
+          serviceRates: settings.serviceRates,
+          serviceDurations: settings.serviceDurations,
+          timeBlocks: settings.timeBlocks,
+        });
+      })
+      .catch(() => {
+        // See the state's doc above: the empty catalog IS the fallback.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // ── bulk select ──────────────────────────────────────────────────────────
   // Off by default, exactly as the mock has it: checkboxes only appear once
@@ -458,23 +484,26 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     );
   }
 
-  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
-  // Home/End, roving tabIndex); called unconditionally at the top level per
-  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
-  // conditionally-invoked render prop.
-  const { getTabProps } = useRovingTabs({
-    count: FILTERS.length,
-    activeIndex: FILTERS.findIndex((f) => f.key === filter),
-  });
-
-  // Every card reads through SECTIONS, so a stat and the section heading of the
-  // same name cannot drift apart. They used to be three separate filter
-  // expressions that happened to agree. The reasoning for what each bucket
-  // holds, DRAFT+PENDING under "Pending" and an unrecognized status under
-  // "History", now lives in one place, on SECTIONS.
-  const pendingCount = asyncScalar(rows, (data) => sectionSize(data, 'pending'));
-  const scheduledCount = asyncScalar(rows, (data) => sectionSize(data, 'scheduled'));
-  const historyCount = asyncScalar(rows, (data) => sectionSize(data, 'history'));
+  /**
+   * The Select toggle, rendered TWICE and driving one piece of state (#701).
+   *
+   * Operator: "Select needs to be near the fucking block it's used for". It had
+   * been sitting in the page heading alone, roughly 750px above the first row it
+   * picks, with two unrelated blocks in between. It now also sits on the list
+   * toolbar, immediately above the sections whose rows it reveals checkboxes on,
+   * and the mock's page-header copy keeps its own.
+   *
+   * ONE control, two places, never two modes: both press the same handler and
+   * both report the same `aria-pressed`, so there is no way for one to say
+   * Select is on while the other says it is off.
+   */
+  const selectToggle = (
+    <GhostButton
+      label="Select"
+      pressed={selecting}
+      onClick={() => (selecting ? leaveSelectMode() : setSelecting(true))}
+    />
+  );
 
   // A DEEP-LINKED id is read BY ID as well, because the stream below is the 200
   // newest sessions and a notification can name an older one. Only ever the id
@@ -512,19 +541,11 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Bookings"
-        title="Every"
-        accentTail="visit."
-        subtitle="Pending requests, scheduled visits, and history."
+        title="Bookings"
+        subtitle="Pending requests and scheduled visits"
         trailing={
           <>
-            {/* The label carries the mode, not an aria-pressed attribute:
-                GhostButton takes no arbitrary DOM props, and a control whose
-                accessible NAME says what pressing it does next needs no second
-                channel to announce its state. */}
-            <GhostButton
-              label={selecting ? 'Done selecting' : 'Select'}
-              onClick={() => (selecting ? leaveSelectMode() : setSelecting(true))}
-            />
+            {selectToggle}
             <PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />
           </>
         }
@@ -541,7 +562,10 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           to move or cancel a visit and nothing happens until someone here
           accepts or declines. #698: reserves its own space with a loading
           panel while its three callables are in flight and says so plainly
-          when nothing is waiting, rather than popping in late. */}
+          when nothing is waiting, rather than popping in late. #704: it is one
+          compact banner rather than an open list of request cards, because the
+          mock puts the three status sections directly under the heading and a
+          queue that is usually empty was pushing the first one to y=580. */}
       <VisitRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
       {rescheduleOutcome !== null && (
@@ -557,89 +581,44 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         </Banner>
       )}
 
-      <div className="bookings__summary">
-        <StatCard
-          label="Pending"
-          value={pendingCount}
-          trend="awaiting a reply"
-          tone="orange"
-          feature={pendingCount.kind === 'value' && pendingCount.value > 0}
-        />
-        <StatCard label="Scheduled" value={scheduledCount} trend="on the books" tone="teal" />
-        <StatCard label="History" value={historyCount} trend="completed, cancelled, or other" tone="purple" />
+      {/* The list's own header: what order the sections are in, and the Select
+          toggle that acts on them (#701). The page heading above owns the
+          screen's name; repeating "Bookings" here as a second heading would
+          announce a section that is the whole page. */}
+      <div className="bookings__toolbar" role="group" aria-label="Bookings list">
+        <p className="bookings__toolbar-note">
+          Pending: newest request first. Scheduled: soonest visit first. History: most recent
+          first. Capped at 200.
+        </p>
+        {selectToggle}
       </div>
 
-      <DenPanel
-        title="Bookings"
-        subtitle="Pending: newest request first. Scheduled: soonest visit first. History: most recent first. Capped at 200."
+      <AsyncRegion
+        state={rows}
+        what="bookings"
+        isEmpty={(data) => data.length === 0}
+        loading={<p className="bookings__hint">Loading bookings…</p>}
+        empty={<EmptyHint>No bookings yet. New requests land here.</EmptyHint>}
       >
-        <AsyncRegion
-          state={rows}
-          what="bookings"
-          isEmpty={(data) => data.length === 0}
-          loading={<p className="bookings__hint">Loading bookings…</p>}
-          empty={<EmptyHint>No bookings yet. New requests land here.</EmptyHint>}
-        >
-          {(data) => {
-            const views = rowViewsFor(data);
-            // Non-null: FILTERS lists all six FilterKey members above, and `filter`
-            // only ever holds a key set via setFilter(f.key) from that same array,
-            // so this always finds one, TS just can't see that invariant through
-            // .find().
-            const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = views.filter((v) => activeFilter.test(v.state));
-            // Group what the chip left, not the whole stream: with "Completed"
-            // picked, History must hold the completed rows only, not the
-            // cancelled ones it also owns under "All".
-            const sections = groupBookingsByStatus(visible.map((v) => v.entry)).filter(
-              (s) => activeFilter.section === null || activeFilter.section === s.key,
-            );
-
-            return (
-              <>
-                <div className="bookings__tabs" role="tablist" aria-label="Filter bookings">
-                  {FILTERS.map((f, index) => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={filter === f.key}
-                      className={filter === f.key ? 'bookings__tab bookings__tab--active' : 'bookings__tab'}
-                      onClick={() => setFilter(f.key)}
-                      {...getTabProps(index)}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-
-                {visible.length === 0 ? (
-                  <EmptyHint>Nothing matches this filter.</EmptyHint>
-                ) : (
-                  sections.map((section) => (
-                    <BookingSectionBlock
-                      key={section.key}
-                      section={section}
-                      // History is where the volume is: 94 of the 100 rows on
-                      // the live screen. Collapsed under "All" so the six live
-                      // bookings are not read last, and open when a chip asked
-                      // for it, since asking again would be asking twice.
-                      collapsed={
-                        section.key === 'history' && activeFilter.section === null && !historyOpen
-                      }
-                      onExpand={() => setHistoryOpen(true)}
-                      onSelectBooking={handleSelectBooking}
-                      selecting={selecting}
-                      selectedIds={selectedIds}
-                      onTogglePick={toggleRow}
-                    />
-                  ))
-                )}
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
+        {(data) =>
+          groupBookingsByStatus(data).map((section) => (
+            <BookingSectionBlock
+              key={section.key}
+              section={section}
+              catalog={catalog}
+              // History is where the volume is: 96 of the 100 rows on the live
+              // screen. Open like the other two, per the mock, and drawn a page
+              // at a time so those 96 do not bury the ones needing an answer.
+              limit={section.key === 'history' ? historyShown : null}
+              onShowMore={() => setHistoryShown((n) => n + HISTORY_PAGE_SIZE)}
+              onSelectBooking={handleSelectBooking}
+              selecting={selecting}
+              selectedIds={selectedIds}
+              onTogglePick={toggleRow}
+            />
+          ))
+        }
+      </AsyncRegion>
 
       {selecting && selectedIds.size > 0 && (
         <BulkBar
@@ -744,8 +723,10 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
 
 interface BookingSectionBlockProps {
   section: BookingSection;
-  collapsed: boolean;
-  onExpand: () => void;
+  catalog: BookingCatalog;
+  /** Rows drawn before "Load more", or `null` for a section that draws them all. */
+  limit: number | null;
+  onShowMore: () => void;
   onSelectBooking: (bookingId: string) => void;
   selecting: boolean;
   selectedIds: ReadonlySet<string>;
@@ -754,22 +735,34 @@ interface BookingSectionBlockProps {
 
 /**
  * One of the mock's three status blocks: a heading, the count beside it, and
- * either the rows, a collapsed control, or a line saying what the section is
- * waiting for.
+ * either the rows or a line saying what the section is waiting for.
+ *
+ * ALWAYS OPEN (#704). History used to render as a single "Show N finished"
+ * button, so the section the mock draws as a list of cards was one control. It
+ * is a list of cards now, capped at `limit` with a "Load more" underneath that
+ * says how many are still to come, which keeps the two sections above it
+ * readable without hiding the third behind a press.
  *
  * `role="group"` with `aria-labelledby`, not a bare `<section>`: a named
  * `<section>` is a landmark REGION, and three landmarks for three parts of one
  * list would tell a screen-reader user this page has three top-level areas when
  * it has one. The heading still carries the name either way.
  *
+ * `h2`, not `h3`: this block used to sit inside a `DenPanel` that owned the
+ * page's only `h2`, and the panel is gone (#704), so a section heading is now
+ * one level under the screen's `h1` rather than two.
+ *
  * The count lives INSIDE the heading rather than beside it so it is part of the
- * section's accessible name: "History 94" answers "how much is under here"
- * without moving focus into the section to count.
+ * section's accessible name: "History 96" answers "how much is under here"
+ * without moving focus into the section to count. It is also the ONLY place
+ * that number is now stated: the three stat cards that used to repeat it above
+ * the list are gone (#704).
  */
 function BookingSectionBlock({
   section,
-  collapsed,
-  onExpand,
+  catalog,
+  limit,
+  onShowMore,
   onSelectBooking,
   selecting,
   selectedIds,
@@ -778,22 +771,23 @@ function BookingSectionBlock({
   const headingId = `bookings-section-${section.key}`;
   // Non-null: SECTIONS is what produced this section's key.
   const def = SECTIONS.find((s) => s.key === section.key)!;
+  const shown = limit === null ? section.rows : section.rows.slice(0, limit);
+  const remaining = section.rows.length - shown.length;
 
   return (
     <section className="bookings__section" role="group" aria-labelledby={headingId}>
-      <h3 className="bookings__section-head" id={headingId}>
+      <h2 className="bookings__section-head" id={headingId}>
         {section.label} <span className="bookings__section-count">{section.rows.length}</span>
-      </h3>
+      </h2>
       {section.rows.length === 0 ? (
         <EmptyHint>{def.emptyHint}</EmptyHint>
-      ) : collapsed ? (
-        <GhostButton label={`Show ${section.rows.length} finished`} onClick={onExpand} />
       ) : (
         <ul className="bookings__list">
-          {rowViewsFor(section.rows).map((v) => (
+          {rowViewsFor(shown).map((v) => (
             <BookingRow
               key={v.entry._id}
               view={v}
+              catalog={catalog}
               onSelectBooking={onSelectBooking}
               selecting={selecting}
               picked={selectedIds.has(v.entry._id)}
@@ -801,6 +795,11 @@ function BookingSectionBlock({
             />
           ))}
         </ul>
+      )}
+      {remaining > 0 && (
+        <div className="bookings__more">
+          <GhostButton label={`Load ${remaining} more`} onClick={onShowMore} />
+        </div>
       )}
     </section>
   );
@@ -1020,6 +1019,7 @@ function BulkRescheduleBanner({
 
 interface BookingRowProps {
   view: RowView;
+  catalog: BookingCatalog;
   onSelectBooking?: ((bookingId: string) => void) | undefined;
   /** Select mode is on: the row shows its checkbox. */
   selecting: boolean;
@@ -1027,7 +1027,33 @@ interface BookingRowProps {
   onTogglePick: (bookingId: string) => void;
 }
 
-function BookingRow({ view, onSelectBooking, selecting, picked, onTogglePick }: BookingRowProps) {
+/**
+ * One booking card, in the mock's own order (#704): the select checkbox, a
+ * coloured accent stripe in the status's own hue, the initials avatar, then the
+ * name, the one service/date/window line, the status pill DIRECTLY UNDER the
+ * name, and the note.
+ *
+ * The pill used to sit at the far right of the row, pushed there by the
+ * name block's `flex: 1`. That put the one fact that decides what to do with a
+ * booking at the opposite end of the card from the booking's name, and left the
+ * stripe's job (status at a glance, down the left edge) undone entirely.
+ *
+ * NO INLINE ACTION BUTTONS, and this is a DEPARTURE FROM THE MOCK held on
+ * purpose. The mock draws Approve / Reject on a pending card and Cancel on a
+ * scheduled one; commit cd594d4 took them off when the card started opening
+ * `BookingDetailModal`, which carries all four transitions with the full record
+ * in front of the operator. #704 lists that difference and explicitly does not
+ * rule on it, so it stays as cd594d4 chose rather than being reinstated by a
+ * pass that was asked to fix the list's shape.
+ */
+function BookingRow({
+  view,
+  catalog,
+  onSelectBooking,
+  selecting,
+  picked,
+  onTogglePick,
+}: BookingRowProps) {
   const { entry, state } = view;
   const info = bookingStateInfo(state);
   // `?? ''` on every field read, matching sessionFormat.ts's convention.
@@ -1038,32 +1064,33 @@ function BookingRow({ view, onSelectBooking, selecting, picked, onTogglePick }: 
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
   // Recomputed per row per render (not memoized): each is a handful of cheap
   // string ops, not worth the hook bookkeeping at list scale.
-  const when = bookingWhen(entry);
+  const meta = bookingMetaLine(entry, catalog);
   const kinfolkNotes = entry.kinfolkNotes ?? '';
   const notePreview = kinfolkNotes.trim() !== '' ? kinfolkNotes : (entry.notes ?? '');
-  const serviceLabel = (entry.serviceType ?? '').trim() !== '' ? entry.serviceType : 'Visit';
 
   const body = (
     <>
+      <span
+        className={`bookings__row-accent bookings__row-accent--${info.cssClass}`}
+        aria-hidden="true"
+      />
+
       <Avatar
         label={displayName}
         initials={initialsFor(displayName)}
         gradientSeed={entry.kinfolkId !== '' ? entry.kinfolkId : displayName}
-        size={40}
+        size={44}
         shape="rounded"
       />
 
       <span className="bookings__row-who">
         <span className="bookings__row-name">{displayName}</span>
-        <span className="bookings__row-meta">
-          {serviceLabel} · {when}
-        </span>
+        <span className="bookings__row-meta">{meta}</span>
+        <span className={`bookings__chip bookings__chip--${info.cssClass}`}>{info.chipLabel}</span>
         {notePreview.trim() !== '' && (
           <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
         )}
       </span>
-
-      <span className={`bookings__chip bookings__chip--${info.cssClass}`}>{info.chipLabel}</span>
     </>
   );
 

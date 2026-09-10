@@ -1,5 +1,8 @@
 import type { Timestamp } from 'firebase/firestore';
+import type { TimeBlockDefinition } from '../api/settings';
 import { str } from './coerce';
+import { resolveTimeBlock } from './businessOperations';
+import { serviceDurationMinutes, storedDurationMinutes } from './newBooking';
 
 /**
  * Pure booking classification + display helpers, kept out of the screen so the
@@ -149,6 +152,22 @@ export function parseFlexibleDate(raw: string): Date | null {
   return null;
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Jul 16" in the LOCAL zone. The date half of {@link formatLocalDateTime}. */
+export function formatLocalDate(d: Date): string {
+  return `${MONTH_NAMES[d.getMonth()] ?? ''} ${d.getDate()}`;
+}
+
+/** "9:00 AM" in the LOCAL zone. The clock half of {@link formatLocalDateTime}. */
+export function formatLocalTime(d: Date): string {
+  let hours = d.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${pad(d.getMinutes())} ${ampm}`;
+}
+
 /**
  * "Jul 16, 9:00 AM" in the LOCAL zone. Uses `Date`'s local getters
  * (getMonth/getDate/getHours/getMinutes), never `toISOString()`, the same
@@ -156,14 +175,7 @@ export function parseFlexibleDate(raw: string): Date | null {
  * here to this collection's free-text timestamp-shaped strings.
  */
 export function formatLocalDateTime(d: Date): string {
-  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = names[d.getMonth()] ?? '';
-  const day = d.getDate();
-  let hours = d.getHours();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  if (hours === 0) hours = 12;
-  return `${month} ${day}, ${hours}:${pad(d.getMinutes())} ${ampm}`;
+  return `${formatLocalDate(d)}, ${formatLocalTime(d)}`;
 }
 
 /**
@@ -222,4 +234,139 @@ export function bookingSortTimeMs(row: BookingWhenInput): number | null {
     if (parsed) return parsed.getTime();
   }
   return row.createdAt ? row.createdAt.toMillis() : null;
+}
+// ── the row's one meta line ─────────────────────────────────────────────────
+/**
+ * The operator's own KinCare catalog and booking windows, as far as a booking
+ * row needs them. All three come off the single `business_settings` document
+ * (`api/settings.ts#getBusinessSettings`), and all three are legitimately
+ * empty: nothing here fabricates a name or a window it cannot find.
+ */
+export interface BookingCatalog {
+  /** `business_settings.serviceRates`, keyed by the KinCare id the wizard books with. */
+  serviceRates: Record<string, string>;
+  /** `business_settings.serviceDurations`, keyed by the same id. Sparse by design. */
+  serviceDurations: Record<string, string>;
+  /** `business_settings.timeBlocks`, the named windows a kinfolk books into. */
+  timeBlocks: readonly TimeBlockDefinition[];
+}
+/** What a row shows before the settings read lands, and if it never does. */
+export const EMPTY_BOOKING_CATALOG: BookingCatalog = {
+  serviceRates: {},
+  serviceDurations: {},
+  timeBlocks: [],
+};
+/** Letters and digits only, lowercased: "30 Minute", "30Minute" and "30-minute" are one id. */
+function normaliseServiceKey(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+/**
+ * Minutes a raw booking label states, for catalog matching only.
+ *
+ * Two readings, in order. A stated unit wins ("60Mins", "30 Minute", "2Hrs"),
+ * through the same `serviceDurationMinutes` parse the New booking dialog and
+ * the Schedule legend already order services by. Failing that, a BARE trailing
+ * number is read as minutes: that is the `visit_60` shape this collection's
+ * older rows carry, and minutes is the only unit any of these ids has ever
+ * counted in.
+ *
+ * The bare read is deliberately the weaker of the two and never decides a name
+ * on its own: `bookingServiceName` only uses these minutes when EXACTLY ONE
+ * configured KinCare runs that long, so a label like "Walk 2" resolves to
+ * nothing rather than to a two-minute visit.
+ */
+function labelMinutes(label: string): number | null {
+  const stated = serviceDurationMinutes(label);
+  if (stated !== null) return stated;
+  const bare = /(?:^|[^0-9A-Za-z])(\d{1,4})$/.exec(label);
+  if (!bare) return null;
+  const minutes = Number(bare[1]);
+  return minutes > 0 ? minutes : null;
+}
+/**
+ * What a booking's service is CALLED, resolved against the operator's catalog.
+ *
+ * `kin_care_sessions.serviceType` is free text and the live collection holds at
+ * least four spellings of the same handful of services: `visit_60`, `60Mins`,
+ * `30 Minute`, `30Minute`. Those are ids and near-ids, not names, and a list
+ * that prints them raw asks the operator to translate every row (#704).
+ *
+ * Resolution, in order:
+ *   1. The catalog key itself, matched on letters and digits alone, so
+ *      `30 Minute` and `30Minute` both land on the configured `30Minute`.
+ *   2. The one catalog entry that runs for the length the label states, when
+ *      there is exactly one. This is what reaches `visit_60` and `60Mins`,
+ *      neither of which is any catalog key spelled differently. Ambiguous
+ *      (two 60-minute KinCares) resolves to nothing rather than to a guess.
+ *
+ * UNRESOLVED FALLS BACK TO THE RAW LABEL, never to a placeholder: a service
+ * the operator has since renamed or removed still says what the visit was
+ * booked as. Only a genuinely blank field becomes "Visit".
+ *
+ * The name returned is the catalog KEY, which is what `KinCareRatesEditor`,
+ * the New booking dialog and the Schedule legend all display, so a row here
+ * and a row in Settings call the same service the same thing.
+ */
+export function bookingServiceName(
+  rawServiceType: string | undefined,
+  catalog: BookingCatalog,
+): string {
+  const label = str(rawServiceType).trim();
+  if (label === '') return 'Visit';
+  const keys = Object.keys(catalog.serviceRates)
+    .map((key) => key.trim())
+    .filter((key) => key !== '');
+  const wanted = normaliseServiceKey(label);
+  const exact = keys.find((key) => normaliseServiceKey(key) === wanted);
+  if (exact !== undefined) return exact;
+  const minutes = labelMinutes(label);
+  if (minutes !== null) {
+    const sameLength = keys.filter(
+      (key) =>
+        (storedDurationMinutes(catalog.serviceDurations[key]) ?? serviceDurationMinutes(key)) ===
+        minutes,
+    );
+    if (sameLength.length === 1) return sameLength[0]!;
+  }
+  return label;
+}
+/** What {@link bookingMetaLine} reads off a row. */
+export type BookingMetaInput = BookingWhenInput & { serviceType?: string | undefined };
+/**
+ * THE ONE LINE UNDER A BOOKING'S NAME: "60Minute · Jul 22 · Morning block".
+ *
+ * Service, then the visit's date, then the window it sits in. The window is the
+ * operator's own named time block when the start time falls inside an active
+ * one (`lib/businessOperations.ts#resolveTimeBlock`, the port of Android's
+ * `TimeBlockResolver`), and the clock time when it does not, because a visit
+ * booked before the blocks existed still happens at a real hour.
+ *
+ * ONE FORMATTER, not three call sites agreeing. Before this the row pasted the
+ * raw `serviceType` next to `bookingWhen`'s combined "Jul 22, 2:00 PM", so
+ * thirteen rows showed four different spellings of two services and no row
+ * named its block at all.
+ *
+ * The fail-loud rules `bookingWhen` established are kept exactly: a stored
+ * stamp that will not parse is printed VERBATIM rather than hidden, and a row
+ * with nothing parseable anywhere says "Date pending" rather than inventing a
+ * date. Neither case invents an empty third segment.
+ */
+export function bookingMetaLine(row: BookingMetaInput, catalog: BookingCatalog): string {
+  const service = bookingServiceName(row.serviceType, catalog);
+  const raw = str(row.startTime).trim() || str(row.completedAt).trim() || str(row.departedAt).trim();
+  const when =
+    raw !== '' ? parseFlexibleDate(raw) : row.createdAt ? row.createdAt.toDate() : null;
+  if (when === null) return `${service} · ${raw !== '' ? raw : 'Date pending'}`;
+  const block = resolveTimeBlock(when.getHours() * 60 + when.getMinutes(), catalog.timeBlocks);
+  const label = (block?.label ?? '').trim();
+  // "Morning" reads as "Morning block", the way the mock and the Android card
+  // both name a window; an operator who already typed "Morning block" is not
+  // given it twice.
+  const window =
+    label === ''
+      ? formatLocalTime(when)
+      : /\bblock$/i.test(label)
+        ? label
+        : `${label} block`;
+  return `${service} · ${formatLocalDate(when)} · ${window}`;
 }
