@@ -4,45 +4,123 @@ import {
   deleteFormSchema,
   type FormSchemaSummary,
 } from '../api/formSchemas';
+import { listBusinessAdmins } from '../api/businessAdmins';
 import { type Async } from '../lib/async';
-import { formSchemaUpdatedLabel } from '../lib/formSchemaFormat';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { formSchemaUpdatedFull } from '../lib/formSchemaFormat';
+import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import './FormSchemas.css';
 
+export type SortColumn = 'name' | 'version' | 'updatedAt' | 'updatedBy';
+export type SortDirection = 'asc' | 'desc';
+
+export interface SortState {
+  column: SortColumn;
+  direction: SortDirection;
+}
+
+/** The mock's shipped default: Updated, descending. */
+export const DEFAULT_SORT: SortState = { column: 'updatedAt', direction: 'desc' };
+
 /**
- * Descending by updatedAt, blanks/nulls last, mirrors FormSchemaListScreen.kt's
- * default sort (`compareBy<isBlank>.thenByDescending`), which is the only sort
- * order the wasm screen actually ships: its column-header sort UI (HeaderCell)
- * was retired when the sortable table became a card list (see the #10/#17
- * comment in the Kotlin source) but the sortCol/sortAsc state, defaulted to
- * UpdatedAt/desc, was never removed, so this fixed order IS the shipped
- * behavior, not a simplification of it.
- *
- * COMPARING THE RAW STRING IS CORRECT HERE, and that is a checked claim rather
- * than an assumption, because the sibling defect in PR #241 was exactly this
- * shape: `invoices.date` / `payments.date` hold free text ("February 17,
- * 2026"), so a byte compare ordered them alphabetically by month name. This
- * field is not that. `formSchemas.updatedAt` is written ONLY by the
- * `saveFormSchema` callable as `FieldValue.serverTimestamp()`
- * (mytribe/functions/src/admin/saveFormSchema.ts:214) and is handed to this
- * client only after `listFormSchemas`'s `toIsoOrNull` has run
- * `.toDate().toISOString()` over it (listFormSchemas.ts:69), so every non-null
- * value is a fixed-width `YYYY-MM-DDTHH:mm:ss.sssZ` UTC instant, for which
- * lexicographic order and chronological order are the same order. See
- * `lib/formSchemaFormat.ts` for the full write-path audit, including why the
- * `isAuntie()` direct-write grant in firestore.rules:770 does not put free
- * text in this field in practice.
+ * A value that reads as a Firebase Auth uid, long and opaque, rather than a
+ * human label such as a seed script name ("seed_phase14_schemas"). Only used
+ * to decide whether an UNRESOLVED `updatedBy` is worth shortening; shortening
+ * a value that was already a readable label would make it harder to read, not
+ * easier.
  */
-export function sortByUpdatedAtDesc(rows: FormSchemaSummary[]): FormSchemaSummary[] {
-  return [...rows].sort((a, b) => {
-    const aBlank = !a.updatedAt;
-    const bBlank = !b.updatedAt;
-    if (aBlank && bBlank) return 0;
-    if (aBlank !== bBlank) return aBlank ? 1 : -1;
-    return (b.updatedAt as string).localeCompare(a.updatedAt as string);
+function looksLikeUid(value: string): boolean {
+  return /^[A-Za-z0-9]{16,}$/.test(value);
+}
+
+/**
+ * What the Updated by column shows for one row's raw `updatedBy`.
+ *
+ * `emailByUid` comes from `listBusinessAdmins` (`api/businessAdmins.ts`), the
+ * one cheap admin-roster lookup this admin already has (built for the
+ * notification gate, issue #450). A uid the roster knows resolves to that
+ * admin's email, matching the mock's "auntie@tribetails.example" column.
+ *
+ * A uid the roster does NOT know, such as a seed script's author string, is
+ * not necessarily wrong, staff turns over and seed data predates the roster,
+ * so it is shown rather than hidden: shortened when it looks like a uid
+ * (nobody scans a 28-character random string), verbatim otherwise. Returns
+ * `null` for a blank `updatedBy`, so the caller can render the shared blank
+ * placeholder ("-") and sort the row last.
+ */
+export function resolveUpdatedBy(
+  updatedBy: string | null,
+  emailByUid: ReadonlyMap<string, string>,
+): string | null {
+  const trimmed = (updatedBy ?? '').trim();
+  if (trimmed === '') return null;
+  const email = emailByUid.get(trimmed);
+  if (email) return email;
+  return looksLikeUid(trimmed) ? `${trimmed.slice(0, 8)}…` : trimmed;
+}
+
+/**
+ * Orders rows for one of the table's four sortable columns, blanks last in
+ * BOTH directions (an ascending sort still puts the row with nothing to show
+ * at the bottom, never at the top where "-" would read as the smallest
+ * value), a deterministic `id` tie-break so equal rows never reorder between
+ * renders, mirrors the Android sibling's `formSchemaSort` (same column enum,
+ * same blank-last rule, same default).
+ *
+ * `updatedAt` compares the raw ISO string rather than a formatted label: see
+ * `lib/formSchemaFormat.ts` for the full write-path audit establishing that,
+ * for this field, byte order over the stored instant IS chronological order.
+ * `updatedBy` compares the DISPLAYED label (an admin's resolved email, or the
+ * raw/shortened uid), not the raw uid, so the on-screen order matches what
+ * the operator is looking at.
+ */
+export function sortSchemas(
+  rows: readonly FormSchemaSummary[],
+  emailByUid: ReadonlyMap<string, string>,
+  sort: SortState,
+): FormSchemaSummary[] {
+  const dir = sort.direction === 'asc' ? 1 : -1;
+
+  // Non-null only when blank-ness differs; the tie-break falls through
+  // otherwise. Blank always sorts after non-blank, regardless of direction,
+  // so this result is NOT multiplied by `dir`.
+  function blankLast(aBlank: boolean, bBlank: boolean): number | null {
+    if (aBlank === bBlank) return null;
+    return aBlank ? 1 : -1;
+  }
+
+  return [...rows].sort((a, b): number => {
+    switch (sort.column) {
+      case 'name': {
+        const an = (a.name || a.id).toLowerCase();
+        const bn = (b.name || b.id).toLowerCase();
+        return (an.localeCompare(bn) || a.id.localeCompare(b.id)) * dir;
+      }
+      case 'version':
+        return (a.version - b.version || a.id.localeCompare(b.id)) * dir;
+      case 'updatedAt': {
+        const aBlank = !a.updatedAt;
+        const bBlank = !b.updatedAt;
+        const blank = blankLast(aBlank, bBlank);
+        if (blank !== null) return blank;
+        return (
+          ((a.updatedAt as string).localeCompare(b.updatedAt as string) ||
+            a.id.localeCompare(b.id)) * dir
+        );
+      }
+      case 'updatedBy': {
+        const aLabel = resolveUpdatedBy(a.updatedBy, emailByUid);
+        const bLabel = resolveUpdatedBy(b.updatedBy, emailByUid);
+        const blank = blankLast(aLabel === null, bLabel === null);
+        if (blank !== null) return blank;
+        return (
+          ((aLabel as string).toLowerCase().localeCompare((bLabel as string).toLowerCase()) ||
+            a.id.localeCompare(b.id)) * dir
+        );
+      }
+    }
   });
 }
 
@@ -53,31 +131,6 @@ export function filterSchemas(rows: FormSchemaSummary[], query: string): FormSch
   return rows.filter(
     (r) => r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q),
   );
-}
-
-/**
- * The non-blank parts of a row's meta line, joined the way the reference
- * renders them: `v4  ·  08-02 10:15  ·  by e2e-admin`.
- *
- * The middle part is `formSchemaUpdatedLabel`, NOT `row.updatedAt`. This line
- * used to interpolate the raw field, so the operator read
- * `2026-08-02T10:15:00.000Z` off the row, in UTC, milliseconds and all. It went
- * unnoticed because until PR #251 the only rendering anybody looked at was a
- * failed-callable error panel, with no rows in it to be wrong.
- *
- * `formSchemaUpdatedLabel` never returns blank, so unlike the version and
- * `updatedBy` parts the timestamp part is never dropped: a schema with no
- * `updatedAt` says `date unknown` out loud rather than leaving a gap the
- * operator has to interpret.
- */
-export function metaLine(row: FormSchemaSummary): string {
-  return [
-    `v${row.version}`,
-    formSchemaUpdatedLabel(row.updatedAt),
-    row.updatedBy ? `by ${row.updatedBy}` : null,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join('  ·  ');
 }
 
 function PlusGlyph() {
@@ -96,6 +149,67 @@ function TrashGlyph() {
   );
 }
 
+function CaretGlyph() {
+  return (
+    <svg
+      className="schemas__caret"
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+const COLUMN_LABEL: Record<SortColumn, string> = {
+  name: 'Name',
+  version: 'Version',
+  updatedAt: 'Updated',
+  updatedBy: 'Updated by',
+};
+
+interface SortHeaderProps {
+  column: SortColumn;
+  sort: SortState;
+  onSort: (column: SortColumn) => void;
+}
+
+/**
+ * One `<th>` of the sortable table, mirroring the mock's header cell: a
+ * clickable label with a caret, the active column tinted, the caret flipped
+ * when that column is ascending. Clicking the active column flips its
+ * direction; clicking a different column selects it, ascending, the same
+ * click semantics the mock's script comments describe.
+ */
+function SortHeader({ column, sort, onSort }: SortHeaderProps) {
+  const active = sort.column === column;
+  const ariaSort: 'ascending' | 'descending' | 'none' = active
+    ? sort.direction === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
+  return (
+    <th scope="col" className={`schemas__th schemas__th--${column}`} aria-sort={ariaSort}>
+      <button
+        type="button"
+        className="schemas__sort"
+        {...(active ? { 'data-active': '', 'data-direction': sort.direction } : {})}
+        onClick={() => onSort(column)}
+      >
+        {COLUMN_LABEL[column]}
+        <CaretGlyph />
+      </button>
+    </th>
+  );
+}
+
 interface FormSchemasProps {
   /** Opens the editor screen (`FormSchemaEditor.tsx`) wired by `routes/FormSchemasView.tsx`. Called with a schema id on row-select. */
   onSelect?: (id: string) => void;
@@ -104,15 +218,28 @@ interface FormSchemasProps {
 }
 
 /**
- * Admin Form Schemas list. Loads once via the one-shot listFormSchemas callable
- * (not a stream, formSchemas has no live-authoring collaborator to watch for),
- * matching the wasm FormSchemaListScreen, which the review named the GOLD
- * STANDARD for fail-loud error handling in the admin: it names the failing
+ * Admin Form Schemas list: the sortable four-column table (Name / Version /
+ * Updated / Updated by) drawn in `ui-ideas/auntieos-formschema-list-2026-05-27.html`
+ * and named as the intended shape in `docs/2026-05-31-den-redesign-design.md`
+ * ("Form Schemas is NOT a card grid, deliberately"). Both design authorities
+ * name a table because the four fields are a fixed, uniform, comparative set,
+ * which a single flattened meta line cannot be sorted or scanned by.
+ *
+ * Loads once via the one-shot `listFormSchemas` callable (not a stream,
+ * formSchemas has no live-authoring collaborator to watch for), matching the
+ * wasm `FormSchemaListScreen`, which the 2026-07-15 review named the gold
+ * standard for fail-loud error handling in the admin: it names the failing
  * callable, offers Retry, and refuses to render a false empty list while the
- * load is failing. AsyncRegion is that behavior expressed as a shared component;
- * this screen prefixes its error message with the callable name to match the
- * reference's "listFormSchemas failed: $msg" / "deleteFormSchema failed: $msg"
- * wording, since AsyncRegion itself does not know which callable is loading.
+ * load is failing. `AsyncRegion` is that behavior expressed as a shared
+ * component; this screen prefixes its error message with the callable name to
+ * match the reference's "listFormSchemas failed: $msg" /
+ * "deleteFormSchema failed: $msg" wording, since `AsyncRegion` itself does not
+ * know which callable is loading.
+ *
+ * `listBusinessAdmins` resolves each row's `updatedBy` uid to an admin's email
+ * (see `resolveUpdatedBy`). That roster load is independent of the schemas
+ * load: a roster failure never blocks or empties the schemas list, it only
+ * leaves `updatedBy` showing the raw/shortened uid.
  *
  * This component renders the list. The editor screen (`FormSchemaEditor.tsx`)
  * is mounted in a modal by the router (`routes/FormSchemasView.tsx`), which
@@ -120,6 +247,8 @@ interface FormSchemasProps {
  */
 export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
   const [schemas, setSchemas] = useState<Async<FormSchemaSummary[]>>({ status: 'loading' });
+  const [emailByUid, setEmailByUid] = useState<ReadonlyMap<string, string>>(new Map());
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [query, setQuery] = useState('');
   const [pendingDelete, setPendingDelete] = useState<FormSchemaSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -130,7 +259,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
     let live = true;
     setSchemas({ status: 'loading' });
     listFormSchemas()
-      .then((data) => live && setSchemas({ status: 'ready', data: sortByUpdatedAtDesc(data) }))
+      .then((data) => live && setSchemas({ status: 'ready', data }))
       .catch(
         (err: unknown) =>
           live &&
@@ -147,6 +276,28 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
 
   useEffect(() => load(), [load]);
 
+  // Independent of the schemas load: a roster it cannot fetch leaves
+  // `updatedBy` showing the raw/shortened uid rather than costing the
+  // operator the schemas list. Never chained into `load()`.
+  useEffect(() => {
+    let live = true;
+    listBusinessAdmins()
+      .then((roster) => {
+        if (!live) return;
+        const map = new Map<string, string>();
+        for (const member of roster.members) {
+          if (member.email) map.set(member.uid, member.email);
+        }
+        setEmailByUid(map);
+      })
+      .catch(() => {
+        // Swallowed on purpose: see the function doc above.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   // Escape cancels the delete confirm, same as clicking Cancel, but never while
   // a delete is actually in flight (mirrors the reference's onDismiss guard).
   useEffect(() => {
@@ -160,7 +311,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
 
   // Deletes via deleteFormSchema, then reloads (matches confirmDelete() in the
   // reference: it reloads on success rather than optimistically splicing the
-  // row, so a schema that reappears server-side, a stale delete, a race, 
+  // row, so a schema that reappears server-side, a stale delete, a race,
   // does not silently vanish from the operator's view). A failure surfaces
   // through the SAME error state the initial load uses, which is why
   // AsyncRegion's "unavailable while the load is failing" message applies here
@@ -186,6 +337,14 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
     }
   }
 
+  function handleSort(column: SortColumn) {
+    setSort((prev) =>
+      prev.column === column
+        ? { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: 'asc' },
+    );
+  }
+
   const shownCount = schemas.status === 'ready' ? filterSchemas(schemas.data, query).length : 0;
   const countLabel = shownCount > 0 ? `${shownCount} schemas` : null; // hide the chip on empty (wasm parity)
 
@@ -201,77 +360,113 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
         }
       />
 
-      <DenPanel
-        title="All schemas"
-        subtitle="Click a row to open it in the editor. The editor owns create, edit, save, and delete."
-        {...(countLabel ? { trailing: <span className="schemas__count">{countLabel}</span> } : {})}
+      <AsyncRegion
+        state={schemas}
+        what="schemas"
+        isEmpty={(rows) => rows.length === 0}
+        loading={<p className="schemas__hint">Loading schemas…</p>}
+        empty={<p className="schemas__hint">No schemas yet. Click New schema to create one.</p>}
       >
-        <AsyncRegion
-          state={schemas}
-          what="schemas"
-          isEmpty={(rows) => rows.length === 0}
-          loading={<p className="schemas__hint">Loading schemas…</p>}
-          empty={<p className="schemas__hint">No schemas yet. Click New schema to create one.</p>}
-        >
-          {(rows) => {
-            const visible = filterSchemas(rows, query);
-            return (
-              <>
-                <div className="schemas__search">
-                  <input
-                    type="search"
-                    className="schemas__search-input"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Filter schemas by name or id…"
-                    aria-label="Filter schemas by name or id"
-                  />
+        {(rows) => {
+          const visible = filterSchemas(rows, query);
+          const sorted = sortSchemas(visible, emailByUid, sort);
+          return (
+            <>
+              <div className="schemas__controls">
+                <input
+                  type="search"
+                  className="schemas__search-input"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter schemas by name or id…"
+                  aria-label="Filter schemas by name or id"
+                />
+                {countLabel && <span className="schemas__count">{countLabel}</span>}
+              </div>
+
+              {sorted.length === 0 ? (
+                <p className="schemas__hint">No schemas match &ldquo;{query}&rdquo;.</p>
+              ) : (
+                <div className="schemas__table-wrap">
+                  <table className="schemas__table">
+                    <colgroup>
+                      <col className="schemas__col-name" />
+                      <col className="schemas__col-version" />
+                      <col className="schemas__col-updated" />
+                      <col className="schemas__col-by" />
+                      <col className="schemas__col-actions" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <SortHeader column="name" sort={sort} onSort={handleSort} />
+                        <SortHeader column="version" sort={sort} onSort={handleSort} />
+                        <SortHeader column="updatedAt" sort={sort} onSort={handleSort} />
+                        <SortHeader column="updatedBy" sort={sort} onSort={handleSort} />
+                        <th scope="col" className="schemas__th schemas__th--actions" aria-label="Actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((row) => {
+                        const updatedFull = formSchemaUpdatedFull(row.updatedAt);
+                        const byLabel = resolveUpdatedBy(row.updatedBy, emailByUid);
+                        const nameCell = (
+                          <>
+                            <span className="schemas__row-name">{row.name || row.id}</span>
+                            <code className="schemas__row-id">{row.id}</code>
+                          </>
+                        );
+                        return (
+                          <tr
+                            key={row.id}
+                            className={onSelect ? 'schemas__row schemas__row--clickable' : 'schemas__row'}
+                            {...(onSelect ? { onClick: () => onSelect(row.id) } : {})}
+                          >
+                            <td className="schemas__td schemas__td--name">
+                              {onSelect ? (
+                                <button type="button" className="schemas__row-main">
+                                  {nameCell}
+                                </button>
+                              ) : (
+                                <div className="schemas__row-main schemas__row-main--static">{nameCell}</div>
+                              )}
+                            </td>
+                            <td className="schemas__td schemas__td--version">
+                              <span className="den-pill" data-tone="teal">v{row.version}</span>
+                            </td>
+                            <td className="schemas__td schemas__td--updated">
+                              {updatedFull ?? <span className="schemas__blank">-</span>}
+                            </td>
+                            <td className="schemas__td schemas__td--by">
+                              {byLabel ?? <span className="schemas__blank">-</span>}
+                            </td>
+                            <td
+                              className="schemas__td schemas__td--actions"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <IconButton
+                                icon={<TrashGlyph />}
+                                label={`Delete ${row.name || row.id}`}
+                                onClick={() => setPendingDelete(row)}
+                                destructive
+                                revealOnHover
+                                size={32}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
+              )}
 
-                {visible.length === 0 ? (
-                  <p className="schemas__hint">No schemas match &ldquo;{query}&rdquo;.</p>
-                ) : (
-                  <ul className="schemas__list">
-                    {visible.map((row) => {
-                      const rowBody = (
-                        <>
-                          <span className="schemas__row-name">{row.name || row.id}</span>
-                          <code className="schemas__row-id">{row.id}</code>
-                          <span className="schemas__row-meta">{metaLine(row)}</span>
-                        </>
-                      );
-                      // Static <div> when unwired: a handler-less <button> still
-                      // carries the implicit button role and is a focusable dead
-                      // control. Real <button> only once onSelect wires it.
-                      return (
-                      <li key={row.id} className="schemas__row">
-                        {onSelect ? (
-                          <button type="button" className="schemas__row-main" onClick={() => onSelect(row.id)}>
-                            {rowBody}
-                          </button>
-                        ) : (
-                          <div className="schemas__row-main schemas__row-main--static">{rowBody}</div>
-                        )}
-                        <IconButton
-                          icon={<TrashGlyph />}
-                          label={`Delete ${row.name || row.id}`}
-                          onClick={() => setPendingDelete(row)}
-                          destructive
-                          revealOnHover
-                          size={32}
-                        />
-                      </li>
-                      );
-                    })}
-                  </ul>
-                )}
-
-                <GhostButton label="Reload" onClick={load} className="schemas__reload" />
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
+              <div className="schemas__footer">
+                <GhostButton label="Reload" onClick={load} />
+              </div>
+            </>
+          );
+        }}
+      </AsyncRegion>
 
       {pendingDelete && (
         <Dialog

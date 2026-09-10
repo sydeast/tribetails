@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  NO_UPDATED_AT_LABEL,
-  formSchemaTimeOf,
-  formSchemaUpdatedLabel,
-} from './formSchemaFormat';
+import { formSchemaTimeOf, formSchemaUpdatedFull } from './formSchemaFormat';
 
 // TZ pinned to a west-of-UTC zone so the AO-18 assertions below are meaningful
 // on any CI runner (identical rationale to lib/tribalIntelFormat.test.ts /
@@ -38,34 +34,33 @@ describe('formSchemaTimeOf', () => {
   });
 });
 
-describe('formSchemaUpdatedLabel', () => {
-  it('renders a well-formed instant as LOCAL MM-DD HH:mm, never the raw ISO string', () => {
+describe('formSchemaUpdatedFull', () => {
+  it('renders a well-formed instant as LOCAL YYYY-MM-DD HH:mm, with the year', () => {
     // The exact row from the visual harness: v4 / e2e-admin / this instant.
     // 10:15 UTC is 05:15 in America/Chicago (CDT, UTC-5).
-    expect(formSchemaUpdatedLabel('2026-08-02T10:15:00.000Z')).toBe('08-02 05:15');
-    expect(formSchemaUpdatedLabel('2026-08-02T10:15:00.000Z')).not.toContain('T');
-    expect(formSchemaUpdatedLabel('2026-08-02T10:15:00.000Z')).not.toContain('Z');
+    expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).toBe('2026-08-02 05:15');
+    expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).not.toContain('T');
+    expect(formSchemaUpdatedFull('2026-08-02T10:15:00.000Z')).not.toContain('Z');
   });
 
   it('shows the LOCAL calendar day, not the UTC one (AO-18)', () => {
     // 01:00 UTC on the 17th is 20:00 on the 16th in Chicago. A raw ISO slice
     // would have printed the 17th.
-    expect(formSchemaUpdatedLabel('2026-07-17T01:00:00.000Z')).toBe('07-16 20:00');
+    expect(formSchemaUpdatedFull('2026-07-17T01:00:00.000Z')).toBe('2026-07-16 20:00');
   });
 
-  it('says "date unknown" for a null updatedAt, the value the server really sends', () => {
-    expect(formSchemaUpdatedLabel(null)).toBe(NO_UPDATED_AT_LABEL);
-    expect(formSchemaUpdatedLabel(null)).toBe('date unknown');
+  it('is null for a null updatedAt, the value the server really sends', () => {
+    expect(formSchemaUpdatedFull(null)).toBeNull();
   });
 
-  it('says "date unknown" for a blank or whitespace updatedAt', () => {
-    expect(formSchemaUpdatedLabel('')).toBe('date unknown');
-    expect(formSchemaUpdatedLabel('   ')).toBe('date unknown');
+  it('is null for a blank or whitespace updatedAt', () => {
+    expect(formSchemaUpdatedFull('')).toBeNull();
+    expect(formSchemaUpdatedFull('   ')).toBeNull();
   });
 
   it('echoes an unparseable value verbatim: never "Invalid Date", never "NaN"', () => {
     for (const bad of ['not-a-date', 'sometime last Tuesday', '2026-13-45T99:99:99Z', '???']) {
-      const out = formSchemaUpdatedLabel(bad);
+      const out = formSchemaUpdatedFull(bad);
       expect(out).toBe(bad);
       expect(out).not.toMatch(/Invalid Date/);
       expect(out).not.toMatch(/NaN/);
@@ -73,12 +68,6 @@ describe('formSchemaUpdatedLabel', () => {
   });
 
   it('trims an unparseable value rather than echoing its padding', () => {
-    expect(formSchemaUpdatedLabel('  not-a-date  ')).toBe('not-a-date');
-  });
-
-  it('never returns a blank string, so the meta line can never lose the part', () => {
-    for (const input of [null, '', '   ', 'not-a-date', '2026-08-02T10:15:00.000Z']) {
-      expect(formSchemaUpdatedLabel(input).trim()).not.toBe('');
-    }
+    expect(formSchemaUpdatedFull('  not-a-date  ')).toBe('not-a-date');
   });
 });

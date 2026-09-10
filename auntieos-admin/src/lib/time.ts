@@ -35,6 +35,19 @@ export function formatWhen(ts: FsTime): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * LOCAL `YYYY-MM-DD HH:mm`, with the year: the shape a sortable table column
+ * uses when it has its own header to name the field, unlike `formatWhen`'s
+ * bare `MM-DD HH:mm`, which counts on a joined meta line to supply context.
+ * `null` for a missing timestamp, so a caller can render its own blank
+ * placeholder rather than inherit `formatWhen`'s `(no time)`.
+ */
+export function formatWhenFull(ts: FsTime): string | null {
+  const d = tsToDate(ts);
+  if (!d) return null;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Machine-readable local datetime for a `<time dateTime={…}>` attribute. */
 export function machineWhen(ts: FsTime): string | undefined {
   const d = tsToDate(ts);

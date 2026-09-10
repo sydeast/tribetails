@@ -124,12 +124,18 @@ Converting it to cards would have put it off both. A card grid is also worse
 for this list specifically: it makes four short parallel values impossible to
 scan down, and it leaves nowhere to hang a sort.
 
-**That exception is currently UNBUILT.** The React screen ships neither shape:
-it renders stacked full-width rows with the four fields flattened into one meta
-string (`v4  ·  08-02 10:15  ·  by e2e-admin`). Building the table, sortable
-column headers included, is follow-up work with its own Android parity and its
-own golden (`visual/baselines/react/formschema-list.png`). Nobody has
-overruled the mock; the work simply has not been done.
+**Built** (issue #717). `FormSchemas.tsx` renders the real `<table>` the mock
+draws: Name / Version / Updated / Updated by columns, each header a sort
+control with a caret, Updated selected descending by default, blank
+`updatedAt`/`updatedBy` rendering "-" and sorting last, `updatedBy` resolved to
+an admin's email via `listBusinessAdmins` when the uid is a known admin. No
+`DenPanel` wraps it: the filter box and count chip sit in a controls row under
+the screen heading, and Reload sits in its own footer, matching the mock's bare
+layout. Android's phone-width analogue is a sort strip above the existing
+`AuntieEntityRow` cards (a phone still shows one card per schema, per the
+Android rule above; the four fields are unchanged, only their order is now
+choosable), plus the same `listBusinessAdmins` email resolution in the row
+subtitle.
 
 ### Screens still to classify
 
