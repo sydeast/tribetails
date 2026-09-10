@@ -155,18 +155,18 @@ describe('KinfolkProfile', () => {
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
   });
 
-  it('omits all-blank sections (no empty Emergency/Vet panels)', async () => {
+  it('omits all-blank sections (no empty Emergency Contacts/Vet panels)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     await screen.findByText('512-555-1000');
-    expect(screen.queryByText('Emergency')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Emergency Contacts' })).toBeNull();
     expect(screen.queryByText('Vet clinic')).toBeNull();
   });
 
-  it('shows the Emergency section when a field is present', async () => {
+  it('shows the Emergency Contacts section when a field is present, renamed from "Emergency" (#680)', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ emergencyContactName: 'Sam', emergencyContactPhone: '555-9' }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
-    expect(await screen.findByText('Emergency')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
     expect(screen.getByText('Sam')).toBeInTheDocument();
   });
 

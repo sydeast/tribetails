@@ -444,7 +444,7 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
                 </fieldset>
               </DenPanel>
 
-              <DenPanel title="Emergency" subtitle="Who Auntie calls if something goes wrong.">
+              <DenPanel title="Emergency Contacts" subtitle="Who Auntie calls if something goes wrong.">
                 <fieldset className="kfedit__grid" disabled={busy}>
                   {EMERGENCY_FIELDS.map(([key, label]) => (
                     <TextField

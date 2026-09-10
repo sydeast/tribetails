@@ -113,7 +113,7 @@ function firstNonBlank(...values: string[]): string {
  * #678/#682, superseding the mock's original left/right split): a breadcrumb
  * trail, a hero carrying the household's identity and the actions that act on
  * it, then two columns. The LEFT column is the household's own facts (Contact,
- * the access panel, Emergency, the vet panels, Auntie's notes). The RIGHT
+ * the access panel, Emergency Contacts, the vet panels, Auntie's notes). The RIGHT
  * column is who they have and what has happened or is coming: Kin, Upcoming
  * KinCare, Recent KinTales, Invoices, in that order. Below the mock's own
  * 860px breakpoint the two columns become one, which is also what the Android
@@ -122,7 +122,7 @@ function firstNonBlank(...values: string[]): string {
  * WHERE THIS DELIBERATELY CARRIES MORE THAN THE MOCK: the mock's own header says
  * its content is illustrative placeholder, so its five-row "Household" panel is a
  * sketch of a facts panel, not a list of the only five facts a household has. The
- * fielded sections (Contact / Home & access / Emergency) stay, because every
+ * fielded sections (Contact / the access panel / Emergency Contacts) stay, because every
  * field in them is persisted and an Auntie standing on a doorstep needs the gate
  * code. Same for the controls the mock does not draw (Edit, Household data,
  * Members and invites, the tag editor, the masked secrets, the vet panels): each
@@ -409,7 +409,7 @@ export function KinfolkProfile({
                 </DenPanel>
 
                 {any(p.emergencyContactName, p.emergencyContactPhone, p.emergencyContactRelation) && (
-                  <DenPanel title="Emergency">
+                  <DenPanel title="Emergency Contacts">
                     <dl className="kprofile__facts">
                       <Fact label="Name" value={p.emergencyContactName} />
                       <Fact label="Phone" value={p.emergencyContactPhone} mono />

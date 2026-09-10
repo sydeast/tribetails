@@ -133,6 +133,13 @@ describe('KinfolkEdit: rendering from data', () => {
     expect(screen.getByRole('radio', { name: 'Prospect' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Active' })).toHaveAttribute('aria-checked', 'false');
   });
+
+  /** #680: renamed from "Emergency" so it is not mistaken for the vet panels. */
+  it('heads the emergency contact panel "Emergency Contacts"', async () => {
+    mount();
+    expect(await screen.findByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Emergency' })).toBeNull();
+  });
 });
 
 describe('KinfolkEdit: service address autofill (#12)', () => {
