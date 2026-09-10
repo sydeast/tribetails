@@ -31,6 +31,64 @@
   color: var(--color-text-faint);
 }
 
+.kview__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.kview__tag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+  font-family: var(--type-label-lg-family);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  line-height: 1.2;
+}
+
+.kview__tags-edit {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: var(--type-label-sm-size);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 4px;
+}
+
+.kview__tags-edit:hover {
+  text-decoration: underline;
+}
+
+/* The reactive marker: an alert-toned pill attached under the Kin box,
+   matching the `.tag.alert` pattern in ui-ideas/auntieos-kin-detail-2026-05-27.html,
+   in place of a full-width page Banner. */
+.kview__flag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-warning) 42%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+  color: var(--color-text-primary);
+  font-family: var(--type-label-lg-family);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+}
+
+[data-theme='dark'] .kview__flag-pill {
+  border-color: color-mix(in srgb, var(--color-warning) 50%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 20%, var(--color-surface));
+}
+
 .kview__facts {
   display: grid;
   grid-template-columns: minmax(9rem, max-content) 1fr;

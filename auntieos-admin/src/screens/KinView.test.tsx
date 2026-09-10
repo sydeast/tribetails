@@ -87,10 +87,13 @@ describe('KinView', () => {
     expect(getKin).toHaveBeenCalledWith('p1');
   });
 
-  it('flags a reactive pet loudly and shows behavior notes', async () => {
+  it('marks a reactive pet with a small alert pill under the Kin box, not a page banner', async () => {
     getKin.mockResolvedValue(kin({ reactive: true, routine: 'Slow approach' }));
     render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
     expect(await screen.findByText(/handle with care/i)).toBeInTheDocument();
+    // No page-level banner: a banner carries role="alert" (Banner.tsx), the
+    // marker does not.
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('Slow approach')).toBeInTheDocument();
   });
 
@@ -103,6 +106,26 @@ describe('KinView', () => {
     expect(screen.queryByText(/handle with care/i)).toBeNull();
   });
 
+  it('has no "Kin profile." subtitle under the name', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    await screen.findByText('Basics');
+    expect(screen.queryByText('Kin profile.')).toBeNull();
+  });
+
+  it('renders no Owner contact panel, even when the stored doc still carries the fields', async () => {
+    // mergeKinDetail no longer reads ownerEmail/ownerPhone at all; a raw doc
+    // that still has them (an untouched legacy value) must not surface either.
+    getKin.mockResolvedValue(
+      mergeKinDetail('p1', { name: 'Willow', ownerEmail: 'a@b.com', ownerPhone: '5551234567' }),
+    );
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    await screen.findByText('Basics');
+    expect(screen.queryByText('Owner contact')).toBeNull();
+    expect(screen.queryByText('a@b.com')).toBeNull();
+    expect(screen.queryByText('5551234567')).toBeNull();
+  });
+
   it('calls onBack from the Back control', async () => {
     getKin.mockResolvedValue(kin());
     const onBack = vi.fn();
@@ -111,11 +134,22 @@ describe('KinView', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('shows and edits pet tags, saving via updateKinTags', async () => {
+  it('shows pet tags as pills next to the name, not a separate Tags panel', async () => {
+    getKin.mockResolvedValue(kin({ tags: ['Yellow lab', 'Microchipped'] }));
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    expect(await screen.findByText('Yellow lab')).toBeInTheDocument();
+    expect(screen.getByText('Microchipped')).toBeInTheDocument();
+    expect(screen.queryByText('Tags')).toBeNull();
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+  });
+
+  it('opens the tag editor from the Edit tags affordance and saves via updateKinTags', async () => {
     getKin.mockResolvedValue(kin({ tags: ['Reactive'] }));
     render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
-    expect(await screen.findByText('Reactive')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText(/add a pet tag/i), 'On meds{Enter}');
+    await screen.findByText('Reactive');
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.type(await screen.findByLabelText(/add a pet tag/i), 'On meds{Enter}');
     await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', ['Reactive', 'On meds']));
   });
 });

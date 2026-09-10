@@ -38,7 +38,9 @@ import com.tribetails.auntieos.data.model.Kinfolk
  *   Kinfolk.archived*        -> "", erasing the archive audit trail
  *   Kin.tags                 -> null, wiping the pet tag vocabulary assignment
  *   Kin.photos               -> [], wiping the migrated photo list
- *   Kin.ownerEmail / ownerPhone -> ""
+ *   Kin.ownerEmail / ownerPhone -> "" (both fields retired from the model since,
+ *                               #687: the kinfolk is the owner, so a second
+ *                               contact record on the pet was redundant)
  *   Kin.status               -> hardcoded "active", un-archiving an archived pet
  *
  * `Kin.tags` is the sharp one: the model comment on that field says it was ADDED
@@ -141,8 +143,6 @@ internal val KIN_DIFF_FIELDS: Map<String, (Kin) -> Any> = linkedMapOf(
     "vetInfo" to { it: Kin -> it.vetInfo },
     "checklist" to { it: Kin -> it.checklist },
     "reactive" to { it: Kin -> it.reactive },
-    "ownerEmail" to { it: Kin -> it.ownerEmail },
-    "ownerPhone" to { it: Kin -> it.ownerPhone },
     "officeNotes" to { it: Kin -> it.officeNotes },
     "formValues" to { it: Kin -> it.formValues },
     // Names, not the raw value: same reason as `Kinfolk.tags` above.

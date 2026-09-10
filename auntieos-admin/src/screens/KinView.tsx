@@ -7,7 +7,6 @@ import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
-import { Banner } from '../components/Banner';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { KinEdit } from './KinEdit';
@@ -44,15 +43,25 @@ function any(...vals: string[]): boolean {
  * Kin (pet) detail view: the read-only screen Directory's onSelectKin opens
  * (Directory shipped list-only). Reads the FULL `kin/{id}` doc via `getKin` (a
  * one-shot getDoc; the list stream carries list fields only). Organized into
- * fielded sections (Basics, Behavior & care, Feeding, Health, Owner contact,
- * Notes); an all-blank section is omitted. A REACTIVE pet is flagged loudly up
- * top, since that is a handle-with-care safety signal, not just another field.
+ * fielded sections (Basics, Behavior & care, Feeding, Health, Notes); an
+ * all-blank section is omitted. A pet's tags render as pills next to its
+ * name in the Kin box, not a separate panel; a REACTIVE pet gets a small
+ * alert-toned marker attached under the Kin box, not a full-width banner: a
+ * handle-with-care signal, but not one that needs to interrupt the page.
  */
 export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
   // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
   // save/archive returns here + reloads so the fresh doc renders.
   const [editing, setEditing] = useState(false);
+  // The tag editor (ProfileTagsSection) stays the same component, just no
+  // longer permanently on screen as its own panel: the pills next to the name
+  // are the default view, and this toggle is the smaller of the two ways to
+  // keep editing reachable (the alternative, moving tag editing into KinEdit,
+  // would break the kinfolk profile's own rule that tags are edited on the
+  // profile screen, never the edit form; see KinfolkEdit.tsx's note on the
+  // same point).
+  const [tagsOpen, setTagsOpen] = useState(false);
 
   const load = useCallback(() => {
     let live = true;
@@ -115,7 +124,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
           { label: kinName || kinId },
         ]}
         title={kinName || kinId}
-        subtitle="Kin profile."
         trailing={
           <>
             <GhostButton label="Back to Directory" onClick={onBack} />
@@ -138,12 +146,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
           const spayed = k.spayedNeutered ? 'Yes' : '';
           return (
             <>
-              {k.reactive && (
-                <Banner tone="warning" title="Reactive: handle with care">
-                  This pet is flagged reactive. Review the behavior notes below before the visit.
-                </Banner>
-              )}
-
               <DenPanel title="Kin">
                 <div className="kview__head">
                   <Avatar
@@ -160,11 +162,39 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                     <span className="kview__status" data-tone={k.status.toLowerCase()}>
                       {k.status.trim() === '' ? '-' : k.status.toLowerCase()}
                     </span>
+                    <div className="kview__tags">
+                      {k.tags.map((tag) => (
+                        <span key={tag} className="kview__tag-pill">
+                          {tag}
+                        </span>
+                      ))}
+                      <button
+                        type="button"
+                        className="kview__tags-edit"
+                        onClick={() => setTagsOpen((open) => !open)}
+                      >
+                        {tagsOpen ? 'Done' : 'Edit tags'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </DenPanel>
 
-              <ProfileTagsSection scope="pet" initialTags={k.tags} onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)} />
+              {k.reactive && (
+                <div className="kview__flags">
+                  <span className="kview__flag-pill">
+                    <span aria-hidden="true">⚠</span> Reactive: handle with care
+                  </span>
+                </div>
+              )}
+
+              {tagsOpen && (
+                <ProfileTagsSection
+                  scope="pet"
+                  initialTags={k.tags}
+                  onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)}
+                />
+              )}
 
               <DenPanel title="Basics">
                 <dl className="kview__facts">
@@ -205,15 +235,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                     <Fact label="Vaccinations" value={k.vaccinations} />
                     <Fact label="Medication / health notes" value={k.medicationHealthNotes} />
                     <Fact label="Vet info" value={k.vetInfo} />
-                  </dl>
-                </DenPanel>
-              )}
-
-              {any(k.ownerEmail, k.ownerPhone) && (
-                <DenPanel title="Owner contact">
-                  <dl className="kview__facts">
-                    <Fact label="Email" value={k.ownerEmail} />
-                    <Fact label="Phone" value={k.ownerPhone} mono />
                   </dl>
                 </DenPanel>
               )}
