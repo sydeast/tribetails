@@ -6,6 +6,7 @@ import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { getKin411 } from '../api/recipientContext';
 import { type Async } from '../lib/async';
 import { str } from '../lib/coerce';
+import { directionsHref } from '../lib/directions';
 import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { DenBreadcrumbs, DenPanel, EmptyHint } from '../components/DenScreenKit';
@@ -56,24 +57,37 @@ interface KinfolkProfileProps {
  * One label/value line; renders nothing when the value is blank (never "undefined").
  * `secret` routes the value through MaskedValue, so an access code is hidden until
  * the operator asks for it; the label doubles as the toggle's spoken field name.
+ * `directions` renders the value as a link that opens it in Google Maps for
+ * turn-by-turn directions (issue #685), the same way Call and Text in the hero
+ * are real `tel:`/`sms:` anchors rather than plain text.
  */
 function Fact({
   label,
   value,
   mono,
   secret,
+  directions,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   secret?: boolean;
+  directions?: boolean;
 }) {
   if (value.trim() === '') return null;
   return (
     <div className="kprofile__fact">
       <dt className="kprofile__fact-label">{label}</dt>
       <dd className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}>
-        {secret === true ? <MaskedValue value={value} field={label.toLowerCase()} /> : value}
+        {directions === true ? (
+          <a href={directionsHref(value)} target="_blank" rel="noopener">
+            {value}
+          </a>
+        ) : secret === true ? (
+          <MaskedValue value={value} field={label.toLowerCase()} />
+        ) : (
+          value
+        )}
       </dd>
     </div>
   );
@@ -341,7 +355,9 @@ export function KinfolkProfile({
                     own "Home & access" panel: an address is a way to reach the
                     household same as a phone number is. Gate code, parking,
                     entry notes and Wi-Fi stay in the access panel below, since
-                    the issue that asked for this only named the home address. */}
+                    the issue that asked for this only named the home address.
+                    The address itself opens Google Maps directions (#685), the
+                    way Call and Text in the hero are real tel:/sms: anchors. */}
                 <DenPanel title="Contact">
                   <dl className="kprofile__facts">
                     <Fact label="Phone" value={p.phoneNumber} mono />
@@ -350,7 +366,7 @@ export function KinfolkProfile({
                     <Fact label="Secondary email" value={p.secondaryEmail} />
                     <Fact label="Preferred contact" value={p.preferredContactMethod} />
                     <Fact label="Best time to reach" value={p.bestTimeToContact} />
-                    <Fact label="Service address" value={p.serviceAddress} />
+                    <Fact label="Service address" value={p.serviceAddress} directions />
                     {!any(
                       p.phoneNumber,
                       p.email,
@@ -409,7 +425,9 @@ export function KinfolkProfile({
                     vet authored in two places at once. They now resolve through
                     `household_data`'s clinic id, so what is shown here is the
                     same single record the Household Data screen edits and the
-                    vet clinics manager corrects. */}
+                    vet clinics manager corrects. The clinic address is a
+                    directions link too (#685), for the same reason the service
+                    address above is one. */}
                 <HouseholdVetPanels kinfolkId={kinfolkId} />
 
                 {/* The mock's "Auntie's notes · admin only". Admin-only, and

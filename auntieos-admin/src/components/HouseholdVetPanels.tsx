@@ -4,6 +4,7 @@ import { DenPanel } from './DenScreenKit';
 import { useOneShot } from '../lib/useOneShot';
 import { useCollection } from '../lib/firestore';
 import { getHouseholdData, type HouseholdRecord } from '../api/householdData';
+import { directionsHref } from '../lib/directions';
 import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
 import { resolveHouseholdVet, hasVet, type ResolvedVet } from '../lib/householdVet';
 
@@ -90,7 +91,7 @@ function VetPanel({
         <>
           <dl className="kprofile__facts">
             <Fact label="Clinic" value={vet.name} />
-            <Fact label="Address" value={vet.address} />
+            <Fact label="Address" value={vet.address} directions />
             <Fact label="Phone" value={vet.phone} mono />
             <Fact label="Hours" value={vet.hours} />
           </dl>
@@ -113,13 +114,35 @@ function VetPanel({
   );
 }
 
-/** Local copy of the profile's fact row: blank values are omitted, not shown. */
-function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+/**
+ * Local copy of the profile's fact row: blank values are omitted, not shown.
+ * `directions` renders the value as a Google Maps directions link (#685), same
+ * as the profile's own `Fact` does for the service address.
+ */
+function Fact({
+  label,
+  value,
+  mono,
+  directions,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  directions?: boolean;
+}) {
   if (value.trim() === '') return null;
   return (
     <div className="kprofile__fact">
       <dt>{label}</dt>
-      <dd className={mono === true ? 'mono' : undefined}>{value}</dd>
+      <dd className={mono === true ? 'mono' : undefined}>
+        {directions === true ? (
+          <a href={directionsHref(value)} target="_blank" rel="noopener">
+            {value}
+          </a>
+        ) : (
+          value
+        )}
+      </dd>
     </div>
   );
 }

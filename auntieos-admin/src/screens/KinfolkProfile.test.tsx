@@ -487,6 +487,17 @@ describe('KinfolkProfile: the mock', () => {
     expect(contact).not.toBeNull();
     expect(within(contact as HTMLElement).getByText('18609 Salt River Bay Dr')).toBeInTheDocument();
   });
+  it('renders the service address as a Google Maps directions link (#685)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ serviceAddress: '18609 Salt River Bay Dr' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    const link = await screen.findByRole('link', { name: '18609 Salt River Bay Dr' });
+    expect(link).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/dir/?api=1&destination=18609%20Salt%20River%20Bay%20Dr',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
   it('shows the admin-only dossier band, headed as admin only', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     getDossier.mockResolvedValue({
