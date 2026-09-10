@@ -15,10 +15,20 @@ import { ADMIN } from '../../e2e/fixtures/accounts';
  * account prod has never heard of, and the run would fail at the form with a
  * bad-credentials banner, which reads as an app defect rather than as the
  * export the operator forgot.
+ *
+ * `Cypress.expose`, NOT the `Cypress.env` this read until Cypress 16 removed
+ * that method. Nothing changes for whoever runs this: the same two
+ * `CYPRESS_`-prefixed variables are still what the runbook says to export, and
+ * they still spell the same names here. What changed is that a prefixed
+ * variable now lands in Cypress's Node-side `env` rather than anywhere the
+ * browser can see, so `cypress.config.ts` carries the pair across into
+ * `expose`. Its comment holds the argument for why they go there rather than
+ * through an asynchronous `cy.env()` read - in short, because
+ * `usingFixtureAdmin()` below is read where no command chain exists yet.
  */
 function adminCredentials(): { email: string; password: string } {
-  const email = Cypress.env('E2E_ADMIN_EMAIL') as string | undefined;
-  const password = Cypress.env('E2E_ADMIN_PW') as string | undefined;
+  const email = Cypress.expose('E2E_ADMIN_EMAIL') as string | undefined;
+  const password = Cypress.expose('E2E_ADMIN_PW') as string | undefined;
   if (email && password) return { email, password };
   if (email || password) {
     throw new Error(

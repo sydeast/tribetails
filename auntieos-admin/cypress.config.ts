@@ -41,8 +41,44 @@ const PORT = 5174; // matches vite.config.ts's dev port and playwright.config.ts
  */
 let seeded: Promise<void> | null = null;
 
+/**
+ * The admin credentials a deployed-host run overrides, carried from this
+ * process into the browser.
+ *
+ * WHY THIS BRIDGE EXISTS AT ALL. Cypress 16 removed `Cypress.env()` and split
+ * what it did in two: `expose`, which the browser can read synchronously, and
+ * `env`, which stays in this Node process and is fetched a command at a time
+ * with `cy.env()`. A `CYPRESS_`-prefixed operating-system variable lands in
+ * `env` and NEVER in `expose` - `parseExposed` in Cypress's own config package
+ * fills `expose` from this file and from `--expose` on the command line, and
+ * from nothing else. So the two variables `docs/runbooks/e2e.md` tells the
+ * operator to export would simply stop arriving if this file did not carry
+ * them across.
+ *
+ * WHY `expose` AND NOT `cy.env()`, given the password is a secret. Because
+ * `usingFixtureAdmin()` in `cypress/support/commands.ts` is read synchronously
+ * inside `this.skip()`, before a test body starts, and there is no command
+ * chain to hang an async read off at that point. And the secrecy `cy.env()`
+ * buys is not available here in any case: this suite signs in by TYPING the
+ * password into the real form, so it is in the browser either way. Under
+ * Cypress 15 both values reached the browser through `Cypress.env()`, and this
+ * is the same reach by its new name, not a wider one.
+ *
+ * ONLY KEYS THAT ARE ACTUALLY SET GO IN. `commands.ts` treats one-of-two as an
+ * error rather than as a fallback, so an entry present but undefined would
+ * defeat the check it makes.
+ */
+const CREDENTIAL_OVERRIDE_KEYS = ['E2E_ADMIN_EMAIL', 'E2E_ADMIN_PW'] as const;
+
+const credentialOverride: Record<string, string> = {};
+for (const key of CREDENTIAL_OVERRIDE_KEYS) {
+  const value = process.env[`CYPRESS_${key}`];
+  if (value) credentialOverride[key] = value;
+}
+
 export default defineConfig({
   projectId: '2khvut',
+  expose: credentialOverride,
   e2e: {
     baseUrl: `http://127.0.0.1:${PORT}`,
     specPattern: 'cypress/e2e/**/*.cy.ts',
