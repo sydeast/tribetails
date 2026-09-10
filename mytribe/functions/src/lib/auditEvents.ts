@@ -198,6 +198,12 @@ export const AUDIT_EVENTS = {
 
   // Admin feature-flag toggles (setFeatureFlags callable).
   ADMIN_FEATURE_FLAGS_UPDATED: 'ADMIN_FEATURE_FLAGS_UPDATED',
+  // #713: one tag was deleted from a business_settings vocabulary AND stripped
+  // off every kinfolk (or kin) doc carrying it. Audited because the strip is
+  // not recoverable: the vocabulary row can be re-added, but which households
+  // held the tag is gone the moment the batch commits. The payload carries the
+  // record ids so the trail can answer that.
+  BUSINESS_TAG_REMOVED: 'BUSINESS_TAG_REMOVED',
 
   // Care-ops session callables (1E §A.9): server-bound create + reschedule of
   // kin_care_sessions, replacing client-side patches so the audit is bound to
