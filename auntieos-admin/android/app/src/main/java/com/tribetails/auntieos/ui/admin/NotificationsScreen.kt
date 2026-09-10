@@ -517,8 +517,9 @@ private fun DaySeparator(label: String) {
  *
  * Quick actions (Step 4) are all live: a read/unread toggle, an Open button when the
  * notification points at an openable item, a Dismiss button, and quick Approve/Deny
- * when the notification targets a booking. Which buttons appear is decided by the
- * pure [applicableNotificationActions] helper from the entry's targetType.
+ * on a still-pending booking request. Which buttons appear is decided by the pure
+ * [applicableNotificationActions] helper from the entry's targetType and, for
+ * Approve/Deny and Create quote (issue #706), its dispatch key.
  *
  * The CTAs were never the broken half of the operator's complaint. They have
  * always acted on the entity via batchUpdateBookings. What was broken is that
@@ -616,6 +617,11 @@ private fun NotificationRow(
                     }
                 }
             }
+            // ISSUE #707: a read row must LOOK read. Unread already owns the
+            // border colour below; a read row dims its own text instead, so
+            // triage still reads read vs. unread without relying on the
+            // "Mark unread"/"Mark read" label alone.
+            val bodyTextColor = if (unread) c.textPrimary else c.textDim
             if (canOpenDetail) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -624,7 +630,7 @@ private fun NotificationRow(
                     Text(
                         text = notificationHeadline(entry),
                         style = typo.titleMedium,
-                        color = c.textPrimary,
+                        color = bodyTextColor,
                     )
                     // Rotates the same glyph rather than swapping it, so the
                     // affordance reads as one control changing state.
@@ -639,14 +645,14 @@ private fun NotificationRow(
                 Text(
                     text = notificationHeadline(entry),
                     style = typo.titleMedium,
-                    color = c.textPrimary,
+                    color = bodyTextColor,
                 )
             }
             if (entry.description.isNotBlank()) {
                 Text(
                     text = entry.description,
                     style = typo.bodySmall,
-                    color = c.textPrimary,
+                    color = bodyTextColor,
                 )
             }
 

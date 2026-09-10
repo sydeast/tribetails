@@ -41,10 +41,16 @@ import { useRovingTabs } from '../lib/useRovingTabs';
 import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
-import { NotificationQuickActions } from '../components/NotificationQuickActions';
+import {
+  NotificationQuickActions,
+  type NotificationPendingKind,
+} from '../components/NotificationQuickActions';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+
+/** A row with no write in flight gets this, rather than a fresh empty Set each render. */
+const NO_PENDING: ReadonlySet<NotificationPendingKind> = new Set();
 
 export interface NotificationsProps {
   /**
@@ -148,7 +154,16 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   const rows = useCollection<NotificationEntry>(NOTIFICATIONS_QUERY);
   const households = useCollection<Kinfolk>(KINFOLK_QUERY);
 
-  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  // Issue #707: WAS a Set<string>, so any write for a row disabled all six of
+  // its buttons for however long that ONE call took (10s+ for
+  // markNotificationRead). A Map of Sets remembers WHICH write(s) are running,
+  // so only the buttons that write the same thing show as pending. A Set, not
+  // a single value, because the read write and the archive write touch
+  // different fields and can genuinely overlap (mark read, then archive,
+  // before the first call resolves); collapsing that to one value per row
+  // would make the guard below drop the second write's own pending state and
+  // let its button fire again while the first is still in flight.
+  const [pendingActions, setPendingActions] = useState<Map<string, Set<NotificationPendingKind>>>(new Map());
   const [filter, setFilter] = useState<string | null>(null);
   const [archived, setArchived] = useState<NotificationArchivedMode>('hide');
   const [bulkArchiving, setBulkArchiving] = useState(false);
@@ -176,14 +191,22 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
     return map;
   }, [households]);
 
-  /** Runs one row-scoped write with fail-loud reporting and per-row busy state. */
+  /** Runs one row-scoped write with fail-loud reporting and per-row, per-kind pending state. */
   async function runRowAction(
     id: string,
+    kind: NotificationPendingKind,
     action: () => Promise<string | null>,
     fallbackMessage: string,
   ) {
-    if (pendingIds.has(id)) return;
-    setPendingIds((prev) => new Set(prev).add(id));
+    // Guarded by (id, kind), not just id: two DIFFERENT kinds for the same row
+    // are allowed to run at once (see the state comment above), and only a
+    // second click of the SAME kind while it is already running is refused.
+    if (pendingActions.get(id)?.has(kind)) return;
+    setPendingActions((prev) => {
+      const next = new Map(prev);
+      next.set(id, new Set(next.get(id)).add(kind));
+      return next;
+    });
     setActionError(null);
     try {
       const refusal = await action();
@@ -191,9 +214,12 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : fallbackMessage);
     } finally {
-      setPendingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
+      setPendingActions((prev) => {
+        const next = new Map(prev);
+        const remaining = new Set(next.get(id));
+        remaining.delete(kind);
+        if (remaining.size === 0) next.delete(id);
+        else next.set(id, remaining);
         return next;
       });
     }
@@ -202,6 +228,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   function toggleOne(entry: NotificationEntry) {
     void runRowAction(
       entry._id,
+      'read',
       async () => {
         if (isRead(entry)) await markNotificationUnread(entry._id);
         else await markNotificationRead(entry._id);
@@ -214,6 +241,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   function archiveOne(entry: NotificationEntry) {
     void runRowAction(
       entry._id,
+      'archive',
       async () => {
         const count = await archiveNotification(entry._id);
         // A resolved 0 means the server declined: the doc is gone, has no
@@ -229,6 +257,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   function restoreOne(entry: NotificationEntry) {
     void runRowAction(
       entry._id,
+      'archive',
       async () => {
         const count = await unarchiveNotification(entry._id);
         return count > 0 ? null : 'Nothing was restored. The notification may already be gone.';
@@ -240,6 +269,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
   function bookingAction(entry: NotificationEntry, bookingId: string, action: BatchBookingAction) {
     void runRowAction(
       entry._id,
+      'booking',
       async () => {
         const result = await batchUpdateBookings([bookingId], action);
         if (result.failed.length > 0) {
@@ -493,7 +523,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
                               entry={entry}
                               householdName={notificationKinfolkName(entry, namesById)}
                               selected={selectedIds.has(entry._id)}
-                              busy={pendingIds.has(entry._id)}
+                              pending={pendingActions.get(entry._id) ?? NO_PENDING}
                               onToggleSelect={(checked) => bulk.toggle(entry._id, checked)}
                               onToggleRead={() => toggleOne(entry)}
                               onArchive={() => archiveOne(entry)}
@@ -574,7 +604,8 @@ interface NotificationRowProps {
   /** Resolved household name, or '' when none could be identified. */
   householdName: string;
   selected: boolean;
-  busy: boolean;
+  /** The kinds of write in flight for this row (may be more than one). */
+  pending: ReadonlySet<NotificationPendingKind>;
   onToggleSelect: (checked: boolean) => void;
   onToggleRead: () => void;
   onArchive: () => void;
@@ -588,7 +619,7 @@ function NotificationRow({
   entry,
   householdName,
   selected,
-  busy,
+  pending,
   onToggleSelect,
   onToggleRead,
   onArchive,
@@ -618,7 +649,10 @@ function NotificationRow({
 
   const rowClass = [
     'notif-row',
-    read ? null : 'notif-row--unread',
+    // Issue #707: a read row must look read. Unread already carried the accent
+    // border; read got nothing of its own, so a read row and an unread row
+    // were told apart only by the "Mark unread"/"Mark read" label.
+    read ? 'notif-row--read' : 'notif-row--unread',
     archived ? 'notif-row--archived' : null,
     open ? 'notif-row--open' : null,
   ]
@@ -710,7 +744,7 @@ function NotificationRow({
           entry={entry}
           read={read}
           archived={archived}
-          busy={busy}
+          pending={pending}
           onToggleRead={onToggleRead}
           onArchive={onArchive}
           onRestore={onRestore}

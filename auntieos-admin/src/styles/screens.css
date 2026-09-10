@@ -207,6 +207,15 @@
 .notif-row--unread {
   border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
+/* Issue #707: a read row must LOOK read, not just carry a different button
+   label. Dims the row's own text rather than the border (unread already owns
+   the border) so triage still reads read vs. unread at a glance. */
+.notif-row--read .notif-row__key,
+.notif-row--read .notif-row__key--button,
+.notif-row--read .notif-row__desc,
+.notif-row--read .notif-row__summary {
+  color: var(--color-text-dim);
+}
 
 .notif-row__select {
   margin-top: var(--space-1);
@@ -260,6 +269,26 @@
   margin-top: var(--space-2);
 }
 
+/* Issue #707: a row waiting on ONE write shows the wait on that button, not a
+   frozen-looking row of six. Ghost buttons have no fill to draw a contrasting
+   spinner against (PrimaryButton's `.auntie-btn__spinner` assumes one), so
+   this tints from the ghost button's own text colour instead. Reuses the
+   Buttons.css keyframe rather than redeclaring it. */
+.notif-row__pending {
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--color-text-dim) 35%, transparent);
+  border-top-color: var(--color-text-dim);
+  border-radius: var(--radius-pill);
+  animation: auntie-btn-spin 800ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .notif-row__pending {
+    animation-duration: 2400ms;
+  }
+}
+
 /* Category filter chips. "All", "Unread", then one per category actually
    present in the feed. */
 .notif-filters {
@@ -296,10 +325,10 @@
   font-size: 0.92rem;
   color: var(--color-text-primary);
 }
-/* The headline doubles as the disclosure control when the row has resolved
-   detail to show (R5). Styled to sit flush with the plain-heading version so a
-   feed of mixed rows does not look ragged: same weight, same size, no button
-   chrome, just a caret and a pointer. */
+/* The headline stays styled as a button (issue #705 moved the click handler
+   to the card body, not this element) so a feed of mixed rows does not look
+   ragged: same weight, same size as the plain-heading version, no button
+   chrome, just a caret. */
 .notif-row__key--button {
   display: inline-flex;
   align-items: center;

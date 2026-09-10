@@ -216,6 +216,47 @@ describe('Notifications screen', () => {
     await waitFor(() => expect(btn).not.toBeDisabled());
   });
 
+  // ISSUE #707. Verbatim: "Marking Read greys everything out, but after a few
+  // minutes all ctas and active again." The 10s+ callable disabled all six
+  // buttons; now only Mark read shows the wait, with a small inline indicator
+  // rather than the row looking frozen.
+  it('shows an inline pending indicator on Mark read and leaves the other CTAs live while it runs', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
+    let release!: () => void;
+    markNotificationRead.mockReturnValue(
+      new Promise<void>((r) => {
+        release = () => r();
+      }),
+    );
+    render(<Notifications />);
+    const markRead = screen.getByRole('button', { name: /mark read/i });
+    await userEvent.click(markRead);
+    expect(markRead).toBeDisabled();
+    expect(markRead.querySelector('.notif-row__pending')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Archive' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Deny' })).not.toBeDisabled();
+    release();
+    await waitFor(() => expect(markRead).not.toBeDisabled());
+  });
+
+  // The regression this issue's fix could introduce: guarding by row id alone
+  // (instead of row id AND write kind) would make Archive a silent no-op
+  // while Mark read is still running for the same row, because the guard
+  // would see the row as "already has a pending write" and refuse the click
+  // outright. Archive must actually run.
+  it('archives a row while its own mark-read call is still in flight', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'n1' })] });
+    markNotificationRead.mockReturnValue(new Promise<void>(() => {}));
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: /mark read/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(archiveNotification).toHaveBeenCalledWith('n1');
+  });
+
   it('fails loud (dismissible banner) when a single mark-read call rejects', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'n1' })] });
     markNotificationRead.mockRejectedValue(new Error('permission-denied'));
@@ -976,5 +1017,29 @@ describe('Notifications card body click (issue #705)', () => {
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(screen.queryByText('Requested by')).toBeNull();
+  });
+});
+
+/**
+ * ISSUE #707, the other half. Verbatim: the only visual difference between a
+ * read and an unread row was a faint accent border on the unread one, so a
+ * read row looked exactly like every other row rather than looking read.
+ */
+describe('Notifications read-row styling (issue #707)', () => {
+  it('marks a read row with its own class, distinct from unread', () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        entry({ _id: 'unread' }),
+        entry({ _id: 'read', readAt: fakeTs('2026-07-16T10:00:00Z') }),
+      ],
+    });
+    const { container } = render(<Notifications />);
+    const rows = container.querySelectorAll('li.notif-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveClass('notif-row--unread');
+    expect(rows[0]).not.toHaveClass('notif-row--read');
+    expect(rows[1]).toHaveClass('notif-row--read');
+    expect(rows[1]).not.toHaveClass('notif-row--unread');
   });
 });
