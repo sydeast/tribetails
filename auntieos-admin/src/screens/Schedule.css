@@ -215,11 +215,29 @@
   padding: 0.05rem 0.45rem;
 }
 
+/* A day with a busy slot (#697). Same dashed border and faint fill as the
+   week grid's `.schedule-grid__busy` block, so the two views read as the
+   same tone for the same fact. */
+.schedule__day-busy {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 1px;
+  border: var(--border-hairline) dashed var(--color-border-soft);
+  background: var(--color-surface-2);
+}
+
 
 /* ── day agenda ──────────────────────────────────────────────────────────── */
 
+/* #695: this panel used to sit below the week/month grid, where its only
+   margin (top) made sense. It now sits directly under the Day/Week/Month
+   controls, ahead of the legend and the grid, so it needs space on both
+   sides. */
 .schedule__agenda-panel {
-  margin-top: var(--space-2);
+  margin: var(--space-2) 0 var(--space-4);
 }
 
 .schedule__agenda-list {
