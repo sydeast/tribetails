@@ -76,13 +76,25 @@ beforeEach(() => {
  * Clearing is what lets a crawl assert per page rather than accumulating one
  * screen's failure onto every screen visited after it.
  */
-export function takeConsoleErrors(): string[] {
+function takeConsoleErrors(): string[] {
   const unexpected = consoleErrors.filter(
     (line) => !EXPECTED_CONSOLE_ERRORS.some((pattern) => pattern.test(line)),
   );
   consoleErrors = [];
   return unexpected;
 }
+
+/**
+ * The other half of this file's stated job: a screen that logs an error fails
+ * the test that visited it. Global rather than per-spec, so every spec file
+ * gets this for free, including smoke.cy.ts, which used to boot the app and
+ * sign in without ever reading what the console recorded. Three feature specs
+ * each carried this exact line in their own afterEach; one copy here is the
+ * one the harness owns, not three that can drift.
+ */
+afterEach(() => {
+  expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
+});
 
 before(() => {
   cy.task('seedOnce');

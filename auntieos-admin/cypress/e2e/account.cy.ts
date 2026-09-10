@@ -1,6 +1,5 @@
 import { ADMIN } from '../../e2e/fixtures/accounts';
 import { usingFixtureAdmin } from '../support/commands';
-import { takeConsoleErrors } from '../support/e2e';
 
 /**
  * The operator's own Account screen (`/account`): inline profile edit, its
@@ -101,12 +100,9 @@ const HOSTILE_BIO = `Line one ${STAMP}\nLine two, with a comma; and a semicolon.
 const HOSTILE_PHONE = '+1 (805) 555-0100';
 
 describe('account', () => {
-  afterEach(() => {
-    // The support file records `console.error` on every page and filters the
-    // harness's own noise out; this is the first spec to read the result. A
-    // React effect that throws on this screen fails here, not silently.
-    expect(takeConsoleErrors(), 'unexpected console.error lines').to.deep.equal([]);
-  });
+  // The support file's global afterEach reads and asserts on `console.error`
+  // for every test in every spec; nothing extra is needed here. A React
+  // effect that throws on this screen fails there, not silently.
 
   // Needs a signed-OUT browser. A fresh `cypress run` gives one, but under
   // `cypress open` this file can follow one that ended signed in, and `/signin`
