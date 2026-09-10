@@ -167,7 +167,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background: var(--color-surface-1);
+  background: var(--color-surface);
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card);
   padding: var(--space-3);
@@ -177,7 +177,7 @@
    around it. Only ARRIVED, matching the GPS line's own rule. */
 .sessions__card--arrived {
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface-1));
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));
 }
 
 .sessions__card--cancelled .sessions__card-name {
@@ -290,14 +290,6 @@
 @keyframes sessions-pulse {
   50% {
     opacity: 0.35;
-  }
-}
-
-/* A pulsing dot is decoration, and decoration stops when the operator has asked
-   the system to stop moving things. The dot stays visible, it just holds still. */
-@media (prefers-reduced-motion: reduce) {
-  .sessions__gps-dot {
-    animation: none;
   }
 }
 
