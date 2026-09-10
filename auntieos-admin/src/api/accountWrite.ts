@@ -59,10 +59,11 @@ export async function saveUserProfile(uid: string, patch: UserProfilePatch): Pro
 /**
  * Saves the operator's own profile photo URL, and nothing else.
  *
- * Deliberately NOT a field on `UserProfilePatch`: the edit dialog never carries
- * `photoUrl`, so a dialog save can never clear a photo the operator uploaded a
- * moment earlier. Same merge write as `saveUserProfile`, same doc, same rules.
- * The value is whatever `media_files.storageUrl` holds for the upload (see
+ * Deliberately NOT a field on `UserProfilePatch`: the Account screen's inline
+ * profile form never carries `photoUrl`, so a profile save can never clear a
+ * photo the operator uploaded a moment earlier. Same merge write as
+ * `saveUserProfile`, same doc, same rules. The value is whatever
+ * `media_files.storageUrl` holds for the upload (see
  * `api/accountPhoto.ts`): Cloudinary's `secure_url`. Android writes its
  * transformed delivery URL to the same field; both are plain image URLs and
  * either client renders either.

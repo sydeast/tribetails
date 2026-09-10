@@ -70,7 +70,7 @@ function stageLabel(stage: UploadStage): string {
  * The Gallery's Upload affordance (out of scope in Gallery.tsx's original
  * LIST/GRID-only port, see that file's header). Opened as a Dialog from a new
  * "Upload media" button, same "editor lives in a modal over the read screen"
- * shape `EditProfileDialog`/`FormSchemas`' delete-confirm already use.
+ * shape `AddKinfolkDialog`/`FormSchemas`' delete-confirm already use.
  *
  * Targets one of three entities (`api/mediaUpload.ts#UploadEntityType`):
  *   KINFOLK   picked from the already-streamed household roster (a real
@@ -101,7 +101,7 @@ function stageLabel(stage: UploadStage): string {
  * Dialog cannot be dismissed mid-upload, and a rejected upload at ANY of the
  * three pipeline stages (sign / Cloudinary / Firestore write) replaces
  * nothing, it surfaces the failing stage's message and leaves the form
- * exactly as the operator left it, mirroring `EditProfileDialog`'s
+ * exactly as the operator left it, mirroring `AddKinfolkDialog`'s
  * `saveError` convention.
  */
 export function MediaUploadDialog({

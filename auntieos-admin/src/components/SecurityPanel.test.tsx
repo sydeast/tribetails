@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { changeEmail, changePassword, sendReset, AccountSecurityError } = vi.hoisted(() => {
+const { changeEmail, sendReset, signOut, AccountSecurityError } = vi.hoisted(() => {
   class AccountSecurityError extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -14,162 +14,27 @@ const { changeEmail, changePassword, sendReset, AccountSecurityError } = vi.hois
   }
   return {
     changeEmail: vi.fn(),
-    changePassword: vi.fn(),
     sendReset: vi.fn(),
+    signOut: vi.fn(),
     AccountSecurityError,
   };
 });
 
-vi.mock('../lib/auth', () => ({ changeEmail, changePassword, sendReset, AccountSecurityError }));
+vi.mock('../lib/auth', () => ({ changeEmail, sendReset, signOut, AccountSecurityError }));
 
 import { SecurityPanel } from './SecurityPanel';
 
 function emailGroup() {
   return within(screen.getByRole('group', { name: /login email/i }));
 }
-function passwordGroup() {
-  return within(screen.getByRole('group', { name: /change password/i }));
-}
 
 beforeEach(() => {
   changeEmail.mockReset();
   changeEmail.mockResolvedValue(undefined);
-  changePassword.mockReset();
-  changePassword.mockResolvedValue(undefined);
   sendReset.mockReset();
   sendReset.mockResolvedValue(undefined);
-});
-
-describe('SecurityPanel: change password', () => {
-  it('keeps Update password disabled until current, new and matching confirm are all filled', async () => {
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    const button = g.getByRole('button', { name: 'Update password' });
-    expect(button).toBeDisabled();
-
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    expect(button).toBeDisabled();
-
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    expect(button).toBeEnabled();
-  });
-
-  it('warns inline on a confirm mismatch instead of letting the operator submit it', async () => {
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-2');
-
-    expect(g.getByText("New passwords don't match.")).toBeInTheDocument();
-    expect(g.getByRole('button', { name: 'Update password' })).toBeDisabled();
-    expect(changePassword).not.toHaveBeenCalled();
-  });
-
-  it('calls changePassword with current then next, and confirms in a banner', async () => {
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(changePassword).toHaveBeenCalledWith('old-secret', 'new-secret-1');
-    expect(await screen.findByText('Password updated.')).toBeInTheDocument();
-  });
-
-  it('clears the password fields after a successful change, so nothing lingers on screen', async () => {
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    await screen.findByText('Password updated.');
-    expect(g.getByLabelText('Current password')).toHaveValue('');
-    expect(g.getByLabelText('New password')).toHaveValue('');
-    expect(g.getByLabelText('Confirm new password')).toHaveValue('');
-  });
-
-  it('surfaces a wrong current password fail-loud, and keeps no success banner', async () => {
-    changePassword.mockRejectedValueOnce(
-      new AccountSecurityError('wrong-password', 'Current password is incorrect.'),
-    );
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'wrong');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(await screen.findByText('Current password is incorrect.')).toBeInTheDocument();
-    expect(screen.queryByText('Password updated.')).toBeNull();
-  });
-
-  it('surfaces a weak-password rejection', async () => {
-    changePassword.mockRejectedValueOnce(
-      new AccountSecurityError('weak-password', 'Choose a stronger password (at least 6 characters).'),
-    );
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(await screen.findByText(/stronger password/i)).toBeInTheDocument();
-  });
-
-  it('surfaces requires-recent-login', async () => {
-    changePassword.mockRejectedValueOnce(
-      new AccountSecurityError('requires-recent-login', 'Please sign in again, then retry this change.'),
-    );
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(await screen.findByText(/sign in again/i)).toBeInTheDocument();
-  });
-
-  it('surfaces a network failure rather than failing silently', async () => {
-    changePassword.mockRejectedValueOnce(
-      new AccountSecurityError('network-error', 'Network error. Check your connection and try again.'),
-    );
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(await screen.findByText(/check your connection/i)).toBeInTheDocument();
-  });
-
-  it('surfaces a non-typed throw too, so nothing can fall through silently', async () => {
-    changePassword.mockRejectedValueOnce(new Error('boom'));
-    const user = userEvent.setup();
-    render(<SecurityPanel email="auntie@tribetails.com" />);
-    const g = passwordGroup();
-    await user.type(g.getByLabelText('Current password'), 'old-secret');
-    await user.type(g.getByLabelText('New password'), 'new-secret-1');
-    await user.type(g.getByLabelText('Confirm new password'), 'new-secret-1');
-    await user.click(g.getByRole('button', { name: 'Update password' }));
-
-    expect(await screen.findByText(/boom/i)).toBeInTheDocument();
-  });
+  signOut.mockReset();
+  signOut.mockResolvedValue(undefined);
 });
 
 describe('SecurityPanel: change login email', () => {
@@ -253,14 +118,27 @@ describe('SecurityPanel: change login email', () => {
   });
 });
 
-describe('SecurityPanel: password reset email', () => {
+describe('SecurityPanel: password reset email (the mock\'s "Change password" row)', () => {
+  it('offers a reset row instead of a typed current/new/confirm form', () => {
+    render(<SecurityPanel email="auntie@tribetails.com" />);
+    expect(screen.getByText('Change password')).toBeInTheDocument();
+    expect(
+      screen.getByText('A password reset link goes to auntie@tribetails.com.'),
+    ).toBeInTheDocument();
+    // The three password boxes are gone; the reset link is the whole flow.
+    expect(screen.queryByLabelText('New password')).toBeNull();
+    expect(screen.queryByLabelText('Confirm new password')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Update password' })).toBeNull();
+  });
   it('sends the reset mail to the signed-in address', async () => {
     const user = userEvent.setup();
     render(<SecurityPanel email="auntie@tribetails.com" />);
     await user.click(screen.getByRole('button', { name: 'Send reset email' }));
 
     expect(sendReset).toHaveBeenCalledWith('auntie@tribetails.com');
-    expect(await screen.findByText(/reset email sent to auntie@tribetails\.com/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/reset link sent to auntie@tribetails\.com/i),
+    ).toBeInTheDocument();
   });
 
   it('surfaces a reset failure fail-loud', async () => {
@@ -274,8 +152,41 @@ describe('SecurityPanel: password reset email', () => {
     expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument();
   });
 
-  it('cannot send a reset for an account with no address on file', () => {
+  it('cannot send a reset for an account with no address on file, and says why', () => {
     render(<SecurityPanel email="" />);
     expect(screen.getByRole('button', { name: 'Send reset email' })).toBeDisabled();
+    expect(
+      screen.getByText('No login email is on file, so there is nowhere to send a reset link.'),
+    ).toBeInTheDocument();
+  });
+});
+describe('SecurityPanel: sign out row', () => {
+  it('signs the operator out of this device', async () => {
+    const user = userEvent.setup();
+    render(<SecurityPanel email="auntie@tribetails.com" />);
+    expect(screen.getByText('End this session on this device.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(signOut).toHaveBeenCalledTimes(1);
+  });
+  it('says why when the sign out fails rather than looking like it worked', async () => {
+    signOut.mockRejectedValueOnce(new Error('network down'));
+    const user = userEvent.setup();
+    render(<SecurityPanel email="auntie@tribetails.com" />);
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByText('network down')).toBeInTheDocument();
+  });
+  it('does not build the mock\'s suggested "sign out all devices" action', () => {
+    // The mock flags that card as "Suggestion, not in current model" and nothing
+    // in this app revokes refresh tokens, so there is no button to press.
+    render(<SecurityPanel email="auntie@tribetails.com" />);
+    expect(screen.queryByRole('button', { name: /all devices/i })).toBeNull();
+  });
+});
+describe('SecurityPanel: meta slot', () => {
+  it('renders whatever Access and Activity block the Account screen hands it', () => {
+    render(
+      <SecurityPanel email="auntie@tribetails.com" meta={<p>Last sign-in: Jul 16, 2026, 12:00</p>} />,
+    );
+    expect(screen.getByText('Last sign-in: Jul 16, 2026, 12:00')).toBeInTheDocument();
   });
 });

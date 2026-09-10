@@ -88,13 +88,13 @@ describe('account photo', () => {
     });
     cy.wait('@cloudinary');
 
-    cy.get('.account__identity img', { timeout: 6_000 }).should('have.attr', 'src', PNG_DATA_URI);
+    cy.get('.account__hero img', { timeout: 6_000 }).should('have.attr', 'src', PNG_DATA_URI);
 
     // The write, not the state. A screen that showed the returned URL and
     // never saved it would pass everything above.
     cy.reload();
     cy.get('.account__fields', { timeout: 6_000 }).should('exist');
-    cy.get('.account__identity img').should('have.attr', 'src', PNG_DATA_URI);
+    cy.get('.account__hero img').should('have.attr', 'src', PNG_DATA_URI);
   });
 
   it('keeps the current photo and says why when Cloudinary refuses', () => {
@@ -114,7 +114,7 @@ describe('account photo', () => {
     // uploaded one, the initials fallback on a fresh seed. Captured as markup
     // so "unchanged" holds for either, and this test does not depend on the
     // upload test having run first.
-    cy.get('.account__identity')
+    cy.get('.account__hero')
       .find('img, [role="img"]')
       .first()
       .invoke('prop', 'outerHTML')
@@ -126,11 +126,16 @@ describe('account photo', () => {
         cy.wait('@cloudinary');
         // The server's own reason reaches the operator, not a generic line:
         // `uploadToCloudinary` lifts `error.message` off the response body.
-        cy.get('.account__identity [role="alert"]').should('contain.text', 'e2e: refused on purpose');
-        cy.get('.account__identity').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
+        // The banner sits under the hero, not inside it (#719 layout). Scoped
+        // with `contains` rather than `get`: the Notifications panel on this
+        // page renders its own role=alert when its callables are refused (this
+        // spec does not stub them), and a bare `get` would assert against the
+        // concatenated text of both.
+        cy.contains('[role="alert"]', 'e2e: refused on purpose').should('exist');
+        cy.get('.account__hero').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
         cy.reload();
         cy.get('.account__fields', { timeout: 6_000 }).should('exist');
-        cy.get('.account__identity').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
+        cy.get('.account__hero').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
       });
   });
 });
