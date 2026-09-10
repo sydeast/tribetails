@@ -203,3 +203,23 @@ export function bookingWhen(row: BookingWhenInput): string {
   if (row.createdAt) return formatLocalDateTime(row.createdAt.toDate());
   return 'Date pending';
 }
+
+/**
+ * #699: the millis a row sorts by within its Bookings section, walking the
+ * exact same fallback chain `bookingWhen` displays (startTime, then
+ * completedAt, then departedAt, then the real `createdAt` server timestamp),
+ * so a row never sorts by one moment while showing a different one.
+ *
+ * `null` when nothing on the row parses to a real instant. Sorting treats
+ * `null` as "sorts last" regardless of direction, never as 1970 or "now": an
+ * undated row is not the oldest or the newest, it is unknown, and floating it
+ * to either end would misplace it next to rows that really do carry that time.
+ */
+export function bookingSortTimeMs(row: BookingWhenInput): number | null {
+  const raw = str(row.startTime).trim() || str(row.completedAt).trim() || str(row.departedAt).trim();
+  if (raw !== '') {
+    const parsed = parseFlexibleDate(raw);
+    if (parsed) return parsed.getTime();
+  }
+  return row.createdAt ? row.createdAt.toMillis() : null;
+}
