@@ -119,18 +119,54 @@ beforeEach(() => {
 });
 
 describe('VisitRequestsSection', () => {
-  it('renders nothing while the queues are loading', () => {
+  it('reserves the block with a loading panel while the three queues are in flight (#698)', () => {
     listRescheduleRequests.mockReturnValue(new Promise(() => {}));
     listCancelRequests.mockReturnValue(new Promise(() => {}));
     listPendingBookingRequests.mockReturnValue(new Promise(() => {}));
     const { container } = render(<VisitRequestsSection />);
-    expect(container.querySelector('.visit-requests')).toBeNull();
+    expect(container.querySelector('.visit-requests')).not.toBeNull();
+    expect(screen.getByText('Checking for requests…')).toBeInTheDocument();
   });
 
-  it('renders nothing when nothing is waiting in either queue', async () => {
-    const { container } = render(<VisitRequestsSection />);
+  it('states plainly that nothing is waiting, rather than rendering nothing (#698)', async () => {
+    render(<VisitRequestsSection />);
     await waitFor(() => expect(listCancelRequests).toHaveBeenCalled());
-    await waitFor(() => expect(container.querySelector('.visit-requests')).toBeNull());
+    expect(await screen.findByText('No visit requests waiting.')).toBeInTheDocument();
+  });
+
+  it('keeps the same block mounted from the loading panel through to data, so the page never shifts (#698)', async () => {
+    let settleReschedule: (v: { requests: RescheduleRequestDto[] }) => void = () => {};
+    let settleCancel: (v: { requests: CancelRequestDto[] }) => void = () => {};
+    let settleNewBookings: (v: { requests: ListPendingBookingRequestsResultRequest[] }) => void =
+      () => {};
+    listRescheduleRequests.mockReturnValue(
+      new Promise((res) => {
+        settleReschedule = res;
+      }),
+    );
+    listCancelRequests.mockReturnValue(
+      new Promise((res) => {
+        settleCancel = res;
+      }),
+    );
+    listPendingBookingRequests.mockReturnValue(
+      new Promise((res) => {
+        settleNewBookings = res;
+      }),
+    );
+
+    const { container } = render(<VisitRequestsSection />);
+    expect(container.querySelectorAll('.visit-requests')).toHaveLength(1);
+    expect(screen.getByText('Checking for requests…')).toBeInTheDocument();
+
+    settleReschedule({ requests: [] });
+    settleCancel({ requests: [] });
+    settleNewBookings({ requests: [] });
+
+    expect(await screen.findByText('No visit requests waiting.')).toBeInTheDocument();
+    // Exactly one section the whole way through: the block itself never
+    // unmounts and remounts, which is what would push the stat strip below it.
+    expect(container.querySelectorAll('.visit-requests')).toHaveLength(1);
   });
 
   it('shows both kinds of ask in one queue, oldest first', async () => {
@@ -201,18 +237,28 @@ describe('VisitRequestsSection', () => {
     expect(await screen.findByText(/no schedule row to take off/i)).toBeInTheDocument();
   });
 
-  it('refuses a cancellation decline with no reason, before the callable is reached', async () => {
+  it('submits a cancellation decline with no note, since the office does not owe a reason (#700)', async () => {
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
+    resolveBookingCancellationRequest.mockResolvedValue({
+      ok: true,
+      visitId: 'v2',
+      decision: 'decline',
+      status: 'confirmed',
+      sessionUpdated: false,
+      rescheduleRequestClosed: false,
+    });
     render(<VisitRequestsSection />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
 
-    expect(await screen.findByText(/say why the visit is staying/i)).toBeInTheDocument();
-    expect(resolveBookingCancellationRequest).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(resolveBookingCancellationRequest).toHaveBeenCalledWith('fam-2', 'b2', 'v2', 'decline', ''),
+    );
+    await waitFor(() => expect(screen.queryByText('Evening sit')).toBeNull());
   });
 
-  it('sends a cancellation decline with its reason and drops the row', async () => {
+  it('sends a cancellation decline with its optional note and drops the row', async () => {
     listCancelRequests.mockResolvedValue({ requests: [cancellation()] });
     resolveBookingCancellationRequest.mockResolvedValue({
       ok: true,
@@ -226,7 +272,7 @@ describe('VisitRequestsSection', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
-      await screen.findByLabelText(/why it is staying/i),
+      await screen.findByLabelText(/anything to add for the household/i),
       'Inside the 48-hour window.',
     );
     await userEvent.click(screen.getByRole('button', { name: 'Send the decline' }));
@@ -264,15 +310,24 @@ describe('VisitRequestsSection', () => {
     await waitFor(() => expect(screen.queryByText('Morning drop-in')).toBeNull());
   });
 
-  it('refuses a reschedule decline with no reason', async () => {
+  it('submits a reschedule decline with no note, since the office does not owe a reason (#700)', async () => {
     listRescheduleRequests.mockResolvedValue({ requests: [reschedule()] });
+    resolveBookingRescheduleRequest.mockResolvedValue({
+      ok: true,
+      visitId: 'v1',
+      decision: 'decline',
+      startTimeMs: CURRENT_MS,
+      sessionUpdated: false,
+    });
     render(<VisitRequestsSection />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
 
-    expect(await screen.findByText(/say why the time does not work/i)).toBeInTheDocument();
-    expect(resolveBookingRescheduleRequest).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(resolveBookingRescheduleRequest).toHaveBeenCalledWith('fam-1', 'b1', 'v1', 'decline', ''),
+    );
+    await waitFor(() => expect(screen.queryByText('Morning drop-in')).toBeNull());
   });
 
   it('keeps the row when the write fails, and shows the server’s reason', async () => {
@@ -478,18 +533,23 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     expect(screen.getByRole('button', { name: 'Book it' })).toBeEnabled();
   });
 
-  it('refuses to decline without a reason, because a silent no is the same gap', async () => {
+  it('submits a decline with no note, since the office does not owe a reason (#700)', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    declineBookingRequest.mockResolvedValue({
+      affectedVisits: 4,
+      failedVisits: 0,
+      householdNotified: true,
+    });
     render(<VisitRequestsSection />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Send the decline' }));
 
-    expect(await screen.findByText(/Say why you cannot take it/)).toBeInTheDocument();
-    expect(declineBookingRequest).not.toHaveBeenCalled();
+    await waitFor(() => expect(declineBookingRequest).toHaveBeenCalledWith('fam-3', 'b3', ''));
+    expect(await screen.findByText(/the household has your answer/)).toBeInTheDocument();
   });
 
-  it('declining sends the reason to the household', async () => {
+  it('declining sends the optional note to the household', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     declineBookingRequest.mockResolvedValue({
       affectedVisits: 4,
@@ -500,7 +560,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
-      screen.getByLabelText('Why you cannot take it'),
+      screen.getByLabelText('Anything to add for the household (optional)'),
       'Fully booked that weekend.',
     );
     await userEvent.click(screen.getByRole('button', { name: 'Send the decline' }));
@@ -512,9 +572,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
         'Fully booked that weekend.',
       ),
     );
-    expect(
-      await screen.findByText(/the household has your answer and your reason/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/the household has your answer/)).toBeInTheDocument();
   });
 
   it('says so when the decline went through and the MESSAGE did not', async () => {
@@ -535,7 +593,7 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
     await userEvent.type(
-      screen.getByLabelText('Why you cannot take it'),
+      screen.getByLabelText('Anything to add for the household (optional)'),
       'Fully booked that weekend.',
     );
     await userEvent.click(screen.getByRole('button', { name: 'Send the decline' }));

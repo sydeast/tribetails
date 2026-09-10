@@ -39,8 +39,10 @@ export function listRescheduleRequests(limit?: number): Promise<ListRescheduleRe
  * disagreeing about when the visit is. Declining moves nothing and records the
  * note, which the household reads on its own booking screen.
  *
- * A decline needs a note. The server refuses one without it, and the dialog
- * enforces it too, so the operator finds out before the round trip.
+ * #700: the note is optional on a decline too. The office does not owe the
+ * household a reason; `note` is only the extra, custom text an operator can
+ * choose to add on top of the decline. An empty note is withheld from the call
+ * entirely rather than sent as `''`.
  */
 export function resolveBookingRescheduleRequest(
   kinfolkId: string,

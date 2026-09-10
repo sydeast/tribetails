@@ -110,10 +110,15 @@ class VisitRequestQueueTest {
     }
 
     @Test
-    fun declineNoteLabelAsksTheRightQuestionForEachKind() {
-        assertEquals("Why it is staying", VisitRequestRow.Cancel(cancel()).declineNoteLabel())
+    fun declineNoteLabelIsTheSameOptionalPromptForEveryKind() {
+        // #700: the office does not owe the household a reason, so the field is
+        // one shared "optional extra" prompt rather than a per-kind question.
         assertEquals(
-            "Why the time does not work",
+            "Anything to add for the household (optional)",
+            VisitRequestRow.Cancel(cancel()).declineNoteLabel(),
+        )
+        assertEquals(
+            "Anything to add for the household (optional)",
             VisitRequestRow.Reschedule(reschedule()).declineNoteLabel(),
         )
     }

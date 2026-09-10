@@ -488,8 +488,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
       {/* #399 item 2 and #438, in one queue. Above the list because it is work
           waiting on a human, not a view of the schedule: a household has asked
           to move or cancel a visit and nothing happens until someone here
-          accepts or declines. Renders nothing at all when both queues are
-          empty. */}
+          accepts or declines. #698: reserves its own space with a loading
+          panel while its three callables are in flight and says so plainly
+          when nothing is waiting, rather than popping in late. */}
       <VisitRequestsSection />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
       {rescheduleOutcome !== null && (

@@ -155,16 +155,17 @@ describe('resolveBookingRescheduleRequestHandler', () => {
     expect(write?.data).not.toHaveProperty('startTime');
   });
 
-  it('refuses a decline with no reason', async () => {
+  it('declines with no note, since the office does not owe a reason (#700)', async () => {
     const ctx = buildDbMock({ docs: { [VISIT]: pendingVisit() } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { resolveBookingRescheduleRequestHandler } = await import('../src/admin/rescheduleRequests');
-    await expect(
-      resolveBookingRescheduleRequestHandler(
-        callableRequest({ ...acceptArgs, decision: 'decline' }, { uid: 'op-1', token: { admin: true } }),
-      ),
-    ).rejects.toMatchObject({ code: 'invalid-argument' });
-    expect(ctx.writes).toHaveLength(0);
+    const res = await resolveBookingRescheduleRequestHandler(
+      callableRequest({ ...acceptArgs, decision: 'decline' }, { uid: 'op-1', token: { admin: true } }),
+    );
+    expect(res.decision).toBe('decline');
+    const write = ctx.writes.find((w) => w.path === VISIT);
+    expect(write?.data?.['rescheduleRequestStatus']).toBe('declined');
+    expect(write?.data?.['rescheduleResponseNote']).toBeNull();
   });
 
   it('refuses an unknown decision', async () => {

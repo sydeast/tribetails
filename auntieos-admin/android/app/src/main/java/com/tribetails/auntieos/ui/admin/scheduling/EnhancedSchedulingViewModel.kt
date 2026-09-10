@@ -122,6 +122,12 @@ data class SchedulingState(
     // brand-new booking waiting on approval; these are changes to a booking the
     // office already agreed to.
     val visitRequests: List<VisitRequestRow> = emptyList(),
+    // #698: true from init until `loadVisitRequests` settles, its own flag
+    // rather than reusing [isLoading]. That flag only covers `loadInitialData`,
+    // and `loadVisitRequests` runs as a separate fire-and-forget call in the
+    // same `init`, so the panel used to pop in seconds after the rest of the
+    // screen had already finished loading and shoved everything below it down.
+    val visitRequestsLoading: Boolean = true,
     val visitRequestsError: String? = null,
     val visitRequestKey: String? = null, // row currently being accepted/declined
     val visitRequestMessage: String? = null,
@@ -514,7 +520,7 @@ class EnhancedSchedulingViewModel(
         // the days; `kincare.request.declined` still renders the #534 span until
         // step 2 of the visit-date spec lands.
         action == "CANCEL" && res.householdNotified ->
-            "The household has your answer and your reason."
+            "The household has your answer."
         res.householdNotified ->
             "The household was told once, with every date."
         else ->
@@ -572,6 +578,7 @@ class EnhancedSchedulingViewModel(
      * waiting since July, which is the exact failure this feature exists to end.
      */
     fun loadVisitRequests() {
+        _state.value = _state.value.copy(visitRequestsLoading = true)
         viewModelScope.launch {
             // Stage-0I sandbox: the underlying reads are cross-tenant and a test
             // admin cannot make them, so their permission-denied must not paint
@@ -588,6 +595,7 @@ class EnhancedSchedulingViewModel(
                     reschedule.getOrDefault(emptyList()),
                     cancel.getOrDefault(emptyList()),
                 ),
+                visitRequestsLoading = false,
                 visitRequestsError = if (failures.isEmpty() || sandbox) {
                     null
                 } else {
@@ -603,9 +611,9 @@ class EnhancedSchedulingViewModel(
      * Accepting is what changes the visit, and the server writes both the
      * household's kinCares doc and the flat `kin_care_sessions` row so this
      * screen and the portal cannot end up disagreeing. Declining changes
-     * nothing about the visit and REQUIRES a note: "no" with no reason is not
-     * an answer, and the server refuses one without it, so the check is made
-     * here too rather than after a round trip.
+     * nothing about the visit and records the operator's note, when they left
+     * one; #700 made the note optional on every decision, including a
+     * decline, since the office does not owe the household a reason.
      *
      * The resolved row is dropped locally the moment the server confirms,
      * never re-fetched and never assumed.
@@ -613,12 +621,6 @@ class EnhancedSchedulingViewModel(
     fun resolveVisitRequest(row: VisitRequestRow, decision: String, note: String? = null) {
         if (_state.value.visitRequestKey != null) return
         val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }
-        if (decision == "decline" && trimmed == null) {
-            _state.value = _state.value.copy(
-                visitRequestsError = "Say why, so the household knows where they stand.",
-            )
-            return
-        }
         _state.value = _state.value.copy(
             visitRequestKey = row.key,
             visitRequestMessage = null,
@@ -661,13 +663,13 @@ class EnhancedSchedulingViewModel(
     }
 
     private fun cancelOutcomeMessage(decision: String, sessionUpdated: Boolean): String = when {
-        decision == "decline" -> "Declined. The visit stays on the schedule and the household gets your reason."
+        decision == "decline" -> "Declined. The visit stays on the schedule and the household gets your answer."
         sessionUpdated -> "Cancelled. It is off the schedule and off the household's portal."
         else -> "Cancelled. This visit was still a request, so it had no schedule row to take off."
     }
 
     private fun rescheduleOutcomeMessage(decision: String, sessionUpdated: Boolean): String = when {
-        decision == "decline" -> "Declined. The household will see your reason on their booking."
+        decision == "decline" -> "Declined. The household will see your answer on their booking."
         sessionUpdated -> "Moved. The schedule and the household now show the new time."
         else -> "Moved. This visit is still a request, so it has no schedule row to move yet."
     }

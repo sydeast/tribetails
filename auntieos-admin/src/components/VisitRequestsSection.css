@@ -126,3 +126,59 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
+
+/* ── loading state (#698) ──────────────────────────────────────────────────
+   Shape only, no counts claimed: this is what reserves the block's space
+   while the three callables are still in flight. */
+
+.visit-requests__skeleton-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--color-border-soft);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-glass);
+}
+
+.visit-requests__skeleton-label {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.visit-requests__skeleton-bar {
+  display: block;
+  height: var(--space-3);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface-2);
+  animation: visit-requests-pulse var(--dur-slow) var(--ease-standard) infinite alternate;
+}
+
+.visit-requests__skeleton-bar--title {
+  width: 40%;
+  height: var(--space-4);
+}
+
+@keyframes visit-requests-pulse {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visit-requests__skeleton-bar {
+    animation: none;
+  }
+}
+
+/* ── empty state (#698) ─────────────────────────────────────────────────── */
+
+.visit-requests__empty {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
