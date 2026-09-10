@@ -51,21 +51,24 @@ import './Settings.css';
  * toggle is opened; see the comment on `IntegrationsSection` for how. The
  * `calendar` `SectionId` and its nav entry are gone.
  *
- * NOTHING DEEP-LINKS TO A SECTION: `/settings` takes no parameter, the
- * selected section is React state, and no hash or `scrollIntoView` reads the
- * `settings-panel-*` DOM ids that `SectionNav` mints. So retiring an id costs
- * no URL. Grepped the whole admin for the four ids these regrouping issues
- * retired (`timeZone` was never a `SectionId` at all: it was a field inside
- * the `businessProfile` panel from the start; `branding`, `visitsTracking` and
- * `calendar` were): nothing outside this file read any of them as a nav id.
- * The one real caller that named a retired id is server-side:
- * `getIntegrationsHealth`'s `ownedBySection`, which can still say the retired
- * `googleCalendar` from an older deploy, or the current `calendar`, and it
- * is handled without an alias table: `IntegrationsSection` treats ANY
- * non-empty `ownedBySection` as "this row expands inline," never comparing
- * against a specific string, so either value works. If a future section
- * needs an actual URL deep link, it will need to invent one; there is
- * currently nothing to alias.
+ * NOTHING DEEP-LINKS TO A SECTION BY DEFAULT: the selected section is React
+ * state, and no hash or `scrollIntoView` reads the `settings-panel-*` DOM ids
+ * that `SectionNav` mints, so retiring most ids costs no URL. The one
+ * exception is `?section=<id>` (`routes/SettingsView.tsx`), added for #718 so
+ * the retired `/notification-gate` route has somewhere real to land; a
+ * section id that redirect ever targets needs an alias from its old id if it
+ * is retired later. Grepped the whole admin for the four ids these
+ * regrouping issues retired (`timeZone` was never a `SectionId` at all: it
+ * was a field inside the `businessProfile` panel from the start; `branding`,
+ * `visitsTracking` and `calendar` were): nothing outside this file read any
+ * of them as a nav id. The one real caller that named a retired id is
+ * server-side: `getIntegrationsHealth`'s `ownedBySection`, which can still
+ * say the retired `googleCalendar` from an older deploy, or the current
+ * `calendar`, and it is handled without an alias table: `IntegrationsSection`
+ * treats ANY non-empty `ownedBySection` as "this row expands inline," never
+ * comparing against a specific string, so either value works. If a future
+ * section needs an actual URL deep link beyond `?section=`, it will need to
+ * invent one; there is currently nothing else to alias.
  *
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
@@ -131,14 +134,29 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
  *  asserted to exist below. */
 const FIRST_SECTION: SectionId = 'businessProfile';
 
-export function Settings() {
+interface SettingsProps {
+  /**
+   * Seeds which section opens first, from `routes/SettingsView.tsx`'s
+   * `?section=` search param. The only caller today is the `/notification-gate`
+   * redirect (#718); an absent or unrecognized value opens `FIRST_SECTION`,
+   * exactly like a plain visit to `/settings` always has.
+   */
+  initialSection?: string;
+}
+
+export function Settings({ initialSection }: SettingsProps = {}) {
+  const startSection: SectionId =
+    initialSection !== undefined && SECTIONS.some((s) => s.id === initialSection)
+      ? (initialSection as SectionId)
+      : FIRST_SECTION;
+
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
-  const [selected, setSelected] = useState<SectionId>(FIRST_SECTION);
+  const [selected, setSelected] = useState<SectionId>(startSection);
   // Which sections have been opened at least once. A section mounts on its first
   // visit and then stays mounted (hidden when not selected), so an in-progress
   // edit survives a trip to another section instead of being silently reset, and
   // the two self-loading sections (Notifications, Tags) don't fetch until opened.
-  const [visited, setVisited] = useState<Set<SectionId>>(() => new Set([FIRST_SECTION]));
+  const [visited, setVisited] = useState<Set<SectionId>>(() => new Set([startSection]));
 
   // Hoisted so a failed load can hand AsyncRegion a real retry (the
   // FeatureFlags.tsx / FormSchemas.tsx convention).

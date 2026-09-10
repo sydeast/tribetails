@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   NAV,
+  NOTIFICATION_GATE_REDIRECT,
   parseHash,
   railEntries,
   railGroup,
@@ -88,36 +89,33 @@ describe('rail composition', () => {
     expect(NAV.find((e) => e.dest === 'invites')?.contextual).toBeUndefined();
   });
   /**
-   * #396. The notification gate is the one screen that lists every notification
-   * the platform can send, who it reaches and what fires it, and it was marked
-   * `contextual`, so it appeared nowhere in the rail and was reachable only by
-   * opening Settings and already knowing to look for it. The operator's report
-   * was "I am blind to what could be sent out to users". This flag is a large
-   * part of why. It stays pinned.
+   * #396/#435 pinned a "Notification gate" rail entry so the operator could
+   * find the screen without already knowing to look for it inside Settings.
+   * #718 reverses that ruling: the operator wants exactly one way to the
+   * gate, the Notifications section under Settings, so the destination and
+   * its rail entry are gone entirely.
    */
-  it('pins the notification gate in the rail', () => {
-    expect(NAV.find((e) => e.dest === 'notificationGate')?.contextual).toBeUndefined();
-    const slugs = railEntries().map((e) => e.slug);
-    expect(slugs).toContain('notification-gate');
+  it('removes the notification gate rail entry, per the #718 ruling', () => {
+    const slugs = NAV.map((e) => e.slug);
+    expect(slugs).not.toContain('notification-gate');
+    expect(railEntries().map((e) => e.slug)).not.toContain('notification-gate');
   });
-  it('files the notification gate under More, beside the other what-we-emit screens', () => {
-    const more = railGroup('more');
-    const gate = more.findIndex((e) => e.dest === 'notificationGate');
-    expect(gate).toBeGreaterThanOrEqual(0);
-    expect(more[gate]?.title).toBe('Notification gate');
-    // Templates is the other half of the same question (what the body says),
-    // so the two must not end up at opposite ends of the group.
-    const templates = more.findIndex((e) => e.dest === 'templates');
-    expect(templates).toBeGreaterThanOrEqual(0);
-    expect(Math.abs(gate - templates)).toBeLessThanOrEqual(4);
-  });
-  it('still resolves the gate by its old URL, so existing links keep working', () => {
-    expect(parseHash('#/notification-gate').dest).toBe('notificationGate');
+  it('still resolves the gate by its old URL, into Settings, so existing links keep working', () => {
+    expect(parseHash('#/notification-gate').dest).toBe('settings');
   });
 
   it('every destination has a unique slug', () => {
     const slugs = NAV.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
+  });
+});
+
+describe('NOTIFICATION_GATE_REDIRECT (#718)', () => {
+  it('points router.tsx\'s /notification-gate redirect at Settings > Notifications', () => {
+    expect(NOTIFICATION_GATE_REDIRECT).toEqual({
+      to: '/settings',
+      search: { section: 'notifications' },
+    });
   });
 });
 
@@ -173,6 +171,7 @@ describe('routeWarning: a dead link must not vanish quietly', () => {
   it('does not warn for slugs that only resolve via back-compat', () => {
     expect(routeWarning('#/training-docs')).toBeNull();
     expect(routeWarning('#/template-bank')).toBeNull();
+    expect(routeWarning('#/notification-gate')).toBeNull();
   });
 });
 
