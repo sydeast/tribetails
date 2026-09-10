@@ -748,6 +748,10 @@ interface BookingSectionBlockProps {
  * list would tell a screen-reader user this page has three top-level areas when
  * it has one. The heading still carries the name either way.
  *
+ * `h2`, not `h3`: this block used to sit inside a `DenPanel` that owned the
+ * page's only `h2`, and the panel is gone (#704), so a section heading is now
+ * one level under the screen's `h1` rather than two.
+ *
  * The count lives INSIDE the heading rather than beside it so it is part of the
  * section's accessible name: "History 96" answers "how much is under here"
  * without moving focus into the section to count. It is also the ONLY place
@@ -772,9 +776,9 @@ function BookingSectionBlock({
 
   return (
     <section className="bookings__section" role="group" aria-labelledby={headingId}>
-      <h3 className="bookings__section-head" id={headingId}>
+      <h2 className="bookings__section-head" id={headingId}>
         {section.label} <span className="bookings__section-count">{section.rows.length}</span>
-      </h3>
+      </h2>
       {section.rows.length === 0 ? (
         <EmptyHint>{def.emptyHint}</EmptyHint>
       ) : (
