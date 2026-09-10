@@ -107,6 +107,27 @@ function uploadTestImage(fileName: string): void {
   cy.visit('/gallery');
   cy.contains('button', 'Upload media').click();
   cy.get('[role="dialog"]').within(() => {
+    // The household picker (the default KINFOLK target) renders a <select>
+    // only once `kinfolkOptions` has resolved; before that it renders a
+    // "No households on file yet" hint instead. Worse, `kinfolkId` seeds
+    // itself from `kinfolkOptions[0]?.id` in a `useState` INITIALIZER, which
+    // runs once at mount: if the dialog opened before the roster resolved
+    // (it reliably does, since nothing on this screen blocks "Upload media"
+    // on that read), the select can render for real and still carry a
+    // `kinfolkId` of `''`, and `handleUpload` bails out on a blank
+    // `entityId` before it ever asks for a signed upload. That is why an
+    // upload driven the instant the dialog opens sends no request at all.
+    // Explicitly choosing a household is what fixes it: a real `select`
+    // fires the `onChange` that sets the state, regardless of what the
+    // initializer saw. `account-photo.cy.ts` never has to do this: its
+    // upload target is fixed, with no roster to race.
+    cy.get('select', { timeout: 10_000 }).should('exist');
+    cy.get('select option')
+      .first()
+      .invoke('val')
+      .then((householdId) => {
+        cy.get('select').select(householdId as string);
+      });
     cy.get('input[type="file"]').selectFile(
       { contents: Cypress.Buffer.from(PNG_BASE64, 'base64'), fileName, mimeType: 'image/png' },
       { force: true }, // the input is visually hidden behind its own label
