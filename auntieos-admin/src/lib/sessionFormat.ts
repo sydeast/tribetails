@@ -258,22 +258,24 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
   return groups;
 }
 
-// ── phase grouping: the Auntie Time window (operator issue #17, #702) ───────
+// ── phase grouping: the Auntie Time window (issues #17, #702, #703) ─────────
 //
-// The sub-header has always read "Every Kin Care today and coming up, plus what
-// wrapped recently", while `SESSIONS_QUERY` streamed a flat 300 rows ordered by
-// startTime desc, so the data contradicted the copy: a visit from March sat in
-// the same list as tomorrow's. Everything below makes the data match the
-// promise, porting the archive's `KinCareSessionsScreen.kt` phases
-// (`Phase.Active` / `Upcoming` / `CompletedToday`, labelled "Recent") and its
-// `isVisibleOnAuntieTime` day-of filter.
+// This is the DAY-OF BOARD the `auntieos-auntie-time-2026-05-27` mock draws:
+// four phase groups of action cards, ported from the archive's
+// `KinCareSessionsScreen.kt` phases (`Phase.Active` / `Upcoming` /
+// `CompletedToday`, labelled "Recent") and its `isVisibleOnAuntieTime` day-of
+// filter. Issue #17 gave the screen a bounded window in the first place, since
+// `SESSIONS_QUERY` used to stream a flat 300 rows with no date predicate and a
+// visit from March sat beside tomorrow's.
 //
 // THE WINDOW BOUNDARIES, and why each is where it is:
 //
-//  RECENT, 7 days back. The archive used "yesterday onward", which is a day-of
-//    run sheet. The operator asked for "recent", and a week is the span in
-//    which "did that visit get wrapped?" is still a live question. Measured on
-//    the WRAP day (completedAt, falling back to startTime, because a CANCELLED
+//  RECENT, 1 day back: today or yesterday, which is what the mock labels its
+//    Recent group ("COMPLETED / CANCELLED today or yesterday"). Issue #17 read
+//    "recent" as the span in which a wrap is still a live question and widened
+//    it to a week; the mock is the operator's ruling and it is narrower, so the
+//    week is gone (#703). Anything older is behind the Archive. Measured on the
+//    WRAP day (completedAt, falling back to startTime, because a CANCELLED
 //    session never gets a completedAt).
 //  OVERDUE, added for issue #702. A visit still sitting at SCHEDULED once its
 //    slot is more than a day gone is the single row an operator most needs to
@@ -282,7 +284,7 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
 //    nowhere past that, which is exactly the bug: `sessionPhase` returned
 //    `null` for anything older, and `groupSessionsByPhase` drops nulls, so a
 //    SCHEDULED row that missed its slot by more than a day disappeared from
-//    every tab, including the Scheduled filter itself.) Bounded only by the
+//    the board entirely.) Bounded only by the
 //    FETCH range, same as Upcoming and Recent; anything the query never
 //    fetched is not this module's problem.
 //  UPCOMING, 14 days forward, one day BACK (unchanged: "yesterday" is still
@@ -296,19 +298,28 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
 
 export type SessionPhase = 'active' | 'overdue' | 'upcoming' | 'recent';
 
-/** Sort direction the operator picks; applied WITHIN a phase, never across phases. */
+/**
+ * Sort direction, applied WITHIN a phase and never across phases.
+ *
+ * NO CONTROL EXPOSES THIS ANY MORE. The Sort select went with #703 (the mock
+ * has none, and a run sheet reads forwards), so every caller passes the
+ * `'soonest'` default. The parameter stays because the ordering rule it names
+ * is real and tested: "latest first" is the ascending order read backwards on
+ * both axes, which is the property a future control would have to preserve.
+ */
 export type SessionSort = 'soonest' | 'latest';
 
-export const RECENT_WINDOW_DAYS = 7;
+export const RECENT_WINDOW_DAYS = 1;
 export const UPCOMING_WINDOW_DAYS = 14;
 
 /**
  * How far the bounded FETCH reaches, which is deliberately wider than the
  * display window above.
  *
- * Back 30 rather than 7, because Active carries no date bound: a visit clocked
- * in three weeks ago and never completed still has to reach the Active group,
- * and it cannot if the query never fetched it. Forward 15 rather than 14, to
+ * Back 30 rather than 1, because Active and Overdue carry no lower date bound:
+ * a visit clocked in three weeks ago and never completed, or one still sitting
+ * at SCHEDULED a fortnight after its slot, both have to reach the board,
+ * and neither can if the query never fetched it. Forward 15 rather than 14, to
  * absorb the UTC-vs-local boundary: the query compares raw ISO text while
  * grouping parses to a LOCAL day, so a row can sit one calendar day either side
  * of where the string sort puts it. Fetching the extra day and letting
@@ -369,8 +380,8 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
 
   if (state === 'completed' || state === 'cancelled') {
     // A cancellation has no completedAt, so it is dated by when it was meant to
-    // happen. Falling back rather than dropping it keeps the Cancelled filter
-    // tab meaningful inside the window.
+    // happen. Falling back rather than dropping it is what puts a cancelled
+    // visit in Recent beside the completed ones, exactly as the mock draws it.
     const wrapDay = sessionDayKey(row.completedAt ?? '') === 'Undated'
       ? sessionDayKey(row.startTime ?? '')
       : sessionDayKey(row.completedAt ?? '');
@@ -402,7 +413,7 @@ export interface SessionPhaseGroup<T> {
 // passed with nobody clocking in is more urgent than one still ahead of us,
 // so it reads right after what's in flight right now. Active, Upcoming and
 // Recent keep the exact relative order the archive always had.
-const PHASE_ORDER: readonly SessionPhase[] = ['active', 'overdue', 'upcoming', 'recent'];
+export const PHASE_ORDER: readonly SessionPhase[] = ['active', 'overdue', 'upcoming', 'recent'];
 
 export const PHASE_LABEL: Record<SessionPhase, string> = {
   active: 'Active',
@@ -415,8 +426,15 @@ export const PHASE_LABEL: Record<SessionPhase, string> = {
  * Group rows into Active / Overdue / Upcoming / Recent, each still sub-grouped
  * by LOCAL day, dropping anything outside the window (see `sessionPhase`).
  * Phases keep the fixed order above; [sort] reverses days and rows WITHIN a
- * phase only, so "latest first" never puts Recent above Active. A phase with
- * no rows emits no group at all, rather than an empty heading.
+ * phase only, so "latest first" never puts Recent above Active.
+ *
+ * ALL FOUR GROUPS ARE ALWAYS RETURNED, empty ones included, and that is the
+ * #703 change. They used to be skipped, which is how the operator reached a
+ * frame that said "9 visits fetched" over a single empty hint: an empty phase
+ * had nothing to say, so the board said nothing at all and read as broken. The
+ * mock draws every phase with its count chip whether or not it has cards, and
+ * a chip that says 0 is an answer. The screen decides how an empty group
+ * renders; this function's job is to stop hiding it.
  */
 export function groupSessionsByPhase<T extends PhaseRow>(
   rows: readonly T[],
@@ -432,10 +450,8 @@ export function groupSessionsByPhase<T extends PhaseRow>(
     else byPhase.set(phase, [row]);
   }
 
-  const groups: SessionPhaseGroup<T>[] = [];
-  for (const phase of PHASE_ORDER) {
-    const phaseRows = byPhase.get(phase);
-    if (!phaseRows || phaseRows.length === 0) continue;
+  return PHASE_ORDER.map((phase) => {
+    const phaseRows = byPhase.get(phase) ?? [];
     // `groupSessionsByDay` already returns days ascending with rows ascending
     // inside each; "latest first" is that same ordering read backwards, on both
     // axes, so a day's rows stay consistent with the day order around them.
@@ -444,9 +460,8 @@ export function groupSessionsByPhase<T extends PhaseRow>(
       sort === 'latest'
         ? [...days].reverse().map((d) => ({ ...d, rows: [...d.rows].reverse() }))
         : days;
-    groups.push({ phase, label: PHASE_LABEL[phase], count: phaseRows.length, days: ordered });
-  }
-  return groups;
+    return { phase, label: PHASE_LABEL[phase], count: phaseRows.length, days: ordered };
+  });
 }
 
 /** Re-exported so screens/tests needn't also import `lib/invoiceFormat` just for "today, as a local date". */

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { sessionsPageQuery, sessionsWindowPageQuery, type SessionEntry } from '../api/sessions';
+import { KIN_QUERY, KINFOLK_QUERY, type Kin, type Kinfolk } from '../api/directory';
+import { transitionBookingStatus } from '../api/bookingsWrite';
 import {
   sessionState,
   sessionStateInfo,
@@ -9,55 +11,46 @@ import {
   sessionDayLabel,
   groupSessionsByDay,
   groupSessionsByPhase,
-  isSessionActive,
   localDateIso,
-  shiftDayIso,
   FETCH_DAYS_BACK,
-  RECENT_WINDOW_DAYS,
   UPCOMING_WINDOW_DAYS,
+  shiftDayIso,
   type SessionDayGroup,
-  type SessionSort,
+  type SessionPhase,
   type SessionState,
 } from '../lib/sessionFormat';
+import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
+import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { usePagedCollection } from '../lib/usePagedCollection';
-import { useDocById } from '../lib/firestore';
-import { asyncScalar } from '../lib/async';
-import { str } from '../lib/coerce';
-import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
-import { GhostButton } from '../components/Buttons';
+import { useCollection, useDocById } from '../lib/firestore';
+import { str, arr } from '../lib/coerce';
+import { DenScreenHeading, ServicePill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { Avatar } from '../components/Avatar';
+import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { SessionDetail } from './SessionDetail';
 import './Sessions.css';
 
-/**
- * The Den filter tabs. Every predicate is a POSITIVE membership test against
- * the enumerated `SessionState` (the Invoices `FILTERS` / AO-12 convention), 
- * never a negation of another bucket.
- */
-type FilterKey = 'all' | 'active' | 'scheduled' | 'completed' | 'cancelled';
-
-interface FilterDef {
-  key: FilterKey;
-  label: string;
-  test: (state: SessionState) => boolean;
-}
-
-const FILTERS: readonly FilterDef[] = [
-  { key: 'all', label: 'All', test: () => true },
-  { key: 'active', label: 'Active', test: (s) => isSessionActive(s) },
-  { key: 'scheduled', label: 'Scheduled', test: (s) => s === 'scheduled' },
-  { key: 'completed', label: 'Completed', test: (s) => s === 'completed' },
-  { key: 'cancelled', label: 'Cancelled', test: (s) => s === 'cancelled' },
-];
-
-/** Which body of data the screen is showing: the day-of window, or older history. */
+/** Which body of data the screen is showing: the day-of board, or older history. */
 type ViewMode = 'window' | 'archive';
 
-const SORTS: readonly { key: SessionSort; label: string }[] = [
-  { key: 'soonest', label: 'Soonest first' },
-  { key: 'latest', label: 'Latest first' },
-];
+/**
+ * What an EMPTY phase group says, per phase.
+ *
+ * The count chip beside the heading already reads 0, so repeating "nothing here"
+ * would be a line that is true of any empty list on any screen. What the chip
+ * CANNOT say is what the group covers, and that is the question an operator
+ * looking at four zeroes actually has: is Overdue empty because no visit has
+ * slipped, or because the board is not looking that far back? Each line answers
+ * that by naming the phase's own rule.
+ */
+const PHASE_EMPTY: Record<SessionPhase, string> = {
+  active: 'No visit is in flight.',
+  overdue: 'No scheduled visit has slipped past its slot.',
+  upcoming: `Nothing booked in the next ${String(UPCOMING_WINDOW_DAYS)} days.`,
+  recent: 'Nothing wrapped today or yesterday.',
+};
 
 interface SessionsProps {
   /**
@@ -68,98 +61,88 @@ interface SessionsProps {
    */
   initialSessionId?: string;
   /**
-   * Row-select override. The router mounts this screen propless, and by default
-   * a selected row now opens the in-screen `SessionDetail` read-only view, fed
-   * from the SAME live SESSIONS_QUERY stream this list already reads (no second
-   * fetch, see the `detailEntry` lookup below), the Bookings.tsx onSelectBooking
-   * pattern. Passing `onSelect` explicitly overrides that default (a future
-   * detail ROUTE, or a test, owns selection instead); when overridden this
-   * screen's own detail view never renders (see the `!onSelect` guard).
+   * Card-select override. The router mounts this screen propless, and by default
+   * selecting a card opens the in-screen `SessionDetail`, fed from a live by-id
+   * read (see the `detailEntry` lookup below). Passing `onSelect` explicitly
+   * overrides that default (a future detail ROUTE, or a test, owns selection
+   * instead); when overridden this screen's own detail view never renders (see
+   * the `!onSelect` guard).
    */
   onSelect?: (sessionId: string) => void;
+  /**
+   * Open the KinTale composer on this visit ("Complete KinTale" on a departed
+   * card). Supplied by `routes/SessionsView.tsx`, which owns the navigation.
+   * ABSENT means the button is not rendered at all, rather than rendered as a
+   * control that does nothing (the `ControlShell` dead-control rule).
+   */
+  onComposeKinTale?: (sessionId: string) => void;
+  /** Open one SENT KinTale ("View KinTale" on a completed card). Same absent-means-hidden rule. */
+  onViewKinTale?: (kinTaleId: string) => void;
 }
 
 /**
- * Admin Sessions list ("The Den · Auntie Time", nav slug `sessions`,
- * `lib/nav.ts` is explicit that the rail label and the slug are not the same
- * word). Reads the flat `kin_care_sessions` collection a PAGE at a time through
- * a bounded, server-ordered, DATE-RANGED query, classifies every row through the
- * enumerated `sessionState` (never by negation), then groups the FILTERED rows
- * into Active / Overdue / Upcoming / Recent, each still sub-grouped by LOCAL
- * calendar day (the AO-18 fix). Overdue is issue #702: a SCHEDULED visit whose
- * slot passed more than a day ago used to vanish outright (`sessionPhase`
- * returned `null` and `groupSessionsByPhase` drops nulls), so the Scheduled
- * tab could say "9 visits fetched" and render nothing. It now gets its own
- * group instead of being dropped.
+ * Admin Auntie Time (nav slug `sessions`; `lib/nav.ts` is explicit that the rail
+ * label and the slug are not the same word).
  *
- * OPERATOR ISSUE #17, and what changed. The sub-header has always promised
- * "Every Kin Care today and coming up, plus what wrapped recently", but the
- * screen read `SESSIONS_QUERY`: a flat 300 rows by startTime desc, no date
- * predicate, day-grouped and nothing else. A visit from March sat in the same
- * list as tomorrow's, so the copy and the data disagreed. Now:
- *  - `sessionsWindowPageQuery` fetches a bounded date range, and
- *    `groupSessionsByPhase` narrows it to the three phases the copy describes
- *    (see `lib/sessionFormat.ts` for each boundary and why it sits where it
- *    does).
- *  - Day headers carry the YEAR when it is not the current one, so a visit
- *    from last January can no longer read as this January.
- *  - A Sort control (soonest / latest first) reverses days and rows WITHIN a
- *    phase; the phases themselves keep the archive's fixed order.
- *  - The filter tabs are unchanged, and now operate inside the window.
- *  - Older history moved behind an Archive toggle, which swaps in
- *    `sessionsPageQuery` over an operator-chosen range and drops the phase
- *    rules (escaping them is the point of opening it).
+ * WHAT THIS SCREEN IS, per `ui-ideas/auntieos-auntie-time-2026-05-27.html` and
+ * the operator's ruling on it in #703 ("we are not following the correct ui for
+ * this screen period"). It is a DAY-OF BOARD: four always-present phase groups
+ * (Active / Overdue / Upcoming / Recent), each wearing a count chip, holding
+ * ACTION CARDS the operator can run a visit from without leaving the page.
  *
- * PHASE 4: BOTH MODES NOW PAGE. `usePagedCollection` replaced the flat
- * range-and-cap in each, so a busy month is reachable instead of being silently
- * truncated at the far end of the sort, and a failed SECOND page leaves the
- * visits already on screen exactly where they were.
+ * WHAT IT IS NO LONGER, and why each piece went. It had grown into a filtered,
+ * sortable, paged list, and every one of those controls is absent from the mock:
+ *   stat strip        three cards plus a "these counts cover N visits" line. A
+ *                     board whose four groups are counted has already said this,
+ *                     and said it about the rows on screen rather than about the
+ *                     size of the fetch.
+ *   filter tabs       All / Active / Scheduled / Completed / Cancelled. The
+ *                     phase groups ARE the split, and a tab that hides three of
+ *                     them hides the board.
+ *   Sort select       soonest / latest. A run sheet reads forwards.
+ *   DenPanel wrapper  a "Kin Care sessions" panel around everything. The screen
+ *                     heading already names the screen.
+ * The Archive survives as a single ghost link in the heading, because older
+ * history has to stay reachable and it is not day-of work.
  *
- * WHY THIS SCREEN DOES NOT WEAR `ListToolbar`, unlike KinTales and Invoices.
- * That toolbar's windows are "the last N days from now", which is the wrong
- * shape twice over here. Auntie Time reaches FORWARD: its window is today plus
- * the next fortnight plus what wrapped recently, so a backward-only preset would
- * either describe the wrong half of the list or need an upper bound the chips
- * cannot express. And the Archive is defined as the range BEFORE that window, so
- * a "Last 7 days" chip inside it would re-show exactly the rows the operator
- * opened the Archive to escape. The explicit From/To pair says more than four
- * chips can, and it already exists. A control that lies about its own scope is
- * worse than a control that looks different from its neighbours.
+ * EMPTY PHASES NOW RENDER. `groupSessionsByPhase` used to drop them, which is
+ * how the walk reached a frame reading "9 visits fetched" above one empty hint
+ * and nothing else. Four headings with count chips, some of them 0, is an
+ * answer; a blank page is not.
  *
- * Selecting a row opens `SessionDetail`, the operational detail for that one
- * visit: status/service, timing, household/kin, notes, AND, since #397 L19, the
- * writes this screen's header used to say were "still NOT built here" -- the
- * visit clock (on the way / clock in / clock out / undo arrival), the details
- * editor, and the GPS route. It is resolved by a live by-id subscription rather
- * than out of this list's paged rows, because those rows are a one-shot read
- * and a screen that hosts writes cannot render a frozen copy of the record; see
- * the `detailEntry` lookup below. Still NOT built here: KinTale compose
- * (`KinTaleComposeScreen` in the wasm reference, #397 L20), a separate surface.
+ * THE CARDS HOST WRITES, which is the part that makes this more than a layout
+ * change. The clock buttons go through `lib/useVisitLifecycle.ts`, the same hook
+ * `SessionDetail` drives, so there is one implementation of the four in-visit
+ * writes rather than two that can disagree. "Complete" goes through
+ * `transitionBookingStatus` instead, because completing a visit is terminal and
+ * billable and the server owns that state machine (the split
+ * `api/sessionsWrite.ts` documents). Both refresh the page after a write that
+ * changed something: `usePagedCollection` is a one-shot `getDocs`, so without
+ * that a card would keep painting the status it was fetched with while offering
+ * the transitions of that old state.
+ *
+ * SessionDetail is still one click away, from the card's own header, and it
+ * remains the home of the details editor, the note to office, the full route map
+ * and the Timing panel. The board is the run sheet; the sheet is the record.
  */
-export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
-  const [filter, setFilter] = useState<FilterKey>('all');
-  const [sort, setSort] = useState<SessionSort>('soonest');
+export function Sessions({
+  onSelect,
+  initialSessionId,
+  onComposeKinTale,
+  onViewKinTale,
+}: SessionsProps) {
   const [mode, setMode] = useState<ViewMode>('window');
   // The detail view's own selection state, used only when no external onSelect
   // is supplied (see SessionsProps's doc above).
   const [detailId, setDetailId] = useState<string | null>(initialSessionId ?? null);
   const handleSelect = onSelect ?? setDetailId;
 
-  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
-  // Home/End, roving tabIndex); called unconditionally at the top level per
-  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
-  // conditionally-invoked render prop.
-  const { getTabProps } = useRovingTabs({
-    count: FILTERS.length,
-    activeIndex: FILTERS.findIndex((f) => f.key === filter),
-  });
-
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
 
   // The Archive's default range is the month immediately BEFORE the day-of
-  // window's own fetch reaches, so opening it never re-shows what the list was
+  // window's own fetch reaches, so opening it never re-shows what the board was
   // already showing.
   const [archiveFrom, setArchiveFrom] = useState(() =>
     shiftDayIso(todayIso, -(FETCH_DAYS_BACK + 30)),
@@ -178,55 +161,48 @@ export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
         : sessionsWindowPageQuery(todayIso),
     [mode, archiveFrom, archiveTo, todayIso],
   );
-  const { state: rows, hasMore, more, loadMore } = usePagedCollection<SessionEntry>(spec);
+  const { state: rows, hasMore, more, loadMore, reload } = usePagedCollection<SessionEntry>(spec);
 
-  // Every field below is read through `str()`: `SessionEntry` is a cast over raw
-  // Firestore data, not a validation of it (see api/sessions.ts), so a doc can
-  // genuinely lack `status`/`startTime`/`completedAt`. An absent field degrades
-  // to '' and lands in the honest bucket the helpers already have for blank text
-  // ('unknown' state, 'Undated' day), so it just doesn't count toward a stat
-  // instead of throwing and blanking the screen.
-  const activeCount = asyncScalar(rows, (data) =>
-    data.filter((e) => isSessionActive(sessionState(str(e.status)))).length,
-  );
-  const todayCount = asyncScalar(
-    rows,
-    (data) => data.filter((e) => sessionDayKey(str(e.startTime)) === todayIso).length,
-  );
-  const wrappedTodayCount = asyncScalar(
-    rows,
-    (data) =>
-      data.filter(
-        (e) => sessionState(str(e.status)) === 'completed' && sessionDayKey(str(e.completedAt)) === todayIso,
-      ).length,
-  );
-
-  const loaded = rows.status === 'ready' ? rows.data.length : null;
-  const visitPlural = loaded === 1 ? '' : 's';
-  // "all 1 visit" is not a sentence anyone writes.
-  const everyOne = loaded === 1 ? 'the 1' : `all ${String(loaded)}`;
+  /**
+   * THE TWO JOINS THE CARD NEEDS, both of them household-directory streams this
+   * app already runs elsewhere (Directory, Gallery and Invoices read the same
+   * two specs), not new queries invented here.
+   *
+   * `kinfolk` carries the SERVICE ADDRESS: the session document does not, and a
+   * card whose whole job is getting an Auntie to a door has to show the door.
+   * `kin` carries the PROFILE PHOTOS the mock stacks on a card.
+   *
+   * A read that has not landed, or a household with nothing on file, degrades to
+   * the honest thing: no address line at all, and the status glyph in place of
+   * the photo circles. Never a placeholder address and never a stock face, which
+   * is the same rule `Avatar` already applies to a broken photo url.
+   */
+  const kinfolkState = useCollection<Kinfolk>(KINFOLK_QUERY);
+  const kinState = useCollection<Kin>(KIN_QUERY);
+  const addressById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (kinfolkState.status !== 'ready') return map;
+    for (const kf of kinfolkState.data) map.set(kf._id, str(kf.serviceAddress).trim());
+    return map;
+  }, [kinfolkState]);
+  const kinById = useMemo(() => {
+    const map = new Map<string, Kin>();
+    if (kinState.status !== 'ready') return map;
+    for (const k of kinState.data) map.set(k._id, k);
+    return map;
+  }, [kinState]);
 
   // The row SessionDetail shows, resolved by a LIVE by-id subscription.
   //
   // THE DEEP-LINK HALF (issue #389's rule, applied to visits) was always the
   // reason this read existed: a link into this screen names a visit, and
-  // resolving it by searching the rows this list happens to have loaded answers
-  // a different question -- an invoice line routes here for work that is by
+  // resolving it by searching the rows this board happens to have loaded answers
+  // a different question, since an invoice line routes here for work that is by
   // definition old enough to have been billed. A blank id issues no read at all
-  // (see useDocById), so a list with nothing open pays nothing for it.
-  //
-  // WHAT CHANGED WITH #397 L19: it used to run only as a FALLBACK, when the id
-  // was missing from the paged rows, and the streamed copy won otherwise. That
-  // was right while the detail was read-only and wrong the moment it gained the
-  // visit clock and the details editor, because `usePagedCollection` is a
-  // one-shot `getDocs`, not a listener -- so a clock-in would have written the
-  // document and left this screen rendering the stale row it was opened with,
-  // for as long as it stayed open. `useDocById`'s own header states the rule it
-  // exists for: "the sheets these ids open host writes ... and a frozen copy of
-  // the record would disagree with the list behind it the moment one landed."
+  // (see useDocById), so a board with nothing open pays nothing for it.
   //
   // The streamed row is still used, as the PLACEHOLDER while the subscription's
-  // first snapshot is in flight, so opening a visit the list already holds
+  // first snapshot is in flight, so opening a visit the board already holds
   // paints instantly rather than flashing "unavailable".
   const streamedEntry =
     detailId !== null && rows.status === 'ready'
@@ -237,54 +213,31 @@ export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
 
   // Only this screen's OWN selection takes over with its own detail view; an
   // external onSelect (see the prop's doc) means the caller owns the detail UI
-  // instead. A sibling VIEW of the list, the Directory/KinfolkProfile pattern.
+  // instead. A sibling VIEW of the board, the Directory/KinfolkProfile pattern.
   if (!onSelect && detailId !== null) {
     return <SessionDetail entry={detailEntry} onBack={() => setDetailId(null)} />;
   }
+
+  const cardContext: CardContext = {
+    todayIso,
+    addressById,
+    kinById,
+    onSelect: handleSelect,
+    onWritten: reload,
+    ...(onComposeKinTale ? { onComposeKinTale } : {}),
+    ...(onViewKinTale ? { onViewKinTale } : {}),
+  };
 
   return (
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Auntie Time"
         title="Auntie"
-        accentTail="Time."
-        subtitle="Every Kin Care today and coming up, plus what wrapped recently."
-      />
-
-      {mode === 'window' && (
-        <>
-          <div className="sessions__summary">
-            <StatCard
-              label="In flight"
-              value={activeCount}
-              trend="on the way, arrived, or departed"
-              tone="teal"
-              feature={activeCount.kind === 'value' && activeCount.value > 0}
-            />
-            <StatCard label="Today" value={todayCount} trend="on today's calendar" tone="orange" />
-            <StatCard label="Wrapped today" value={wrappedTodayCount} trend="completed Kin Cares" tone="success" />
-          </div>
-
-          {/* What the three numbers above actually count. They are computed over
-              the visits LOADED, which is the whole fetched window only once the
-              cursor is exhausted, so the line reads off `hasMore` rather than
-              trusting the page size to have covered everything. */}
-          {loaded !== null && (
-            <p className="sessions__stats-note">
-              {hasMore
-                ? `These counts cover the ${String(loaded)} visit${visitPlural} loaded so far. Load more to include the rest of the window.`
-                : `These counts cover ${everyOne} visit${visitPlural} fetched for this window.`}
-            </p>
-          )}
-        </>
-      )}
-
-      <DenPanel
-        title={mode === 'archive' ? 'Archive' : 'Kin Care sessions'}
+        accentTail="Time"
         subtitle={
           mode === 'archive'
             ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
-            : `In flight now, anything overdue, the next ${UPCOMING_WINDOW_DAYS} days, and what wrapped in the last ${RECENT_WINDOW_DAYS}.`
+            : 'Day-of view. Clock in, clock out, every Kin Care in flight.'
         }
         trailing={
           <GhostButton
@@ -292,201 +245,136 @@ export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
             onClick={() => setMode(mode === 'archive' ? 'window' : 'archive')}
           />
         }
-      >
-        {mode === 'archive' && (
-          <>
-            <div className="sessions__range">
-              <label className="sessions__range-field">
-                <span className="sessions__control-label">From</span>
-                <input
-                  type="date"
-                  className="sessions__range-input"
-                  value={archiveFrom}
-                  max={archiveTo}
-                  onChange={(e) => setArchiveFrom(e.target.value)}
-                />
-              </label>
-              <label className="sessions__range-field">
-                <span className="sessions__control-label">To</span>
-                <input
-                  type="date"
-                  className="sessions__range-input"
-                  value={archiveTo}
-                  min={archiveFrom}
-                  onChange={(e) => setArchiveTo(e.target.value)}
-                />
-              </label>
-            </div>
+      />
 
-            {/* The Archive's own scope line. The range is right there in the two
-                inputs; what the operator cannot see is how much of it has
-                actually been fetched, which is the thing the filter tabs and the
-                day groups below are really describing. */}
-            {loaded !== null && (
-              <p className="sessions__range-note">
-                {hasMore
-                  ? `Showing the first ${String(loaded)} visit${visitPlural} from ${archiveFrom} to ${archiveTo}. There are more to load.`
-                  : `Showing ${everyOne} visit${visitPlural} from ${archiveFrom} to ${archiveTo}.`}
-              </p>
+      {mode === 'archive' && (
+        <div className="sessions__range">
+          <label className="sessions__range-field">
+            <span className="sessions__control-label">From</span>
+            <input
+              type="date"
+              className="sessions__range-input"
+              value={archiveFrom}
+              max={archiveTo}
+              onChange={(e) => setArchiveFrom(e.target.value)}
+            />
+          </label>
+          <label className="sessions__range-field">
+            <span className="sessions__control-label">To</span>
+            <input
+              type="date"
+              className="sessions__range-input"
+              value={archiveTo}
+              min={archiveFrom}
+              onChange={(e) => setArchiveTo(e.target.value)}
+            />
+          </label>
+        </div>
+      )}
+
+      <AsyncRegion
+        state={rows}
+        what="Kin Care sessions"
+        // The BOARD is never empty: four phase groups render whatever the data
+        // says, so `isEmpty` is false there by construction and the "nothing on
+        // the books" line rides UNDER the groups instead of replacing them. The
+        // Archive is a plain list and keeps the ordinary empty state.
+        isEmpty={(data) => mode === 'archive' && data.length === 0}
+        loading={<p className="sessions__hint">Loading Kin Care sessions…</p>}
+        empty={<EmptyHint>No Kin Cares in this range.</EmptyHint>}
+      >
+        {(data) => (
+          <>
+            {mode === 'archive' ? (
+              <DayList days={groupSessionsByDay(data)} ctx={cardContext} />
+            ) : (
+              <>
+                <ul className="sessions__phases">
+                  {groupSessionsByPhase(data, todayIso).map((p) => (
+                    <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
+                      <h3 className="sessions__phase-header">
+                        {p.label}
+                        <span className="sessions__phase-count">{p.count}</span>
+                      </h3>
+                      {p.count === 0 ? (
+                        <p className="sessions__phase-empty">{PHASE_EMPTY[p.phase]}</p>
+                      ) : (
+                        <ul className="sessions__cards">
+                          {p.days.flatMap((d) =>
+                            d.rows.map((entry) => (
+                              <SessionCard key={entry._id} entry={entry} ctx={cardContext} />
+                            )),
+                          )}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Says where the rest of the book is, under a board that is
+                    genuinely holding nothing. The four groups above have already
+                    said each phase is empty; this says that is not a fault. */}
+                {data.length === 0 && (
+                  <p className="sessions__hint">
+                    Nothing on the books in this window. Older visits are in the Archive.
+                  </p>
+                )}
+              </>
+            )}
+
+            {/* A FAILED PAGE IS NOT A FAILED LIST. The visits above are still
+                true, the cursor has not advanced, and the failure is reported
+                beside them rather than replacing them. That is why this is an
+                inline alert and not the AsyncRegion banner. */}
+            {hasMore && (
+              <div className="sessions__more">
+                <GhostButton
+                  label={more.status === 'loading' ? 'Loading more…' : 'Load more'}
+                  onClick={loadMore}
+                  disabled={more.status === 'loading'}
+                />
+                {more.status === 'error' && (
+                  <p className="sessions__more-error" role="alert">
+                    Couldn&rsquo;t load more Kin Care sessions. {more.message} The{' '}
+                    {String(data.length)} already loaded are unaffected.
+                    {more.retry && (
+                      <button type="button" className="async-retry" onClick={more.retry}>
+                        Retry
+                      </button>
+                    )}
+                  </p>
+                )}
+              </div>
             )}
           </>
         )}
-
-        <AsyncRegion
-          state={rows}
-          what="Kin Care sessions"
-          isEmpty={(data) => data.length === 0}
-          loading={<p className="sessions__hint">Loading Kin Care sessions…</p>}
-          empty={
-            <EmptyHint>
-              {mode === 'archive'
-                ? 'No Kin Cares in this range.'
-                : 'Nothing on the books in this window. Older visits are in the Archive.'}
-            </EmptyHint>
-          }
-        >
-          {(data) => {
-            // Non-null: FILTERS lists all five FilterKey members above, and
-            // `filter` only ever holds a key set via setFilter(f.key) from
-            // that same array (Invoices.tsx's identical .find()! comment).
-            const activeFilter = FILTERS.find((f) => f.key === filter)!;
-            const visible = data.filter((e) => activeFilter.test(sessionState(str(e.status))));
-
-            // The window view groups by PHASE (each phase still sub-grouped by
-            // day); the Archive is plain history, so it groups by day alone,
-            // deliberately WITHOUT the window rules, since escaping them is the
-            // whole point of opening it.
-            const phases =
-              mode === 'archive' ? [] : groupSessionsByPhase(visible, todayIso, sort);
-            const archiveDays = mode === 'archive' ? orderDays(groupSessionsByDay(visible), sort) : [];
-            const shown = mode === 'archive' ? archiveDays.length : phases.length;
-
-            // Two different empties, told apart rather than merged: a filter
-            // that matches nothing, versus a window that holds nothing.
-            const unfilteredShown =
-              mode === 'archive'
-                ? data.length
-                : groupSessionsByPhase(data, todayIso, sort).length;
-
-            return (
-              <>
-                <div className="sessions__controls">
-                  <div className="sessions__tabs" role="tablist" aria-label="Filter Kin Care sessions">
-                    {FILTERS.map((f, index) => (
-                      <button
-                        key={f.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={filter === f.key}
-                        className={filter === f.key ? 'sessions__tab sessions__tab--active' : 'sessions__tab'}
-                        onClick={() => setFilter(f.key)}
-                        {...getTabProps(index)}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <label className="sessions__sort">
-                    <span className="sessions__control-label">Sort</span>
-                    <select
-                      className="sessions__sort-select"
-                      value={sort}
-                      onChange={(e) => setSort(e.target.value as SessionSort)}
-                    >
-                      {SORTS.map((s) => (
-                        <option key={s.key} value={s.key}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {shown === 0 ? (
-                  <EmptyHint>
-                    {unfilteredShown === 0
-                      ? mode === 'archive'
-                        ? 'No Kin Cares in this range.'
-                        : 'Nothing on the books in this window. Older visits are in the Archive.'
-                      : 'Nothing matches this filter.'}
-                  </EmptyHint>
-                ) : mode === 'archive' ? (
-                  <DayList days={archiveDays} todayIso={todayIso} onSelect={handleSelect} />
-                ) : (
-                  <ul className="sessions__phases">
-                    {phases.map((p) => (
-                      <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
-                        <h3 className="sessions__phase-header">
-                          {p.label}
-                          <span className="sessions__phase-count">{p.count}</span>
-                        </h3>
-                        <DayList days={p.days} todayIso={todayIso} onSelect={handleSelect} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {/* A FAILED PAGE IS NOT A FAILED LIST. The visits above are
-                    still true, the cursor has not advanced, and the failure is
-                    reported beside them rather than replacing them. That is why
-                    this is an inline alert and not the AsyncRegion banner. */}
-                {hasMore && (
-                  <div className="sessions__more">
-                    <GhostButton
-                      label={more.status === 'loading' ? 'Loading more…' : 'Load more'}
-                      onClick={loadMore}
-                      disabled={more.status === 'loading'}
-                    />
-                    {more.status === 'error' && (
-                      <p className="sessions__more-error" role="alert">
-                        Couldn&rsquo;t load more Kin Care sessions. {more.message} The{' '}
-                        {String(data.length)} already loaded are unaffected.
-                        {more.retry && (
-                          <button type="button" className="async-retry" onClick={more.retry}>
-                            Retry
-                          </button>
-                        )}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
+      </AsyncRegion>
     </div>
   );
 }
 
-/**
- * Day groups read in the operator's chosen direction. `groupSessionsByDay`
- * always returns days ascending with rows ascending inside each, so "latest
- * first" is that same ordering reversed on both axes (the identical rule
- * `groupSessionsByPhase` applies within a phase).
- */
-function orderDays<T>(days: SessionDayGroup<T>[], sort: SessionSort): SessionDayGroup<T>[] {
-  if (sort === 'soonest') return days;
-  return [...days].reverse().map((d) => ({ ...d, rows: [...d.rows].reverse() }));
-}
-
-interface DayListProps {
-  days: SessionDayGroup<SessionEntry>[];
+/** Everything a card needs beyond its own row, passed down whole rather than one prop at a time. */
+interface CardContext {
   todayIso: string;
+  addressById: Map<string, string>;
+  kinById: Map<string, Kin>;
   onSelect: (sessionId: string) => void;
+  /** Re-runs the paged read after a write that changed the document. */
+  onWritten: () => void;
+  onComposeKinTale?: (sessionId: string) => void;
+  onViewKinTale?: (kinTaleId: string) => void;
 }
 
-/** The day-header + rows list, shared by the phase groups and the Archive. */
-function DayList({ days, todayIso, onSelect }: DayListProps) {
+/** The Archive's day-grouped list, the one place a day header still earns its line. */
+function DayList({ days, ctx }: { days: SessionDayGroup<SessionEntry>[]; ctx: CardContext }) {
   return (
     <ul className="sessions__list">
       {days.map((g) => (
         <li key={g.dayKeyValue} className="sessions__day-group">
-          <h4 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, todayIso)}</h4>
-          <ul className="sessions__day-rows">
+          <h4 className="sessions__day-header">{sessionDayLabel(g.dayKeyValue, ctx.todayIso)}</h4>
+          <ul className="sessions__cards">
             {g.rows.map((entry) => (
-              <SessionRow key={entry._id} entry={entry} onSelect={onSelect} />
+              <SessionCard key={entry._id} entry={entry} ctx={ctx} />
             ))}
           </ul>
         </li>
@@ -495,39 +383,248 @@ function DayList({ days, todayIso, onSelect }: DayListProps) {
   );
 }
 
-interface SessionRowProps {
-  entry: SessionEntry;
-  onSelect?: ((sessionId: string) => void) | undefined;
+/**
+ * The glyph standing in for a visit with no kin photos to show, transcribed from
+ * the mock's own `.sicon` tiles: an arrow for a visit under way, a clock face
+ * for one still ahead, a tick for a wrap, a cross for a cancellation.
+ *
+ * Decorative: every card names its state in the status chip beside this, so the
+ * tile is `aria-hidden` at the render site rather than given a second accessible
+ * name that a screen reader would read out twice.
+ */
+const STATE_GLYPH: Record<SessionState, string> = {
+  scheduled: '◷',
+  onMyWay: '↗',
+  arrived: '◉',
+  departed: '↘',
+  completed: '✓',
+  cancelled: '✕',
+  unknown: '?',
+};
+
+/** `err.message` when there is one, else a plain sentence. Never an empty string. */
+function messageOf(err: unknown): string {
+  return err instanceof Error && err.message !== '' ? err.message : 'Unknown error.';
 }
 
-function SessionRow({ entry, onSelect }: SessionRowProps) {
+/**
+ * One visit as the mock's action card.
+ *
+ * THE HEADER IS ONE BUTTON AND THE ACTION ROW SITS OUTSIDE IT, deliberately: a
+ * button inside a button is invalid HTML and browsers resolve it by dropping one
+ * of them, which would make the inline lifecycle controls unclickable on exactly
+ * the cards that need them most. The header opens the detail; the action row
+ * acts.
+ */
+function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) {
+  const { todayIso, addressById, kinById, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
+    ctx;
   const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
   const household = sessionHousehold(str(entry.kinfolkName));
+  const clock = useVisitLifecycle(entry._id, household, onWritten);
 
-  const body = (
-    <>
-      <span className="sessions__row-who">
-        <span className="sessions__row-name">{household}</span>
-        <ServicePill serviceType={str(entry.serviceType)} />
-      </span>
+  // "Complete" is NOT a `setVisitLifecycle` action and so does not go through
+  // the hook: completing a visit is terminal and billable, so it goes through
+  // `transitionBookingStatus` like every other booking-status change, and the
+  // server's refusal is what the operator reads.
+  const [completing, setCompleting] = useState(false);
+  const [completeAsked, setCompleteAsked] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
-      <span className="sessions__row-when">{sessionWindow(str(entry.startTime), str(entry.endTime))}</span>
+  async function runComplete() {
+    setCompleteAsked(false);
+    setCompleting(true);
+    setCompleteError(null);
+    try {
+      await transitionBookingStatus({
+        sessionId: entry._id,
+        action: 'COMPLETE',
+        completedAt: lifecycleNowIso(),
+      });
+      onWritten();
+    } catch (err) {
+      setCompleteError(messageOf(err));
+    } finally {
+      setCompleting(false);
+    }
+  }
 
-      <span className={`sessions__chip sessions__chip--${info.cssClass}`}>{info.chipLabel}</span>
-    </>
-  );
+  // The mock's identity line: the service, the kin this visit covers, then when
+  // it happens. Blank parts drop out rather than leaving a stranded separator,
+  // so a session with no kin names reads "Dog Walk · Today · 09:00 to 10:00"
+  // instead of "Dog Walk ·  · Today · ...".
+  const kinNames = arr<string>(entry.kinNames)
+    .map((n) => n.trim())
+    .filter((n) => n !== '');
+  const dayKeyValue = sessionDayKey(str(entry.startTime));
+  const when = sessionWindow(str(entry.startTime), str(entry.endTime));
+  const day = dayKeyValue === 'Undated' ? '' : sessionDayLabel(dayKeyValue, todayIso);
+  // The board carries no day headers (the mock has none), so the day rides on
+  // the card's own line. That is also what keeps the AO-18 local-day fix visible
+  // here: the same `sessionDayKey` / `sessionDayLabel` pair the day headers used,
+  // rendered per card instead.
+  const whenLine = day === '' ? when : `${day} · ${when}`;
+  const metaLine = [kinNames.join(' & '), whenLine].filter((p) => p !== '').join(' · ');
 
-  // Static, non-interactive row unless a detail handler is wired: a live no-op
-  // button is the dead-control anti-pattern (see ControlShell in Buttons.tsx).
+  const address = addressById.get(str(entry.kinfolkId)) ?? '';
+  // What the FAMILY wrote about their own house first, the office's internal
+  // note second. Truncated the way Android's card truncates it: a run sheet
+  // shows enough to recognize the instruction, and the detail sheet has the rest.
+  const rawNote = str(entry.kinfolkNotes).trim() || str(entry.notes).trim();
+  const note = rawNote.length > 120 ? `${rawNote.slice(0, 120)}…` : rawNote;
+
+  const kin = arr<string>(entry.kinIds)
+    .map((id) => kinById.get(id))
+    .filter((k): k is Kin => k !== undefined);
+  const reportIds = arr<string>(entry.reportIds).filter((id) => id.trim() !== '');
+  const firstReportId = reportIds[0];
+
+  const clockActions = cardLifecycleActionsFor(state);
+  // Transcribed from the mock card by card: Complete sits on the two states
+  // BEFORE the Auntie has clocked in (its scheduled and on-my-way cards carry
+  // it) and the write-up buttons take over from there. The server accepts
+  // COMPLETE from all four pre-terminal states (`bookingTransitions.ts`), so
+  // this is the mock narrowing an allowed set, never a guess at what will work.
+  const offersComplete = state === 'scheduled' || state === 'onMyWay';
+  const offersCompose = state === 'departed' && onComposeKinTale !== undefined;
+  const offersView =
+    state === 'completed' && firstReportId !== undefined && onViewKinTale !== undefined;
+  const hasActions = clockActions.length > 0 || offersComplete || offersCompose || offersView;
+
   return (
-    <li className="sessions__row">
-      {onSelect ? (
-        <button type="button" className="sessions__row-main lift" onClick={() => onSelect(entry._id)}>
-          {body}
-        </button>
-      ) : (
-        <div className="sessions__row-main sessions__row-main--static">{body}</div>
+    <li className={`sessions__card sessions__card--${info.cssClass}`}>
+      <button type="button" className="sessions__card-head lift" onClick={() => onSelect(entry._id)}>
+        {kin.length > 0 ? (
+          <span className="sessions__photos">
+            {kin.slice(0, 3).map((k) => (
+              <Avatar
+                key={k._id}
+                className="sessions__photo"
+                label={str(k.name) === '' ? 'Kin' : str(k.name)}
+                imageUrl={k.profilePictureUrl}
+                initials={str(k.name).slice(0, 2)}
+                size={34}
+              />
+            ))}
+          </span>
+        ) : (
+          <span className="sessions__glyph" aria-hidden="true">
+            {STATE_GLYPH[state]}
+          </span>
+        )}
+
+        <span className="sessions__card-id">
+          <span className="sessions__card-name">{household}</span>
+          <span className="sessions__card-svc">
+            <ServicePill serviceType={str(entry.serviceType)} />
+            {metaLine !== '' && <span className="sessions__card-meta">{metaLine}</span>}
+          </span>
+        </span>
+
+        <span className={`sessions__chip sessions__chip--${info.cssClass}`}>{info.chipLabel}</span>
+      </button>
+
+      {/* Live only while the Auntie is inside the house. A DEPARTED visit has a
+          finished route on the detail sheet, and claiming a live one here would
+          be a claim about a phone that has stopped pinging. */}
+      {state === 'arrived' && (
+        <p className="sessions__gps">
+          <span className="sessions__gps-dot" aria-hidden="true" />
+          GPS tracking · live route
+        </p>
+      )}
+
+      {address !== '' && <p className="sessions__addr">📍 {address}</p>}
+      {note !== '' && <p className="sessions__note">{note}</p>}
+      {str(entry.invoiceId).trim() !== '' && <p className="sessions__invoice">Invoice linked</p>}
+
+      {hasActions && (
+        <div className="sessions__acts">
+          {clockActions.map((a) =>
+            a.tone === 'primary' ? (
+              <PrimaryButton
+                key={a.action}
+                label={a.cardLabel}
+                onClick={() => clock.ask(a)}
+                disabled={clock.saving || completing}
+              />
+            ) : (
+              <GhostButton
+                key={a.action}
+                label={a.cardLabel}
+                onClick={() => clock.ask(a)}
+                disabled={clock.saving || completing}
+              />
+            ),
+          )}
+          {offersComplete && (
+            <GhostButton
+              label="Complete"
+              onClick={() => setCompleteAsked(true)}
+              disabled={clock.saving || completing}
+            />
+          )}
+          {offersCompose && onComposeKinTale !== undefined && (
+            <PrimaryButton label="Complete KinTale" onClick={() => onComposeKinTale(entry._id)} />
+          )}
+          {offersView && onViewKinTale !== undefined && firstReportId !== undefined && (
+            <GhostButton label="View KinTale" onClick={() => onViewKinTale(firstReportId)} />
+          )}
+        </div>
+      )}
+
+      {clock.write.status === 'error' && (
+        <ErrorHint>Couldn&rsquo;t update the visit clock. {clock.write.message}</ErrorHint>
+      )}
+      {clock.write.status === 'done' && (
+        <p className="sessions__ok" role="status">
+          {clock.write.message}
+        </p>
+      )}
+      {completeError !== null && (
+        <ErrorHint>Couldn&rsquo;t complete this visit. {completeError}</ErrorHint>
+      )}
+
+      {clock.pending !== null && (
+        <Dialog
+          title={clock.pending.label}
+          onClose={clock.dismiss}
+          footer={
+            <>
+              <GhostButton label="Not yet" onClick={clock.dismiss} />
+              <PrimaryButton label={clock.pending.confirmLabel} onClick={clock.confirm} />
+            </>
+          }
+        >
+          {/* Future tense, and a confirm label the operator has not already
+              pressed once: the BookingActions confirm-copy rule. The gate is
+              here and not only on the detail sheet because these writes notify a
+              household, and a mis-tap on a dense board is easier than one on a
+              sheet with a single action row. */}
+          <p>{clock.pending.confirmBody(household)}</p>
+        </Dialog>
+      )}
+
+      {completeAsked && (
+        <Dialog
+          title="Mark this visit completed?"
+          onClose={() => setCompleteAsked(false)}
+          footer={
+            <>
+              <GhostButton label="Not yet" onClick={() => setCompleteAsked(false)} />
+              <PrimaryButton label="Yes, mark it completed" onClick={() => void runComplete()} />
+            </>
+          }
+        >
+          {/* Where the card GOES is stated, because it moves: a visit completed
+              today is a wrap from today, so it lands in Recent rather than
+              leaving the board. */}
+          <p>
+            {household}&rsquo;s visit will be marked Completed and move to Recent. It is billable
+            from that point.
+          </p>
+        </Dialog>
       )}
     </li>
   );

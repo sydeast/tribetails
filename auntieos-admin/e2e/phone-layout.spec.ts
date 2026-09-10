@@ -115,11 +115,14 @@ const SCREENS: readonly Screen[] = [
     row: '.invoices__row-main',
     identity: '.invoices__row-who',
   },
+  // Auntie Time is a board of action CARDS since #703, not a row grid. The
+  // measurement is the same either way: the header carrying the visit's
+  // identity, and the column inside it that has to keep room to ellipsise.
   {
     slug: 'sessions',
     kicker: 'The Den · Auntie Time',
-    row: '.sessions__row-main',
-    identity: '.sessions__row-who',
+    row: '.sessions__card-head',
+    identity: '.sessions__card-id',
   },
   {
     slug: 'schedule',

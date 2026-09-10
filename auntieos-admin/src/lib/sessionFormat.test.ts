@@ -234,10 +234,9 @@ describe('localDateIso re-export', () => {
   });
 });
 /**
- * OPERATOR ISSUE #17. The sub-header has always promised "Every Kin Care today
- * and coming up, plus what wrapped recently", while the screen streamed a flat
- * 300 rows ordered by startTime desc, so the data contradicted the copy. These
- * cases pin the window the copy describes.
+ * THE DAY-OF BOARD (#17, #702, #703). The window these cases pin is the one the
+ * `auntieos-auntie-time-2026-05-27` mock draws: four phases, always all four,
+ * with Recent meaning today or yesterday.
  */
 describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothing else', () => {
   interface Row {
@@ -254,7 +253,7 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
   const fixture: Row[] = [
     { id: 'active', startTime: dayOffset(0, 9), status: 'ARRIVED' },
     { id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' },
-    { id: 'threeDaysAgo', startTime: dayOffset(-3), status: 'COMPLETED', completedAt: dayOffset(-3, 14) },
+    { id: 'yesterdayWrap', startTime: dayOffset(-1), status: 'COMPLETED', completedAt: dayOffset(-1, 14) },
     { id: 'thirtyDaysAgo', startTime: dayOffset(-30), status: 'COMPLETED', completedAt: dayOffset(-30, 14) },
   ];
   function idsByPhase(rows: Row[], today = TODAY) {
@@ -263,30 +262,39 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
       groups.map((g) => [g.phase, g.days.flatMap((d) => d.rows.map((r) => r.id))]),
     );
   }
-  it('puts an in-flight visit, tomorrow, and a wrap from three days ago in their own phases', () => {
+  it('puts an in-flight visit, tomorrow, and yesterday’s wrap in their own phases', () => {
     expect(idsByPhase(fixture)).toEqual({
       active: ['active'],
+      overdue: [],
       upcoming: ['tomorrow'],
-      recent: ['threeDaysAgo'],
+      recent: ['yesterdayWrap'],
     });
   });
-  it('excludes a wrap from thirty days ago: Recent means the last seven days', () => {
+  it('excludes a wrap from thirty days ago: Recent means today or yesterday', () => {
     const all = Object.values(idsByPhase(fixture)).flat();
     expect(all).not.toContain('thirtyDaysAgo');
   });
-  it('keeps a wrap exactly seven days old, and drops one eight days old (the boundary)', () => {
+  it('keeps a wrap from yesterday, and drops one from the day before (the #703 boundary)', () => {
+    // The mock labels Recent "COMPLETED / CANCELLED today or yesterday". #17 had
+    // widened this to a week; the mock is the ruling and it is narrower.
     const rows: Row[] = [
-      { id: 'sevenDays', startTime: dayOffset(-7), status: 'COMPLETED', completedAt: dayOffset(-7, 14) },
-      { id: 'eightDays', startTime: dayOffset(-8), status: 'COMPLETED', completedAt: dayOffset(-8, 14) },
+      { id: 'yesterday', startTime: dayOffset(-1), status: 'COMPLETED', completedAt: dayOffset(-1, 14) },
+      { id: 'twoDaysAgo', startTime: dayOffset(-2), status: 'COMPLETED', completedAt: dayOffset(-2, 14) },
     ];
-    expect(idsByPhase(rows).recent).toEqual(['sevenDays']);
+    expect(idsByPhase(rows).recent).toEqual(['yesterday']);
+  });
+  it('keeps a wrap from TODAY in Recent, which is the group the board is mostly about', () => {
+    const rows: Row[] = [
+      { id: 'today', startTime: dayOffset(0, 9), status: 'COMPLETED', completedAt: dayOffset(0, 10) },
+    ];
+    expect(idsByPhase(rows).recent).toEqual(['today']);
   });
   it('keeps an in-flight visit whatever its date, so a stale clock-in is never lost', () => {
     const rows: Row[] = [{ id: 'stuck', startTime: dayOffset(-20), status: 'ARRIVED' }];
     expect(idsByPhase(rows).active).toEqual(['stuck']);
   });
   it('dates a cancellation by its start time, since a cancelled visit has no completedAt', () => {
-    const rows: Row[] = [{ id: 'called-off', startTime: dayOffset(-2), status: 'CANCELLED' }];
+    const rows: Row[] = [{ id: 'called-off', startTime: dayOffset(-1), status: 'CANCELLED' }];
     expect(idsByPhase(rows).recent).toEqual(['called-off']);
   });
   it('shows a scheduled visit yesterday that never got clocked, rather than dropping it', () => {
@@ -298,8 +306,8 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
   it('puts a SCHEDULED visit ten days overdue in its own Overdue phase, never dropped (issue #702)', () => {
     // Before the fix, sessionPhase returned null for any SCHEDULED row older
     // than yesterday and groupSessionsByPhase dropped the null, so a visit
-    // still SCHEDULED after its slot passed vanished from every tab, including
-    // the Scheduled filter itself, reachable only through the Archive.
+    // still SCHEDULED after its slot passed vanished from the board entirely,
+    // reachable only through the Archive.
     const rows: Row[] = [{ id: 'overdue', startTime: dayOffset(-10), status: 'SCHEDULED' }];
     expect(idsByPhase(rows).overdue).toEqual(['overdue']);
     const allShown = Object.values(idsByPhase(rows)).flat();
@@ -341,7 +349,9 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
       { id: 'pending', startTime: dayOffset(1), status: 'PENDING' },
       { id: 'rejected', startTime: dayOffset(1), status: 'REJECTED' },
     ];
-    expect(groupSessionsByPhase(rows, TODAY)).toEqual([]);
+    // The four groups still come back, because the board always shows four; what
+    // "hidden" means is that not one of them holds a booking-queue row.
+    expect(groupSessionsByPhase(rows, TODAY).map((g) => g.count)).toEqual([0, 0, 0, 0]);
   });
   it('surfaces an unrecognized status under Upcoming rather than swallowing it', () => {
     // AO-12: an unknown code is not silently dropped. It is not a booking-queue
@@ -350,24 +360,36 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
     const rows: Row[] = [{ id: 'novel', startTime: dayOffset(2), status: 'some_new_code' }];
     expect(idsByPhase(rows).upcoming).toEqual(['novel']);
   });
-  it('emits no group at all for a phase with no rows, never an empty heading', () => {
+  it('emits an EMPTY group for a phase with no rows, with a count of 0 (#703)', () => {
+    // This is the #703 inversion. Empty phases used to be skipped, which is how
+    // the walk reached a frame that claimed nine fetched visits over one empty
+    // hint. The mock draws all four groups with their count chips whatever the
+    // data says, and a chip that reads 0 is an answer.
     const rows: Row[] = [{ id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' }];
-    expect(groupSessionsByPhase(rows, TODAY).map((g) => g.phase)).toEqual(['upcoming']);
+    const groups = groupSessionsByPhase(rows, TODAY);
+    expect(groups.map((g) => g.phase)).toEqual(['active', 'overdue', 'upcoming', 'recent']);
+    expect(groups.map((g) => g.count)).toEqual([0, 0, 1, 0]);
   });
-  it('orders the phases Active, Upcoming, Recent when there is no overdue row, matching the archive', () => {
+  it('returns all four groups over NO rows at all, rather than an empty array', () => {
+    const groups = groupSessionsByPhase([], TODAY);
+    expect(groups.map((g) => g.label)).toEqual(['Active', 'Overdue', 'Upcoming', 'Recent']);
+    expect(groups.every((g) => g.count === 0 && g.days.length === 0)).toBe(true);
+  });
+  it('orders the phases Active, Overdue, Upcoming, Recent, matching the archive plus #702', () => {
     expect(groupSessionsByPhase(fixture, TODAY).map((g) => g.phase)).toEqual([
       'active',
+      'overdue',
       'upcoming',
       'recent',
     ]);
   });
-  it('keeps day sub-groups inside each phase, so headers stay per-day', () => {
+  it('keeps day sub-groups inside each phase, so the Archive can still head them per-day', () => {
     const rows: Row[] = [
       { id: 'day1a', startTime: dayOffset(1, 9), status: 'SCHEDULED' },
       { id: 'day1b', startTime: dayOffset(1, 15), status: 'SCHEDULED' },
       { id: 'day2', startTime: dayOffset(2, 9), status: 'SCHEDULED' },
     ];
-    const upcoming = groupSessionsByPhase(rows, TODAY)[0]!;
+    const upcoming = groupSessionsByPhase(rows, TODAY).find((g) => g.phase === 'upcoming')!;
     expect(upcoming.days).toHaveLength(2);
     expect(upcoming.days[0]!.rows.map((r) => r.id)).toEqual(['day1a', 'day1b']);
   });
@@ -387,15 +409,19 @@ describe('groupSessionsByPhase: the sort control', () => {
     { id: 'day1b', startTime: dayOffset(1, 15), status: 'SCHEDULED' },
     { id: 'day2', startTime: dayOffset(2, 9), status: 'SCHEDULED' },
   ];
+  // Addressed by PHASE rather than by index: every phase is returned now (#703),
+  // so index 0 is Active, which these fixtures deliberately leave empty.
   function flatIds(direction: SessionSort): string[] {
-    return groupSessionsByPhase(rows, TODAY, direction)[0]!.days.flatMap((d) =>
-      d.rows.map((r) => r.id),
-    );
+    return groupSessionsByPhase(rows, TODAY, direction)
+      .find((g) => g.phase === 'upcoming')!
+      .days.flatMap((d) => d.rows.map((r) => r.id));
   }
   it('defaults to soonest first', () => {
     expect(flatIds('soonest')).toEqual(['day1a', 'day1b', 'day2']);
     expect(
-      groupSessionsByPhase(rows, TODAY)[0]!.days.flatMap((d) => d.rows.map((r) => r.id)),
+      groupSessionsByPhase(rows, TODAY)
+        .find((g) => g.phase === 'upcoming')!
+        .days.flatMap((d) => d.rows.map((r) => r.id)),
     ).toEqual(['day1a', 'day1b', 'day2']);
   });
   it('latest first reverses both the day groups and the rows within a day', () => {
@@ -408,16 +434,19 @@ describe('groupSessionsByPhase: the sort control', () => {
     ];
     expect(groupSessionsByPhase(mixed, TODAY, 'latest').map((g) => g.phase)).toEqual([
       'active',
+      'overdue',
       'upcoming',
+      'recent',
     ]);
   });
 });
 describe('sessionsWindowBounds: the bounded fetch range', () => {
   it('reaches back thirty days and forward fifteen, a deliberate backstop around the display window', () => {
-    // The DISPLAY window is -7 recent / +14 upcoming. The FETCH range is wider
-    // on purpose: a stale in-flight visit must still reach Active, and the extra
-    // forward day absorbs the UTC-vs-local boundary, since the query compares
-    // raw ISO text while grouping parses to a local day.
+    // The DISPLAY window is -1 recent / +14 upcoming. The FETCH range is wider
+    // on purpose: a stale in-flight visit must still reach Active and a long-
+    // missed SCHEDULED one must still reach Overdue, neither of which carries a
+    // lower date bound. The extra forward day absorbs the UTC-vs-local boundary,
+    // since the query compares raw ISO text while grouping parses to a local day.
     expect(sessionsWindowBounds('2026-07-16')).toEqual({ from: '2026-06-16', to: '2026-07-31' });
   });
   it('rolls over a year boundary correctly', () => {
