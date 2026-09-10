@@ -421,13 +421,17 @@ export function Directory({
   // it (its `openKinfolkId` comes from the route, which has not changed), so
   // checking the profile first would swallow the drill-down. Closing this view
   // therefore lands back on whichever screen opened it: the profile, or the
-  // Directory's own Kin tab.
+  // Directory's own Kin tab. `openedFrom` tells KinView which of the two that
+  // is, so its Back button and its trail can name the destination correctly
+  // (#689). It is read off the mount, not stored: a profile that is open is a
+  // profile this view was drilled into from.
   if (openKinId !== null) {
     return (
       <KinView
         kinId={openKinId.id}
         kinName={openKinId.name}
         {...(openKinId.household ? { household: openKinId.household } : {})}
+        openedFrom={openKinfolkId !== null ? 'profile' : 'directory'}
         onBack={() => setOpenKinId(null)}
       />
     );
@@ -459,10 +463,13 @@ export function Directory({
           });
         }}
         onBack={() => {
-          // Closing is a navigation too. `onProfileClose` is what the route
-          // passes; propless (never reached today, the profile only mounts
-          // under the route) fall back to the list URL rather than to a
-          // silently unchanged screen.
+          // The COLD-ARRIVAL branch of the profile's Back (#689): the profile
+          // steps back through history whenever there is an entry behind it,
+          // and reaches this only when a bookmark or a typed URL opened it with
+          // nothing behind it at all. Closing is a navigation even then, so
+          // `onProfileClose` is what the route passes; propless (never reached
+          // today, the profile only mounts under the route) falls back to the
+          // list URL rather than to a silently unchanged screen.
           if (onProfileClose) onProfileClose();
           else void navigate({ to: '/directory' });
         }}

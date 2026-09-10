@@ -80,6 +80,25 @@ function mount(over: Partial<{ kinfolkName: string }> = {}) {
   );
 }
 
+/**
+ * #689. This record is a sub-view of the household PROFILE, held in that
+ * screen's state, so closing it never leaves `/directory/{id}`. The button used
+ * to say "Back to household", which named no screen the operator could find.
+ */
+describe('HouseholdData: Back', () => {
+  it('names the household it closes back down to', async () => {
+    const onBack = vi.fn();
+    render(<HouseholdData kinfolkId="kf1" kinfolkName="Nora Whitfield" onBack={onBack} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Nora Whitfield' }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the id when the profile passed no name down', async () => {
+    render(<HouseholdData kinfolkId="kf1" kinfolkName="" onBack={() => {}} />);
+    expect(await screen.findByRole('button', { name: 'Back to kf1' })).toBeInTheDocument();
+  });
+});
+
 describe('HouseholdData: reading the record', () => {
   it('renders every remaining section with the values that were read', async () => {
     mount();
@@ -104,7 +123,10 @@ describe('HouseholdData: reading the record', () => {
 
   it('names the household in the heading', async () => {
     mount();
-    expect(await screen.findByText(/Nora Whitfield/)).toBeInTheDocument();
+    // Matched on the subtitle sentence rather than the bare name: since #689
+    // the Back button names the household too, and a bare /Nora Whitfield/
+    // matches both.
+    expect(await screen.findByText(/The shared record behind Nora Whitfield/)).toBeInTheDocument();
   });
 
   it('shows a blank field as "Not set" rather than hiding it, because the gaps are the point', async () => {

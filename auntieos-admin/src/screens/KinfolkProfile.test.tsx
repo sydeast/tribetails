@@ -32,8 +32,13 @@ vi.mock('./HouseholdData', () => ({
 // than a sub-view swap, so this file needs the router's `Link`. The stub
 // substitutes the params into the path the way the real one does, which is what
 // the assertion below is actually about.
+// `useRouter` is here for the Back control: it reads `history.canGoBack()` to
+// decide between stepping back and the `onBack` fallback (#689). Default is a
+// cold arrival (nothing behind us), which is what most of this file asserts.
+const routerHistory = vi.hoisted(() => ({ canGoBack: vi.fn(() => false), back: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({
   linkOptions: (o: unknown) => o,
+  useRouter: () => ({ history: routerHistory }),
   Link: ({
     to,
     params,
@@ -99,6 +104,9 @@ beforeEach(() => {
   getDossier.mockResolvedValue(null);
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'loading' });
+  routerHistory.canGoBack.mockReset();
+  routerHistory.canGoBack.mockReturnValue(false);
+  routerHistory.back.mockReset();
 });
 
 describe('mergeKinfolkProfile (pure)', () => {
@@ -186,12 +194,29 @@ describe('KinfolkProfile', () => {
     expect(container.textContent).not.toContain('Joined');
   });
 
-  it('calls onBack from the Back control', async () => {
+  // #689. Two halves of one control: on a cold arrival it falls back to the
+  // Directory and says so; walked into, it returns to whatever the operator was
+  // reading and drops the claim about where that is.
+  it('falls back to the Directory, and names it, when nothing is behind this page', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     const onBack = vi.fn();
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={onBack} />);
-    await userEvent.click(await screen.findByRole('button', { name: /back to directory/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Directory' }));
     expect(onBack).toHaveBeenCalledOnce();
+    expect(routerHistory.back).not.toHaveBeenCalled();
+  });
+
+  it('steps back through history, under a plain label, when the operator walked here', async () => {
+    routerHistory.canGoBack.mockReturnValue(true);
+    getKinfolkProfile.mockResolvedValue(profile());
+    const onBack = vi.fn();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={onBack} />);
+    // Not "Back to Directory": the page behind this one may be the Schedule, an
+    // invoice, or the Inbox, and the button no longer guesses.
+    expect(screen.queryByRole('button', { name: /back to/i })).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Back' }));
+    expect(routerHistory.back).toHaveBeenCalledOnce();
+    expect(onBack).not.toHaveBeenCalled();
   });
 
   it('masks the gate code and the Wi-Fi password until the operator reveals them', async () => {

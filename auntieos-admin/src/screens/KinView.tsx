@@ -4,7 +4,7 @@ import { getKin, type KinDetail } from '../api/kinView';
 import { updateKinTags } from '../api/directoryWrite';
 import { initialsOf } from '../api/directory';
 import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, EmptyHint, type Crumb } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
@@ -22,6 +22,15 @@ interface KinViewProps {
    * could not be resolved: the step is dropped rather than filled with a guess.
    */
   household?: { id: string; name: string };
+  /**
+   * Which screen swapped this view in, which is the only thing that knows where
+   * closing it lands (#689). This view is not a route: it opens without touching
+   * the URL, from the Directory's Kin tab OR from a kin row on a household
+   * profile, and `onBack` returns to whichever of the two it was. Naming the
+   * opener is what lets the Back label and the trail tell the truth about that
+   * instead of both saying "Directory" from inside a household.
+   */
+  openedFrom: 'directory' | 'profile';
   onBack: () => void;
 }
 
@@ -49,7 +58,7 @@ function any(...vals: string[]): boolean {
  * alert-toned marker attached under the Kin box, not a full-width banner: a
  * handle-with-care signal, but not one that needs to interrupt the page.
  */
-export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
+export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
   // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
   // save/archive returns here + reloads so the fresh doc renders.
@@ -101,32 +110,49 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
     );
   }
 
+  // `auntieos-kin-detail-2026-05-27.html`: Directory / Lorna Wren / Biscuit.
+  // WHICH STEP IS A LINK DEPENDS ON WHERE THIS VIEW OPENED, because a `<Link>`
+  // to the address you are already standing on is a step that does nothing when
+  // clicked (see `Crumb` in DenScreenKit). From the Kin tab the URL is
+  // `/directory`, so the household profile is elsewhere and is the anchor;
+  // from a household profile the URL is already `/directory/{id}`, so it is the
+  // Directory that is elsewhere and the household step closes back down to the
+  // profile underneath. Either way both walkable steps lead somewhere real.
+  const openedFromProfile = openedFrom === 'profile';
+  const householdCrumb: Crumb[] = household
+    ? [
+        openedFromProfile
+          ? { label: household.name, onSelect: onBack }
+          : {
+              label: household.name,
+              link: linkOptions({
+                to: '/directory/$kinfolkId',
+                params: { kinfolkId: household.id },
+              }),
+            },
+      ]
+    : [];
+  // Closing lands on the opener, so the button says the opener. "Back to
+  // Directory" from inside a household was the complaint in #689: it named a
+  // screen the click does not go to.
+  const backLabel = openedFromProfile
+    ? `Back to ${household ? household.name : 'the household'}`
+    : 'Back to Directory';
+
   return (
     <div className="screen">
       <DenScreenHeading
-        // `auntieos-kin-detail-2026-05-27.html`: Directory / Lorna Wren / Biscuit.
-        // The household step is a real route link (this view sits on
-        // `/directory`, so `/directory/{id}` is somewhere else); the Directory
-        // step is not, because this view opened without changing the URL.
         crumbs={[
-          { label: 'Directory', onSelect: onBack },
-          ...(household
-            ? [
-                {
-                  label: household.name,
-                  link: linkOptions({
-                    to: '/directory/$kinfolkId',
-                    params: { kinfolkId: household.id },
-                  }),
-                },
-              ]
-            : []),
+          openedFromProfile
+            ? { label: 'Directory', link: linkOptions({ to: '/directory' }) }
+            : { label: 'Directory', onSelect: onBack },
+          ...householdCrumb,
           { label: kinName || kinId },
         ]}
         title={kinName || kinId}
         trailing={
           <>
-            <GhostButton label="Back to Directory" onClick={onBack} />
+            <GhostButton label={backLabel} onClick={onBack} />
             <PrimaryButton label="Edit" onClick={() => setEditing(true)} />
           </>
         }

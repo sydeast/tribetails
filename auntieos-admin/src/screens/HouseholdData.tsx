@@ -86,7 +86,11 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataP
         title="Household"
         accentTail="data"
         subtitle={`The shared record behind ${household}: vet, supplies, routines, and who covers Auntie.`}
-        trailing={<GhostButton label="Back to household" onClick={onBack} />}
+        // Names the screen the click actually lands on (#689). This is a
+        // sub-view of the household PROFILE, held in that screen's state, so
+        // closing it never leaves `/directory/{id}`. "Back to household" named
+        // no screen the operator could find; the household's own name does.
+        trailing={<GhostButton label={`Back to ${household}`} onClick={onBack} />}
       />
 
       {sandbox !== null ? (

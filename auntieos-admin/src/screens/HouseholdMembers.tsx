@@ -36,6 +36,7 @@ import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
+import { useHistoryBack } from '../lib/useHistoryBack';
 import './HouseholdMembers.css';
 
 /**
@@ -96,6 +97,11 @@ export interface HouseholdMembersProps {
   kinfolkId: string;
   /** For the heading and the confirm copy. The id is used when it is blank. */
   kinfolkName?: string;
+  /**
+   * Where Back goes on a COLD arrival only (#689): this screen has its own
+   * `/household-members/{id}` route, so an operator who walked here has an
+   * entry behind them and Back returns to that instead, whatever it was.
+   */
   onBack: () => void;
 }
 
@@ -132,6 +138,10 @@ function errText(err: unknown, fallback: string): string {
 export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMembersProps) {
   const { showToast } = useToast();
   const householdName = (kinfolkName ?? '').trim() === '' ? kinfolkId : (kinfolkName as string);
+  // #689. Named after the household rather than "household" so the fallback
+  // wording still points at something the operator can picture; the cold-arrival
+  // route has no name to use, so it falls back to the id it does have.
+  const back = useHistoryBack({ fallbackLabel: householdName, onFallback: onBack });
 
   const [members, setMembers] = useState<Async<HouseholdMember[]>>({ status: 'loading' });
   const [invites, setInvites] = useState<Async<HouseholdInvite[]>>({ status: 'loading' });
@@ -356,19 +366,24 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     <div className="screen">
       <div className="d1">
         <DenScreenHeading
-          // Both walkable steps are real: this screen has exactly one mount,
-          // its own `/household-members/{id}` route, so `/directory` is an
-          // anchor and the household is `onBack`, which the route resolves to
-          // `/directory/{id}`.
+          // Both walkable steps are real ROUTE LINKS: this screen has exactly
+          // one mount, its own `/household-members/{id}` route, so `/directory`
+          // and the household profile are both somewhere else and both can be
+          // middle-clicked, copied and opened in a new tab (#689). The
+          // household step used to be `onBack`, which was the same destination
+          // by a worse road: a button that only one kind of click reaches.
           crumbs={[
             { label: 'Directory', link: linkOptions({ to: '/directory' }) },
-            { label: householdName, onSelect: onBack },
+            {
+              label: householdName,
+              link: linkOptions({ to: '/directory/$kinfolkId', params: { kinfolkId } }),
+            },
             { label: 'Members and invites' },
           ]}
           title="Members and"
           accentTail="invites."
           subtitle={`Who can reach ${householdName} in MyTribe, and what each of them may do.`}
-          trailing={<GhostButton label="Back to household" onClick={onBack} />}
+          trailing={<GhostButton label={back.label} onClick={back.goBack} />}
         />
       </div>
 
