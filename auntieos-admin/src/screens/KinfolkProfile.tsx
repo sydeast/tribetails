@@ -95,13 +95,15 @@ function firstNonBlank(...values: string[]): string {
  * fields). The household's kin come from the Directory's own KIN_QUERY stream,
  * passed in, so this opens with no second read.
  *
- * LAID OUT AS THE MOCK LAYS IT OUT (`ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`,
- * the only design authority for this screen, issue #407): a breadcrumb trail, a
- * hero carrying the household's identity and the actions that act on it, then
- * two columns. The left column is who and where they are (Kin, the household's
- * facts, Auntie's notes); the right column is what has happened and what is
- * coming (KinTales, visits, invoices). Below the mock's own 860px breakpoint the
- * two columns become one, which is also what the Android profile is.
+ * LAID OUT AS AN OPERATOR WALK REORDERED IT (walk `admin-2026-09-10`, issues
+ * #678/#682, superseding the mock's original left/right split): a breadcrumb
+ * trail, a hero carrying the household's identity and the actions that act on
+ * it, then two columns. The LEFT column is the household's own facts (Contact,
+ * the access panel, Emergency, the vet panels, Auntie's notes). The RIGHT
+ * column is who they have and what has happened or is coming: Kin, Upcoming
+ * KinCare, Recent KinTales, Invoices, in that order. Below the mock's own
+ * 860px breakpoint the two columns become one, which is also what the Android
+ * profile is.
  *
  * WHERE THIS DELIBERATELY CARRIES MORE THAN THE MOCK: the mock's own header says
  * its content is illustrative placeholder, so its five-row "Household" panel is a
@@ -324,83 +326,6 @@ export function KinfolkProfile({
 
       <div className="kprofile__cols">
         <div className="kprofile__col">
-          {/* KIN FIRST, as the mock puts it: the pets are what the household is
-              for. The count lives in the panel's meta slot rather than inside
-              the heading text, so the section is still called "Kin". */}
-          <DenPanel
-            title="Kin"
-            {...(kinPending ? {} : { meta: kin.length === 1 ? '1 kin' : `${kin.length} kin` })}
-            subtitle="Kin in this household."
-          >
-            {kinPending ? (
-              <div role="status" aria-live="polite">
-                <p className="kprofile__hint">Loading kin…</p>
-              </div>
-            ) : kin.length === 0 ? (
-              <EmptyHint>No kin on file for this household.</EmptyHint>
-            ) : (
-              <ul className="kprofile__kin">
-                {kin.map((k) => {
-                  // These rows render `api/directory.ts#Kin`, which is a CAST over the
-                  // streamed `kin` docs, not a validated merge like the `p` profile
-                  // below (`mergeKinfolkProfile`). A legacy mirror doc genuinely lacks
-                  // `species`/`age`/`name`, and an unguarded read would throw mid-render
-                  // and blank the whole profile over one pet. Coerced to '' here, which
-                  // is the same blank the filters and `initialsOf` already expect.
-                  const name = str(k.name);
-                  const age = str(k.age);
-                  const detail = [str(k.species), str(k.breed), age !== '' ? `${age} yrs` : '']
-                    .filter((s) => s !== '')
-                    .join(' · ');
-                  const note = kinNotes[k._id] ?? '';
-                  const body = (
-                    <>
-                      <Avatar
-                        label={name}
-                        imageUrl={k.profilePictureUrl}
-                        initials={initialsOf(name)}
-                        size={44}
-                        shape="circle"
-                        gradientSeed={k._id !== '' ? k._id : name}
-                      />
-                      <span className="kprofile__kin-text">
-                        <span className="kprofile__kin-name">{name}</span>
-                        {detail !== '' && <span className="kprofile__kin-detail">{detail}</span>}
-                        {note !== '' && <span className="kprofile__kin-note">{note}</span>}
-                      </span>
-                    </>
-                  );
-                  return (
-                    <li key={k._id}>
-                      {onOpenKin ? (
-                        <button
-                          type="button"
-                          className="kprofile__kin-row kprofile__kin-row--open"
-                          onClick={() => onOpenKin(k)}
-                        >
-                          {body}
-                          <span className="kprofile__kin-chev" aria-hidden="true">
-                            ›
-                          </span>
-                        </button>
-                      ) : (
-                        <span className="kprofile__kin-row">{body}</span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {/* Fail loud, quietly: the row is still right, one line of it is
-                missing, and the operator is told which half is unknown. */}
-            {kinNotesFailed && (
-              <p className="kprofile__hint" role="status">
-                Some kin notes couldn&rsquo;t be read, so a row may be missing its
-                line about the pet.
-              </p>
-            )}
-          </DenPanel>
-
           <AsyncRegion
             state={profile}
             what="household"
@@ -489,12 +414,88 @@ export function KinfolkProfile({
           </AsyncRegion>
         </div>
 
-        {/* The mock's right column: what has happened and what is coming. Each
-            card owns its own household-scoped read, so one failing does not take
-            the profile down with it. */}
+        {/* The right column: who they have and what has happened or is coming.
+            Kin leads it now that it has moved out of the left column (#678),
+            followed by the three feed cards in the order the operator asked
+            for (#682). Each card owns its own household-scoped read, so one
+            failing does not take the profile down with it. */}
         <div className="kprofile__col">
-          <RecentKinTalesPanel kinfolkId={kinfolkId} />
+          <DenPanel
+            title="Kin"
+            {...(kinPending ? {} : { meta: kin.length === 1 ? '1 kin' : `${kin.length} kin` })}
+            subtitle="Kin in this household."
+          >
+            {kinPending ? (
+              <div role="status" aria-live="polite">
+                <p className="kprofile__hint">Loading kin…</p>
+              </div>
+            ) : kin.length === 0 ? (
+              <EmptyHint>No kin on file for this household.</EmptyHint>
+            ) : (
+              <ul className="kprofile__kin">
+                {kin.map((k) => {
+                  // These rows render `api/directory.ts#Kin`, which is a CAST over the
+                  // streamed `kin` docs, not a validated merge like the `p` profile
+                  // below (`mergeKinfolkProfile`). A legacy mirror doc genuinely lacks
+                  // `species`/`age`/`name`, and an unguarded read would throw mid-render
+                  // and blank the whole profile over one pet. Coerced to '' here, which
+                  // is the same blank the filters and `initialsOf` already expect.
+                  const name = str(k.name);
+                  const age = str(k.age);
+                  const detail = [str(k.species), str(k.breed), age !== '' ? `${age} yrs` : '']
+                    .filter((s) => s !== '')
+                    .join(' · ');
+                  const note = kinNotes[k._id] ?? '';
+                  const body = (
+                    <>
+                      <Avatar
+                        label={name}
+                        imageUrl={k.profilePictureUrl}
+                        initials={initialsOf(name)}
+                        size={44}
+                        shape="circle"
+                        gradientSeed={k._id !== '' ? k._id : name}
+                      />
+                      <span className="kprofile__kin-text">
+                        <span className="kprofile__kin-name">{name}</span>
+                        {detail !== '' && <span className="kprofile__kin-detail">{detail}</span>}
+                        {note !== '' && <span className="kprofile__kin-note">{note}</span>}
+                      </span>
+                    </>
+                  );
+                  return (
+                    <li key={k._id}>
+                      {onOpenKin ? (
+                        <button
+                          type="button"
+                          className="kprofile__kin-row kprofile__kin-row--open"
+                          onClick={() => onOpenKin(k)}
+                        >
+                          {body}
+                          <span className="kprofile__kin-chev" aria-hidden="true">
+                            ›
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="kprofile__kin-row">{body}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {/* Fail loud, quietly: the row is still right, one line of it is
+                missing, and the operator is told which half is unknown. */}
+            {kinNotesFailed && (
+              <p className="kprofile__hint" role="status">
+                Some kin notes couldn&rsquo;t be read, so a row may be missing its
+                line about the pet.
+              </p>
+            )}
+          </DenPanel>
+
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
+          <RecentKinTalesPanel kinfolkId={kinfolkId} />
           <HouseholdInvoicesPanel kinfolkId={kinfolkId} />
         </div>
       </div>

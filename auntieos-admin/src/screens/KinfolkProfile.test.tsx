@@ -502,11 +502,12 @@ describe('KinfolkProfile: the mock', () => {
     await userEvent.click(screen.getByRole('button', { name: /stub close/i }));
     expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
   });
-  it('carries the three feed cards that make up the mock\u2019s right column', async () => {
+  it('carries the three feed cards, Upcoming KinCare renamed from Upcoming visits (#682)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Upcoming visits' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Upcoming KinCare' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Upcoming visits' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
   });
   it('scopes every feed read to this household rather than filtering the whole collection in memory', async () => {
@@ -519,5 +520,24 @@ describe('KinfolkProfile: the mock', () => {
       expect(spec, `no read of ${path}`).toBeDefined();
       expect(spec?.filters).toEqual([['kinfolkId', '==', 'k1']]);
     }
+  });
+  it('orders the right column Kin, Upcoming KinCare, Recent KinTales, Invoices, Contact first on the left (#678/#682)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />,
+    );
+    await screen.findByRole('heading', { name: 'Invoices' });
+
+    const cols = Array.from(container.querySelectorAll('.kprofile__col'));
+    expect(cols).toHaveLength(2);
+    const [leftCol, rightCol] = cols as [Element, Element];
+
+    const headingsIn = (col: Element) =>
+      within(col as HTMLElement)
+        .getAllByRole('heading', { level: 2 })
+        .map((h) => h.textContent);
+
+    expect(headingsIn(rightCol)).toEqual(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices']);
+    expect(headingsIn(leftCol)[0]).toBe('Contact');
   });
 });
