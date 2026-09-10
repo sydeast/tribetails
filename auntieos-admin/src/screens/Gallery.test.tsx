@@ -18,6 +18,16 @@ vi.mock('../api/mediaTags', async () => {
   return { ...actual, saveMediaTags };
 });
 
+// The tile delete's only write path (#692). Mocked at the api seam, not at
+// `lib/fns`, so these tests exercise the screen's wiring rather than the
+// callable client `api/mediaWrite.test.ts` already covers. Same seam
+// Media.test.tsx mocks for the same callable.
+const { deleteMediaFile } = vi.hoisted(() => ({ deleteMediaFile: vi.fn() }));
+vi.mock('../api/mediaWrite', async () => {
+  const actual = await vi.importActual<typeof import('../api/mediaWrite')>('../api/mediaWrite');
+  return { ...actual, deleteMediaFile };
+});
+
 import { Gallery } from './Gallery';
 
 // TZ pinned so month-chip keys (derived LOCAL from UTC uploadedAt, AO-18) are
@@ -76,6 +86,13 @@ beforeEach(() => {
   kinfolkAsync = { status: 'ready', data: [] };
   kinAsync = { status: 'ready', data: [] };
   saveMediaTags.mockReset();
+  deleteMediaFile.mockReset().mockResolvedValue({
+    ok: true,
+    mediaFileId: 'm1',
+    entityType: 'KINFOLK',
+    entityId: 'kf1',
+    clearedProfilePhoto: false,
+  });
   useCollection.mockReset().mockImplementation((spec: { path: string }) => {
     if (spec.path === 'kinfolk') return kinfolkAsync;
     if (spec.path === 'kin') return kinAsync;
@@ -205,7 +222,7 @@ describe('Gallery screen, media viewer (#388: tapping a photo did nothing)', () 
     };
     render(<Gallery />);
 
-    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button'));
+    await userEvent.click(within(tileFor('Biscuit napping')).getByRole('button', { name: /^Open/ }));
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAccessibleName('Biscuit napping');
@@ -217,7 +234,7 @@ describe('Gallery screen, media viewer (#388: tapping a photo did nothing)', () 
     mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
     render(<Gallery />);
 
-    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button', { name: /^Open/ });
     tileButton.focus();
     await userEvent.keyboard('{Enter}');
 
@@ -228,7 +245,7 @@ describe('Gallery screen, media viewer (#388: tapping a photo did nothing)', () 
     mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
     render(<Gallery />);
 
-    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button', { name: /^Open/ });
     tileButton.focus();
     await userEvent.keyboard(' ');
 
@@ -239,7 +256,7 @@ describe('Gallery screen, media viewer (#388: tapping a photo did nothing)', () 
     mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
     render(<Gallery />);
 
-    const tileButton = within(tileFor('Rufus at the park')).getByRole('button');
+    const tileButton = within(tileFor('Rufus at the park')).getByRole('button', { name: /^Open/ });
     await userEvent.click(tileButton);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
@@ -285,7 +302,7 @@ describe('Gallery screen, async states', () => {
 });
 
 describe('Gallery screen, filters', () => {
-  it('filters the grid by household when a household chip is clicked', async () => {
+  it('filters the grid by household when a household is picked from the select', async () => {
     mediaAsync = {
       status: 'ready',
       data: [
@@ -301,16 +318,17 @@ describe('Gallery screen, filters', () => {
     expect(screen.getByText('Household A photo')).toBeInTheDocument();
     expect(screen.getByText('Household B photo')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Amy Adams' }));
+    const household = screen.getByRole('combobox', { name: 'Household' });
+    await userEvent.selectOptions(household, 'kf-a');
     expect(screen.getByText('Household A photo')).toBeInTheDocument();
     expect(screen.queryByText('Household B photo')).toBeNull();
 
-    // Clicking the same chip again toggles back to "All".
-    await userEvent.click(screen.getByRole('button', { name: 'Amy Adams' }));
+    // Back to "All households" and both are visible again.
+    await userEvent.selectOptions(household, screen.getByRole('option', { name: 'All households' }));
     expect(screen.getByText('Household B photo')).toBeInTheDocument();
   });
 
-  it('filters the grid by type when a type chip is clicked', async () => {
+  it('filters the grid by type when a type pill is clicked, and toggles back off', async () => {
     mediaAsync = {
       status: 'ready',
       data: [
@@ -319,12 +337,54 @@ describe('Gallery screen, filters', () => {
       ],
     };
     render(<Gallery />);
-    await userEvent.click(screen.getByRole('button', { name: 'Video' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Videos/ }));
     expect(screen.queryByText('A photo')).toBeNull();
     expect(screen.getByText('A clip')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Videos/ }));
+    expect(screen.getByText('A photo')).toBeInTheDocument();
   });
 
-  it('filters the grid by month when a month chip is clicked', async () => {
+  it('carries a per-type count on every pill, counted over the WHOLE stream and not the filtered slice', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'A photo', fileType: 'IMAGE' }),
+        media({ _id: 'b', description: 'Another photo', fileType: 'IMAGE' }),
+        media({ _id: 'c', description: 'A clip', fileType: 'VIDEO' }),
+      ],
+    };
+    render(<Gallery />);
+    const pills = screen.getByRole('group', { name: 'Filter by type' });
+    expect(within(pills).getByRole('button', { name: 'All 3' })).toBeInTheDocument();
+    expect(within(pills).getByRole('button', { name: 'Images 2' })).toBeInTheDocument();
+    expect(within(pills).getByRole('button', { name: 'Videos 1' })).toBeInTheDocument();
+
+    // Narrowing to Videos must not restate Images as 0: the counts describe the
+    // stream, not the slice on screen.
+    await userEvent.click(within(pills).getByRole('button', { name: 'Videos 1' }));
+    expect(within(pills).getByRole('button', { name: 'Images 2' })).toBeInTheDocument();
+    expect(within(pills).getByRole('button', { name: 'All 3' })).toBeInTheDocument();
+  });
+
+  it('names the pills the way the mock does, plural and by kind, not by the raw fileType string', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', fileType: 'IMAGE', description: 'A photo' }),
+        media({ _id: 'b', fileType: 'VIDEO', description: 'A clip' }),
+        media({ _id: 'c', fileType: 'DOCUMENT', description: 'Vet notes' }),
+        media({ _id: 'd', fileType: 'AUDIO', description: 'A bark' }),
+      ],
+    };
+    render(<Gallery />);
+    const pills = screen.getByRole('group', { name: 'Filter by type' });
+    for (const name of ['Images 1', 'Videos 1', 'Documents 1', 'Audio 1']) {
+      expect(within(pills).getByRole('button', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('filters the grid by month when a month is picked from the select', async () => {
     mediaAsync = {
       status: 'ready',
       data: [
@@ -333,33 +393,33 @@ describe('Gallery screen, filters', () => {
       ],
     };
     render(<Gallery />);
-    await userEvent.click(screen.getByRole('button', { name: '2026-06' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '2026-06');
     expect(screen.getByText('June shot')).toBeInTheDocument();
     expect(screen.queryByText('July shot')).toBeNull();
   });
 
-  it('does not render a filter row for an axis with no distinct values (Type, when every row omits it)', () => {
+  it('does not render the type pills at all for a stream where every row omits fileType', () => {
     mediaAsync = { status: 'ready', data: [media({ kinfolkId: 'kf1', fileType: '' })] };
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
     render(<Gallery />);
-    expect(screen.queryByText('Type')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Filter by type' })).toBeNull();
   });
 
-  it('shows a "No household" chip (never hides the Household axis) when every row is unattached', () => {
+  it('shows a "No household" option (never hides the Household axis) when every row is unattached', () => {
     mediaAsync = { status: 'ready', data: [media({ kinfolkId: '' })] };
     render(<Gallery />);
-    expect(screen.getByText('Household')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'No household' })).toBeInTheDocument();
+    const household = screen.getByRole('combobox', { name: 'Household' });
+    expect(within(household).getByRole('option', { name: 'No household' })).toBeInTheDocument();
   });
 
-  it('the "No household" chip does not appear when every row already has a household', () => {
+  it('the "No household" option does not appear when every row already has a household', () => {
     mediaAsync = { status: 'ready', data: [media({ kinfolkId: 'kf1' })] };
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
     render(<Gallery />);
-    expect(screen.queryByRole('button', { name: 'No household' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'No household' })).toBeNull();
   });
 
-  it('filters the grid to unattached media only when the "No household" chip is clicked, and toggles back to All', async () => {
+  it('filters the grid to unattached media only when "No household" is picked, and back to All', async () => {
     mediaAsync = {
       status: 'ready',
       data: [
@@ -370,11 +430,15 @@ describe('Gallery screen, filters', () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
     render(<Gallery />);
 
-    await userEvent.click(screen.getByRole('button', { name: 'No household' }));
+    const household = screen.getByRole('combobox', { name: 'Household' });
+    await userEvent.selectOptions(household, screen.getByRole('option', { name: 'No household' }));
     expect(screen.getByText('Company party photo')).toBeInTheDocument();
     expect(screen.queryByText('Household photo')).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'No household' }));
+    // "No household" is a REAL filter value (the empty kinfolkId), so it must be
+    // distinguishable from "no filter at all", which is what this round trip
+    // proves: picking All again brings the attached row back.
+    await userEvent.selectOptions(household, screen.getByRole('option', { name: 'All households' }));
     expect(screen.getByText('Household photo')).toBeInTheDocument();
   });
 
@@ -388,7 +452,7 @@ describe('Gallery screen, filters', () => {
     };
     render(<Gallery />);
     expect(screen.getByText('2 of 2')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Video' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Videos/ }));
     expect(screen.getByText('1 of 2')).toBeInTheDocument();
   });
 });
@@ -412,7 +476,7 @@ describe('Gallery screen, kin tagging (#447)', () => {
     expect(within(tileFor('Rufus at the park')).getByText('Waddles')).toBeInTheDocument();
   });
 
-  it('collapses two or more names to a count: a 132px tile cannot show three names', () => {
+  it('collapses two or more names to a count: a tile cannot show three names', () => {
     withOnePhoto(['k1', 'k2']);
     render(<Gallery />);
     expect(within(tileFor('Rufus at the park')).getByText('2 kin')).toBeInTheDocument();
@@ -493,5 +557,155 @@ describe('Gallery screen, kin tagging (#447)', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(/permission denied/);
     expect(screen.queryByText('No kin on this household to tag.')).toBeNull();
+  });
+});
+describe('Gallery screen, mock parity (#692)', () => {
+  it('renders one tile per streamed row, in one grid', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'One' }),
+        media({ _id: 'b', description: 'Two' }),
+        media({ _id: 'c', description: 'Three' }),
+        media({ _id: 'd', description: 'Four' }),
+      ],
+    };
+    const { container } = render(<Gallery />);
+    expect(container.querySelectorAll('.gallery__grid')).toHaveLength(1);
+    expect(container.querySelectorAll('.gallery__cell')).toHaveLength(4);
+  });
+
+  it('prints nothing under a tile at rest: the caption, household and meta all live in the hover strip', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ description: 'Rufus at the park', kinfolkId: 'kf1', uploadedBy: 'Jamie' })],
+    };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    const { container } = render(<Gallery />);
+    // jsdom applies no stylesheet, so `toBeVisible()` would pass on the strip
+    // whatever its opacity. The state carrier is WHERE the text sits: every one
+    // of these three lines is inside the strip, and the always-on body block
+    // that used to hold them is gone.
+    expect(container.querySelector('.gallery__tile-body')).toBeNull();
+    // Scoped to the tile: the household name is also an option in the household
+    // select now, and this assertion is about the TILE.
+    const tile = tileFor('Rufus at the park');
+    for (const text of ['Rufus at the park', 'Jamie Halbrook', '2026-07-16 · Jamie']) {
+      expect(within(tile).getByText(text).closest('.gallery__tile-caption-strip')).not.toBeNull();
+    }
+  });
+
+  it('does not aria-hide the strip: it is the tile\'s only carrier for that text now', () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    const { container } = render(<Gallery />);
+    const strip = container.querySelector('.gallery__tile-caption-strip');
+    // Media.tsx's strip IS aria-hidden, because an always-visible block there
+    // repeats it word for word. Nothing repeats this one, so hiding it from
+    // assistive tech would drop the text rather than de-duplicate it. Folding it
+    // into the strip is a VISUAL change: the same nodes, in the same labelled
+    // button, seen by the same tools.
+    expect(strip).not.toBeNull();
+    expect(strip?.getAttribute('aria-hidden')).toBeNull();
+  });
+
+  it('puts a count chip beside the title and the upload action in the same header row', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'a', description: 'One' }), media({ _id: 'b', description: 'Two' })],
+    };
+    const { container } = render(<Gallery />);
+    const header = container.querySelector('.gallery__header-actions');
+    expect(header).not.toBeNull();
+    expect(within(header as HTMLElement).getByText('2')).toBeInTheDocument();
+    expect(within(header as HTMLElement).getByText('files')).toBeInTheDocument();
+    expect(within(header as HTMLElement).getByRole('button', { name: 'Upload media' })).toBeInTheDocument();
+  });
+
+  it('says "file", not "files", for a stream of one', () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Only one' })] };
+    render(<Gallery />);
+    expect(screen.getByText('file')).toBeInTheDocument();
+  });
+
+  it('never prints a confident count while the stream is still in flight', () => {
+    mediaAsync = { status: 'loading' };
+    const { container } = render(<Gallery />);
+    expect(container.querySelector('.gallery__count-chip')).toBeNull();
+  });
+
+  it('offers a delete control on every tile', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'a', description: 'One' }), media({ _id: 'b', description: 'Two' })],
+    };
+    render(<Gallery />);
+    expect(screen.getByRole('button', { name: 'Delete One' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Two' })).toBeInTheDocument();
+  });
+
+  it('the delete control is a SIBLING of the open button, never nested inside it', () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+    const del = screen.getByRole('button', { name: 'Delete Rufus at the park' });
+    // Nesting one interactive element in another is invalid HTML and jsdom
+    // accepts it silently, so this is asserted rather than assumed.
+    expect(del.closest('.gallery__tile')).toBeNull();
+  });
+
+  it('the delete control asks for confirmation and writes nothing on its own', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm7', description: 'Rufus at the park' })] };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Rufus at the park' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAccessibleName('Delete Media');
+    expect(within(dialog).getByText('Are you sure you want to delete this image?')).toBeInTheDocument();
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+
+  it('names the file type in the confirm body, the way the mock and Android both do', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'v1', fileType: 'VIDEO', description: 'Walkies' })] };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Walkies' }));
+    expect(screen.getByText('Are you sure you want to delete this video?')).toBeInTheDocument();
+  });
+
+  it('Cancel closes the confirm and deletes nothing', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm7', description: 'Rufus at the park' })] };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+
+  it('confirming deletes through the callable, with NO entity scope: this grid spans every household', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm7', kinfolkId: 'kf1', description: 'Rufus at the park' })] };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleteMediaFile).toHaveBeenCalledWith('m7'));
+  });
+
+  it('a refused delete is surfaced and the tile stays: no optimistic splice', async () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'm7', description: 'Rufus at the park' })] };
+    deleteMediaFile.mockRejectedValue(new Error('Admin claim required.'));
+    render(<Gallery />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Rufus at the park' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.getByText(/admin claim required/i)).toBeInTheDocument());
+    // The listener owns the grid: the row is still there because the document is.
+    expect(screen.getByText('Rufus at the park')).toBeInTheDocument();
+  });
+
+  it('shows the PROFILE badge on the profile photo, and warns when that is the one being deleted', async () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'p1', description: 'Profile shot', isProfilePhoto: true })],
+    };
+    render(<Gallery />);
+    expect(within(tileFor('Profile shot')).getByText('Profile')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Profile shot' }));
+    expect(screen.getByText(/this is a profile photo/i)).toBeInTheDocument();
   });
 });

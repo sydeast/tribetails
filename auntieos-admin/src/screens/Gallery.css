@@ -2,16 +2,14 @@
  * Gallery screen styling. Scoped to this screen and imported directly by
  * Gallery.tsx (the Directory.css / Invoices.css convention): nothing here
  * touches the shared styles/screens.css or styles/tokens.css. Every value
- * comes from tokens.css: no literal colours, radii, or durations. The one
- * literal pixel value (the 132px tile edge) is a design constant carried in
- * from the source, not a token: see Gallery.tsx's `TILE_SIZE` comment.
+ * comes from tokens.css: no literal colours, radii, or durations.
+ *
+ * The one literal pixel value left is the grid's 150px column floor (#692),
+ * carried in from the mock's `repeat(auto-fill, minmax(150px, 1fr))`. The tile
+ * itself no longer has a fixed edge: it is a square cell sized by the column it
+ * lands in, which is what fills the content width instead of clustering three
+ * tiles in the first third of it.
  */
-
-.gallery__actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-4);
-}
 
 .gallery__hint {
   color: var(--color-text-dim);
@@ -26,69 +24,130 @@
   margin: var(--space-2) 0;
 }
 
-/* ── filters: three optional chip rows (household / type / month) ─────────── */
-
-.gallery__filters {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-
-.gallery__filter-row {
+/* The mock's top-bar pairing: the count chip and the upload action, together,
+   beside the title rather than on a row of their own below the subtitle.
+   `den-heading-trailing` is `flex: none`, so the row itself lives here. */
+.gallery__header-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.gallery__filter-label {
+/* The mock's `.count`. Mono, pill, hairline border, with the number itself
+   picked out in the accent the way the mock's `.count em` is. Same shape
+   Media.css already gives its chip, so the two gallery screens read alike. */
+.gallery__count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
-  color: var(--color-text-faint);
-  flex: 0 0 auto;
-  min-width: 6rem;
-}
-
-.gallery__filter-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.gallery__chip {
-  font: inherit;
   font-size: var(--type-label-md-size);
-  font-weight: var(--type-label-md-weight);
   color: var(--color-text-dim);
   background: var(--color-surface-glass);
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-pill);
+  padding: 0.2rem 0.65rem;
+  white-space: nowrap;
+}
+
+.gallery__count-chip-n {
+  color: var(--color-accent);
+}
+
+/* ── controls: one row (#692) ─────────────────────────────────────────────
+   Type pills on the leading edge with their counts, the two facets the mock's
+   entity-scoped screen never had (household, month) as compact selects on the
+   trailing edge. This was three labelled chip rows that pushed the grid a third
+   of the way down the page and grew a chip per household as the customer list
+   grew. */
+
+.gallery__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+/* The mock's `.pills`: one inset tray holding the whole type axis, so the row
+   reads as a single segmented control rather than five loose buttons. */
+.gallery__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.gallery__pill {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-dim);
+  background: none;
+  border: none;
+  border-radius: var(--radius-chip);
   padding: 0.35rem 0.85rem;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background var(--dur-base) var(--ease-standard),
-    color var(--dur-base) var(--ease-standard),
-    border-color var(--dur-base) var(--ease-standard);
+    color var(--dur-base) var(--ease-standard);
 }
-.gallery__chip[data-active='true'] {
+.gallery__pill[data-active='true'] {
   background: var(--color-text-primary);
   color: var(--color-background);
-  border-color: var(--color-text-primary);
 }
-.gallery__chip:focus-visible {
+.gallery__pill:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-/* ── grid ───────────────────────────────────────────────────────────────── */
+/* Per-type count riding inside its pill, as the mock's `.ct` does. */
+.gallery__pill-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  opacity: 0.6;
+}
+.gallery__pill[data-active='true'] .gallery__pill-count {
+  opacity: 0.8;
+}
 
-.gallery__grid {
+.gallery__selects {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.gallery__select {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  color: var(--color-text-dim);
+  background: var(--color-surface-glass);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.75rem;
+  max-width: 14rem;
+  cursor: pointer;
+}
+.gallery__select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ── grid ─────────────────────────────────────────────────────────────────
+   The mock's `repeat(auto-fill, minmax(150px, 1fr))` with square cells and a
+   uniform gap, filling the content width at every viewport. It was a flex-wrap
+   row of fixed 132px tiles, which is why a 1258px main held three of them in
+   its first third and nothing in the rest. */
+
+.gallery__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: var(--space-3);
   list-style: none;
   margin: 0;
@@ -96,16 +155,20 @@
 }
 
 .gallery__cell {
-  display: block;
+  /* The positioning context for the delete control, which is a SIBLING of the
+     open button rather than a child of it (nesting one interactive element in
+     another is invalid and unreliable), so the cell is what it anchors to. */
+  position: relative;
+  aspect-ratio: 1 / 1;
 }
 
-/* A real `<button>` now (#388), so this resets every default the browser
-   would otherwise impose (border, background, padding, centered text, a
-   system font) back to the plain block the tile always visually was. */
+/* A real `<button>` (#388), so this resets every default the browser would
+   otherwise impose (border, background, padding, centered text, a system font)
+   back to the plain square the tile visually is. */
 .gallery__tile {
-  display: flex;
-  flex-direction: column;
-  width: 132px;
+  display: block;
+  width: 100%;
+  height: 100%;
   text-align: left;
   font: inherit;
   color: inherit;
@@ -122,14 +185,21 @@
 
 .gallery__tile-media {
   position: relative;
-  width: 132px;
-  height: 132px;
+  width: 100%;
+  height: 100%;
 }
 
-/* A hairline frame at rest; the interactive states below are the tile's own
-   hover-lift, now that it opens the fullscreen viewer (#388) instead of doing
-   nothing. */
-.gallery__tile-avatar {
+/* Two classes, so this beats `.avatar`'s own `width/height: var(--avatar-size)`
+   whatever order the two stylesheets land in the bundle. Avatar still scales its
+   fallback glyph off the `size` prop; only the box is the grid's business now. */
+.gallery__tile-media .gallery__tile-avatar {
+  /* `display: block`, not the `inline-grid` Avatar.css sets: an inline box at
+     `height: 100%` sits on a line box, and the descender space under it would
+     push the square past its own cell and float the caption strip clear of the
+     bottom edge. */
+  display: block;
+  width: 100%;
+  height: 100%;
   border: var(--border-hairline) solid var(--color-border);
   transition: var(--lift-transition);
 }
@@ -162,6 +232,7 @@
   background: rgba(0, 0, 0, 0.6);
   border-radius: var(--radius-chip);
   padding: 0.1rem 0.4rem;
+  z-index: 1;
 }
 
 .gallery__tile-profile-badge {
@@ -175,17 +246,20 @@
   background: var(--color-accent);
   border-radius: var(--radius-pill);
   padding: 0.1rem 0.5rem;
+  z-index: 1;
 }
 
 /* #593. Shown only when the asynchronous location strip FAILED, so the tile
    itself says the video still carries the coordinates it was recorded with.
-   Runs along the bottom rather than sharing the profile badge's corner: the
-   two states are independent and either can be true on its own. */
+   Runs along the TOP now that the caption strip owns the bottom edge, one row
+   BELOW the profile badge rather than over it: the two states are independent
+   and either can be true on its own, so neither may cover the other. The right
+   inset clears the delete control's corner. */
 .gallery__tile-strip-badge {
   position: absolute;
   left: var(--space-1);
-  right: var(--space-1);
-  bottom: var(--space-1);
+  right: 2.2rem;
+  top: calc(var(--space-1) + 1.6rem);
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);
@@ -194,23 +268,70 @@
   background: var(--color-error);
   border-radius: var(--radius-pill);
   padding: 0.1rem 0.5rem;
+  z-index: 2;
 }
 
-.gallery__tile-body {
+/* The mock's top-end delete X. Always painted, never hover-only: a touch device
+   has no hover, and an action nobody can summon is the same as an action that is
+   not there. */
+.gallery__tile-actions {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 3;
+  display: flex;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(6px);
+}
+
+/**
+ * The mock's `.cap` strip (#692), and the tile's only carrier for this text now
+ * that nothing is printed under the tile at rest.
+ *
+ * OPACITY, never `display: none`, and the markup is not `aria-hidden` either
+ * (see Gallery.tsx's GalleryTile header): the caption, household and meta line
+ * sit in the same labelled button they sat in before, so this is a visual change
+ * and not a deletion. `:focus-visible` reveals it as well as `:hover`, so a
+ * keyboard user is not left with a photo and no context. A touch device, which
+ * has no hover at all, reaches every one of those values by tapping the tile:
+ * the viewer shows caption, meta line and tagged kin.
+ */
+.gallery__tile-caption-strip {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  margin-top: var(--space-2);
-  min-width: 0;
+  gap: 0.1rem;
+  padding: var(--space-5) var(--space-2) var(--space-2);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.92), transparent);
+  border-radius: 0 0 var(--radius-card-lg) var(--radius-card-lg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.gallery__tile:hover .gallery__tile-caption-strip,
+.gallery__tile:focus-visible .gallery__tile-caption-strip {
+  opacity: 1;
+}
+
+/* The strip's fade is decoration; a reduced-motion preference drops the fade,
+   never the information. */
+@media (prefers-reduced-motion: reduce) {
+  .gallery__tile-caption-strip {
+    transition: none;
+  }
 }
 
 .gallery__tile-caption {
   font-family: var(--font-fraunces);
   font-size: var(--type-title-sm-size);
   font-weight: var(--type-title-sm-weight);
-  color: var(--color-text-primary);
+  line-height: 1.3;
+  color: var(--tt-brand-cream);
   overflow: hidden;
-  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -218,7 +339,8 @@
 
 .gallery__tile-household {
   font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
+  color: var(--tt-brand-cream);
+  opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -227,38 +349,39 @@
 .gallery__tile-meta {
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+  color: var(--tt-brand-cream);
+  opacity: 0.75;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Who is tagged in this photo (#447). Reads as a chip rather than another
-   line of grey text, because it is the one line on the tile that is about
-   the CONTENT of the photo rather than its filing. */
+/* Who is tagged in this photo (#447). Reads as a chip rather than another line
+   of text, because it is the one line in the strip that is about the CONTENT of
+   the photo rather than its filing. */
 .gallery__tile-tags {
   align-self: flex-start;
   max-width: 100%;
+  margin-top: 0.15rem;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--color-surface-2);
+  background: rgba(0, 0, 0, 0.5);
   font-size: var(--type-label-sm-size);
-  color: var(--color-text-dim);
+  color: var(--tt-brand-cream);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ── Phone width ──────────────────────────────────────────────────────────
-   `justify-content: flex-end` puts "Upload media" alone at the trailing edge.
-   That reads as a toolbar on a desktop, where it sits under a heading whose
-   own action block is also on the right. Below 720px `DenScreenKit.css` stacks
-   the heading and drops its trailing block to the LEADING edge, so on a phone
-   this was the one screen in the admin whose primary action was somewhere
-   different from every other screen's. Alignment only: the button, the screen
-   and the desktop layout are untouched. */
-@media (max-width: 720px) {
-  .gallery__actions {
-    justify-content: flex-start;
-  }
+/* ── delete confirm (#692) ────────────────────────────────────────────────── */
+
+.gallery__dialog-body {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--type-body-md-size);
+}
+.gallery__dialog-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
 }

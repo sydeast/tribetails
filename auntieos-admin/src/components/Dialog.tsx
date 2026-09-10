@@ -29,11 +29,19 @@ interface DialogProps {
    * (TemplateEditor). A size modifier on the shared shell, not a per-screen
    * override of `.dialog`, because a screen stylesheet reaching into another
    * component's class is how two rules end up fighting over the same width.
+   *
+   * `'full'` is the near-viewport panel a media viewer needs when the browser
+   * will not hand it a real fullscreen element (#691). The Fullscreen API is
+   * the first choice there; this is the fallback that still lets a 1080px photo
+   * be looked at. It takes as much of the viewport as it can rather than a
+   * fixed column, and its BODY is the part that scrolls, so a stage inside it
+   * can grow to fill the height instead of pushing the footer off screen.
+   *
    * Ignored by `variant="sheet"`, which is pinned to the trailing edge and
    * takes its width from that, and by `variant="wizard"`, whose width and
    * height are the shape of the step flow rather than a caller's choice.
    */
-  size?: 'standard' | 'wide';
+  size?: 'standard' | 'wide' | 'full';
 }
 
 /**
@@ -99,7 +107,9 @@ export function Dialog({
               ? 'dialog dialog--wizard'
               : size === 'wide'
                 ? 'dialog dialog--wide'
-                : 'dialog'
+                : size === 'full'
+                  ? 'dialog dialog--full'
+                  : 'dialog'
         }
         role="dialog"
         aria-modal="true"

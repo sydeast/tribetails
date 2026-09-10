@@ -190,7 +190,8 @@ export function Media({ targetType, targetId }: MediaProps) {
         <>
           {/* The mock's `＋ Upload Media` top-bar action. Placed in its own row
               rather than the heading's `trailing` slot, which the count chip
-              already holds, the same actions-row shape Gallery.tsx uses. */}
+              already holds. Gallery.tsx fits both into that slot (#692); this
+              screen's heading carries a longer entity title beside them. */}
           <div className="media__actions">
             <PrimaryButton label="Upload media" onClick={() => setUploadOpen(true)} />
           </div>
@@ -423,7 +424,7 @@ function MediaGrid({
   );
 }
 
-/** "IMAGE" -> "Image". Ports the same title-casing `Gallery.tsx` uses for its type chips. */
+/** "IMAGE" -> "Image". Ports `GalleryScreen.kt`'s `t.lowercase().replaceFirstChar { it.uppercase() }`. */
 function titleCase(s: string): string {
   if (s === '') return s;
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
@@ -448,10 +449,14 @@ function Chip({
 }
 
 /**
- * The tile's fixed edge, in px. Same literal `Gallery.tsx`'s `TILE_SIZE` uses
- * (a direct port of `AuntieMediaCell`'s `Modifier.width(132.dp)` call site),
- * kept identical so a Media tile and a Gallery tile read as the same component
- * at a glance.
+ * The tile's fixed edge, in px. A direct port of `AuntieMediaCell`'s
+ * `Modifier.width(132.dp)` call site: a literal design constant from the
+ * source, not a value the shared token scale defines.
+ *
+ * `Gallery.tsx` no longer uses this edge. The operator ruled its grid should
+ * follow the mock's fluid `auto-fill` columns instead (#692), and that ruling
+ * was about the global gallery's empty right-hand two thirds, not about this
+ * entity-scoped screen, so this one keeps the ported constant.
  */
 const TILE_SIZE = 132;
 
