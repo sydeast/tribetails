@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 
 const { getDossier } = vi.hoisted(() => ({ getDossier: vi.fn() }));
 vi.mock('../api/recipientContext', async (orig) => ({
@@ -48,16 +48,32 @@ describe('AuntieNotesPanel', () => {
     expect(screen.queryByText('Communication style')).toBeNull();
   });
 
-  it('says nothing is written yet when the household has no dossier', async () => {
+  /**
+   * #683, operator ruling: "Admin Notes should be pin to the bottom when
+   * viewing the kinfolk IF notes exist". The minimal reading of "pin" is that
+   * this panel does not render at all when there is nothing to pin, rather than
+   * an empty band saying so.
+   */
+  it('renders nothing at all when the household has no dossier', async () => {
     getDossier.mockResolvedValue(null);
-    render(<AuntieNotesPanel kinfolkId="k1" />);
-    expect(await screen.findByText('Nothing written about this household yet.')).toBeInTheDocument();
+    const { container } = render(<AuntieNotesPanel kinfolkId="k1" />);
+    await waitFor(() => expect(getDossier).toHaveBeenCalledWith('k1'));
+    await waitFor(() => expect(container.textContent).toBe(''));
+    expect(screen.queryByText('Nothing written about this household yet.')).toBeNull();
+    expect(screen.queryByRole('heading')).toBeNull();
   });
 
-  it('treats an all-blank dossier as nothing written, not as content', async () => {
+  it('renders nothing at all when every dossier field is blank, not "content"', async () => {
     getDossier.mockResolvedValue(dossier());
-    render(<AuntieNotesPanel kinfolkId="k1" />);
-    expect(await screen.findByText('Nothing written about this household yet.')).toBeInTheDocument();
+    const { container } = render(<AuntieNotesPanel kinfolkId="k1" />);
+    await waitFor(() => expect(getDossier).toHaveBeenCalledWith('k1'));
+    await waitFor(() => expect(container.textContent).toBe(''));
+  });
+
+  it('renders nothing while the load is in flight, so the panel never flashes in then vanishes', () => {
+    getDossier.mockReturnValue(new Promise(() => {})); // never resolves
+    const { container } = render(<AuntieNotesPanel kinfolkId="k1" />);
+    expect(container.textContent).toBe('');
   });
 
   it('surfaces a failed read fail-loud rather than as an empty band', async () => {

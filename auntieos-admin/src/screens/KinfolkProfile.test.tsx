@@ -549,12 +549,22 @@ describe('KinfolkProfile: the mock', () => {
       expect(spec?.filters).toEqual([['kinfolkId', '==', 'k1']]);
     }
   });
-  it('orders the right column Kin, Upcoming KinCare, Recent KinTales, Invoices, Contact first on the left (#678/#682)', async () => {
+  it('orders the right column Kin, Upcoming KinCare, Recent KinTales, Invoices, Contact first and Auntie’s notes last on the left (#678/#679/#682/#683)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockResolvedValue({
+      tldr: 'Text when on the way.',
+      rawSummary: '',
+      communicationStyle: '',
+      householdNotes: '',
+      relationshipWithAuntie: '',
+    });
     const { container } = render(
       <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />,
     );
     await screen.findByRole('heading', { name: 'Invoices' });
+    // Auntie's notes loads on its own async read; wait for it too, or the
+    // column's "last heading" can be sampled before it lands.
+    await screen.findByText('Text when on the way.');
 
     const cols = Array.from(container.querySelectorAll('.kprofile__col'));
     expect(cols).toHaveLength(2);
@@ -566,6 +576,8 @@ describe('KinfolkProfile: the mock', () => {
         .map((h) => h.textContent);
 
     expect(headingsIn(rightCol)).toEqual(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices']);
-    expect(headingsIn(leftCol)[0]).toBe('Contact');
+    const left = headingsIn(leftCol);
+    expect(left[0]).toBe('Contact');
+    expect(left[left.length - 1]).toBe('Auntie’s notes');
   });
 });
