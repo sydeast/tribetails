@@ -7,7 +7,6 @@ import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
-import { Banner } from '../components/Banner';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { KinEdit } from './KinEdit';
@@ -45,8 +44,9 @@ function any(...vals: string[]): boolean {
  * (Directory shipped list-only). Reads the FULL `kin/{id}` doc via `getKin` (a
  * one-shot getDoc; the list stream carries list fields only). Organized into
  * fielded sections (Basics, Behavior & care, Feeding, Health, Owner contact,
- * Notes); an all-blank section is omitted. A REACTIVE pet is flagged loudly up
- * top, since that is a handle-with-care safety signal, not just another field.
+ * Notes); an all-blank section is omitted. A REACTIVE pet gets a small
+ * alert-toned marker attached under the Kin box, not a full-width banner: a
+ * handle-with-care signal, but not one that needs to interrupt the page.
  */
 export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
@@ -137,12 +137,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
           const spayed = k.spayedNeutered ? 'Yes' : '';
           return (
             <>
-              {k.reactive && (
-                <Banner tone="warning" title="Reactive: handle with care">
-                  This pet is flagged reactive. Review the behavior notes below before the visit.
-                </Banner>
-              )}
-
               <DenPanel title="Kin">
                 <div className="kview__head">
                   <Avatar
@@ -162,6 +156,14 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                   </div>
                 </div>
               </DenPanel>
+
+              {k.reactive && (
+                <div className="kview__flags">
+                  <span className="kview__flag-pill">
+                    <span aria-hidden="true">⚠</span> Reactive: handle with care
+                  </span>
+                </div>
+              )}
 
               <ProfileTagsSection scope="pet" initialTags={k.tags} onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)} />
 

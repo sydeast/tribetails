@@ -87,10 +87,13 @@ describe('KinView', () => {
     expect(getKin).toHaveBeenCalledWith('p1');
   });
 
-  it('flags a reactive pet loudly and shows behavior notes', async () => {
+  it('marks a reactive pet with a small alert pill under the Kin box, not a page banner', async () => {
     getKin.mockResolvedValue(kin({ reactive: true, routine: 'Slow approach' }));
     render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
     expect(await screen.findByText(/handle with care/i)).toBeInTheDocument();
+    // No page-level banner: a banner carries role="alert" (Banner.tsx), the
+    // marker does not.
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByText('Slow approach')).toBeInTheDocument();
   });
 
