@@ -56,9 +56,10 @@ import './Settings.css';
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
  * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
- * to react to. `Notifications` and `Tags` are their own self-loading editors
- * (`NotificationGate`, `TagsEditor`), so they do not depend on this doc and are
- * rendered directly; the other eleven sections read this loaded `data`.
+ * to react to. `Notifications`, `Tags` and `Integrations` are their own
+ * self-loading editors (`NotificationGate`, `TagsEditor`,
+ * `IntegrationsSection`), so they do not depend on this doc and are rendered
+ * directly; the other ten sections read this loaded `data`.
  */
 
 type SectionId =
@@ -70,7 +71,6 @@ type SectionId =
   | 'bookingRules'
   | 'visitsTracking'
   | 'payments'
-  | 'branding'
   | 'mytribe'
   | 'notifications'
   | 'tags'
@@ -96,7 +96,6 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   { id: 'bookingRules', label: 'Booking rules' },
   { id: 'visitsTracking', label: 'Visits and tracking' },
   { id: 'payments', label: 'Payments' },
-  { id: 'branding', label: 'Branding' },
   { id: 'mytribe', label: 'MyTribe portal' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'tags', label: 'Tags' },
@@ -282,7 +281,7 @@ function renderDataSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
-    // TWO PANELS, ONE TAB. Weather area was one text box and Booking behavior
+    // FOUR PANELS, ONE TAB. Weather area was one text box and Booking behavior
     // was two toggles, each behind its own nav entry. Mark 16 of the
     // 2026-08-17 walk: "move this and weather area to related setting pages. it
     // does not need to be its own page with so little fields", and the operator
@@ -294,17 +293,23 @@ function renderDataSection(
     // them into one panel would put a Save button next to controls that have
     // already saved.
     //
-    // ISSUE #519 gave the time zone its own THIRD panel here, on the reasoning
-    // that a validated picker whose wrong value silently makes the phone line
-    // answer as open around the clock deserved its own save gate. ISSUE #709
+    // ISSUE #519 gave the time zone its own panel here, on the reasoning that a
+    // validated picker whose wrong value silently makes the phone line answer
+    // as open around the clock deserved its own save gate. ISSUE #709
     // overrides that: operator, 2026-09-10 walk mark 36, "Time Zone needs to be
     // in the profile box; not its own block." `BusinessProfileSection` now
     // carries the contact fields AND the time zone picker as one panel with one
     // Save, and `TimeZoneSection.tsx` is deleted.
+    //
+    // ISSUE #712 moved Branding (the Logo and Branding panels) here from its
+    // own nav entry: operator, "Branding should be under the business
+    // profile. Again we need to group these better." The separate `branding`
+    // nav entry is gone; nothing else pointed at it (grepped the whole admin).
     case 'businessProfile':
       return (
         <>
           <BusinessProfileSection data={data} onSave={persist} />
+          <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />
           <BookingBehaviorSection data={data} onSave={persist} />
         </>
       );
@@ -326,8 +331,6 @@ function renderDataSection(
     // mark 17: "make it a true toggle for different payment option".
     case 'payments':
       return <PaymentOptionsSection data={data} onSave={persist} />;
-    case 'branding':
-      return <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     default:

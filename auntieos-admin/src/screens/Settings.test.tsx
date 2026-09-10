@@ -225,22 +225,25 @@ describe('Settings — section nav shell', () => {
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = within(tablist).getAllByRole('tab');
-    // 14. It was 11: the 2026-07-31 calendar-tab merge took two calendar
+    // 13. It was 11: the 2026-07-31 calendar-tab merge took two calendar
     // features down to one tab, then mark 16 of the 2026-08-17 walk folded
     // Weather area and Booking behavior into Business profile ("it does not
     // need to be its own page with so little fields"). Issue #519 then added
     // the two sections for the twenty fields the clients decoded and none of
     // them edited: Booking rules and Visits and tracking, making 13. Issue #397
     // then added Phone line, the press-3 live transfer, next to Business hours
-    // because it is gated on them. Integrations still sits last, because it
-    // reports on outside services rather than editing anything.
-    expect(tabs).toHaveLength(14);
+    // because it is gated on them, making 14. Issue #712 then folded the
+    // separate Branding tab back into Business profile, back down to 13.
+    // Integrations still sits last, because it reports on outside services
+    // rather than editing anything.
+    expect(tabs).toHaveLength(13);
     expect(within(tablist).getByRole('tab', { name: 'Booking rules' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Visits and tracking' })).toBeInTheDocument();
     expect(within(tablist).getByRole('tab', { name: 'Phone line' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /weather area/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /booking behavior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /google calendar/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Branding' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -538,15 +541,42 @@ describe('Settings — Business profile absorbed the two thin sections', () => {
     expect(within(panel).getByRole('switch', { name: /block bookings during busy events/i })).toBeInTheDocument();
     // NO Save button in the toggles' own panel. They write on every flip, so a
     // Save button beside them would be a lie about what is already stored. The
-    // one Save in this tab belongs to the sibling Business profile panel
-    // (issue #709 folded the time zone picker's Save into it), which is why
-    // this is scoped to the toggle panel rather than counting buttons across
-    // the whole tab.
+    // two Saves in this tab belong to the Business profile panel (issue #709
+    // folded the time zone picker's Save into it) and the Branding text-fields
+    // panel (issue #712 moved it here); the Logo panel saves on upload and has
+    // no Save button of its own. This is scoped to the toggle panel rather
+    // than counting buttons across the whole tab.
     const togglePanel = panelOwning(
       within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i }),
     );
     expect(within(togglePanel).queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
-    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(1);
+    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(2);
+  });
+});
+
+// ISSUE #712: "Branding should be under the business profile." The Logo and
+// Branding panels moved from their own nav tab into this one.
+describe('Settings — Business profile absorbed Branding', () => {
+  it('shows the Logo and Branding panels inside the Business profile tab', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    await within(panel).findByLabelText('Business name');
+    expect(within(panel).getByText('Business logo')).toBeInTheDocument();
+    expect(within(panel).getByLabelText('App name')).toBeInTheDocument();
+  });
+
+  it('saves the branding text fields through the shared persist', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    const wordmark = await within(panel).findByLabelText('App name');
+    await userEvent.type(wordmark, 'AuntieOS');
+    await userEvent.click(within(panelOwning(wordmark)).getByRole('button', { name: /^save$/i }));
+    expect(saveBusinessSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ brandWordmark: 'AuntieOS' }),
+    );
   });
 });
 describe('Settings — real editors wire through the shared persist', () => {
