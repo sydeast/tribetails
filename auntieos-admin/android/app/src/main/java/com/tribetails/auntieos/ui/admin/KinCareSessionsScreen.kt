@@ -114,6 +114,9 @@ private fun startGpsTracking(context: Context, sessionId: String, kinfolkId: Str
 
 private enum class Phase(val label: String, val tone: AuntieStatusTone) {
     Active("Active", AuntieStatusTone.Teal),
+    // issue #702: a SCHEDULED visit whose slot already passed gets its own
+    // phase, between Active and Upcoming, rather than being dropped outright.
+    Overdue("Overdue", AuntieStatusTone.Warning),
     Upcoming("Upcoming", AuntieStatusTone.Orange),
     CompletedToday("Recent", AuntieStatusTone.Muted),
 }
@@ -177,7 +180,7 @@ fun KinCareSessionsScreen(
     var sort by remember { mutableStateOf(AuntieTimeSort.Soonest) }
 
     val grouped = visible
-        .groupBy { phaseFor(it) }
+        .groupBy { phaseFor(it, today) }
         .mapValues { (_, rows) -> sortSessions(rows, sort) }
 
     val activeCount = grouped[Phase.Active].orEmpty().size
@@ -871,16 +874,18 @@ private fun AddressChip(address: String, context: Context) {
 
 @Composable
 private fun EmptyState() {
-    // Migration-aware empty state. Per the audit this is a data-coverage outcome
-    // (DRAFT/PENDING bookings and stale-dated migration docs are filtered out by
-    // design), not a code bug, so it explains where Kin Cares come from rather than
-    // implying something is broken.
+    // Migration-aware empty state. DRAFT/PENDING bookings are filtered out by
+    // design (the Bookings screen owns that queue), and a wrapped visit older
+    // than RECENT_WINDOW_DAYS ages out too, so an empty screen here is a
+    // data-coverage outcome, not a code bug. A SCHEDULED visit is no longer in
+    // that "ages out" bucket, issue #702: it stays visible as Overdue back
+    // through OVERDUE_WINDOW_DAYS, so this copy says so.
     GlassSurface(cornerRadius = 16.dp, modifier = Modifier.fillMaxWidth()) {
         AuntieEmptyState(
             title = "Nothing in flight right now",
-            message = "Approved Kin Cares for today and the next two weeks land here, plus anything " +
-                "completed or cancelled since yesterday. New bookings show up once you approve them " +
-                "on the Bookings screen.",
+            message = "Approved Kin Cares for today and the next two weeks land here, still-scheduled " +
+                "visits whose slot already passed, and anything completed or cancelled since yesterday. " +
+                "New bookings show up once you approve them on the Bookings screen.",
             icon = Lucide.PawPrint,
         )
     }
@@ -907,10 +912,18 @@ private fun statusGlyph(status: String): ImageVector = when (status.uppercase())
     else -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession): Phase = when (s.status.uppercase()) {
-    "ON_MY_WAY", "ARRIVED", "DEPARTED" -> Phase.Active
-    "SCHEDULED" -> Phase.Upcoming
-    else -> Phase.CompletedToday
+/**
+ * [today] as "YYYY-MM-DD", needed since #702 to tell Overdue from Upcoming.
+ * A positive match against COMPLETED/CANCELLED for Recent, same as
+ * [isVisibleOnAuntieTime]'s own WRAPPED_STATUSES; a status code no writer
+ * produces today is therefore never swept into Recent by elimination, it is
+ * placed by its date like SCHEDULED (matching web's `sessionPhase`).
+ */
+private fun phaseFor(s: KinCareSession, today: String): Phase = when {
+    s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> Phase.Active
+    s.status.uppercase() in setOf("COMPLETED", "CANCELLED") -> Phase.CompletedToday
+    isOverdueScheduled(s, today) -> Phase.Overdue
+    else -> Phase.Upcoming
 }
 
 /**

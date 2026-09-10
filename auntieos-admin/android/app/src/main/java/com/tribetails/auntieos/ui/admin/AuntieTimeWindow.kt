@@ -18,21 +18,35 @@ import com.tribetails.auntieos.data.model.KinCareSession
  *  Cancelled view.
  *
  *  UPCOMING keeps the fourteen-day horizon and the one-day look-back it always
- *  had. Forward so a long approved recurring series cannot bury today under
- *  next month; backward because a visit still sitting at SCHEDULED after its
- *  slot passed is the row an operator most needs to see.
+ *  had: "yesterday" still reads as today's run sheet, not yet a problem case.
  *
  *  ACTIVE has no date bound at all. In flight is in flight whatever the
  *  startTime says, so a clock-in nobody closed can never fall out of the list.
  *
+ * ISSUE #702 added a fourth case: a visit still sitting at SCHEDULED more than
+ * a day after its slot used to fall out of [isVisibleOnAuntieTime] entirely
+ * (the one-day look-back above was its only allowance), so the exact row an
+ * operator most needs to see disappeared outright. It now stays visible,
+ * OVERDUE, back through [OVERDUE_WINDOW_DAYS]. That cap exists only on
+ * Android: unlike the web admin's `sessionsWindowPageQuery`, this screen's
+ * `getKinCareSessions()` fetches the whole collection with no date bound and
+ * there is no Archive here to hand older rows to, so somewhere has to stop an
+ * ancient dangling SCHEDULED row from resurfacing forever. Thirty days matches
+ * the web fetch's own backstop (`FETCH_DAYS_BACK` in `sessionFormat.ts`).
+ *
  * DRAFT / PENDING / REJECTED stay hidden and are matched POSITIVELY by name
  * (the archive's AO-60: the Bookings screen owns that queue). A status code no
  * writer produces today is therefore not swept in with them; it lands in
- * Upcoming carrying its own honest status pill.
+ * Upcoming or Overdue by its date, carrying its own honest status pill.
  */
 
 const val RECENT_WINDOW_DAYS = 7
 const val UPCOMING_WINDOW_DAYS = 14
+
+/** How far back a SCHEDULED (or unrecognized-status) visit stays visible once
+ * its slot has passed. See the ISSUE #702 note above for why Android needs an
+ * explicit cap here where web does not. */
+const val OVERDUE_WINDOW_DAYS = 30
 
 /** Sort direction the operator picks. Applied WITHIN a phase, never across phases. */
 enum class AuntieTimeSort(val label: String) {
@@ -77,10 +91,28 @@ internal fun isVisibleOnAuntieTime(session: KinCareSession, today: String): Bool
     }
 
     // SCHEDULED, plus any code no writer produces today: placed by its date,
-    // which we do know, rather than dropped over a word we do not.
+    // which we do know, rather than dropped over a word we do not. Issue #702:
+    // the lower bound used to be `today - 1`, so anything older simply
+    // vanished; it now reaches back to OVERDUE_WINDOW_DAYS instead of
+    // dropping the row outright.
     val date = session.startTime.take(10)
     if (date.length < 10) return false
-    return date in dateAddDays(today, -1)..dateAddDays(today, UPCOMING_WINDOW_DAYS)
+    return date in dateAddDays(today, -OVERDUE_WINDOW_DAYS)..dateAddDays(today, UPCOMING_WINDOW_DAYS)
+}
+
+/**
+ * Whether [session] is a SCHEDULED (or unrecognized-status) visit whose slot
+ * passed more than a day ago, issue #702's OVERDUE phase. Active and wrapped
+ * statuses are never overdue by this definition, they have their own phases.
+ */
+internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean {
+    val status = session.status.uppercase()
+    if (isBookingQueueStatus(status) || status in ACTIVE_STATUSES || status in WRAPPED_STATUSES) {
+        return false
+    }
+    val date = session.startTime.take(10)
+    if (date.length < 10) return false
+    return date < dateAddDays(today, -1)
 }
 
 /**

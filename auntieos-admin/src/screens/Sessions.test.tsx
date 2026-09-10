@@ -322,13 +322,28 @@ describe('Sessions screen: the Auntie Time window', () => {
     ]);
   });
 
-  it('renders the three phase headings, and no fourth', () => {
+  it('renders three phase headings when nothing is overdue, and no fourth', () => {
     usePagedCollection.mockReturnValue(paged(windowFixture));
     render(<Sessions />);
     const headings = screen
       .getAllByRole('heading', { level: 3 })
       .map((h) => h.textContent?.replace(/\d+$/, '').trim());
     expect(headings).toEqual(['Active', 'Upcoming', 'Recent']);
+  });
+
+  it('adds the Overdue heading, between Active and Upcoming, once a SCHEDULED visit is stale (#702)', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        ...windowFixture,
+        entry({ _id: 'stale', kinfolkName: 'Ten Days Late', status: 'SCHEDULED', startTime: at(-10) }),
+      ]),
+    );
+    render(<Sessions />);
+    const headings = screen
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent?.replace(/\d+$/, '').trim());
+    expect(headings).toEqual(['Active', 'Overdue', 'Upcoming', 'Recent']);
+    expect(screen.getByText('Ten Days Late')).toBeInTheDocument();
   });
 
   it('sorts the in-flight visit, tomorrow, and the recent wrap into their own phases', () => {
@@ -552,6 +567,47 @@ describe('Sessions screen: the stat strip says what it counts', () => {
     render(<Sessions />);
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.queryByText(/These counts cover/)).toBeNull();
+  });
+});
+describe('Sessions screen: issue #702, the "N visits fetched" line must agree with what renders', () => {
+  // Nine SCHEDULED visits, all past their start (the walk's own fixture: nine
+  // of thirteen bookings landed inside the fetch window, every one older than
+  // yesterday). Before the fix, sessionPhase() dropped all nine and the
+  // Scheduled tab read "9 visits fetched" while showing nothing on the books.
+  const nineOverdue = Array.from({ length: 9 }, (_, i) =>
+    entry({
+      _id: `overdue-${String(i)}`,
+      kinfolkName: `Household ${String(i)}`,
+      status: 'SCHEDULED',
+      startTime: at(-(2 + i)),
+    }),
+  );
+
+  it('renders every fetched SCHEDULED row under the Scheduled tab, matching the stat line', async () => {
+    usePagedCollection.mockReturnValue(paged(nineOverdue));
+    render(<Sessions />);
+    await user.click(screen.getByRole('tab', { name: 'Scheduled' }));
+
+    expect(
+      screen.getByText('These counts cover all 9 visits fetched for this window.'),
+    ).toBeInTheDocument();
+    expect(document.querySelectorAll('.sessions__row')).toHaveLength(9);
+    expect(screen.queryByText(/nothing on the books in this window/i)).toBeNull();
+  });
+
+  it('agrees on the "All" tab too, mixing overdue rows with an in-flight visit and a future one', async () => {
+    const mixed = [
+      ...nineOverdue,
+      entry({ _id: 'active', kinfolkName: 'In Flight', status: 'ARRIVED', startTime: at(0, 9) }),
+      entry({ _id: 'tomorrow', kinfolkName: 'Next Up', status: 'SCHEDULED', startTime: at(1) }),
+    ];
+    usePagedCollection.mockReturnValue(paged(mixed));
+    render(<Sessions />);
+
+    expect(
+      screen.getByText('These counts cover all 11 visits fetched for this window.'),
+    ).toBeInTheDocument();
+    expect(document.querySelectorAll('.sessions__row')).toHaveLength(11);
   });
 });
 describe('Sessions screen: the Archive says how much of its range it has', () => {
