@@ -258,7 +258,7 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
   return groups;
 }
 
-// ── phase grouping: the Auntie Time window (operator issue #17) ─────────────
+// ── phase grouping: the Auntie Time window (operator issue #17, #702) ───────
 //
 // The sub-header has always read "Every Kin Care today and coming up, plus what
 // wrapped recently", while `SESSIONS_QUERY` streamed a flat 300 rows ordered by
@@ -275,19 +275,26 @@ export function groupSessionsByDay<T extends { startTime?: string | undefined }>
 //    which "did that visit get wrapped?" is still a live question. Measured on
 //    the WRAP day (completedAt, falling back to startTime, because a CANCELLED
 //    session never gets a completedAt).
-//  UPCOMING, 14 days forward, and one day BACK. Forward is the archive's own
-//    horizon, and it exists so a long approved recurring series cannot bury
-//    today under next month. Backward by one day is also the archive's: a visit
-//    still sitting at SCHEDULED after its slot passed is the single row an
-//    operator most needs to see, so it stays put rather than vanishing at
-//    midnight.
+//  OVERDUE, added for issue #702. A visit still sitting at SCHEDULED once its
+//    slot is more than a day gone is the single row an operator most needs to
+//    see, so it gets its own group between Active and Upcoming rather than
+//    being dropped. (It used to fall inside UPCOMING's one-day look-back and
+//    nowhere past that, which is exactly the bug: `sessionPhase` returned
+//    `null` for anything older, and `groupSessionsByPhase` drops nulls, so a
+//    SCHEDULED row that missed its slot by more than a day disappeared from
+//    every tab, including the Scheduled filter itself.) Bounded only by the
+//    FETCH range, same as Upcoming and Recent; anything the query never
+//    fetched is not this module's problem.
+//  UPCOMING, 14 days forward, one day BACK (unchanged: "yesterday" is still
+//    Upcoming, not Overdue, since a visit that missed its slot by less than a
+//    day reads as "today's run sheet", not yet a problem case).
 //  ACTIVE, no date bound at all. An in-flight visit is in flight whatever its
 //    startTime says; a clock-in nobody closed must never fall out of the list.
 //    (The FETCH range still bounds it; see `sessionsWindowBounds`.)
 //
 // Anything outside those lives behind the Archive affordance in `Sessions.tsx`.
 
-export type SessionPhase = 'active' | 'upcoming' | 'recent';
+export type SessionPhase = 'active' | 'overdue' | 'upcoming' | 'recent';
 
 /** Sort direction the operator picks; applied WITHIN a phase, never across phases. */
 export type SessionSort = 'soonest' | 'latest';
@@ -377,7 +384,9 @@ export function sessionPhase(row: PhaseRow, todayIso: string): SessionPhase | nu
   const startDay = sessionDayKey(row.startTime ?? '');
   if (startDay === 'Undated') return null;
   const diff = daysBetween(todayIso, startDay);
-  return diff >= -1 && diff <= UPCOMING_WINDOW_DAYS ? 'upcoming' : null;
+  if (diff > UPCOMING_WINDOW_DAYS) return null;
+  // issue #702: a slot missed by more than a day is OVERDUE, not dropped.
+  return diff >= -1 ? 'upcoming' : 'overdue';
 }
 
 /** One phase's rows, still sub-grouped by local day so the day headers survive. */
@@ -389,20 +398,25 @@ export interface SessionPhaseGroup<T> {
   days: SessionDayGroup<T>[];
 }
 
-const PHASE_ORDER: readonly SessionPhase[] = ['active', 'upcoming', 'recent'];
+// Overdue sits between Active and Upcoming (issue #702): a slot that already
+// passed with nobody clocking in is more urgent than one still ahead of us,
+// so it reads right after what's in flight right now. Active, Upcoming and
+// Recent keep the exact relative order the archive always had.
+const PHASE_ORDER: readonly SessionPhase[] = ['active', 'overdue', 'upcoming', 'recent'];
 
 export const PHASE_LABEL: Record<SessionPhase, string> = {
   active: 'Active',
+  overdue: 'Overdue',
   upcoming: 'Upcoming',
   recent: 'Recent',
 };
 
 /**
- * Group rows into Active / Upcoming / Recent, each still sub-grouped by LOCAL
- * day, dropping anything outside the window (see `sessionPhase`). Phases keep
- * the archive's fixed order; [sort] reverses days and rows WITHIN a phase only,
- * so "latest first" never puts Recent above Active. A phase with no rows emits
- * no group at all, rather than an empty heading.
+ * Group rows into Active / Overdue / Upcoming / Recent, each still sub-grouped
+ * by LOCAL day, dropping anything outside the window (see `sessionPhase`).
+ * Phases keep the fixed order above; [sort] reverses days and rows WITHIN a
+ * phase only, so "latest first" never puts Recent above Active. A phase with
+ * no rows emits no group at all, rather than an empty heading.
  */
 export function groupSessionsByPhase<T extends PhaseRow>(
   rows: readonly T[],

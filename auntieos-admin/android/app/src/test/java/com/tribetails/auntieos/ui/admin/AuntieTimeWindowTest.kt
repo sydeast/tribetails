@@ -7,9 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * OPERATOR ISSUE #17, the Android half. Mirrors the web suite in
+ * OPERATOR ISSUE #17, the Android half, plus #702 (a SCHEDULED visit past its
+ * slot must stay visible, not vanish). Mirrors the web suite in
  * `src/lib/sessionFormat.test.ts` case for case, so the two platforms cannot
- * drift on what "Recent" means or on when a year shows.
+ * drift on what "Recent" means, when a year shows, or when a visit is Overdue.
  */
 class AuntieTimeWindowTest {
 
@@ -70,6 +71,36 @@ class AuntieTimeWindowTest {
     @Test
     fun `a scheduled visit yesterday that never got clocked stays visible`() {
         assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-15T09:00:00Z"), today))
+    }
+
+    // ── issue #702: a SCHEDULED visit whose slot passed must stay visible ────
+
+    @Test
+    fun `a scheduled visit ten days overdue is still visible, not dropped`() {
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-07-06T09:00:00Z"), today))
+    }
+
+    @Test
+    fun `overdue visibility reaches back thirty days, and stops just past it`() {
+        assertTrue(isVisibleOnAuntieTime(session(startTime = "2026-06-16T09:00:00Z"), today))
+        assertFalse(isVisibleOnAuntieTime(session(startTime = "2026-06-15T09:00:00Z"), today))
+    }
+
+    @Test
+    fun `isOverdueScheduled is true two days late and false exactly one day late`() {
+        assertTrue(isOverdueScheduled(session(startTime = "2026-07-14T09:00:00Z"), today))
+        assertFalse(isOverdueScheduled(session(startTime = "2026-07-15T09:00:00Z"), today))
+    }
+
+    @Test
+    fun `isOverdueScheduled is false for active and wrapped statuses, whatever their date`() {
+        assertFalse(isOverdueScheduled(session(status = "ARRIVED", startTime = "2026-06-01T09:00:00Z"), today))
+        assertFalse(
+            isOverdueScheduled(
+                session(status = "COMPLETED", startTime = "2026-07-01T09:00:00Z", completedAt = "2026-07-01T14:00:00Z"),
+                today,
+            ),
+        )
     }
 
     @Test

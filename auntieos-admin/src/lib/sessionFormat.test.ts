@@ -239,7 +239,7 @@ describe('localDateIso re-export', () => {
  * 300 rows ordered by startTime desc, so the data contradicted the copy. These
  * cases pin the window the copy describes.
  */
-describe('groupSessionsByPhase: Active / Upcoming / Recent, and nothing else', () => {
+describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothing else', () => {
   interface Row {
     id: string;
     startTime: string;
@@ -295,6 +295,39 @@ describe('groupSessionsByPhase: Active / Upcoming / Recent, and nothing else', (
     const rows: Row[] = [{ id: 'missed', startTime: dayOffset(-1), status: 'SCHEDULED' }];
     expect(idsByPhase(rows).upcoming).toEqual(['missed']);
   });
+  it('puts a SCHEDULED visit ten days overdue in its own Overdue phase, never dropped (issue #702)', () => {
+    // Before the fix, sessionPhase returned null for any SCHEDULED row older
+    // than yesterday and groupSessionsByPhase dropped the null, so a visit
+    // still SCHEDULED after its slot passed vanished from every tab, including
+    // the Scheduled filter itself, reachable only through the Archive.
+    const rows: Row[] = [{ id: 'overdue', startTime: dayOffset(-10), status: 'SCHEDULED' }];
+    expect(idsByPhase(rows).overdue).toEqual(['overdue']);
+    const allShown = Object.values(idsByPhase(rows)).flat();
+    expect(allShown).toContain('overdue');
+  });
+  it('keeps the yesterday boundary in Upcoming and moves the day before that into Overdue', () => {
+    const rows: Row[] = [
+      { id: 'yesterday', startTime: dayOffset(-1), status: 'SCHEDULED' },
+      { id: 'twoDaysAgo', startTime: dayOffset(-2), status: 'SCHEDULED' },
+    ];
+    const groups = idsByPhase(rows);
+    expect(groups.upcoming).toEqual(['yesterday']);
+    expect(groups.overdue).toEqual(['twoDaysAgo']);
+  });
+  it('places Overdue between Active and Upcoming, keeping the rest of the archive order intact', () => {
+    const rows: Row[] = [
+      { id: 'active', startTime: dayOffset(0, 9), status: 'ARRIVED' },
+      { id: 'overdue', startTime: dayOffset(-10), status: 'SCHEDULED' },
+      { id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' },
+      { id: 'recentWrap', startTime: dayOffset(-3), status: 'COMPLETED', completedAt: dayOffset(-3, 14) },
+    ];
+    expect(groupSessionsByPhase(rows, TODAY).map((g) => g.phase)).toEqual([
+      'active',
+      'overdue',
+      'upcoming',
+      'recent',
+    ]);
+  });
   it('stops at the fourteen-day upcoming horizon, so an approved series cannot bury today', () => {
     const rows: Row[] = [
       { id: 'inHorizon', startTime: dayOffset(14), status: 'SCHEDULED' },
@@ -321,7 +354,7 @@ describe('groupSessionsByPhase: Active / Upcoming / Recent, and nothing else', (
     const rows: Row[] = [{ id: 'tomorrow', startTime: dayOffset(1), status: 'SCHEDULED' }];
     expect(groupSessionsByPhase(rows, TODAY).map((g) => g.phase)).toEqual(['upcoming']);
   });
-  it('orders the phases Active, Upcoming, Recent, matching the archive', () => {
+  it('orders the phases Active, Upcoming, Recent when there is no overdue row, matching the archive', () => {
     expect(groupSessionsByPhase(fixture, TODAY).map((g) => g.phase)).toEqual([
       'active',
       'upcoming',

@@ -85,8 +85,12 @@ interface SessionsProps {
  * word). Reads the flat `kin_care_sessions` collection a PAGE at a time through
  * a bounded, server-ordered, DATE-RANGED query, classifies every row through the
  * enumerated `sessionState` (never by negation), then groups the FILTERED rows
- * into Active / Upcoming / Recent, each still sub-grouped by LOCAL calendar day
- * (the AO-18 fix).
+ * into Active / Overdue / Upcoming / Recent, each still sub-grouped by LOCAL
+ * calendar day (the AO-18 fix). Overdue is issue #702: a SCHEDULED visit whose
+ * slot passed more than a day ago used to vanish outright (`sessionPhase`
+ * returned `null` and `groupSessionsByPhase` drops nulls), so the Scheduled
+ * tab could say "9 visits fetched" and render nothing. It now gets its own
+ * group instead of being dropped.
  *
  * OPERATOR ISSUE #17, and what changed. The sub-header has always promised
  * "Every Kin Care today and coming up, plus what wrapped recently", but the
@@ -280,7 +284,7 @@ export function Sessions({ onSelect, initialSessionId }: SessionsProps) {
         subtitle={
           mode === 'archive'
             ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
-            : `In flight now, the next ${UPCOMING_WINDOW_DAYS} days, and what wrapped in the last ${RECENT_WINDOW_DAYS}.`
+            : `In flight now, anything overdue, the next ${UPCOMING_WINDOW_DAYS} days, and what wrapped in the last ${RECENT_WINDOW_DAYS}.`
         }
         trailing={
           <GhostButton
