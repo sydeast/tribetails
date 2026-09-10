@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
 import {
+  bookingSortTimeMs,
   bookingState,
   bookingStateInfo,
   bookingWhen,
@@ -12,7 +13,8 @@ import {
 } from './bookingFormat';
 
 function fakeTs(iso: string): Timestamp {
-  return { toDate: () => new Date(iso) } as unknown as Timestamp;
+  const ms = new Date(iso).getTime();
+  return { toDate: () => new Date(iso), toMillis: () => ms } as unknown as Timestamp;
 }
 
 function statusRow(status: string): BookingStateInput {
@@ -161,5 +163,35 @@ describe('bookingWhen', () => {
 
   it('says "Date pending" honestly when nothing on the doc is usable, never fabricating a date', () => {
     expect(bookingWhen(whenRow({}))).toBe('Date pending');
+  });
+});
+
+describe('bookingSortTimeMs (#699)', () => {
+  it('sorts by the visit startTime, the same field bookingWhen displays', () => {
+    const ms = bookingSortTimeMs(whenRow({ startTime: '2026-07-16T09:00:00' }));
+    expect(ms).toBe(new Date('2026-07-16T09:00:00').getTime());
+  });
+
+  it('walks the same fallback chain as bookingWhen: completedAt, then departedAt', () => {
+    expect(bookingSortTimeMs(whenRow({ completedAt: '2026-07-10T17:30:00' }))).toBe(
+      new Date('2026-07-10T17:30:00').getTime(),
+    );
+    expect(bookingSortTimeMs(whenRow({ departedAt: '2026-07-11T08:15:00' }))).toBe(
+      new Date('2026-07-11T08:15:00').getTime(),
+    );
+  });
+
+  it('falls back to the real createdAt Timestamp once every string field is blank', () => {
+    expect(bookingSortTimeMs(whenRow({ createdAt: fakeTs('2026-07-01T12:00:00Z') }))).toBe(
+      new Date('2026-07-01T12:00:00Z').getTime(),
+    );
+  });
+
+  it('returns null, never 1970 or "now", when nothing on the row is usable', () => {
+    expect(bookingSortTimeMs(whenRow({}))).toBeNull();
+  });
+
+  it('returns null rather than a fabricated instant for unparseable free text', () => {
+    expect(bookingSortTimeMs(whenRow({ startTime: 'Net 14' }))).toBeNull();
   });
 });

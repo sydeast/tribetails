@@ -636,12 +636,49 @@ describe('groupBookingsByStatus', () => {
     const sections = groupBookingsByStatus([entry({ _id: 'u', status: 'WAT' })]);
     expect(sections[2]?.rows.map((r) => r._id)).toEqual(['u']);
   });
-  it('preserves the query order inside a section, never re-sorting it', () => {
+  it('#699: Pending keeps the query order (the read that matters is who asked first)', () => {
     const sections = groupBookingsByStatus([
-      entry({ _id: 'newer', status: 'SCHEDULED' }),
-      entry({ _id: 'older', status: 'SCHEDULED' }),
+      entry({ _id: 'newer', status: 'PENDING' }),
+      entry({ _id: 'older', status: 'PENDING' }),
     ]);
-    expect(sections[1]?.rows.map((r) => r._id)).toEqual(['newer', 'older']);
+    expect(sections[0]?.rows.map((r) => r._id)).toEqual(['newer', 'older']);
+  });
+
+  it('#699: Scheduled sorts by the visit start time, soonest first, not BOOKINGS_QUERY\'s createdAt-desc order', () => {
+    // BOOKINGS_QUERY streams newest-CREATED first, so `justAsked` (created most
+    // recently) leads the input array even though its visit is a month out,
+    // while `bookedWeeksAgo` (created earlier) is scheduled for next week.
+    const sections = groupBookingsByStatus([
+      entry({
+        _id: 'justAsked',
+        status: 'SCHEDULED',
+        createdAt: fakeTs('2026-07-20T00:00:00Z'),
+        startTime: '2026-08-10T09:00:00',
+      }),
+      entry({
+        _id: 'bookedWeeksAgo',
+        status: 'SCHEDULED',
+        createdAt: fakeTs('2026-07-01T00:00:00Z'),
+        startTime: '2026-07-16T09:00:00',
+      }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id)).toEqual(['bookedWeeksAgo', 'justAsked']);
+  });
+
+  it('#699: History sorts by the visit start time, most recent first', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'earlierVisit', status: 'COMPLETED', startTime: '2026-06-01T09:00:00' }),
+      entry({ _id: 'laterVisit', status: 'COMPLETED', startTime: '2026-06-20T09:00:00' }),
+    ]);
+    expect(sections[2]?.rows.map((r) => r._id)).toEqual(['laterVisit', 'earlierVisit']);
+  });
+
+  it('#699: an undated row sorts last within its section, never as 1970 or "now"', () => {
+    const sections = groupBookingsByStatus([
+      entry({ _id: 'undated', status: 'SCHEDULED', startTime: '', createdAt: null }),
+      entry({ _id: 'dated', status: 'SCHEDULED', startTime: '2026-07-16T09:00:00' }),
+    ]);
+    expect(sections[1]?.rows.map((r) => r._id)).toEqual(['dated', 'undated']);
   });
   it('cancelled and completed share the one History section', () => {
     const sections = groupBookingsByStatus([

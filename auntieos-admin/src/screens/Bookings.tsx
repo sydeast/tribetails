@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
+  bookingSortTimeMs,
   bookingState,
   bookingStateInfo,
   bookingWhen,
@@ -93,12 +94,16 @@ export interface BookingSection {
   rows: BookingEntry[];
 }
 
+/** How a section orders its own rows once membership is decided. */
+type SectionSort = 'soonest' | 'mostRecent' | 'stream';
+
 interface SectionDef {
   key: BookingSectionKey;
   label: string;
   test: (state: BookingState) => boolean;
   /** Shown in place of the rows when the section holds none. */
   emptyHint: string;
+  sort: SectionSort;
 }
 
 /**
@@ -122,20 +127,60 @@ const SECTIONS: readonly SectionDef[] = [
     label: 'Pending approval',
     test: (s) => s === 'draft' || s === 'pending',
     emptyHint: 'Nothing is waiting on a reply.',
+    // Matches the Android counterpart (`groupBookingsByStatus` in
+    // ScheduleViewScreen.kt): "Pending keeps the order the stream delivered."
+    // These are requests waiting on a HUMAN, not a schedule, so the read that
+    // matters is which one arrived first, and BOOKINGS_QUERY already streams
+    // newest-created first.
+    sort: 'stream',
   },
   {
     key: 'scheduled',
     label: 'Scheduled',
     test: (s) => s === 'scheduled',
     emptyHint: 'Nothing on the books. A request moves here once you approve it.',
+    // #699: a to-do list reads soonest first. `BOOKINGS_QUERY` orders by
+    // `createdAt` (the one field every row genuinely carries), so the streamed
+    // order was the order the record was WRITTEN, not the order the visit
+    // HAPPENS, and thirteen rows under one heading came out looking shuffled.
+    sort: 'soonest',
   },
   {
     key: 'history',
     label: 'History',
     test: (s) => s === 'completed' || s === 'cancelled' || s === 'unknown',
     emptyHint: 'No finished visits yet.',
+    // A record reads most-recent-first, same as Android's History section.
+    sort: 'mostRecent',
   },
 ];
+
+/**
+ * Orders one section's rows by the visit's own start time (falling through
+ * the same `completedAt` / `departedAt` / `createdAt` chain `bookingWhen`
+ * displays, via `bookingSortTimeMs`), rather than the `createdAt`-descending
+ * order `BOOKINGS_QUERY` streams rows in.
+ *
+ * A row with no parseable time sorts LAST regardless of direction: it is
+ * neither the soonest nor the most recent, it is unknown, and putting it at
+ * either end would misplace it next to rows that really do carry that time.
+ * Rows tie-broken by their position in the streamed page, so two undated rows
+ * (or two with the exact same instant) keep a stable relative order instead of
+ * shuffling on every re-render.
+ */
+function sortSectionRows(rows: readonly BookingEntry[], sort: SectionSort): BookingEntry[] {
+  if (sort === 'stream') return [...rows];
+  const direction = sort === 'soonest' ? 1 : -1;
+  return rows
+    .map((entry, index) => ({ entry, index, ms: bookingSortTimeMs(entry) }))
+    .sort((a, b) => {
+      if (a.ms === null && b.ms === null) return a.index - b.index;
+      if (a.ms === null) return 1;
+      if (b.ms === null) return -1;
+      return (a.ms - b.ms) * direction;
+    })
+    .map((v) => v.entry);
+}
 
 /**
  * Split the streamed rows into the mock's three status sections.
@@ -144,16 +189,22 @@ const SECTIONS: readonly SectionDef[] = [
  * can say what a section is waiting for rather than silently dropping the
  * heading and leaving the operator to wonder whether it failed to load.
  *
- * Input order is preserved inside each section. `BOOKINGS_QUERY` already
- * orders by `createdAt` descending server-side, so re-sorting here would either
- * duplicate that or quietly disagree with it.
+ * #699: each section then orders ITS OWN rows by visit start time (see
+ * `sortSectionRows`), rather than preserving `BOOKINGS_QUERY`'s
+ * `createdAt`-descending stream order. That used to read as random to an
+ * operator looking at visit dates, because it is: the record-creation order
+ * has no relationship to the visit's own date once bookings are made out of
+ * sequence, which they are.
  */
 export function groupBookingsByStatus(rows: readonly BookingEntry[]): BookingSection[] {
   const views = rows.map((entry) => ({ entry, state: bookingState({ status: entry.status }) }));
   return SECTIONS.map((section) => ({
     key: section.key,
     label: section.label,
-    rows: views.filter((v) => section.test(v.state)).map((v) => v.entry),
+    rows: sortSectionRows(
+      views.filter((v) => section.test(v.state)).map((v) => v.entry),
+      section.sort,
+    ),
   }));
 }
 
@@ -463,7 +514,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         kicker="The Den · Bookings"
         title="Every"
         accentTail="visit."
-        subtitle="Pending requests and scheduled visits, newest first."
+        subtitle="Pending requests, scheduled visits, and history."
         trailing={
           <>
             {/* The label carries the mode, not an aria-pressed attribute:
@@ -517,7 +568,10 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         <StatCard label="History" value={historyCount} trend="completed, cancelled, or other" tone="purple" />
       </div>
 
-      <DenPanel title="Bookings" subtitle="Newest first, capped at 200.">
+      <DenPanel
+        title="Bookings"
+        subtitle="Pending: newest request first. Scheduled: soonest visit first. History: most recent first. Capped at 200."
+      >
         <AsyncRegion
           state={rows}
           what="bookings"
