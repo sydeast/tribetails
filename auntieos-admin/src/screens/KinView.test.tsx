@@ -103,6 +103,13 @@ describe('KinView', () => {
     expect(screen.queryByText(/handle with care/i)).toBeNull();
   });
 
+  it('has no "Kin profile." subtitle under the name', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    await screen.findByText('Basics');
+    expect(screen.queryByText('Kin profile.')).toBeNull();
+  });
+
   it('calls onBack from the Back control', async () => {
     getKin.mockResolvedValue(kin());
     const onBack = vi.fn();

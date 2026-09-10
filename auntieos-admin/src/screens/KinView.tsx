@@ -115,7 +115,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
           { label: kinName || kinId },
         ]}
         title={kinName || kinId}
-        subtitle="Kin profile."
         trailing={
           <>
             <GhostButton label="Back to Directory" onClick={onBack} />
