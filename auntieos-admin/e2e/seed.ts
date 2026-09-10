@@ -217,6 +217,22 @@ export async function put(
 }
 
 /**
+ * Deletes one document by id, `put`'s inverse.
+ *
+ * FOR A SPEC-OWNED FIXTURE that only one test needs and no other spec reads: a
+ * row written straight into `kin_care_sessions` to exercise an ordering or a
+ * date-boundary rule the whole-run seed above does not carry (a mismatched
+ * created/start order, a SCHEDULED visit ten days overdue). Written by the
+ * test that needs it and removed by that same test's `after`, so the next spec
+ * file's exact-count assertions (`bookings.spec.ts`'s `toHaveCount(4)`) never
+ * see a stray row a different suite left behind.
+ */
+export async function remove(collection: string, id: string): Promise<void> {
+  const url = `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${collection}/${id}`;
+  await seedFetch(url, { method: 'DELETE', headers: OWNER }, `delete ${collection}/${id}`);
+}
+
+/**
  * `startTime` is an ISO STRING and `createdAt` is a real Timestamp, and that
  * asymmetry is the collection's, not this seeder's: `approveBookingSeriesCore`
  * writes exactly that pair (see `src/api/bookings.ts`). Seeding both as
