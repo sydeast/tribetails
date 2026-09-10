@@ -15,8 +15,12 @@ vi.mock('../lib/firestore', () => ({ useCollection }));
 // screen still renders from its route param has a real anchor to the members
 // route inside it.
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+const routerHistory = vi.hoisted(() => ({ canGoBack: vi.fn(() => false), back: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
+  // KinfolkProfile's Back reads `history.canGoBack()` (#689). Cold arrival by
+  // default, which is what the profile assertions below expect to see named.
+  useRouter: () => ({ history: routerHistory }),
   // Identity, the AppShell.test.tsx convention. KinfolkProfile builds its
   // breadcrumb's Directory step with `linkOptions`.
   linkOptions: (o: unknown) => o,
@@ -36,8 +40,17 @@ vi.mock('../api/kinfolkProfile', async (orig) => ({
 // RESOLVING which household a kin card belongs to, since the kin doc holds an
 // id and the breadcrumb needs a name.
 vi.mock('./KinView', () => ({
-  KinView: ({ household }: { household?: { id: string; name: string } }) => (
-    <p>STUB KinView household={household ? `${household.id}/${household.name}` : 'unresolved'}</p>
+  KinView: ({
+    household,
+    openedFrom,
+  }: {
+    household?: { id: string; name: string };
+    openedFrom: 'directory' | 'profile';
+  }) => (
+    <p>
+      STUB KinView household={household ? `${household.id}/${household.name}` : 'unresolved'}{' '}
+      openedFrom={openedFrom}
+    </p>
   ),
 }));
 import { Directory } from './Directory';
@@ -284,6 +297,26 @@ describe('Directory screen, Kin tab', () => {
     await openKinTab();
     await userEvent.click(screen.getByText('Biscuit'));
     expect(screen.getByText(/household=kf1\/Jamie Halbrook/)).toBeInTheDocument();
+    // Opened from the Kin TAB, so the URL is still /directory (#689).
+    expect(screen.getByText(/openedFrom=directory/)).toBeInTheDocument();
+  });
+  /**
+   * #689. The same view, drilled into from a household profile, is standing on
+   * `/directory/{id}` instead, and only this screen knows which of the two
+   * mounts it is: the profile is open underneath whenever the route named one.
+   */
+  it('tells the kin detail it was opened from a household profile', async () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    kinAsync = { status: 'ready', data: [kinRow({ _id: 'k9', name: 'Biscuit', kinfolkId: 'kf1' })] };
+    getKinfolkProfile.mockResolvedValue(
+      (await import('../api/kinfolkProfile')).mergeKinfolkProfile('kf1', {
+        firstName: 'Jamie',
+        lastName: 'Halbrook',
+      }),
+    );
+    render(<Directory initialKinfolkId="kf1" />);
+    await userEvent.click(await screen.findByText('Biscuit'));
+    expect(screen.getByText(/openedFrom=profile/)).toBeInTheDocument();
   });
   /**
    * Unresolved, not invented. A kin whose `kinfolkId` names no household this

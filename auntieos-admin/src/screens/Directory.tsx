@@ -421,13 +421,17 @@ export function Directory({
   // it (its `openKinfolkId` comes from the route, which has not changed), so
   // checking the profile first would swallow the drill-down. Closing this view
   // therefore lands back on whichever screen opened it: the profile, or the
-  // Directory's own Kin tab.
+  // Directory's own Kin tab. `openedFrom` tells KinView which of the two that
+  // is, so its Back button and its trail can name the destination correctly
+  // (#689). It is read off the mount, not stored: a profile that is open is a
+  // profile this view was drilled into from.
   if (openKinId !== null) {
     return (
       <KinView
         kinId={openKinId.id}
         kinName={openKinId.name}
         {...(openKinId.household ? { household: openKinId.household } : {})}
+        openedFrom={openKinfolkId !== null ? 'profile' : 'directory'}
         onBack={() => setOpenKinId(null)}
       />
     );

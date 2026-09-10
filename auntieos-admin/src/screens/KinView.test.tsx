@@ -81,7 +81,7 @@ describe('mergeKinDetail (pure)', () => {
 describe('KinView', () => {
   it('loads and renders basics', async () => {
     getKin.mockResolvedValue(kin({ weight: '52 lbs', colorMarkings: 'Black' }));
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     expect(await screen.findByText('52 lbs')).toBeInTheDocument();
     expect(screen.getByText('Black')).toBeInTheDocument();
     expect(getKin).toHaveBeenCalledWith('p1');
@@ -89,7 +89,7 @@ describe('KinView', () => {
 
   it('marks a reactive pet with a small alert pill under the Kin box, not a page banner', async () => {
     getKin.mockResolvedValue(kin({ reactive: true, routine: 'Slow approach' }));
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     expect(await screen.findByText(/handle with care/i)).toBeInTheDocument();
     // No page-level banner: a banner carries role="alert" (Banner.tsx), the
     // marker does not.
@@ -99,7 +99,7 @@ describe('KinView', () => {
 
   it('omits all-blank sections (no empty Health/Feeding panels)', async () => {
     getKin.mockResolvedValue(kin());
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     await screen.findByText('Basics');
     expect(screen.queryByText('Health')).toBeNull();
     expect(screen.queryByText('Feeding')).toBeNull();
@@ -108,7 +108,7 @@ describe('KinView', () => {
 
   it('has no "Kin profile." subtitle under the name', async () => {
     getKin.mockResolvedValue(kin());
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     await screen.findByText('Basics');
     expect(screen.queryByText('Kin profile.')).toBeNull();
   });
@@ -119,7 +119,7 @@ describe('KinView', () => {
     getKin.mockResolvedValue(
       mergeKinDetail('p1', { name: 'Willow', ownerEmail: 'a@b.com', ownerPhone: '5551234567' }),
     );
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     await screen.findByText('Basics');
     expect(screen.queryByText('Owner contact')).toBeNull();
     expect(screen.queryByText('a@b.com')).toBeNull();
@@ -129,23 +129,51 @@ describe('KinView', () => {
   it('calls onBack from the Back control', async () => {
     getKin.mockResolvedValue(kin());
     const onBack = vi.fn();
-    render(<KinView kinId="p1" kinName="Willow" onBack={onBack} />);
-    await userEvent.click(await screen.findByRole('button', { name: /back to directory/i }));
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={onBack} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Directory' }));
     expect(onBack).toHaveBeenCalledOnce();
   });
 
   it('shows pet tags as pills next to the name, not a separate Tags panel', async () => {
     getKin.mockResolvedValue(kin({ tags: ['Yellow lab', 'Microchipped'] }));
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     expect(await screen.findByText('Yellow lab')).toBeInTheDocument();
     expect(screen.getByText('Microchipped')).toBeInTheDocument();
     expect(screen.queryByText('Tags')).toBeNull();
     expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
   });
 
+  /**
+   * #689, the screen the operator marked. Closing lands on whichever screen
+   * opened this one, so from a household profile "Back to Directory" named a
+   * screen the click does not reach. The button now names the household.
+   */
+  it('names the household, not the Directory, when a profile opened it', async () => {
+    getKin.mockResolvedValue(kin());
+    const onBack = vi.fn();
+    render(
+      <KinView
+        kinId="p1"
+        kinName="Willow"
+        household={{ id: 'kf-1', name: 'Sandy Demo' }}
+        openedFrom="profile"
+        onBack={onBack}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Back to Directory' })).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to Sandy Demo' }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it('says "the household" when the profile that opened it could not be named', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="profile" onBack={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Back to the household' })).toBeInTheDocument();
+  });
+
   it('opens the tag editor from the Edit tags affordance and saves via updateKinTags', async () => {
     getKin.mockResolvedValue(kin({ tags: ['Reactive'] }));
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     await screen.findByText('Reactive');
     expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
@@ -166,6 +194,7 @@ describe('KinView: breadcrumbs', () => {
         kinId="p1"
         kinName="Willow"
         household={{ id: 'kf-1', name: 'the Wrens' }}
+        openedFrom="directory"
         onBack={vi.fn()}
       />,
     );
@@ -187,7 +216,7 @@ describe('KinView: breadcrumbs', () => {
    */
   it('omits the household step rather than guessing at one', async () => {
     getKin.mockResolvedValue(kin());
-    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
     expect(within(nav).queryAllByRole('link')).toHaveLength(0);
     expect(within(nav).getAllByRole('listitem')).toHaveLength(2);
@@ -196,9 +225,38 @@ describe('KinView: breadcrumbs', () => {
   it('walks back to the list from the trail', async () => {
     getKin.mockResolvedValue(kin());
     const onBack = vi.fn();
-    render(<KinView kinId="p1" kinName="Willow" onBack={onBack} />);
+    render(<KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={onBack} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
     await userEvent.click(within(nav).getByRole('button', { name: 'Directory' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * #689. Which step is an anchor follows the address this view opened on: a
+   * `<Link>` to the page you are already standing on is a step that does
+   * nothing when clicked. Opened from a household profile the URL is already
+   * `/directory/{id}`, so the roles swap over.
+   */
+  it('anchors the Directory and closes down to the household, when a profile opened it', async () => {
+    getKin.mockResolvedValue(kin());
+    const onBack = vi.fn();
+    render(
+      <KinView
+        kinId="p1"
+        kinName="Willow"
+        household={{ id: 'kf-1', name: 'Sandy Demo' }}
+        openedFrom="profile"
+        onBack={onBack}
+      />,
+    );
+    const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByRole('link', { name: 'Directory' })).toHaveAttribute(
+      'href',
+      '/directory',
+    );
+    // Not an anchor: the profile is the page underneath this view, and its URL
+    // is the one already in the address bar.
+    await userEvent.click(within(nav).getByRole('button', { name: 'Sandy Demo' }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

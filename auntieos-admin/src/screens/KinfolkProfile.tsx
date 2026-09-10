@@ -8,6 +8,7 @@ import { str } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
 import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
+import { useHistoryBack } from '../lib/useHistoryBack';
 import { DenBreadcrumbs, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
@@ -39,6 +40,12 @@ interface KinfolkProfileProps {
    * read that has not landed (the `StatCard` rule).
    */
   kinPending?: boolean;
+  /**
+   * Where Back goes on a COLD arrival only (#689). This screen is its own route
+   * (`/directory/{kinfolkId}`), so an operator who walked here has an entry
+   * behind them and Back returns to that instead, whatever it was. This runs
+   * when there is none, which is why the Directory is still right for it.
+   */
   onBack: () => void;
   /**
    * Open one kin's own detail view. The mock draws every kin row as a chevroned,
@@ -213,6 +220,9 @@ export function KinfolkProfile({
     };
   }, [kinKey]);
 
+  // #689. Above the sub-view returns because a hook cannot sit behind one.
+  const back = useHistoryBack({ fallbackLabel: 'Directory', onFallback: onBack });
+
   if (view === 'edit') {
     return (
       <KinfolkEdit
@@ -347,7 +357,7 @@ export function KinfolkProfile({
             <span className="auntie-btn__label">Members and invites</span>
           </Link>
           <GhostButton label="Edit" onClick={() => setView('edit')} />
-          <GhostButton label="Back to Directory" onClick={onBack} />
+          <GhostButton label={back.label} onClick={back.goBack} />
           {/* The hero used to end with a "New KinTale" primary. Operator ruling
               (#676, walk admin-2026-09-10): a KinTale is only ever started from
               a KinCare session, so a standalone entry point on the household

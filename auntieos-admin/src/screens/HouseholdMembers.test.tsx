@@ -9,10 +9,24 @@ import type { ReactElement, ReactNode } from 'react';
 // somewhere else), and a real `Link` wants a RouterProvider no suite in this
 // tree mounts. Stood in for by the anchor it renders, the AppShell.test.tsx
 // convention.
+// `useRouter` is here for the Back control, which reads `history.canGoBack()`
+// to choose between stepping back and the `onBack` fallback (#689). The default
+// is a cold arrival, nothing behind us, which is what most of this file mounts.
+const routerHistory = vi.hoisted(() => ({ canGoBack: vi.fn(() => false), back: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({
   linkOptions: (o: unknown) => o,
-  Link: ({ to, children, ...rest }: { to: string; children: ReactNode }) => (
-    <a href={to} {...rest}>
+  useRouter: () => ({ history: routerHistory }),
+  Link: ({
+    to,
+    params,
+    children,
+    ...rest
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children: ReactNode;
+  }) => (
+    <a href={Object.entries(params ?? {}).reduce((p, [k, v]) => p.replace(`$${k}`, v), to)} {...rest}>
       {children}
     </a>
   ),
@@ -119,6 +133,9 @@ function mount(over: { members?: HouseholdMember[]; invites?: HouseholdInvite[] 
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
+  routerHistory.canGoBack.mockReset();
+  routerHistory.canGoBack.mockReturnValue(false);
+  routerHistory.back.mockReset();
 });
 
 describe('HouseholdMembers HAPPY', () => {
@@ -595,8 +612,9 @@ describe('inviteMetaLine', () => {
  * Item 7b. `auntieos-members-2026-05-27.html` heads this screen
  * `Directory / Households / the Wrens / Members`, and this screen is reachable
  * two ways: as a sub-view of the household profile, and as its own
- * `/household-members/{id}` route. The Directory step has to work on both, and
- * only one of them can use a route link.
+ * `/household-members/{id}` route. Since #689 the screen has ONE mount, that
+ * route, so both walkable steps are route links rather than one link and one
+ * button that only a plain left click can reach.
  */
 describe('HouseholdMembers breadcrumbs', () => {
   it('trails Directory / household / this page, with only the last as current', async () => {
@@ -615,15 +633,17 @@ describe('HouseholdMembers breadcrumbs', () => {
       '/directory',
     );
   });
-  it('walks back to the household profile from the middle step', async () => {
-    const onBack = vi.fn();
+  it('links the household step at its own profile route', async () => {
     api.listHouseholdMembers.mockResolvedValue([member()]);
     api.listHouseholdInvites.mockResolvedValue([invite()]);
-    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={onBack} />);
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={vi.fn()} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    await userEvent.click(within(nav).getByRole('button', { name: 'the Walls' }));
-    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(within(nav).getByRole('link', { name: 'the Walls' })).toHaveAttribute(
+      'href',
+      '/directory/fam1',
+    );
   });
+
   // Pre-existing: the /household-members/{id} route passes no name, so a cold
   // deep link genuinely has only the id to show. Showing it is honest; showing
   // a placeholder household name would not be.
@@ -632,6 +652,36 @@ describe('HouseholdMembers breadcrumbs', () => {
     api.listHouseholdInvites.mockResolvedValue([invite()]);
     render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(within(nav).getByRole('button', { name: 'fam1' })).toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'fam1' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #689. The Back control here used to say "Back to household" and always go to
+ * the household profile, whichever of the two doors the operator came through
+ * (the profile's own action, or a card in the admin-wide Invites list).
+ */
+describe('HouseholdMembers Back', () => {
+  it('names the household, and goes there, when nothing is behind this page', async () => {
+    const onBack = vi.fn();
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={onBack} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to the Walls' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(routerHistory.back).not.toHaveBeenCalled();
+  });
+
+  it('steps back through history, under a plain label, when the operator walked here', async () => {
+    routerHistory.canGoBack.mockReturnValue(true);
+    const onBack = vi.fn();
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={onBack} />);
+    // The Invites list is one of the doors in, and it is not the profile.
+    expect(screen.queryByRole('button', { name: /back to/i })).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Back' }));
+    expect(routerHistory.back).toHaveBeenCalledTimes(1);
+    expect(onBack).not.toHaveBeenCalled();
   });
 });

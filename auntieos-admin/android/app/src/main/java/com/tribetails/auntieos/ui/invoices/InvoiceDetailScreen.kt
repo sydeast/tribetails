@@ -172,9 +172,14 @@ fun InvoiceDetailScreen(
                     accentTail = "Detail.",
                     subtitle   = "Full billing record.",
                     trailing   = {
+                        // "Back", not "Back to invoices" (#689): `onBack` is
+                        // `popBackStack()`, so this returns to whatever opened
+                        // the invoice, and a household profile or a visit is as
+                        // likely as the list. The old description was the only
+                        // Android back control that named a destination.
                         AuntieIconButton(
                             icon               = Lucide.X,
-                            contentDescription = "Back to invoices",
+                            contentDescription = "Back",
                             onClick            = onBack,
                             size               = 38.dp,
                         )
