@@ -121,11 +121,22 @@ describe('KinView', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('shows and edits pet tags, saving via updateKinTags', async () => {
+  it('shows pet tags as pills next to the name, not a separate Tags panel', async () => {
+    getKin.mockResolvedValue(kin({ tags: ['Yellow lab', 'Microchipped'] }));
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    expect(await screen.findByText('Yellow lab')).toBeInTheDocument();
+    expect(screen.getByText('Microchipped')).toBeInTheDocument();
+    expect(screen.queryByText('Tags')).toBeNull();
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+  });
+
+  it('opens the tag editor from the Edit tags affordance and saves via updateKinTags', async () => {
     getKin.mockResolvedValue(kin({ tags: ['Reactive'] }));
     render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
-    expect(await screen.findByText('Reactive')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText(/add a pet tag/i), 'On meds{Enter}');
+    await screen.findByText('Reactive');
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.type(await screen.findByLabelText(/add a pet tag/i), 'On meds{Enter}');
     await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', ['Reactive', 'On meds']));
   });
 });

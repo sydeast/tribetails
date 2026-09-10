@@ -44,15 +44,25 @@ function any(...vals: string[]): boolean {
  * (Directory shipped list-only). Reads the FULL `kin/{id}` doc via `getKin` (a
  * one-shot getDoc; the list stream carries list fields only). Organized into
  * fielded sections (Basics, Behavior & care, Feeding, Health, Owner contact,
- * Notes); an all-blank section is omitted. A REACTIVE pet gets a small
- * alert-toned marker attached under the Kin box, not a full-width banner: a
- * handle-with-care signal, but not one that needs to interrupt the page.
+ * Notes); an all-blank section is omitted. A pet's tags render as pills next
+ * to its name in the Kin box, not a separate panel; a REACTIVE pet gets a
+ * small alert-toned marker attached under the Kin box, not a full-width
+ * banner: a handle-with-care signal, but not one that needs to interrupt the
+ * page.
  */
 export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
   // The editor is a sub-view of this detail screen: Edit swaps to KinEdit, and a
   // save/archive returns here + reloads so the fresh doc renders.
   const [editing, setEditing] = useState(false);
+  // The tag editor (ProfileTagsSection) stays the same component, just no
+  // longer permanently on screen as its own panel: the pills next to the name
+  // are the default view, and this toggle is the smaller of the two ways to
+  // keep editing reachable (the alternative, moving tag editing into KinEdit,
+  // would break the kinfolk profile's own rule that tags are edited on the
+  // profile screen, never the edit form; see KinfolkEdit.tsx's note on the
+  // same point).
+  const [tagsOpen, setTagsOpen] = useState(false);
 
   const load = useCallback(() => {
     let live = true;
@@ -153,6 +163,20 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                     <span className="kview__status" data-tone={k.status.toLowerCase()}>
                       {k.status.trim() === '' ? '-' : k.status.toLowerCase()}
                     </span>
+                    <div className="kview__tags">
+                      {k.tags.map((tag) => (
+                        <span key={tag} className="kview__tag-pill">
+                          {tag}
+                        </span>
+                      ))}
+                      <button
+                        type="button"
+                        className="kview__tags-edit"
+                        onClick={() => setTagsOpen((open) => !open)}
+                      >
+                        {tagsOpen ? 'Done' : 'Edit tags'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </DenPanel>
@@ -165,7 +189,13 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                 </div>
               )}
 
-              <ProfileTagsSection scope="pet" initialTags={k.tags} onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)} />
+              {tagsOpen && (
+                <ProfileTagsSection
+                  scope="pet"
+                  initialTags={k.tags}
+                  onSaveTags={(next) => updateKinTags(k._id !== '' ? k._id : kinId, next)}
+                />
+              )}
 
               <DenPanel title="Basics">
                 <dl className="kview__facts">
