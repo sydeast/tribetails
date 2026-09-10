@@ -72,11 +72,14 @@ describe('NotificationQuickActions', () => {
     expect(h.onNavigate).toHaveBeenCalledWith(route);
   });
 
-  it('offers Approve and Deny only for a booking target', async () => {
+  // ISSUE #706: Approve/Deny is scoped to `kincare.requested`, the one key
+  // that means a booking request is still waiting on a decision. See the
+  // table in lib/notificationActions.test.ts for the full per-key accounting.
+  it('offers Approve and Deny only for a pending booking request', async () => {
     const h = handlers();
     const { rerender } = render(
       <NotificationQuickActions
-        entry={entry({ targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
         read={false}
         busy={false}
         {...h}
@@ -99,11 +102,24 @@ describe('NotificationQuickActions', () => {
     expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
+  it('offers NO Approve/Deny on an already-confirmed booking, even though the target is still a booking', () => {
+    render(
+      <NotificationQuickActions
+        entry={entry({ key: 'kincare.booking.confirm', targetType: 'booking', targetId: 'b1' })}
+        read={false}
+        busy={false}
+        {...handlers()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+  });
+
   it('Create quote jumps to the composer seeded with the household', async () => {
     const h = handlers();
     render(
       <NotificationQuickActions
-        entry={entry({ targetType: 'invoice', targetId: 'i1', data: { kinfolkId: 'k9' } })}
+        entry={entry({ key: 'quote.denied', targetType: 'invoice', targetId: 'i1', data: { kinfolkId: 'k9' } })}
         read={false}
         busy={false}
         {...h}
@@ -131,7 +147,7 @@ describe('NotificationQuickActions', () => {
   it('disables every write action while one is in flight, but leaves navigation live', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
         read={false}
         busy
         {...handlers()}
@@ -178,7 +194,7 @@ describe('NotificationQuickActions, the archive direction', () => {
   it('keeps the read toggle and the conditional actions on an archived row', () => {
     render(
       <NotificationQuickActions
-        entry={entry({ targetType: 'booking', targetId: 'b1' })}
+        entry={entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })}
         read={false}
         busy={false}
         {...handlers()}

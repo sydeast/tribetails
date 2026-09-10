@@ -96,28 +96,86 @@ describe('applicableNotificationActions', () => {
     expect(applicableNotificationActions(entry({ targetId: 'p1' })).open).toBeNull();
   });
 
-  it('offers approve/deny ONLY for a booking target', () => {
-    expect(applicableNotificationActions(entry({ targetType: 'booking', targetId: 'b1' })).bookingId).toBe(
-      'b1',
-    );
-    expect(
-      applicableNotificationActions(entry({ targetType: 'invoice', targetId: 'i1' })).bookingId,
-    ).toBe('');
-  });
-
-  it('offers Create quote whenever a household is identifiable, by target OR by data', () => {
-    expect(applicableNotificationActions(entry({ targetType: 'kinfolk', targetId: 'k1' })).quote).toEqual({
-      to: '/invoices',
-      search: { composeQuoteForKinfolkId: 'k1' },
+  // ISSUE #706. `kincare.requested` ("Kinfolk requested a KinCare visit",
+  // mytribe/functions/src/notifications/catalog.ts) is the ONE catalog key that
+  // fires when a booking is freshly asked for and nothing has ruled on it yet
+  // (onBookingEnvelopeCreate.ts, fired once per request). That is the pendency
+  // signal: the notification doc carries no live visit status to re-check, so
+  // Approve/Deny is scoped to the event that means "this needs a decision"
+  // rather than to every booking-flavoured row. batchUpdateBookings APPROVE/
+  // REJECT is also the wrong callable for a reschedule ask (resolved through
+  // resolveBookingRescheduleRequest) or a cancellation ask (resolved through
+  // the #438 accept/decline path), so those two keys are excluded even though
+  // they are also booking-targeted and also pending an answer. A stale
+  // Approve/Deny on an already-decided request still fails loud: `bookingAction`
+  // in Notifications.tsx surfaces batchUpdateBookings' `failed[]` / `updated
+  // === 0` in the error banner rather than pretending the click worked.
+  describe('Approve/Deny (bookingId)', () => {
+    it.each([
+      ['kincare.requested', 'booking', 'b1', 'b1'],
+      ['kincare.reschedule.requested', 'booking', 'b1', ''],
+      ['kincare.cancel.requested', 'booking', 'b1', ''],
+      ['kincare.request.declined', 'booking', 'b1', ''],
+      ['kincare.booking.confirm', 'booking', 'b1', ''],
+      ['kincare.booking.cancel', 'booking', 'b1', ''],
+      ['kincare.requested', 'invoice', 'i1', ''],
+      [undefined, 'booking', 'b1', ''],
+    ])('key %s + targetType %s -> bookingId %j', (key, targetType, targetId, expected) => {
+      expect(applicableNotificationActions(entry({ key, targetType, targetId })).bookingId).toBe(expected);
     });
-    // An invoice notification that names its household still knows whom to quote.
-    expect(
-      applicableNotificationActions(entry({ targetType: 'invoice', targetId: 'i1', data: { kinfolkId: 'k9' } }))
-        .quote,
-    ).toEqual({ to: '/invoices', search: { composeQuoteForKinfolkId: 'k9' } });
+
+    it('offers nothing for a pending booking request with a blank targetId', () => {
+      expect(
+        applicableNotificationActions(entry({ key: 'kincare.requested', targetType: 'booking', targetId: '' }))
+          .bookingId,
+      ).toBe('');
+    });
   });
 
-  it('offers NO Create quote when no household can be identified', () => {
-    expect(applicableNotificationActions(entry({ targetType: 'kintale', targetId: 't1' })).quote).toBeNull();
+  // Create quote: "a quote, or a booking request that has no invoice" (operator
+  // reading, issue #706). `quote.denied` is the household turning a quote down,
+  // where a new quote is the natural follow-up; `quote.accepted` is excluded
+  // because that quote already became the bill. `kincare.requested` is a fresh
+  // ask with nothing billed yet, so it qualifies UNLESS the entry already
+  // references an invoice (targetType 'invoice', or `data.invoiceId`), in which
+  // case a quote already exists for it. Every case still needs an identifiable
+  // household, same as before.
+  describe('Create quote', () => {
+    it.each([
+      ['quote.denied', 'invoice', 'i1', { kinfolkId: 'k9' }, true],
+      ['quote.accepted', 'invoice', 'i1', { kinfolkId: 'k9' }, false],
+      ['kincare.requested', 'booking', 'b1', { kinfolkId: 'k9' }, true],
+      ['kincare.request.declined', 'booking', 'b1', { kinfolkId: 'k9' }, false],
+      ['invoice.new', 'invoice', 'i1', { kinfolkId: 'k9' }, false],
+      ['assignment.changed', 'kinfolk', 'k9', undefined, false],
+      ['kincare.booking.confirm', 'booking', 'b1', { kinfolkId: 'k9' }, false],
+    ])('key %s + targetType %s -> quote offered: %s', (key, targetType, targetId, data, offered) => {
+      const actions = applicableNotificationActions(entry({ key, targetType, targetId, data }));
+      if (offered) {
+        expect(actions.quote).toEqual({ to: '/invoices', search: { composeQuoteForKinfolkId: 'k9' } });
+      } else {
+        expect(actions.quote).toBeNull();
+      }
+    });
+
+    it('never offers Create quote without an identifiable household, even on a qualifying key', () => {
+      expect(
+        applicableNotificationActions(entry({ key: 'quote.denied', targetType: 'invoice', targetId: 'i1' }))
+          .quote,
+      ).toBeNull();
+    });
+
+    it('excludes a booking request that already carries an invoice reference in data', () => {
+      expect(
+        applicableNotificationActions(
+          entry({
+            key: 'kincare.requested',
+            targetType: 'booking',
+            targetId: 'b1',
+            data: { kinfolkId: 'k9', invoiceId: 'inv_1' },
+          }),
+        ).quote,
+      ).toBeNull();
+    });
   });
 });

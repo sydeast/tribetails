@@ -399,10 +399,11 @@ describe('Notifications stat strip', () => {
     mockStreams({
       status: 'ready',
       data: [
-        entry({ _id: 'n1', targetType: 'booking', targetId: 'b1' }),
+        entry({ _id: 'n1', key: 'kincare.requested', targetType: 'booking', targetId: 'b1' }),
         entry({ _id: 'n2', targetType: 'invoice', targetId: 'i1' }),
         entry({
           _id: 'n3',
+          key: 'kincare.requested',
           targetType: 'booking',
           targetId: 'b2',
           readAt: fakeTs('2026-07-16T10:00:00Z'),
@@ -711,18 +712,37 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
   });
 
+  // ISSUE #706: Approve/Deny only offers on a still-pending booking request
+  // (key `kincare.requested`). See notificationActions.test.ts for the full
+  // per-key table.
   it('Approve calls batchUpdateBookings with the booking id and APPROVE', async () => {
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'APPROVE');
   });
 
   it('Deny calls batchUpdateBookings with the booking id and REJECT', async () => {
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(batchUpdateBookings).toHaveBeenCalledWith(['b1'], 'REJECT');
+  });
+
+  it('offers no Approve/Deny on a booking notification whose event has already been decided', () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.booking.confirm', targetType: 'booking', targetId: 'b1' })],
+    });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
   });
 
   it('fails loud when the booking batch resolves with a per-id failure, not a fake success', async () => {
@@ -732,7 +752,10 @@ describe('Notifications quick actions (issue #20)', () => {
       updated: 0,
       failed: [{ id: 'b1', error: 'not found' }],
     });
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
@@ -740,7 +763,10 @@ describe('Notifications quick actions (issue #20)', () => {
 
   it('fails loud when the booking call rejects', async () => {
     batchUpdateBookings.mockRejectedValue(new Error('permission-denied'));
-    mockStreams({ status: 'ready', data: [entry({ targetType: 'booking', targetId: 'b1' })] });
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'b1' })],
+    });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
@@ -750,7 +776,9 @@ describe('Notifications quick actions (issue #20)', () => {
     const onNavigate = vi.fn();
     mockStreams({
       status: 'ready',
-      data: [entry({ targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } })],
+      data: [
+        entry({ key: 'quote.denied', targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } }),
+      ],
     });
     render(<Notifications onNavigate={onNavigate} />);
     await userEvent.click(screen.getByRole('button', { name: 'Create quote' }));
@@ -758,6 +786,15 @@ describe('Notifications quick actions (issue #20)', () => {
       to: '/invoices',
       search: { composeQuoteForKinfolkId: 'k9' },
     });
+  });
+
+  it('offers no Create quote on a plain invoice notification, even with a household in data', () => {
+    mockStreams({
+      status: 'ready',
+      data: [entry({ key: 'invoice.new', targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } })],
+    });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
   });
 
   it('archives a row: calls the callable, and the row leaves the feed once archivedAt lands', async () => {
@@ -885,7 +922,7 @@ describe('Notifications card detail', () => {
    * must not disturb them.
    */
   it('keeps the entity CTAs working while the card is open', async () => {
-    mockStreams({ status: 'ready', data: [detailed()] });
+    mockStreams({ status: 'ready', data: [detailed({ key: 'kincare.requested' })] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));

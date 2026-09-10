@@ -774,13 +774,11 @@ internal fun notificationsForFilter(all: List<NotificationEntry>, filter: String
     }
 
 /**
- * Which quick actions apply to a notification, decided purely from its targetType /
- * targetId. Mirrors the deployed callable contract:
- *   - Open is available whenever the notification points at a known, openable domain
- *     ('booking' | 'invoice' | 'kintale' | 'kinfolk') with a non-blank targetId.
- *   - Approve/Deny is available ONLY for booking notifications (batchUpdateBookings).
- * read/unread toggle + Dismiss always apply, so they are not modeled here.
- * Pure; unit-tested.
+ * Which quick actions apply to a notification. Open is decided purely from
+ * targetType/targetId (below); Approve/Deny and Create quote are narrowed
+ * further by the entry-aware overload at the bottom of this file, which reads
+ * the dispatch `key` as well. read/unread toggle + Dismiss always apply, so
+ * they are not modeled here. Pure; unit-tested.
  */
 internal data class NotificationActions(val canOpen: Boolean, val canApproveDeny: Boolean, val canCreateQuote: Boolean)
 
@@ -856,16 +854,62 @@ internal fun notificationHeadline(entry: NotificationEntry): String =
     entry.title.ifBlank { entry.key }.ifBlank { "(no key)" }
 
 /**
- * Entry-aware overload of [applicableNotificationActions]. Open and Approve/Deny
- * are unchanged; Create quote WIDENS from the string version's kinfolk-target
- * rule to the derived household, so an invoice or booking notification that
- * names its household can also spawn a quote for it. The button still
- * disappears entirely when no household is identifiable, which is the property
- * the narrow rule was really protecting. Matches the web build. Pure; unit-tested.
+ * The one catalog key that means "a booking request is waiting on a decision"
+ * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a
+ * KinCare visit"). Fired once, at the moment of the ask, by
+ * onBookingEnvelopeCreate.ts. Mirrors the web build's
+ * `lib/notificationActions.ts`.
  */
-internal fun applicableNotificationActions(entry: NotificationEntry): NotificationActions =
-    applicableNotificationActions(entry.targetType, entry.targetId)
-        .copy(canCreateQuote = notificationKinfolkId(entry).isNotBlank())
+private const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
+
+/** The household turned a quote down; a new quote is the natural follow-up. */
+private const val QUOTE_DENIED_KEY = "quote.denied"
+
+/**
+ * Entry-aware overload of [applicableNotificationActions]. Open stays decided
+ * purely by targetType/targetId; Approve/Deny and Create quote are narrowed by
+ * the dispatch `key` (issue #706, operator: "most of these don't need most of
+ * these ctas").
+ *
+ * Every booking-flavoured row used to offer Approve/Deny, and any row naming a
+ * household offered Create quote, regardless of what the event was or what had
+ * already happened to it.
+ *
+ * APPROVE/DENY calls the batch booking callable with APPROVE/REJECT, and that
+ * is only the right action for a FRESH request: a reschedule ask resolves
+ * through a different callable and a cancellation ask through the #438
+ * accept/decline path. A notification carries no live visit status to
+ * re-check, so pendency is read off the key itself:
+ * [PENDING_BOOKING_REQUEST_KEY] only ever fires once, at the moment of the
+ * ask. A request an admin has since decided keeps offering Approve/Deny on its
+ * original card until archived or read away; the callable itself fails loud on
+ * a stale click rather than pretending the click worked.
+ *
+ * CREATE QUOTE is offered for a quote or a booking request that has no
+ * invoice yet: [QUOTE_DENIED_KEY] (the quote itself was rejected, no bill
+ * exists) or [PENDING_BOOKING_REQUEST_KEY] (a fresh ask, nothing billed)
+ * PROVIDED the entry does not already reference an invoice. `quote.accepted`
+ * is excluded because that quote already became the bill. The button still
+ * disappears entirely when no household is identifiable. Matches the web
+ * build. Pure; unit-tested.
+ */
+internal fun applicableNotificationActions(entry: NotificationEntry): NotificationActions {
+    val base = applicableNotificationActions(entry.targetType, entry.targetId)
+    val key = entry.key.trim()
+    val type = entry.targetType.trim().lowercase()
+    val targetId = entry.targetId.trim()
+
+    val isPendingBookingRequest =
+        key == PENDING_BOOKING_REQUEST_KEY && type == "booking" && targetId.isNotBlank()
+
+    val hasInvoiceReference = type == "invoice" || dataString(entry, "invoiceId").isNotBlank()
+    val isQuoteDenial = key == QUOTE_DENIED_KEY
+    val isUninvoicedBookingRequest = key == PENDING_BOOKING_REQUEST_KEY && !hasInvoiceReference
+    val kinfolkId = notificationKinfolkId(entry)
+    val quoteEligible = kinfolkId.isNotBlank() && (isQuoteDenial || isUninvoicedBookingRequest)
+
+    return base.copy(canApproveDeny = isPendingBookingRequest, canCreateQuote = quoteEligible)
+}
 
 // ---- row DETAIL: what the notification is actually about (R5) ----------------
 //
