@@ -8,14 +8,23 @@
  * hues than the shared DenTone palette carries).
  */
 
-.bookings__summary {
+/* The list's own header row (#701): the sort-order note, and the Select toggle
+   that acts on the sections under it. Wraps to two lines on a phone so the
+   toggle never sits off the right edge of the note. */
+.bookings__toolbar {
   display: flex;
-  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  margin-bottom: var(--space-5);
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
-.bookings__summary > * {
-  flex: 1 1 12rem;
+
+.bookings__toolbar-note {
+  margin: 0;
+  flex: 1 1 18rem;
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
 }
 
 .bookings__hint {
@@ -23,49 +32,12 @@
   margin: 0;
 }
 
-/* ── filter tabs ─────────────────────────────────────────────────────────── */
-
-.bookings__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.bookings__tab {
-  font: inherit;
-  font-size: var(--type-label-md-size);
-  font-weight: var(--type-label-md-weight);
-  letter-spacing: var(--type-label-md-tracking);
-  color: var(--color-text-dim);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-4);
-  cursor: pointer;
-  transition:
-    background var(--dur-base) var(--ease-standard),
-    border-color var(--dur-base) var(--ease-standard),
-    color var(--dur-base) var(--ease-standard);
-}
-.bookings__tab:hover {
-  border-color: var(--color-primary);
-  color: var(--color-text-primary);
-}
-.bookings__tab:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-.bookings__tab--active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-background);
-}
-
 /* ── status sections ─────────────────────────────────────────────────────── */
 
-/* One block per status, so the live bookings are not read after 94 finished
-   ones. The heading carries its own count, mirroring the mock's `.ct` pill. */
+/* One block per status, all three open, so the live bookings are not read
+   after 96 finished ones. The heading carries its own count, mirroring the
+   mock's `.ct` pill, and it is the only place that count is stated now that
+   the stat strip above the list is gone (#704). */
 .bookings__section + .bookings__section {
   margin-top: var(--space-5);
 }
@@ -110,6 +82,35 @@
 }
 .bookings__row:last-child {
   border-bottom: none;
+}
+/* The mock's `.accent`: a 4px rounded bar down the left edge of the card, in
+   the status's own hue, so a section can be read by colour without reading a
+   single pill. `align-self: stretch` inside the row's flex line, so it grows
+   with a card that has a note on it. */
+.bookings__row-accent {
+  flex: 0 0 auto;
+  width: 4px;
+  align-self: stretch;
+  min-height: 2.75rem;
+  border-radius: var(--radius-pill);
+}
+.bookings__row-accent--draft {
+  background: var(--color-primary);
+}
+.bookings__row-accent--pending {
+  background: var(--color-warning);
+}
+.bookings__row-accent--scheduled {
+  background: var(--color-accent);
+}
+.bookings__row-accent--completed {
+  background: var(--color-tertiary);
+}
+.bookings__row-accent--cancelled {
+  background: var(--color-border);
+}
+.bookings__row-accent--unknown {
+  background: var(--color-border);
 }
 /* Picked reads on the ROW, not only on the checkbox: at 20 rows the operator
    is scanning the list, not the 20px control at its left edge. */
@@ -207,9 +208,18 @@
   white-space: nowrap;
 }
 
+/* "Load more" under a paged section (History). */
+.bookings__more {
+  margin-top: var(--space-3);
+}
 /* ── status chip ─────────────────────────────────────────────────────────── */
 
+/* Under the name, not at the far right of the row: the mock puts the pill
+   directly beneath the household, where the thing it describes is. It is
+   therefore sized to its own text rather than stretched by the row. */
 .bookings__chip {
+  align-self: flex-start;
+  margin-top: 0.15rem;
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
   font-weight: var(--type-label-sm-weight);

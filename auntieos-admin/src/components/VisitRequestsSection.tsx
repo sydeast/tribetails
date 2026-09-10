@@ -146,6 +146,17 @@ export function VisitRequestsSection() {
   const [activeSheet, setActiveSheet] = useState<
     { row: VisitRequest; decision: 'accept' | 'decline' } | null
   >(null);
+  /**
+   * #704: the queue reads as ONE compact banner until asked to open.
+   *
+   * The mock goes from the page heading straight into Pending approval /
+   * Scheduled / History. This block sits above them because it is work waiting
+   * on a human, but drawn open it was three request cards tall and pushed the
+   * first section to y=580 on a screen where the queue is usually empty. The
+   * banner still states the count out loud, so nothing is hidden: "Review 3"
+   * is one press away and the rows are unchanged underneath it.
+   */
+  const [open, setOpen] = useState(false);
   const { showToast } = useToast();
 
   if (loaded.status === 'loading') {
@@ -197,12 +208,22 @@ export function VisitRequestsSection() {
 
       {rows.length > 0 && (
         <>
-          <Banner tone="warning" title="Visit requests" pillLabel={`${String(rows.length)} waiting`}>
-            Households asked for these changes and are waiting on an answer. Accepting a reschedule moves
-            the visit on both the schedule and their portal; accepting a cancellation takes it off both.
-            Declining leaves the visit alone and lets them know your answer.
+          <Banner
+            tone="warning"
+            title="Visit requests"
+            pillLabel={`${String(rows.length)} waiting`}
+            trailing={
+              <GhostButton
+                label={open ? 'Hide' : `Review ${String(rows.length)}`}
+                pressed={open}
+                onClick={() => setOpen((o) => !o)}
+              />
+            }
+          >
+            Households asked to move, cancel, or book a visit and are waiting on an answer.
           </Banner>
 
+          {open && (
           <ul className="visit-requests__list">
             {rows.map((row) => (
               <li key={requestKey(row)} className="visit-requests__row">
@@ -237,6 +258,7 @@ export function VisitRequestsSection() {
               </li>
             ))}
           </ul>
+          )}
         </>
       )}
 

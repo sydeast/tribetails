@@ -407,3 +407,49 @@ export function deviceTimeZone(): string {
     return '';
   }
 }
+/**
+ * The ACTIVE block a visit starting at `minutesOfDay` falls inside, or null.
+ *
+ * Ports `resolveTimeBlock` (`domain/TimeBlockResolver.kt:13`) so the web
+ * Bookings row names a visit's window with the same block Android's booking
+ * cards do: active rows only, `start` inclusive to `end` exclusive, first match
+ * wins. `validateTimeBlocks` above is what makes "first match" deterministic,
+ * since it refuses two active blocks that overlap and stores the rows in start
+ * order.
+ *
+ * Takes MINUTES SINCE LOCAL MIDNIGHT rather than the stored timestamp string.
+ * A `kin_care_sessions` row carries its start as free text in two spellings
+ * (a UTC "...Z" instant and a local wall-clock string, see
+ * `lib/bookingFormat.ts#parseFlexibleDate`), so reading "HH:mm" out of the raw
+ * text would label a UTC-stamped visit with the block its UTC hour lands in
+ * while the row displayed the local hour beside it. The caller parses once and
+ * passes the local clock minutes the row is actually showing.
+ *
+ * A block missing either end of its window is skipped rather than treated as
+ * open-ended: `TimeBlockDefinition` is a cast over raw Firestore data and a
+ * half-written row is not a window.
+ */
+export function resolveTimeBlock(
+  minutesOfDay: number,
+  blocks: readonly TimeBlockDefinition[],
+): TimeBlockDefinition | null {
+  if (!Number.isFinite(minutesOfDay)) return null;
+  for (const block of blocks) {
+    if (!block.active) continue;
+    const start = minutesOfDayFromHhmm(block.startTime);
+    const end = minutesOfDayFromHhmm(block.endTime);
+    if (start === null || end === null) continue;
+    if (minutesOfDay >= start && minutesOfDay < end) return block;
+  }
+  return null;
+}
+/** "09:30" to 570. Null on anything that is not a real HH:mm. */
+export function minutesOfDayFromHhmm(raw: string | undefined): number | null {
+  if (typeof raw !== 'string') return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}

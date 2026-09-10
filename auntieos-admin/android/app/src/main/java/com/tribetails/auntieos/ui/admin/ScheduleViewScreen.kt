@@ -254,6 +254,15 @@ fun ScheduleViewScreen(
     // is the working set fed to the batch action bar.
     var selecting by remember { mutableStateOf(false) }
     var selectedBookingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // #701: ONE mode, several controls. Operator: "Select needs to be near the
+    // fucking block it's used for". The screen toolbar's Select sits above the
+    // calendar, several hundred dp from the cards it reveals checkboxes on, so
+    // the Pending approval and Scheduled panels carry their own, and all of them
+    // press this one lambda rather than keeping separate modes.
+    val toggleSelecting: () -> Unit = {
+        selecting = !selecting
+        if (!selecting) selectedBookingIds = emptySet()
+    }
     // #574: the block/unblock dialog for the selected day. Opened from the month
     // grid's blocked-slot tap, which used to be wired to a no-op lambda.
     var showTimeSlotDialog by remember { mutableStateOf(false) }
@@ -347,10 +356,7 @@ fun ScheduleViewScreen(
                     selectedDate = state.selectedDate,
                     viewMode = state.viewMode,
                     selecting = selecting,
-                    onToggleSelect = {
-                        selecting = !selecting
-                        if (!selecting) selectedBookingIds = emptySet()
-                    },
+                    onToggleSelect = toggleSelecting,
                     onView = { mode -> viewModel.changeViewMode(mode) },
                     onPrev = {
                         val delta = if (state.viewMode == CalendarViewMode.MONTH) state.selectedDate.minusMonths(1) else state.selectedDate.minusWeeks(1)
@@ -674,6 +680,8 @@ fun ScheduleViewScreen(
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             // AO-25: create a multi-date / recurring request (envelope model).
                             AuntieTextBtn(onClick = { viewModel.showNewRequestDialog() }) { Text("+ New request") }
+                            // #701: on the block it acts on, not only in the screen toolbar.
+                            AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
                             SectionCount(pendingSection.rows.size.toString())
                         }
                     },
@@ -708,7 +716,14 @@ fun ScheduleViewScreen(
                 DenPanel(
                     title = scheduledSection.label,
                     subtitle = "Approved visits on the calendar.",
-                    trailing = { SectionCount(scheduledSection.rows.size.toString()) },
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // #701: the scheduled cards are selectable too, so the control
+                            // that reveals their checkboxes sits on their own heading.
+                            AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
+                            SectionCount(scheduledSection.rows.size.toString())
+                        }
+                    },
                 ) {
                     if (scheduledBookings.isEmpty()) {
                         EmptyHint("Nothing scheduled. Approved requests appear here.")
@@ -923,6 +938,8 @@ fun ScheduleViewScreen(
 /**
  * Den schedule controls: a mono range navigator (‹ Month yyyy ›), the view
  * SegmentedPicker, a Today reset, and a Select toggle for the (gated) bulk path.
+ * #701: that toggle is no longer the ONLY one. The Pending approval and Scheduled
+ * panels carry their own, beside the cards it acts on; all three drive one mode.
  * Stacks for phone width via a wrapping Column of rows.
  */
 @Composable
@@ -1428,9 +1445,15 @@ private fun HistorySubsection(
 }
 
 /**
- * Booking-section card (mirrors the web BookingScreen BookingCard): status accent
- * bar, name + service/date subtitle, optional per-card actions, then a status pill
- * and note preview. Used by the Pending / Scheduled / History sections.
+ * Booking-section card (mirrors the web Bookings row): status accent bar, the
+ * household's initials avatar, name + service/date/block subtitle, optional
+ * per-card actions, then a status pill and note preview. Used by the Pending /
+ * Scheduled / History sections.
+ *
+ * #704 gave the web row the mock's full card anatomy; the avatar was the one
+ * piece this card did not already carry, and the mock draws one on every card.
+ * `AuntieAvatar` derives the monogram from the name itself, the same way the
+ * Invoices row does.
  */
 @Composable
 private fun BookingSectionCard(
@@ -1462,6 +1485,12 @@ private fun BookingSectionCard(
                         .height(46.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .background(tone.color(c)),
+                )
+                AuntieAvatar(
+                    initials = if (hasName) booking.kinfolkName else "?",
+                    gradientSeed = booking.kinfolkId.ifBlank { booking.kinfolkName },
+                    size = 44.dp,
+                    shape = RoundedCornerShape(13.dp),
                 )
                 Column(Modifier.weight(1f)) {
                     Text(

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
 import {
+  bookingMetaLine,
+  bookingServiceName,
   bookingSortTimeMs,
   bookingState,
   bookingStateInfo,
@@ -8,6 +10,8 @@ import {
   formatLocalDateTime,
   initialsFor,
   parseFlexibleDate,
+  EMPTY_BOOKING_CATALOG,
+  type BookingCatalog,
   type BookingStateInput,
   type BookingWhenInput,
 } from './bookingFormat';
@@ -193,5 +197,120 @@ describe('bookingSortTimeMs (#699)', () => {
 
   it('returns null rather than a fabricated instant for unparseable free text', () => {
     expect(bookingSortTimeMs(whenRow({ startTime: 'Net 14' }))).toBeNull();
+  });
+});
+
+/**
+ * #704: the raw `serviceType` spellings the live collection actually holds,
+ * and the one line the Bookings card builds out of them.
+ *
+ * The four shapes are the ones named on the walk: `visit_60`, `60Mins`,
+ * `30 Minute` and `30Minute` sat side by side across thirteen rows for two
+ * services. The catalog below is the operator's own `serviceRates` shape (keys
+ * ARE the ids the booking wizard sends, prices as strings).
+ */
+const CATALOG: BookingCatalog = {
+  serviceRates: { '30Minute': '25', '60Minute': '45' },
+  serviceDurations: {},
+  timeBlocks: [
+    { id: 'morning', label: 'Morning', startTime: '08:00', endTime: '11:00', active: true },
+    { id: 'evening', label: 'Evening block', startTime: '17:00', endTime: '21:00', active: true },
+    { id: 'seasonal', label: 'Seasonal', startTime: '11:00', endTime: '13:00', active: false },
+  ],
+};
+
+describe('bookingServiceName', () => {
+  it('resolves all four raw label shapes to the configured KinCare name', () => {
+    // Exact key, and the same key spelled with a space: matched on letters and
+    // digits alone.
+    expect(bookingServiceName('30Minute', CATALOG)).toBe('30Minute');
+    expect(bookingServiceName('30 Minute', CATALOG)).toBe('30Minute');
+    // Neither of these IS a catalog key. Both state a length, and exactly one
+    // configured KinCare runs that long.
+    expect(bookingServiceName('60Mins', CATALOG)).toBe('60Minute');
+    expect(bookingServiceName('visit_60', CATALOG)).toBe('60Minute');
+  });
+
+  it('reads an operator-stated duration in preference to the one in the name', () => {
+    const renamed: BookingCatalog = {
+      ...CATALOG,
+      serviceRates: { 'Drop-in': '20' },
+      serviceDurations: { 'Drop-in': '60' },
+    };
+    expect(bookingServiceName('visit_60', renamed)).toBe('Drop-in');
+  });
+
+  it('keeps the raw label rather than guessing when two KinCares run the same length', () => {
+    const ambiguous: BookingCatalog = {
+      ...CATALOG,
+      serviceRates: { '60Minute': '45', '60MinuteOvernight': '90' },
+      serviceDurations: { '60MinuteOvernight': '60' },
+    };
+    expect(bookingServiceName('visit_60', ambiguous)).toBe('visit_60');
+  });
+
+  it('keeps the raw label when the catalog has nothing to match it against', () => {
+    expect(bookingServiceName('visit_60', EMPTY_BOOKING_CATALOG)).toBe('visit_60');
+    expect(bookingServiceName('Dog Walking', CATALOG)).toBe('Dog Walking');
+  });
+
+  it('only a genuinely blank service becomes the neutral "Visit"', () => {
+    expect(bookingServiceName('', CATALOG)).toBe('Visit');
+    expect(bookingServiceName('   ', CATALOG)).toBe('Visit');
+    expect(bookingServiceName(undefined, CATALOG)).toBe('Visit');
+  });
+
+  it('does not read a trailing number as minutes unless one KinCare runs that long', () => {
+    expect(bookingServiceName('Walk 2', CATALOG)).toBe('Walk 2');
+  });
+});
+
+describe('bookingMetaLine', () => {
+  const row = (over: Partial<BookingWhenInput & { serviceType: string }> = {}) => ({
+    serviceType: 'visit_60',
+    startTime: '2026-05-28T09:30:00',
+    completedAt: '',
+    departedAt: '',
+    createdAt: null,
+    ...over,
+  });
+
+  it('names the service, the date, and the operator\'s own time block', () => {
+    expect(bookingMetaLine(row(), CATALOG)).toBe('60Minute · May 28 · Morning block');
+  });
+
+  it('says the clock time when the start falls outside every active block', () => {
+    // 12:00 is inside the SEASONAL window, which is switched off, so it resolves
+    // to no block at all rather than to a window nothing can be booked into.
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T12:00:00' }), CATALOG)).toBe(
+      '60Minute · May 28 · 12:00 PM',
+    );
+  });
+
+  it('does not say "block" twice when the operator already typed it', () => {
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T18:00:00' }), CATALOG)).toBe(
+      '60Minute · May 28 · Evening block',
+    );
+  });
+
+  it('prints an unparseable stored stamp verbatim, with no empty third segment', () => {
+    expect(bookingMetaLine(row({ startTime: 'Net 14' }), CATALOG)).toBe('60Minute · Net 14');
+  });
+
+  it('says "Date pending" rather than inventing one when the row carries no time at all', () => {
+    expect(bookingMetaLine(row({ startTime: '' }), CATALOG)).toBe('60Minute · Date pending');
+  });
+
+  it('falls through startTime to completedAt to departedAt, the chain bookingWhen walks', () => {
+    expect(
+      bookingMetaLine(row({ startTime: '', completedAt: '2026-05-25T09:00:00' }), CATALOG),
+    ).toBe('60Minute · May 25 · Morning block');
+    expect(
+      bookingMetaLine(row({ startTime: '', departedAt: '2026-05-24T09:00:00' }), CATALOG),
+    ).toBe('60Minute · May 24 · Morning block');
+  });
+
+  it('degrades to the raw label and the clock time on an empty catalog, never to a blank', () => {
+    expect(bookingMetaLine(row(), EMPTY_BOOKING_CATALOG)).toBe('visit_60 · May 28 · 9:30 AM');
   });
 });

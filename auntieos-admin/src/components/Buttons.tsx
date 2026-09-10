@@ -33,6 +33,14 @@ interface ShellProps {
   ariaLabel?: string | undefined;
   /** Static glyphs need role=img or the aria-label on a bare span is inert. */
   staticRole?: 'img' | undefined;
+  /**
+   * Toggle controls only: `aria-pressed`, plus the painted on state.
+   *
+   * `undefined` (the default) leaves the attribute off entirely rather than
+   * writing `aria-pressed="false"`, because a plain button that announces
+   * itself as "not pressed" is claiming a state it does not have.
+   */
+  pressed?: boolean | undefined;
   style?: CSSProperties | undefined;
   children: ReactNode;
 }
@@ -45,6 +53,7 @@ function ControlShell({
   className,
   ariaLabel,
   staticRole,
+  pressed,
   style,
   children,
 }: ShellProps) {
@@ -52,6 +61,7 @@ function ControlShell({
     base,
     !onClick && 'auntie-is-static',
     disabled && 'auntie-is-disabled',
+    pressed === true && 'auntie-is-on',
     className,
   );
 
@@ -73,6 +83,7 @@ function ControlShell({
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       aria-label={ariaLabel}
+      aria-pressed={pressed}
       style={style}
     >
       {children}
@@ -126,6 +137,14 @@ export interface GhostButtonProps {
   /** Omit to render a static, non-interactive element. See the file header. */
   onClick?: () => void;
   disabled?: boolean;
+  /**
+   * Makes this a TOGGLE: the button reports `aria-pressed` and paints an on
+   * state, instead of renaming itself to say what the next press will do.
+   *
+   * Mirrors the mocks' `.seltoggle.on` (the Bookings "Select" control). Omit it
+   * on an ordinary button, which is not a toggle and must not claim to be one.
+   */
+  pressed?: boolean;
   leading?: ReactNode;
   className?: string;
 }
@@ -135,6 +154,7 @@ export function GhostButton({
   label,
   onClick,
   disabled = false,
+  pressed,
   leading,
   className,
 }: GhostButtonProps) {
@@ -144,6 +164,7 @@ export function GhostButton({
       onClick={onClick}
       disabled={disabled}
       busy={false}
+      pressed={pressed}
       className={className}
     >
       {leading ? (
