@@ -410,6 +410,7 @@ internal fun BookingRulesPanel(
                 }
             }
 
+            AuntieFieldLabel(text = "Time zone")
             AuntieDropdownField(
                 value = timeZone,
                 options = timeZoneOptions(settings.timeZone),
@@ -424,6 +425,12 @@ internal fun BookingRulesPanel(
                 color = c.textDim,
             )
 
+            // ISSUE #708 (web mark 38, ported here for the same defect): this
+            // panel used to read as one flat column with no break between the
+            // mode toggles, the defaults below them, and the time blocks. It is
+            // now three named groups, matching the split BookingRulesSection.tsx
+            // uses on the web admin.
+            AuntieFieldLabel(text = "Booking modes")
             AuntieSettingRow(
                 title = "Offer specific times",
                 description = "Kinfolk pick an exact start time.",
@@ -437,9 +444,11 @@ internal fun BookingRulesPanel(
                 description = "Kinfolk pick a named window instead of a clock time.",
                 leadingIcon = Lucide.CalendarClock,
                 iconTone = AuntieStatusTone.Orange,
-                showDivider = true,
+                showDivider = false,
                 trailing = { AuntieToggle(checked = allowBlock, onCheckedChange = { allowBlock = it }) },
             )
+
+            AuntieFieldLabel(text = "Defaults")
             AuntieSettingRow(
                 title = "Remind kinfolk 24 hours before a visit",
                 description = "The reminder goes out the day before. Turning this off stops it for everyone.",

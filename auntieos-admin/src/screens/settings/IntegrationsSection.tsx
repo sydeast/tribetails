@@ -7,11 +7,13 @@ import {
   type IntegrationSecret,
   type IntegrationsHealthResult,
 } from '../../api/integrations';
+import { type BusinessSettings } from '../../api/settings';
 import { type Async } from '../../lib/async';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { GhostButton } from '../../components/Buttons';
+import { CalendarSection } from './CalendarSection';
 import './IntegrationsSection.css';
 
 /**
@@ -38,17 +40,31 @@ import './IntegrationsSection.css';
  * NOTHING HERE CONNECTS ANYTHING. Setting a secret is a CLI action and Stripe
  * Connect onboarding is a credential this repo does not hold, so those are named
  * as steps rather than staged behind a button that could not work. The one
- * exception is Google Calendar, whose OAuth flow already exists: that row links
- * to the section that owns it instead of growing a second copy of it.
+ * exception is Google Calendar, whose OAuth flow already exists.
+ *
+ * ISSUE #715: CALENDAR LIVES HERE NOW, opened IN PLACE rather than by
+ * switching to a tab that no longer exists. Operator: "And Calendar needs to
+ * go under integrations." Any row whose `ownedBySection` is non-empty (today
+ * only the Google Calendar row) gets a toggle that mounts `CalendarSection`
+ * (both its free/busy and OAuth panels) directly below the report, still
+ * inside this same Integrations tab. The check is deliberately generic:
+ * `ownedBySection !== ''`, never compared against a specific string, because
+ * the server can still send the retired `googleCalendar` id from an older
+ * deploy alongside the current `calendar`, and this row does not need to
+ * know which: it only asks "does something here open in place," never
+ * "open WHAT." `settings` and `onSaveCalendar` exist on this component only
+ * to hand to that inline `CalendarSection`; the health check above has
+ * nothing to do with `business_settings`.
  */
 
 interface Props {
-  /**
-   * Switches the Settings shell to another section. Supplied by `Settings.tsx`
-   * so the Google Calendar row's link really moves the operator; without it the
-   * row states where to go rather than offering a button that does nothing.
-   */
-  onOpenSection?: (id: string) => void;
+  /** The loaded business settings, threaded through only so the Google
+   *  Calendar row's inline panels (opened below) can read/save the free/busy
+   *  calendar id. Unused by the integrations health check itself. */
+  settings: Async<BusinessSettings>;
+  /** Persists a patch through the shell's shared save, exactly like every
+   *  other section's `onSave`. */
+  onSaveCalendar: (patch: Partial<BusinessSettings>) => Promise<void>;
 }
 
 /** Local time, or an honest note when the stamp will not parse. */
@@ -58,8 +74,11 @@ function checkedLabel(iso: string): string {
   return `Checked ${d.toLocaleString()}.`;
 }
 
-export function IntegrationsSection({ onOpenSection }: Props) {
+export function IntegrationsSection({ settings, onSaveCalendar }: Props) {
   const [state, setState] = useState<Async<IntegrationsHealthResult>>({ status: 'loading' });
+  // Whether the inline Calendar panels are open. Lives here, not per-row: only
+  // one row ever owns this today, and the panels render once, below the list.
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   // Hoisted so a failed load can hand AsyncRegion a real Retry, the
   // FeatureFlags.tsx / Settings.tsx convention.
@@ -85,60 +104,65 @@ export function IntegrationsSection({ onOpenSection }: Props) {
   useEffect(() => load(), [load]);
 
   return (
-    <DenPanel
-      title="Integrations"
-      subtitle="The outside services this business runs on, checked on the server. Nothing here is guessed from your browser."
-    >
-      <AsyncRegion
-        state={state}
-        what="integrations"
-        isEmpty={(data) => data.integrations.length === 0}
-        loading={<p className="settingsEdit__hint">Checking integrations&hellip;</p>}
-        empty={<p className="settingsEdit__hint">The server reported no integrations to check.</p>}
+    <>
+      <DenPanel
+        title="Integrations"
+        subtitle="The outside services this business runs on, checked on the server. Nothing here is guessed from your browser."
       >
-        {(data) => (
-          <>
-            {!data.declaredKnown ? (
-              <Banner
-                tone="warning"
-                title="Part of this check could not run"
-                className="settingsEdit__sectionBanner"
-              >
-                The server could not read which secrets the deployed functions declare, so the
-                &ldquo;declared&rdquo; line is left off every row below. Everything else on this page still
-                stands. {data.declaredError}
-              </Banner>
-            ) : null}
+        <AsyncRegion
+          state={state}
+          what="integrations"
+          isEmpty={(data) => data.integrations.length === 0}
+          loading={<p className="settingsEdit__hint">Checking integrations&hellip;</p>}
+          empty={<p className="settingsEdit__hint">The server reported no integrations to check.</p>}
+        >
+          {(data) => (
+            <>
+              {!data.declaredKnown ? (
+                <Banner
+                  tone="warning"
+                  title="Part of this check could not run"
+                  className="settingsEdit__sectionBanner"
+                >
+                  The server could not read which secrets the deployed functions declare, so the
+                  &ldquo;declared&rdquo; line is left off every row below. Everything else on this page still
+                  stands. {data.declaredError}
+                </Banner>
+              ) : null}
 
-            <div className="integrations__meta">
-              <span className="integrations__checked">{checkedLabel(data.checkedAt)}</span>
-              <GhostButton label="Check again" onClick={load} />
-            </div>
+              <div className="integrations__meta">
+                <span className="integrations__checked">{checkedLabel(data.checkedAt)}</span>
+                <GhostButton label="Check again" onClick={load} />
+              </div>
 
-            <ul className="integrations__list">
-              {data.integrations.map((integration) => (
-                <IntegrationRow
-                  key={integration.key}
-                  integration={integration}
-                  declaredKnown={data.declaredKnown}
-                  {...(onOpenSection ? { onOpenSection } : {})}
-                />
-              ))}
-            </ul>
-          </>
-        )}
-      </AsyncRegion>
-    </DenPanel>
+              <ul className="integrations__list">
+                {data.integrations.map((integration) => (
+                  <IntegrationRow
+                    key={integration.key}
+                    integration={integration}
+                    declaredKnown={data.declaredKnown}
+                    calendarOpen={calendarOpen}
+                    onToggleCalendar={() => setCalendarOpen((open) => !open)}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </AsyncRegion>
+      </DenPanel>
+      {calendarOpen ? <CalendarSection settings={settings} onSave={onSaveCalendar} /> : null}
+    </>
   );
 }
 
 interface RowProps {
   integration: IntegrationHealth;
   declaredKnown: boolean;
-  onOpenSection?: (id: string) => void;
+  calendarOpen: boolean;
+  onToggleCalendar: () => void;
 }
 
-function IntegrationRow({ integration, declaredKnown, onOpenSection }: RowProps) {
+function IntegrationRow({ integration, declaredKnown, calendarOpen, onToggleCalendar }: RowProps) {
   const tone = STATUS_TONE[integration.status];
   return (
     <li className="integrations__row" data-status={integration.status}>
@@ -177,16 +201,10 @@ function IntegrationRow({ integration, declaredKnown, onOpenSection }: RowProps)
 
       {integration.ownedBySection !== '' ? (
         <div className="integrations__handoff">
-          {onOpenSection ? (
-            <GhostButton
-              label="Open Google Calendar settings"
-              onClick={() => onOpenSection(integration.ownedBySection)}
-            />
-          ) : (
-            <p className="settingsEdit__hint">
-              Connecting and disconnecting live in the Google Calendar section of these settings.
-            </p>
-          )}
+          <GhostButton
+            label={calendarOpen ? 'Hide Google Calendar settings' : 'Open Google Calendar settings'}
+            onClick={onToggleCalendar}
+          />
         </div>
       ) : null}
     </li>

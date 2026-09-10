@@ -85,8 +85,11 @@
   color: var(--color-text-dim);
 }
 
+/* ISSUE #708: was `--space-4`, barely more than the `--space-3` padding
+   between the rows inside a section, so a heading read as just another row
+   rather than the start of a new group. `--space-6` gives it real air. */
 .notifgate__section {
-  margin-top: var(--space-4);
+  margin-top: var(--space-6);
 }
 .notifgate__section-heading {
   font-family: var(--type-label-sm-family);

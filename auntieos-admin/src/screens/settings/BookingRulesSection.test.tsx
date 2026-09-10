@@ -5,7 +5,6 @@ import userEvent from '@testing-library/user-event';
 import { DEFAULT_BUSINESS_SETTINGS, type BusinessSettings } from '../../api/settings';
 import { BookingRulesSection, bookingRulesPatch } from './BookingRulesSection';
 import { VisitsTrackingSection, visitsTrackingPatch } from './VisitsTrackingSection';
-import { TimeZoneSection } from './TimeZoneSection';
 
 /**
  * ISSUE #519. Each case here names a field the three admin clients decoded and
@@ -168,6 +167,16 @@ describe('BookingRulesSection', () => {
   it('sends nothing until something changes', () => {
     render(<BookingRulesSection data={settings()} onSave={onSave} />);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  // ISSUE #708 mark 38: "This is just a huge weird block, there is no spacial
+  // breakup." The panel now reads as three named groups rather than one flat
+  // column.
+  it('groups the panel into Booking modes, Defaults, and Time blocks, each headed', () => {
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    expect(screen.getByText('Booking modes')).toBeInTheDocument();
+    expect(screen.getByText('Defaults')).toBeInTheDocument();
+    expect(screen.getByText('Time blocks')).toBeInTheDocument();
   });
 });
 
@@ -357,30 +366,5 @@ describe('VisitsTrackingSection', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByText(/On-my-way choices/)).toBeInTheDocument();
     expect(onSave).not.toHaveBeenCalled();
-  });
-});
-
-// ── Time zone ───────────────────────────────────────────────────────────────
-
-describe('TimeZoneSection', () => {
-  it('saves the picked zone', async () => {
-    const user = userEvent.setup();
-    render(<TimeZoneSection data={settings()} onSave={onSave} />);
-
-    await user.selectOptions(screen.getByLabelText('Business time zone'), 'America/Chicago');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(onSave).toHaveBeenCalledWith({ timeZone: 'America/Chicago' });
-  });
-
-  it('offers a stored zone the runtime does not know, and warns instead of saving it silently', () => {
-    render(<TimeZoneSection data={settings({ timeZone: 'Mars/Olympus' })} onSave={onSave} />);
-    expect(screen.getByLabelText('Business time zone')).toHaveValue('Mars/Olympus');
-    expect(screen.getByText(/the phone line answers as open around the clock/)).toBeInTheDocument();
-  });
-
-  it('starts with nothing to save', () => {
-    render(<TimeZoneSection data={settings()} onSave={onSave} />);
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 });

@@ -24,7 +24,8 @@ import { closureOccurrencesInRange, type ClosureEntry } from './closureRecurrenc
  *     collection, which is exactly the "a visit somebody misses" failure.
  *
  *  2. `business_settings.timeZone` is now a validated, editable setting
- *     (`screens/settings/TimeZoneSection.tsx`, issue #519) with five real
+ *     (a field of `screens/settings/BusinessProfileSection.tsx` since issue
+ *     #709, originally its own panel under issue #519) with five real
  *     consumers, all of them server-side: the phone line's open/closed answer,
  *     quote expiry, visit dates in notifications, notification template time
  *     tokens. NONE of them is a booking write. Converting the picker through it

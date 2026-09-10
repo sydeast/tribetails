@@ -6,19 +6,12 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { lastSavedLabel } from '../lib/settingsFormat';
 import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
-import {
-  TextFieldsSection,
-  BookingBehaviorSection,
-  MyTribePortalSection,
-  PaymentOptionsSection,
-  BUSINESS_PROFILE_FIELDS,
-} from './settings/sections';
+import { BookingBehaviorSection, MyTribePortalSection, PaymentOptionsSection } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { PhoneLineSection } from './settings/PhoneLineSection';
-import { TimeZoneSection } from './settings/TimeZoneSection';
+import { BusinessProfileSection } from './settings/BusinessProfileSection';
 import { BookingRulesSection } from './settings/BookingRulesSection';
 import { VisitsTrackingSection } from './settings/VisitsTrackingSection';
-import { CalendarSection } from './settings/CalendarSection';
 import { IntegrationsSection } from './settings/IntegrationsSection';
 import { BusinessHoursEditor } from './settings/BusinessHoursEditor';
 import { TimeOffEditor } from './settings/TimeOffEditor';
@@ -48,23 +41,41 @@ import './Settings.css';
  * was deployed the whole time. It is now a full editor with a Run Sync action
  * and a last-run receipt (`settings/CalendarSyncSection.tsx`).
  *
- * CALENDAR IS ONE SECTION, not two. It shipped as two nav items, `calendar`
- * ("Calendar sync") and `googleCalendar` ("Google Calendar (editable)"), which
- * asked an operator to know the difference between a service account reading
- * busy time and an OAuth grant writing events before they could pick a tab.
- * `settings/CalendarSection.tsx` renders both, sub-headed, under `calendar`; the
- * `googleCalendar` id is retired. NOTHING DEEP-LINKS TO A SECTION: `/settings`
- * takes no parameter, the selected section is React state, and no hash or
- * `scrollIntoView` reads the `settings-panel-*` DOM ids that `SectionNav` mints.
- * So retiring an id costs no URL. If section deep links ever arrive, they will
- * need an alias from the retired id, and this is the note that says so.
+ * CALENDAR LIVES INSIDE INTEGRATIONS, not as its own nav entry. It was already
+ * one section holding both Google Calendar capabilities (the free/busy import
+ * and the editable OAuth calendars, sub-headed, since the 2026-07-31 tab
+ * merge); ISSUE #715 moved that whole section under `integrations` instead of
+ * keeping it a sibling tab, on the operator's own words: "And Calendar needs
+ * to go under integrations." `IntegrationsSection` now owns rendering
+ * `CalendarSection` inline, below its Google Calendar row, when that row's
+ * toggle is opened; see the comment on `IntegrationsSection` for how. The
+ * `calendar` `SectionId` and its nav entry are gone.
+ *
+ * NOTHING DEEP-LINKS TO A SECTION: `/settings` takes no parameter, the
+ * selected section is React state, and no hash or `scrollIntoView` reads the
+ * `settings-panel-*` DOM ids that `SectionNav` mints. So retiring an id costs
+ * no URL. Grepped the whole admin for the four ids these regrouping issues
+ * retired (`timeZone` was never a `SectionId` at all: it was a field inside
+ * the `businessProfile` panel from the start; `branding`, `visitsTracking` and
+ * `calendar` were): nothing outside this file read any of them as a nav id.
+ * The one real caller that named a retired id is server-side:
+ * `getIntegrationsHealth`'s `ownedBySection`, which can still say the retired
+ * `googleCalendar` from an older deploy, or the current `calendar`, and it
+ * is handled without an alias table: `IntegrationsSection` treats ANY
+ * non-empty `ownedBySection` as "this row expands inline," never comparing
+ * against a specific string, so either value works. If a future section
+ * needs an actual URL deep link, it will need to invent one; there is
+ * currently nothing to alias.
  *
  * Loads `business_settings/business_settings` once via the one-shot
  * `getBusinessSettings` (a direct Firestore `getDoc`, not a callable — see
  * `api/settings.ts`), not a live listener: a sole admin has no concurrent editor
  * to react to. `Notifications` and `Tags` are their own self-loading editors
  * (`NotificationGate`, `TagsEditor`), so they do not depend on this doc and are
- * rendered directly; the other eleven sections read this loaded `data`.
+ * rendered directly. `Integrations` is self-loading too (a Cloud Functions
+ * secret answer no client can read), but it now also receives the loaded
+ * `settings` and the shared `persist`, purely to hand them to the Calendar
+ * panels it can open inline. The other nine sections read this loaded `data`.
  */
 
 type SectionId =
@@ -74,13 +85,10 @@ type SectionId =
   | 'timeOff'
   | 'kinCare'
   | 'bookingRules'
-  | 'visitsTracking'
   | 'payments'
-  | 'branding'
   | 'mytribe'
   | 'notifications'
   | 'tags'
-  | 'calendar'
   | 'integrations';
 
 /** Nav order. Matches the section order the operator saw approved for this screen. */
@@ -92,28 +100,29 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   // when it applies.
   { id: 'phoneLine', label: 'Phone line' },
   { id: 'timeOff', label: 'Time off' },
-  { id: 'kinCare', label: 'KinCare types' },
-  // ISSUE #519: two sections for the twenty `business_settings` fields the three
-  // admin clients decoded and none of them edited. They are two rather than one
-  // because they answer different questions: `bookingRules` is what a booking is
-  // allowed to be, `visitsTracking` is what happens once you are out on it. The
-  // split matches how Android already groups them (Business operations holds the
-  // tracking + visit defaults; the booking config had no home at all).
+  // ISSUE #711: "There are settings all over the place and are not grouped by
+  // topic very well. 'Visits & Tracking' is Just KinCare settings. So put it
+  // under the KinCare 'Types' which needs to be changed to KinCare Settings."
+  // ISSUE #519 had split the twenty `business_settings` fields the three admin
+  // clients decoded and none of them edited into two sections on the
+  // reasoning that they answered different questions: `bookingRules` is what
+  // a booking is ALLOWED to be, the visit-day fields are what happens once you
+  // are out on it. That second question is a KinCare question, per the
+  // operator's ruling above, so its answer moved in with the KinCare types
+  // editor rather than staying its own tab. `bookingRules` is unaffected: it
+  // still answers the first question, on its own.
+  { id: 'kinCare', label: 'KinCare Settings' },
   { id: 'bookingRules', label: 'Booking rules' },
-  { id: 'visitsTracking', label: 'Visits and tracking' },
   { id: 'payments', label: 'Payments' },
-  { id: 'branding', label: 'Branding' },
   { id: 'mytribe', label: 'MyTribe portal' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'tags', label: 'Tags' },
-  // Both Google calendar capabilities: the free/busy import (Task 7.1) and the
-  // editable OAuth calendars (Task 7.2), sub-headed inside one panel. They are
-  // still two features that fail separately, which is why they are still two
-  // panels with their own receipts; they are one thing to LOOK for, which is why
-  // they are one tab.
-  { id: 'calendar', label: 'Calendar' },
-  // Last because it is the one section that reports rather than edits: the place
-  // an operator goes when something ELSE on this screen stopped working.
+  // Last because it is the one section that reports rather than edits: the
+  // place an operator goes when something ELSE on this screen stopped
+  // working. ISSUE #715 folded the Calendar tab in here too (the free/busy
+  // import and the editable OAuth calendars, sub-headed inside one panel,
+  // opened in place from the Google Calendar row below): "And Calendar needs
+  // to go under integrations."
   { id: 'integrations', label: 'Integrations' },
 ];
 
@@ -212,7 +221,7 @@ export function Settings() {
                 tabIndex={0}
                 hidden={!active}
               >
-                {renderSection(section.id, settings, persist, applyServerChange, selectSection)}
+                {renderSection(section.id, settings, persist, applyServerChange)}
               </div>
             );
           })}
@@ -233,38 +242,17 @@ function renderSection(
   settings: Async<BusinessSettings>,
   persist: (patch: Partial<BusinessSettings>) => Promise<void>,
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
-  selectSection: (id: SectionId) => void,
 ): ReactNode {
   if (id === 'notifications') return <NotificationGate />;
   if (id === 'tags') return <TagsEditor />;
-  // Calendar owns its own AsyncRegion rather than being wrapped in the shared
-  // one below, because only its free/busy half reads `business_settings`. Its
-  // OAuth half asks a callable (the connection document is denied to every
-  // client by `firestore.rules`), and must not be taken down by a settings load
-  // it does not depend on.
-  if (id === 'calendar') return <CalendarSection settings={settings} onSave={persist} />;
-  // Self-loading too, and for a stronger reason: no client can read a Cloud
-  // Functions secret at all, so this section's whole answer is a callable's.
-  // `onOpenSection` is what makes its Google Calendar link real rather than a
-  // sentence telling the operator to go and find the section themselves; the
-  // server's `ownedBySection: googleCalendar` ids from before the calendar tabs
-  // merged resolve to 'calendar' below.
+  // Self-loading, and for a stronger reason than Notifications/Tags: no
+  // client can read a Cloud Functions secret at all, so this section's whole
+  // answer is a callable's. It also receives `settings` and `persist`
+  // (unused by the health check itself) purely so it can open the Calendar
+  // panels inline below its Google Calendar row; see the comment on
+  // `IntegrationsSection` for the full reasoning (issue #715).
   if (id === 'integrations') {
-    return (
-      <IntegrationsSection
-        onOpenSection={(next) => {
-          // Checked against the real nav rather than cast. The id arrives from
-          // the server (`ownedBySection`), and selecting one this screen does
-          // not have would leave the panel area blank with no nav item lit: a
-          // dead button that looks like it worked. The retired 'googleCalendar'
-          // id aliases to the merged 'calendar' tab; any other unknown id is
-          // ignored, and the row's own copy still names where to go.
-          const target = next === 'googleCalendar' ? 'calendar' : next;
-          const match = SECTIONS.find((section) => section.id === target);
-          if (match) selectSection(match.id);
-        }}
-      />
-    );
+    return <IntegrationsSection settings={settings} onSaveCalendar={persist} />;
   }
 
   return (
@@ -288,34 +276,35 @@ function renderDataSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
-    // THREE PANELS, ONE TAB. Weather area was one text box and Booking
-    // behavior was two toggles, each behind its own nav entry. Mark 16 of the
+    // FOUR PANELS, ONE TAB. Weather area was one text box and Booking behavior
+    // was two toggles, each behind its own nav entry. Mark 16 of the
     // 2026-08-17 walk: "move this and weather area to related setting pages. it
     // does not need to be its own page with so little fields", and the operator
     // named Business profile as where they go.
     //
     // Booking behavior stays its own PANEL rather than being folded into the
-    // fields above, because the two save differently: the text fields stage a
-    // draft behind a Save button, the toggles write on every flip. Merging them
-    // into one panel would put a Save button next to controls that have already
-    // saved.
+    // fields above, because the two save differently: the profile fields stage
+    // a draft behind a Save button, the toggles write on every flip. Merging
+    // them into one panel would put a Save button next to controls that have
+    // already saved.
     //
-    // ISSUE #519 added the third panel here: `timeZone`. It belongs with the
-    // business's own identity rather than with the booking rules (the issue's
-    // own grouping says so), and it is its own panel rather than a row in the
-    // text fields above because it is a validated picker whose wrong value
-    // silently makes the phone line answer as open around the clock.
+    // ISSUE #519 gave the time zone its own panel here, on the reasoning that a
+    // validated picker whose wrong value silently makes the phone line answer
+    // as open around the clock deserved its own save gate. ISSUE #709
+    // overrides that: operator, 2026-09-10 walk mark 36, "Time Zone needs to be
+    // in the profile box; not its own block." `BusinessProfileSection` now
+    // carries the contact fields AND the time zone picker as one panel with one
+    // Save, and `TimeZoneSection.tsx` is deleted.
+    //
+    // ISSUE #712 moved Branding (the Logo and Branding panels) here from its
+    // own nav entry: operator, "Branding should be under the business
+    // profile. Again we need to group these better." The separate `branding`
+    // nav entry is gone; nothing else pointed at it (grepped the whole admin).
     case 'businessProfile':
       return (
         <>
-          <TextFieldsSection
-            title="Business profile"
-            subtitle="Who kinfolk and invoices contact, and the area the Home weather widgets cover."
-            data={data}
-            fields={BUSINESS_PROFILE_FIELDS}
-            onSave={persist}
-          />
-          <TimeZoneSection data={data} onSave={persist} />
+          <BusinessProfileSection data={data} onSave={persist} />
+          <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />
           <BookingBehaviorSection data={data} onSave={persist} />
         </>
       );
@@ -326,19 +315,24 @@ function renderDataSection(
       return <PhoneLineSection data={data} onSave={persist} />;
     case 'timeOff':
       return <TimeOffEditor data={data} onSave={persist} />;
+    // ISSUE #711: KinCare Settings holds both the types/rates editor and the
+    // visit-day tracking settings now, each its own DenPanel (so each keeps
+    // its own heading, the `KinCareRatesEditor` title and the
+    // `VisitsTrackingSection` title) under the one renamed nav entry.
     case 'kinCare':
-      return <KinCareRatesEditor data={data} onSave={persist} />;
+      return (
+        <>
+          <KinCareRatesEditor data={data} onSave={persist} />
+          <VisitsTrackingSection data={data} onSave={persist} />
+        </>
+      );
     case 'bookingRules':
       return <BookingRulesSection data={data} onSave={persist} />;
-    case 'visitsTracking':
-      return <VisitsTrackingSection data={data} onSave={persist} />;
     // ISSUE #409: a real toggle per method, replacing the three free-text
     // boxes whose only off switch was deleting the handle. Operator, walk
     // mark 17: "make it a true toggle for different payment option".
     case 'payments':
       return <PaymentOptionsSection data={data} onSave={persist} />;
-    case 'branding':
-      return <BrandingSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     default:

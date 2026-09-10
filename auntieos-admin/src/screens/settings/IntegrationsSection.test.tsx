@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { DEFAULT_BUSINESS_SETTINGS, type BusinessSettings } from '../../api/settings';
+import type { Async } from '../../lib/async';
 
 const api = vi.hoisted(() => ({ getIntegrationsHealth: vi.fn() }));
 vi.mock('../../api/integrations', async (importOriginal) => {
@@ -11,8 +13,48 @@ vi.mock('../../api/integrations', async (importOriginal) => {
   return { ...actual, getIntegrationsHealth: api.getIntegrationsHealth };
 });
 
+// ISSUE #715: the Google Calendar row now opens `CalendarSection` inline,
+// which mounts `GoogleCalendarSection`. Mocked at the api seam (the
+// Settings.test.tsx / CalendarSection.test.tsx convention) so this file never
+// reaches real Firebase Functions when a test opens the inline panel.
+const googleCalendarApi = vi.hoisted(() => ({
+  getGoogleCalendarConnection: vi.fn(),
+  startGoogleCalendarConnect: vi.fn(),
+  listGoogleCalendars: vi.fn(),
+  setGoogleCalendarTargets: vi.fn(),
+  pushVisitsToGoogleCalendar: vi.fn(),
+  disconnectGoogleCalendar: vi.fn(),
+}));
+vi.mock('../../api/googleCalendar', () => googleCalendarApi);
+
+const BLANK_GOOGLE_CONNECTION = {
+  connected: false,
+  googleAccountEmail: '',
+  connectedAt: '',
+  scopes: [],
+  writeCalendarId: '',
+  enabledCalendarIds: [],
+  disconnectedAt: '',
+  disconnectedError: '',
+  connectLastAttemptAt: '',
+  connectLastStatus: '',
+  connectLastError: '',
+  calendarPushLastRunAt: '',
+  calendarPushLastStatus: '',
+  calendarPushLastPushed: 0,
+  calendarPushLastError: '',
+  calendarAutoSyncLastRunAt: '',
+  calendarAutoSyncLastStatus: '',
+  calendarAutoSyncLastAction: '',
+  calendarAutoSyncLastSessionId: '',
+  calendarAutoSyncLastError: '',
+};
+
 import { IntegrationsSection } from './IntegrationsSection';
 import type { IntegrationHealth, IntegrationsHealthResult } from '../../api/integrations';
+
+const READY_SETTINGS: Async<BusinessSettings> = { status: 'ready', data: DEFAULT_BUSINESS_SETTINGS };
+const onSaveCalendar = vi.fn();
 
 /**
  * What this section must never do, stated as tests rather than as a comment:
@@ -63,6 +105,13 @@ function result(over: Partial<IntegrationsHealthResult> = {}): IntegrationsHealt
 beforeEach(() => {
   api.getIntegrationsHealth.mockReset();
   api.getIntegrationsHealth.mockResolvedValue(result());
+  onSaveCalendar.mockReset();
+  for (const fn of Object.values(googleCalendarApi)) fn.mockReset();
+  googleCalendarApi.getGoogleCalendarConnection.mockResolvedValue({
+    connection: BLANK_GOOGLE_CONNECTION,
+    freeBusyCalendarId: '',
+    redirectUri: '',
+  });
 });
 
 describe('IntegrationsSection renders each status class', () => {
@@ -79,13 +128,13 @@ describe('IntegrationsSection renders each status class', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('Working')).toBeInTheDocument();
     expect(screen.getByText('A signed upload can be signed.')).toBeInTheDocument();
   });
 
   it('shows set-but-unverified as its own class, not as working', async () => {
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('Set up, not verified')).toBeInTheDocument();
     expect(screen.queryByText('Working')).not.toBeInTheDocument();
   });
@@ -111,7 +160,7 @@ describe('IntegrationsSection renders each status class', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('Missing')).toBeInTheDocument();
     expect(screen.getByText(/TWILIO_AUTH_TOKEN is not set/)).toBeInTheDocument();
     expect(screen.getByText('not set')).toBeInTheDocument();
@@ -128,7 +177,7 @@ describe('IntegrationsSection renders each status class', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('Could not check')).toBeInTheDocument();
     expect(screen.queryByText('Working')).not.toBeInTheDocument();
   });
@@ -143,13 +192,13 @@ describe('IntegrationsSection remediation', () => {
     api.getIntegrationsHealth.mockResolvedValue(
       result({ integrations: [integration({ status: 'missing', remediation: command })] }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     const block = await screen.findByText(/firebase functions:secrets:set TWILIO_AUTH_TOKEN/);
     expect(block.textContent).toBe(command);
   });
 
   it('shows no remediation block when nothing is owed', async () => {
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     await screen.findByText('Twilio');
     expect(screen.queryByText('What to do')).not.toBeInTheDocument();
   });
@@ -166,14 +215,14 @@ describe('IntegrationsSection remediation', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText(/Stripe Connect onboarding is not built here/)).toBeInTheDocument();
   });
 });
 
 describe('IntegrationsSection never leaks a credential', () => {
   it('reports a length, and offers no field that could carry a value', async () => {
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('set, 32 characters')).toBeInTheDocument();
   });
 });
@@ -181,7 +230,7 @@ describe('IntegrationsSection never leaks a credential', () => {
 describe('IntegrationsSection failure state', () => {
   it('says the read failed, offers Retry, and renders no status pill at all', async () => {
     api.getIntegrationsHealth.mockRejectedValue(new Error('permission-denied'));
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByText(/Couldn’t load integrations|Couldn't load integrations/)).toBeInTheDocument();
@@ -195,7 +244,7 @@ describe('IntegrationsSection failure state', () => {
   it('retries the callable rather than offering a button that does nothing', async () => {
     api.getIntegrationsHealth.mockRejectedValueOnce(new Error('permission-denied'));
     api.getIntegrationsHealth.mockResolvedValue(result());
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Set up, not verified')).toBeInTheDocument();
@@ -224,7 +273,7 @@ describe('IntegrationsSection failure state', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
 
     expect(await screen.findByText(/Part of this check could not run/)).toBeInTheDocument();
     expect(screen.getByText(/the functions index would not load/)).toBeInTheDocument();
@@ -250,12 +299,14 @@ describe('IntegrationsSection failure state', () => {
         ],
       }),
     );
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     expect(await screen.findByText('no deployed function declares this')).toBeInTheDocument();
   });
 });
 
-describe('IntegrationsSection hands Google Calendar off rather than rebuilding it', () => {
+// ISSUE #715: Calendar lives inside Integrations now, opened IN PLACE rather
+// than by switching to a tab that no longer exists.
+describe('IntegrationsSection opens Calendar in place rather than switching tabs', () => {
   const google = integration({
     key: 'googleCalendar',
     name: 'Google Calendar',
@@ -263,27 +314,45 @@ describe('IntegrationsSection hands Google Calendar off rather than rebuilding i
     summary: 'No Google account has been connected yet.',
   });
 
-  it('opens the section that owns the connect flow', async () => {
+  it('expands the Calendar panels below the report when the row is opened', async () => {
     api.getIntegrationsHealth.mockResolvedValue(result({ integrations: [google] }));
-    const onOpenSection = vi.fn();
-    render(<IntegrationsSection onOpenSection={onOpenSection} />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
 
+    expect(screen.queryByText('Free/busy import')).not.toBeInTheDocument();
     await userEvent.click(await screen.findByRole('button', { name: 'Open Google Calendar settings' }));
-    expect(onOpenSection).toHaveBeenCalledWith('googleCalendar');
+
+    expect(screen.getByText('Free/busy import')).toBeInTheDocument();
+    expect(screen.getByText('Editable calendars')).toBeInTheDocument();
+    expect(screen.getByLabelText('Calendar ID')).toBeInTheDocument();
   });
 
-  it('states where to go instead of showing a button that cannot navigate', async () => {
+  it('collapses the panels again when the row is closed', async () => {
     api.getIntegrationsHealth.mockResolvedValue(result({ integrations: [google] }));
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
 
-    expect(await screen.findByText(/live in the Google Calendar section/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Open Google Calendar settings' })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Google Calendar settings' }));
+    expect(screen.getByText('Free/busy import')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hide Google Calendar settings' }));
+    expect(screen.queryByText('Free/busy import')).not.toBeInTheDocument();
+  });
+
+  // The check is generic (`ownedBySection !== ''`), never a specific string,
+  // so it works whether the server sends the current 'calendar' id or the
+  // retired 'googleCalendar' id an older deploy might still send (the `google`
+  // fixture above already covers the retired id).
+  it('still shows the toggle when the server sends the current calendar id', async () => {
+    api.getIntegrationsHealth.mockResolvedValue(
+      result({ integrations: [{ ...google, ownedBySection: 'calendar' }] }),
+    );
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
+    expect(await screen.findByRole('button', { name: 'Open Google Calendar settings' })).toBeInTheDocument();
   });
 });
 
 describe('IntegrationsSection re-checks on demand', () => {
   it('asks the server again rather than re-rendering a cached answer', async () => {
-    render(<IntegrationsSection />);
+    render(<IntegrationsSection settings={READY_SETTINGS} onSaveCalendar={onSaveCalendar} />);
     await screen.findByText('Twilio');
     await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(api.getIntegrationsHealth).toHaveBeenCalledTimes(2));

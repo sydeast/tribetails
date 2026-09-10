@@ -1150,6 +1150,7 @@ private fun WeatherAreaPanel(
 @Composable
 private fun NotificationMatrixPanel() {
     val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
     val repo = remember { AuntieOSApp.instance.repository }
     val scope = rememberCoroutineScope()
     var matrix by remember { mutableStateOf<NotificationMatrix?>(null) }
@@ -1225,12 +1226,17 @@ private fun NotificationMatrixPanel() {
                     val stream = selectedTab.streamKey
                     // Rows grouped under workflow sections (unmatched categories land
                     // in a trailing "Other" section so nothing disappears).
+                    // ISSUE #708 mark 42 (web): "give more spacing between
+                    // sections damn." The gap above a section heading was
+                    // barely more than the gap between the rows inside it, so
+                    // a new section did not read as a break. Ported here for
+                    // the same defect.
                     sectionedNotifEntries(shown, stream).forEach { (sectionTitle, rows) ->
                         Text(
                             sectionTitle,
                             style = AuntieTheme.typography.labelMedium,
                             color = c.textPrimary,
-                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = dims.space6, bottom = dims.space1),
                         )
                         rows.forEach { entry ->
                             NotifMatrixRow(
