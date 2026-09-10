@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.CoveragePackageConfig
 import com.tribetails.auntieos.data.model.coveragePackageConfigFieldChanges
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -13,13 +14,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Loads and saves the Coverage Package Builder config (visit menu + rules), the
- * flat data-class UiState + Kotlin Result idiom used by [AdminSettingsViewModel].
- * The pure schedule/pricing maths lives in `domain/CoveragePackage.kt`; this VM
- * only orchestrates the Firestore round-trip.
+ * Feeds the Coverage Package Builder, the flat data-class UiState + Kotlin Result
+ * idiom used by [AdminSettingsViewModel]. The pure schedule/pricing maths lives in
+ * `domain/CoveragePackage.kt`; this VM only orchestrates the Firestore reads.
+ *
+ * [loadSettings] is what the screen calls: since issue #693 the visit menu is the
+ * operator's KinCare types on `business_settings`, edited in Settings.
+ *
+ * [loadConfig] and [saveConfig] read and write `coverage_package_config/config`,
+ * the builder's old second rate card. NOTHING ON THE SCREEN CALLS THEM ANY MORE.
+ * They are kept, with their write-diff discipline and their tests, because the
+ * document still exists and the web writer still exists, and a rate-card write
+ * path is not something to delete quietly. Delete them only together with
+ * `auntieos-admin/src/api/coveragePackageWrite.ts` and the document itself.
  */
 data class CoveragePackageUiState(
     val config: CoveragePackageConfig = CoveragePackageConfig(),
+    /** The operator's KinCare types, the source of visit lengths and prices. */
+    val businessSettings: BusinessSettings = BusinessSettings(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val saveSuccess: Boolean = false,
@@ -49,6 +61,28 @@ class CoveragePackageViewModel(
      * the edit pending and the retry still carries it.
      */
     private var configBaseline: CoveragePackageConfig? = null
+
+    /**
+     * Read the KinCare types the builder prices from. Fails loud: an empty menu
+     * and a failed read are different states, and the screen must not show the
+     * first when it means the second.
+     */
+    fun loadSettings() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            repository.getBusinessSettings().fold(
+                onSuccess = { settings ->
+                    _uiState.value = _uiState.value.copy(businessSettings = settings, isLoading = false)
+                },
+                onFailure = { error ->
+                    _uiState.value = _uiState.value.copy(
+                        error = "Failed to load your KinCare rates: ${error.message}",
+                        isLoading = false,
+                    )
+                },
+            )
+        }
+    }
 
     fun loadConfig() {
         viewModelScope.launch {

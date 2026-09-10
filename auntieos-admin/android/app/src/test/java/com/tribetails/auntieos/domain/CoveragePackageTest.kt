@@ -37,6 +37,51 @@ class CoveragePackageTest {
     }
 
     @Test
+    fun `durationsFromServiceRates reads the KinCare types as the visit menu`() {
+        val rates = mapOf("30Minute" to "25", "Half-Day 6Hrs" to "100", "Overnight" to "150", "Consultation" to "")
+        val menu = durationsFromServiceRates(rates).associateBy { it.id }
+        // The service NAME is the id, the length comes off the name, the rate off the map.
+        assertEquals(Duration("30Minute", "30Minute", 30.0, 25.0, "visit"), menu.getValue("30Minute"))
+        assertEquals(360.0, menu.getValue("Half-Day 6Hrs").minutes, 0.001)
+        // Named overnight is an overnight; a 6-hour day stay is still a visit.
+        assertEquals("overnight", menu.getValue("Overnight").kind)
+        assertEquals("visit", menu.getValue("Half-Day 6Hrs").kind)
+        // No price and no stated length is 0, not a dropped row.
+        assertEquals(0.0, menu.getValue("Consultation").price, 0.001)
+        assertEquals(0.0, menu.getValue("Consultation").minutes, 0.001)
+    }
+
+    @Test
+    fun `durationsFromServiceRates takes a stated duration over the one in the name`() {
+        val menu = durationsFromServiceRates(mapOf("Overnight" to "150"), mapOf("Overnight" to "720"))
+        assertEquals(720.0, menu[0].minutes, 0.001)
+    }
+
+    @Test
+    fun `alignPinnedToDurations repoints a pinned visit whose length left the menu`() {
+        val menu = durationsFromServiceRates(mapOf("30Minute" to "25", "Overnight" to "150"))
+        // The shipped default pins `d2`, an id from the deleted builder-owned menu.
+        val aligned = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, menu)
+        assertEquals("30Minute", aligned.pinnedTimes[0].durationId)
+        assertEquals(DEFAULT_COVERAGE_RULES.pinnedTimes[0].label, aligned.pinnedTimes[0].label)
+        assertEquals(DEFAULT_COVERAGE_RULES.pinnedTimes[0].time, aligned.pinnedTimes[0].time)
+        // Nothing to point at leaves it blank rather than inventing a length.
+        assertEquals("", alignPinnedToDurations(DEFAULT_COVERAGE_RULES, emptyList()).pinnedTimes[0].durationId)
+    }
+
+    @Test
+    fun `alignPinnedToDurations leaves a pinned visit that already resolves`() {
+        val menu = durationsFromServiceRates(mapOf("30Minute" to "25", "60Minute" to "45"))
+        val rules = DEFAULT_COVERAGE_RULES.copy(pinnedTimes = listOf(PinnedTime("p", "Meds", "12:00", "60Minute")))
+        assertEquals("60Minute", alignPinnedToDurations(rules, menu).pinnedTimes[0].durationId)
+    }
+
+    @Test
+    fun `todayIso is the device's calendar date`() {
+        assertEquals("2026-09-09", todayIso(java.time.LocalDate.of(2026, 9, 9)))
+    }
+
+    @Test
     fun `buildDayPatterns is empty for a degenerate window and drops empty suggestions`() {
         assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "14:00", "11:00").isEmpty())
         assertTrue(buildDayPatterns(DEFAULT_DURATIONS, emptyList(), 6.0, "11:00", "14:00").isEmpty())
