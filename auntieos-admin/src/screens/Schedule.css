@@ -126,11 +126,20 @@
   color: var(--color-text-dim);
 }
 
+/* The "Busy" swatch. Hatched, because the blocks it labels are hatched: a solid
+   grey square told the operator nothing about which mark on the calendar it
+   stood for. The same 45deg 3px/6px stripe is drawn by
+   `.schedule__month-block--busy` below and by `.schedule-grid__busy` in
+   `components/ScheduleWeekGrid.css`; those three are the whole set. */
 .schedule__legend-swatch {
   width: 0.65rem;
   height: 0.65rem;
   border-radius: var(--radius-tight);
-  background: var(--color-text-faint);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-text-faint) 0 3px,
+    var(--color-surface-2) 3px 6px
+  );
   display: inline-block;
 }
 
@@ -152,10 +161,15 @@
   margin-bottom: var(--space-4);
 }
 
-/* ── month grid (day-cell look) ───────────────────────────────────────────
+/* ── month grid ───────────────────────────────────────────────────────────
    The week STRIP that shared these rules is gone: #397 M13 replaced it with a
    real time grid (`components/ScheduleWeekGrid.css`), which a drag can actually
-   be a drag on. The month grid keeps the day-cell look it always had. */
+   be a drag on.
+
+   #696 turned the month cells from date-picker number pills into real calendar
+   cells: a tinted block per visit, a hatched block per busy window, "+N more"
+   past the cap. The cell is a flow column now rather than a centred stack of
+   badges, and it is a DIV, since the blocks inside it are controls. */
 
 .schedule__month {
   display: grid;
@@ -168,28 +182,26 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: var(--space-1);
+  /* Six rows have to line up, so the cell states its own height rather than
+     taking it from whichever day happens to be busiest. */
+  min-height: 7rem;
   font: inherit;
   color: var(--color-text-primary);
   background: var(--color-surface-2);
   border: var(--border-hairline) solid var(--color-border-soft);
   border-radius: var(--radius-card);
   padding: var(--space-2);
-  cursor: pointer;
   transition:
     background var(--dur-base) var(--ease-standard),
     border-color var(--dur-base) var(--ease-standard);
 }
-.schedule__day-cell:hover {
-  border-color: var(--color-primary);
-}
-.schedule__day-cell:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
+/* Today is OUTLINED, not filled: a fill would fight the tint of the blocks
+   drawn inside the cell, which are the content. */
 .schedule__day-cell--today {
   border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 var(--border-emphasis) var(--color-accent);
 }
 .schedule__day-cell--selected {
   background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface-2));
@@ -199,34 +211,137 @@
   opacity: 0.45;
 }
 
-
+/* The day number is the button that picks the agenda day. It carries the
+   cell's `aria-pressed` and `aria-current`, which is why it, and not the cell,
+   takes the hover and focus treatment. */
 .schedule__day-number {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  color: inherit;
+  cursor: pointer;
   font-family: var(--font-hanken);
   font-size: var(--type-title-md-size);
   font-weight: var(--type-title-md-weight);
+  line-height: 1.1;
+}
+.schedule__day-number:hover {
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+}
+.schedule__day-number:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
-.schedule__day-count {
+.schedule__day-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One block in a cell. Visits are tinted by service type through `--den-tone`,
+   the same variable `DenScreenKit.css` resolves for every service pill and for
+   the legend under this grid, so a block and its legend row are one colour. */
+.schedule__month-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  gap: 0;
+  overflow: hidden;
+  padding: 2px var(--space-1);
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-tight);
+  font: inherit;
+  text-align: left;
+}
+
+.schedule__month-block--visit {
+  border-color: color-mix(in srgb, var(--den-tone) 50%, transparent);
+  background: color-mix(in srgb, var(--den-tone) 16%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.schedule__month-block--visit:hover {
+  background: color-mix(in srgb, var(--den-tone) 28%, transparent);
+}
+.schedule__month-block--visit:focus-visible {
+  outline: 2px solid var(--den-tone);
+  outline-offset: 1px;
+}
+
+/* Read-only, and drawn to say so: `booking_time_slots` denies every client
+   write, so this is deliberately not a control (see MonthGrid's doc comment).
+   Same hatch as `.schedule__legend-swatch` above and `.schedule-grid__busy` in
+   `components/ScheduleWeekGrid.css`. */
+.schedule__month-block--busy {
+  border-style: dashed;
+  border-color: var(--color-border-soft);
+  color: var(--color-text-dim);
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-text-faint) 26%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.schedule__month-block-time {
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
-  border-radius: var(--radius-pill);
-  padding: 0.05rem 0.45rem;
+  color: var(--color-text-dim);
+}
+.schedule__month-block-name {
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-/* A day with a busy slot (#697). Same dashed border and faint fill as the
-   week grid's `.schedule-grid__busy` block, so the two views read as the
-   same tone for the same fact. */
-.schedule__day-busy {
-  position: absolute;
-  top: 0.35rem;
-  right: 0.35rem;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 1px;
-  border: var(--border-hairline) dashed var(--color-border-soft);
-  background: var(--color-surface-2);
+/* The overflow count. A control, not a caption: it puts the whole day in the
+   agenda panel, which is where the folded rows can be read. */
+.schedule__day-more {
+  align-self: flex-start;
+  margin-top: auto;
+  border: none;
+  background: none;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+.schedule__day-more:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+}
+.schedule__day-more:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Seven columns at phone width leave a cell about 45px across. The names still
+   fit (they ellipsis); the times do not, so they go rather than wrap the block
+   to two lines each. */
+@media (max-width: 720px) {
+  .schedule__month {
+    gap: var(--space-1);
+  }
+  .schedule__day-cell {
+    min-height: 4.5rem;
+    padding: var(--space-1);
+  }
+  .schedule__month-block-time {
+    display: none;
+  }
 }
 
 

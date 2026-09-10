@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ScheduleWeekGrid } from './ScheduleWeekGrid';
 import { HOUR_HEIGHT_PX, SNAP_MINUTES_ON, rescheduleTimesForDrop } from '../lib/scheduleGrid';
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
@@ -210,5 +210,77 @@ describe('ScheduleWeekGrid', () => {
     renderGrid([session()]);
     fireEvent.click(screen.getByRole('button', { name: '2026-07-18' }));
     expect(onSelectDay).toHaveBeenCalledWith('2026-07-18');
+  });
+});
+
+/**
+ * The "now" line (#696).
+ *
+ * The mock draws a coral rule with the clock beside it across today's column;
+ * this grid had none. The gap sat unrecorded because the walk that found the
+ * month view ran at 1:44am, hours outside the drawn 8a-6p window, so the line
+ * would have been absent there either way and the mark could only say
+ * "unverified".
+ *
+ * Clock-pinned, because "is the line at 11:18" is not a question a test can ask
+ * of the real time of day. `renderGrid` fixes today at 2026-07-16, so the date
+ * set here has to match it for the line to have a column to sit in.
+ */
+describe('ScheduleWeekGrid now line', () => {
+  function nowLine(): HTMLElement | null {
+    return document.querySelector('.schedule-grid__day--today .schedule-grid__now');
+  }
+
+  function atLocalTime(hour: number, minute: number, run: () => void): void {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 6, 16, hour, minute, 0, 0));
+      run();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('draws the line at the current minute, in today’s column, with the clock beside it', () => {
+    atLocalTime(11, 18, () => {
+      renderGrid([session()]);
+      const line = nowLine();
+      expect(line).not.toBeNull();
+      // 11:18 is 198 minutes into an 8a grid, at 0.9px a minute.
+      expect(line?.style.top).toBe(`${(HOUR_HEIGHT_PX * 198) / 60}px`);
+      expect(line).toHaveTextContent('11:18');
+    });
+  });
+
+  it('draws no line at all when the clock is outside the drawn hours', () => {
+    // 7pm, an hour past the bottom edge. Pinning the line to that edge would
+    // claim 6pm is now, which is the silent-lie shape this codebase forbids.
+    atLocalTime(19, 0, () => {
+      renderGrid([session()]);
+      expect(nowLine()).toBeNull();
+      expect(document.querySelector('.schedule-grid__now')).toBeNull();
+    });
+  });
+
+  it('never marks a day that is not today', () => {
+    atLocalTime(11, 18, () => {
+      renderGrid([session()]);
+      // One line on the whole grid, and it is inside the today column.
+      expect(document.querySelectorAll('.schedule-grid__now')).toHaveLength(1);
+      const column = document.querySelector('.schedule-grid__day--today') as HTMLElement;
+      expect(column.dataset['day']).toBe('2026-07-16');
+    });
+  });
+
+  it('keeps ticking: an hour of wall clock moves the line down an hour', () => {
+    atLocalTime(11, 18, () => {
+      renderGrid([session()]);
+      const before = nowLine()?.style.top;
+      act(() => {
+        vi.advanceTimersByTime(60 * 60 * 1000);
+      });
+      expect(nowLine()?.style.top).toBe(`${Number(before?.replace('px', '')) + HOUR_HEIGHT_PX}px`);
+      expect(nowLine()).toHaveTextContent('12:18');
+    });
   });
 });

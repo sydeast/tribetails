@@ -178,6 +178,18 @@ function withFixedToday(run: () => void): void {
 function agenda(): HTMLElement {
   return document.querySelector('.schedule__agenda-panel') as HTMLElement;
 }
+
+/**
+ * One cell of the month grid, by its ISO day.
+ *
+ * Queried by `data-day` rather than by the day-number button, because since
+ * #696 the cell is a DIV holding several controls: the day number, one button
+ * per visit, and "+N more". `within(getByRole('button', { name: day }))` used to
+ * reach the whole cell and now reaches only the number inside it.
+ */
+function monthCell(day: string): HTMLElement {
+  return document.querySelector(`.schedule__day-cell[data-day="${day}"]`) as HTMLElement;
+}
 describe('Schedule screen', () => {
   it('renders a streamed session in the selected-day agenda with its time window, household, and status chip', () => {
     withFixedToday(() => {
@@ -765,7 +777,13 @@ describe('Schedule screen', () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
-  it('draws a busy marker on every month-grid day that carries a busy slot, and none on a clean day (#697)', async () => {
+  /**
+   * #696 replaced #697's corner dot with the busy WINDOW drawn as its own
+   * block, so this reads the block rather than the dot. The fact under test is
+   * unchanged and still #697's: every busy day in the month is marked, a clean
+   * day is not, so the "Busy blocks" count can be traced to dates.
+   */
+  it('draws a busy block on every month-grid day that carries a busy slot, and none on a clean day (#697)', async () => {
     const todayIsoReal = localDateIso(new Date());
     const monthDays = monthGridDays(todayIsoReal);
     const busyDayA = monthDays[3] as string;
@@ -782,9 +800,188 @@ describe('Schedule screen', () => {
     render(<Schedule />);
     await user.click(screen.getByRole('tab', { name: 'Month' }));
 
-    expect(within(screen.getByRole('button', { name: busyDayA })).getByTitle('Busy')).toBeInTheDocument();
-    expect(within(screen.getByRole('button', { name: busyDayB })).getByTitle('Busy')).toBeInTheDocument();
-    expect(within(screen.getByRole('button', { name: cleanDay })).queryByTitle('Busy')).toBeNull();
+    expect(within(monthCell(busyDayA)).getByText('Busy')).toBeInTheDocument();
+    expect(within(monthCell(busyDayB)).getByText('Busy')).toBeInTheDocument();
+    expect(within(monthCell(cleanDay)).queryByText('Busy')).toBeNull();
+  });
+});
+
+/**
+ * The month calendar (#696).
+ *
+ * The operator's words were "we are still using the wrong calendar", looking at
+ * a month of bare numbered pills. What these pin is that a cell now draws its
+ * OWN day: the visits on it, tinted by service type, the busy windows on it,
+ * and an honest count of whatever did not fit.
+ *
+ * Days are computed off the REAL today rather than a pinned clock, the
+ * convention the click-driven tests in the suite above already follow
+ * (`withFixedToday`'s doc explains why fake timers and userEvent do not mix),
+ * and every session time is built from a LOCAL `Date` so the block label is the
+ * hour written here in any zone and on either side of a DST boundary.
+ */
+describe('Schedule month grid', () => {
+  const todayIsoReal = localDateIso(new Date());
+  const monthDays = monthGridDays(todayIsoReal);
+  /** Two days in the visible month grid, far enough apart to be separate weeks. */
+  const dayA = monthDays[8] as string;
+  const dayB = monthDays[16] as string;
+
+  /** An ISO instant for a LOCAL wall-clock hour on a `YYYY-MM-DD` day. */
+  function at(dayIso: string, hour: number, minute = 0): string {
+    const [y, m, d] = dayIso.split('-').map(Number) as [number, number, number];
+    return new Date(y, m - 1, d, hour, minute, 0, 0).toISOString();
+  }
+
+  async function renderMonth(
+    sessions: ScheduleSessionEntry[],
+    busy: BusySlotEntry[] = [],
+  ): Promise<void> {
+    mockCollections({
+      sessions: { status: 'ready', data: sessions },
+      busy: { status: 'ready', data: busy },
+    });
+    render(<Schedule />);
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+  }
+
+  it('draws each day’s visits and busy windows as blocks in that day’s own cell', async () => {
+    await renderMonth(
+      [
+        sessionEntry({
+          _id: 'a-morning',
+          kinfolkName: 'Morning Household',
+          serviceType: 'Dog Walk',
+          startTime: at(dayA, 9),
+          endTime: at(dayA, 10),
+        }),
+        sessionEntry({
+          _id: 'a-midday',
+          kinfolkName: 'Midday Household',
+          serviceType: 'House Sit',
+          startTime: at(dayA, 11),
+          endTime: at(dayA, 12),
+        }),
+        sessionEntry({
+          _id: 'b-only',
+          kinfolkName: 'Other-Day Household',
+          serviceType: 'Drop-in',
+          startTime: at(dayB, 15),
+          endTime: at(dayB, 16),
+        }),
+      ],
+      [busySlot({ _id: 'busy-a', date: dayA, startTime: '13:00', endTime: '14:00' })],
+    );
+
+    const cellA = monthCell(dayA);
+    const cellB = monthCell(dayB);
+
+    // Day A: both of its visits, with their LOCAL start times, plus its busy
+    // window. Nothing from day B.
+    expect(within(cellA).getByText('Morning Household')).toBeInTheDocument();
+    expect(within(cellA).getByText('09:00')).toBeInTheDocument();
+    expect(within(cellA).getByText('Midday Household')).toBeInTheDocument();
+    expect(within(cellA).getByText('11:00')).toBeInTheDocument();
+    expect(within(cellA).getByText('Busy')).toBeInTheDocument();
+    expect(within(cellA).getByText('13:00')).toBeInTheDocument();
+    expect(within(cellA).queryByText('Other-Day Household')).toBeNull();
+
+    // Day B: only its own visit, and no busy block at all.
+    expect(within(cellB).getByText('Other-Day Household')).toBeInTheDocument();
+    expect(within(cellB).getByText('15:00')).toBeInTheDocument();
+    expect(within(cellB).queryByText('Morning Household')).toBeNull();
+    expect(within(cellB).queryByText('Busy')).toBeNull();
+
+    // Exactly at the cap, so nothing is folded away.
+    expect(within(cellA).queryByText(/more$/)).toBeNull();
+  });
+
+  it('tints each visit block by service type, from the same palette the legend’s pills use', async () => {
+    await renderMonth([
+      sessionEntry({
+        _id: 'walk',
+        kinfolkName: 'Walk Household',
+        serviceType: 'Dog Walk',
+        startTime: at(dayA, 9),
+        endTime: at(dayA, 10),
+      }),
+      sessionEntry({
+        _id: 'sit',
+        kinfolkName: 'Sit Household',
+        serviceType: 'House Sit',
+        startTime: at(dayB, 9),
+        endTime: at(dayB, 10),
+      }),
+    ]);
+
+    // `serviceTone` is the app-wide mapping: walk -> teal, sit -> purple. The
+    // block reads it through the same `data-tone` attribute `ServicePill` sets,
+    // so a block and its legend row can never drift to two different colours.
+    const walkBlock = within(monthCell(dayA)).getByRole('button', { name: /Walk Household/ });
+    const sitBlock = within(monthCell(dayB)).getByRole('button', { name: /Sit Household/ });
+    expect(walkBlock).toHaveAttribute('data-tone', 'teal');
+    expect(sitBlock).toHaveAttribute('data-tone', 'purple');
+  });
+
+  it('folds everything past the cap into "+N more", which opens that day in the agenda', async () => {
+    const names = ['First', 'Second', 'Third', 'Fourth', 'Fifth'];
+    await renderMonth(
+      names.map((name, i) =>
+        sessionEntry({
+          _id: `crowd-${String(i)}`,
+          kinfolkName: `${name} Household`,
+          startTime: at(dayA, 9 + i),
+          endTime: at(dayA, 10 + i),
+        }),
+      ),
+    );
+
+    const cellA = monthCell(dayA);
+    // Three drawn, in clock order, and the last two folded rather than dropped.
+    expect(within(cellA).getByText('First Household')).toBeInTheDocument();
+    expect(within(cellA).getByText('Third Household')).toBeInTheDocument();
+    expect(within(cellA).queryByText('Fourth Household')).toBeNull();
+    const more = within(cellA).getByRole('button', { name: /2 more on/ });
+    expect(more).toHaveTextContent('+2 more');
+
+    // The fold is never a dead end: the whole day is one click away in the
+    // agenda panel, which is where the folded rows can be read.
+    await user.click(more);
+    expect(within(agenda()).getByText('Fifth Household')).toBeInTheDocument();
+  });
+
+  it('a visit block is a control: clicking it opens that session’s detail sheet', async () => {
+    await renderMonth([
+      sessionEntry({
+        _id: 'sess-month',
+        kinfolkName: 'Openable Household',
+        startTime: at(dayA, 9),
+        endTime: at(dayA, 10),
+      }),
+    ]);
+
+    await user.click(within(monthCell(dayA)).getByRole('button', { name: /Openable Household/ }));
+    expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'sess-month');
+  });
+
+  it('renders the service-type legend in month view, scoped to the month on screen', async () => {
+    await renderMonth([
+      sessionEntry({
+        _id: 'walk',
+        kinfolkName: 'Walk Household',
+        serviceType: 'Dog Walk',
+        startTime: at(dayA, 9),
+        endTime: at(dayA, 10),
+      }),
+    ]);
+
+    expect(screen.getByRole('group', { name: 'Month' })).toBeInTheDocument();
+    const legend = document.querySelector('.schedule__legend') as HTMLElement;
+    expect(legend).toBeInTheDocument();
+    const items = Array.from(legend.querySelectorAll('.schedule__legend-item')).map(
+      (el) => el.textContent,
+    );
+    expect(items).toEqual(['Dog Walk', 'Busy']);
   });
 });
 

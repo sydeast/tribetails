@@ -107,14 +107,27 @@
 }
 
 /* Read-only overlay: `booking_time_slots` denies every client write, so this
-   is deliberately not interactive. See the component doc. */
+   is deliberately not interactive. See the component doc.
+
+   HATCHED since #696. A flat fill in the surface colour read as an empty slot
+   rather than a taken one, and the operator's mock hatches it. The same 45deg
+   3px/6px stripe is drawn by `.schedule__month-block--busy` and by the legend's
+   `.schedule__legend-swatch` in `screens/Schedule.css`; those three are the
+   whole set, and they have to match or the legend labels a mark nothing on the
+   calendar wears. */
 .schedule-grid__busy {
   position: absolute;
   left: 2px;
   right: 2px;
   border-radius: var(--radius-card);
   border: var(--border-hairline) dashed var(--color-border-soft);
-  background: var(--color-surface-2);
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-text-faint) 26%, transparent) 0 3px,
+      transparent 3px 6px
+    ),
+    var(--color-surface-2);
   color: var(--color-text-faint);
   cursor: not-allowed;
   overflow: hidden;
@@ -124,6 +137,44 @@
   font-size: var(--type-label-sm-size);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* The "now" line (#696), drawn across today's column only.
+
+   INSIDE THE COLUMN, not across the grid body: the time gutter is 56px wide
+   above 900px and 44px below, so a body-anchored line would need two `left`
+   values and would drift the moment either changes. Coral is the mock's own
+   hue for it (`--tt-snuggle-coral`), and it is the one brand colour no block
+   on this grid uses, which is the point of a marker. */
+.schedule-grid__now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-coral);
+  z-index: 3;
+  pointer-events: none;
+}
+.schedule-grid__now::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-coral);
+}
+.schedule-grid__now-label {
+  position: absolute;
+  left: 12px;
+  top: -0.7rem;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-tight);
+  background: var(--color-surface);
+  color: var(--color-coral);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
 }
 
 .schedule-grid__block {
