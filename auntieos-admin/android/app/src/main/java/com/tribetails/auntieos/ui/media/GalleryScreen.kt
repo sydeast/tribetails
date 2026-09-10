@@ -36,9 +36,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -64,6 +66,7 @@ import com.tribetails.auntieos.domain.taggedKinNames
 import com.tribetails.auntieos.ui.components.AuntieCard
 import com.tribetails.auntieos.ui.components.AuntieChip
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
+import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -300,6 +303,20 @@ private fun <T> FilterRow(
  * straight to tag-editing). Images render full-res; for video we show the poster and
  * say so plainly rather than faking inline playback. "Tag kin" hands off to the tag
  * dialog so tagging is still one tap away.
+ *
+ * #691, "cannot view the entire photo". This was a platform-default-width dialog
+ * whose stage was capped at 420.dp, so a 1080px photo was shown at roughly a third
+ * of its size with no way to see the rest of it: the SAME defect the web viewer
+ * had, on the same global-gallery screen. It now takes the whole window
+ * (usePlatformDefaultWidth = false) and the stage takes whatever height the rest
+ * of the column leaves, with ContentScale.Fit still showing the whole frame.
+ * "Open original" hands the file to the browser at its own resolution, which is
+ * this platform's answer to the web viewer's fullscreen toggle: an Android dialog
+ * that fills the window IS the fullscreen state.
+ *
+ * MediaGalleryScreen.kt's `FullscreenMediaViewer` (the entity-scoped screen's
+ * viewer) never had this defect: it has always been usePlatformDefaultWidth =
+ * false plus fillMaxSize. It is deliberately left alone.
  */
 @Composable
 private fun MediaViewerDialog(
@@ -310,10 +327,14 @@ private fun MediaViewerDialog(
 ) {
     val c = AuntieTheme.colors
     val context = LocalContext.current
-    Dialog(onDismissRequest = onDismiss) {
+    val uriHandler = LocalUriHandler.current
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties       = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .clip(RoundedCornerShape(16.dp))
                 .background(c.surface)
                 .padding(16.dp),
@@ -323,7 +344,7 @@ private fun MediaViewerDialog(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
+                    .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
                     .background(c.surface2),
                 contentAlignment = Alignment.Center,
@@ -336,7 +357,7 @@ private fun MediaViewerDialog(
                             .build(),
                         contentDescription = media.description.ifBlank { "Media" },
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     Icon(
@@ -362,6 +383,17 @@ private fun MediaViewerDialog(
                     "Tagged: ${taggedNames.joinToString(", ")}",
                     style = AuntieTheme.typography.labelSmall,
                     color = c.textDim,
+                )
+            }
+            // #691. The way out to the file itself, at its own resolution, in a
+            // browser that can zoom and save. Offered only when there IS a stored
+            // original: a thumbnail is not the original, and a button that opened
+            // a 300px crop labelled "Open original" would be a lie.
+            if (media.storageUrl.isNotBlank()) {
+                GhostButton(
+                    label = "Open original",
+                    onClick = { uriHandler.openUri(media.storageUrl) },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             PrimaryButton(label = "Tag kin", onClick = onTag, modifier = Modifier.fillMaxWidth())

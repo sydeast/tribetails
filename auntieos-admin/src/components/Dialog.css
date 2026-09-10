@@ -34,6 +34,25 @@
   width: min(100%, 56rem);
 }
 
+/* Dialog size="full" (#691). The fallback a media viewer falls back TO when the
+   browser refuses, or has never implemented, the Fullscreen API: as much of the
+   viewport as a modal can take, so a 1080px photo the 56rem panel was boxing
+   gets room. The BODY is what scrolls, not the whole panel, and it is a flex
+   column so a stage inside it can claim the leftover height rather than being
+   sized by a rule that knows nothing about the chrome above and below it. */
+.dialog--full {
+  width: min(100%, 90rem);
+  height: min(100%, 94vh);
+  max-height: 100%;
+}
+.dialog--full .dialog__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* The right-side detail sheet (Dialog variant="sheet"). Full height, pinned to
    the trailing edge, 480px like the archive's BookingDetailModal. Below the
    phone breakpoint it becomes a full-bleed panel rather than a 480px column

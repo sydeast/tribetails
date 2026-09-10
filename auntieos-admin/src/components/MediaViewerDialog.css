@@ -8,20 +8,90 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  /* Claims the height of a `dialog--full` body, so the stage below has room to
+     grow into. In the default `dialog--wide` panel the body is a plain block
+     and this is simply ignored. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .media-viewer__stage {
   position: relative;
   width: 100%;
-  /* Tall enough to read as a real viewer, capped so a portrait photo in a
-     `dialog--wide` (56rem) panel never forces the page to scroll past the
-     fold. `object-fit: contain` below does the letterboxing. */
-  height: min(60vh, 32rem);
+  /* #691. Was `min(60vh, 32rem)`, which boxed a 1080px photo into about 512px
+     on a laptop with no way to see the rest of it. The stage now takes the
+     viewport height LESS the dialog's own chrome (its 90vh cap, the title bar,
+     the footer, the body padding, and the meta line under the frame: about
+     14rem all told), with a floor so a short window still gets a real viewer
+     rather than a letterbox slot. `object-fit: contain` below still does the
+     letterboxing, so the whole frame shows either way. */
+  height: max(16rem, calc(90vh - 14rem));
   display: grid;
   place-items: center;
   background: var(--color-surface-2);
   border-radius: var(--radius-card-lg);
   overflow: hidden;
+}
+
+/* The larger-modal fallback (#691): the stage stops being a computed height and
+   simply takes whatever the panel has left, which is nearly the whole viewport. */
+.media-viewer[data-expanded='true'] .media-viewer__stage {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 16rem;
+}
+
+/* Promoted by the Fullscreen API. The browser paints its own black behind a
+   fullscreen element; the surface colour and the rounded corners are panel
+   chrome that has no panel to sit in any more. */
+.media-viewer__stage:fullscreen {
+  border-radius: 0;
+  background: var(--color-background);
+}
+
+/* Sits over the top-trailing corner of the frame, inside the stage, because the
+   stage is the element that goes fullscreen and anything outside it stops being
+   painted the moment that happens. */
+.media-viewer__fullscreen-toggle {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+  font: inherit;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--tt-brand-cream);
+  background: rgba(0, 0, 0, 0.55);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+}
+.media-viewer__fullscreen-toggle:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+.media-viewer__fullscreen-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The row under the frame: the video-preview hint on the leading edge, the
+   "Open original" link on the trailing one. */
+.media-viewer__stage-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.media-viewer__stage-footer:empty {
+  display: none;
+}
+
+.media-viewer__original {
+  margin-inline-start: auto;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-primary);
 }
 
 .media-viewer__image {

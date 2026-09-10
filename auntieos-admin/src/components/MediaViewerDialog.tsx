@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { updateMediaCaption, mediaWriteErrorMessage, MAX_CAPTION_LENGTH } from '../api/mediaWrite';
@@ -108,6 +108,66 @@ export function MediaViewerDialog({
   const [saveError, setSaveError] = useState<string | null>(null);
   const captionInputId = useId();
 
+  /**
+   * #691, "cannot view the entire photo". The stage no longer caps itself at
+   * 512px, and these two states are the rest of the answer: the Fullscreen API
+   * when the browser has it, and a near-viewport modal when it does not.
+   *
+   * `expanded` is the fallback, and it is deliberately a SECOND state rather
+   * than a value derived from `nativeFullscreen`: a browser that refuses the
+   * request (an iframe with no `allow="fullscreen"`, a permission policy, iOS
+   * Safari, which has never implemented `Element.requestFullscreen`) must still
+   * get a bigger picture out of the button, not a control that does nothing.
+   */
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+
+  // The browser owns this state, so it is read back from the browser rather than
+  // assumed on click: Escape and the browser's own exit affordance both leave
+  // fullscreen without telling this component, and a label that then still said
+  // "Exit fullscreen" would be lying about where the user is.
+  useEffect(() => {
+    function sync() {
+      setNativeFullscreen(
+        stageRef.current !== null && document.fullscreenElement === stageRef.current,
+      );
+    }
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  function toggleFullscreen() {
+    const el = stageRef.current;
+    if (nativeFullscreen) {
+      // Ignoring the rejection is the right thing: the only failure mode is
+      // "already not fullscreen", which is the state the caller asked for.
+      if (typeof document.exitFullscreen === 'function') {
+        void document.exitFullscreen().catch(() => undefined);
+      }
+      return;
+    }
+    if (el !== null && typeof el.requestFullscreen === 'function') {
+      void el.requestFullscreen().then(
+        () => undefined,
+        // Refused. Fall back rather than leaving the operator with a button
+        // that swallowed their click.
+        () => setExpanded(true),
+      );
+      return;
+    }
+    setExpanded((wasExpanded) => !wasExpanded);
+  }
+
+  const bigger = nativeFullscreen || expanded;
+  /**
+   * The full-resolution file itself, for the "Open original" link. Only ever
+   * offered for a kind that HAS a frame to open: a document or audio row has no
+   * viewer URL, and a link labelled "Open original" that led nowhere would be
+   * worse than no link.
+   */
+  const originalUrl = mediaKindHasPreview(kind) ? mediaViewerUrl(shown) : undefined;
+
   function startEditing() {
     // Seeds from the stored `description`, NOT from `mediaCaption`: the caption
     // shown falls back to the original filename, and pre-filling the editor with
@@ -138,7 +198,7 @@ export function MediaViewerDialog({
     <Dialog
       title={title}
       onClose={onClose}
-      size="wide"
+      size={bigger ? 'full' : 'wide'}
       footer={
         <>
           {!editing && <GhostButton label="Edit caption" onClick={startEditing} />}
@@ -146,11 +206,37 @@ export function MediaViewerDialog({
         </>
       }
     >
-      <div className="media-viewer">
-        <ViewerStage kind={kind} url={mediaKindHasPreview(kind) ? mediaViewerUrl(shown) : undefined} label={title} />
-        {kind === 'video' && (
-          <p className="media-viewer__hint">Video preview only. Open the original to play it.</p>
-        )}
+      <div className="media-viewer" data-expanded={bigger}>
+        <ViewerStage
+          kind={kind}
+          url={originalUrl}
+          label={title}
+          stageRef={stageRef}
+          fullscreen={bigger}
+          onToggleFullscreen={toggleFullscreen}
+        />
+        <div className="media-viewer__stage-footer">
+          {kind === 'video' && (
+            <p className="media-viewer__hint">Video preview only. Open the original to play it.</p>
+          )}
+          {/*
+            #691. The stage shows the whole frame, letterboxed, at whatever size
+            the viewport allows; this is the way out to the file itself, at its
+            own resolution, in a tab the browser can zoom and save. Videos have
+            been pointed at "the original" in prose since this viewer shipped
+            with nothing to point AT, so the link serves both kinds.
+          */}
+          {originalUrl !== undefined && (
+            <a
+              className="media-viewer__original"
+              href={originalUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open original
+            </a>
+          )}
+        </div>
 
         {editing && (
           <div className="media-viewer__caption-editor">
@@ -217,17 +303,52 @@ export function MediaViewerDialog({
  * cropped"). Tracks which url failed (not a bare boolean) for the same reason
  * Avatar does: a changed media prop must get its own load attempt.
  *
+ * #691. The stage used to be `height: min(60vh, 32rem)`, which boxed a 1080px
+ * photo into about 512px on a laptop and offered no way out of it. It now takes
+ * the viewport height less the dialog's own chrome, and carries the fullscreen
+ * toggle below, so "cannot view the entire photo" has three answers: a bigger
+ * stage, a real fullscreen element, and the "Open original" link beneath it.
+ *
  * Document/audio, and the degenerate row this port must not crash on (a
  * `media_files` doc with no `fileType`, no caption, and no preview URL at
  * all — see #388), all resolve to `url === undefined` here, which renders the
  * glyph fallback below rather than an empty `<img>`.
  */
-function ViewerStage({ kind, url, label }: { kind: MediaKind; url: string | undefined; label: string }) {
+function ViewerStage({
+  kind,
+  url,
+  label,
+  stageRef,
+  fullscreen,
+  onToggleFullscreen,
+}: {
+  kind: MediaKind;
+  url: string | undefined;
+  label: string;
+  stageRef: RefObject<HTMLDivElement | null>;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+}) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = url !== undefined && failedUrl !== url;
 
   return (
-    <div className="media-viewer__stage">
+    <div className="media-viewer__stage" ref={stageRef}>
+      {/*
+        #691. INSIDE the stage, not in the dialog footer, and that is the whole
+        reason it is positioned rather than laid out: when the Fullscreen API
+        promotes this element, nothing outside it is painted, so a toggle in the
+        footer would vanish at the exact moment it started working, leaving no
+        way back but Escape.
+      */}
+      <button
+        type="button"
+        className="media-viewer__fullscreen-toggle"
+        aria-pressed={fullscreen}
+        onClick={onToggleFullscreen}
+      >
+        {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      </button>
       {showImage && url !== undefined ? (
         <img
           className="media-viewer__image"

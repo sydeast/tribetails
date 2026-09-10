@@ -253,3 +253,96 @@ describe('MediaViewerDialog, caption editing (#397 S3)', () => {
     expect(updateMediaCaption).not.toHaveBeenCalled();
   });
 });
+describe('MediaViewerDialog, seeing the whole photo (#691)', () => {
+  it('links out to the original file for an image, the way the video hint has always promised', () => {
+    render(
+      <MediaViewerDialog
+        media={media({ description: 'Rufus at the park', storageUrl: 'https://cdn/full.jpg', thumbnailUrl: 'https://cdn/thumb.jpg' })}
+        onClose={vi.fn()}
+      />,
+    );
+    const link = screen.getByRole('link', { name: 'Open original' });
+    // The full-resolution file, never the 300px thumbnail the tile uses.
+    expect(link).toHaveAttribute('href', 'https://cdn/full.jpg');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('links out to the original for a video too', () => {
+    render(
+      <MediaViewerDialog
+        media={media({ fileType: 'VIDEO', description: 'Walkies', storageUrl: 'https://cdn/clip.mp4' })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('link', { name: 'Open original' })).toHaveAttribute('href', 'https://cdn/clip.mp4');
+  });
+
+  it('offers no "Open original" link for a document: there is no frame to open', () => {
+    render(<MediaViewerDialog media={media({ fileType: 'DOCUMENT', description: 'Vet notes' })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: 'Open original' })).toBeNull();
+  });
+
+  it('offers a fullscreen toggle on the stage itself, not in the footer the fullscreen element would hide', () => {
+    const { container } = render(
+      <MediaViewerDialog media={media({ description: 'Rufus', storageUrl: 'https://cdn/full.jpg' })} onClose={vi.fn()} />,
+    );
+    const toggle = screen.getByRole('button', { name: 'Fullscreen' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.closest('.media-viewer__stage')).toBe(container.querySelector('.media-viewer__stage'));
+  });
+
+  it('falls back to the larger modal when the browser has no Fullscreen API, rather than swallowing the click', async () => {
+    // jsdom implements neither `Element.requestFullscreen` nor
+    // `document.exitFullscreen`, which is exactly the case this fallback is for
+    // (iOS Safari, an iframe with no `allow="fullscreen"`, a locked-down
+    // webview). The button must still make the picture bigger.
+    const { container } = render(
+      <MediaViewerDialog media={media({ description: 'Rufus', storageUrl: 'https://cdn/full.jpg' })} onClose={vi.fn()} />,
+    );
+    expect(container.querySelector('.dialog--full')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+    expect(container.querySelector('.dialog--full')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Exit fullscreen' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'Exit fullscreen' }));
+    expect(container.querySelector('.dialog--full')).toBeNull();
+  });
+
+  it('uses the Fullscreen API when the browser has one, and does not open the fallback modal instead', async () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(Element.prototype, 'requestFullscreen', {
+      value: requestFullscreen,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const { container } = render(
+        <MediaViewerDialog media={media({ description: 'Rufus', storageUrl: 'https://cdn/full.jpg' })} onClose={vi.fn()} />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+      expect(requestFullscreen).toHaveBeenCalledOnce();
+      // The real thing was granted, so the fallback must NOT also fire: two
+      // "bigger" states at once is a panel the operator cannot get out of.
+      expect(container.querySelector('.dialog--full')).toBeNull();
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'requestFullscreen');
+    }
+  });
+
+  it('falls back to the larger modal when the browser REFUSES the fullscreen request', async () => {
+    const requestFullscreen = vi.fn().mockRejectedValue(new Error('permissions policy'));
+    Object.defineProperty(Element.prototype, 'requestFullscreen', {
+      value: requestFullscreen,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const { container } = render(
+        <MediaViewerDialog media={media({ description: 'Rufus', storageUrl: 'https://cdn/full.jpg' })} onClose={vi.fn()} />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Fullscreen' }));
+      await waitFor(() => expect(container.querySelector('.dialog--full')).not.toBeNull());
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'requestFullscreen');
+    }
+  });
+});
