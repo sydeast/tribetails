@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, linkOptions } from '@tanstack/react-router';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
-import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { getKin411 } from '../api/recipientContext';
 import { type Async } from '../lib/async';
@@ -20,7 +19,6 @@ import {
 } from '../components/KinfolkProfileFeeds';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
-import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { MaskedValue } from '../components/MaskedValue';
 import { PrimaryButton } from '../components/Buttons';
 import { KinfolkEdit } from './KinfolkEdit';
@@ -125,8 +123,11 @@ function firstNonBlank(...values: string[]): string {
  * fielded sections (Contact / the access panel / Emergency Contacts) stay, because every
  * field in them is persisted and an Auntie standing on a doorstep needs the gate
  * code. Same for the controls the mock does not draw (Edit, Household data,
- * Members and invites, the tag editor, the masked secrets, the vet panels): each
- * is a standing ruling or a route decision made after this mock was drawn.
+ * Members and invites, the masked secrets, the vet panels): each is a standing
+ * ruling or a route decision made after this mock was drawn. Household tags
+ * moved the other way (#681): they now show as read-only pills in the hero,
+ * and the tag editor itself lives on the Edit form rather than on this
+ * read-only screen.
  *
  * Sub-views this profile can swap in: Directory owns the Directory/profile
  * switch the same way, so the editor, the household record and the KinTale
@@ -222,7 +223,16 @@ export function KinfolkProfile({
           // loaded before the edit.
           load();
         }}
-        onCancel={() => setView('profile')}
+        onCancel={() => {
+          setView('profile');
+          // The Edit form's tag panel saves each add/remove the moment it
+          // happens (ProfileTagsSection's own optimistic save), not on this
+          // screen's Save button. Cancelling out still leaves those tag writes
+          // in place, so this re-reads too: otherwise the hero's tag pills would
+          // keep showing what was loaded before the edit, not what is now
+          // actually on the household.
+          load();
+        }}
       />
     );
   }
@@ -304,6 +314,16 @@ export function KinfolkProfile({
             {/* Tenure, from the join date. Absent when the stored date is one
                 nobody can read, rather than a fabricated "0 months". */}
             {tenure !== null && <span className="kprofile__chip kprofile__chip--tenure">{tenure}</span>}
+            {/* Household tags, read-only pills next to the name and status
+                (#681). The mock's hero draws its `.tags` row this way; editing
+                them is a Kinfolk edit rather than a hero action, so it lives on
+                the Edit form (`KinfolkEdit`'s own Tags panel), not here. */}
+            {loaded !== null &&
+              loaded.tags.map((tag) => (
+                <span key={tag} className="kprofile__chip kprofile__chip--tag">
+                  {tag}
+                </span>
+              ))}
           </div>
         </div>
         <div className="kinfolk-profile__actions">
@@ -430,15 +450,11 @@ export function KinfolkProfile({
                     address above is one. */}
                 <HouseholdVetPanels kinfolkId={kinfolkId} />
 
-                {/* The mock's "Auntie's notes · admin only". Admin-only, and
-                    only ever on an admin surface: see the panel's own note. */}
+                {/* The mock's "Auntie's notes · admin only", last in this
+                    column now that household tags moved to the hero (#681).
+                    Admin-only, and only ever on an admin surface: see the
+                    panel's own note. */}
                 <AuntieNotesPanel kinfolkId={kinfolkId} />
-
-                <ProfileTagsSection
-                  scope="household"
-                  initialTags={p.tags}
-                  onSaveTags={(next) => updateKinfolkTags(p._id !== '' ? p._id : kinfolkId, next)}
-                />
               </>
             )}
           </AsyncRegion>

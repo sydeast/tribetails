@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
@@ -10,16 +10,6 @@ const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }))
 vi.mock('../api/kinfolkProfile', async (orig) => ({
   ...(await orig<typeof import('../api/kinfolkProfile')>()),
   getKinfolkProfile,
-}));
-// The Tags panel (ProfileTagsSection) loads the vocab + persists tag edits.
-const getBusinessSettings = vi.fn();
-vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
-const saveBusinessSettings = vi.fn();
-vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
-const { updateKinfolkTags } = vi.hoisted(() => ({ updateKinfolkTags: vi.fn() }));
-vi.mock('../api/directoryWrite', async (orig) => ({
-  ...(await orig<typeof import('../api/directoryWrite')>()),
-  updateKinfolkTags,
 }));
 
 // The child screens own their own loaders and their own suites (KinfolkEdit 24
@@ -115,12 +105,6 @@ function kin(over: Partial<Kin> = {}): Kin {
 
 beforeEach(() => {
   getKinfolkProfile.mockReset();
-  getBusinessSettings.mockReset();
-  getBusinessSettings.mockResolvedValue({ householdTags: [], petTags: [] });
-  saveBusinessSettings.mockReset();
-  saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
-  updateKinfolkTags.mockReset();
-  updateKinfolkTags.mockResolvedValue(undefined);
   getKin411.mockReset();
   getKin411.mockResolvedValue(null);
   getDossier.mockReset();
@@ -263,12 +247,22 @@ describe('KinfolkProfile', () => {
     expect(screen.queryByRole('button', { name: /^show /i })).toBeNull();
   });
 
-  it('shows and edits household tags, saving via updateKinfolkTags', async () => {
-    getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP'] }));
+  it('shows household tags as read-only pills in the hero, with no editor on this screen (#681)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP', 'Slow pay'] }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByText('VIP')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
-    await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('k1', ['VIP', 'Slow pay']));
+    expect(screen.getByText('Slow pay')).toBeInTheDocument();
+    // Tag editing moved to the Edit form; the read-only profile offers no way
+    // to add or remove one.
+    expect(screen.queryByLabelText(/add a household tag/i)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
+  });
+
+  it('shows no tag pills at all when the household has none', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ tags: [] }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('512-555-1000');
+    expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
   });
 });
 
@@ -286,6 +280,20 @@ describe('KinfolkProfile: sub-view wiring', () => {
     await user.click(screen.getByRole('button', { name: /stub cancel/i }));
     expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
     expect(screen.queryByText('STUB KinfolkEdit')).not.toBeInTheDocument();
+  });
+  /**
+   * The Edit form's tag panel auto-saves on every add/remove (#681), so a
+   * Cancel out of the editor can still leave a tag write behind it. This
+   * re-reads so the hero's pills catch up rather than showing what loaded
+   * before the visit to Edit.
+   */
+  it('re-reads the household on cancel, so a tag saved during the edit is not left stale', async () => {
+    const user = userEvent.setup();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }));
+    await user.click(screen.getByRole('button', { name: /stub cancel/i }));
+    await screen.findByRole('button', { name: /back to directory/i });
+    expect(getKinfolkProfile).toHaveBeenCalledTimes(2);
   });
   it('swaps in the household record', async () => {
     const user = userEvent.setup();

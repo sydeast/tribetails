@@ -6,6 +6,7 @@ import {
   updateKinfolkProfile,
   type KinfolkEditPatch,
 } from '../api/kinfolkProfileWrite';
+import { updateKinfolkTags } from '../api/directoryWrite';
 import {
   KINFOLK_ARCHIVED_STATUS,
   KINFOLK_STATUS_OPTIONS,
@@ -23,6 +24,7 @@ import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
 import { MaskedValue } from '../components/MaskedValue';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { useToast } from '../components/Toast';
 import './KinfolkEdit.css';
 
@@ -61,9 +63,11 @@ import './KinfolkEdit.css';
  *    so nothing here can set `profilePictureUrl` without widening that shared
  *    module. Left to the media surface that owns it.
  *
- * Tags are not duplicated here either: `ProfileTagsSection` on KinfolkProfile
- * already owns them through `updateKinfolkTags`, and two writers for one field
- * is how they drift.
+ * TAGS EDITING LIVES HERE (#681, moved off the read-only profile). It used to
+ * sit as a `ProfileTagsSection` panel at the foot of `KinfolkProfile`'s left
+ * column; the operator wanted household tags shown as read-only pills in the
+ * hero instead, and reusing the SAME `ProfileTagsSection` component here rather
+ * than a second one keeps `updateKinfolkTags` the only writer of this field.
  */
 
 interface KinfolkEditProps {
@@ -384,6 +388,18 @@ export function KinfolkEdit({ kinfolkId, kinfolkName, onDone, onCancel }: Kinfol
                   />
                 </fieldset>
               </DenPanel>
+
+              {/* Household tags (#681): moved here from the read-only profile,
+                  which now shows them as pills in the hero instead. Reuses the
+                  same `ProfileTagsSection` the profile used to render, so
+                  `updateKinfolkTags` stays the one writer of this field. It
+                  saves each add/remove immediately, independent of this form's
+                  own Save button. */}
+              <ProfileTagsSection
+                scope="household"
+                initialTags={loaded.status === 'ready' ? loaded.data.tags : []}
+                onSaveTags={(next) => updateKinfolkTags(kinfolkId, next)}
+              />
 
               <DenPanel title="Home & access" subtitle="Gate codes, parking, and how to get in the door.">
                 <fieldset className="kfedit__grid" disabled={busy}>
