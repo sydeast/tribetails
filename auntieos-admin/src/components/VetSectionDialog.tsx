@@ -6,7 +6,7 @@ import { VetClinicPicker, EMPTY_VET_CLINIC, type VetClinicSelection } from './Ve
 import { type Async } from '../lib/async';
 import { selectableClinics, type VetClinic } from '../api/vetClinics';
 import { resolveHouseholdVet, type ResolvedVet } from '../lib/householdVet';
-import { type HouseholdSectionSpec } from '../lib/householdDataSchema';
+import { legacyVetKeysForSlot, type HouseholdFields, type HouseholdSectionSpec } from '../lib/householdDataSchema';
 import { saveHouseholdSection, type HouseholdRecord } from '../api/householdData';
 import './HouseholdSectionDialog.css';
 
@@ -31,12 +31,22 @@ interface Props {
  * `VetClinicPicker` the rest of the product uses, and the value is always a row
  * that already exists in the bank.
  *
- * THE PATCH IS TWO KEYS, AND ONLY TWO. `primaryVetClinicId` and
- * `emergencyVetClinicId`. The seven free-text `primaryVet*` / `emergencyVet*`
- * fields the section also lists are the retired copy: read for a household that
- * predates the catalog, shown when they linger, never written. Patching them
- * back out with every save is what the old path did, which quietly re-authored
- * data three places in this codebase promise nothing writes any more.
+ * THE PATCH IS THE TWO CLINIC IDS, PLUS A CLEAR FOR ANY SLOT THAT IS LINKED.
+ * `primaryVetClinicId` and `emergencyVetClinicId` are the only fields this
+ * dialog ever fills in with real text. The seven free-text `primaryVet*` /
+ * `emergencyVet*` fields the section also lists are the retired copy: read for
+ * a household that predates the catalog, shown when they linger, never
+ * authored again.
+ *
+ * BUT A LINKED SLOT CLEARS ITS OWN LEGACY FIELDS IN THE SAME WRITE
+ * (`legacyVetKeysForSlot`, issue #677). Before this, choosing a clinic here left
+ * the old typed text sitting on the record forever, since nothing in the admin
+ * ever touched it. From the operator's chair that reads as "cannot update vet":
+ * the clinic picker shows the new practice, the read view shows the new
+ * practice, and the same record still carries a name nobody chose. Clearing the
+ * matching slot's legacy text the moment it is superseded is what makes this
+ * dialog the one place a stale copy can actually be retired, rather than a
+ * banner that can only report it.
  *
  * WHY HERE AND NOT ON THE PROFILE, which is where android sends you ("Edit on
  * the profile", `ui/directory/HouseholdDataScreen.kt`). React went the other
@@ -86,10 +96,21 @@ export function VetSectionDialog({
     setSaving(true);
     setSaveError(null);
     try {
-      const next = await saveHouseholdSection(record, {
+      const patch: Partial<HouseholdFields> = {
         primaryVetClinicId: primary.clinicId,
         emergencyVetClinicId: emergency.clinicId,
-      });
+      };
+      // A linked slot's legacy text is retired the moment the link is saved:
+      // it is superseded by the clinic and nothing else in the admin will ever
+      // clear it. An unlinked slot keeps its legacy text, since that text is
+      // the vet actually shown for it.
+      if (primary.clinicId.trim() !== '') {
+        for (const key of legacyVetKeysForSlot('primary')) patch[key] = '';
+      }
+      if (emergency.clinicId.trim() !== '') {
+        for (const key of legacyVetKeysForSlot('emergency')) patch[key] = '';
+      }
+      const next = await saveHouseholdSection(record, patch);
       setSaving(false);
       onSaved(next);
     } catch (err) {

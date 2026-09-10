@@ -3,7 +3,8 @@ import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
-import { GhostButton } from '../components/Buttons';
+import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { Dialog } from '../components/Dialog';
 import { MaskedValue } from '../components/MaskedValue';
 import { HouseholdSectionDialog } from '../components/HouseholdSectionDialog';
 import { VetSectionDialog } from '../components/VetSectionDialog';
@@ -14,6 +15,8 @@ import {
   HOUSEHOLD_SECTIONS,
   legacyVetLeftovers,
   sectionFilledCount,
+  type HouseholdFields,
+  type HouseholdFieldSpec,
   type HouseholdSectionSpec,
 } from '../lib/householdDataSchema';
 import { useCollection } from '../lib/firestore';
@@ -23,6 +26,7 @@ import {
   blankHouseholdRecord,
   getDossierHouseholdNotes,
   getHouseholdData,
+  saveHouseholdSection,
   type HouseholdRecord,
 } from '../api/householdData';
 import './HouseholdData.css';
@@ -140,6 +144,19 @@ function HouseholdRecordView({
   );
 
   /**
+   * The leftovers banner's "Clear old vet notes" write lands here too, so the
+   * view updates from the write's own result the same way every other save
+   * does (see the comment on `state` below for why that matters).
+   */
+  const handleClearedLegacy = useCallback(
+    (next: HouseholdRecord) => {
+      setSaved(next);
+      showToast(`Cleared the old vet notes for ${household}.`);
+    },
+    [showToast, household],
+  );
+
+  /**
    * A landed save OVERRIDES the original read, rather than being merged into it.
    *
    * This is the branch that would otherwise lie: a household with no record
@@ -224,6 +241,7 @@ function HouseholdRecordView({
             kinfolkId={kinfolkId}
             household={household}
             onEdit={setEditing}
+            onCleared={handleClearedLegacy}
             dialog={dialogFor}
             clinics={clinics}
           />
@@ -238,6 +256,7 @@ function HouseholdRecordView({
               <Sections
                 record={current}
                 onEdit={setEditing}
+                onCleared={handleClearedLegacy}
                 clinics={clinics}
               />
               {dialogFor(current)}
@@ -258,12 +277,14 @@ function EmptyRecord({
   kinfolkId,
   household,
   onEdit,
+  onCleared,
   dialog,
   clinics,
 }: {
   kinfolkId: string;
   household: string;
   onEdit: (section: HouseholdSectionSpec) => void;
+  onCleared: (next: HouseholdRecord) => void;
   dialog: (record: HouseholdRecord) => ReactNode;
   clinics: Async<VetClinic[]>;
 }) {
@@ -279,6 +300,7 @@ function EmptyRecord({
       <Sections
         record={blank}
         onEdit={onEdit}
+        onCleared={onCleared}
         clinics={clinics}
       />
       {dialog(blank)}
@@ -289,10 +311,12 @@ function EmptyRecord({
 function Sections({
   record,
   onEdit,
+  onCleared,
   clinics,
 }: {
   record: HouseholdRecord;
   onEdit: (section: HouseholdSectionSpec) => void;
+  onCleared: (next: HouseholdRecord) => void;
   clinics: Async<VetClinic[]>;
 }) {
   return (
@@ -308,6 +332,7 @@ function Sections({
               record={record}
               clinics={clinics}
               onEdit={() => onEdit(section)}
+              onCleared={onCleared}
             />
           );
         }
@@ -374,11 +399,13 @@ function VeterinarySection({
   record,
   clinics,
   onEdit,
+  onCleared,
 }: {
   section: HouseholdSectionSpec;
   record: HouseholdRecord;
   clinics: Async<VetClinic[]>;
   onEdit: () => void;
+  onCleared: (next: HouseholdRecord) => void;
 }) {
   const vet = clinics.status === 'ready' ? resolveHouseholdVet(record, clinics.data) : null;
   // Leftovers are only worth flagging when the slot is LINKED. On an unlinked
@@ -386,6 +413,28 @@ function VeterinarySection({
   // "older notes, not used anywhere" would be both duplicative and false.
   const supersededByLink = vet !== null && (vet.primary.linked || vet.emergency.linked);
   const leftovers = supersededByLink ? legacyVetLeftovers(record) : [];
+
+  const [confirming, setConfirming] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  async function confirmClear() {
+    if (clearing) return;
+    setClearing(true);
+    setClearError(null);
+    try {
+      const patch: Partial<HouseholdFields> = {};
+      for (const field of leftovers) patch[field.key] = '';
+      const next = await saveHouseholdSection(record, patch);
+      setClearing(false);
+      setConfirming(false);
+      onCleared(next);
+    } catch (err) {
+      setClearing(false);
+      setClearError(err instanceof Error ? err.message : 'The clear did not go through.');
+    }
+  }
+
   return (
     <DenPanel
       title={section.title}
@@ -407,19 +456,64 @@ function VeterinarySection({
           <p>
             These were typed before the vet was chosen from the shared bank. They are not used
             anywhere and are not kept up to date. The migration moves anything the record is
-            missing; whatever is left below is a duplicate or a conflict to resolve by hand.
+            missing; whatever is left below can be cleared once you have copied out anything worth
+            keeping.
           </p>
-          <dl className="hdata__facts">
-            {leftovers.map((field) => (
-              <div className="hdata__fact" key={field.key}>
-                <dt className="hdata__fact-label">{field.label}</dt>
-                <dd className="hdata__fact-value">{record[field.key]}</dd>
-              </div>
-            ))}
-          </dl>
+          <LeftoverFacts leftovers={leftovers} record={record} />
+          <GhostButton label="Clear old vet notes" onClick={() => setConfirming(true)} />
         </Banner>
       )}
+      {confirming && (
+        <Dialog
+          title="Clear the old vet notes?"
+          onClose={() => {
+            if (!clearing) setConfirming(false);
+          }}
+          footer={
+            <>
+              <GhostButton label="Cancel" onClick={() => setConfirming(false)} disabled={clearing} />
+              <PrimaryButton
+                label={clearing ? 'Clearing…' : 'Clear'}
+                onClick={() => void confirmClear()}
+                disabled={clearing}
+                busy={clearing}
+              />
+            </>
+          }
+        >
+          <p>
+            This removes the {leftovers.length === 1 ? 'field' : `${leftovers.length} fields`} listed
+            below from this record. The linked vet shown above is unaffected: it lives on the clinic,
+            not here.
+          </p>
+          <LeftoverFacts leftovers={leftovers} record={record} />
+          {clearError !== null && (
+            <Banner tone="error" title="That did not clear">
+              <p>{clearError}</p>
+            </Banner>
+          )}
+        </Dialog>
+      )}
     </DenPanel>
+  );
+}
+/** The leftover legacy vet fields, read-only, shared by the banner and its confirm dialog. */
+function LeftoverFacts({
+  leftovers,
+  record,
+}: {
+  leftovers: readonly HouseholdFieldSpec[];
+  record: HouseholdRecord;
+}) {
+  return (
+    <dl className="hdata__facts">
+      {leftovers.map((field) => (
+        <div className="hdata__fact" key={field.key}>
+          <dt className="hdata__fact-label">{field.label}</dt>
+          <dd className="hdata__fact-value">{record[field.key]}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 function VetFacts({ vet }: { vet: HouseholdVet }) {

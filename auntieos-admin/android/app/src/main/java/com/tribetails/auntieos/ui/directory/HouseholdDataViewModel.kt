@@ -130,7 +130,38 @@ class HouseholdDataViewModel(
     // The vet is authored on the household profile, against the shared clinic
     // catalog, and read through here. The stored fields remain on the model so
     // a household that still carries the old free text can be shown it (and so
-    // the migration can find it), but nothing writes them any more.
+    // the migration can find it); nothing ever authors new text into them
+    // again. `clearLegacyVetLeftovers` below is the one exception, and it only
+    // ever blanks them.
+
+    /**
+     * Issue #677: nothing in this admin could ever retire the old typed vet
+     * text once a clinic replaced it, so it sat on the record forever, which
+     * from the operator's seat read as "cannot update vet". The leftovers card
+     * offers this once there is something to clear; it goes through the same
+     * diffed save every other household-data edit uses
+     * (`HOUSEHOLD_DIFF_FIELDS`), so only the fields that actually change travel
+     * to Firestore.
+     *
+     * Blanks all seven legacy keys regardless of which ones are already empty:
+     * the diff strips the no-op ones back out before the write, so there is
+     * nothing to gain from checking here first.
+     */
+    fun clearLegacyVetLeftovers() {
+        val current = _uiState.value.householdData
+        _uiState.value = _uiState.value.copy(
+            householdData = current.copy(
+                primaryVetName = "",
+                primaryVetPhone = "",
+                primaryVetAddress = "",
+                primaryVetHours = "",
+                emergencyVetName = "",
+                emergencyVetPhone = "",
+                emergencyVetAddress = "",
+            ),
+        )
+        saveHouseholdData()
+    }
 
     // Household Items & Locations
     fun updateFoodLocation(value: String) {
