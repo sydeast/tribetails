@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Timestamp } from 'firebase/firestore';
-import { tsToDate, dayKey, formatWhen, machineWhen } from './time';
+import { tsToDate, dayKey, formatWhen, formatWhenFull, machineWhen } from './time';
 
 /** A fake Firestore Timestamp wrapping a real (local) Date. */
 function ts(d: Date): Timestamp {
@@ -29,6 +29,16 @@ describe('lib/time (local, AO-18)', () => {
 
   it('machineWhen is a local ISO-ish datetime for <time dateTime>', () => {
     expect(machineWhen(ts(new Date(2026, 6, 16, 9, 3)))).toBe('2026-07-16T09:03');
+  });
+
+  it('formatWhenFull renders local YYYY-MM-DD HH:mm, with the year', () => {
+    expect(formatWhenFull(ts(new Date(2026, 6, 16, 9, 3)))).toBe('2026-07-16 09:03');
+    expect(formatWhenFull(ts(new Date(2026, 11, 1, 23, 59)))).toBe('2026-12-01 23:59');
+  });
+
+  it('formatWhenFull is null for a missing timestamp, not a placeholder string', () => {
+    expect(formatWhenFull(null)).toBeNull();
+    expect(formatWhenFull(undefined)).toBeNull();
   });
 
   it('does NOT roll a late-evening local time into the next day (the AO-18 regression)', () => {

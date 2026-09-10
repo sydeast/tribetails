@@ -171,6 +171,72 @@ class FormSchemaUpdatedLabelTest {
         )
     }
 
+    // A blank updatedAt/updatedBy sorting first on ASCENDING was the bug the
+    // sort strip exposed: sortColumn/sortDescending were dead state before this
+    // change, so descending was the only order anyone ever saw a row in.
+    @Test fun `sorts a blank updatedAt last on ASCENDING too, not first`() {
+        val rows = listOf(
+            summary(id = "blank", updatedAt = ""),
+            summary(id = "dated", updatedAt = "2026-01-01T00:00:00.000Z"),
+        )
+        assertEquals(
+            listOf("dated", "blank"),
+            formSchemaSort(rows, SortColumn.UPDATED_AT, descending = false).map { it.id },
+        )
+    }
+
+    @Test fun `sorts a blank updatedBy last in BOTH directions`() {
+        val rows = listOf(
+            summary(id = "blank", updatedBy = ""),
+            summary(id = "has", updatedBy = "admin1"),
+        )
+        assertEquals(
+            listOf("has", "blank"),
+            formSchemaSort(rows, SortColumn.UPDATED_BY, descending = false).map { it.id },
+        )
+        assertEquals(
+            listOf("has", "blank"),
+            formSchemaSort(rows, SortColumn.UPDATED_BY, descending = true).map { it.id },
+        )
+    }
+
+    @Test fun `sorts by name and version, both directions`() {
+        val rows = listOf(
+            summary(id = "b", name = "Bravo", version = 2),
+            summary(id = "a", name = "Alpha", version = 4),
+            summary(id = "c", name = "Charlie", version = 1),
+        )
+        assertEquals(
+            listOf("a", "b", "c"),
+            formSchemaSort(rows, SortColumn.NAME, descending = false).map { it.id },
+        )
+        assertEquals(
+            listOf("c", "b", "a"),
+            formSchemaSort(rows, SortColumn.NAME, descending = true).map { it.id },
+        )
+        assertEquals(
+            listOf("c", "b", "a"),
+            formSchemaSort(rows, SortColumn.VERSION, descending = false).map { it.id },
+        )
+        assertEquals(
+            listOf("a", "b", "c"),
+            formSchemaSort(rows, SortColumn.VERSION, descending = true).map { it.id },
+        )
+    }
+
+    @Test fun `sorts by updatedBy on the RESOLVED label, not the raw uid`() {
+        val rows = listOf(
+            summary(id = "row1", updatedBy = "uid-a"),
+            summary(id = "row2", updatedBy = "uid-b"),
+        )
+        val emailByUid = mapOf("uid-a" to "zed@tribetails.example", "uid-b" to "ann@tribetails.example")
+        assertEquals(
+            listOf("row2", "row1"),
+            formSchemaSort(rows, SortColumn.UPDATED_BY, descending = false) { emailByUid[it] ?: it }
+                .map { it.id },
+        )
+    }
+
     @Test fun `never drops or duplicates a row, whatever the input classes are`() {
         val rows = listOf(
             summary(id = "iso", updatedAt = "2026-08-02T10:15:00.000Z"),

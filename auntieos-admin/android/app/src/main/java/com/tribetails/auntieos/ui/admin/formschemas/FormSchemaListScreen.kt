@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,7 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -51,10 +56,10 @@ import kotlinx.coroutines.launch
  * web counterpart (web/.../admin/formschemas/FormSchemaListScreen.kt).
  *
  * A mono kicker + serif heading, a dashed "New schema" add affordance, and a glass
- * [DenPanel] holding the schema rows. Each row is an [AuntieEntityRow] showing the
- * schema name, its id, and updated metadata, with an [AuntieStatusPill] version tag.
- * Load failures surface loudly via [AuntieBanner] (fail-loud policy), never a silent
- * empty list.
+ * [DenPanel] holding a sort strip ([SchemaSortHeader], issue #717) over the schema
+ * rows. Each row is an [AuntieEntityRow] showing the schema name, its id, and
+ * updated metadata, with an [AuntieStatusPill] version tag. Load failures surface
+ * loudly via [AuntieBanner] (fail-loud policy), never a silent empty list.
  *
  * The android ViewModel/repository contract is preserved exactly:
  * [AuntieRepository.listFormSchemas] returns Result<List<FormSchemaSummary>>, and
@@ -102,7 +107,7 @@ internal enum class SortColumn { NAME, VERSION, UPDATED_AT, UPDATED_BY }
 /**
  * The list order. Lifted out of the composable so it is unit-testable, the same
  * treatment [formSchemaSearchFilter] already has; the comparators are the ones
- * that were inline here, unchanged.
+ * that were inline here, blank-handling fixed (see below).
  *
  * COMPARING `updatedAt` AS A STRING IS CORRECT, and that is a checked claim.
  * The sibling defect confirmed in production (PR #241) was this exact shape:
@@ -113,25 +118,53 @@ internal enum class SortColumn { NAME, VERSION, UPDATED_AT, UPDATED_BY }
  * after `listFormSchemas#toIsoOrNull` has run `.toDate().toISOString()` over
  * it, so every non-blank value is a fixed-width `YYYY-MM-DDTHH:mm:ss.sssZ` UTC
  * instant, for which lexicographic order IS chronological order. The React
- * admin's `sortByUpdatedAtDesc` rests on the same audit and is left comparing
- * raw strings for the same reason.
+ * admin's `sortSchemas` rests on the same audit and is left comparing raw
+ * strings for the same reason.
  *
- * A blank `updatedAt` sorts LAST in the shipped (descending) order, because ""
- * precedes every instant ascending. That matches the React sibling, which sorts
- * blanks last explicitly.
+ * A blank `updatedAt` or `updatedBy` sorts LAST in BOTH directions, matching
+ * the React sibling's `sortSchemas`. Blank-last is handled as its own
+ * comparison, independent of `descending`, rather than by reversing the whole
+ * comparator: reversing would put a blank row FIRST on an ascending sort (""
+ * precedes every real value), which is the bug this fixes. `sortColumn` /
+ * `sortDescending` were dead state before this change, always UPDATED_AT/true
+ * with no header to move them: the sort strip added to the screen below is
+ * what actually calls this with every column and both directions now.
+ *
+ * `updatedByLabel` resolves a raw `updatedBy` uid to what the row actually
+ * DISPLAYS (an admin's email, when [FormSchemaListScreen] has one from
+ * `listBusinessAdmins`) before comparing, so the on-screen order matches what
+ * the operator is looking at, the same reasoning the React sibling's
+ * `resolveUpdatedBy` + `sortSchemas` use. Defaults to identity so the existing
+ * uid-based tests below still hold.
  */
 internal fun formSchemaSort(
     schemas: List<FormSchemaSummary>,
     column: SortColumn,
     descending: Boolean,
+    updatedByLabel: (String) -> String = { it },
 ): List<FormSchemaSummary> {
-    val comparator: Comparator<FormSchemaSummary> = when (column) {
-        SortColumn.NAME       -> compareBy { it.name.lowercase() }
-        SortColumn.VERSION    -> compareBy { it.version }
-        SortColumn.UPDATED_AT -> compareBy { it.updatedAt }
-        SortColumn.UPDATED_BY -> compareBy { it.updatedBy.lowercase() }
+    val dir = if (descending) -1 else 1
+
+    fun blankLast(aBlank: Boolean, bBlank: Boolean): Int? =
+        if (aBlank == bBlank) null else if (aBlank) 1 else -1
+
+    val comparator = Comparator<FormSchemaSummary> { a, b ->
+        when (column) {
+            SortColumn.NAME -> a.name.lowercase().compareTo(b.name.lowercase()) * dir
+            SortColumn.VERSION -> a.version.compareTo(b.version) * dir
+            SortColumn.UPDATED_AT -> {
+                blankLast(a.updatedAt.isBlank(), b.updatedAt.isBlank())
+                    ?: (a.updatedAt.compareTo(b.updatedAt) * dir)
+            }
+            SortColumn.UPDATED_BY -> {
+                val aLabel = updatedByLabel(a.updatedBy)
+                val bLabel = updatedByLabel(b.updatedBy)
+                blankLast(aLabel.isBlank(), bLabel.isBlank())
+                    ?: (aLabel.lowercase().compareTo(bLabel.lowercase()) * dir)
+            }
+        }
     }
-    return if (descending) schemas.sortedWith(comparator.reversed()) else schemas.sortedWith(comparator)
+    return schemas.sortedWith(comparator)
 }
 
 @Composable
@@ -149,9 +182,16 @@ fun FormSchemaListScreen(
     // Fail-loud: a non-null error string renders an AuntieBanner(Error). Cleared on
     // every successful reload so a stale failure never lingers behind fresh data.
     var loadError by remember { mutableStateOf<String?>(null) }
-    // Default: most-recently-updated first (matches the prior android workflow).
+    // Default: most-recently-updated first (matches the mock's shipped default).
+    // Actually reachable now: the sort strip below calls setSortColumn/onSort,
+    // where before this state had no header to move it and never changed.
     var sortColumn by remember { mutableStateOf(SortColumn.UPDATED_AT) }
     var sortDescending by remember { mutableStateOf(true) }
+    // uid -> email, from listBusinessAdmins (issue #450's roster reader). Loaded
+    // independently of the schemas list: a roster failure must not cost the
+    // operator the schemas list, it only leaves Updated-by showing the raw uid.
+    // Never chained into reload(). Mirrors the React sibling's `emailByUid`.
+    var emailByUid by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // Local-only filter query; the loaded list is filtered client-side, never re-queried.
     var query by remember { mutableStateOf("") }
     // Row-delete: the schema awaiting confirmation (null = no dialog), an in-flight
@@ -169,6 +209,14 @@ fun FormSchemaListScreen(
     }
 
     LaunchedEffect(Unit) { reload() }
+
+    // See emailByUid's doc above: independent load, swallowed failure.
+    LaunchedEffect(Unit) {
+        repository.listBusinessAdmins()
+            .onSuccess { roster ->
+                emailByUid = roster.members.mapNotNull { m -> m.email?.let { m.uid to it } }.toMap()
+            }
+    }
 
     // Confirmed delete: route through the deployed deleteFormSchema callable, then
     // reload so the row disappears only after the server confirms. Fail-loud: a
@@ -190,8 +238,8 @@ fun FormSchemaListScreen(
         }
     }
 
-    val sorted = remember(schemas, sortColumn, sortDescending) {
-        formSchemaSort(schemas, sortColumn, sortDescending)
+    val sorted = remember(schemas, sortColumn, sortDescending, emailByUid) {
+        formSchemaSort(schemas, sortColumn, sortDescending) { uid -> emailByUid[uid] ?: uid }
     }
 
     // Filter the already-sorted list by name or id (always on). Empty query is a
@@ -304,12 +352,33 @@ fun FormSchemaListScreen(
                                     .padding(bottom = dims.space3),
                             )
 
+                            // The sort strip: four tappable column labels, the active one
+                            // tinted with a caret. This is what makes sortColumn /
+                            // sortDescending (declared above) reachable at all; before this
+                            // change nothing in the composable ever assigned them.
+                            SchemaSortHeader(
+                                sortColumn = sortColumn,
+                                sortDescending = sortDescending,
+                                onSort = { column ->
+                                    if (sortColumn == column) {
+                                        sortDescending = !sortDescending
+                                    } else {
+                                        sortColumn = column
+                                        sortDescending = false
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = dims.space2),
+                            )
+
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(dims.space2),
                             ) {
                                 visible.forEachIndexed { idx, row ->
                                     SchemaRow(
                                         row = row,
+                                        emailByUid = emailByUid,
                                         showDivider = idx < visible.lastIndex,
                                         deleting = deletingId == row.id,
                                         deleteEnabled = deletingId == null,
@@ -357,26 +426,41 @@ fun FormSchemaListScreen(
 @Composable
 private fun SchemaRow(
     row: FormSchemaSummary,
+    emailByUid: Map<String, String>,
     showDivider: Boolean,
     deleting: Boolean,
     deleteEnabled: Boolean,
     onClick: () -> Unit,
     onRequestDelete: () -> Unit,
 ) {
-    // Fold the web table's Updated / Updated-by columns into the row subtitle so the
-    // same metadata survives the single-line AuntieEntityRow layout.
+    // Fold the Updated / Updated-by fields into the row subtitle: a phone is one
+    // column wide, so the web table's four columns collapse to this single-line
+    // AuntieEntityRow, per the design doc's Android rule for the redesign (a
+    // phone row carries the same FIELDS the web draws in columns, name/version/
+    // updated/updated-by, all four are still here, just stacked into one line
+    // instead of laid out side by side).
     //
-    // Through [formSchemaUpdatedMeta], NOT the raw fields. This line used to
-    // interpolate `row.updatedAt` directly and printed the machine instant
+    // Through [formSchemaUpdatedMeta], NOT the raw `updatedAt`. This line used
+    // to interpolate `row.updatedAt` directly and printed the machine instant
     // ("updated 2026-08-02T10:15:00.000Z by e2e-admin") at the operator; the
     // helper formats it as a LOCAL `MM-DD HH:mm` and says `date unknown` out
-    // loud when the field is absent, instead of the old bare "-" that read the
-    // same as a blank author. The React admin's `metaLine` was fixed in the same
-    // change and produces the same string for the same input.
+    // loud when the field is absent. This intentionally does NOT match the web
+    // table's own Updated cell, which now prints the FULL local timestamp with
+    // the year in its own column: a bare "-" is unambiguous under a column
+    // header naming the field, but ambiguous stacked into one subtitle line
+    // with nothing to say what field it names, so this row keeps
+    // `formSchemaUpdatedLabel`'s "date unknown" here instead of borrowing "-".
+    //
+    // `updatedBy` is resolved through `emailByUid` (from `listBusinessAdmins`,
+    // loaded by [FormSchemaListScreen]) before it reaches the meta string, so a
+    // known admin's uid reads as their email, matching the web table's Updated
+    // by column; an unresolved value (a seed script name, staff who left) is
+    // shown as-is.
     val subtitle = if (deleting) {
         "Deleting..."
     } else {
-        "${row.id}  ·  ${formSchemaUpdatedMeta(row.updatedAt, row.updatedBy)}"
+        val by = emailByUid[row.updatedBy] ?: row.updatedBy
+        "${row.id}  ·  ${formSchemaUpdatedMeta(row.updatedAt, by)}"
     }
 
     AuntieEntityRow(
@@ -405,4 +489,65 @@ private fun SchemaRow(
             }
         },
     )
+}
+
+/**
+ * The strip that makes [SortColumn] / `sortDescending` in [FormSchemaListScreen]
+ * reachable: four tappable mono labels, weighted 3 / 1 / 2 / 2 to match the web
+ * table's Name / Version / Updated / Updated-by columns, the active one tinted
+ * with a caret that flips for descending. Clicking the active column flips its
+ * direction; clicking a different column selects it ascending, the same click
+ * semantics the mock's header (and this screen's `onSort` callback) describe.
+ *
+ * A phone still renders [SchemaRow] as one card, not four literal columns
+ * (see the design doc's Android rule), so this strip is the part of the mock's
+ * table that DOES have a phone analogue: choosing what order the cards come in.
+ */
+@Composable
+private fun SchemaSortHeader(
+    sortColumn: SortColumn,
+    sortDescending: Boolean,
+    onSort: (SortColumn) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space3)) {
+        SortHeaderCell("Name", SortColumn.NAME, sortColumn, sortDescending, onSort, Modifier.weight(3f))
+        SortHeaderCell("Version", SortColumn.VERSION, sortColumn, sortDescending, onSort, Modifier.weight(1f))
+        SortHeaderCell("Updated", SortColumn.UPDATED_AT, sortColumn, sortDescending, onSort, Modifier.weight(2f))
+        SortHeaderCell("Updated by", SortColumn.UPDATED_BY, sortColumn, sortDescending, onSort, Modifier.weight(2f))
+    }
+}
+
+@Composable
+private fun SortHeaderCell(
+    label: String,
+    column: SortColumn,
+    activeColumn: SortColumn,
+    descending: Boolean,
+    onSort: (SortColumn) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = AuntieTheme.colors
+    val active = activeColumn == column
+    Row(
+        modifier = modifier
+            .clickable { onSort(column) }
+            .padding(vertical = AuntieTheme.dims.space1),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space1),
+    ) {
+        Text(
+            text = label.uppercase(),
+            style = AuntieTheme.typography.labelSmall,
+            color = if (active) c.primary else c.textDim,
+        )
+        if (active) {
+            Icon(
+                imageVector = if (descending) Lucide.ChevronDown else Lucide.ChevronUp,
+                contentDescription = null,
+                tint = c.primary,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
 }

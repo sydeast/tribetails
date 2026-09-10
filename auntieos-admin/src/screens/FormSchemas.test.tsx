@@ -3,18 +3,31 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vites
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type FormSchemaSummary } from '../api/formSchemas';
+import { type BusinessAdminRoster } from '../api/businessAdmins';
 
-const { listFormSchemas, deleteFormSchema } = vi.hoisted(() => ({
+const { listFormSchemas, deleteFormSchema, listBusinessAdmins } = vi.hoisted(() => ({
   listFormSchemas: vi.fn(),
   deleteFormSchema: vi.fn(),
+  listBusinessAdmins: vi.fn(),
 }));
 vi.mock('../api/formSchemas', async (orig) => ({
   ...(await orig<typeof import('../api/formSchemas')>()),
   listFormSchemas,
   deleteFormSchema,
 }));
+vi.mock('../api/businessAdmins', async (orig) => ({
+  ...(await orig<typeof import('../api/businessAdmins')>()),
+  listBusinessAdmins,
+}));
 
-import { FormSchemas, sortByUpdatedAtDesc, filterSchemas, metaLine } from './FormSchemas';
+import {
+  FormSchemas,
+  sortSchemas,
+  filterSchemas,
+  resolveUpdatedBy,
+  DEFAULT_SORT,
+  type SortState,
+} from './FormSchemas';
 
 function schema(over: Partial<FormSchemaSummary>): FormSchemaSummary {
   return {
@@ -28,16 +41,23 @@ function schema(over: Partial<FormSchemaSummary>): FormSchemaSummary {
   };
 }
 
+function roster(members: BusinessAdminRoster['members']): BusinessAdminRoster {
+  return { members, source: 'roster', rosterPath: 'businessSettings/admins.uids', reason: null };
+}
+
 beforeEach(() => {
   listFormSchemas.mockReset();
   deleteFormSchema.mockReset();
+  listBusinessAdmins.mockReset();
+  // Every screen-level test gets a resolved-but-empty roster by default, so a
+  // test that never mocks it does not hang waiting on a pending promise.
+  listBusinessAdmins.mockResolvedValue(roster([]));
 });
 
-// The meta line renders `updatedAt` in the operator's LOCAL zone (AO-18), so
-// every assertion on it would read differently on a UTC CI box than on a
-// laptop. Pinned west of UTC so the local-vs-UTC difference is actually
-// visible in the expected strings, the same discipline
-// lib/formSchemaFormat.test.ts and lib/tribalIntelFormat.test.ts use.
+// updatedAt renders in the operator's LOCAL zone (AO-18), so every assertion
+// on it would read differently on a UTC CI box than on a laptop. Pinned west
+// of UTC so the local-vs-UTC difference is actually visible in the expected
+// strings, the same discipline lib/formSchemaFormat.test.ts uses.
 let originalTz: string | undefined;
 beforeAll(() => {
   originalTz = process.env.TZ;
@@ -48,70 +68,137 @@ afterAll(() => {
   else process.env.TZ = originalTz;
 });
 
-describe('sortByUpdatedAtDesc (pure)', () => {
-  it('orders most-recently-updated first', () => {
-    const older = schema({ id: 'a', updatedAt: '2026-01-01T00:00:00Z' });
-    const newer = schema({ id: 'b', updatedAt: '2026-06-01T00:00:00Z' });
-    expect(sortByUpdatedAtDesc([older, newer])).toEqual([newer, older]);
+const emptyRoster = new Map<string, string>();
+
+describe('resolveUpdatedBy (pure)', () => {
+  it('resolves a known uid to the roster email', () => {
+    const map = new Map([['uid1', 'auntie@tribetails.example']]);
+    expect(resolveUpdatedBy('uid1', map)).toBe('auntie@tribetails.example');
   });
 
-  it('sorts null updatedAt last regardless of direction', () => {
-    const blank = schema({ id: 'blank', updatedAt: null });
-    const dated = schema({ id: 'dated', updatedAt: '2026-01-01T00:00:00Z' });
-    expect(sortByUpdatedAtDesc([blank, dated])).toEqual([dated, blank]);
-    expect(sortByUpdatedAtDesc([dated, blank])).toEqual([dated, blank]);
+  it('shortens an unresolved value that looks like a uid', () => {
+    expect(resolveUpdatedBy('nppJNdMNYJfUigibGKUQj3n4obt2', emptyRoster)).toBe('nppJNdMN…');
   });
 
-  // The string compare is only sound because `listFormSchemas` normalises every
-  // non-null value to a fixed-width `YYYY-MM-DDTHH:mm:ss.sssZ` instant (see the
-  // write-path audit in lib/formSchemaFormat.ts). These pin the shape the sort
-  // depends on, over the digit positions a byte compare could plausibly get
-  // wrong: a single-digit month/day, and a difference that lives only in the
-  // clock or the milliseconds.
-  it('orders full ISO instants chronologically at every digit position', () => {
-    const rows = [
-      schema({ id: 'sep', updatedAt: '2026-09-01T00:00:00.000Z' }),
-      schema({ id: 'jan', updatedAt: '2026-01-31T23:59:59.999Z' }),
-      schema({ id: 'oct', updatedAt: '2026-10-01T00:00:00.000Z' }),
-      schema({ id: 'lastYear', updatedAt: '2025-12-31T23:59:59.999Z' }),
+  it('shows a non-uid unresolved value verbatim (e.g. a seed script name)', () => {
+    expect(resolveUpdatedBy('seed_phase14_schemas', emptyRoster)).toBe('seed_phase14_schemas');
+  });
+
+  it('is null for a blank or null updatedBy, never a placeholder string', () => {
+    expect(resolveUpdatedBy(null, emptyRoster)).toBeNull();
+    expect(resolveUpdatedBy('', emptyRoster)).toBeNull();
+    expect(resolveUpdatedBy('   ', emptyRoster)).toBeNull();
+  });
+});
+
+describe('sortSchemas (pure)', () => {
+  const rows = [
+    schema({ id: 'b', name: 'Bravo', version: 2, updatedAt: '2026-02-01T00:00:00.000Z', updatedBy: 'uid-b' }),
+    schema({ id: 'a', name: 'Alpha', version: 4, updatedAt: '2026-04-01T00:00:00.000Z', updatedBy: 'uid-a' }),
+    schema({ id: 'c', name: 'Charlie', version: 1, updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'uid-c' }),
+  ];
+
+  it('defaults to Updated, descending (DEFAULT_SORT)', () => {
+    expect(DEFAULT_SORT).toEqual<SortState>({ column: 'updatedAt', direction: 'desc' });
+    expect(sortSchemas(rows, emptyRoster, DEFAULT_SORT).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('sorts by name, both directions', () => {
+    expect(sortSchemas(rows, emptyRoster, { column: 'name', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+    expect(sortSchemas(rows, emptyRoster, { column: 'name', direction: 'desc' }).map((r) => r.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+  });
+
+  it('sorts by version numerically, both directions', () => {
+    expect(sortSchemas(rows, emptyRoster, { column: 'version', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+    expect(sortSchemas(rows, emptyRoster, { column: 'version', direction: 'desc' }).map((r) => r.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('sorts by updatedAt, both directions', () => {
+    expect(sortSchemas(rows, emptyRoster, { column: 'updatedAt', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+    expect(sortSchemas(rows, emptyRoster, { column: 'updatedAt', direction: 'desc' }).map((r) => r.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('sorts by updatedBy on the RESOLVED label, not the raw uid', () => {
+    const emailByUid = new Map([
+      ['uid-a', 'zed@tribetails.example'],
+      ['uid-b', 'ann@tribetails.example'],
+      ['uid-c', 'mid@tribetails.example'],
+    ]);
+    // Alphabetically by resolved email: ann (b), mid (c), zed (a).
+    expect(sortSchemas(rows, emailByUid, { column: 'updatedBy', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'b',
+      'c',
+      'a',
+    ]);
+  });
+
+  it('sorts a blank updatedAt last in BOTH directions', () => {
+    const withBlank = [
+      schema({ id: 'blank', updatedAt: null }),
+      schema({ id: 'dated', updatedAt: '2026-01-01T00:00:00.000Z' }),
     ];
-    expect(sortByUpdatedAtDesc(rows).map((r) => r.id)).toEqual(['oct', 'sep', 'jan', 'lastYear']);
+    expect(sortSchemas(withBlank, emptyRoster, { column: 'updatedAt', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'dated',
+      'blank',
+    ]);
+    expect(sortSchemas(withBlank, emptyRoster, { column: 'updatedAt', direction: 'desc' }).map((r) => r.id)).toEqual([
+      'dated',
+      'blank',
+    ]);
   });
 
-  it('separates two instants that differ only in the clock, and only in the millis', () => {
-    const rows = [
-      schema({ id: 'early', updatedAt: '2026-08-02T09:15:00.000Z' }),
-      schema({ id: 'late', updatedAt: '2026-08-02T10:15:00.000Z' }),
-      schema({ id: 'latest', updatedAt: '2026-08-02T10:15:00.001Z' }),
-    ];
-    expect(sortByUpdatedAtDesc(rows).map((r) => r.id)).toEqual(['latest', 'late', 'early']);
-  });
-
-  it('treats an empty-string updatedAt as blank, not as the earliest instant', () => {
-    const empty = schema({ id: 'empty', updatedAt: '' });
-    const dated = schema({ id: 'dated', updatedAt: '2026-01-01T00:00:00.000Z' });
-    expect(sortByUpdatedAtDesc([empty, dated]).map((r) => r.id)).toEqual(['dated', 'empty']);
+  it('sorts a blank updatedBy last in BOTH directions', () => {
+    const withBlank = [schema({ id: 'blank', updatedBy: null }), schema({ id: 'has', updatedBy: 'uid1' })];
+    expect(sortSchemas(withBlank, emptyRoster, { column: 'updatedBy', direction: 'asc' }).map((r) => r.id)).toEqual([
+      'has',
+      'blank',
+    ]);
+    expect(sortSchemas(withBlank, emptyRoster, { column: 'updatedBy', direction: 'desc' }).map((r) => r.id)).toEqual([
+      'has',
+      'blank',
+    ]);
   });
 
   it('never drops or duplicates a row, whatever the input classes are', () => {
-    const rows = [
+    const mixed = [
       schema({ id: 'iso', updatedAt: '2026-08-02T10:15:00.000Z' }),
       schema({ id: 'null', updatedAt: null }),
       schema({ id: 'empty', updatedAt: '' }),
       schema({ id: 'junk', updatedAt: 'not-a-date' }),
     ];
-    const out = sortByUpdatedAtDesc(rows);
+    const out = sortSchemas(mixed, emptyRoster, DEFAULT_SORT);
     expect(out).toHaveLength(4);
     expect([...out.map((r) => r.id)].sort()).toEqual(['empty', 'iso', 'junk', 'null']);
   });
 
   it('does not mutate its input', () => {
-    const rows = [
-      schema({ id: 'a', updatedAt: '2026-01-01T00:00:00.000Z' }),
-      schema({ id: 'b', updatedAt: '2026-06-01T00:00:00.000Z' }),
-    ];
-    sortByUpdatedAtDesc(rows);
-    expect(rows.map((r) => r.id)).toEqual(['a', 'b']);
+    const copy = [...rows];
+    sortSchemas(rows, emptyRoster, { column: 'name', direction: 'asc' });
+    expect(rows).toEqual(copy);
   });
 });
 
@@ -131,76 +218,119 @@ describe('filterSchemas (pure)', () => {
   });
 });
 
-describe('metaLine (pure)', () => {
-  it('joins version, the FORMATTED updatedAt, and updatedBy', () => {
-    // 2026-07-01T00:00:00Z is 2026-06-30 19:00 in America/Chicago (CDT, UTC-5).
-    expect(metaLine(schema({}))).toBe('v3  ·  06-30 19:00  ·  by admin1');
-  });
-
-  it('never leaks the raw machine timestamp the operator was being shown', () => {
-    const line = metaLine(schema({ updatedAt: '2026-08-02T10:15:00.000Z' }));
-    expect(line).not.toContain('2026-08-02T10:15:00.000Z');
-    expect(line).not.toContain('T10:15');
-    expect(line).not.toContain('.000Z');
-    expect(line).toBe('v3  ·  08-02 05:15  ·  by admin1');
-  });
-
-  it('says "date unknown" for a null updatedAt rather than leaving a gap', () => {
-    expect(metaLine(schema({ updatedAt: null, updatedBy: '' }))).toBe('v3  ·  date unknown');
-  });
-
-  it('keeps updatedBy when only the date is missing', () => {
-    expect(metaLine(schema({ updatedAt: null }))).toBe('v3  ·  date unknown  ·  by admin1');
-  });
-
-  it('drops a blank updatedBy without a stray separator', () => {
-    expect(metaLine(schema({ updatedBy: '' }))).toBe('v3  ·  06-30 19:00');
-  });
-
-  it('shows an unparseable updatedAt verbatim, never "Invalid Date" or "NaN"', () => {
-    const line = metaLine(schema({ updatedAt: 'sometime last Tuesday' }));
-    expect(line).toBe('v3  ·  sometime last Tuesday  ·  by admin1');
-    expect(line).not.toMatch(/Invalid Date|NaN/);
-  });
-});
-
 describe('FormSchemas screen', () => {
-  it('loads and renders rows with name, id, and meta', async () => {
+  it('loads and renders the table with a name, id, version pill, updated, and updated-by cell', async () => {
     listFormSchemas.mockResolvedValue([schema({})]);
+    listBusinessAdmins.mockResolvedValue(
+      roster([{ uid: 'admin1', email: 'auntie@tribetails.example', displayName: null, hasStaffRecord: true, defaultAssignee: false }]),
+    );
     render(<FormSchemas />);
     expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
     expect(screen.getByText('tribeProfile')).toBeInTheDocument();
-    expect(screen.getByText('v3 · 06-30 19:00 · by admin1')).toBeInTheDocument();
+    expect(screen.getByText('v3')).toBeInTheDocument();
+    // 2026-07-01T00:00:00Z is 2026-06-30 19:00 in America/Chicago (CDT, UTC-5).
+    expect(screen.getByText('2026-06-30 19:00')).toBeInTheDocument();
+    expect(await screen.findByText('auntie@tribetails.example')).toBeInTheDocument();
   });
 
-  it('renders a human local time on the row, never the raw ISO instant', async () => {
+  it('renders the table headers as sort controls, Updated active and descending by default', async () => {
+    listFormSchemas.mockResolvedValue([schema({})]);
+    render(<FormSchemas />);
+    await screen.findByText('Tribe Profile');
+    expect(screen.getByRole('columnheader', { name: /updated$/i })).toHaveAttribute('aria-sort', 'descending');
+    expect(screen.getByRole('columnheader', { name: /^name/i })).toHaveAttribute('aria-sort', 'none');
+    expect(screen.getByRole('columnheader', { name: /^version/i })).toHaveAttribute('aria-sort', 'none');
+    expect(screen.getByRole('columnheader', { name: /updated by/i })).toHaveAttribute('aria-sort', 'none');
+  });
+
+  it('sorts by a column when its header is clicked, and flips direction on a second click', async () => {
     listFormSchemas.mockResolvedValue([
-      schema({ id: 'intake-household', name: 'Household intake', version: 4, updatedAt: '2026-08-02T10:15:00.000Z', updatedBy: 'e2e-admin' }),
+      schema({ id: 'b', name: 'Bravo', version: 2 }),
+      schema({ id: 'a', name: 'Alpha', version: 4 }),
+    ]);
+    render(<FormSchemas />);
+    await screen.findByText('Bravo');
+
+    function bodyRowIds(): (string | null | undefined)[] {
+      return screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
+    }
+
+    await userEvent.click(screen.getByRole('button', { name: /^name/i }));
+    expect(bodyRowIds()).toEqual(['a', 'b']);
+    expect(screen.getByRole('columnheader', { name: /^name/i })).toHaveAttribute('aria-sort', 'ascending');
+
+    await userEvent.click(screen.getByRole('button', { name: /^name/i }));
+    expect(bodyRowIds()).toEqual(['b', 'a']);
+    expect(screen.getByRole('columnheader', { name: /^name/i })).toHaveAttribute('aria-sort', 'descending');
+  });
+
+  it('selecting a new column starts it ascending', async () => {
+    listFormSchemas.mockResolvedValue([
+      schema({ id: 'lo', name: 'Lo', version: 1 }),
+      schema({ id: 'hi', name: 'Hi', version: 9 }),
+    ]);
+    render(<FormSchemas />);
+    await screen.findByText('Lo');
+    await userEvent.click(screen.getByRole('button', { name: /^version/i }));
+    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
+    expect(ids).toEqual(['lo', 'hi']);
+    expect(screen.getByRole('columnheader', { name: /^version/i })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
+  it('renders a full local timestamp with the year, never the raw ISO instant', async () => {
+    listFormSchemas.mockResolvedValue([
+      schema({
+        id: 'intake-household',
+        name: 'Household intake',
+        version: 4,
+        updatedAt: '2026-08-02T10:15:00.000Z',
+        updatedBy: 'e2e-admin',
+      }),
     ]);
     render(<FormSchemas />);
     await screen.findByText('Household intake');
-    expect(screen.getByText('v4 · 08-02 05:15 · by e2e-admin')).toBeInTheDocument();
+    expect(screen.getByText('2026-08-02 05:15')).toBeInTheDocument();
     expect(screen.queryByText(/2026-08-02T10:15:00\.000Z/)).toBeNull();
   });
 
-  it('renders a schema with no updatedAt honestly, and still renders the row', async () => {
+  it('renders "-" for a blank updatedAt and a blank updatedBy, and still renders the row', async () => {
     listFormSchemas.mockResolvedValue([
       schema({ id: 'meet-and-greet', name: 'Meet and greet checklist', version: 1, updatedAt: null, updatedBy: null }),
     ]);
     render(<FormSchemas />);
-    // The row survives: a missing timestamp must never cost the operator the schema.
+    // The row survives: missing metadata must never cost the operator the schema.
     expect(await screen.findByText('Meet and greet checklist')).toBeInTheDocument();
-    expect(screen.getByText('v1 · date unknown')).toBeInTheDocument();
+    expect(screen.getAllByText('-')).toHaveLength(2);
   });
 
-  it('renders a malformed updatedAt without ever printing "Invalid Date"', async () => {
+  it('sorts a blank-updatedAt row last by default', async () => {
     listFormSchemas.mockResolvedValue([
-      schema({ id: 'legacy', name: 'Legacy schema', version: 2, updatedAt: 'sometime last Tuesday', updatedBy: 'admin1' }),
+      schema({ id: 'draft', name: 'Draft', updatedAt: null, updatedBy: null }),
+      schema({ id: 'dated', name: 'Dated', updatedAt: '2026-01-01T00:00:00.000Z', updatedBy: 'admin1' }),
     ]);
     render(<FormSchemas />);
+    await screen.findByText('Dated');
+    const ids = screen.getAllByRole('row').slice(1).map((row) => row.querySelector('code')?.textContent);
+    expect(ids).toEqual(['dated', 'draft']);
+  });
+
+  it('shows a shortened uid when it does not resolve against the admin roster', async () => {
+    listFormSchemas.mockResolvedValue([
+      schema({ id: 'legacy', name: 'Legacy schema', updatedBy: 'nppJNdMNYJfUigibGKUQj3n4obt2' }),
+    ]);
+    listBusinessAdmins.mockResolvedValue(roster([]));
+    render(<FormSchemas />);
     await screen.findByText('Legacy schema');
-    expect(screen.getByText('v2 · sometime last Tuesday · by admin1')).toBeInTheDocument();
-    expect(screen.queryByText(/Invalid Date|NaN/)).toBeNull();
+    expect(await screen.findByText('nppJNdMN…')).toBeInTheDocument();
+  });
+
+  it('renders the schemas list even when the admin roster fails to load', async () => {
+    listFormSchemas.mockResolvedValue([schema({ id: 'tribeProfile', name: 'Tribe Profile', updatedBy: 'admin1' })]);
+    listBusinessAdmins.mockRejectedValue(new Error('permission-denied'));
+    render(<FormSchemas />);
+    expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
+    // Falls back to the raw value since it neither resolves nor looks like a uid.
+    expect(screen.getByText('admin1')).toBeInTheDocument();
   });
 
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
@@ -262,10 +392,10 @@ describe('FormSchemas screen', () => {
     await screen.findByText('Tribe Profile');
     expect(screen.getByText('New schema')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /new schema/i })).toBeNull();
-    // Row is a plain <div> when unwired, not a focusable button (a handler-less
-    // <button> would still carry the implicit button role). The Delete icon
-    // button stays interactive, so assert the ROW element's tag directly rather
-    // than a name query that the "Delete Tribe Profile" button would also match.
+    // The name cell is a plain <div> when unwired, not a focusable button (a
+    // handler-less <button> would still carry the implicit button role). The
+    // Delete icon button stays interactive, so assert the CELL element's tag
+    // directly rather than a name query that "Delete Tribe Profile" would match.
     expect(screen.getByText('Tribe Profile').closest('.schemas__row-main')?.tagName).toBe('DIV');
   });
 
@@ -306,5 +436,14 @@ describe('FormSchemas screen', () => {
     await userEvent.click(screen.getByRole('button', { name: /delete schema/i }));
     expect(await screen.findByText(/deleteFormSchema failed:.*not found/i)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('deleting a row does not activate onSelect for that row', async () => {
+    listFormSchemas.mockResolvedValue([schema({ id: 'tribeProfile', name: 'Tribe Profile' })]);
+    const onSelect = vi.fn();
+    render(<FormSchemas onSelect={onSelect} />);
+    await screen.findByText('Tribe Profile');
+    await userEvent.click(screen.getByRole('button', { name: /delete tribe profile/i }));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

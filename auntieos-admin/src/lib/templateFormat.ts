@@ -27,9 +27,9 @@ import type { TemplateSummary, TemplateSection } from '../api/templates';
  * Row display title. The backend already falls back `title` to the doc id
  * when blank (`listTemplatesHandler`: `title: data.title ?? d.id`), so this is
  * a defensive second line of the SAME fallback, matching the
- * `row.name || row.id` convention `FormSchemas.tsx#metaLine`'s row rendering
- * uses for its own server-guaranteed field: cheap insurance, not a sign the
- * guarantee is doubted.
+ * `row.name || row.id` convention `FormSchemas.tsx`'s row rendering uses for
+ * its own server-guaranteed field: cheap insurance, not a sign the guarantee
+ * is doubted.
  */
 export function templateRowTitle(tpl: Pick<TemplateSummary, 'title' | 'templateId'>): string {
   return tpl.title.trim() !== '' ? tpl.title : tpl.templateId;

@@ -3,30 +3,32 @@
  * FormSchemas.tsx (the DenScreenKit.css / Banner.css / Buttons.css convention),
  * so nothing here needs to land in the shared styles/screens.css. Every value
  * comes from styles/tokens.css, no literal colours, radii, or durations.
+ *
+ * The sortable table (`.schemas__table`) is the shape
+ * `ui-ideas/auntieos-formschema-list-2026-05-27.html` draws: a header row of
+ * sort controls over striped rows, four columns weighted 3 / 1 / 2 / 2 (Name /
+ * Version / Updated / Updated by) plus a narrow actions column. No DenPanel
+ * wraps it; the controls row (filter + count chip) sits directly under the
+ * screen heading, and Reload sits in its own footer below the table, matching
+ * the mock's bare layout rather than the panel-with-a-second-title shape this
+ * screen used to render.
  */
-
-.schemas__count {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  color: var(--color-text-dim);
-  background: var(--color-surface-2);
-  border-radius: var(--radius-pill);
-  padding: 0.2rem 0.65rem;
-  white-space: nowrap;
-}
 
 .schemas__hint {
   color: var(--color-text-dim);
   margin: 0;
 }
 
-.schemas__search {
-  margin-bottom: var(--space-3);
+.schemas__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .schemas__search-input {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   box-sizing: border-box;
   font: inherit;
   font-size: var(--type-body-md-size);
@@ -45,50 +47,148 @@
   color: var(--color-text-faint);
 }
 
-.schemas__list {
-  list-style: none;
-  margin: 0;
+.schemas__count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-pill);
+  padding: 0.4rem 0.75rem;
+  white-space: nowrap;
+}
+
+/* ── table ─────────────────────────────────────────────────────────────── */
+
+.schemas__table-wrap {
+  overflow-x: auto;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+}
+
+.schemas__table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.schemas__col-name {
+  width: 38%;
+}
+.schemas__col-version {
+  width: 12%;
+}
+.schemas__col-updated {
+  width: 25%;
+}
+.schemas__col-by {
+  width: 25%;
+}
+.schemas__col-actions {
+  width: 3rem;
+}
+
+.schemas__table thead {
+  background: var(--color-surface-2);
+}
+
+.schemas__th {
+  text-align: left;
+  padding: var(--space-3);
+}
+.schemas__th--actions {
+  padding: var(--space-3) var(--space-2);
+}
+
+.schemas__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  transition: color var(--dur-base) var(--ease-standard);
+}
+.schemas__sort:hover {
+  color: var(--color-text-primary);
+}
+.schemas__sort[data-active] {
+  color: var(--color-primary);
+}
+
+.schemas__caret {
+  opacity: 0.55;
+  transition:
+    opacity var(--dur-base) var(--ease-standard),
+    transform var(--dur-base) var(--ease-standard);
+}
+.schemas__sort[data-active] .schemas__caret {
+  opacity: 1;
+}
+.schemas__sort[data-direction='asc'] .schemas__caret {
+  transform: rotate(180deg);
 }
 
 .schemas__row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card-lg);
-  background: var(--color-surface-glass);
-  transition:
-    background var(--dur-base) var(--ease-standard),
-    border-color var(--dur-base) var(--ease-standard);
+  border-top: var(--border-hairline) solid var(--color-border);
+  transition: background var(--dur-base) var(--ease-standard);
 }
-.schemas__row:hover,
-.schemas__row:focus-within {
+.schemas__row:nth-child(even) {
   background: var(--color-surface-2);
-  border-color: var(--color-primary);
+}
+.schemas__row--clickable {
+  cursor: pointer;
+}
+.schemas__row:hover {
+  background: var(--color-surface-glass);
+}
+
+.schemas__td {
+  padding: var(--space-3);
+  vertical-align: middle;
+}
+.schemas__td--updated,
+.schemas__td--by {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+.schemas__td--actions {
+  text-align: right;
+}
+
+.schemas__blank {
+  color: var(--color-text-faint);
 }
 
 .schemas__row-main {
-  flex: 1 1 auto;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.15rem;
+  width: 100%;
   text-align: left;
   background: none;
   border: none;
-  cursor: pointer;
-  padding: var(--space-3) var(--space-4);
+  padding: 0;
   font: inherit;
   color: inherit;
 }
-.schemas__row-main:focus-visible {
+button.schemas__row-main {
+  cursor: pointer;
+}
+button.schemas__row-main:focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+  outline-offset: 2px;
   border-radius: var(--radius-card);
 }
 /* Defensive fallback when no handler is wired (e.g., in a test context). */
@@ -110,12 +210,7 @@
   word-break: break-all;
 }
 
-.schemas__row-meta {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
-}
-
-.schemas__reload {
+.schemas__footer {
   margin-top: var(--space-4);
 }
 

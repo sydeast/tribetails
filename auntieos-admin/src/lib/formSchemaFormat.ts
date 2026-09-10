@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
-import { formatWhen, type FsTime } from './time';
+import { formatWhenFull, type FsTime } from './time';
 
 /**
  * Pure Form Schemas ("The Den · Admin", nav slug `form-schemas`) display
@@ -9,7 +9,7 @@ import { formatWhen, type FsTime } from './time';
  *
  * ── WHAT `formSchemas/{id}.updatedAt` ACTUALLY HOLDS ───────────────────────
  * Confirmed end-to-end, because the answer decides both the formatting below
- * AND whether FormSchemas.tsx's string sort is sound:
+ * AND whether FormSchemas.tsx's `sortSchemas` string compare is sound:
  *
  *  - THE ONLY WRITER is the `saveFormSchema` callable
  *    (`mytribe/functions/src/admin/saveFormSchema.ts:214`), which stamps
@@ -30,13 +30,14 @@ import { formatWhen, type FsTime } from './time';
  *    entirely, which lands on the `null` branch, not a free-text one.
  *
  * So the live input classes are exactly two: a full ISO instant, or null. That
- * is why `sortByUpdatedAtDesc` in FormSchemas.tsx is left comparing raw
- * strings. Over fixed-width ISO instants, byte order IS chronological order.
- * It is NOT the invoice/payment `date` situation (PR #241), where the stored
- * value is genuinely free text like "February 17, 2026" and a string compare
- * ordered rows by their first letter. The third class below (unparseable text)
- * is handled anyway, because the rules permit it even though no writer emits
- * it, and an operator staring at a bad row deserves to see the bad value.
+ * is why the `updatedAt` column of `sortSchemas` in FormSchemas.tsx is left
+ * comparing raw strings. Over fixed-width ISO instants, byte order IS
+ * chronological order. It is NOT the invoice/payment `date` situation (PR
+ * #241), where the stored value is genuinely free text like "February 17,
+ * 2026" and a string compare ordered rows by their first letter. The third
+ * class below (unparseable text) is handled anyway, because the rules permit
+ * it even though no writer emits it, and an operator staring at a bad row
+ * deserves to see the bad value.
  */
 
 /**
@@ -58,31 +59,30 @@ export function formSchemaTimeOf(iso: string | null): FsTime {
   return { toDate: () => d } as unknown as Timestamp;
 }
 
-/** What a row shows when the server sent no `updatedAt` at all. */
-export const NO_UPDATED_AT_LABEL = 'date unknown';
-
 /**
- * The row's "last updated" text: LOCAL `MM-DD HH:mm`, the same shape every
- * other list row in this admin prints for a timestamp (`lib/time.ts`'s
- * `formatWhen`, reached the same way `settingsFormat.ts#lastSavedLabel` reaches
- * it for this exact `updatedAt` + `updatedBy` pair).
+ * The Updated column's cell text: LOCAL `YYYY-MM-DD HH:mm`, with the year
+ * (`lib/time.ts`'s `formatWhenFull`), because the table has its own "Updated"
+ * header to say what the column is, unlike the retired single-line meta
+ * string that needed `formatWhen`'s bare `MM-DD HH:mm` to stay short.
  *
  * Three input classes, three honest outputs, never `Invalid Date` and never
  * `NaN`:
- *  - a real instant  -> `08-02 10:15`, in the OPERATOR'S zone (AO-18: local
- *    getters, never a `toISOString()` slice, so a schema saved at 5:15am in
- *    Chicago does not read as 10:15).
- *  - null / blank    -> `date unknown`. Not "never updated": a null here means
- *    the field is ABSENT, which is a schema older than the field, not proof
- *    that nobody ever saved it.
+ *  - a real instant  -> `2026-08-02 05:15`, in the OPERATOR'S zone (AO-18:
+ *    local getters, never a `toISOString()` slice, so a schema saved at
+ *    5:15am in Chicago does not read as 10:15).
+ *  - null / blank    -> `null`. The caller renders the shared blank
+ *    placeholder ("-") and sorts the row last, matching the mock's blank-row
+ *    treatment. Not "never updated": a null here means the field is ABSENT,
+ *    which is a schema older than the field, not proof that nobody ever saved
+ *    it.
  *  - anything else   -> the raw trimmed text, verbatim. Fail-loud, the same
  *    contract `accountFormat.ts#authDateLabel` and `bookingFormat.ts#bookingWhen`
  *    hold: a value this function cannot read is a value the operator needs to
  *    SEE in order to report it, not one to launder into a placeholder.
  */
-export function formSchemaUpdatedLabel(updatedAt: string | null): string {
+export function formSchemaUpdatedFull(updatedAt: string | null): string | null {
   const raw = (updatedAt ?? '').trim();
-  if (raw === '') return NO_UPDATED_AT_LABEL;
+  if (raw === '') return null;
   const when = formSchemaTimeOf(raw);
-  return when ? formatWhen(when) : raw;
+  return when ? formatWhenFull(when) : raw;
 }
