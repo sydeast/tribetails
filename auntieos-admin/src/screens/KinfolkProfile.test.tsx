@@ -468,15 +468,24 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.getByText('Willow')).toBeInTheDocument();
   });
   /**
-   * THE PANEL UNDER THE OPERATOR'S CURSOR AT THE MARK. It used to disappear
-   * whole when a household had no address and no codes on file, so the screen
-   * gave no sign a service address was even a thing this household could have.
+   * THE PANEL UNDER THE OPERATOR'S CURSOR AT THE MARK (#407). It used to
+   * disappear whole when a household had no codes on file, so the screen gave
+   * no sign an access detail was even a thing this household could have. The
+   * service address itself moved out to Contact (#679), so this panel's empty
+   * hint no longer mentions it.
    */
   it('keeps Home & access on screen with an empty hint when nothing is on file', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Home & access' })).toBeInTheDocument();
-    expect(screen.getByText('No address or entry details on file.')).toBeInTheDocument();
+    expect(screen.getByText('No entry details on file.')).toBeInTheDocument();
+  });
+  it('folds the service address into Contact, not a separate panel (#679)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ serviceAddress: '18609 Salt River Bay Dr' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    const contact = (await screen.findByRole('heading', { name: 'Contact' })).closest('.den-panel');
+    expect(contact).not.toBeNull();
+    expect(within(contact as HTMLElement).getByText('18609 Salt River Bay Dr')).toBeInTheDocument();
   });
   it('shows the admin-only dossier band, headed as admin only', async () => {
     getKinfolkProfile.mockResolvedValue(profile());

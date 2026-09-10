@@ -335,6 +335,13 @@ export function KinfolkProfile({
           >
             {(p) => (
               <>
+                {/* CONTACT FIRST under the hero (#679, holds once Kin has moved
+                    to the right column, #678): the household's own facts, not
+                    who lives there. The service address folded in here from its
+                    own "Home & access" panel: an address is a way to reach the
+                    household same as a phone number is. Gate code, parking,
+                    entry notes and Wi-Fi stay in the access panel below, since
+                    the issue that asked for this only named the home address. */}
                 <DenPanel title="Contact">
                   <dl className="kprofile__facts">
                     <Fact label="Phone" value={p.phoneNumber} mono />
@@ -343,25 +350,30 @@ export function KinfolkProfile({
                     <Fact label="Secondary email" value={p.secondaryEmail} />
                     <Fact label="Preferred contact" value={p.preferredContactMethod} />
                     <Fact label="Best time to reach" value={p.bestTimeToContact} />
-                    {!any(p.phoneNumber, p.email, p.secondaryPhone, p.secondaryEmail, p.preferredContactMethod, p.bestTimeToContact) && (
-                      <EmptyHint>No contact details on file.</EmptyHint>
-                    )}
+                    <Fact label="Service address" value={p.serviceAddress} />
+                    {!any(
+                      p.phoneNumber,
+                      p.email,
+                      p.secondaryPhone,
+                      p.secondaryEmail,
+                      p.preferredContactMethod,
+                      p.bestTimeToContact,
+                      p.serviceAddress,
+                    ) && <EmptyHint>No contact details on file.</EmptyHint>}
                   </dl>
                 </DenPanel>
 
                 {/*
-                  ALWAYS RENDERED, empty or not. This is the panel the operator's
-                  cursor was on when they marked the screen (#407): it used to
-                  vanish entirely when a household had no address, no gate code
-                  and no parking note, so the screen gave no sign that a service
-                  address is a thing this household could have. The mock shows the
-                  household's facts panel unconditionally, and Contact right above
-                  already says "No contact details on file" rather than
-                  disappearing. This now matches both.
+                  ALWAYS RENDERED, empty or not (#407): a household with no gate
+                  code and no parking note still needs to see this panel as a
+                  thing it could fill in, not have it vanish. Only the address
+                  moved out, into Contact above (#679); gate code, parking, entry
+                  notes and Wi-Fi stay here, because they are about getting into
+                  the home once an Auntie has already found it, which the
+                  address answers on its own.
                 */}
                 <DenPanel title="Home & access">
                   <dl className="kprofile__facts">
-                    <Fact label="Service address" value={p.serviceAddress} />
                     <Fact label="Gate code" value={p.gateCode} mono secret />
                     <Fact label="Parking" value={p.parkingInstructions} />
                     <Fact label="Entry notes" value={p.entryNotes} />
@@ -374,8 +386,8 @@ export function KinfolkProfile({
                     */}
                     <Fact label="Wi-Fi network" value={p.wifiName} />
                     <Fact label="Wi-Fi password" value={p.wifiPassword} mono secret />
-                    {!any(p.serviceAddress, p.gateCode, p.parkingInstructions, p.entryNotes, p.wifiName, p.wifiPassword) && (
-                      <EmptyHint>No address or entry details on file.</EmptyHint>
+                    {!any(p.gateCode, p.parkingInstructions, p.entryNotes, p.wifiName, p.wifiPassword) && (
+                      <EmptyHint>No entry details on file.</EmptyHint>
                     )}
                   </dl>
                 </DenPanel>
