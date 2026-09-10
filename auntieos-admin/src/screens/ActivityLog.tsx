@@ -22,6 +22,7 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton } from '../components/Buttons';
+import { LoadingRow } from '../components/LoadingRow';
 
 function statusClass(status: string): string {
   const s = status.toUpperCase();
@@ -154,9 +155,9 @@ export function ActivityLog() {
         }
       >
         {chain.status === 'loading' ? (
-          <p className="log__hint" role="status">
-            Verifying…
-          </p>
+          <div role="status" aria-live="polite">
+            <LoadingRow label="Verifying…" className="log__hint" />
+          </div>
         ) : chain.status === 'error' ? (
           <Banner tone="error" title="Verification call failed">
             {chain.message}

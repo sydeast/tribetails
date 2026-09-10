@@ -537,6 +537,9 @@ internal fun GoogleCalendarConnectCard(
         }
 
         when {
+            // state.polling checked first: a user-initiated wait for the
+            // consent window always wins over a background reload, in case a
+            // future caller ever reloads while polling is also true.
             state.polling -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AuntieSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AuntieTheme.colors.kinfolkOrange)
@@ -544,6 +547,34 @@ internal fun GoogleCalendarConnectCard(
                     Text(
                         "Waiting for you to finish in the browser...",
                         color = AuntieTheme.colors.kinfolkOrange,
+                        style = AuntieTheme.typography.bodySmall,
+                    )
+                }
+            }
+            // Issue #714, Android parity with the web fix. `loadingConnection`
+            // has been tracked on GoogleCalendarUiState since the first read of
+            // getGoogleCalendarConnection was added, but nothing here checked
+            // it: with `connection` still null while the cold start (up to
+            // 8.5s) is in flight, this `when` fell through to `else` below and
+            // showed "Setup, once, by an operator..." and a Connect button as
+            // if nothing were connected, for the whole cold start.
+            //
+            // Gated on `connection == null` too (not `state.loadingConnection`
+            // alone), the same way the web fix gates on `stillLoadingConnection`
+            // rather than on `connection === null`: `loadGoogleCalendarState`
+            // is documented "safe to call repeatedly (screen open, resume)", and
+            // a reload of an already-connected account must keep showing the
+            // calendar picker and push button, not flash this spinner over
+            // them. A real load failure (state.error set, loadingConnection
+            // false, connection still null) still falls through to the
+            // not-connected body below rather than spinning forever.
+            state.loadingConnection && connection == null -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AuntieSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = AuntieTheme.colors.textDim)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Reading the connection...",
+                        color = AuntieTheme.colors.textDim,
                         style = AuntieTheme.typography.bodySmall,
                     )
                 }

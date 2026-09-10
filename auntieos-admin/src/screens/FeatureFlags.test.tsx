@@ -117,4 +117,18 @@ describe('FeatureFlags screen', () => {
     await userEvent.click(recap);
     await waitFor(() => expect(screen.queryByText(/boom/i)).toBeNull());
   });
+
+  it('shows the spinner while getFeatureFlags cold-starts, not a bare hint (issue #714)', async () => {
+    let resolveFlags: (value: Record<string, boolean>) => void = () => {};
+    getFeatureFlags.mockImplementation(() => new Promise((resolve) => { resolveFlags = resolve; }));
+    render(<FeatureFlags />);
+
+    expect(await screen.findByRole('img', { name: 'Loading flags…' })).toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+
+    resolveFlags({});
+
+    expect(await screen.findByRole('switch', { name: /comms recap/i })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Loading flags…' })).not.toBeInTheDocument();
+  });
 });

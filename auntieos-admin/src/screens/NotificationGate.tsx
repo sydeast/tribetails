@@ -38,6 +38,7 @@ import { DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { LoadingRow } from '../components/LoadingRow';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import './NotificationGate.css';
 
@@ -148,7 +149,9 @@ export function NotificationGate() {
         a notification can serve more than one."
       >
         {loading ? (
-          <p className="notifgate__hint">Loading the notification gate…</p>
+          <div role="status" aria-live="polite">
+            <LoadingRow label="Loading the notification gate…" className="notifgate__hint" />
+          </div>
         ) : loadError ? (
           <Banner tone="error" title="Couldn&rsquo;t load the notification gate" trailing={<GhostButton label="Retry" onClick={load} />}>
             {loadError}

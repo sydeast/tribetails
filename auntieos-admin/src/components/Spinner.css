@@ -1,0 +1,40 @@
+/* Issue #714: the admin had no spinner component at all. Every in-flight state
+   was a plain hint sentence, so an 8-10s callable cold start (settings sections
+   reading Google Calendar, integrations health, notification overrides, feature
+   flags, the activity log chain) read as broken rather than slow, with nothing
+   moving on screen to say otherwise. This is the one spinner, meant to be
+   reused everywhere a section waits on a callable. */
+.spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid color-mix(in srgb, var(--color-text-dim) 35%, transparent);
+  border-top-color: var(--color-text-dim);
+  border-radius: var(--radius-pill);
+  animation: spinner-spin 800ms linear infinite;
+}
+
+@keyframes spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Belt and braces: base.css already turns every animation off (with
+   !important) once `prefers-reduced-motion: reduce` is set. This is here so
+   the spinner is correct on its own, the same way Toast.css and
+   PulsingBadge.css guard their own animation rather than relying only on the
+   global rule. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.loadingRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

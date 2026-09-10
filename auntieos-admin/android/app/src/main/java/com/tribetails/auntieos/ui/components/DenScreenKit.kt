@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -371,6 +372,26 @@ fun EmptyHint(text: String, error: Boolean = false) {
         color = if (error) c.error else c.textDim,
         modifier = Modifier.padding(vertical = 8.dp),
     )
+}
+
+/**
+ * Same quiet line as [EmptyHint], but for a state that is genuinely in flight
+ * rather than empty or failed: a small spinner beside the sentence, matching
+ * the web admin's `LoadingRow` (issue #714). Settings sections cold-start their
+ * callables at 8-10s, and a bare hint sentence with nothing moving read as
+ * broken rather than slow, next to no motion cue at all.
+ */
+@Composable
+fun LoadingHint(text: String) {
+    val c = AuntieTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 8.dp),
+    ) {
+        AuntieSpinner(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = c.textDim)
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+    }
 }
 
 // ── shared helpers ───────────────────────────────────────────────────────────

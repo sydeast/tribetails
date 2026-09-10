@@ -27,6 +27,7 @@ import { AutomaticCalendarSyncPanel } from './AutomaticCalendarSyncPanel';
 import { DenPanel, ServicePill } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
+import { LoadingRow } from '../../components/LoadingRow';
 import '../SettingsEdit.css';
 
 /**
@@ -326,6 +327,11 @@ export function GoogleCalendarSection() {
   }
 
   const connection = loaded?.connection ?? null;
+  // Genuinely in flight: the first `getGoogleCalendarConnection` has not come
+  // back yet, one way or the other. False again the moment it answers, whether
+  // that answer is a connection or a `loadError`, so a real failure still gets
+  // the checklist's own read on it below rather than staying stuck on "loading".
+  const stillLoadingConnection = connection === null && loadError === null;
   const pushLabel = connection === null ? null : calendarPushRunLabel(storedCalendarPushRun(connection));
   const draftProblem =
     loaded === null || draftCalendarId === ''
@@ -368,15 +374,30 @@ export function GoogleCalendarSection() {
         </p>
       )}
 
-      {/* Only while there is nothing connected. A connected account IS the
-          receipt for all three steps, and leaving a finished checklist above it
-          would bury the calendar picker under setup nobody has left to do. */}
-      {connection?.connected !== true && <SetupChecklist signals={signals} />}
+      {/* Not while still loading, and not once connected. Issue #714: this used
+          to read `connection?.connected !== true`, which is also true while
+          `connection` is still null, so the not-connected checklist rendered for
+          the whole 8-10s of a cold `getGoogleCalendarConnection`, next to
+          nothing that said the panel was still loading. A real load failure
+          still shows the checklist (`stillLoadingConnection` is false the
+          moment `loadError` is set), because that IS the checklist's job: say
+          which of the three steps a failure like "functions not reachable"
+          points at. A connected account is the receipt for all three steps once
+          it is known, and leaving a finished checklist above it would bury the
+          calendar picker under setup nobody has left to do. */}
+      {!stillLoadingConnection && connection?.connected !== true && <SetupChecklist signals={signals} />}
 
-      {connection === null ? (
-        <p className="settingsEdit__hint" role="status">
-          Reading the connection…
-        </p>
+      {stillLoadingConnection ? (
+        <div role="status" aria-live="polite">
+          <LoadingRow label="Reading the connection…" className="settingsEdit__hint" />
+        </div>
+      ) : connection === null ? (
+        // A real load failure. The error banner above already says so, and
+        // the checklist above already offers its own read on it; nothing else
+        // here can be shown without a connection object, and showing the
+        // spinner forever would be the exact bug AsyncRegion.test.tsx guards
+        // against elsewhere: never leave a spinner running after a failure.
+        null
       ) : connection.connected ? (
         <>
           <p className="settingsEdit__readonlyValue">

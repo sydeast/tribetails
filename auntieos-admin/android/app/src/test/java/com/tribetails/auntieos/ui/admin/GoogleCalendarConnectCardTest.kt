@@ -109,6 +109,32 @@ class GoogleCalendarConnectCardTest {
     }
 
     @Test
+    fun loadingConnection_showsTheSpinnerLine_notTheNotConnectedSetupCopy() {
+        // Issue #714, Android parity with the web fix. getGoogleCalendarConnection
+        // cold-starts at up to 8.5s. `connection` is still null the whole time
+        // this state is true, and before this fix the card had nothing else to
+        // check, so it fell into the not-connected branch and showed the setup
+        // instructions and a Connect button as if nothing were connected.
+        rule.setContent {
+            AuntieOSTheme(themeMode = ThemeMode.DARK) {
+                GoogleCalendarConnectCard(
+                    state = GoogleCalendarUiState(connection = null, loadingConnection = true),
+                    onConnect = {},
+                    onConsumeAuthUrl = {},
+                    onRefreshCalendars = {},
+                    onSaveTargets = { _, _ -> },
+                    onPush = {},
+                    onDisconnect = {},
+                    onDismissError = {},
+                )
+            }
+        }
+        rule.onNodeWithText("Reading the connection...").assertIsDisplayed()
+        rule.onNodeWithText("Connect Google Calendar").assertDoesNotExist()
+        rule.onNodeWithText("Setup, once, by an operator", substring = true).assertDoesNotExist()
+    }
+
+    @Test
     fun connected_showsAccountAddress_andDisconnectButton() {
         rule.setContent {
             AuntieOSTheme(themeMode = ThemeMode.DARK) {

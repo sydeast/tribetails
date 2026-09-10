@@ -9,6 +9,7 @@ import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
+import { LoadingRow } from '../components/LoadingRow';
 
 /** One togglable flag: stable dotted key + operator label + what it gates. */
 export interface FlagMeta {
@@ -113,7 +114,7 @@ export function FeatureFlags() {
           state={flags}
           what="feature flags"
           isEmpty={() => FLAGS.length === 0}
-          loading={<p className="flags__hint">Loading flags…</p>}
+          loading={<LoadingRow label="Loading flags…" className="flags__hint" />}
           empty={<p className="flags__hint">No togglable flags.</p>}
         >
           {(data) => (

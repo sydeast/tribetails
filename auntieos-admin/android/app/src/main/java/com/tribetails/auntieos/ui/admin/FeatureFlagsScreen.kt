@@ -31,7 +31,7 @@ import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieToggle
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
-import com.tribetails.auntieos.ui.components.EmptyHint
+import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -114,7 +114,7 @@ fun FeatureFlagsScreen(onBack: () -> Unit) {
             ) {
                 val ov = overrides
                 if (ov == null) {
-                    EmptyHint("Loading flags…")
+                    LoadingHint("Loading flags…")
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         FLAGS.forEach { meta ->

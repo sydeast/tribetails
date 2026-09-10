@@ -60,6 +60,7 @@ import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
@@ -204,7 +205,7 @@ fun AdminNotificationPrefsScreen(onBack: () -> Unit) {
             val m = matrix
             val p = prefs
             when {
-                loading -> EmptyHint("Loading your notifications…")
+                loading -> LoadingHint("Loading your notifications…")
                 m == null || p == null -> if (loadError == null) EmptyHint("Couldn't load your notifications.", error = true)
                 else -> {
                     val anyRow = RECEIVE_SECTIONS.any { s -> m.catalog.any { it.adminReceives(m, s.stream) } }

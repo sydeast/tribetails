@@ -119,6 +119,23 @@ describe('NotificationGate screen', () => {
     expect(screen.getByRole('heading', { name: 'Notification gate', level: 2 })).toBeInTheDocument();
   });
 
+  it('shows the spinner while getNotificationMatrix cold-starts, not the catalog-empty message (issue #714)', async () => {
+    let resolveMatrix: (value: NotificationMatrix) => void = () => {};
+    getNotificationMatrix.mockImplementation(
+      () => new Promise((resolve) => { resolveMatrix = resolve; }),
+    );
+    render(<NotificationGate />);
+
+    expect(await screen.findByRole('img', { name: 'Loading the notification gate…' })).toBeInTheDocument();
+    expect(screen.queryByText(/no notification types in the catalog yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+
+    resolveMatrix(matrix({ catalog: [entry({})] }));
+
+    expect(await screen.findByRole('tab', { name: /Business/ })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Loading the notification gate…' })).not.toBeInTheDocument();
+  });
+
   it('turning a channel off persists a per-stream overlay through the write callable', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({ key: 'k' })] }));
     render(<NotificationGate />);
