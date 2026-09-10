@@ -23,7 +23,15 @@ import {
   sessionDayKey,
 } from '../lib/sessionFormat';
 import { sortServiceTypesByDuration } from '../lib/newBooking';
-import { SNAP_MINUTES_OFF, SNAP_MINUTES_ON, rescheduleTimesForDrop, isNoOpDrop } from '../lib/scheduleGrid';
+import {
+  SNAP_MINUTES_OFF,
+  SNAP_MINUTES_ON,
+  rescheduleTimesForDrop,
+  isNoOpDrop,
+  localMinutesOfDay,
+  minutesFromHHmm,
+  hhmmFromMinutes,
+} from '../lib/scheduleGrid';
 import { getBusinessSettings } from '../api/settings';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { rescheduleBooking } from '../api/bookingsWrite';
@@ -37,7 +45,7 @@ import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint, serviceTone } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -110,6 +118,13 @@ interface ScheduleProps {
  * the detail sheet, and the sheet's Reschedule form writes through the same
  * callable with the same duration rule. That is the documented keyboard path,
  * and `ScheduleWeekGrid`'s own doc comment says so at the other end.
+ *
+ * THE MONTH VIEW IS A CALENDAR (#696), not a date picker. Every cell lists its
+ * own day: a block per visit tinted by service type, a hatched block per busy
+ * window, "+N more" past the cap. See `MonthGrid`'s own doc for why the cell is
+ * a div. The legend below applies to it exactly as it does to the week view;
+ * it always has, and the operator saw none only because the month they marked
+ * had nothing scheduled in it.
  *
  * THE LEGEND, TWO RULES (operator mark 5, 2026-08-17, issue #392). SCOPE: the
  * legend lists only the service types actually present on the days currently
@@ -321,8 +336,9 @@ export function Schedule({ onSelect }: ScheduleProps) {
    * "Busy blocks" was a dead count with no way to reach the days it counted
    * (issue #697). Clicking it selects the first day in the current range that
    * carries a busy slot; ScheduleWeekGrid separately scrolls that day's first
-   * busy block into view, and MonthGrid always marks every busy day so the
-   * count can be traced to dates without a click at all.
+   * busy block into view, and MonthGrid draws every busy window as its own
+   * hatched block (#696 replaced #697's corner dot with the block itself), so
+   * the count can be traced to dates without a click at all.
    */
   function selectFirstBusyDay() {
     if (busyState.status !== 'ready') return;
@@ -419,7 +435,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                  * here as above the grid, directly under the Day/Week/Month
                  * controls, still inside the Schedule panel: the minimal move
                  * that puts "Today" on screen without touching the grid the
-                 * separate month-view rebuild (#696) owns. `collapsible` lets
+                 * separate month-view rebuild (#696) owned. `collapsible` lets
                  * the operator shrink it back down on a day with a long list,
                  * so it does not push the grid itself off screen.
                  */}
@@ -507,6 +523,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                     byDay={byDay}
                     busyByDate={busyByDate}
                     onSelectDay={setSelected}
+                    onOpenSession={onSelect ?? setOpenSessionId}
                   />
                 )}
 
@@ -626,6 +643,79 @@ function ScheduleLegend({ serviceTypes }: { serviceTypes: string[] }) {
 
 // ── month grid ──────────────────────────────────────────────────────────────
 
+/**
+ * How many blocks one month cell draws before the rest fold into "+N more".
+ *
+ * Three, the same cap the Android month cell already uses
+ * (`ScheduleViewScreen.kt#EnhancedDayCell`). A cell that grows to fit its
+ * busiest day makes every other row in the month jump, and six rows of that is
+ * not a calendar anybody can scan. The overflow is never silent: the count says
+ * how many are folded, and pressing it puts the whole day in the agenda.
+ *
+ * IT COUNTS VISITS ONLY. Busy windows are drawn whatever else is on the day,
+ * because #697's whole point is that the "Busy blocks" stat card's count can be
+ * traced to dates from the month grid alone. A cap over the merged list would
+ * hide the busy block on exactly the crowded day an operator is most likely to
+ * be looking for a free window on, which is the promise #697 made and this
+ * would quietly take back. There are three busy windows in the whole month the
+ * operator marked; visits are what fills a cell.
+ */
+const MONTH_CELL_BLOCK_CAP = 3;
+
+/** One drawn thing in a month cell: a visit, or a read-only busy window. */
+type MonthCellItem =
+  | { kind: 'visit'; key: string; minute: number | null; entry: ScheduleSessionEntry }
+  | { kind: 'busy'; key: string; minute: number | null; slot: BusySlotEntry };
+
+/** What one month cell draws, and how many visits it could not fit. */
+interface MonthCellContents {
+  /** Drawn blocks in clock order: every busy window, plus the first {@link MONTH_CELL_BLOCK_CAP} visits. */
+  drawn: MonthCellItem[];
+  /** Visits past the cap. Never dropped: "+N more" names them and opens the day. */
+  folded: number;
+}
+
+/** Sorts by local start, putting a row whose start does not parse LAST rather than dropping it. */
+function byStartMinute(a: MonthCellItem, b: MonthCellItem): number {
+  return (a.minute ?? Number.MAX_SAFE_INTEGER) - (b.minute ?? Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * One day's blocks, in clock order, visits and busy windows interleaved the way
+ * the operator's mock draws them on the week calendar.
+ *
+ * A visit whose start does not parse sorts LAST rather than being dropped. It
+ * is still a visit on the books, and the agenda panel is where its real window
+ * can be read; silently omitting it is how a month view starts under-reporting
+ * the day it is supposed to summarize.
+ */
+function monthCellContents(
+  visits: ScheduleSessionEntry[],
+  busy: BusySlotEntry[],
+): MonthCellContents {
+  const visitItems: MonthCellItem[] = visits
+    .map((entry) => ({
+      kind: 'visit' as const,
+      key: entry._id,
+      minute: localMinutesOfDay(str(entry.startTime)),
+      entry,
+    }))
+    .sort(byStartMinute);
+  // Busy rows store a plain `HH:mm` wall clock with no zone, which is why they
+  // read through a different parser than the sessions above.
+  const busyItems: MonthCellItem[] = busy.map((slot) => ({
+    kind: 'busy' as const,
+    key: slot._id,
+    minute: minutesFromHHmm(str(slot.startTime)),
+    slot,
+  }));
+  const shownVisits = visitItems.slice(0, MONTH_CELL_BLOCK_CAP);
+  return {
+    drawn: [...shownVisits, ...busyItems].sort(byStartMinute),
+    folded: visitItems.length - shownVisits.length,
+  };
+}
+
 interface MonthGridProps {
   days: string[];
   anchorMonth: string;
@@ -635,34 +725,147 @@ interface MonthGridProps {
   /** Google Calendar + manually blocked windows, by local date (#697). */
   busyByDate: Map<string, BusySlotEntry[]>;
   onSelectDay: (day: string) => void;
+  onOpenSession: (sessionId: string) => void;
 }
 
-function MonthGrid({ days, anchorMonth, today, selected, byDay, busyByDate, onSelectDay }: MonthGridProps) {
+/**
+ * The month calendar (#696).
+ *
+ * WHAT THIS REPLACES: a 7-column grid of date-picker number pills carrying at
+ * most a session count and, after #697, a busy dot. It could say a Tuesday had
+ * three visits; it could not say who, when, or what kind, which is the whole
+ * job of a calendar. The operator's words were "we are still using the wrong
+ * calendar", against a mock whose cells draw the visits themselves.
+ *
+ * SO EACH CELL NOW LISTS ITS DAY: a short block per visit, tinted by service
+ * type through the SAME `serviceTone` the legend's pills and every service pill
+ * in the app use, carrying the household and the local start time; a hatched,
+ * read-only block per busy window; and "+N more" when the day's VISITS run past
+ * {@link MONTH_CELL_BLOCK_CAP}. Busy windows are outside that cap and always
+ * drawn, for the reason the cap's own doc gives.
+ *
+ * THE CELL IS A DIV, NOT A BUTTON, and that is structural rather than
+ * cosmetic. The blocks inside it are controls (a visit opens its detail sheet,
+ * "+N more" opens the day in the agenda), and a button cannot contain a button.
+ * The day NUMBER stays the button that picks the agenda day, so it keeps the
+ * `aria-pressed` / `aria-current` the cell used to carry and every existing
+ * "click the day" path still lands on the same control.
+ *
+ * BUSY BLOCKS ARE STATIC, the same rule `ScheduleWeekGrid` documents at length:
+ * `firestore.rules` denies every client write to `booking_time_slots`, so a
+ * pressable busy block would be a dead control. Removing one is the agenda
+ * panel's "Unblock" (#574), which is one click away on the day number.
+ */
+function MonthGrid({
+  days,
+  anchorMonth,
+  today,
+  selected,
+  byDay,
+  busyByDate,
+  onSelectDay,
+  onOpenSession,
+}: MonthGridProps) {
   return (
     <div className="schedule__month" role="group" aria-label="Month">
       {days.map((day) => {
-        const count = sessionCountForDay(byDay, day);
+        const { drawn, folded } = monthCellContents(byDay.get(day) ?? [], busyByDate.get(day) ?? []);
         const inMonth = day.slice(0, 7) === anchorMonth;
-        const busy = (busyByDate.get(day)?.length ?? 0) > 0;
         return (
-          <button
+          <div
             key={day}
-            type="button"
             className={`${dayCellClass(day, today, selected)}${inMonth ? '' : ' schedule__day-cell--outside'}`}
-            onClick={() => onSelectDay(day)}
-            aria-current={day === today ? 'date' : undefined}
-            aria-pressed={day === selected}
-            aria-label={day}
+            data-day={day}
           >
-            <span className="schedule__day-number">{Number(day.slice(8, 10))}</span>
-            {count > 0 && <span className="schedule__day-count">{count}</span>}
-            {/* #697: the month grid used to draw nothing for a busy day, so the
-                "Busy blocks" count could not be traced to a date. Same faint,
-                dashed tone as the week grid's `schedule-grid__busy` block. */}
-            {busy && <span className="schedule__day-busy" title="Busy" />}
-          </button>
+            <button
+              type="button"
+              className="schedule__day-number"
+              onClick={() => onSelectDay(day)}
+              aria-current={day === today ? 'date' : undefined}
+              aria-pressed={day === selected}
+              aria-label={day}
+            >
+              {Number(day.slice(8, 10))}
+            </button>
+
+            {drawn.length > 0 && (
+              <ul className="schedule__day-blocks">
+                {drawn.map((item) =>
+                  item.kind === 'visit' ? (
+                    <li key={item.key}>
+                      <MonthVisitBlock
+                        entry={item.entry}
+                        startMinute={item.minute}
+                        onOpen={() => onOpenSession(item.entry._id)}
+                      />
+                    </li>
+                  ) : (
+                    <li key={item.key}>
+                      <MonthBusyBlock slot={item.slot} startMinute={item.minute} />
+                    </li>
+                  ),
+                )}
+              </ul>
+            )}
+
+            {folded > 0 && (
+              <button
+                type="button"
+                className="schedule__day-more"
+                onClick={() => onSelectDay(day)}
+                aria-label={`${folded} more visit${folded === 1 ? '' : 's'} on ${day}. Open this day in the agenda.`}
+              >
+                +{folded} more
+              </button>
+            )}
+          </div>
         );
       })}
+    </div>
+  );
+}
+
+/** The time a month block shows, or the same "Time TBD" the agenda row falls back to. */
+function blockTimeLabel(startMinute: number | null): string {
+  return startMinute === null ? 'Time TBD' : hhmmFromMinutes(startMinute);
+}
+
+function MonthVisitBlock({
+  entry,
+  startMinute,
+  onOpen,
+}: {
+  entry: ScheduleSessionEntry;
+  startMinute: number | null;
+  onOpen: () => void;
+}) {
+  // str() on every field read: `serviceType` is absent on 76 of the 99 live
+  // sessions, and `serviceTone` reads it as a string.
+  const household = sessionHousehold(str(entry.kinfolkName));
+  const when = blockTimeLabel(startMinute);
+  return (
+    <button
+      type="button"
+      className="schedule__month-block schedule__month-block--visit"
+      data-tone={serviceTone(str(entry.serviceType))}
+      data-session-id={entry._id}
+      onClick={onOpen}
+      aria-label={`${household} at ${when}. Open this visit.`}
+    >
+      <span className="schedule__month-block-time">{when}</span>
+      <span className="schedule__month-block-name">{household}</span>
+    </button>
+  );
+}
+
+function MonthBusyBlock({ slot, startMinute }: { slot: BusySlotEntry; startMinute: number | null }) {
+  return (
+    <div
+      className="schedule__month-block schedule__month-block--busy"
+      title={busyWindowLabel(slot.startTime, slot.endTime)}
+    >
+      <span className="schedule__month-block-time">{blockTimeLabel(startMinute)}</span>
+      <span className="schedule__month-block-name">Busy</span>
     </div>
   );
 }

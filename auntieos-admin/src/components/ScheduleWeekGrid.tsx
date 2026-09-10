@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import type { ScheduleSessionEntry, BusySlotEntry } from '../api/schedule';
 import {
   GRID_END_HOUR,
+  GRID_END_MINUTE,
   GRID_HOURS,
   GRID_START_HOUR,
   GRID_START_MINUTE,
@@ -33,6 +34,22 @@ import './ScheduleWeekGrid.css';
  * wobble in place never crosses it.
  */
 const DRAG_THRESHOLD_PX = 5;
+
+/**
+ * How often the "now" line re-reads the clock.
+ *
+ * A minute, because the line is drawn to the minute: anything finer redraws for
+ * nothing, and anything coarser leaves the line visibly behind the label beside
+ * it. The interval is cleared on unmount, so a Schedule screen that has been
+ * navigated away from is not still ticking.
+ */
+const NOW_TICK_MS = 60_000;
+
+/** Minute-of-day right now, in the viewer's own zone (the same clock every block is placed against). */
+function minutesOfDayNow(): number {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
 
 /** One in-flight drag. Null whenever the pointer is not down on a block. */
 interface DragState {
@@ -111,6 +128,11 @@ interface ScheduleWeekGridProps {
  * dropped: a 7am visit is still a visit, and the line under the grid says how
  * many the calendar could not draw and where to see them.
  *
+ * THE "NOW" LINE (#696) is drawn across today's column when the clock is inside
+ * the drawn window, and nowhere else. The mock has one and this grid did not;
+ * the gap went unrecorded for a month because the walk that found it ran at
+ * 1:44am, when the line would have been off the window anyway.
+ *
  * BUSY BLOCKS ARE NOT DRAGGABLE, and that is not a styling choice.
  * `booking_time_slots` is denied every client write by `firestore.rules`; the
  * only way to move one is to delete and re-block it. A grabbable busy block
@@ -139,6 +161,27 @@ export function ScheduleWeekGrid({
 }: ScheduleWeekGridProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+
+  /**
+   * The "now" line's minute (#696). The mock draws a coral rule with a "now
+   * 11:18" label across today's column and the grid had none, which is exactly
+   * the kind of thing that is invisible in a screenshot taken after hours: the
+   * operator's mark was at 1:44am, outside the drawn 8a-6p window, so nothing
+   * would have shown there even if the line had existed.
+   *
+   * Held in state and ticked rather than read at render time, because a
+   * component that only re-renders on data would draw the line where it was
+   * when the screen opened and leave it there all afternoon.
+   */
+  const [nowMinute, setNowMinute] = useState<number>(minutesOfDayNow);
+  useEffect(() => {
+    const id = setInterval(() => setNowMinute(minutesOfDayNow()), NOW_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+  // Only when today is one of the seven columns AND the clock is inside the
+  // drawn window. Outside it there is no honest place to put the line, and
+  // pinning it to the top or bottom edge would claim a time that is not now.
+  const drawNowLine = nowMinute >= GRID_START_MINUTE && nowMinute < GRID_END_MINUTE;
 
   // #697: the click that asked for this lands on the day (`onSelectDay`
   // upstream), the scroll here just brings that day's first busy block into
@@ -276,6 +319,16 @@ export function ScheduleWeekGrid({
             style={{ height: `${HOUR_HEIGHT_PX * GRID_HOURS}px` }}
             data-day={day}
           >
+            {day === today && drawNowLine && (
+              <div
+                className="schedule-grid__now"
+                style={{ top: `${previewTopPx(nowMinute)}px` }}
+                aria-hidden="true"
+              >
+                <span className="schedule-grid__now-label">{hhmmFromMinutes(nowMinute)}</span>
+              </div>
+            )}
+
             {(busyByDate.get(day) ?? []).map((slot) => {
               const place = busyPlacement(slot.startTime, slot.endTime);
               if (place === null) return null;
