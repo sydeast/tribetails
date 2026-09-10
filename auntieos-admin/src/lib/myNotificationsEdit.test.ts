@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { applyBulkToggle, setUserChannelChoice, prefsEqual } from './myNotificationsEdit';
+import {
+  applyBulkToggle,
+  applyChannelToggle,
+  channelMasterCount,
+  channelMasterOn,
+  setUserChannelChoice,
+  prefsEqual,
+  type BulkToggleScope,
+} from './myNotificationsEdit';
 import {
   STREAM_BUSINESS,
   type AdminNotificationPrefs,
@@ -219,5 +227,87 @@ describe('prefsEqual', () => {
     const a: AdminNotificationPrefs = { ...EMPTY, byKey: { k: { sms: true } } };
     const roundTripped = setUserChannelChoice(a, 'k', 'sms', true);
     expect(prefsEqual(a, roundTripped)).toBe(true);
+  });
+});
+
+// ── the Account screen's per-channel master switches (#719) ─────────────────
+/** One business-stream scope over `entries`, the shape the Account screen builds. */
+function scopeOf(...entries: NotificationCatalogEntry[]): BulkToggleScope[] {
+  return [{ entries, stream: STREAM_BUSINESS }];
+}
+describe('channelMasterCount', () => {
+  it('counts one editable pair per notification that offers the channel', () => {
+    const scopes = scopeOf(entry({ key: 'a' }), entry({ key: 'b' }));
+    expect(channelMasterCount(matrix(), scopes, 'sms')).toBe(2);
+  });
+  it('does not count a channel the notification never offers', () => {
+    const scopes = scopeOf(entry({ key: 'a', allowedChannels: ['email'] }));
+    expect(channelMasterCount(matrix(), scopes, 'sms')).toBe(0);
+  });
+  it('does not count a forced channel: the operator does not decide it', () => {
+    const scopes = scopeOf(entry({ key: 'a', required: { sms: true } }));
+    expect(channelMasterCount(matrix(), scopes, 'sms')).toBe(0);
+  });
+  it('does not count a channel the business gate has switched off', () => {
+    const m = matrix({
+      overrides: {
+        a: { enabled: true, channels: { sms: false }, lockedEnabled: false, locked: {}, streams: {} },
+      },
+    });
+    expect(channelMasterCount(m, scopeOf(entry({ key: 'a' })), 'sms')).toBe(0);
+  });
+});
+describe('channelMasterOn', () => {
+  it('is on when ONE notification would reach the operator on that channel', () => {
+    const prefs: AdminNotificationPrefs = { ...EMPTY, byKey: { b: { sms: true } } };
+    const scopes = scopeOf(entry({ key: 'a' }), entry({ key: 'b' }));
+    expect(channelMasterOn(prefs, matrix(), scopes, 'sms')).toBe(true);
+  });
+  it('is off only when every editable row is off', () => {
+    const prefs: AdminNotificationPrefs = {
+      ...EMPTY,
+      byKey: { a: { sms: false }, b: { sms: false } },
+    };
+    const scopes = scopeOf(entry({ key: 'a' }), entry({ key: 'b' }));
+    expect(channelMasterOn(prefs, matrix(), scopes, 'sms')).toBe(false);
+  });
+  it('reads the catalog default when the operator never chose: email on, sms off', () => {
+    const scopes = scopeOf(entry({ key: 'a' }));
+    expect(channelMasterOn(EMPTY, matrix(), scopes, 'email')).toBe(true);
+    expect(channelMasterOn(EMPTY, matrix(), scopes, 'sms')).toBe(false);
+  });
+  it('is off when the channel has no editable row at all', () => {
+    const scopes = scopeOf(entry({ key: 'a', allowedChannels: ['email'] }));
+    expect(channelMasterOn(EMPTY, matrix(), scopes, 'push')).toBe(false);
+  });
+});
+describe('applyChannelToggle', () => {
+  it('writes the flipped channel on every editable notification', () => {
+    const scopes = scopeOf(entry({ key: 'a' }), entry({ key: 'b' }));
+    const next = applyChannelToggle(EMPTY, matrix(), scopes, 'sms', true);
+    expect(next.byKey).toEqual({ a: { sms: true }, b: { sms: true } });
+  });
+  it('leaves the other two channels exactly where the operator left them', () => {
+    const prefs: AdminNotificationPrefs = { ...EMPTY, byKey: { a: { email: true, push: false } } };
+    const next = applyChannelToggle(prefs, matrix(), scopeOf(entry({ key: 'a' })), 'sms', true);
+    expect(next.byKey['a']).toEqual({ email: true, push: false, sms: true });
+  });
+  it('skips a forced channel rather than writing a value the gate would override', () => {
+    const scopes = scopeOf(entry({ key: 'a', required: { sms: true } }), entry({ key: 'b' }));
+    const next = applyChannelToggle(EMPTY, matrix(), scopes, 'sms', false);
+    expect(next.byKey).toEqual({ b: { sms: false } });
+  });
+  it('round-trips: on then off leaves every editable row explicitly off', () => {
+    const scopes = scopeOf(entry({ key: 'a' }), entry({ key: 'b' }));
+    const on = applyChannelToggle(EMPTY, matrix(), scopes, 'push', true);
+    const off = applyChannelToggle(on, matrix(), scopes, 'push', false);
+    expect(channelMasterOn(off, matrix(), scopes, 'push')).toBe(false);
+    expect(off.byKey).toEqual({ a: { push: false }, b: { push: false } });
+  });
+  it('does not mutate the input prefs', () => {
+    const start: AdminNotificationPrefs = { ...EMPTY, byKey: { a: { email: true } } };
+    const snapshot = JSON.parse(JSON.stringify(start)) as AdminNotificationPrefs;
+    applyChannelToggle(start, matrix(), scopeOf(entry({ key: 'a' })), 'sms', true);
+    expect(start).toEqual(snapshot);
   });
 });

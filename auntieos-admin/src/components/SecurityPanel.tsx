@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AccountSecurityError, changeEmail, changePassword, sendReset } from '../lib/auth';
+import { AccountSecurityError, changeEmail, sendReset, signOut } from '../lib/auth';
 import { DenPanel } from './DenScreenKit';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -8,34 +8,51 @@ import './SecurityPanel.css';
 interface SecurityPanelProps {
   /** The signed-in operator's current login email. Blank when Auth has none. */
   email: string;
+  /** Rendered under the rows: the Access and Activity facts (see Account.tsx). */
+  meta?: React.ReactNode;
 }
 
 /**
- * Account > Security: change the login email, change the password, or mail
- * yourself a reset link. Ported from Android's `SecurityPanel` in
- * AdminSettingsScreen.kt, which the Account screen there already hosts; the
- * field set, the button labels, and the error copy are deliberately the same
- * sentences on both surfaces.
+ * Account > Security: mail yourself a password reset link, end this session,
+ * or move your login to a different address. Ported from Android's
+ * `SecurityPanel` in AdminSettingsScreen.kt, which the Account screen there
+ * already hosts; the button labels and the error copy are deliberately the
+ * same sentences on both surfaces.
  *
- * All three flows are Firebase Auth client-side. No callable exists for any of
- * them and none is needed: `reauthenticateWithCredential` proves ownership,
- * `updatePassword` and `verifyBeforeUpdateEmail` do the work, and lib/auth.ts
- * turns every failure into a typed AccountSecurityError whose message is
- * already operator-facing.
+ * ISSUE #719 reshaped this to the 2026-05-27 User profile mock: the mock draws
+ * Security as two action ROWS, "Change password" (which sends a reset link, not
+ * a form) and "Sign out". The typed current/new/confirm password form is gone
+ * with them; a reset link is the flow the mock chose and the one that also
+ * works for an operator who has forgotten the current password. `changePassword`
+ * stays in lib/auth.ts with its own tests: nothing about the credential flow
+ * broke, this screen just stopped asking for three password boxes.
+ *
+ * The login-email form below the rows is KEPT even though the mock does not
+ * draw it. It exists, it works, and no other surface offers it, so deleting it
+ * would take away the only way to move an admin login off a dead address.
+ *
+ * Every flow is Firebase Auth client-side. No callable exists for any of them
+ * and none is needed: `reauthenticateWithCredential` proves ownership,
+ * `verifyBeforeUpdateEmail` and `sendPasswordResetEmail` do the work, and
+ * lib/auth.ts turns every failure into a typed AccountSecurityError whose
+ * message is already operator-facing.
  *
  * The email flow says "we sent a link", never "your email changed", because
  * that is what verifyBeforeUpdateEmail actually does: the address flips only
  * after the operator opens the link in the NEW inbox. Reporting it as done
  * would leave someone thinking they had moved their login when they had not.
  */
-export function SecurityPanel({ email }: SecurityPanelProps) {
+export function SecurityPanel({ email, meta }: SecurityPanelProps) {
   return (
-    <DenPanel title="Security" subtitle="Your login email and password.">
+    <DenPanel title="Security" subtitle="Your password, this session, and the address you sign in with.">
+      <div className="security__rows">
+        <ResetRow email={email} />
+        <SignOutRow />
+      </div>
       <div className="security__stack">
         <EmailSection email={email} />
-        <PasswordSection />
-        <ResetSection email={email} />
       </div>
+      {meta}
     </DenPanel>
   );
 }
@@ -165,120 +182,36 @@ function EmailSection({ email }: SecurityPanelProps) {
   );
 }
 
-// ── password ────────────────────────────────────────────────────────────────
-
-const MIN_PASSWORD_LENGTH = 6;
-
-function PasswordSection() {
-  const [current, setCurrent] = useState('');
-  const [next, setNext] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-
-  // Only once there is something to compare, so the field does not scold the
-  // operator mid-word on the first keystroke of the confirm box.
-  const mismatch = next !== '' && confirm !== '' && next !== confirm;
-  const ready =
-    !busy && current !== '' && next.length >= MIN_PASSWORD_LENGTH && next === confirm;
-
-  async function submit() {
-    if (!ready) return;
-    setBusy(true);
-    setError(null);
-    setDone(false);
-    try {
-      await changePassword(current, next);
-      setDone(true);
-      setCurrent('');
-      setNext('');
-      setConfirm('');
-    } catch (err) {
-      setError(failureMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+// ── action rows (the mock's two Security rows) ──────────────────────
+interface SecurityRowProps {
+  title: string;
+  detail: React.ReactNode;
+  outcome: React.ReactNode;
+  action: React.ReactNode;
+}
+/** One "what it does / here is the button" row. The mock's `.secrow`. */
+function SecurityRow({ title, detail, outcome, action }: SecurityRowProps) {
   return (
-    <fieldset className="security__section" disabled={busy}>
-      <legend className="security__legend">Change password</legend>
-
-      <Outcome
-        errorTitle="Couldn't change your password"
-        error={error}
-        success={done ? 'Password updated.' : null}
-      />
-
-      <div className="security__field">
-        <label className="security__label" htmlFor="security-current-password">
-          Current password
-        </label>
-        <input
-          id="security-current-password"
-          type="password"
-          autoComplete="current-password"
-          className="security__input"
-          value={current}
-          onChange={(e) => setCurrent(e.target.value)}
-        />
+    <div className="security__row">
+      <div className="security__rowText">
+        <b className="security__rowTitle">{title}</b>
+        <small className="security__rowDetail">{detail}</small>
+        {outcome}
       </div>
-
-      <div className="security__field">
-        <label className="security__label" htmlFor="security-new-password">
-          New password
-        </label>
-        <input
-          id="security-new-password"
-          type="password"
-          autoComplete="new-password"
-          className="security__input"
-          value={next}
-          onChange={(e) => setNext(e.target.value)}
-        />
-      </div>
-
-      <div className="security__field">
-        <label className="security__label" htmlFor="security-confirm-password">
-          Confirm new password
-        </label>
-        <input
-          id="security-confirm-password"
-          type="password"
-          autoComplete="new-password"
-          className="security__input"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          aria-invalid={mismatch}
-          aria-describedby={mismatch ? 'security-confirm-error' : undefined}
-        />
-        {mismatch && (
-          <span id="security-confirm-error" className="security__error" role="alert">
-            New passwords don&apos;t match.
-          </span>
-        )}
-      </div>
-
-      <PrimaryButton
-        label={busy ? 'Updating…' : 'Update password'}
-        onClick={() => void submit()}
-        disabled={!ready}
-        busy={busy}
-      />
-    </fieldset>
+      <div className="security__rowAction">{action}</div>
+    </div>
   );
 }
-
-// ── reset email ─────────────────────────────────────────────────────────────
-
-function ResetSection({ email }: SecurityPanelProps) {
+/**
+ * "Change password" in the mock's words: a reset link to the account email,
+ * not a form. Disabled when Auth holds no usable address, because there is
+ * nowhere to send the link and a button that cannot work should say so.
+ */
+function ResetRow({ email }: { email: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-
   const ready = !busy && isPlausibleEmail(email);
-
   async function submit() {
     if (!ready) return;
     setBusy(true);
@@ -293,22 +226,64 @@ function ResetSection({ email }: SecurityPanelProps) {
       setBusy(false);
     }
   }
-
   return (
-    <div className="security__section">
-      <p className="security__hint">Forgot your password?</p>
-
-      <Outcome
-        errorTitle="Couldn't send the reset email"
-        error={error}
-        success={sent ? `Password reset email sent to ${email}. Check your inbox.` : null}
-      />
-
-      <GhostButton
-        label={busy ? 'Sending…' : 'Send reset email'}
-        onClick={() => void submit()}
-        disabled={!ready}
-      />
-    </div>
+    <SecurityRow
+      title="Change password"
+      detail={
+        isPlausibleEmail(email)
+          ? `A password reset link goes to ${email}.`
+          : 'No login email is on file, so there is nowhere to send a reset link.'
+      }
+      outcome={
+        <Outcome
+          errorTitle="Couldn't send the reset email"
+          error={error}
+          success={sent ? `Reset link sent to ${email}. Check your inbox.` : null}
+        />
+      }
+      action={
+        <GhostButton
+          label={busy ? 'Sending…' : 'Send reset email'}
+          onClick={() => void submit()}
+          disabled={!ready}
+        />
+      }
+    />
+  );
+}
+/**
+ * Ends THIS session on THIS device, the same `signOut` the topbar chip calls.
+ * The mock's suggestion card for revoking every other device is deliberately
+ * not built here: nothing in this app revokes refresh tokens today, and a
+ * button that only looks like it would is worse than no button.
+ */
+function SignOutRow() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signOut();
+    } catch (err) {
+      setError(failureMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <SecurityRow
+      title="Sign out"
+      detail="End this session on this device."
+      outcome={<Outcome errorTitle="Couldn't sign you out" error={error} success={null} />}
+      action={
+        <GhostButton
+          label={busy ? 'Signing out…' : 'Sign out'}
+          onClick={() => void submit()}
+          disabled={busy}
+        />
+      }
+    />
   );
 }

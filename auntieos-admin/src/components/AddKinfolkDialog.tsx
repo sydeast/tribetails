@@ -26,7 +26,8 @@ interface AddKinfolkDialogProps {
  * not a callable) and for which of the full wasm Kinfolk fields are
  * deliberately left at their real default here rather than fabricated.
  *
- * Same shape as EditProfileDialog: disabled-while-busy, fail-loud on a
+ * Same shape as the other Dialog editors (HouseholdSectionDialog,
+ * MediaUploadDialog): disabled-while-busy, fail-loud on a
  * rejected write (names the failing call, leaves the form exactly as typed),
  * Escape/backdrop-close routed through Dialog but suppressed mid-save.
  */
@@ -56,9 +57,9 @@ export function AddKinfolkDialog({ onClose, onCreated }: AddKinfolkDialogProps) 
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
   }
 
-  // See EditProfileDialog's identical note: Dialog's focus-management effect
-  // depends on this identity, an inline function here would be a new
-  // reference every keystroke and steal focus off whichever field is active.
+  // Memoized: Dialog's focus-management effect depends on this identity, so an
+  // inline function here would be a new reference on every keystroke and would
+  // steal focus off whichever field is active.
   const closeUnlessSaving = useCallback(() => {
     if (!saving) onClose();
   }, [saving, onClose]);

@@ -5,7 +5,11 @@ import type {
   NotificationMatrix,
   NotifStream,
 } from '../api/myNotifications';
-import { adminChannelForced, adminGateEnabledChannels } from './myNotificationsFormat';
+import {
+  adminChannelForced,
+  adminGateEnabledChannels,
+  userChannelChoice,
+} from './myNotificationsFormat';
 
 /**
  * Pure draft-editing helpers for the My Notifications EDITOR
@@ -105,6 +109,88 @@ export function applyBulkToggleAll(
   let next = prefs;
   for (const { entries, stream } of scopes) {
     next = applyBulkToggle(next, matrix, entries, stream, on);
+  }
+  return next;
+}
+
+/**
+ * Every (notification, stream) pair whose `channel` the operator may actually
+ * decide: the gate offers that channel on that stream and it is not forced on.
+ * Exactly the pairs a row toggle on the full My Notifications page would let
+ * them click, narrowed to one channel.
+ *
+ * Shared by the two functions below so the Account screen's channel switch can
+ * never claim to control a pair that its own flip would skip.
+ */
+function editablePairs(
+  matrix: NotificationMatrix,
+  scopes: readonly BulkToggleScope[],
+  channel: NotificationChannel,
+): Array<{ entry: NotificationCatalogEntry; stream: NotifStream }> {
+  const pairs: Array<{ entry: NotificationCatalogEntry; stream: NotifStream }> = [];
+  for (const { entries, stream } of scopes) {
+    for (const entry of entries) {
+      if (!adminGateEnabledChannels(matrix, entry, stream).includes(channel)) continue;
+      if (adminChannelForced(matrix, entry, stream, channel)) continue;
+      pairs.push({ entry, stream });
+    }
+  }
+  return pairs;
+}
+
+/** How many notifications one channel switch on the Account screen governs. */
+export function channelMasterCount(
+  matrix: NotificationMatrix,
+  scopes: readonly BulkToggleScope[],
+  channel: NotificationChannel,
+): number {
+  return editablePairs(matrix, scopes, channel).length;
+}
+
+/**
+ * Where the Account screen's single per-channel switch sits (issue #719).
+ *
+ * There is no global "email on" bit in the store: `staff/{uid}.notificationPrefs`
+ * is per notification (`byKey`), with a `byCategory` fallback and a catalog
+ * default. So one switch has to stand for many rows, and this is the reading
+ * that does not lie to the operator: ON when at least one notification would
+ * currently reach them on this channel. Turning it off silences the channel
+ * (every editable row goes off); turning it back on restores every editable
+ * row. Anything narrower ("all of them are on") would report OFF while mail
+ * kept arriving.
+ *
+ * Forced channels are excluded on purpose. The business gate decides those and
+ * the full page renders them read-only, so counting them here would pin the
+ * switch on and make it look broken when clicked.
+ */
+export function channelMasterOn(
+  prefs: AdminNotificationPrefs,
+  matrix: NotificationMatrix,
+  scopes: readonly BulkToggleScope[],
+  channel: NotificationChannel,
+): boolean {
+  return editablePairs(matrix, scopes, channel).some(({ entry }) =>
+    userChannelChoice(prefs, entry.key, entry.category, channel),
+  );
+}
+
+/**
+ * The write half of `channelMasterOn`: flips ONE channel on every editable
+ * (notification, stream) pair, leaving the other two channels exactly where the
+ * operator left them. `applyBulkToggle` cannot be reused here because it flips
+ * every offered channel at once, which would turn an "SMS off" click into a
+ * silent wipe of the email choices beside it.
+ */
+export function applyChannelToggle(
+  prefs: AdminNotificationPrefs,
+  matrix: NotificationMatrix,
+  scopes: readonly BulkToggleScope[],
+  channel: NotificationChannel,
+  on: boolean,
+): AdminNotificationPrefs {
+  let next = prefs;
+  for (const { entry } of editablePairs(matrix, scopes, channel)) {
+    next = setUserChannelChoice(next, entry.key, channel, on);
   }
   return next;
 }

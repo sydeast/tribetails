@@ -1,67 +1,78 @@
+/**
+ * Account screen styling, rebuilt to `ui-ideas/auntieos-user-profile-2026-05-27.html`
+ * for issue #719: a hero, then two columns. Every value comes from
+ * styles/tokens.css; the mock's literal colours are its own concept palette and
+ * do not cross over.
+ */
 .account__hint {
   color: var(--color-text-dim);
   padding: var(--space-4) 0;
 }
-
-.account__identity {
+/* ── hero ─────────────────────────────────────────────────────────────────── */
+.account__hero {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
 }
-
-.account__identity-text {
+.account__heroMeta {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
+  flex: 1 1 14rem;
 }
-
-.account__identity-name {
+.account__heroName {
   font-family: var(--font-fraunces);
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 600;
-  color: var(--color-primary);
+  color: var(--color-text-primary);
 }
-
-.account__identity-title {
+.account__heroRole {
+  color: var(--color-accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.account__heroEmail {
   color: var(--color-text-dim);
-}
-
-.account__fields {
-  display: grid;
-  grid-template-columns: minmax(9rem, max-content) 1fr;
-  gap: var(--space-3) var(--space-4);
-  margin: 0;
-}
-
-.account__field {
-  display: contents;
-}
-
-.account__field-label {
-  color: var(--color-text-dim);
-  font-weight: 500;
-}
-
-.account__field-value {
-  margin: 0;
-  color: var(--color-primary);
+  font-size: 0.9rem;
   overflow-wrap: anywhere;
 }
-
-.account__field-value--mono {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-}
-
-/* The photo control under the identity name: the real <input type="file"> is
-   visually hidden but still focusable and labelled, so a keyboard user and a
-   test both reach the picker without the button. */
-.account__photo {
+.account__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-top: var(--space-2);
 }
-
+.account__badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+}
+.account__badge--sole,
+.account__badge--uid {
+  color: var(--color-text-primary);
+}
+.account__heroActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+/* The real <input type="file"> is visually hidden but still focusable and
+   labelled, so a keyboard user and a test both reach the picker without the
+   button. */
 .account__photo-input {
   position: absolute;
   width: 1px;
@@ -70,4 +81,136 @@
   clip: rect(0 0 0 0);
   clip-path: inset(50%);
   white-space: nowrap;
+}
+/* ── two columns ──────────────────────────────────────────────────────────── */
+.account__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+.account__col {
+  min-width: 0;
+}
+@media (max-width: 60rem) {
+  .account__cols {
+    grid-template-columns: 1fr;
+  }
+  .account__heroActions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+/* ── inline profile fields ────────────────────────────────────────────────── */
+.account__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.account__frow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+@media (max-width: 34rem) {
+  .account__frow {
+    grid-template-columns: 1fr;
+  }
+}
+.account__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.account__label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+.account__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.account__input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.account__input:disabled {
+  opacity: 0.6;
+}
+.account__textarea {
+  resize: vertical;
+}
+.account__fieldError {
+  font-size: 0.8rem;
+  color: var(--color-error);
+}
+/* ── notification channel switches ────────────────────────────────────────── */
+.account__toggles {
+  display: flex;
+  flex-direction: column;
+}
+.account__toggleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.account__toggleRow:first-child {
+  padding-top: 0;
+}
+.account__toggleRow:last-child {
+  border-bottom: none;
+}
+.account__toggleText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+.account__toggleTitle {
+  font-size: 0.95rem;
+  color: var(--color-text-primary);
+}
+.account__toggleDetail {
+  font-size: 0.85rem;
+  color: var(--color-text-dim);
+}
+.account__toggleFooter {
+  margin-top: var(--space-3);
+}
+/* ── Access and Activity meta block (under Security) ──────────────────────── */
+.account__meta {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.85rem;
+}
+.account__metaRow {
+  display: contents;
+}
+.account__metaLabel {
+  color: var(--color-text-dim);
+}
+.account__metaValue {
+  margin: 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.account__metaValue--mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }

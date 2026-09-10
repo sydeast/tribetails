@@ -34,7 +34,7 @@ interface Props {
  * overwrites), and a 30-field form on the web is a scroll where the error you
  * need to fix is off screen from the button that told you about it.
  *
- * Fail-loud on save, the `EditProfileDialog` convention: the fieldset locks
+ * Fail-loud on save, the shared Dialog-editor convention: the fieldset locks
  * while the write is in flight, the dialog cannot be dismissed mid-save, and a
  * rejection leaves every edit exactly where the operator left it under a
  * persistent Banner. The success TOAST is not raised here, the caller raises it,
@@ -61,7 +61,7 @@ export function HouseholdSectionDialog({ section, kinfolkName, record, onClose, 
 
   // Memoized: Dialog's focus effect keys off this identity, and a fresh arrow on
   // every keystroke re-focused the panel and stole the caret out of the input
-  // after its first character (the bug EditProfileDialog documents).
+  // after its first character.
   const closeUnlessSaving = useCallback(() => {
     if (!saving) onClose();
   }, [saving, onClose]);
