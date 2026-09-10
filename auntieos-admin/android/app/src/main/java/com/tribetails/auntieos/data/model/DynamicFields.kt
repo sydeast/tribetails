@@ -95,9 +95,11 @@ data class HouseholdData(
     var emergencyVetClinicId: String = "",
 
     // Veterinary Information: LEGACY free text, kept readable for a household
-    // that predates the catalog link. Read only when the id above is blank, and
-    // never written again. `primaryVetHours` is superseded by
-    // `vet_clinics.hours`: hours belong to the practice, not to each household.
+    // that predates the catalog link. Read only when the id above is blank.
+    // Never authored with new text; cleared to blank once
+    // `HouseholdDataViewModel.clearLegacyVetLeftovers` retires it on request
+    // (issue #677). `primaryVetHours` is superseded by `vet_clinics.hours`:
+    // hours belong to the practice, not to each household.
     var primaryVetName: String = "",
     var primaryVetPhone: String = "",
     var primaryVetAddress: String = "",

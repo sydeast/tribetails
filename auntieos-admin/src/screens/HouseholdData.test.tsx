@@ -414,13 +414,18 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
 });
 
 /**
- * The vet is CHOSEN, never typed, and choosing it never rewrites the old copy.
+ * The vet is CHOSEN, never typed, and choosing it never RE-AUTHORS the old
+ * copy with new text.
  *
- * Three places in this codebase already promise that the seven free-text
- * `primaryVet*` / `emergencyVet*` keys are read for display and never written
- * again: `lib/householdDataSchema.ts`, the leftovers banner on this screen, and
- * android `ui/directory/HouseholdDataScreen.kt`. "Edit veterinary" is the one
- * path that could break that promise, so it is the one path pinned here.
+ * Issue #677: linking a clinic used to leave the seven free-text
+ * `primaryVet*` / `emergencyVet*` keys sitting on the record forever, since
+ * nothing in the admin ever touched them. From the operator's chair that reads
+ * as "cannot update vet", the operator's exact words: the picker showed the new
+ * clinic, the read view showed the new clinic, and the record still carried a
+ * name nobody chose. A save now clears a slot's legacy keys the moment that
+ * slot links a clinic (`lib/householdDataSchema.ts#legacyVetKeysForSlot`), and
+ * an unlinked slot's legacy text is left alone, since that text is the vet
+ * being shown for it.
  */
 describe('HouseholdData: editing the vet', () => {
   /** The catalog rows the picker searches. `CLINIC` is the household's current vet. */
@@ -443,31 +448,44 @@ describe('HouseholdData: editing the vet', () => {
   }
 
   /**
-   * THE ONE THAT MATTERS. A save here used to patch every field the veterinary
-   * section lists, which is the two clinic ids AND the seven retired strings, so
-   * an operator who opened this dialog to change the vet wrote the superseded
-   * copy back out with it. That is silent: nothing on screen changes, and the
-   * record now carries a fresh `updatedAt` on data the product says is dead.
+   * THE ONE THAT MATTERS (issue #677). `record()`'s fixture already carries
+   * legacy primary text ("Barton Creek Animal Hospital") alongside a linked
+   * `primaryVetClinicId`, the exact "dd" shape from the walk: a clinic is
+   * chosen, and the old text is still sitting on the record. Saving from here
+   * must clear it, in the same write, rather than leaving it for a banner that
+   * can only report it.
    */
-  it('never writes the seven retired free-text vet keys', async () => {
+  it('clears the linked primary slot\'s legacy keys, and leaves the unlinked emergency slot alone', async () => {
     const dialog = await openVet();
     await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
 
     await waitFor(() => expect(saveHouseholdSection).toHaveBeenCalled());
     const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
-    for (const key of [
-      'primaryVetName',
-      'primaryVetPhone',
-      'primaryVetHours',
-      'primaryVetAddress',
-      'emergencyVetName',
-      'emergencyVetPhone',
-      'emergencyVetAddress',
-    ]) {
+    // Primary is linked (clinic_riverside), so its four legacy keys clear.
+    expect(patch['primaryVetName']).toBe('');
+    expect(patch['primaryVetPhone']).toBe('');
+    expect(patch['primaryVetHours']).toBe('');
+    expect(patch['primaryVetAddress']).toBe('');
+    // Emergency is unlinked in this fixture, so its legacy keys are not touched.
+    for (const key of ['emergencyVetName', 'emergencyVetPhone', 'emergencyVetAddress']) {
       expect(patch).not.toHaveProperty(key);
     }
-    // The two catalog links are the whole of what this dialog authors.
-    expect(Object.keys(patch).sort()).toEqual(['emergencyVetClinicId', 'primaryVetClinicId']);
+    expect(patch['primaryVetClinicId']).toBe('clinic_riverside');
+    expect(patch['emergencyVetClinicId']).toBe('');
+  });
+
+  it('clears the emergency slot\'s legacy keys too, once it is linked', async () => {
+    const dialog = await openVet();
+    await user.type(within(dialog).getByLabelText('Emergency vet'), 'Pet ER');
+    await user.click(await within(dialog).findByText('Austin Pet ER'));
+    await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(saveHouseholdSection).toHaveBeenCalled());
+    const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
+    expect(patch['emergencyVetClinicId']).toBe('clinic_er');
+    expect(patch['emergencyVetName']).toBe('');
+    expect(patch['emergencyVetPhone']).toBe('');
+    expect(patch['emergencyVetAddress']).toBe('');
   });
 
   it('picks the vet from the catalog by search rather than typing a document id', async () => {
@@ -520,5 +538,95 @@ describe('HouseholdData: editing the vet', () => {
     expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
     expect(within(dialog).getByText(/catalog didn.t load/i)).toBeInTheDocument();
     expect(saveHouseholdSection).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Issue #677, the second half: the leftovers banner used to tell the operator
+ * to "resolve by hand" with no control anywhere in the admin that could ever
+ * touch these fields. This is that control: a button on the banner, a confirm
+ * step (this write cannot be undone from here), and the same `saveHouseholdSection`
+ * write path as every other edit on this screen.
+ */
+describe('HouseholdData: clearing the old vet notes', () => {
+  function leftoverRecord() {
+    return record({
+      primaryVetClinicId: 'clinic_riverside',
+      primaryVetName: 'Barton Creek Animal Hospital',
+      primaryVetPhone: '(512) 555 0134',
+    });
+  }
+
+  it('shows a Clear old vet notes button beside the leftovers', async () => {
+    getHouseholdData.mockResolvedValue(leftoverRecord());
+    mount();
+    expect(await screen.findByText(/Older vet notes are still on this record/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear old vet notes' })).toBeInTheDocument();
+  });
+
+  it('does not show the button when there is nothing left to clear', async () => {
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    expect(screen.queryByRole('button', { name: 'Clear old vet notes' })).not.toBeInTheDocument();
+  });
+
+  it('asks to confirm before writing anything', async () => {
+    getHouseholdData.mockResolvedValue(leftoverRecord());
+    mount();
+    await screen.findByText(/Older vet notes are still on this record/);
+
+    await user.click(screen.getByRole('button', { name: 'Clear old vet notes' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(saveHouseholdSection).not.toHaveBeenCalled();
+  });
+
+  it('cancels without writing anything', async () => {
+    getHouseholdData.mockResolvedValue(leftoverRecord());
+    mount();
+    await screen.findByText(/Older vet notes are still on this record/);
+
+    await user.click(screen.getByRole('button', { name: 'Clear old vet notes' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(saveHouseholdSection).not.toHaveBeenCalled();
+  });
+
+  it('clears only the leftover legacy fields on confirm, through the same write path, and the banner drops away', async () => {
+    getHouseholdData.mockResolvedValue(leftoverRecord());
+    saveHouseholdSection.mockImplementation(
+      async (current: HouseholdRecord, patch: Partial<HouseholdRecord>) => ({ ...current, ...patch }),
+    );
+    mount();
+    await screen.findByText(/Older vet notes are still on this record/);
+
+    await user.click(screen.getByRole('button', { name: 'Clear old vet notes' }));
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+
+    await waitFor(() => expect(saveHouseholdSection).toHaveBeenCalled());
+    const patch = saveHouseholdSection.mock.calls[0]?.[1] as Record<string, string>;
+    expect(patch['primaryVetName']).toBe('');
+    expect(patch['primaryVetPhone']).toBe('');
+    // Only what was actually shown as a leftover travels, never the clinic link.
+    expect(patch).not.toHaveProperty('primaryVetClinicId');
+    expect(patch).not.toHaveProperty('primaryVetHours');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.queryByText(/Older vet notes are still on this record/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/Cleared the old vet notes for Nora Whitfield/)).toBeInTheDocument();
+  });
+
+  it('keeps the dialog open with the reason on a rejected clear, and the leftovers stay on screen', async () => {
+    getHouseholdData.mockResolvedValue(leftoverRecord());
+    saveHouseholdSection.mockRejectedValue(new Error('permission-denied'));
+    mount();
+    await screen.findByText(/Older vet notes are still on this record/);
+
+    await user.click(screen.getByRole('button', { name: 'Clear old vet notes' }));
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+
+    expect(await screen.findByText(/permission-denied/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getAllByText(/Older vet notes are still on this record/).length).toBeGreaterThan(0);
   });
 });

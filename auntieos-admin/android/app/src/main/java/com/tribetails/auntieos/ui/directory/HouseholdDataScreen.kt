@@ -151,6 +151,7 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
     val state by viewModel.uiState.collectAsState()
     val vet = state.vet
     val leftovers = legacyVetLeftovers(state.householdData)
+    var confirmingClear by remember { mutableStateOf(false) }
     AuntieCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -227,15 +228,52 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                     tone = AuntieBannerTone.Warning,
                     title = "Older vet notes are still on this record",
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "These were typed here before the vet moved to the household profile. They are not used anywhere and are not kept up to date. Whatever is left below is a duplicate or a conflict to resolve by hand.",
+                            "These were typed here before the vet moved to the household profile. They are not used anywhere and are not kept up to date. Whatever is left below can be cleared once you have copied out anything worth keeping.",
                             style = AuntieTheme.typography.bodySmall,
                             color = AuntieTheme.colors.textDim,
                         )
                         leftovers.forEach { (label, value) -> VetFactRow(label, value) }
+                        GhostButton(label = "Clear old vet notes", onClick = { confirmingClear = true })
                     }
                 }
+            }
+        }
+    }
+
+    // Issue #677: this used to tell the operator to "resolve by hand" with no
+    // control anywhere in the admin that could ever touch these fields. This is
+    // that control, confirmed before it writes and routed through the same
+    // diffed save (`saveHouseholdData`) every other household-data edit uses.
+    if (confirmingClear) {
+        AuntieModal(
+            onDismissRequest = { if (!state.isSaving) confirmingClear = false },
+            title = "Clear the old vet notes?",
+            confirmButton = {
+                PrimaryButton(
+                    label = if (state.isSaving) "Clearing..." else "Clear",
+                    enabled = !state.isSaving,
+                    loading = state.isSaving,
+                    onClick = {
+                        viewModel.clearLegacyVetLeftovers()
+                        confirmingClear = false
+                    },
+                )
+            },
+            dismissButton = {
+                AuntieTextBtn(onClick = { confirmingClear = false }, enabled = !state.isSaving) {
+                    Text("Cancel")
+                }
+            },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "This removes the fields below from this record. The linked vet shown above is unaffected: it lives on the clinic, not here.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                leftovers.forEach { (label, value) -> VetFactRow(label, value) }
             }
         }
     }

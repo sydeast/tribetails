@@ -239,6 +239,38 @@ class HouseholdDataSaveTest {
         advanceUntilIdle()
         assertEquals(mapOf("foodLocation" to "garage shelf"), changes.captured)
     }
+
+    /**
+     * Issue #677: the record predates the catalog and still carries the old
+     * typed primary vet, alongside a clean emergency slot. `clearLegacyVetLeftovers`
+     * must blank every legacy key that is actually set, through the same diffed
+     * write every other edit here uses, and must never touch the clinic ids.
+     */
+    @Test
+    fun `clearLegacyVetLeftovers writes only the legacy keys that were set, never the clinic ids`() = runTest(testDispatcher) {
+        val withLeftovers = stored.copy(
+            primaryVetName = "dd",
+            primaryVetPhone = "555-0000",
+        )
+        val changes = captureChanges()
+        val vm = loadedViewModel(withLeftovers)
+
+        vm.clearLegacyVetLeftovers()
+        advanceUntilIdle()
+
+        assertEquals(mapOf("primaryVetName" to "", "primaryVetPhone" to ""), changes.captured)
+    }
+
+    /** A household with nothing left over has nothing to write; the call must not error. */
+    @Test
+    fun `clearLegacyVetLeftovers on a record with nothing to clear writes nothing`() = runTest(testDispatcher) {
+        val vm = loadedViewModel(stored)
+
+        vm.clearLegacyVetLeftovers()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repo.updateHouseholdFields(any(), any()) }
+    }
 }
 
 /** The differ itself, away from the ViewModel. */

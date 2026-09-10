@@ -108,13 +108,16 @@ export const householdDataSchema = z.object({
    *
    * The seven free-text `primaryVet*` / `emergencyVet*` fields below are the
    * LEGACY fallback, kept readable for a household that predates the catalog
-   * link and never written again. Blank id means unlinked, which both clients
-   * label rather than hide.
+   * link. Never authored with new text; cleared to blank for a slot once that
+   * slot links a clinic (`legacyVetKeysForSlot`, `VetSectionDialog`), or on
+   * request from the leftovers banner's "Clear old vet notes" control
+   * (`HouseholdData.tsx`). Blank id means unlinked, which both clients label
+   * rather than hide.
    */
   primaryVetClinicId: line,
   /** The 24-hour clinic. A DISTINCT practice from the primary, never folded in. */
   emergencyVetClinicId: line,
-  // Veterinary (legacy free text: read when unlinked, never authored)
+  // Veterinary (legacy free text: read when unlinked, cleared once linked, never authored with new text)
   primaryVetName: line,
   primaryVetPhone: phone,
   primaryVetAddress: text,
@@ -216,8 +219,10 @@ export interface HouseholdSectionSpec {
    * `emergencyVetClinic*` emergency, both picked from the `vet_clinics` catalog
    * and both carrying the clinic's id). The seven fields listed on the section
    * are the OLD free-text copy. They stay in the schema and stay readable, so no
-   * household silently loses what is on file, but they are no longer editable
-   * here and nothing writes them.
+   * household silently loses what is on file before it is dealt with, but they
+   * are no longer editable here: a save clears a slot's copy once that slot
+   * links a clinic (issue #677), and the leftovers banner can clear whatever is
+   * still left on request. Nothing ever writes new text into them again.
    *
    * WHY KINFOLK WON, on the screen someone reads the emergency number off:
    * only the catalog-linked copy can be CORRECTED. `updateVetClinic` fixes a
@@ -343,7 +348,8 @@ export const EDITABLE_HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] =
 /**
  * The seven free-text vet fields, retired as an authoring surface by A2.
  *
- * Still read, still shown when populated, never written. The migration script
+ * Still read, still shown when populated. Never authored with new text: a save
+ * only ever clears one of these, never fills it back in. The migration script
  * (`mytribe/scripts/backfillHouseholdVetToKinfolk.ts`) reads exactly this list,
  * so it and the screen cannot drift into disagreeing about what "the old copy"
  * means.
@@ -352,6 +358,18 @@ export const LEGACY_VET_FIELD_KEYS: readonly HouseholdFieldKey[] =
   HOUSEHOLD_SECTIONS.find((s) => s.id === 'veterinary')
     ?.fields.filter((f) => f.kind !== 'clinicId')
     .map((f) => f.key) ?? [];
+
+/**
+ * The legacy keys for one vet slot ("primary" or "emergency"), the exact set
+ * `VetSectionDialog` clears in the same write once that slot links a clinic
+ * (issue #677: linking left the old text sitting on the record with no way to
+ * clear it, which read as "cannot update vet"), and the subset the leftovers
+ * banner's "Clear old vet notes" button can also blank on request.
+ */
+export function legacyVetKeysForSlot(slot: 'primary' | 'emergency'): HouseholdFieldKey[] {
+  const prefix = slot === 'primary' ? 'primaryVet' : 'emergencyVet';
+  return LEGACY_VET_FIELD_KEYS.filter((key) => key.startsWith(prefix));
+}
 
 /** The legacy vet fields still carrying a value, so leftovers fail loud, not silent. */
 export function legacyVetLeftovers(values: HouseholdFields): HouseholdFieldSpec[] {

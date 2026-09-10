@@ -44,7 +44,9 @@ private val HOUSEHOLD_FIELDS: List<HField> = listOf(
 
 /**
  * The seven free-text vet fields, retired as an authoring surface by punchlist
- * A2. Still read, still shown when populated, never written.
+ * A2. Still read, still shown when populated. Never authored with new text;
+ * `HouseholdDataViewModel.clearLegacyVetLeftovers` (issue #677) is the one
+ * write path that touches them, and it only ever blanks them.
  *
  * They stay in the catalog above so the gap list keeps its shape, but they are
  * named here so the veterinary card can surface any value still on file rather
