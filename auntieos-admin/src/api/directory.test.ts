@@ -12,6 +12,9 @@ import {
   initialsOf,
   filterSortKinfolk,
   filterSortKin,
+  tagNamesOf,
+  tagFilterOptions,
+  matchesTag,
   KIN_QUERY,
   type Kinfolk,
   type Kin,
@@ -193,6 +196,58 @@ describe('filterSortKinfolk', () => {
   });
   it('filters by the query before sorting', () => {
     expect(filterSortKinfolk(rows, 'amy', 'alpha_asc').map((r) => r._id)).toEqual(['b']);
+  });
+});
+
+/**
+ * #713: "tags are just labels and not actual tags which act like a filter."
+ * These are the pure halves of the Directory's tag filter.
+ */
+describe('tag filtering', () => {
+  it('reads only the string entries off a tags field', () => {
+    expect(tagNamesOf({ tags: ['VIP', 7, null, 'Slow pay'] })).toEqual(['VIP', 'Slow pay']);
+    expect(tagNamesOf({ tags: 'VIP' })).toEqual([]);
+    expect(tagNamesOf({})).toEqual([]);
+  });
+
+  it('offers every distinct tag on the rows, alphabetically, collapsing casing', () => {
+    const rows = [{ tags: ['Slow pay', 'VIP'] }, { tags: ['vip', 'Allergy'] }, { tags: [] }];
+    expect(tagFilterOptions(rows)).toEqual(['Allergy', 'Slow pay', 'VIP']);
+  });
+
+  it('offers nothing when no row carries a tag, so the control can hide itself', () => {
+    expect(tagFilterOptions([{ tags: [] }, {}])).toEqual([]);
+  });
+
+  it('matches case- and whitespace-insensitively, the rule the chips resolve by', () => {
+    expect(matchesTag({ tags: ['  vip '] }, 'VIP')).toBe(true);
+    expect(matchesTag({ tags: ['VIP'] }, 'Slow pay')).toBe(false);
+  });
+
+  it('a blank tag narrows nothing', () => {
+    expect(matchesTag({ tags: [] }, '')).toBe(true);
+    expect(matchesTag({}, '   ')).toBe(true);
+  });
+
+  it('narrows the household list, on top of the search query', () => {
+    const rows = [
+      kinfolk({ _id: 'a', firstName: 'Jamie', lastName: 'Halbrook', tags: ['VIP'] }),
+      kinfolk({ _id: 'b', firstName: 'Amy', lastName: 'Adams', tags: ['Slow pay'] }),
+      kinfolk({ _id: 'c', firstName: 'Ros', lastName: 'Vance' }),
+    ];
+    expect(filterSortKinfolk(rows, '', 'alpha_asc', 'VIP').map((r) => r._id)).toEqual(['a']);
+    expect(filterSortKinfolk(rows, 'amy', 'alpha_asc', 'VIP')).toEqual([]);
+    // Omitted (the pre-#713 call shape) still means "every row".
+    expect(filterSortKinfolk(rows, '', 'alpha_asc')).toHaveLength(3);
+  });
+
+  it('narrows the Kin list, and still excludes archived kin', () => {
+    const rows = [
+      kin({ _id: 'a', name: 'Biscuit', tags: ['Reactive'] }),
+      kin({ _id: 'b', name: 'Gravy', tags: ['On meds'] }),
+      kin({ _id: 'c', name: 'Old', status: 'archived', tags: ['Reactive'] }),
+    ];
+    expect(filterSortKin(rows, '', 'alpha_asc', 'Reactive').map((r) => r._id)).toEqual(['a']);
   });
 });
 

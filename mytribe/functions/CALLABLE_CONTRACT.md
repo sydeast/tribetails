@@ -1303,6 +1303,36 @@ closure so the operator can act on them manually.
 - Mirrors: `auntieos-admin/src/api/vetClinicsWrite.ts`, Android
   `AuntieRepository.archiveVetClinic`. Frozen in `test/callableContract.test.ts`.
 
+### removeBusinessTag (admin-gated)
+- req `{ scope: 'household' | 'pet', name: string (trimmed, 1..40) }`
+- res `{ ok: true, scope, name: string, recordsTouched: number, vocabRemoved: boolean }`
+- Added 2026-09-10 (#713). **DELETE IS A CASCADE, not a vocabulary edit.**
+  Operator ruling: "IF THE TAG IS DELETED THEN IT GOES AWAY COMPLETELY." Removing
+  a tag used to filter the `business_settings` list and nothing else, so every
+  household and pet already carrying the name kept it as a neutral chip.
+- Writes, and nothing else:
+  `scope 'household'` -> `kinfolk/{id}.tags` then `business_settings/business_settings.householdTags`;
+  `scope 'pet'` -> `kin/{id}.tags` then `business_settings/business_settings.petTags`.
+  The same name may sit in BOTH vocabularies ("Meds Needed" on a household and on
+  a pet), so a household delete never reaches into `kin`. There is no third copy:
+  the nested `families/{kinfolkId}/kin/{kinId}` doc carries no `tags` field and
+  `onFamilyKinWrite`'s flat-mirror payload does not include one.
+- **Assignments first, vocabulary last.** A failure partway leaves the row in the
+  list, so the operator presses Remove again and the retry finishes. The reverse
+  order would orphan assignments with nothing left to remove them by.
+- Matching is case-insensitive over normalized names, so the scan is in memory:
+  `where('tags','array-contains',name)` and `FieldValue.arrayRemove` both match
+  exactly and would leave "vip" behind, which reads as the delete not working.
+  Writes are whole-list replaces chunked at 400 per batch.
+- Idempotent. A name already off the list is not an error (that is exactly what a
+  half-finished earlier run leaves behind): the strip runs anyway and
+  `vocabRemoved` reports `false`.
+- Audited `BUSINESS_TAG_REMOVED` (`SUCCESS`; `warn` when records were touched,
+  else `info`). The payload carries the record ids, because which households held
+  the tag is unrecoverable once the batch commits.
+- Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
+  `AuntieRepository.removeBusinessTag`. Frozen in `test/callableContract.test.ts`.
+
 ## Blocked time windows (admin-gated)
 - req `{ date: 'YYYY-MM-DD', startTime: 'HH:mm', endTime: 'HH:mm', notes?: string
   (<=500), startTimeMs?: number, endTimeMs?: number, overrideVisitConflict?: boolean }`

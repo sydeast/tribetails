@@ -8,9 +8,18 @@
  * palette `color`, and an `icon` (a plain emoji string in v1). Assignments on a
  * kinfolk/kin doc store only the NAME (`string[]`); a name is resolved back to
  * its color/icon against the relevant vocabulary at render time. A name with no
- * matching vocab entry (a free-form tag, or one whose vocab entry was removed)
- * resolves to a neutral default chip rather than an error, so a tag never
- * "breaks" when its definition changes.
+ * matching vocab entry resolves to a neutral default chip rather than an error,
+ * so a tag never "breaks" when its definition changes.
+ *
+ * #713 changed WHICH names reach that neutral path. Deleting a tag used to drop
+ * the vocabulary row and leave every assignment standing, so a deleted tag lived
+ * on as a neutral chip on the households carrying it. The operator ruled against
+ * that: "IF THE TAG IS DELETED THEN IT GOES AWAY COMPLETELY." A delete now runs
+ * through the `removeBusinessTag` callable, which strips the name off every
+ * `kinfolk` (or `kin`) doc as well as off the list. The neutral chip therefore
+ * covers a free-form name a profile assigned without promoting it to the
+ * vocabulary, and legacy docs written before the cascade existed. It is no
+ * longer the documented outcome of pressing Remove.
  *
  * `color` is a `{ token, css }` pair, not a raw hex: `token` is the stable
  * palette identifier persisted on the doc, `css` is the token's `var(--color-*)`
@@ -83,7 +92,9 @@ export interface ResolvedTag {
 /**
  * Resolve a tag NAME to its color/icon against a vocabulary (case-insensitive).
  * An unknown name resolves to `{ name, color: null, icon: null }` so the chip
- * renders neutral, never an error. Never throws.
+ * renders neutral, never an error. Never throws. See the header for what an
+ * unknown name means now that a delete cascades: a free-form assignment or a
+ * legacy doc, not a tag the operator just removed.
  */
 export function resolveTag(name: string, vocab: TagDef[]): ResolvedTag {
   const hit = vocab.find((t) => sameName(t.name, name));
@@ -108,7 +119,15 @@ export function addTag(vocab: TagDef[], def: TagDef): TagDef[] {
   return [...vocab, { name, color: def.color, icon: def.icon }];
 }
 
-/** Drop the vocab entry with this name (case-insensitive). Returns a new array. */
+/**
+ * Drop the vocab entry with this name (case-insensitive). Returns a new array.
+ *
+ * This is the LIST half only. Since #713 the editor never calls it to perform a
+ * delete: `removeBusinessTag` does that server-side, because the assignments on
+ * `kinfolk` / `kin` have to go with it and a client cannot guarantee that
+ * fan-out finishes. This stays as the pure transform that keeps the on-screen
+ * list in step once the callable has reported success.
+ */
 export function removeTag(vocab: TagDef[], name: string): TagDef[] {
   return vocab.filter((t) => !sameName(t.name, name));
 }

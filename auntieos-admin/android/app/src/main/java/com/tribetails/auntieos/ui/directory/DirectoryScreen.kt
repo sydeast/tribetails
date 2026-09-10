@@ -80,6 +80,23 @@ fun DirectoryScreen(
     val state by viewModel.directoryState.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
     var kinSearch by remember { mutableStateOf("") }
+    // #713: the Kin tab's tag filter sits here beside its search, the same way
+    // the Kinfolk tab's sits on the view model beside its own. Kept separate
+    // because household tags and Kin tags are separate vocabularies: carrying
+    // one across would narrow the other list to nothing.
+    var kinTag by remember { mutableStateOf(TAG_FILTER_ALL) }
+    val kinfolkTagOptions = remember(state.allKinfolk) {
+        directoryTagOptions(state.allKinfolk.map { it.tagNames() })
+    }
+    val kinTagOptions = remember(state.kinByKinfolkId) {
+        directoryTagOptions(state.kinByKinfolkId.values.flatten().map { it.tagNames() })
+    }
+    // A Kin tag filter no loaded row can satisfy any more falls back to "All
+    // tags". Deleting the tag being filtered by empties the option list, which
+    // hides the dropdown; without this the list would sit on an empty result
+    // with no control left to clear it. The Kinfolk tab's equivalent reset lives
+    // on the view model, beside the state it is resetting.
+    val activeKinTag = if (kinTagOptions.any { it.equals(kinTag, ignoreCase = true) }) kinTag else TAG_FILTER_ALL
 
     // #14: bulk portal-invite state + Toast feedback.
     val inviteBusy by viewModel.inviteBusy.collectAsState()
@@ -184,6 +201,32 @@ fun DirectoryScreen(
                         }
                     }
 
+                    // ── Tag filter (#713) ────────────────────────────────────────
+                    //
+                    // Rendered only when some row on THIS tab carries a tag. An
+                    // empty picker on a tribe that has never tagged anyone is a
+                    // dead control, and one shown while the roster is still
+                    // loading would claim "no tags" about rows it has not read.
+                    item {
+                        val tagOptions = if (selectedTab == 0) kinfolkTagOptions else kinTagOptions
+                        if (!state.isLoading && tagOptions.isNotEmpty()) {
+                            AuntieDropdownField(
+                                value = if (selectedTab == 0) state.tagFilter else activeKinTag,
+                                options = listOf(TAG_FILTER_ALL) + tagOptions,
+                                onSelect = { picked ->
+                                    if (selectedTab == 0) {
+                                        viewModel.setTagFilter(picked)
+                                    } else {
+                                        kinTag = picked
+                                    }
+                                },
+                                displayText = { name -> if (name == TAG_FILTER_ALL) "All tags" else name },
+                                label = "Tag",
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+
                     // ── Content panel ────────────────────────────────────────────
                     if (selectedTab == 0) {
                         kinfolkSection(
@@ -194,6 +237,7 @@ fun DirectoryScreen(
                         kinSection(
                             state = state,
                             kinSearch = kinSearch,
+                            kinTag = activeKinTag,
                             onKinClick = onKinClick,
                         )
                     }
@@ -314,16 +358,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinfolkSection(
 private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
     state: DirectoryUiState,
     kinSearch: String,
+    kinTag: String,
     onKinClick: (String) -> Unit,
 ) {
-    val allKin = state.kinByKinfolkId.values.flatten()
-        .filter {
-            kinSearch.isBlank() ||
-                it.name.contains(kinSearch, ignoreCase = true) ||
-                it.species.contains(kinSearch, ignoreCase = true) ||
-                it.breed.contains(kinSearch, ignoreCase = true)
-        }
-        .sortedBy { it.name.lowercase() }
+    // The search + tag + sort now live in `filterKinDirectory`, so the rule a
+    // JUnit test pins is the rule this list actually draws.
+    val allKin = filterKinDirectory(state.kinByKinfolkId.values.flatten(), kinSearch, kinTag)
 
     when {
         state.isLoading -> item {

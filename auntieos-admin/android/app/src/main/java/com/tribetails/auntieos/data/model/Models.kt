@@ -23,6 +23,12 @@ data class BaserowFile(
 // name with no matching vocab entry renders a neutral chip rather than an error.
 // Wire shapes are byte-identical to the React admin (auntieos-admin
 // src/lib/tags/model.ts + src/api/settings.ts), which is the authoring surface.
+//
+// #713: deleting a tag is a CASCADE, not a list edit. The `removeBusinessTag`
+// callable drops the vocabulary row AND strips the name off every kinfolk (or
+// kin) doc carrying it, so a deleted tag no longer lives on as a neutral chip.
+// The neutral chip now covers a free-form name a profile assigned without
+// promoting it, and legacy docs written before the cascade existed.
 
 /**
  * A tag palette entry as persisted: the stable [token] plus the [css] paint

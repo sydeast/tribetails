@@ -6,8 +6,10 @@ import {
   KINFOLK_SORT_OPTIONS,
   KIN_SORT_OPTIONS,
   SORT_OPTION_DEFAULT,
+  TAG_FILTER_ALL,
   filterSortKinfolk,
   filterSortKin,
+  tagFilterOptions,
   activeKinByKinfolk,
   kinfolkDisplayName,
   householdSubtitle,
@@ -230,6 +232,19 @@ function KinCard({ kin, onClick }: KinCardProps) {
   );
 }
 
+/**
+ * Why nothing is showing. The old copy always blamed the search box, which
+ * became a lie the moment a tag filter could empty the list on its own: an
+ * operator who cleared the search and still saw "No matches for" had no way to
+ * learn the tag was the thing holding rows back.
+ */
+function noMatchHint(query: string, tag: string): string {
+  const q = query.trim();
+  if (q !== '' && tag !== '') return `No matches for "${q}" tagged "${tag}".`;
+  if (tag !== '') return `Nothing here is tagged "${tag}".`;
+  return `No matches for "${q}".`;
+}
+
 /** The open kin detail view, plus the household its breadcrumb names. */
 interface OpenKin {
   id: string;
@@ -291,6 +306,13 @@ export function Directory({
   const [tab, setTab] = useState<DirectoryTab>('kinfolk');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
+  /**
+   * #713: narrow the list to one tag. Per tab, because the two vocabularies are
+   * separate lists and a household tag would match nothing on the Kin tab.
+   * Client-side over rows this screen already holds, so no read and no index.
+   */
+  const [kinfolkTag, setKinfolkTag] = useState(TAG_FILTER_ALL);
+  const [kinTag, setKinTag] = useState(TAG_FILTER_ALL);
   // The household profile detail view. It is opened by the ROUTE, never by
   // local state: a card click navigates to `/directory/{kinfolkId}` and this
   // screen re-mounts under that route with the id as a prop. That is what makes
@@ -324,6 +346,32 @@ export function Directory({
       label: kinfolkDisplayName(kf),
     }));
   }, [kinfolkState]);
+
+  // The tag options each tab offers, derived from the rows it is showing. Built
+  // from the loaded docs rather than from the settings vocabulary so the list
+  // never offers a tag that would narrow to nothing, and so this screen keeps
+  // its two reads.
+  const kinfolkTagOptions = useMemo(
+    () => (kinfolkState.status === 'ready' ? tagFilterOptions(kinfolkState.data) : []),
+    [kinfolkState],
+  );
+  const kinTagOptions = useMemo(
+    () => (kinState.status === 'ready' ? tagFilterOptions(kinState.data) : []),
+    [kinState],
+  );
+
+  /**
+   * A tag filter that no row can satisfy any more falls back to "All tags".
+   *
+   * This PR is what makes that reachable: filter the Directory by "VIP", delete
+   * "VIP" in Settings, and the live stream drops every assignment. The option
+   * list empties, the picker hides itself, and without this the list would sit
+   * on "Nothing here is tagged VIP" with no control left to clear it. Derived
+   * rather than reset in an effect, so there is no window where the state and
+   * the rendered list disagree.
+   */
+  const activeKinfolkTag = kinfolkTagOptions.includes(kinfolkTag) ? kinfolkTag : TAG_FILTER_ALL;
+  const activeKinTag = kinTagOptions.includes(kinTag) ? kinTag : TAG_FILTER_ALL;
 
   function selectTab(next: DirectoryTab) {
     setTab(next);
@@ -492,6 +540,36 @@ export function Directory({
           }
         />
 
+        {/*
+          The tag filter. Rendered only once the tab's stream is ready AND some
+          row actually carries a tag: an empty picker on a tribe that has not
+          tagged anyone is a dead control, and one offered while the stream is
+          still loading would claim "no tags" about rows it has not read.
+          Each tab keeps its own selection, because household tags and Kin tags
+          are separate vocabularies and carrying one across would filter the
+          other list down to nothing.
+        */}
+        {(tab === 'kinfolk' ? kinfolkTagOptions : kinTagOptions).length > 0 && (
+          <label className="directory__sort">
+            <span className="directory__sort-label">Tag</span>
+            <select
+              className="directory__sort-select"
+              value={tab === 'kinfolk' ? activeKinfolkTag : activeKinTag}
+              onChange={(e) =>
+                tab === 'kinfolk' ? setKinfolkTag(e.target.value) : setKinTag(e.target.value)
+              }
+              aria-label={tab === 'kinfolk' ? 'Filter kinfolk by tag' : 'Filter kin by tag'}
+            >
+              <option value={TAG_FILTER_ALL}>All tags</option>
+              {(tab === 'kinfolk' ? kinfolkTagOptions : kinTagOptions).map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <label className="directory__sort">
           <span className="directory__sort-label">Sort</span>
           <select
@@ -530,9 +608,9 @@ export function Directory({
           empty={<p className="directory__hint">No kinfolk on file yet.</p>}
         >
           {(rows) => {
-            const visible = filterSortKinfolk(rows, query, sort);
+            const visible = filterSortKinfolk(rows, query, sort, activeKinfolkTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">No matches for &ldquo;{query}&rdquo;.</p>;
+              return <p className="directory__hint">{noMatchHint(query, activeKinfolkTag)}</p>;
             }
             return (
               <EntityCardGrid label="Kinfolk" minCardWidth="290px" align="start">
@@ -562,9 +640,9 @@ export function Directory({
           empty={<p className="directory__hint">No kin on file yet.</p>}
         >
           {(rows) => {
-            const visible = filterSortKin(rows, query, sort);
+            const visible = filterSortKin(rows, query, sort, activeKinTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">No matches for &ldquo;{query}&rdquo;.</p>;
+              return <p className="directory__hint">{noMatchHint(query, activeKinTag)}</p>;
             }
             return (
               <EntityCardGrid label="Kin" minCardWidth="290px" align="start">

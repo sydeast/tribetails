@@ -355,3 +355,116 @@ describe('Directory screen, Add kinfolk / Add kin (the deferred create flows)', 
     expect(screen.queryByRole('dialog', { name: /^add kin$/i })).toBeNull();
   });
 });
+
+/**
+ * #713's second half: "tags are just labels and not actual tags which act like
+ * a filter." Both lists narrow by tag now, client-side over the rows the screen
+ * already streams.
+ */
+describe('Directory screen, tag filter', () => {
+  it('narrows the household list to the chosen tag', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook', tags: ['VIP'] }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams', tags: ['Slow pay'] }),
+        kinfolkRow({ _id: 'kf3', firstName: 'Ros', lastName: 'Vance' }),
+      ],
+    };
+    render(<Directory />);
+    expect(screen.getByText('Amy Adams')).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText('Filter kinfolk by tag'), 'VIP');
+
+    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
+    expect(screen.queryByText('Amy Adams')).toBeNull();
+    expect(screen.queryByText('Ros Vance')).toBeNull();
+  });
+
+  it('narrows the Kin list to the chosen tag', async () => {
+    kinAsync = {
+      status: 'ready',
+      data: [
+        kinRow({ _id: 'k1', name: 'Biscuit', tags: ['Reactive'] }),
+        kinRow({ _id: 'k2', name: 'Gravy', tags: ['On meds'] }),
+      ],
+    };
+    render(<Directory />);
+    await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
+    expect(screen.getByText('Gravy')).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText('Filter kin by tag'), 'Reactive');
+
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+    expect(screen.queryByText('Gravy')).toBeNull();
+  });
+
+  it('offers each tab its own vocabulary, never the other list\'s tags', async () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1', tags: ['VIP'] })] };
+    kinAsync = { status: 'ready', data: [kinRow({ _id: 'k1', tags: ['Reactive'] })] };
+    render(<Directory />);
+
+    const householdFilter = screen.getByLabelText('Filter kinfolk by tag');
+    expect(within(householdFilter).getByRole('option', { name: 'VIP' })).toBeInTheDocument();
+    expect(within(householdFilter).queryByRole('option', { name: 'Reactive' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));
+    const kinFilter = screen.getByLabelText('Filter kin by tag');
+    expect(within(kinFilter).getByRole('option', { name: 'Reactive' })).toBeInTheDocument();
+    expect(within(kinFilter).queryByRole('option', { name: 'VIP' })).toBeNull();
+  });
+
+  it('says the TAG is what emptied the list, not the search box', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook', tags: ['VIP'] }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    render(<Directory />);
+    await userEvent.selectOptions(screen.getByLabelText('Filter kinfolk by tag'), 'VIP');
+    await userEvent.type(screen.getByLabelText(/search kinfolk/i), 'Amy');
+
+    expect(screen.getByText('No matches for "Amy" tagged "VIP".')).toBeInTheDocument();
+  });
+
+  it('hides the filter entirely when nothing on the tab carries a tag', () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Directory />);
+    expect(screen.queryByLabelText('Filter kinfolk by tag')).toBeNull();
+  });
+
+  /**
+   * The sequence this PR makes reachable: filter by a tag here, delete that tag
+   * in Settings, and the live stream drops every assignment. The picker hides
+   * itself, so a filter left standing would strand the list on an empty result
+   * with no control left to clear it.
+   */
+  it('falls back to every row when the filtered tag stops existing', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook', tags: ['VIP'] }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    const { rerender } = render(<Directory />);
+    await userEvent.selectOptions(screen.getByLabelText('Filter kinfolk by tag'), 'VIP');
+    expect(screen.queryByText('Amy Adams')).toBeNull();
+
+    // The cascade lands: no household carries "VIP" any more.
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'kf1', firstName: 'Jamie', lastName: 'Halbrook' }),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' }),
+      ],
+    };
+    rerender(<Directory />);
+
+    expect(screen.queryByLabelText('Filter kinfolk by tag')).toBeNull();
+    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
+    expect(screen.getByText('Amy Adams')).toBeInTheDocument();
+  });
+});

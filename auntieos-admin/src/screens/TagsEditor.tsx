@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { getBusinessSettings } from '../api/settings';
-import { saveBusinessSettings } from '../api/settingsWrite';
+import { saveBusinessSettings, removeBusinessTag } from '../api/settingsWrite';
 import {
   TAG_PALETTE,
   DEFAULT_TAG_COLOR,
@@ -10,11 +10,13 @@ import {
   removeTag,
   type TagColor,
   type TagDef,
+  type TagScope,
 } from '../lib/tags/model';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
+import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { TagChip } from '../components/TagChip';
 import './TagsEditor.css';
@@ -29,8 +31,20 @@ import './TagsEditor.css';
  *
  * Add / edit-color-and-icon / remove only: renaming a tag in place would orphan
  * every assignment referencing the old name (the name is the key), so v1 has no
- * rename. Removing a tag drops the vocab entry but leaves existing assignments,
- * which then render as neutral chips (see `resolveTag`) rather than vanishing.
+ * rename.
+ *
+ * REMOVE IS THE ONE EDIT THAT DOES NOT WAIT FOR SAVE (#713). It used to be a
+ * local list filter like the others, which left every household and pet holding
+ * the deleted name. The operator ruled that wrong: "IF THE TAG IS DELETED THEN
+ * IT GOES AWAY COMPLETELY." So Remove asks for confirmation and then calls
+ * `removeBusinessTag`, which drops the vocabulary row AND strips the name off
+ * every `kinfolk` (household scope) or `kin` (pet scope) doc carrying it, in
+ * one server-side pass. The count it reports is shown afterwards, because this
+ * screen reads `business_settings` alone and cannot count the directory itself.
+ *
+ * On success the row is dropped from BOTH the working list and the loaded
+ * baseline, so a delete never leaves the Save button armed with a change the
+ * server has already made, and any other unsaved edit stays dirty.
  */
 
 interface TagsEditorProps {
@@ -130,10 +144,24 @@ interface TagVocabSectionProps {
   scopeNoun: string;
   tags: TagDef[];
   onChange: (next: TagDef[]) => void;
+  /**
+   * Remove is a server action now, not a list edit, so the section asks the
+   * screen to run it rather than handing back a shortened array. See the file
+   * header.
+   */
+  onRequestRemove: (name: string) => void;
   disabled: boolean;
 }
 
-function TagVocabSection({ title, subtitle, scopeNoun, tags, onChange, disabled }: TagVocabSectionProps) {
+function TagVocabSection({
+  title,
+  subtitle,
+  scopeNoun,
+  tags,
+  onChange,
+  onRequestRemove,
+  disabled,
+}: TagVocabSectionProps) {
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState<TagColor>(DEFAULT_TAG_COLOR);
   const [newIcon, setNewIcon] = useState('');
@@ -166,7 +194,7 @@ function TagVocabSection({ title, subtitle, scopeNoun, tags, onChange, disabled 
                 <div className="tagsEditor__rowControls">
                   <TagColorPicker value={t.color} onChange={(c) => onChange(editTag(tags, t.name, { color: c }))} />
                   <TagEmojiPicker value={t.icon} onChange={(icon) => onChange(editTag(tags, t.name, { icon }))} />
-                  <GhostButton label="Remove" onClick={() => onChange(removeTag(tags, t.name))} />
+                  <GhostButton label="Remove" onClick={() => onRequestRemove(t.name)} />
                 </div>
               </li>
             ))}
@@ -201,6 +229,19 @@ function TagVocabSection({ title, subtitle, scopeNoun, tags, onChange, disabled 
   );
 }
 
+/**
+ * What the delete actually did, in the operator's terms. The count comes from
+ * the server rather than from this screen: TagsEditor reads `business_settings`
+ * alone and has no directory stream to count against, so a number invented here
+ * would be a guess about records it never loaded.
+ */
+function removedSummary(r: { name: string; noun: string; count: number }): string {
+  const plural = r.noun === 'household' ? 'households' : 'Kin';
+  if (r.count === 0) return `"${r.name}" is gone. No ${plural} were carrying it.`;
+  if (r.count === 1) return `"${r.name}" is gone. It came off 1 ${r.noun}.`;
+  return `"${r.name}" is gone. It came off ${r.count} ${plural}.`;
+}
+
 export function TagsEditor({ onBack }: TagsEditorProps) {
   const [loaded, setLoaded] = useState<Async<Vocabs>>({ status: 'loading' });
   const [household, setHousehold] = useState<TagDef[]>([]);
@@ -208,6 +249,12 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  /** The tag the operator pressed Remove on, held until they confirm the cascade. */
+  const [pendingRemove, setPendingRemove] = useState<{ scope: TagScope; name: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  /** What the last successful delete actually did, reported once it is done. */
+  const [removed, setRemoved] = useState<{ name: string; noun: string; count: number } | null>(null);
 
   const load = useCallback(() => {
     let live = true;
@@ -250,6 +297,53 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
     setJustSaved(false);
   }
 
+  /**
+   * Runs the delete. On success the row leaves the working list AND the
+   * baseline: the server has already applied it, so leaving it in the baseline
+   * would arm Save with a change that is no longer a change, and leaving it in
+   * the working list would show a tag the operator just deleted.
+   *
+   * A failure is fail-loud and CHANGES NOTHING locally. The callable strips
+   * assignments before it touches the vocabulary, so a half-finished run leaves
+   * the row on screen and pressing Remove again finishes it.
+   */
+  async function confirmRemove() {
+    if (pendingRemove === null || removing) return;
+    const target = pendingRemove;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      const res = await removeBusinessTag(target.scope, target.name);
+      const shorten = (list: TagDef[]) => removeTag(list, target.name);
+      if (target.scope === 'household') setHousehold(shorten);
+      else setPet(shorten);
+      setLoaded((prev) =>
+        prev.status === 'ready'
+          ? {
+              status: 'ready',
+              data:
+                target.scope === 'household'
+                  ? { ...prev.data, household: shorten(prev.data.household) }
+                  : { ...prev.data, pet: shorten(prev.data.pet) },
+            }
+          : prev,
+      );
+      setRemoved({
+        name: res.name,
+        noun: target.scope === 'household' ? 'household' : 'Kin',
+        count: res.recordsTouched,
+      });
+      setPendingRemove(null);
+    } catch (err) {
+      setRemoveError(
+        `Couldn't remove "${target.name}": ${err instanceof Error ? err.message : 'Remove failed'}`,
+      );
+      setPendingRemove(null);
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   async function handleSave() {
     if (!dirty || busy) return;
     setBusy(true);
@@ -280,9 +374,22 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
         </Banner>
       )}
 
+      {removeError !== null && (
+        <Banner tone="error" title="Remove failed" onDismiss={() => setRemoveError(null)}>
+          <p className="tagsEditor__hint">{removeError}</p>
+          <p className="tagsEditor__hint">The tag is still on the list, so you can try again.</p>
+        </Banner>
+      )}
+
+      {removed !== null && (
+        <Banner tone="success" title="Tag removed" onDismiss={() => setRemoved(null)}>
+          {removedSummary(removed)}
+        </Banner>
+      )}
+
       <Banner tone="info" dashed pillLabel="Heads up">
-        Removing a tag here just takes it off the suggestion list. Households or pets already carrying that
-        tag keep it, shown plainly until you re-add it or take it off each one.
+        Removing a tag deletes it everywhere. It comes off the list here and off every household or Kin
+        carrying it, as soon as you confirm. Adding the same name back later starts it with nobody on it.
       </Banner>
 
       <AsyncRegion
@@ -300,7 +407,8 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
               scopeNoun="household"
               tags={household}
               onChange={editHousehold}
-              disabled={busy}
+              onRequestRemove={(name) => setPendingRemove({ scope: 'household', name })}
+              disabled={busy || removing}
             />
 
             <TagVocabSection
@@ -309,7 +417,8 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
               scopeNoun="pet"
               tags={pet}
               onChange={editPet}
-              disabled={busy}
+              onRequestRemove={(name) => setPendingRemove({ scope: 'pet', name })}
+              disabled={busy || removing}
             />
 
             <div className="tagsEditor__saveRow">
@@ -324,6 +433,37 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
           </>
         )}
       </AsyncRegion>
+
+      {pendingRemove !== null && (
+        <Dialog
+          title={`Remove "${pendingRemove.name}"?`}
+          onClose={() => {
+            if (!removing) setPendingRemove(null);
+          }}
+          footer={
+            <>
+              <GhostButton
+                label="Cancel"
+                onClick={() => setPendingRemove(null)}
+                disabled={removing}
+              />
+              <PrimaryButton
+                label={removing ? 'Removing…' : 'Remove everywhere'}
+                onClick={() => void confirmRemove()}
+                disabled={removing}
+                busy={removing}
+              />
+            </>
+          }
+        >
+          <p className="tagsEditor__hint">
+            {pendingRemove.scope === 'household'
+              ? `This takes "${pendingRemove.name}" off the household tag list and off every household carrying it.`
+              : `This takes "${pendingRemove.name}" off the Kin tag list and off every Kin carrying it.`}{' '}
+            It happens right away, without waiting for Save, and it cannot be undone.
+          </p>
+        </Dialog>
+      )}
     </div>
   );
 }

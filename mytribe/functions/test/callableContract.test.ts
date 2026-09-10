@@ -37,6 +37,11 @@ import { Args as SubmitVetClinicArgs } from '../src/portal/submitVetClinic';
 // correction reaching the households instead of failing visibly.
 import { Args as UpdateVetClinicArgs } from '../src/admin/updateVetClinic';
 import { Args as ArchiveVetClinicArgs } from '../src/admin/archiveVetClinic';
+// #713: the tag-delete cascade. Two clients (React admin TagsEditor, android
+// AdminSettingsScreen) hand-build this payload, and getting `scope` wrong does
+// not fail loudly, it strips the WRONG collection, so the shape is frozen from
+// birth.
+import { Args as RemoveBusinessTagArgs } from '../src/admin/removeBusinessTag';
 // 17.3 Home dashboard layout (added 2026-07-25). Three surfaces parse the SAME
 // stored token list: the React admin (auntieos-admin/src/lib/dashboardLayout.ts),
 // android (ui/home/DashboardLayout.kt) and the superseded Compose web build.
@@ -287,6 +292,10 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // purpose: a hard delete would strand every household's `vetClinicId`, so the
   // absence of that key is part of the contract, not an omission.
   archiveVetClinic: { schema: ArchiveVetClinicArgs, keys: ['archived', 'clinicId'] },
+  // Two keys, and `scope` must stay one of them: it is what decides whether the
+  // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
+  // otherwise fall to a default and clear the wrong half of the directory.
+  removeBusinessTag: { schema: RemoveBusinessTagArgs, keys: ['name', 'scope'] },
 
   // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
   // its own; the token-VALUE freeze below is the part that actually matters.

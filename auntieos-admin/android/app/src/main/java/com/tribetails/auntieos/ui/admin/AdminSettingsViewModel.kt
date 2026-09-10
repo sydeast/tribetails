@@ -10,6 +10,7 @@ import com.tribetails.auntieos.data.model.BusinessHours
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.MediaEntityType
+import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.IntegrationsRepository
@@ -66,6 +67,16 @@ data class AdminSettingsUiState(
      * reads like a clean bill of health.
      */
     val integrationsError: String? = null,
+    /**
+     * #713 tag delete. Its own three fields rather than reusing [error] and
+     * [saveSuccess]: deleting a tag is a cascade over the whole directory and
+     * says nothing about whether the settings document saved. An operator shown
+     * "Saved" after a delete would not learn that households changed too.
+     */
+    val tagRemoveBusy: Boolean = false,
+    /** What the last delete actually did. Null until one succeeds. */
+    val tagRemoveMessage: String? = null,
+    val tagRemoveError: String? = null,
 )
 
 class AdminSettingsViewModel(
@@ -194,6 +205,60 @@ class AdminSettingsViewModel(
 
     fun updateBusinessSettings(settings: BusinessSettings) {
         saveSettingsDiff(settings, failureLabel = "Failed to save settings")
+    }
+
+    // ---- Tag vocabulary delete (#713) ----
+
+    /**
+     * Delete one tag, everywhere. Operator ruling: "IF THE TAG IS DELETED THEN
+     * IT GOES AWAY COMPLETELY."
+     *
+     * NOT a settings save, and deliberately not routed through
+     * [saveSettingsDiff]. The vocabulary row is only half of it; the name also
+     * has to come off every `kinfolk` (household scope) or `kin` (pet scope)
+     * doc carrying it, and that fan-out belongs on the server. `removeBusinessTag`
+     * does both in one pass and reports how many records it touched.
+     *
+     * On success the row leaves BOTH the on-screen settings and
+     * [settingsBaseline]. Leaving it in the baseline would make the next diff
+     * re-send the deleted row and put the tag back in the list.
+     *
+     * A failure changes nothing locally: the callable strips assignments before
+     * it touches the vocabulary, so the row is still on screen and pressing
+     * Remove again finishes what the failed call started.
+     */
+    fun removeBusinessTag(scope: TagScope, name: String) {
+        if (_uiState.value.tagRemoveBusy) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                tagRemoveBusy = true,
+                tagRemoveError = null,
+                tagRemoveMessage = null,
+            )
+            repository.removeBusinessTag(scope.wire, name).fold(
+                onSuccess = { touched ->
+                    val current = _uiState.value.businessSettings
+                    settingsBaseline = settingsBaseline?.let { withTagRemoved(it, scope, name) }
+                    _uiState.value = _uiState.value.copy(
+                        businessSettings = withTagRemoved(current, scope, name),
+                        tagRemoveBusy = false,
+                        tagRemoveMessage = tagRemovedSummary(scope, name, touched),
+                        tagRemoveError = null,
+                    )
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        tagRemoveBusy = false,
+                        tagRemoveError = "Couldn't remove \"$name\": ${e.message}",
+                    )
+                },
+            )
+        }
+    }
+
+    /** Clears the delete banners once the operator has read them. */
+    fun clearTagRemoveFeedback() {
+        _uiState.value = _uiState.value.copy(tagRemoveMessage = null, tagRemoveError = null)
     }
 
     // ---- Business hours ----

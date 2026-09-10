@@ -1,6 +1,8 @@
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { call } from '../lib/fns';
 import { BUSINESS_SETTINGS_DOC_ID, type BusinessSettings } from './settings';
+import { type TagScope } from '../lib/tags/model';
 
 /**
  * The Settings editor's write path, paired with `getBusinessSettings` in
@@ -50,4 +52,44 @@ export async function saveBusinessSettings(patch: Partial<BusinessSettings>): Pr
     { merge: true },
   );
   return { updatedAt, updatedBy };
+}
+
+/**
+ * Deleting one tag, which is a CASCADE and therefore not a settings write.
+ *
+ * #713, operator ruling: "IF THE TAG IS DELETED THEN IT GOES AWAY COMPLETELY."
+ * Dropping the vocabulary row is only half of it; the tag has to come off every
+ * `kinfolk` (household scope) or `kin` (pet scope) doc carrying it. That fan-out
+ * cannot run from the client: it is an unbounded set of writes, and one that
+ * half-finishes because a laptop slept leaves the directory in a state the
+ * editor can no longer describe. `removeBusinessTag` does both halves server-side
+ * and reports how many records it touched.
+ *
+ * Deliberately NOT routed through `saveBusinessSettings`: this is the one tag
+ * edit that is not a local list edit waiting on Save. Every other change (add,
+ * recolor, re-emoji) still batches into the Save button.
+ *
+ * Not marked idempotent for `call`'s retry (see CallOptions): the callable IS
+ * safe to re-run, but a retry that lands after a lost reply would report a
+ * second, smaller `recordsTouched` and the toast would understate what happened.
+ * A visible failure the operator can press again is the honest outcome.
+ */
+export interface RemoveBusinessTagResult {
+  ok: true;
+  scope: TagScope;
+  name: string;
+  /** Households (or kin) the tag was stripped off. */
+  recordsTouched: number;
+  /** False when the vocabulary had already lost the row, e.g. a half-finished earlier delete. */
+  vocabRemoved: boolean;
+}
+
+export async function removeBusinessTag(
+  scope: TagScope,
+  name: string,
+): Promise<RemoveBusinessTagResult> {
+  return call<{ scope: TagScope; name: string }, RemoveBusinessTagResult>('removeBusinessTag', {
+    scope,
+    name,
+  });
 }

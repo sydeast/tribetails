@@ -39,6 +39,60 @@ import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+// ── Tag filtering (#713) ─────────────────────────────────────────────────────
+//
+// The operator's second complaint on the issue: "tags are just labels and not
+// actual tags which act like a filter." These helpers are that filter, and they
+// are PURE and CLIENT-SIDE on purpose. The screen already holds the whole
+// roster, so narrowing by tag costs no read and needs no composite index, and
+// it matches the web admin's Directory filter one-for-one.
+
+/** The value meaning "do not narrow by tag". Not a legal tag name. */
+internal const val TAG_FILTER_ALL: String = ""
+
+/** The comparison key for a tag name: normalized, then lowercased, as [resolveTag] compares. */
+private fun tagFilterKey(name: String): String =
+    com.tribetails.auntieos.data.model.normalizeTagName(name).lowercase()
+
+/**
+ * Every distinct tag carried by these rows, alphabetically, for the filter's
+ * option list. Built from the ROWS rather than from the business_settings
+ * vocabulary, so the list only ever offers a tag that would narrow something and
+ * the screen needs no second read. Names differing only by case or spacing
+ * collapse to one option, keeping the first casing seen. Pure; tested.
+ */
+internal fun directoryTagOptions(rowTags: List<List<String>>): List<String> {
+    val seen = LinkedHashMap<String, String>()
+    for (tags in rowTags) {
+        for (name in tags) {
+            val key = tagFilterKey(name)
+            if (key != "" && !seen.containsKey(key)) seen[key] = name.trim()
+        }
+    }
+    return seen.values.sortedBy { it.lowercase() }
+}
+
+/** True when the row carries this tag. A blank [filter] matches everything. Pure; tested. */
+internal fun matchesDirectoryTag(tags: List<String>, filter: String): Boolean {
+    val key = tagFilterKey(filter)
+    if (key == "") return true
+    return tags.any { tagFilterKey(it) == key }
+}
+
+/**
+ * The Kin tab's list: name/species/breed search, then the tag filter, then
+ * alphabetical. Lifted out of the composable so the filter is unit-testable
+ * without an Android runtime. Pure; tested.
+ */
+internal fun filterKinDirectory(kin: List<Kin>, search: String, tag: String): List<Kin> =
+    kin.filter { k ->
+        val matchesSearch = search.isBlank() ||
+            k.name.contains(search, ignoreCase = true) ||
+            k.species.contains(search, ignoreCase = true) ||
+            k.breed.contains(search, ignoreCase = true)
+        matchesSearch && matchesDirectoryTag(k.tagNames(), tag)
+    }.sortedBy { it.name.lowercase() }
+
 data class DirectoryUiState(
     val allKinfolk: List<Kinfolk> = emptyList(),
     val displayedKinfolk: List<Kinfolk> = emptyList(),
@@ -51,6 +105,13 @@ data class DirectoryUiState(
     val isLoading: Boolean = true,
     val searchQuery: String = "",
     val statusFilter: String = "Active",
+    /**
+     * #713: narrow the household list to one tag. Operator: "tags are just
+     * labels and not actual tags which act like a filter." Blank means no
+     * narrowing, and it is not a legal tag name (a blank name is refused by
+     * `addTag`), so it can never collide with a real one.
+     */
+    val tagFilter: String = TAG_FILTER_ALL,
     val error: String? = null
 )
 
@@ -441,6 +502,15 @@ class DirectoryViewModel(
                     lastVisitByKinfolkId    = com.tribetails.auntieos.domain.lastVisitByKinfolk(sessions),
                     kintaleCountByKinfolkId = com.tribetails.auntieos.domain.kintaleCountByKinfolk(sessions),
                     isLoading               = false,
+                    // #713: a tag filter no loaded row can satisfy any more falls
+                    // back to "All tags". Deleting the tag the operator was
+                    // filtering by empties the option list, which hides the
+                    // dropdown, and without this the list would sit on an empty
+                    // result with no control left to clear it.
+                    tagFilter               = _directoryState.value.tagFilter.takeIf { wanted ->
+                        directoryTagOptions(all.map { it.tagNames() })
+                            .any { it.equals(wanted, ignoreCase = true) }
+                    } ?: TAG_FILTER_ALL,
                 )
                 applyFilters()
             }.onFailure { e ->
@@ -462,6 +532,13 @@ class DirectoryViewModel(
         applyFilters()
     }
 
+    /** #713: narrow the household list to one tag. [TAG_FILTER_ALL] clears it. */
+    fun setTagFilter(tag: String) {
+        AuntieLog.d("Directory filter by tag: $tag")
+        _directoryState.value = _directoryState.value.copy(tagFilter = tag)
+        applyFilters()
+    }
+
     private fun applyFilters() {
         val state = _directoryState.value
         val filter = state.statusFilter
@@ -477,7 +554,9 @@ class DirectoryViewModel(
                                 kf.displayName.contains(state.searchQuery, ignoreCase = true) ||
                                 kf.phoneNumber.contains(state.searchQuery, ignoreCase = true) ||
                                 kf.email.contains(state.searchQuery, ignoreCase = true)
-            matchesStatus && matchesSearch
+            // #713: the tag filter sits beside status and search, not instead of
+            // either, so "Active households tagged VIP" is one list.
+            matchesStatus && matchesSearch && matchesDirectoryTag(kf.tagNames(), state.tagFilter)
         }
         // 03-directory item 3: order the directory by surname (last name), parity with web.
         val sorted = filtered.sortedBy {

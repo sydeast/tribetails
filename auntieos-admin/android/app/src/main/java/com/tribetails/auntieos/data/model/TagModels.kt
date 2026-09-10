@@ -18,9 +18,15 @@ package com.tribetails.auntieos.data.model
 // palette `color`, and an `icon` (a plain emoji string in v1, "" for none).
 // Assignments on a kinfolk/kin doc store only the NAME; a name is resolved back
 // to its color/icon against the relevant vocabulary at render time, and a name
-// with no matching vocab entry (a free-form tag, or one whose vocab entry was
-// removed) resolves to a neutral chip rather than an error, so a tag never
-// "breaks" when its definition changes.
+// with no matching vocab entry resolves to a neutral chip rather than an error,
+// so a tag never "breaks" when its definition changes.
+//
+// #713 changed WHICH names reach that neutral path. Deleting a tag used to drop
+// the vocabulary row and leave every assignment standing. The operator ruled
+// against it: "IF THE TAG IS DELETED THEN IT GOES AWAY COMPLETELY." A delete now
+// runs through the `removeBusinessTag` callable, which strips the name off every
+// kinfolk (or kin) doc too, so the neutral chip covers free-form assignments and
+// legacy docs, not a tag the operator just removed.
 //
 // [TagColor] is a `{ token, css }` pair, not a raw hex. `token` is the stable
 // palette identifier persisted on the doc; `css` is the token's `var(--color-*)`
@@ -166,7 +172,14 @@ fun addTag(vocab: List<TagDef>, def: TagDef): List<TagDef> {
     return vocab + TagDef(name = name, color = def.color, icon = def.icon)
 }
 
-/** Drop the vocab entry with this name (case-insensitive). Returns a new list. */
+/**
+ * Drop the vocab entry with this name (case-insensitive). Returns a new list.
+ *
+ * The LIST half only. Since #713 the Den's editor does not call this to perform
+ * a delete: `removeBusinessTag` does that server-side, because the assignments
+ * on kinfolk/kin have to go with it. This stays as the pure transform that keeps
+ * the on-screen list in step once the callable has reported success.
+ */
 fun removeTag(vocab: List<TagDef>, name: String): List<TagDef> =
     vocab.filterNot { sameName(it.name, name) }
 

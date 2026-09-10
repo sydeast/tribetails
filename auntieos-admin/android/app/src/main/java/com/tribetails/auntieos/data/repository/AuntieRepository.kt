@@ -776,6 +776,33 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("listRecentSends failed", it) }
 
     /**
+     * #713: delete one tag from a business_settings vocabulary AND strip it off
+     * every record carrying it, through the admin-gated `removeBusinessTag`
+     * callable. [scope] is the wire value from [TagScope] ("household" or
+     * "pet"), which decides whether the cascade rewrites `kinfolk` or `kin`.
+     *
+     * Operator ruling: "IF THE TAG IS DELETED THEN IT GOES AWAY COMPLETELY."
+     * The vocabulary edit used to be a local list filter saved with the rest of
+     * settings, which left every household and pet still carrying the name. It
+     * has to be one server-side pass: a fan-out driven from a handset that loses
+     * signal halfway leaves the directory in a state the editor cannot describe.
+     *
+     * Returns how many records were touched, so the screen can say what
+     * happened rather than implying it only tidied a list. Fail-loud via
+     * Result: the callable strips assignments before it drops the vocabulary
+     * row, so a failed call leaves the row on screen and a retry finishes it.
+     */
+    suspend fun removeBusinessTag(scope: String, name: String): Result<Int> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("removeBusinessTag")
+            .call(mapOf("scope" to scope, "name" to name))
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("removeBusinessTag: non-map payload")
+        (raw["recordsTouched"] as? Number)?.toInt() ?: 0
+    }.onFailure { AuntieLog.e("removeBusinessTag failed (scope=$scope)", it) }
+
+    /**
      * Run-4 #6: dog + cat breed name banks for the Kin breed dropdown, from the
      * `getBreeds` callable (reads the seeded dog_breeds / cat_breeds collections).
      * Fail-loud: a failure propagates via Result so the UI falls back to free-text

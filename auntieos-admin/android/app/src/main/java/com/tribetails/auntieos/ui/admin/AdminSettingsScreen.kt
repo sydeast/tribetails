@@ -574,6 +574,11 @@ fun AdminSettingsScreen(
                             settings = uiState.businessSettings,
                             isLoading = uiState.isLoading,
                             onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            removeBusy = uiState.tagRemoveBusy,
+                            removeMessage = uiState.tagRemoveMessage,
+                            removeError = uiState.tagRemoveError,
+                            onRemoveTag = { scope, name -> viewModel.removeBusinessTag(scope, name) },
+                            onDismissRemoveFeedback = { viewModel.clearTagRemoveFeedback() },
                         )
 
                         // ISSUE #397 M10: the kinfolk portal's Home layout,
@@ -2831,6 +2836,44 @@ internal fun tagVocabDirty(baseline: List<TagDef>, draft: List<TagDef>): Boolean
 internal fun emptyTagVocabHint(scopeNoun: String): String = "No $scopeNoun tags yet. Add one below."
 
 /**
+ * Drop one tag from ONE scope's vocabulary, leaving the other scope alone.
+ *
+ * #713: the same name may legitimately sit in both lists ("Meds Needed" on a
+ * household and on a pet), so a household delete must never reach into the pet
+ * vocabulary. Pure; tested.
+ */
+internal fun withTagRemoved(
+    settings: BusinessSettings,
+    scope: TagScope,
+    name: String,
+): BusinessSettings = settingsWithTagVocab(settings, scope, removeTag(tagVocabFor(settings, scope), name))
+
+/**
+ * What the delete actually did, in the operator's terms. The count is the
+ * server's, because this screen reads business_settings alone and has no
+ * directory roster to count against. Pure; tested.
+ */
+internal fun tagRemovedSummary(scope: TagScope, name: String, recordsTouched: Int): String {
+    val one = if (scope == TagScope.HOUSEHOLD) "household" else "Kin"
+    val many = if (scope == TagScope.HOUSEHOLD) "households" else "Kin"
+    return when (recordsTouched) {
+        0 -> "\"$name\" is gone. No $many were carrying it."
+        1 -> "\"$name\" is gone. It came off 1 $one."
+        else -> "\"$name\" is gone. It came off $recordsTouched $many."
+    }
+}
+
+/** The confirm prompt shown before a delete runs. Pure; tested. */
+internal fun tagRemoveConfirmBody(scope: TagScope, name: String): String =
+    if (scope == TagScope.HOUSEHOLD) {
+        "This takes \"$name\" off the household tag list and off every household carrying it. " +
+            "It happens right away, without waiting for Save, and it cannot be undone."
+    } else {
+        "This takes \"$name\" off the Kin tag list and off every Kin carrying it. " +
+            "It happens right away, without waiting for Save, and it cannot be undone."
+    }
+
+/**
  * The seven palette swatches. Selection is by TOKEN, which is exact and
  * case-sensitive, unlike a name. Painting goes through the shared [tagToneRole],
  * the same resolver the chips use, so the swatch an operator picks here and the
@@ -2912,6 +2955,9 @@ private fun TagEmojiPicker(value: String, enabled: Boolean, onChange: (String) -
  * controls and a Remove, plus the add form. Every edit goes through the pure
  * helpers in TagModels.kt, so a name is normalized once and duplicates are caught
  * case-insensitively ("vip" never lands beside "VIP").
+ *
+ * Remove is the exception (#713): it does not hand back a shortened list, it
+ * asks the panel to run the server-side delete. See [TagVocabularyPanel].
  */
 @Composable
 private fun TagVocabSection(
@@ -2921,6 +2967,7 @@ private fun TagVocabSection(
     tags: List<TagDef>,
     enabled: Boolean,
     onChange: (List<TagDef>) -> Unit,
+    onRequestRemove: (String) -> Unit,
 ) {
     val c = AuntieTheme.colors
     var newName by remember { mutableStateOf("") }
@@ -2950,7 +2997,7 @@ private fun TagVocabSection(
                             GhostButton(
                                 label = "Remove",
                                 enabled = enabled,
-                                onClick = { onChange(removeTag(tags, def.name)) },
+                                onClick = { onRequestRemove(def.name) },
                             )
                         }
                         TagColorPicker(
@@ -3015,15 +3062,23 @@ private fun TagVocabSection(
  * this does the same through a single [BusinessSettings] save; the two lists are
  * only written independently from a profile's inline promotion, not here.
  *
- * Removing a tag here only takes it off the suggestion list. A household or pet
- * already carrying that name keeps it and renders a neutral chip, which is the
- * whole reason an assignment stores the NAME and not a copy of the definition.
+ * REMOVE IS THE ONE EDIT THAT DOES NOT WAIT FOR SAVE (#713). It used to filter
+ * the local list like the others, which left every household and pet still
+ * carrying the deleted name. Operator ruling: "IF THE TAG IS DELETED THEN IT
+ * GOES AWAY COMPLETELY." Remove now confirms, then goes through
+ * `removeBusinessTag`, which drops the vocabulary row AND strips the name off
+ * every `kinfolk` or `kin` doc in one server-side pass, and reports the count.
  */
 @Composable
 private fun TagVocabularyPanel(
     settings: BusinessSettings,
     isLoading: Boolean,
     onSettingsChange: (BusinessSettings) -> Unit,
+    removeBusy: Boolean,
+    removeMessage: String?,
+    removeError: String?,
+    onRemoveTag: (TagScope, String) -> Unit,
+    onDismissRemoveFeedback: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     val baselineHousehold = remember(settings) { tagVocabFor(settings, TagScope.HOUSEHOLD) }
@@ -3032,14 +3087,43 @@ private fun TagVocabularyPanel(
     var household by remember(baselineHousehold) { mutableStateOf(baselineHousehold) }
     var pet by remember(baselinePet) { mutableStateOf(baselinePet) }
     val dirty = tagVocabDirty(baselineHousehold, household) || tagVocabDirty(baselinePet, pet)
+    // The tag Remove was pressed on, held until the operator confirms the cascade.
+    var pendingRemove by remember { mutableStateOf<Pair<TagScope, String>?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         AuntieBanner(tone = AuntieBannerTone.Info, dashed = true, pillLabel = "Heads up") {
             Text(
-                "Removing a tag here just takes it off the suggestion list. Households or pets already carrying that tag keep it, shown plainly until you re-add it or take it off each one.",
+                "Removing a tag deletes it everywhere. It comes off the list here and off every household or Kin carrying it, as soon as you confirm. Adding the same name back later starts it with nobody on it.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
+        }
+
+        removeError?.let { msg ->
+            AuntieBanner(
+                tone = AuntieBannerTone.Error,
+                title = "Remove failed",
+                onDismiss = onDismissRemoveFeedback,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    Text(
+                        "The tag is still on the list, so you can try again.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+            }
+        }
+
+        removeMessage?.let { msg ->
+            AuntieBanner(
+                tone = AuntieBannerTone.Success,
+                title = "Tag removed",
+                onDismiss = onDismissRemoveFeedback,
+            ) {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
 
         TagVocabSection(
@@ -3047,8 +3131,9 @@ private fun TagVocabularyPanel(
             subtitle = "Label a household (a kinfolk), e.g. VIP or Slow pay. Used by broadcasts and KinTale rules.",
             scopeNoun = "household",
             tags = household,
-            enabled = !isLoading,
+            enabled = !isLoading && !removeBusy,
             onChange = { household = it },
+            onRequestRemove = { pendingRemove = TagScope.HOUSEHOLD to it },
         )
 
         TagVocabSection(
@@ -3056,13 +3141,14 @@ private fun TagVocabularyPanel(
             subtitle = "Label a pet (a kin), e.g. Reactive or On meds.",
             scopeNoun = "pet",
             tags = pet,
-            enabled = !isLoading,
+            enabled = !isLoading && !removeBusy,
             onChange = { pet = it },
+            onRequestRemove = { pendingRemove = TagScope.PET to it },
         )
 
         PrimaryButton(
             label = "Save tags",
-            enabled = dirty && !isLoading,
+            enabled = dirty && !isLoading && !removeBusy,
             onClick = {
                 onSettingsChange(
                     settingsWithTagVocab(
@@ -3073,6 +3159,37 @@ private fun TagVocabularyPanel(
                 )
             },
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    pendingRemove?.let { (scope, name) ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!removeBusy) pendingRemove = null },
+            title = { Text("Remove \"$name\"?") },
+            text = {
+                Text(
+                    tagRemoveConfirmBody(scope, name),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            },
+            confirmButton = {
+                PrimaryButton(
+                    label = if (removeBusy) "Removing…" else "Remove everywhere",
+                    enabled = !removeBusy,
+                    onClick = {
+                        onRemoveTag(scope, name)
+                        pendingRemove = null
+                    },
+                )
+            },
+            dismissButton = {
+                GhostButton(
+                    label = "Cancel",
+                    enabled = !removeBusy,
+                    onClick = { pendingRemove = null },
+                )
+            },
         )
     }
 }

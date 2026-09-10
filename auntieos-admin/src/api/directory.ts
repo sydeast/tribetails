@@ -55,6 +55,14 @@ export interface Kinfolk {
    * since it is real operator-entered data, not a fabricated fallback.
    */
   joinDate?: string | undefined;
+  /**
+   * Assigned household tag NAMES, written by `updateKinfolkTags` from the
+   * profile's Tags panel. Typed `unknown` for the same cast-not-validation
+   * reason as every field above: a legacy or seeded doc can hold nothing, a
+   * string, or an array with a stray number in it. Read it through
+   * `tagNamesOf`, never directly.
+   */
+  tags?: unknown;
 }
 
 /** Mirrors the Kotlin `Kinfolk.displayName` getter exactly. */
@@ -181,6 +189,8 @@ export interface Kin {
    * KIN_SORT_OPTIONS below, which omits it rather than shipping a no-op.
    */
   updatedAt?: Timestamp | null;
+  /** Assigned Kin tag NAMES. Same `unknown` treatment as `Kinfolk.tags`; read via `tagNamesOf`. */
+  tags?: unknown;
 }
 
 /** ISO sort key for `updatedAt`, or '' (sorts last, never fabricated as "now"). */
@@ -421,9 +431,69 @@ function sortByOption<T>(
   }
 }
 
-/** Search-filter then sort Kinfolk, ports `DirectoryUiState.filteredSorted`. */
-export function filterSortKinfolk(rows: Kinfolk[], query: string, sort: SortOption): Kinfolk[] {
-  const filtered = rows.filter((kf) => matchesKinfolk(kf, query));
+// ── Tag filtering (#713) ─────────────────────────────────────────────────────
+//
+// The operator's second complaint on this issue: "tags are just labels and not
+// actual tags which act like a filter." Tags drove Communicate audiences and
+// KinTale rules and nothing else; the Directory could not narrow by one. These
+// three helpers are that filter, and they are PURE and CLIENT-SIDE on purpose.
+// Both tabs already hold their whole collection in memory (KINFOLK_QUERY /
+// KIN_QUERY), so narrowing by tag costs no read, needs no composite index, and
+// cannot silently truncate the way a re-queried `array-contains` would.
+
+/** The special value meaning "do not narrow by tag". Not a real tag name. */
+export const TAG_FILTER_ALL = '';
+
+/** Keep only the string entries of a `tags` field. A malformed value reads as no tags. */
+export function tagNamesOf(row: { tags?: unknown }): string[] {
+  if (!Array.isArray(row.tags)) return [];
+  return row.tags.filter((t): t is string => typeof t === 'string');
+}
+
+/** The comparison key for a tag name, matching `normalizeTagName` + lowercase in lib/tags/model.ts. */
+function tagKey(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * Every distinct tag carried by these rows, in alphabetical order, for the
+ * filter's option list.
+ *
+ * Built from the ROWS rather than from the `business_settings` vocabulary, and
+ * that is the whole point: the list then only ever offers a tag that would
+ * actually narrow something, and it needs no second read on a screen that has
+ * no reason to load business settings. A free-form name a profile assigned
+ * without promoting it to the vocabulary is a real filter here too.
+ *
+ * Names that differ only by case or spacing collapse to one option, keeping the
+ * first casing seen, so "vip" and "VIP" do not both appear.
+ */
+export function tagFilterOptions(rows: Array<{ tags?: unknown }>): string[] {
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    for (const name of tagNamesOf(row)) {
+      const key = tagKey(name);
+      if (key !== '' && !seen.has(key)) seen.set(key, name.trim());
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** True when the row carries this tag. A blank `tag` matches everything (no filter applied). */
+export function matchesTag(row: { tags?: unknown }, tag: string): boolean {
+  const key = tagKey(tag);
+  if (key === '') return true;
+  return tagNamesOf(row).some((t) => tagKey(t) === key);
+}
+
+/** Search-filter (and tag-filter) then sort Kinfolk, ports `DirectoryUiState.filteredSorted`. */
+export function filterSortKinfolk(
+  rows: Kinfolk[],
+  query: string,
+  sort: SortOption,
+  tag: string = TAG_FILTER_ALL,
+): Kinfolk[] {
+  const filtered = rows.filter((kf) => matchesKinfolk(kf, query) && matchesTag(kf, tag));
   return sortByOption(
     filtered,
     sort,
@@ -436,13 +506,20 @@ export function filterSortKinfolk(rows: Kinfolk[], query: string, sort: SortOpti
 }
 
 /**
- * Search-filter (excluding archived) then sort Kin, ports the Kin-tab branch
+ * Search-filter and tag-filter (excluding archived) then sort Kin, ports the Kin-tab branch
  * of DirectoryScreen.kt's `when (activeTab)`. `createdAt` always resolves to
  * ''  no Kin doc has one  so `recently_created` on Kin is a stable no-op
  * (see KIN_SORT_OPTIONS, which does not expose it as a choice).
  */
-export function filterSortKin(rows: Kin[], query: string, sort: SortOption): Kin[] {
-  const filtered = rows.filter((k) => k.status !== 'archived' && matchesKin(k, query));
+export function filterSortKin(
+  rows: Kin[],
+  query: string,
+  sort: SortOption,
+  tag: string = TAG_FILTER_ALL,
+): Kin[] {
+  const filtered = rows.filter(
+    (k) => k.status !== 'archived' && matchesKin(k, query) && matchesTag(k, tag),
+  );
   return sortByOption(
     filtered,
     sort,
