@@ -690,6 +690,7 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
       </label>
 
       <div className="settingsEdit__subsection">
+        <span className="settingsEdit__groupHeading">Top banner</span>
         <div className="settingsEdit__toggleRow">
           <span className="settingsEdit__toggleLabel">Show top banner</span>
           <Toggle
@@ -713,8 +714,9 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
       </div>
 
       <div className="settingsEdit__subsection">
+        <span className="settingsEdit__groupHeading">Message Auntie chat</span>
         <div className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Message Auntie chat</span>
+          <span className="settingsEdit__toggleLabel">Show Message Auntie chat</span>
           <Toggle
             label="Toggle the Message Auntie chat"
             checked={portal.chat.enabled}
@@ -736,7 +738,7 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
       </div>
 
       <div className="settingsEdit__subsection">
-        <span className="settingsEdit__fieldLabel">Home layout</span>
+        <span className="settingsEdit__groupHeading">Home layout</span>
         <p className="settingsEdit__readonlyValue">{portalHomeSummary(portal.home)}</p>
         <HomeLayoutEditor
           home={portal.home}

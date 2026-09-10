@@ -587,6 +587,19 @@ describe('Settings — real editors wire through the shared persist', () => {
 });
 
 describe('Settings — MyTribe portal editor', () => {
+  // ISSUE #708 mark 41: "Break up this one long as setting block." The three
+  // subsections already existed as hairline-separated groups with no label; each
+  // now carries a heading so a group can be told apart from the one above it.
+  it('heads each of its three subsections', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('MyTribe portal');
+    expect(within(panel).getByText('Top banner')).toBeInTheDocument();
+    expect(within(panel).getByText('Message Auntie chat')).toBeInTheDocument();
+    expect(within(panel).getByText('Home layout')).toBeInTheDocument();
+  });
+
   it('disables the banner message field until the banner toggle is on', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
     render(<Settings />);

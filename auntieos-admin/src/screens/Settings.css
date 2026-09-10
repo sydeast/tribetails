@@ -64,6 +64,27 @@
   min-width: 0;
 }
 
+/* ISSUE #708: every section renders straight into this div, and a section
+   that returns more than one DenPanel (Business profile, KinCare Settings,
+   Integrations with Calendar opened) used to stack them with their borders
+   touching. `gap` is the fix rather than a margin on `.den-panel` itself,
+   because `DenPanel` is shared by dozens of other screens that never asked
+   for one. 18px sits exactly between the two nearest tokens (`--space-4` =
+   16px, `--space-5` = 20px); `--space-5` is the one used here, matching the
+   wider rhythm this screen already uses to separate its nav column from its
+   panel column (`--space-6` on `.settings__layout`). A section with only one
+   DenPanel is unaffected: gap has nothing to do with a single child.
+   `:not([hidden])` matters here, not just for tidiness: `Settings.tsx` keeps
+   every visited section mounted and toggles the OTHERS off with the `hidden`
+   attribute, which only works through the UA stylesheet's `[hidden] {
+   display: none}` — an author `display: flex` on the same element overrides
+   that regardless of specificity, and would leave every previously-visited
+   section rendered and stacked underneath the active one. */
+.settings__panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
 .settings__panel:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 4px;

@@ -169,6 +169,16 @@ describe('BookingRulesSection', () => {
     render(<BookingRulesSection data={settings()} onSave={onSave} />);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
+
+  // ISSUE #708 mark 38: "This is just a huge weird block, there is no spacial
+  // breakup." The panel now reads as three named groups rather than one flat
+  // column.
+  it('groups the panel into Booking modes, Defaults, and Time blocks, each headed', () => {
+    render(<BookingRulesSection data={settings()} onSave={onSave} />);
+    expect(screen.getByText('Booking modes')).toBeInTheDocument();
+    expect(screen.getByText('Defaults')).toBeInTheDocument();
+    expect(screen.getByText('Time blocks')).toBeInTheDocument();
+  });
 });
 
 // ── Visits and tracking ─────────────────────────────────────────────────────

@@ -133,6 +133,20 @@
   padding-top: 0;
 }
 
+/* ISSUE #708: a visible label for one group inside a long panel (Booking
+   rules' "Booking modes" / "Defaults" / "Time blocks", MyTribe portal's "Top
+   banner" / "Message Auntie chat" / "Home layout"). Same look the Time off
+   editor already used for its own groups (`timeOff__groupLabel`), lifted
+   here so every multi-group panel shares one class instead of each file
+   inventing its own. */
+.settingsEdit__groupHeading {
+  display: block;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-dim);
+  margin-bottom: var(--space-2);
+}
+
 /* ── Setup checklist (Google Calendar over OAuth) ─────────────────────────────
    An ordered list whose markers are the step numbers the operator is told to
    work in, so "step 2" in the summary and in the server's own message points at

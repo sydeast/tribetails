@@ -246,113 +246,127 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
         </Banner>
       ) : null}
 
-      <ul className="settingsEdit__toggleList">
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Offer specific times</span>
-          <Toggle
-            label="Toggle booking at a specific time"
-            checked={draft.allowSpecificTimeBooking}
-            disabled={busy}
-            onChange={(next) => edit({ allowSpecificTimeBooking: next })}
-          />
-        </li>
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Offer time blocks</span>
-          <Toggle
-            label="Toggle booking into a time block"
-            checked={draft.allowTimeBlockBooking}
-            disabled={busy}
-            onChange={(next) => edit({ allowTimeBlockBooking: next })}
-          />
-        </li>
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Remind kinfolk 24 hours before a visit</span>
-          <Toggle
-            label="Toggle the 24-hour visit reminder"
-            checked={draft.enableAutoReminder24h}
-            disabled={busy}
-            onChange={(next) => edit({ enableAutoReminder24h: next })}
-          />
-        </li>
-      </ul>
-
-      <div className="settingsEdit__fields">
-        <div className="settingsEdit__fieldGroup">
-          <label className="settingsEdit__field">
-            <span className="settingsEdit__fieldLabel">New bookings start as</span>
-            <select
-              className="settingsEdit__input"
-              value={draft.defaultBookingMode}
+      {/* ISSUE #708 mark 38: this panel used to run as one flat column of
+          toggles, dropdowns and the block editor with no visible break between
+          them. It is now three named groups: which booking modes are on,
+          what a new booking defaults to, and the named windows kinfolk book
+          into. */}
+      <div className="settingsEdit__subsection">
+        <span className="settingsEdit__groupHeading">Booking modes</span>
+        <ul className="settingsEdit__toggleList">
+          <li className="settingsEdit__toggleRow">
+            <span className="settingsEdit__toggleLabel">Offer specific times</span>
+            <Toggle
+              label="Toggle booking at a specific time"
+              checked={draft.allowSpecificTimeBooking}
               disabled={busy}
-              onChange={(e) => edit({ defaultBookingMode: e.target.value })}
-            >
-              {optionsIncluding(BOOKING_MODES, draft.defaultBookingMode).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="settingsEdit__fieldGroup">
-          <label className="settingsEdit__field">
-            <span className="settingsEdit__fieldLabel">Calendar opens on</span>
-            <select
-              className="settingsEdit__input"
-              value={draft.defaultCalendarView}
-              disabled={busy}
-              onChange={(e) => edit({ defaultCalendarView: e.target.value })}
-            >
-              {optionsIncluding(CALENDAR_VIEWS, draft.defaultCalendarView).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="settingsEdit__fieldGroup">
-          <label className="settingsEdit__field">
-            <span className="settingsEdit__fieldLabel">Default block length (hours)</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="settingsEdit__input"
-              value={draft.defaultTimeBlockDurationHours}
-              disabled={busy}
-              aria-describedby="blockLength-hint"
-              onChange={(e) => edit({ defaultTimeBlockDurationHours: e.target.value })}
+              onChange={(next) => edit({ allowSpecificTimeBooking: next })}
             />
-          </label>
-          <span id="blockLength-hint" className="settingsEdit__hint">
-            How long a block runs when you add one below.
-          </span>
-        </div>
-
-        <div className="settingsEdit__fieldGroup">
-          <label className="settingsEdit__field">
-            <span className="settingsEdit__fieldLabel">Travel buffer (minutes)</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="settingsEdit__input"
-              value={draft.travelBufferMinutes}
+          </li>
+          <li className="settingsEdit__toggleRow">
+            <span className="settingsEdit__toggleLabel">Offer time blocks</span>
+            <Toggle
+              label="Toggle booking into a time block"
+              checked={draft.allowTimeBlockBooking}
               disabled={busy}
-              aria-describedby="travelBuffer-hint"
-              onChange={(e) => edit({ travelBufferMinutes: e.target.value })}
+              onChange={(next) => edit({ allowTimeBlockBooking: next })}
             />
-          </label>
-          <span id="travelBuffer-hint" className="settingsEdit__hint">
-            Room kept between two visits in the same block, so a full block still leaves you time to
-            drive.
-          </span>
+          </li>
+        </ul>
+      </div>
+
+      <div className="settingsEdit__subsection">
+        <span className="settingsEdit__groupHeading">Defaults</span>
+        <ul className="settingsEdit__toggleList">
+          <li className="settingsEdit__toggleRow">
+            <span className="settingsEdit__toggleLabel">Remind kinfolk 24 hours before a visit</span>
+            <Toggle
+              label="Toggle the 24-hour visit reminder"
+              checked={draft.enableAutoReminder24h}
+              disabled={busy}
+              onChange={(next) => edit({ enableAutoReminder24h: next })}
+            />
+          </li>
+        </ul>
+
+        <div className="settingsEdit__fields">
+          <div className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">New bookings start as</span>
+              <select
+                className="settingsEdit__input"
+                value={draft.defaultBookingMode}
+                disabled={busy}
+                onChange={(e) => edit({ defaultBookingMode: e.target.value })}
+              >
+                {optionsIncluding(BOOKING_MODES, draft.defaultBookingMode).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">Calendar opens on</span>
+              <select
+                className="settingsEdit__input"
+                value={draft.defaultCalendarView}
+                disabled={busy}
+                onChange={(e) => edit({ defaultCalendarView: e.target.value })}
+              >
+                {optionsIncluding(CALENDAR_VIEWS, draft.defaultCalendarView).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">Default block length (hours)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="settingsEdit__input"
+                value={draft.defaultTimeBlockDurationHours}
+                disabled={busy}
+                aria-describedby="blockLength-hint"
+                onChange={(e) => edit({ defaultTimeBlockDurationHours: e.target.value })}
+              />
+            </label>
+            <span id="blockLength-hint" className="settingsEdit__hint">
+              How long a block runs when you add one below.
+            </span>
+          </div>
+
+          <div className="settingsEdit__fieldGroup">
+            <label className="settingsEdit__field">
+              <span className="settingsEdit__fieldLabel">Travel buffer (minutes)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="settingsEdit__input"
+                value={draft.travelBufferMinutes}
+                disabled={busy}
+                aria-describedby="travelBuffer-hint"
+                onChange={(e) => edit({ travelBufferMinutes: e.target.value })}
+              />
+            </label>
+            <span id="travelBuffer-hint" className="settingsEdit__hint">
+              Room kept between two visits in the same block, so a full block still leaves you time
+              to drive.
+            </span>
+          </div>
         </div>
       </div>
 
       <div className="settingsEdit__subsection">
-        <span className="settingsEdit__fieldLabel">Time blocks</span>
+        <span className="settingsEdit__groupHeading">Time blocks</span>
         <p className="settingsEdit__hint">
           The windows kinfolk book into. They pick one of these by name rather than typing a clock
           time, so this list is what is on offer. Turn a block off to stop offering it without
