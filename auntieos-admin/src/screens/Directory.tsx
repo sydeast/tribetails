@@ -463,10 +463,13 @@ export function Directory({
           });
         }}
         onBack={() => {
-          // Closing is a navigation too. `onProfileClose` is what the route
-          // passes; propless (never reached today, the profile only mounts
-          // under the route) fall back to the list URL rather than to a
-          // silently unchanged screen.
+          // The COLD-ARRIVAL branch of the profile's Back (#689): the profile
+          // steps back through history whenever there is an entry behind it,
+          // and reaches this only when a bookmark or a typed URL opened it with
+          // nothing behind it at all. Closing is a navigation even then, so
+          // `onProfileClose` is what the route passes; propless (never reached
+          // today, the profile only mounts under the route) falls back to the
+          // list URL rather than to a silently unchanged screen.
           if (onProfileClose) onProfileClose();
           else void navigate({ to: '/directory' });
         }}

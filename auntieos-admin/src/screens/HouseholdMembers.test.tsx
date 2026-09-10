@@ -672,6 +672,16 @@ describe('HouseholdMembers Back', () => {
     expect(routerHistory.back).not.toHaveBeenCalled();
   });
 
+  // The `/household-members/{id}` route passes no name, so a cold deep link has
+  // only the id. The button shows it, matching the trail step directly above it
+  // under the same ruling: the id is honest and a stand-in household name is not.
+  it('shows the id in the fallback label when no name was passed down', async () => {
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    render(<HouseholdMembers kinfolkId="fam1" onBack={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Back to fam1' })).toBeInTheDocument();
+  });
+
   it('steps back through history, under a plain label, when the operator walked here', async () => {
     routerHistory.canGoBack.mockReturnValue(true);
     const onBack = vi.fn();
