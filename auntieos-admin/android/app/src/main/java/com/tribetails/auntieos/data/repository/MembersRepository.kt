@@ -6,13 +6,20 @@ import com.tribetails.auntieos.util.AuntieLog
 /**
  * Household members and invites. (B1)
  *
- * Five callables, four of which had no caller on either client until now:
- * `listMembers` (portal, admin-or-primary), and the admin-gated `listInvites`,
- * `mintInvite`, `revokeInvite`, `setMemberPermissions` and `removeMember`.
- * Their request and response shapes are written down in
- * `mytribe/functions/CALLABLE_CONTRACT.md` under "Household members and
- * invites", and the React mirror is `auntieos-admin/src/api/members.ts` +
- * `membersWrite.ts`. The three files have to move together.
+ * Five callables: `listMembers` (portal, admin-or-primary), and the
+ * admin-gated `listInvites`, `mintInvite`, `revokeInvite`,
+ * `setMemberPermissions` and `removeMember`. Their request and response
+ * shapes are written down in `mytribe/functions/CALLABLE_CONTRACT.md` under
+ * "Household members and invites", and the React mirror is
+ * `auntieos-admin/src/api/members.ts` + `membersWrite.ts`. The three files
+ * have to move together.
+ *
+ * `mintInvite` HAS NO CALLER ON EITHER CLIENT (again). Both UIs offered it as
+ * a typed-address "Invite a primary by email" form; the operator rejected
+ * that use case on issue #684, because the Portal access button already sends
+ * the same claim link off the household record. `mintInvite` stays: it is
+ * PRIMARY-only per the 2026-08-04 invite ruling, and the server side of it is
+ * not dead code just because the client-side form is gone.
  *
  * NOT HERE, ON PURPOSE: `inviteKinfolkToPortal`. It already ships on this
  * client as [AuntieRepository.inviteKinfolkToPortal], driven by the button on

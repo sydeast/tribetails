@@ -23,7 +23,6 @@ import {
   describePortalInviteOutcome,
   executePrimaryRecovery,
   inviteKinfolkToPortal,
-  mintInvite,
   removeMember,
   revokeInvite,
   setMemberPermissions,
@@ -42,16 +41,23 @@ import './HouseholdMembers.css';
 /**
  * Household members and invites. (B1)
  *
- * The first surface for `mintInvite`, `revokeInvite`, `setMemberPermissions`,
- * `removeMember` and `inviteKinfolkToPortal`, all of which have been registered
- * callables with no caller anywhere in `src/`. Without this screen a household
- * cannot be let into the portal at all, which is why it blocks onboarding.
+ * The first surface for `revokeInvite`, `setMemberPermissions`, `removeMember`
+ * and `inviteKinfolkToPortal`, all of which have been registered callables
+ * with no caller anywhere in `src/`. Without this screen a household cannot be
+ * let into the portal at all, which is why it blocks onboarding.
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it for them. Both panels below therefore send the same grant: "Portal
- * access" mails the address on the kinfolk record, and "Invite a primary"
- * mails an address the operator types.
+ * do it for them. The one admin invite, "Portal access", mails the primary
+ * claim link to the address on the kinfolk record.
+ *
+ * "Invite a primary by email" sent the same claim link to an address the
+ * operator typed, for a household with the wrong email on file or none
+ * (issue #684). The operator rejected that case: the Portal access button
+ * already covers it. The form and its `submitInvite` handler are gone;
+ * `mintInvite` stays a registered callable with no caller in `src/`, because
+ * it is PRIMARY-only per this same ruling and the server side of it is not
+ * dead code.
  *
  * WHAT A PRIMARY MAY LOSE: nothing. A primary's entitlements are inherent to
  * the role, because `requirePerm` in memberGate.ts answers for PRIMARY before
@@ -134,8 +140,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   // a failed revoke look like a failed mint.
   const [permError, setPermError] = useState<string | null>(null);
   const [savingPerm, setSavingPerm] = useState<string | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [minting, setMinting] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [portalError, setPortalError] = useState<string | null>(null);
@@ -154,10 +158,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [recoveryChoice, setRecoveryChoice] = useState('');
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
-
-  // Invite form. One field: the address. The role is not a choice (an admin
-  // invites the primary), and a primary has no starting permission set to pick.
-  const [email, setEmail] = useState('');
 
   const loadMembers = useCallback(() => {
     let live = true;
@@ -236,22 +236,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     }
   }
 
-  async function submitInvite() {
-    if (minting) return;
-    setMinting(true);
-    setInviteError(null);
-    try {
-      const { inviteId } = await mintInvite({ familyId: kinfolkId, invitedEmail: email });
-      showToast(`Primary invite sent to ${email.trim()} (${inviteHandle(inviteId)}).`);
-      setEmail('');
-      loadInvites();
-    } catch (err: unknown) {
-      setInviteError(`mintInvite failed: ${errText(err, 'The invite was not sent.')}`);
-    } finally {
-      setMinting(false);
-    }
-  }
-
   async function revoke(invite: HouseholdInvite) {
     if (revokingId !== null) return;
     setRevokingId(invite.inviteId);
@@ -312,8 +296,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
       setRemoving(false);
     }
   }
-
-  const emailReady = email.trim() !== '' && email.includes('@');
 
   // The primary this recovery would take the household away from. A suspended
   // one does not count: there is nothing left to suspend, and `oldUid` is what
@@ -397,11 +379,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
           onDismiss={() => setPermError(null)}
         >
           {permError}
-        </Banner>
-      )}
-      {inviteError !== null && (
-        <Banner tone="error" title="The invite was not sent" onDismiss={() => setInviteError(null)}>
-          {inviteError}
         </Banner>
       )}
       {revokeError !== null && (
@@ -556,54 +533,6 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
               <GhostButton label="Start primary recovery" onClick={openRecovery} />
             </>
           )}
-        </DenPanel>
-      </div>
-
-      <div className="d2">
-        <DenPanel
-          title="Invite a primary by email"
-          subtitle={`The same primary claim link as the button above, sent to an address you type, for a household whose record carries the wrong email or none. It expires in ${INVITE_TTL_DAYS} days. Unlike the button above this does not check for an existing primary first, so read the roster before sending.`}
-        >
-          <form
-            className="hmembers__form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitInvite();
-            }}
-          >
-            <fieldset className="hmembers__fieldset" disabled={minting}>
-              <legend className="hmembers__legend">Invite details</legend>
-
-              <div className="hmembers__field">
-                <label htmlFor="hmembers-email">Email address</label>
-                <input
-                  id="hmembers-email"
-                  type="email"
-                  value={email}
-                  autoComplete="off"
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-                <span className="hmembers__hint">
-                  Lowercased and matched against the accepting account. Someone signing in with a
-                  different address cannot use this link.
-                </span>
-              </div>
-
-              <p className="hmembers__inherent">
-                Whoever accepts becomes this household's primary and holds every entitlement by
-                role, so there is no role to pick and no starting permissions to set. To add a
-                second co-parent, the primary invites them from MyTribe; that is not something
-                the Den does on their behalf.
-              </p>
-
-              <PrimaryButton
-                label={minting ? 'Sending…' : 'Send primary invite'}
-                onClick={() => void submitInvite()}
-                disabled={minting || !emailReady}
-                busy={minting}
-              />
-            </fieldset>
-          </form>
         </DenPanel>
       </div>
 

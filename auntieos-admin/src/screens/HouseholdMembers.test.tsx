@@ -21,7 +21,6 @@ vi.mock('@tanstack/react-router', () => ({
 const api = vi.hoisted(() => ({
   listHouseholdMembers: vi.fn(),
   listHouseholdInvites: vi.fn(),
-  mintInvite: vi.fn(),
   revokeInvite: vi.fn(),
   setMemberPermissions: vi.fn(),
   removeMember: vi.fn(),
@@ -38,7 +37,6 @@ vi.mock('../api/members', async (orig) => ({
 }));
 vi.mock('../api/membersWrite', async (orig) => ({
   ...(await orig<typeof import('../api/membersWrite')>()),
-  mintInvite: api.mintInvite,
   revokeInvite: api.revokeInvite,
   setMemberPermissions: api.setMemberPermissions,
   removeMember: api.removeMember,
@@ -162,24 +160,6 @@ describe('HouseholdMembers HAPPY', () => {
     });
   });
 
-  it('mints a primary invite from the one field it offers, and reloads the invite list', async () => {
-    const user = userEvent.setup();
-    api.mintInvite.mockResolvedValue({ inviteId: 'rq_new' });
-    mount();
-
-    await user.type(await screen.findByLabelText('Email address'), 'new@example.com');
-    await user.click(screen.getByRole('button', { name: 'Send primary invite' }));
-
-    await waitFor(() => {
-      expect(api.mintInvite).toHaveBeenCalledWith({
-        familyId: 'fam1',
-        invitedEmail: 'new@example.com',
-      });
-    });
-    // Reloaded, so the new invite appears without a manual refresh.
-    await waitFor(() => expect(api.listHouseholdInvites).toHaveBeenCalledTimes(2));
-  });
-
   it('revokes a live invite and reloads', async () => {
     const user = userEvent.setup();
     api.revokeInvite.mockResolvedValue(undefined);
@@ -206,6 +186,27 @@ describe('HouseholdMembers HAPPY', () => {
 
     await waitFor(() => expect(api.inviteKinfolkToPortal).toHaveBeenCalledWith('fam1'));
     expect(await screen.findByText(/Portal invite sent to the Walls/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * RULING (issue #684): "Invite a primary by email is unnecessary. We already
+ * have the Portal Access button." The Portal access button already sends the
+ * same primary claim link, so the typed-address form and its `submitInvite`
+ * handler are gone. `mintInvite` stays registered (PRIMARY-only, per the
+ * 2026-08-04 invite ruling) with no caller left in this screen.
+ */
+describe('HouseholdMembers invite by email is gone', () => {
+  it('renders no typed-email invite form, only the Portal access button', async () => {
+    mount();
+
+    await screen.findByText('marcus@example.com');
+    expect(screen.queryByRole('button', { name: 'Send primary invite' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument();
+    expect(screen.queryByText('Invite a primary by email')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Invite this household to the portal' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -272,17 +273,16 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     expect(screen.getAllByRole('switch')).toHaveLength(6);
   });
 
-  it('offers no way for an admin to invite a secondary, and says who does', async () => {
+  it('offers no way for an admin to invite a secondary', async () => {
     mount({ members: [primary()] });
 
     await screen.findByText('loretta@example.com');
-    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeInTheDocument();
-    // The role radiogroup defaulted to Secondary, which is the one invite an
-    // admin does not send.
+    // No invite form of any kind lives on this screen now (issue #684): the
+    // secondary-role picker that used to sit inside it is gone with it.
     expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: 'Secondary' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Label')).not.toBeInTheDocument();
-    expect(screen.getByText(/the primary invites them from MyTribe/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send primary invite' })).not.toBeInTheDocument();
   });
 });
 
@@ -349,21 +349,6 @@ describe('HouseholdMembers NEGATIVE', () => {
     expect(locked).toBeDisabled();
   });
 
-  it('keeps the primary invite disabled until the email looks like an address', async () => {
-    const user = userEvent.setup();
-    mount();
-
-    const send = await screen.findByRole('button', { name: 'Send primary invite' });
-    expect(send).toBeDisabled();
-
-    await user.type(screen.getByLabelText('Email address'), 'jane');
-    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeDisabled();
-
-    await user.type(screen.getByLabelText('Email address'), '@example.com');
-    expect(screen.getByRole('button', { name: 'Send primary invite' })).toBeEnabled();
-    expect(api.mintInvite).not.toHaveBeenCalled();
-  });
-
   it('says nothing was sent when the household already has an active portal account', async () => {
     const user = userEvent.setup();
     api.inviteKinfolkToPortal.mockResolvedValue({ kinfolkId: 'fam1', status: 'already_active' });
@@ -412,20 +397,6 @@ describe('HouseholdMembers ERROR', () => {
         screen.getByRole('switch', { name: 'Full billing for marcus@example.com' }),
       ).toHaveAttribute('aria-checked', 'false');
     });
-  });
-
-  it('reports a failed mint instead of clearing the form as if it sent', async () => {
-    const user = userEvent.setup();
-    api.mintInvite.mockRejectedValue(new Error('SMTP2GO rejected the send'));
-    mount();
-
-    await user.type(await screen.findByLabelText('Email address'), 'new@example.com');
-    await user.click(screen.getByRole('button', { name: 'Send primary invite' }));
-
-    expect(await screen.findByText(/mintInvite failed/)).toBeInTheDocument();
-    expect(screen.getByText(/SMTP2GO rejected the send/)).toBeInTheDocument();
-    // The typed address survives so the operator can retry rather than retype.
-    expect(screen.getByLabelText('Email address')).toHaveValue('new@example.com');
   });
 
   it('reports a failed portal invite as a failure, not as an outcome', async () => {

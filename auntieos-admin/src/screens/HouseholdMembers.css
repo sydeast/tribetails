@@ -101,11 +101,10 @@
 }
 
 /*
- * A primary's entitlements, and the invite form's note that a primary has none
- * to choose. Prose, not a disabled control: a greyed-out switch still says
- * "this could be switched", which is the thing the ruling is about. Replaces
- * the --form modifier, which styled the starting-permission toggles the invite
- * form no longer has.
+ * A primary's entitlements, and the primary-recovery panel's note about who
+ * holds the household today. Prose, not a disabled control: a greyed-out
+ * switch still says "this could be switched", which is the thing the ruling is
+ * about.
  */
 .hmembers__inherent {
   margin: var(--space-3) 0 0;
@@ -175,11 +174,13 @@
   color: var(--color-success);
 }
 
-/* ── invite form ─────────────────────────────────────────────────────────── */
-
-.hmembers__form {
-  display: block;
-}
+/*
+ * ── shared fieldset/legend ───────────────────────────────────────────────
+ * Used by the primary-recovery dialog's choice list. The typed-email invite
+ * form that used to share these rules is gone (issue #684): the Portal access
+ * button already sends the primary claim link, so a second, typed-address
+ * form was a use case the operator rejected.
+ */
 
 .hmembers__fieldset {
   border: none;
@@ -201,49 +202,6 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
-
-.hmembers__field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.hmembers__field label {
-  font-family: var(--type-label-md-family);
-  font-size: var(--type-label-md-size);
-  font-weight: var(--type-label-md-weight);
-  letter-spacing: var(--type-label-md-tracking);
-  color: var(--color-text-dim);
-}
-
-.hmembers__field input {
-  font: inherit;
-  font-size: var(--type-body-md-size);
-  color: var(--color-text-primary);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-2) var(--space-3);
-  max-width: 26rem;
-}
-.hmembers__field input:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-}
-.hmembers__field input[aria-invalid='true'] {
-  border-color: var(--color-error);
-}
-
-.hmembers__hint {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-faint);
-}
-
-/*
- * The role segmented control lived here. It offered Secondary / Primary on the
- * admin invite form, defaulting to Secondary, which is the one invite an admin
- * does not send. Removed with the markup rather than hidden.
- */
 
 /* ── invite groups ───────────────────────────────────────────────────────── */
 
