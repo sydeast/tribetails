@@ -43,6 +43,7 @@ vi.mock('../api/templatesWrite', async () => {
 });
 
 import { Templates } from './Templates';
+import { TEMPLATE_BANK_EMPTY_COPY } from '../lib/templateFormat';
 
 function tpl(over: Partial<TemplateSummary>): TemplateSummary {
   return {
@@ -101,7 +102,7 @@ describe('Templates screen', () => {
     expect(
       await screen.findByText(/listTemplates failed: permission-denied/, { selector: '.async-error-detail' }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/no templates yet/i)).toBeNull();
+    expect(screen.queryByText(TEMPLATE_BANK_EMPTY_COPY)).toBeNull();
   });
 
   it('retries the load on demand', async () => {
@@ -116,7 +117,7 @@ describe('Templates screen', () => {
   it('renders the proven-empty state, not while the load is failing', async () => {
     listTemplates.mockResolvedValue([]);
     render(<Templates />);
-    expect(await screen.findByText(/no templates yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
   });
 
   it('surfaces a categories load failure as a secondary note, without blanking the template list', async () => {
@@ -207,22 +208,54 @@ describe('Templates screen', () => {
   });
 
   /**
-   * The panel's instruction has to name the thing the operator can actually
-   * click. The list stopped being a stacked column of rows when the card grid
-   * landed above, and copy that still says "row" sends the operator looking for
-   * a control this screen no longer draws.
+   * #716, the page frame. The mock is a flat page: heading, one controls row,
+   * grid. The live screen had grown a stat strip and a titled panel around the
+   * list, so the operator read the page title twice and met three cards of
+   * counts before the first template.
    *
-   * Asserted on the rendered subtitle rather than on the source string, so a
-   * later re-word that reintroduces the row cannot pass by moving the text.
+   * jsdom has no layout, so these assert the carriers: the elements that used
+   * to be there are gone, and the two controls share one row element.
    */
-  it('tells the operator to click a card, because rows are not what this screen draws', async () => {
+  it('draws no stat strip: the mock has none, and the chips already carry the counts', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'a', title: 'A', tags: [] }),
+      tpl({ templateId: 'b', title: 'B', tags: ['x'] }),
+    ]);
+    listTemplateCategories.mockResolvedValue(['Booking']);
+    const { container } = render(<Templates />);
+    await screen.findByText('A');
+
+    expect(container.querySelectorAll('.den-stat')).toHaveLength(0);
+    expect(screen.queryByText('Untagged', { selector: '.den-stat-label' })).toBeNull();
+    // The count the strip used to claim is still on screen, on the All chip.
+    expect(screen.getByRole('tab', { name: /^all 2/i })).toBeInTheDocument();
+  });
+
+  it('puts the grid straight on the page: no panel, and the page is titled once', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+    render(<Templates />);
+    const grid = await screen.findByRole('list', { name: 'Templates' });
+
+    expect(grid.closest('.den-panel')).toBeNull();
+    // One heading for the page, and no second "Templates" title under it.
+    expect(screen.getAllByRole('heading')).toHaveLength(1);
+    expect(screen.getByRole('heading')).toHaveTextContent(/Template\s*Bank\./);
+  });
+
+  it('keeps the category chips and the search box on one controls row', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+    listTemplateCategories.mockResolvedValue(['Booking']);
     render(<Templates />);
     await screen.findByText('Booking Confirmed');
 
-    const subtitle = screen.getByText(/Filter by category, or search by title or key\./);
-    expect(subtitle.textContent).toContain('Click a card to open it.');
-    expect(subtitle.textContent).not.toMatch(/\brow\b/i);
+    const tablist = screen.getByRole('tablist', { name: /filter templates by category/i });
+    const search = screen.getByLabelText(/search templates by title or key/i).closest('.templates__search');
+    const row = tablist.closest('.templates__controls');
+
+    expect(row).not.toBeNull();
+    expect(search?.closest('.templates__controls')).toBe(row);
+    // The search sits after the chips, which is what puts it on the right edge.
+    expect(tablist.compareDocumentPosition(search as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('cards are always live buttons: with no onSelect override, activating a card opens the built-in editor', async () => {
@@ -240,10 +273,68 @@ describe('Templates screen', () => {
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
+  /**
+   * #716, the card footer. The mock's card ends in a right-aligned "Edit"
+   * ghost button, and this card had none: the comment that chose that said a
+   * footer button would only repeat the card tap. The operator marked the
+   * missing footer, so the button ships, and both routes open the editor.
+   */
+  it('the card footer Edit button opens the same editor the card body opens', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Booking Confirmed')).closest('.templates__card') as HTMLElement;
+
+    const edit = within(card).getByRole('button', { name: 'Edit' });
+    expect(edit.closest('.templates__card-foot')).not.toBeNull();
+    // Its own control, not a button nested inside the card button.
+    expect(edit.closest('.templates__card-main')).toBeNull();
+
+    await userEvent.click(edit);
+
+    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
+  });
+
+  it('the footer Edit button honours an onSelect override, exactly as the card body does', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+    const onSelect = vi.fn();
+    render(<Templates onSelect={onSelect} />);
+    const card = (await screen.findByText('Booking Confirmed')).closest('.templates__card') as HTMLElement;
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Edit' }));
+
+    expect(onSelect).toHaveBeenCalledWith('booking.confirmed');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('labels the subject line "Subject:", the way the mock does', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Booking Confirmed')).closest('.templates__card') as HTMLElement;
+
+    const line = card.querySelector('.templates__card-subject') as HTMLElement;
+    expect(line.textContent?.replace(/\s+/g, ' ').trim()).toBe('Subject: Your booking is confirmed');
+  });
+
+  it('does not label a template that has no subject: the fallback already says so', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: '   ' }),
+    ]);
+    render(<Templates />);
+    const card = (await screen.findByText('Booking Confirmed')).closest('.templates__card') as HTMLElement;
+
+    const line = card.querySelector('.templates__card-subject') as HTMLElement;
+    expect(line.textContent?.replace(/\s+/g, ' ').trim()).toBe('No subject set');
+  });
+
   it('New template opens the built-in editor in create mode by default', async () => {
     listTemplates.mockResolvedValue([]);
     render(<Templates />);
-    await screen.findByText(/no templates yet/i);
+    await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
@@ -253,7 +344,7 @@ describe('Templates screen', () => {
     listTemplates.mockResolvedValue([]);
     const onNew = vi.fn();
     render(<Templates onNew={onNew} />);
-    await screen.findByText(/no templates yet/i);
+    await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     expect(onNew).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -266,7 +357,7 @@ describe('Templates screen', () => {
     ]);
     saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
     render(<Templates />);
-    await screen.findByText(/no templates yet/i);
+    await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
 
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     await userEvent.type(screen.getByLabelText(/template key/i), 'booking.confirmed');
@@ -300,7 +391,7 @@ describe('Templates screen', () => {
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/no templates yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
   });
 
   it('a stale/missing row id (list not yet loaded) is a silent no-op, never a crash or a blank editor', async () => {
@@ -313,25 +404,94 @@ describe('Templates screen', () => {
     expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
   });
 
-  it('shows real counts in the stat strip', async () => {
+  it('every category chip carries its own live count', async () => {
     listTemplates.mockResolvedValue([
-      tpl({ templateId: 'a', title: 'A', tags: [] }),
-      tpl({ templateId: 'b', title: 'B', tags: ['x'] }),
+      tpl({ templateId: 'a', title: 'A', category: 'Booking' }),
+      tpl({ templateId: 'b', title: 'B', category: null }),
     ]);
     listTemplateCategories.mockResolvedValue(['Booking']);
     render(<Templates />);
     await screen.findByText('A');
 
-    // Scoped to each stat card's own container (found via its label), not the
-    // tab-count spans or a sibling card, which would otherwise collide on the
-    // same digit.
-    const templatesCard = screen.getByText('Templates', { selector: '.den-stat-label' }).closest('.den-stat');
-    const categoriesCard = screen.getByText('Categories', { selector: '.den-stat-label' }).closest('.den-stat');
-    const untaggedCard = screen.getByText('Untagged', { selector: '.den-stat-label' }).closest('.den-stat');
+    expect(screen.getByRole('tab', { name: /^all 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^booking 1/i })).toBeInTheDocument();
+  });
+});
 
-    expect(within(templatesCard as HTMLElement).getByText('2')).toBeInTheDocument();
-    expect(within(categoriesCard as HTMLElement).getByText('1')).toBeInTheDocument();
-    expect(within(untaggedCard as HTMLElement).getByText('1')).toBeInTheDocument();
+/**
+ * #716, the header. The mock draws one action. The three secondary flows are
+ * real and stay reachable, one level down.
+ */
+describe('Templates screen: one primary header action, the rest behind a menu', () => {
+  beforeEach(() => {
+    listTemplates.mockReset();
+    listTemplateCategories.mockReset();
+    listTemplateCategories.mockResolvedValue([]);
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
+  });
+
+  it('shows New template and one menu trigger, and no other header buttons', async () => {
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    const trailing = document.querySelector('.den-heading-trailing') as HTMLElement;
+    const buttons = within(trailing).getAllByRole('button').map((b) => b.textContent?.trim());
+    expect(buttons).toEqual(['More actions', 'New template']);
+
+    // Closed until asked for: the three flows are not lined up on the heading.
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByText('Manage assignments')).toBeNull();
+  });
+
+  it('the menu exposes all three secondary flows', async () => {
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    const trigger = screen.getByRole('button', { name: /more actions/i });
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.textContent);
+    expect(items).toEqual(['Manage assignments', 'Import from repo', 'New binding']);
+  });
+
+  it('Manage assignments opens the assignment manager', async () => {
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    await userEvent.click(screen.getByRole('button', { name: /more actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /manage assignments/i }));
+
+    expect(await screen.findByRole('button', { name: /back to template bank/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Template\s*Routing/);
+  });
+
+  it('Import from repo opens the importer', async () => {
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    await userEvent.click(screen.getByRole('button', { name: /more actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /import from repo/i }));
+
+    expect(await screen.findByRole('button', { name: /back to template bank/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Import\s*templates\./);
+  });
+
+  it('Escape closes the menu and hands focus back to the trigger', async () => {
+    render(<Templates />);
+    await screen.findByText('Alpha');
+
+    const trigger = screen.getByRole('button', { name: /more actions/i });
+    await userEvent.click(trigger);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(trigger).toHaveFocus();
   });
 });
 
@@ -386,12 +546,13 @@ describe('Templates screen: I9 New binding', () => {
     listTemplateCategories.mockResolvedValue(['Booking']);
   });
 
-  it('opens the bulk category (New binding) dialog from the header', async () => {
+  it('opens the bulk category (New binding) dialog from the header menu', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha' })]);
     render(<Templates />);
     await screen.findByText('Alpha');
 
-    await userEvent.click(screen.getByRole('button', { name: /new binding/i }));
+    await userEvent.click(screen.getByRole('button', { name: /more actions/i }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /new binding/i }));
 
     expect(screen.getByRole('dialog', { name: /new binding/i })).toBeInTheDocument();
   });
@@ -427,13 +588,13 @@ describe('Templates screen: an empty list that says which fact it means', () => 
       await screen.findByText('Nothing matches "refund". Searched all 1 template, by title and key.'),
     ).toBeInTheDocument();
   });
-  it('an empty CATEGORY is reported as an empty category, not as a failed search', async () => {
+  it('an empty CATEGORY gets the mock\'s empty-state copy, not a failed-search message', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
     listTemplateCategories.mockResolvedValue(['Onboarding', 'Bookings']);
     render(<Templates />);
     await screen.findByText('Alpha');
     await userEvent.click(screen.getByRole('tab', { name: /^Bookings/ }));
-    expect(await screen.findByText('No templates in Bookings.')).toBeInTheDocument();
+    expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
   });
   it('names the active category in the no-match message, so the two exclusions are told apart', async () => {
     listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'Alpha', category: 'Onboarding' })]);
@@ -451,7 +612,7 @@ describe('Templates screen: an empty list that says which fact it means', () => 
   it('a bank with no templates at all still says exactly that', async () => {
     listTemplates.mockResolvedValue([]);
     render(<Templates />);
-    expect(await screen.findByText('No templates yet.')).toBeInTheDocument();
+    expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
   });
 });
 describe('Templates screen: the mock\'s Ctrl-K search shortcut', () => {

@@ -7,6 +7,7 @@ import {
   isUntagged,
   filterTemplates,
   templateEmptyMessage,
+  TEMPLATE_BANK_EMPTY_COPY,
   templateCategoryState,
   templateCategoryDisplay,
   categoryMatchesFilter,
@@ -382,15 +383,21 @@ describe('buildSaveTemplatePayload', () => {
   });
 });
 describe('templateEmptyMessage: what the bank searched over', () => {
+  // #716: the two settled no-search cases speak the mock's own line. The mock
+  // counts "All" among its category chips, so an empty bank and an empty
+  // category read the same sentence there.
   it('says the bank is empty when nothing has loaded at all', () => {
     expect(templateEmptyMessage({ loaded: 0, category: null, query: '', hasMore: false })).toBe(
-      'No templates yet.',
+      TEMPLATE_BANK_EMPTY_COPY,
     );
   });
   it('a category with no templates is not a failed search', () => {
     expect(
       templateEmptyMessage({ loaded: 12, category: 'Bookings', query: '', hasMore: false }),
-    ).toBe('No templates in Bookings.');
+    ).toBe(TEMPLATE_BANK_EMPTY_COPY);
+  });
+  it('the mock copy is the mock copy, verbatim', () => {
+    expect(TEMPLATE_BANK_EMPTY_COPY).toBe('No templates in this category yet. Click New to create one.');
   });
   it('names the loaded page when a category looks empty but the cursor is still open', () => {
     expect(templateEmptyMessage({ loaded: 50, category: 'Bookings', query: '', hasMore: true })).toBe(
