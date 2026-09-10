@@ -1,5 +1,5 @@
 import { defineConfig } from 'cypress';
-import seed, { setPassword, put, remove } from './e2e/seed';
+import seed, { setPassword, put, upsert, remove } from './e2e/seed';
 import { ADMIN } from './e2e/fixtures/accounts';
 
 /**
@@ -140,6 +140,48 @@ export default defineConfig({
         /** `seedKinCareSession`'s inverse, run from the spec's own `after` hook. */
         async deleteKinCareSession({ id }: { id: string }) {
           await remove('kin_care_sessions', id);
+          return null;
+        },
+        /**
+         * Merges one document's fields into the emulator, creating it if
+         * absent (`e2e/seed.ts`'s `upsert`). For fixture rows a spec needs
+         * that the shared seed does not carry (a pending KinCare-request
+         * notification, a household tag), written from a `before` and
+         * reverted from an `after` so later specs in the same run see the
+         * shared seed unchanged. Not for the shared seed itself; that stays
+         * `seedOnce`'s job.
+         *
+         * `timestampFields` names which properties of `doc` are Firestore
+         * Timestamps rather than strings. A `cy.task` argument crosses the
+         * Cypress IPC boundary as JSON, so a spec's `new Date()` (or
+         * `.toISOString()`) arrives here as a plain string; `enc()` in
+         * `e2e/seed.ts` would encode a bare string as `stringValue`, not
+         * `timestampValue`, and every reader of a real Timestamp field
+         * (`lib/time.ts`'s `tsToDate` calls `.toDate()` on it) throws on that
+         * shape rather than rendering it. Naming the field here is what turns
+         * it back into a real `Date` before `upsert` encodes it.
+         */
+        async upsertDoc({
+          collection,
+          id,
+          doc,
+          timestampFields,
+        }: {
+          collection: string;
+          id: string;
+          doc: Record<string, unknown>;
+          timestampFields?: string[];
+        }) {
+          const prepared = { ...doc };
+          for (const field of timestampFields ?? []) {
+            if (field in prepared) prepared[field] = new Date(String(prepared[field]));
+          }
+          await upsert(collection, id, prepared);
+          return null;
+        },
+        /** Deletes one document `upsertDoc` wrote. See `e2e/seed.ts`'s `remove`. */
+        async deleteDoc({ collection, id }: { collection: string; id: string }) {
+          await remove(collection, id);
           return null;
         },
       });
