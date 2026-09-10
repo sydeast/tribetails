@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, linkOptions } from '@tanstack/react-router';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
-import { updateKinfolkTags } from '../api/directoryWrite';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { getKin411 } from '../api/recipientContext';
 import { type Async } from '../lib/async';
 import { str } from '../lib/coerce';
+import { directionsHref } from '../lib/directions';
 import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { DenBreadcrumbs, DenPanel, EmptyHint } from '../components/DenScreenKit';
@@ -19,12 +19,9 @@ import {
 } from '../components/KinfolkProfileFeeds';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
-import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { MaskedValue } from '../components/MaskedValue';
-import { PrimaryButton } from '../components/Buttons';
 import { KinfolkEdit } from './KinfolkEdit';
 import { HouseholdData } from './HouseholdData';
-import { KinTaleCompose } from './KinTaleCompose';
 import './KinfolkProfile.css';
 
 interface KinfolkProfileProps {
@@ -56,24 +53,37 @@ interface KinfolkProfileProps {
  * One label/value line; renders nothing when the value is blank (never "undefined").
  * `secret` routes the value through MaskedValue, so an access code is hidden until
  * the operator asks for it; the label doubles as the toggle's spoken field name.
+ * `directions` renders the value as a link that opens it in Google Maps for
+ * turn-by-turn directions (issue #685), the same way Call and Text in the hero
+ * are real `tel:`/`sms:` anchors rather than plain text.
  */
 function Fact({
   label,
   value,
   mono,
   secret,
+  directions,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   secret?: boolean;
+  directions?: boolean;
 }) {
   if (value.trim() === '') return null;
   return (
     <div className="kprofile__fact">
       <dt className="kprofile__fact-label">{label}</dt>
       <dd className={mono ? 'kprofile__fact-value kprofile__fact-value--mono' : 'kprofile__fact-value'}>
-        {secret === true ? <MaskedValue value={value} field={label.toLowerCase()} /> : value}
+        {directions === true ? (
+          <a href={directionsHref(value)} target="_blank" rel="noopener">
+            {value}
+          </a>
+        ) : secret === true ? (
+          <MaskedValue value={value} field={label.toLowerCase()} />
+        ) : (
+          value
+        )}
       </dd>
     </div>
   );
@@ -95,28 +105,36 @@ function firstNonBlank(...values: string[]): string {
  * fields). The household's kin come from the Directory's own KIN_QUERY stream,
  * passed in, so this opens with no second read.
  *
- * LAID OUT AS THE MOCK LAYS IT OUT (`ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`,
- * the only design authority for this screen, issue #407): a breadcrumb trail, a
- * hero carrying the household's identity and the actions that act on it, then
- * two columns. The left column is who and where they are (Kin, the household's
- * facts, Auntie's notes); the right column is what has happened and what is
- * coming (KinTales, visits, invoices). Below the mock's own 860px breakpoint the
- * two columns become one, which is also what the Android profile is.
+ * LAID OUT AS AN OPERATOR WALK REORDERED IT (walk `admin-2026-09-10`, issues
+ * #678/#682, superseding the mock's original left/right split): a breadcrumb
+ * trail, a hero carrying the household's identity and the actions that act on
+ * it, then two columns. The LEFT column is the household's own facts (Contact,
+ * the access panel, Emergency Contacts, the vet panels, Auntie's notes). The RIGHT
+ * column is who they have and what has happened or is coming: Kin, Upcoming
+ * KinCare, Recent KinTales, Invoices, in that order. Below the mock's own
+ * 860px breakpoint the two columns become one, which is also what the Android
+ * profile is.
  *
  * WHERE THIS DELIBERATELY CARRIES MORE THAN THE MOCK: the mock's own header says
  * its content is illustrative placeholder, so its five-row "Household" panel is a
  * sketch of a facts panel, not a list of the only five facts a household has. The
- * fielded sections (Contact / Home & access / Emergency) stay, because every
+ * fielded sections (Contact / the access panel / Emergency Contacts) stay, because every
  * field in them is persisted and an Auntie standing on a doorstep needs the gate
  * code. Same for the controls the mock does not draw (Edit, Household data,
- * Members and invites, the tag editor, the masked secrets, the vet panels): each
- * is a standing ruling or a route decision made after this mock was drawn.
+ * Members and invites, the masked secrets, the vet panels): each is a standing
+ * ruling or a route decision made after this mock was drawn. Household tags
+ * moved the other way (#681): they now show as read-only pills in the hero,
+ * and the tag editor itself lives on the Edit form rather than on this
+ * read-only screen.
  *
  * Sub-views this profile can swap in: Directory owns the Directory/profile
- * switch the same way, so the editor, the household record and the KinTale
- * composer stay local state rather than routes, matching `KinView`'s precedent.
+ * switch the same way, so the editor and the household record stay local state
+ * rather than routes, matching `KinView`'s precedent. The KinTale composer used
+ * to be a third one, opened from a hero "New KinTale" primary; #676 removed
+ * that entry point (a KinTale is only ever started from a KinCare session, not
+ * a bare household), so this profile no longer opens a composer at all.
  */
-type ProfileView = 'profile' | 'edit' | 'household' | 'kintale';
+type ProfileView = 'profile' | 'edit' | 'household';
 
 export function KinfolkProfile({
   kinfolkId,
@@ -206,7 +224,16 @@ export function KinfolkProfile({
           // loaded before the edit.
           load();
         }}
-        onCancel={() => setView('profile')}
+        onCancel={() => {
+          setView('profile');
+          // The Edit form's tag panel saves each add/remove the moment it
+          // happens (ProfileTagsSection's own optimistic save), not on this
+          // screen's Save button. Cancelling out still leaves those tag writes
+          // in place, so this re-reads too: otherwise the hero's tag pills would
+          // keep showing what was loaded before the edit, not what is now
+          // actually on the household.
+          load();
+        }}
       />
     );
   }
@@ -214,13 +241,6 @@ export function KinfolkProfile({
     return (
       <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
     );
-  }
-  if (view === 'kintale') {
-    // The mock's hero primary. A KinTale is always scaffolded from a Kin Care
-    // session that actually happened, so the composer opens on its own session
-    // picker; passing the household narrows that picker to THIS household's
-    // sessions rather than making the operator find them among everybody's.
-    return <KinTaleCompose kinfolkId={kinfolkId} onClose={() => setView('profile')} />;
   }
   // B1, members and invites, used to be a fourth sub-view here. It is now
   // reached only through its own route (`/household-members/{kinfolkId}`), so
@@ -288,6 +308,16 @@ export function KinfolkProfile({
             {/* Tenure, from the join date. Absent when the stored date is one
                 nobody can read, rather than a fabricated "0 months". */}
             {tenure !== null && <span className="kprofile__chip kprofile__chip--tenure">{tenure}</span>}
+            {/* Household tags, read-only pills next to the name and status
+                (#681). The mock's hero draws its `.tags` row this way; editing
+                them is a Kinfolk edit rather than a hero action, so it lives on
+                the Edit form (`KinfolkEdit`'s own Tags panel), not here. */}
+            {loaded !== null &&
+              loaded.tags.map((tag) => (
+                <span key={tag} className="kprofile__chip kprofile__chip--tag">
+                  {tag}
+                </span>
+              ))}
           </div>
         </div>
         <div className="kinfolk-profile__actions">
@@ -318,15 +348,123 @@ export function KinfolkProfile({
           </Link>
           <GhostButton label="Edit" onClick={() => setView('edit')} />
           <GhostButton label="Back to Directory" onClick={onBack} />
-          <PrimaryButton label="New KinTale" onClick={() => setView('kintale')} />
+          {/* The hero used to end with a "New KinTale" primary. Operator ruling
+              (#676, walk admin-2026-09-10): a KinTale is only ever started from
+              a KinCare session, so a standalone entry point on the household
+              profile is gone. The KinTales list screen keeps its own "New
+              KinTale" button under the same ruling; that button is unaffected
+              by this change. */}
         </div>
       </header>
 
       <div className="kprofile__cols">
         <div className="kprofile__col">
-          {/* KIN FIRST, as the mock puts it: the pets are what the household is
-              for. The count lives in the panel's meta slot rather than inside
-              the heading text, so the section is still called "Kin". */}
+          <AsyncRegion
+            state={profile}
+            what="household"
+            isEmpty={() => false}
+            loading={<p className="kprofile__hint">Loading household…</p>}
+            empty={<EmptyHint>Nothing to show.</EmptyHint>}
+          >
+            {(p) => (
+              <>
+                {/* CONTACT FIRST under the hero (#679, holds once Kin has moved
+                    to the right column, #678): the household's own facts, not
+                    who lives there. The service address folded in here from its
+                    own "Home & access" panel: an address is a way to reach the
+                    household same as a phone number is. Gate code, parking,
+                    entry notes and Wi-Fi stay in the access panel below, since
+                    the issue that asked for this only named the home address.
+                    The address itself opens Google Maps directions (#685), the
+                    way Call and Text in the hero are real tel:/sms: anchors. */}
+                <DenPanel title="Contact">
+                  <dl className="kprofile__facts">
+                    <Fact label="Phone" value={p.phoneNumber} mono />
+                    <Fact label="Email" value={p.email} />
+                    <Fact label="Secondary phone" value={p.secondaryPhone} mono />
+                    <Fact label="Secondary email" value={p.secondaryEmail} />
+                    <Fact label="Preferred contact" value={p.preferredContactMethod} />
+                    <Fact label="Best time to reach" value={p.bestTimeToContact} />
+                    <Fact label="Service address" value={p.serviceAddress} directions />
+                    {!any(
+                      p.phoneNumber,
+                      p.email,
+                      p.secondaryPhone,
+                      p.secondaryEmail,
+                      p.preferredContactMethod,
+                      p.bestTimeToContact,
+                      p.serviceAddress,
+                    ) && <EmptyHint>No contact details on file.</EmptyHint>}
+                  </dl>
+                </DenPanel>
+
+                {/*
+                  ALWAYS RENDERED, empty or not (#407): a household with no gate
+                  code and no parking note still needs to see this panel as a
+                  thing it could fill in, not have it vanish. Only the address
+                  moved out, into Contact above (#679); gate code, parking, entry
+                  notes and Wi-Fi stay here, because they are about getting into
+                  the home once an Auntie has already found it, which the
+                  address answers on its own.
+                */}
+                <DenPanel title="Home & access">
+                  <dl className="kprofile__facts">
+                    <Fact label="Gate code" value={p.gateCode} mono secret />
+                    <Fact label="Parking" value={p.parkingInstructions} />
+                    <Fact label="Entry notes" value={p.entryNotes} />
+                    {/*
+                      The network name and the password are two rows now. They used to
+                      be one string ending in "password on file", which hid the value
+                      but still announced that a password existed; the row now carries
+                      the real thing behind a toggle, and a household with no password
+                      simply has no password row.
+                    */}
+                    <Fact label="Wi-Fi network" value={p.wifiName} />
+                    <Fact label="Wi-Fi password" value={p.wifiPassword} mono secret />
+                    {!any(p.gateCode, p.parkingInstructions, p.entryNotes, p.wifiName, p.wifiPassword) && (
+                      <EmptyHint>No entry details on file.</EmptyHint>
+                    )}
+                  </dl>
+                </DenPanel>
+
+                {any(p.emergencyContactName, p.emergencyContactPhone, p.emergencyContactRelation) && (
+                  <DenPanel title="Emergency Contacts">
+                    <dl className="kprofile__facts">
+                      <Fact label="Name" value={p.emergencyContactName} />
+                      <Fact label="Phone" value={p.emergencyContactPhone} mono />
+                      <Fact label="Relation" value={p.emergencyContactRelation} />
+                    </dl>
+                  </DenPanel>
+                )}
+
+                {/* THE VET IS READ, NOT OWNED. Operator ruling 2026-08-01:
+                    "vet info lives on household data, it can be seen on the kin
+                    profile". These panels used to read `p.vetClinicName` and
+                    friends off the kinfolk doc, which is the copy that made the
+                    vet authored in two places at once. They now resolve through
+                    `household_data`'s clinic id, so what is shown here is the
+                    same single record the Household Data screen edits and the
+                    vet clinics manager corrects. The clinic address is a
+                    directions link too (#685), for the same reason the service
+                    address above is one. */}
+                <HouseholdVetPanels kinfolkId={kinfolkId} />
+
+                {/* The mock's "Auntie's notes · admin only", last in this
+                    column now that household tags moved to the hero (#681).
+                    Admin-only, and only ever on an admin surface: see the
+                    panel's own note. */}
+                <AuntieNotesPanel kinfolkId={kinfolkId} />
+              </>
+            )}
+          </AsyncRegion>
+        </div>
+
+        {/* The right column: who they have and what has happened or is coming.
+            Kin leads it now that it has moved out of the left column (#678),
+            followed by the three feed cards in the order the operator asked
+            for (#682). Each card owns its own household-scoped read, so one
+            failing does not take the profile down with it. */}
+        <div className="kprofile__col">
           <DenPanel
             title="Kin"
             {...(kinPending ? {} : { meta: kin.length === 1 ? '1 kin' : `${kin.length} kin` })}
@@ -401,100 +539,8 @@ export function KinfolkProfile({
             )}
           </DenPanel>
 
-          <AsyncRegion
-            state={profile}
-            what="household"
-            isEmpty={() => false}
-            loading={<p className="kprofile__hint">Loading household…</p>}
-            empty={<EmptyHint>Nothing to show.</EmptyHint>}
-          >
-            {(p) => (
-              <>
-                <DenPanel title="Contact">
-                  <dl className="kprofile__facts">
-                    <Fact label="Phone" value={p.phoneNumber} mono />
-                    <Fact label="Email" value={p.email} />
-                    <Fact label="Secondary phone" value={p.secondaryPhone} mono />
-                    <Fact label="Secondary email" value={p.secondaryEmail} />
-                    <Fact label="Preferred contact" value={p.preferredContactMethod} />
-                    <Fact label="Best time to reach" value={p.bestTimeToContact} />
-                    {!any(p.phoneNumber, p.email, p.secondaryPhone, p.secondaryEmail, p.preferredContactMethod, p.bestTimeToContact) && (
-                      <EmptyHint>No contact details on file.</EmptyHint>
-                    )}
-                  </dl>
-                </DenPanel>
-
-                {/*
-                  ALWAYS RENDERED, empty or not. This is the panel the operator's
-                  cursor was on when they marked the screen (#407): it used to
-                  vanish entirely when a household had no address, no gate code
-                  and no parking note, so the screen gave no sign that a service
-                  address is a thing this household could have. The mock shows the
-                  household's facts panel unconditionally, and Contact right above
-                  already says "No contact details on file" rather than
-                  disappearing. This now matches both.
-                */}
-                <DenPanel title="Home & access">
-                  <dl className="kprofile__facts">
-                    <Fact label="Service address" value={p.serviceAddress} />
-                    <Fact label="Gate code" value={p.gateCode} mono secret />
-                    <Fact label="Parking" value={p.parkingInstructions} />
-                    <Fact label="Entry notes" value={p.entryNotes} />
-                    {/*
-                      The network name and the password are two rows now. They used to
-                      be one string ending in "password on file", which hid the value
-                      but still announced that a password existed; the row now carries
-                      the real thing behind a toggle, and a household with no password
-                      simply has no password row.
-                    */}
-                    <Fact label="Wi-Fi network" value={p.wifiName} />
-                    <Fact label="Wi-Fi password" value={p.wifiPassword} mono secret />
-                    {!any(p.serviceAddress, p.gateCode, p.parkingInstructions, p.entryNotes, p.wifiName, p.wifiPassword) && (
-                      <EmptyHint>No address or entry details on file.</EmptyHint>
-                    )}
-                  </dl>
-                </DenPanel>
-
-                {any(p.emergencyContactName, p.emergencyContactPhone, p.emergencyContactRelation) && (
-                  <DenPanel title="Emergency">
-                    <dl className="kprofile__facts">
-                      <Fact label="Name" value={p.emergencyContactName} />
-                      <Fact label="Phone" value={p.emergencyContactPhone} mono />
-                      <Fact label="Relation" value={p.emergencyContactRelation} />
-                    </dl>
-                  </DenPanel>
-                )}
-
-                {/* THE VET IS READ, NOT OWNED. Operator ruling 2026-08-01:
-                    "vet info lives on household data, it can be seen on the kin
-                    profile". These panels used to read `p.vetClinicName` and
-                    friends off the kinfolk doc, which is the copy that made the
-                    vet authored in two places at once. They now resolve through
-                    `household_data`'s clinic id, so what is shown here is the
-                    same single record the Household Data screen edits and the
-                    vet clinics manager corrects. */}
-                <HouseholdVetPanels kinfolkId={kinfolkId} />
-
-                {/* The mock's "Auntie's notes · admin only". Admin-only, and
-                    only ever on an admin surface: see the panel's own note. */}
-                <AuntieNotesPanel kinfolkId={kinfolkId} />
-
-                <ProfileTagsSection
-                  scope="household"
-                  initialTags={p.tags}
-                  onSaveTags={(next) => updateKinfolkTags(p._id !== '' ? p._id : kinfolkId, next)}
-                />
-              </>
-            )}
-          </AsyncRegion>
-        </div>
-
-        {/* The mock's right column: what has happened and what is coming. Each
-            card owns its own household-scoped read, so one failing does not take
-            the profile down with it. */}
-        <div className="kprofile__col">
-          <RecentKinTalesPanel kinfolkId={kinfolkId} />
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
+          <RecentKinTalesPanel kinfolkId={kinfolkId} />
           <HouseholdInvoicesPanel kinfolkId={kinfolkId} />
         </div>
       </div>

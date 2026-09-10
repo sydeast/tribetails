@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.ContactOverride
@@ -57,13 +58,6 @@ fun KinfolkProfileScreen(
     onOpenReport: (sessionId: String) -> Unit = {},
     /** B1: (kinfolkId, kinfolkName) -> the members and invites screen. */
     onNavigateToMembers: (String, String) -> Unit = { _, _ -> },
-    /**
-     * #552: the mock's hero primary, "New KinTale". Takes the household id and
-     * opens the visit picker scoped to it; the picker hands off to the composer.
-     * The profile cannot open the composer directly, because the composer is keyed
-     * by a VISIT and the profile knows only the household.
-     */
-    onNewKinTale: (kinfolkId: String) -> Unit = {},
 ) {
     val state by viewModel.profileState.collectAsState()
     // #14: portal invite state + Toast feedback on each outcome.
@@ -133,13 +127,11 @@ fun KinfolkProfileScreen(
                     item { ContactOverrideBanner(override, kinfolk.preferredContactMethod) }
                 }
                 item { QuickContactBar(kinfolk) }
-                // #552: the mock puts "New KinTale" in the hero as the PRIMARY,
-                // alongside Call and Text. It sits below the contact row here
-                // rather than inside it: the three contact actions are equal
-                // icon-and-label tiles and this one is not equal to them, so
-                // squeezing a fourth tile in would flatten exactly the emphasis
-                // the mock is asking for on a phone-width hero.
-                item { NewKinTaleAction(onClick = { onNewKinTale(kinfolk.id) }) }
+                // #552 used to put "New KinTale" here, below the contact row, as
+                // the hero's primary action. #676 (walk admin-2026-09-10, same
+                // ruling as the React profile) removed it: a KinTale is only
+                // ever started from a KinCare session, so a standalone entry
+                // point on the household profile is gone.
                 item { ContactInfoCard(kinfolk, state.householdVet) }
                 if (hasDynamicFieldValues(state.kinfolkSchemas, kinfolk.formValues)) {
                     item { AdditionalInfoCard(state.kinfolkSchemas, kinfolk.formValues) }
@@ -298,6 +290,22 @@ fun KinfolkProfileScreen(
                 }
 
                 // Profile feeds (parity with web): real per-kinfolk joins.
+                // #678/#682 (parity with the React admin's right column):
+                // Upcoming KinCare before Recent KinTales, renamed from
+                // "Upcoming visits" to the product word.
+                item {
+                    ProfileFeedSection(
+                        title = "UPCOMING KINCARE",
+                        // The window has a far edge now (the mock's own header),
+                        // so the card says what it is rather than implying it
+                        // shows everything ahead.
+                        meta = "next $UPCOMING_HORIZON_DAYS days",
+                        emptyMsg = "No visits booked in the next $UPCOMING_HORIZON_DAYS days.",
+                        lines = state.upcomingVisits.map { s ->
+                            (s.serviceType.ifBlank { "Visit" }) to s.startTime.take(16).replace('T', ' ')
+                        },
+                    )
+                }
                 item {
                     ProfileFeedSection(
                         title = "RECENT KINTALES",
@@ -312,19 +320,6 @@ fun KinfolkProfileScreen(
                             state.recentTales.getOrNull(idx)?.sessionId
                                 ?.takeIf { it.isNotBlank() }
                                 ?.let { onOpenReport(it) }
-                        },
-                    )
-                }
-                item {
-                    ProfileFeedSection(
-                        title = "UPCOMING VISITS",
-                        // The window has a far edge now (the mock's own header),
-                        // so the card says what it is rather than implying it
-                        // shows everything ahead.
-                        meta = "next $UPCOMING_HORIZON_DAYS days",
-                        emptyMsg = "No visits booked in the next $UPCOMING_HORIZON_DAYS days.",
-                        lines = state.upcomingVisits.map { s ->
-                            (s.serviceType.ifBlank { "Visit" }) to s.startTime.take(16).replace('T', ' ')
                         },
                     )
                 }
@@ -405,6 +400,13 @@ private fun ProfileFeedSection(
     }
 }
 
+/**
+ * #681 (parity with the React admin's hero): household tags shown as read-only
+ * pills next to the name and the status/tenure chips. Editing them is unchanged
+ * on this screen (`ProfileTagsSection` further down still owns the write), same
+ * as the standing pattern where the picker's own panel keeps the write.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileHeader(kinfolk: Kinfolk) {
     Column(
@@ -471,6 +473,25 @@ private fun ProfileHeader(kinfolk: Kinfolk) {
                 }
             }
         }
+        val tags = kinfolk.tagNames()
+        if (tags.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                tags.forEach { tag ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AuntieTheme.colors.packPink.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(tag.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.packPink)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -515,44 +536,6 @@ private fun QuickContactBar(kinfolk: Kinfolk) {
     }
 }
 
-/**
- * #552: the hero's primary action. Filled rather than tinted, because the mock
- * marks it `class="act primary"` while Call and Text are plain `act` tiles, and
- * that difference is the point: writing the household their KinTale is the thing
- * this screen is FOR, and the three contact actions are how you reach them about
- * it.
- */
-@Composable
-private fun NewKinTaleAction(onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(AuntieTheme.colors.kinfolkOrange)
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                Lucide.FileText,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = AuntieTheme.colors.background,
-            )
-            Text(
-                "New KinTale",
-                style = AuntieTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = AuntieTheme.colors.background,
-            )
-        }
-    }
-}
-
 @Composable
 private fun QuickActionBtn(
     modifier: Modifier = Modifier,
@@ -589,7 +572,9 @@ private fun ContactInfoCard(kinfolk: Kinfolk, householdVet: HouseholdVet) {
             ProfileField("Secondary Email", kinfolk.secondaryEmail)
             // K2 (A8): "Preferred Contact" read removed per operator — the value the
             // comms-reconcile pipeline set was noise on the profile. Model field kept.
-            ProfileField("Service Address", kinfolk.serviceAddress)
+            // #685 (parity with the React admin): the address opens Google Maps
+            // directions, the same destination URL the web Fact renders.
+            DirectionsProfileField("Service Address", kinfolk.serviceAddress)
             ProfileField("Parking Instructions", kinfolk.parkingInstructions)
             // Show emergency contact only when at least one part is filled (no "() -" noise).
             val emergency = listOfNotNull(
@@ -597,7 +582,10 @@ private fun ContactInfoCard(kinfolk: Kinfolk, householdVet: HouseholdVet) {
                 kinfolk.emergencyContactPhone.takeIf { it.isNotBlank() }?.let { "($it)" },
                 kinfolk.emergencyContactRelation.takeIf { it.isNotBlank() }?.let { "- $it" },
             ).joinToString(" ")
-            if (emergency.isNotBlank()) ProfileField("Emergency Contact", emergency)
+            // #680 (parity with the React admin): "Emergency Contacts", so it
+            // reads apart from "Emergency vet" below rather than the singular
+            // that could be misread as naming the same thing.
+            if (emergency.isNotBlank()) ProfileField("Emergency Contacts", emergency)
 
             // The household vet is DISPLAYED here and authored on Household Data
             // (operator ruling 2026-08-01). It used to read kinfolk.vetClinic*,
@@ -781,6 +769,34 @@ private fun ProfileField(label: String, value: String) {
         Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
         Spacer(Modifier.height(2.dp))
         Text(value, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+    }
+}
+
+/**
+ * A profile field whose value opens Google Maps directions (#685), same
+ * destination URL the React admin's `Fact` renders for the service address and
+ * the vet clinic address. Blank the same way `ProfileField` is: nothing to show
+ * is nothing rendered.
+ */
+@Composable
+private fun DirectionsProfileField(label: String, address: String) {
+    if (address.isBlank()) return
+    val context = LocalContext.current
+    Column {
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            address,
+            style = AuntieTheme.typography.bodyMedium,
+            color = AuntieTheme.colors.kinfolkOrange,
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable {
+                val uri = Uri.parse(
+                    "https://www.google.com/maps/dir/?api=1&destination=" + Uri.encode(address),
+                )
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            },
+        )
     }
 }
 

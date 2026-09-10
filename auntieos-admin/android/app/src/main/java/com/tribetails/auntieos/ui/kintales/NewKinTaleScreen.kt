@@ -43,13 +43,19 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * Pick the visit a new KinTale is about, then hand off to the composer.
  *
  * This screen writes nothing. It exists because [KinTaleReportViewModel] is keyed
- * by a session and the household profile's "New KinTale" does not have one; see
- * [NewKinTaleViewModel]'s header for why that is the whole of the gap.
+ * by a session, and a caller that knows the household but not the visit has no
+ * session to key it with; see [NewKinTaleViewModel]'s header for why that is the
+ * whole of the gap.
+ *
+ * #676 removed the household profile's "New KinTale" button, this screen's only
+ * caller, so nothing on Android navigates here today (see `Screen.NewKinTale` in
+ * `Navigation.kt`). Left in place rather than deleted; see that route's comment
+ * for why.
  *
  * [onPickSession] navigates to the existing `kintale/{sessionId}` composer, so
  * everything a KinTale is - template, headline, body, kin moods, photos, the AI
  * draft, autosave, the send confirm - stays in the one surface that already does
- * it, on both the profile route and the routes that were already there.
+ * it.
  */
 @Composable
 fun NewKinTaleScreen(

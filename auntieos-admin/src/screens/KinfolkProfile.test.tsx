@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
@@ -10,16 +10,6 @@ const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }))
 vi.mock('../api/kinfolkProfile', async (orig) => ({
   ...(await orig<typeof import('../api/kinfolkProfile')>()),
   getKinfolkProfile,
-}));
-// The Tags panel (ProfileTagsSection) loads the vocab + persists tag edits.
-const getBusinessSettings = vi.fn();
-vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
-const saveBusinessSettings = vi.fn();
-vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
-const { updateKinfolkTags } = vi.hoisted(() => ({ updateKinfolkTags: vi.fn() }));
-vi.mock('../api/directoryWrite', async (orig) => ({
-  ...(await orig<typeof import('../api/directoryWrite')>()),
-  updateKinfolkTags,
 }));
 
 // The child screens own their own loaders and their own suites (KinfolkEdit 24
@@ -66,18 +56,6 @@ vi.mock('@tanstack/react-router', () => ({
     );
   },
 }));
-// The KinTale composer is a screen of its own with its own suite. This asserts
-// the profile's hero primary opens it, not that it works.
-vi.mock('./KinTaleCompose', () => ({
-  KinTaleCompose: ({ kinfolkId, onClose }: { kinfolkId?: string; onClose: () => void }) => (
-    <div>
-      <p>STUB KinTaleCompose for {kinfolkId}</p>
-      <button type="button" onClick={onClose}>
-        stub close
-      </button>
-    </div>
-  ),
-}));
 // The 411 (per-kin) and the dossier (per-household) are ADMIN-ONLY point reads.
 // Both are stubbed so no spec here touches Firestore.
 const { getKin411, getDossier } = vi.hoisted(() => ({
@@ -115,12 +93,6 @@ function kin(over: Partial<Kin> = {}): Kin {
 
 beforeEach(() => {
   getKinfolkProfile.mockReset();
-  getBusinessSettings.mockReset();
-  getBusinessSettings.mockResolvedValue({ householdTags: [], petTags: [] });
-  saveBusinessSettings.mockReset();
-  saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
-  updateKinfolkTags.mockReset();
-  updateKinfolkTags.mockResolvedValue(undefined);
   getKin411.mockReset();
   getKin411.mockResolvedValue(null);
   getDossier.mockReset();
@@ -155,18 +127,18 @@ describe('KinfolkProfile', () => {
     expect(getKinfolkProfile).toHaveBeenCalledWith('k1');
   });
 
-  it('omits all-blank sections (no empty Emergency/Vet panels)', async () => {
+  it('omits all-blank sections (no empty Emergency Contacts/Vet panels)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     await screen.findByText('512-555-1000');
-    expect(screen.queryByText('Emergency')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Emergency Contacts' })).toBeNull();
     expect(screen.queryByText('Vet clinic')).toBeNull();
   });
 
-  it('shows the Emergency section when a field is present', async () => {
+  it('shows the Emergency Contacts section when a field is present, renamed from "Emergency" (#680)', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ emergencyContactName: 'Sam', emergencyContactPhone: '555-9' }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
-    expect(await screen.findByText('Emergency')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
     expect(screen.getByText('Sam')).toBeInTheDocument();
   });
 
@@ -263,12 +235,22 @@ describe('KinfolkProfile', () => {
     expect(screen.queryByRole('button', { name: /^show /i })).toBeNull();
   });
 
-  it('shows and edits household tags, saving via updateKinfolkTags', async () => {
-    getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP'] }));
+  it('shows household tags as read-only pills in the hero, with no editor on this screen (#681)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ tags: ['VIP', 'Slow pay'] }));
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByText('VIP')).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
-    await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('k1', ['VIP', 'Slow pay']));
+    expect(screen.getByText('Slow pay')).toBeInTheDocument();
+    // Tag editing moved to the Edit form; the read-only profile offers no way
+    // to add or remove one.
+    expect(screen.queryByLabelText(/add a household tag/i)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
+  });
+
+  it('shows no tag pills at all when the household has none', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ tags: [] }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    await screen.findByText('512-555-1000');
+    expect(screen.queryByRole('heading', { name: 'Tags' })).toBeNull();
   });
 });
 
@@ -286,6 +268,20 @@ describe('KinfolkProfile: sub-view wiring', () => {
     await user.click(screen.getByRole('button', { name: /stub cancel/i }));
     expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
     expect(screen.queryByText('STUB KinfolkEdit')).not.toBeInTheDocument();
+  });
+  /**
+   * The Edit form's tag panel auto-saves on every add/remove (#681), so a
+   * Cancel out of the editor can still leave a tag write behind it. This
+   * re-reads so the hero's pills catch up rather than showing what loaded
+   * before the visit to Edit.
+   */
+  it('re-reads the household on cancel, so a tag saved during the edit is not left stale', async () => {
+    const user = userEvent.setup();
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[kin()]} onBack={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /^edit$/i }));
+    await user.click(screen.getByRole('button', { name: /stub cancel/i }));
+    await screen.findByRole('button', { name: /back to directory/i });
+    expect(getKinfolkProfile).toHaveBeenCalledTimes(2);
   });
   it('swaps in the household record', async () => {
     const user = userEvent.setup();
@@ -468,15 +464,35 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.getByText('Willow')).toBeInTheDocument();
   });
   /**
-   * THE PANEL UNDER THE OPERATOR'S CURSOR AT THE MARK. It used to disappear
-   * whole when a household had no address and no codes on file, so the screen
-   * gave no sign a service address was even a thing this household could have.
+   * THE PANEL UNDER THE OPERATOR'S CURSOR AT THE MARK (#407). It used to
+   * disappear whole when a household had no codes on file, so the screen gave
+   * no sign an access detail was even a thing this household could have. The
+   * service address itself moved out to Contact (#679), so this panel's empty
+   * hint no longer mentions it.
    */
   it('keeps Home & access on screen with an empty hint when nothing is on file', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Home & access' })).toBeInTheDocument();
-    expect(screen.getByText('No address or entry details on file.')).toBeInTheDocument();
+    expect(screen.getByText('No entry details on file.')).toBeInTheDocument();
+  });
+  it('folds the service address into Contact, not a separate panel (#679)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ serviceAddress: '18609 Salt River Bay Dr' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    const contact = (await screen.findByRole('heading', { name: 'Contact' })).closest('.den-panel');
+    expect(contact).not.toBeNull();
+    expect(within(contact as HTMLElement).getByText('18609 Salt River Bay Dr')).toBeInTheDocument();
+  });
+  it('renders the service address as a Google Maps directions link (#685)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ serviceAddress: '18609 Salt River Bay Dr' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    const link = await screen.findByRole('link', { name: '18609 Salt River Bay Dr' });
+    expect(link).toHaveAttribute(
+      'href',
+      'https://www.google.com/maps/dir/?api=1&destination=18609%20Salt%20River%20Bay%20Dr',
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
   });
   it('shows the admin-only dossier band, headed as admin only', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
@@ -494,19 +510,18 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.getByText('Treats in the blue tin.')).toBeInTheDocument();
     expect(screen.getByText('Short and warm.')).toBeInTheDocument();
   });
-  it('opens the KinTale composer scoped to this household from the hero primary', async () => {
+  it('no longer offers a hero "New KinTale" primary (#676)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
-    await userEvent.click(await screen.findByRole('button', { name: /new kintale/i }));
-    expect(screen.getByText('STUB KinTaleCompose for k1')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /stub close/i }));
-    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /back to directory/i });
+    expect(screen.queryByRole('button', { name: /new kintale/i })).toBeNull();
   });
-  it('carries the three feed cards that make up the mock\u2019s right column', async () => {
+  it('carries the three feed cards, Upcoming KinCare renamed from Upcoming visits (#682)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Upcoming visits' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Upcoming KinCare' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Upcoming visits' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
   });
   it('scopes every feed read to this household rather than filtering the whole collection in memory', async () => {
@@ -519,5 +534,36 @@ describe('KinfolkProfile: the mock', () => {
       expect(spec, `no read of ${path}`).toBeDefined();
       expect(spec?.filters).toEqual([['kinfolkId', '==', 'k1']]);
     }
+  });
+  it('orders the right column Kin, Upcoming KinCare, Recent KinTales, Invoices, Contact first and Auntie’s notes last on the left (#678/#679/#682/#683)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockResolvedValue({
+      tldr: 'Text when on the way.',
+      rawSummary: '',
+      communicationStyle: '',
+      householdNotes: '',
+      relationshipWithAuntie: '',
+    });
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />,
+    );
+    await screen.findByRole('heading', { name: 'Invoices' });
+    // Auntie's notes loads on its own async read; wait for it too, or the
+    // column's "last heading" can be sampled before it lands.
+    await screen.findByText('Text when on the way.');
+
+    const cols = Array.from(container.querySelectorAll('.kprofile__col'));
+    expect(cols).toHaveLength(2);
+    const [leftCol, rightCol] = cols as [Element, Element];
+
+    const headingsIn = (col: Element) =>
+      within(col as HTMLElement)
+        .getAllByRole('heading', { level: 2 })
+        .map((h) => h.textContent);
+
+    expect(headingsIn(rightCol)).toEqual(['Kin', 'Upcoming KinCare', 'Recent KinTales', 'Invoices']);
+    const left = headingsIn(leftCol);
+    expect(left[0]).toBe('Contact');
+    expect(left[left.length - 1]).toBe('Auntie’s notes');
   });
 });

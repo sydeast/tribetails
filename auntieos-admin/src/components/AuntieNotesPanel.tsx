@@ -1,11 +1,12 @@
 import { AsyncRegion } from './AsyncRegion';
-import { DenPanel, EmptyHint } from './DenScreenKit';
+import { DenPanel } from './DenScreenKit';
 import { useOneShot } from '../lib/useOneShot';
 import { getDossier, type Dossier } from '../api/recipientContext';
 import './AuntieNotesPanel.css';
 
 /**
- * "Auntie's notes", the mock's third left-hand panel, headed `admin only`.
+ * "Auntie's notes", pinned last in the profile's left column and headed
+ * `admin only`.
  *
  * WHAT IT READS is the household's DOSSIER, the admin-side record of what Auntie
  * knows about these people: how they like to be talked to, what she has been
@@ -23,21 +24,27 @@ import './AuntieNotesPanel.css';
  * the one mutating action it ever had on a profile (clearing the migrated
  * household notes) was deliberately moved off this read-only screen and onto
  * the editor (K3/A8, `EditKinfolkScreen`). This panel does not bring it back.
+ *
+ * DOES NOT RENDER AT ALL when there is nothing written (#683, operator ruling
+ * "Admin Notes should be pin to the bottom when viewing the kinfolk IF notes
+ * exist"): a panel whose only content is "Nothing written yet" is exactly the
+ * empty band the ruling is against. Held back during the load too, not only
+ * once it resolves empty, so the panel never flashes in with a spinner only to
+ * disappear a moment later. `KinfolkProfile.tsx` renders this last among the
+ * left column's panels, which is the other half of "pin to the bottom".
  */
 export function AuntieNotesPanel({ kinfolkId }: { kinfolkId: string }) {
   const state = useOneShot(() => getDossier(kinfolkId), 'getDossier');
 
+  if (state.status === 'loading') return null;
+  if (state.status === 'ready' && (state.data === null || !hasAnything(state.data))) return null;
+
   return (
     <DenPanel title="Auntie’s notes" meta="admin only">
-      <AsyncRegion
-        state={state}
-        what="this household's dossier"
-        isEmpty={(d) => d === null || !hasAnything(d)}
-        empty={<EmptyHint>Nothing written about this household yet.</EmptyHint>}
-      >
+      <AsyncRegion state={state} what="this household's dossier" isEmpty={() => false} empty={null}>
         {(dossier) => {
-          // Unreachable when empty (AsyncRegion decides that branch), narrowed
-          // for the type rather than defended against.
+          // Unreachable when empty (guarded above), narrowed for the type
+          // rather than defended against.
           if (dossier === null) return null;
           const summary = firstNonBlank(dossier.tldr, dossier.rawSummary);
           return (

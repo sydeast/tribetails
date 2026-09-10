@@ -600,8 +600,9 @@ class DirectoryViewModel(
                 // admin calls by the same names with the same arguments.
                 val now = java.time.Instant.now()
                 val nowIso = now.toString()
-                // The mock heads UPCOMING VISITS "next 7 days", so the window has
-                // a far edge and both surfaces use the same one.
+                // The profile heads UPCOMING KINCARE "next 7 days" (renamed from
+                // "Upcoming visits", #682), so the window has a far edge and
+                // both surfaces use the same one.
                 val throughIso = horizonIso(now)
                 val allReports = reportsDef.await().getOrDefault(emptyList())
                 val allSessions = sessionsDef.await().getOrDefault(emptyList())

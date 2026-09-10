@@ -22,7 +22,7 @@ import java.time.temporal.ChronoUnit
  * Lexical ISO-8601 compares (the app's date convention).
  */
 
-/** How far ahead the profile's UPCOMING VISITS card looks. The mock's own header. */
+/** How far ahead the profile's UPCOMING KINCARE card looks (renamed #682). */
 const val UPCOMING_HORIZON_DAYS = 7L
 
 /** The far edge of that window, as an ISO instant [days] out from [now]. */

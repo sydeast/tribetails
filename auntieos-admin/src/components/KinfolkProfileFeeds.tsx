@@ -33,14 +33,17 @@ import { formatUsd, localDateIso, invoiceStateInfo, unstampedStateInfo } from '.
 import './KinfolkProfileFeeds.css';
 
 /**
- * The household profile's three feed cards: Recent KinTales, Upcoming visits,
- * Invoices.
+ * Three of the household profile's right-column cards: Upcoming KinCare,
+ * Recent KinTales, Invoices. `KinfolkProfile.tsx` orders them behind its own
+ * Kin panel (#678/#682: Kin, Upcoming KinCare, Recent KinTales, Invoices); this
+ * module does not fix an order itself, just the three cards.
  *
- * They are the right-hand column of `ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`,
- * and the React admin had none of them (issue #407). Android has shipped all
- * three for a while, so the joins behind these are a straight port of its
- * `domain/KinfolkProfileFeeds.kt` (see `lib/kinfolkProfileFeeds.ts`) rather than
- * a second interpretation of the same question.
+ * They started as the right-hand column of
+ * `ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`, and the React admin had
+ * none of them (issue #407). Android has shipped all three for a while, so the
+ * joins behind these are a straight port of its `domain/KinfolkProfileFeeds.kt`
+ * (see `lib/kinfolkProfileFeeds.ts`) rather than a second interpretation of the
+ * same question.
  *
  * Each card owns its own read, the way the Home dashboard's widgets do: one
  * household-scoped, indexed, capped query per card, so a card that fails says so
@@ -131,7 +134,7 @@ export function UpcomingVisitsPanel({ kinfolkId, now }: { kinfolkId: string; now
     state.status === 'ready' ? upcomingVisitsFor(state.data, kinfolkId, nowIso, through) : [];
 
   return (
-    <DenPanel title="Upcoming visits" meta={`next ${UPCOMING_HORIZON_DAYS} days`}>
+    <DenPanel title="Upcoming KinCare" meta={`next ${UPCOMING_HORIZON_DAYS} days`}>
       <AsyncRegion
         state={state}
         what="this household's visits"

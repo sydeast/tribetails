@@ -39,6 +39,20 @@ vi.mock('../api/mapbox', async (orig) => ({
 // never touches Firestore, and so a test can hand the picker an exact catalog.
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// Tags editing lives here now (#681, moved off the read-only profile). The
+// Tags panel (ProfileTagsSection) loads the vocab and persists tag edits
+// through these three, the same mocks KinfolkProfile.test.tsx used to carry.
+const getBusinessSettings = vi.fn();
+vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
+const saveBusinessSettings = vi.fn();
+vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
+const { updateKinfolkTags } = vi.hoisted(() => ({ updateKinfolkTags: vi.fn() }));
+vi.mock('../api/directoryWrite', async (orig) => ({
+  ...(await orig<typeof import('../api/directoryWrite')>()),
+  updateKinfolkTags,
+}));
+
 import { KinfolkEdit } from './KinfolkEdit';
 import type { VetClinic } from '../api/vetClinics';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
@@ -108,6 +122,12 @@ beforeEach(() => {
   updateKinfolkProfile.mockResolvedValue(undefined);
   archiveKinfolk.mockResolvedValue(undefined);
   unarchiveKinfolk.mockResolvedValue(undefined);
+  getBusinessSettings.mockReset();
+  getBusinessSettings.mockResolvedValue({ householdTags: [], petTags: [] });
+  saveBusinessSettings.mockReset();
+  saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
+  updateKinfolkTags.mockReset();
+  updateKinfolkTags.mockResolvedValue(undefined);
 });
 
 describe('KinfolkEdit: rendering from data', () => {
@@ -132,6 +152,26 @@ describe('KinfolkEdit: rendering from data', () => {
     await screen.findByLabelText('First name');
     expect(screen.getByRole('radio', { name: 'Prospect' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Active' })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  /** #680: renamed from "Emergency" so it is not mistaken for the vet panels. */
+  it('heads the emergency contact panel "Emergency Contacts"', async () => {
+    mount();
+    expect(await screen.findByRole('heading', { name: 'Emergency Contacts' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Emergency' })).toBeNull();
+  });
+});
+
+/**
+ * #681: household tags moved here from the read-only profile, which now shows
+ * them as pills in the hero instead of a full editor panel.
+ */
+describe('KinfolkEdit: household tags', () => {
+  it('shows and edits household tags, saving via updateKinfolkTags', async () => {
+    mount({ tags: ['VIP'] });
+    expect(await screen.findByText('VIP')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Slow pay{Enter}');
+    await waitFor(() => expect(updateKinfolkTags).toHaveBeenCalledWith('kf1', ['VIP', 'Slow pay']));
   });
 });
 

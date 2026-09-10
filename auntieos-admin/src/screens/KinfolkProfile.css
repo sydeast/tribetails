@@ -60,6 +60,13 @@
   border-color: var(--color-tertiary);
   color: var(--color-tertiary);
 }
+/* Household tags, read-only pills next to the name (#681). Only the border
+   takes the tag hue; `--color-secondary` reads Pack Pink correctly as a
+   background/border but not as text (styles/tokenUsage.test.ts), so the label
+   stays the same dim text every other chip starts from. */
+.kprofile__chip--tag {
+  border-color: var(--color-secondary);
+}
 /* TWO COLUMNS, at the mock's own 860px breakpoint and in its own 1 : 1.2
    proportion. Below it the columns stack, which is what the mock's own media
    query does and what the Android profile already is. */
@@ -164,8 +171,10 @@
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
-/* The hero's action cluster: quick contact, the household's other surfaces,
-   edit, back, and the New KinTale primary. */
+/* The hero's action cluster: quick contact and the household's other
+   surfaces (Household data, Members and invites, Edit, Back). #676 removed
+   the "New KinTale" primary that used to end this row; a KinTale now only
+   ever starts from a KinCare session. */
 .kinfolk-profile__actions {
   display: flex;
   flex-wrap: wrap;
