@@ -31,13 +31,6 @@
     - Cmd/Ctrl-K hint on search
   These are marked so a human can keep, drop, or send back to the user. Real copy stays TODO.
 
-  BUILT SINCE, and kept (#716, 2026-09-10): the admin has three secondary flows this page never
-  drew, all in use: Manage assignments, Import from repo, New binding. The React screen keeps the
-  single header action this mock draws and puts those three behind one "More actions" menu beside
-  it. A later pass that wants this header to match the mock should leave that menu alone: the
-  mock is one action, not one flow. The React screen also keeps a "Load more" control under the
-  grid, because the bank is read a page at a time and this mock draws a fixed six-card sample.
-
   No em dashes (U+2014) anywhere. Palette from AuntieColors.kt.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -440,5 +433,13 @@ Your {{service}} for {{kin_names}} on {{date}} is all set. See you then!
       mesh.style.transform = `translate3d(${x*-15}px,${y*-15}px,0)`;
     }, {passive:true});
   </script>
+<!--
+  BUILT SINCE, and kept (#716, 2026-09-10): the admin has three secondary flows this page never
+  drew, all in use: Manage assignments, Import from repo, New binding. The React screen keeps the
+  single header action this mock draws and puts those three behind one "More actions" menu beside
+  it. A later pass that wants this header to match the mock should leave that menu alone: the
+  mock is one action, not one flow. The React screen also keeps a "Load more" control under the
+  grid, because the bank is read a page at a time and this mock draws a fixed six-card sample.
+-->
 </body>
 </html>

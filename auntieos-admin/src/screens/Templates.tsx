@@ -130,7 +130,7 @@ interface OverflowItem {
  * The heading's secondary actions, behind one trigger.
  *
  * The mock draws a single "＋ New template" action on this header
- * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.246), and #716 is the
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.212), and #716 is the
  * operator saying the live four-button row is not that. Manage assignments,
  * Import from repo and New binding are all real flows an operator uses, so
  * they move behind this menu instead of being deleted.

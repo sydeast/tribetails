@@ -67,7 +67,7 @@
 
 /* ── controls row (chips left, search right) ─────────────────────────────── */
 
-/* The mock's `.controls` (auntieos-template-bank-2026-05-27.html l.94): one
+/* The mock's `.controls` (auntieos-template-bank-2026-05-27.html l.89): one
    row carrying both, with the search pushed to the right edge. It used to be
    two stacked rows inside a panel, which is half of what #716 marked. */
 .templates__controls {
@@ -126,7 +126,7 @@
 
 .templates__search {
   /* Right edge of the controls row, the way the mock pins its search box
-     (`.search { margin-left: auto }`, l.107). */
+     (`.search { margin-left: auto }`, l.101). */
   margin-left: auto;
   flex: 0 1 20rem;
   min-width: 14rem;
@@ -136,7 +136,7 @@
   align-items: center;
 }
 
-/* The mock's own narrow-screen fallback (l.203): below this the chips already
+/* The mock's own narrow-screen fallback (l.192): below this the chips already
    fill the row, so the box takes the next line at full width instead of
    squeezing in beside them. */
 @media (max-width: 780px) {
@@ -196,7 +196,7 @@
   display: flex;
   /* Column, so the footer can sit on the bottom edge under a body of any
      height: the mock's `.tcard` is a column with `.cardfoot { margin-top:
-     auto }` (ll.112, 132). */
+     auto }` (ll.110, 131). */
   flex-direction: column;
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card-lg);
@@ -234,7 +234,7 @@
   border-radius: var(--radius-card);
 }
 
-/* The mock's `.cardfoot` (l.132): a hairline rule, then the Edit button on the
+/* The mock's `.cardfoot` (l.131): a hairline rule, then the Edit button on the
    right edge. */
 .templates__card-foot {
   display: flex;
@@ -283,7 +283,7 @@
   white-space: nowrap;
 }
 
-/* The mock prefixes this line with "Subject:" (l.256). Dimmer than the subject
+/* The mock prefixes this line with "Subject:" (l.245). Dimmer than the subject
    itself, so the label reads as the label and the string reads as the value. */
 .templates__card-subject-label {
   color: var(--color-text-faint);

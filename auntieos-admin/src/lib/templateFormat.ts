@@ -76,7 +76,7 @@ export function filterTemplates(rows: TemplateSummary[], query: string): Templat
 
 /**
  * The mock's own empty-state line, verbatim
- * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.283), adopted under
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.317), adopted under
  * #716. It covers both settled no-search cases: "All" is one of the mock's
  * category chips, so an empty bank and an empty category read the same
  * sentence there, and "New" is the heading's "New template" action.

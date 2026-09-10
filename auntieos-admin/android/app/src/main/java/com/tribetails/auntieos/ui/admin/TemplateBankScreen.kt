@@ -118,7 +118,7 @@ internal fun templateCardTags(
 
 /**
  * The subject line the card shows, carrying the mock's "Subject:" prefix
- * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.256), per #716.
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.245), per #716.
  *
  * The prefix labels a real subject. A template with no subject keeps the bare
  * "No subject set" fallback, because "Subject: No subject set" labels a
