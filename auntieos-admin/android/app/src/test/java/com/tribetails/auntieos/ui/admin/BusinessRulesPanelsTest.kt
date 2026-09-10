@@ -313,6 +313,64 @@ class BusinessRulesPanelsTest {
         assertEquals(BOOKING_MODE_WIRE, optionsIncluding(BOOKING_MODE_WIRE, "TIME_BLOCK"))
     }
 
+    // ── ISSUE #710: turning off the default mode should not need a second edit ─
+
+    @Test
+    fun `turning off the currently-default mode hands the default to the mode left on`() {
+        assertEquals(
+            "TIME_BLOCK",
+            nextDefaultBookingMode("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
+        )
+        assertEquals(
+            "SPECIFIC_TIME",
+            nextDefaultBookingMode("TIME_BLOCK", allowSpecificTimeBooking = true, allowTimeBlockBooking = false),
+        )
+    }
+
+    @Test
+    fun `turning off a mode that is not the default leaves the default alone`() {
+        assertEquals(
+            "TIME_BLOCK",
+            nextDefaultBookingMode("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
+        )
+    }
+
+    @Test
+    fun `turning both modes off leaves the default as-is, since the one-mode-on guard already refuses that save`() {
+        assertEquals(
+            "SPECIFIC_TIME",
+            nextDefaultBookingMode("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = false),
+        )
+    }
+
+    @Test
+    fun `the default-mode picker only offers modes that are on`() {
+        assertEquals(
+            listOf("SPECIFIC_TIME" to "A specific time (11:15 AM)"),
+            bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = true, allowTimeBlockBooking = false),
+        )
+        assertEquals(
+            listOf("TIME_BLOCK" to "A time block (Midday)"),
+            bookingModeOptions("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = true),
+        )
+        assertEquals(
+            BOOKING_MODE_WIRE,
+            bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = true, allowTimeBlockBooking = true),
+        )
+    }
+
+    @Test
+    fun `the current default keeps its real label even when both modes are off`() {
+        val out = bookingModeOptions("TIME_BLOCK", allowSpecificTimeBooking = false, allowTimeBlockBooking = false)
+        assertEquals(listOf("TIME_BLOCK" to "A time block (Midday)"), out)
+    }
+
+    @Test
+    fun `a loaded default whose mode is already off keeps its real label, not 'not a known value'`() {
+        val out = bookingModeOptions("SPECIFIC_TIME", allowSpecificTimeBooking = false, allowTimeBlockBooking = true)
+        assertEquals(listOf("SPECIFIC_TIME" to "A specific time (11:15 AM)"), out)
+    }
+
     // ── diff-vs-rebuild: the trap this codebase is known for ────────────────
 
     /**

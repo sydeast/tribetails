@@ -172,9 +172,48 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
   const problem = 'error' in built ? built.error : null;
   const dirty = isDirty(draft, data);
 
+  // ISSUE #710: the default-mode picker only offers modes that are on, so
+  // there is no way to pick the mode the toggles above already forbid. The
+  // loaded default itself always stays in the list, under its real label,
+  // even when it names a mode that is currently off: it is a legal value the
+  // operator has to see and change deliberately, not an unknown one to be
+  // mislabelled "(not a known value)".
+  const bookingModeOptions = optionsIncluding(BOOKING_MODES, draft.defaultBookingMode).filter(
+    (o) =>
+      o.value === draft.defaultBookingMode ||
+      (o.value === 'SPECIFIC_TIME' && draft.allowSpecificTimeBooking) ||
+      (o.value === 'TIME_BLOCK' && draft.allowTimeBlockBooking),
+  );
+
   function edit(next: Partial<Draft>) {
     setDraft((d) => ({ ...d, ...next }));
     setJustSaved(false);
+  }
+
+  /**
+   * ISSUE #710: turning off the mode that is currently the default used to
+   * leave `defaultBookingMode` pointed at a mode that is now off, which
+   * `bookingRulesPatch` refuses to save. The operator then had to find the
+   * "New bookings start as" picker and change it by hand before the toggle
+   * they had just flipped could be saved. Turning off a mode that is the
+   * default now carries the default to the mode that stayed on. Turning both
+   * off leaves the default as-is; the "leave one mode on" guard already
+   * blocks that save.
+   */
+  function setAllowSpecificTimeBooking(next: boolean) {
+    const patch: Partial<Draft> = { allowSpecificTimeBooking: next };
+    if (!next && draft.defaultBookingMode === 'SPECIFIC_TIME' && draft.allowTimeBlockBooking) {
+      patch.defaultBookingMode = 'TIME_BLOCK';
+    }
+    edit(patch);
+  }
+
+  function setAllowTimeBlockBooking(next: boolean) {
+    const patch: Partial<Draft> = { allowTimeBlockBooking: next };
+    if (!next && draft.defaultBookingMode === 'TIME_BLOCK' && draft.allowSpecificTimeBooking) {
+      patch.defaultBookingMode = 'SPECIFIC_TIME';
+    }
+    edit(patch);
   }
 
   function editBlock(index: number, next: Partial<TimeBlockDraft>) {
@@ -260,7 +299,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
               label="Toggle booking at a specific time"
               checked={draft.allowSpecificTimeBooking}
               disabled={busy}
-              onChange={(next) => edit({ allowSpecificTimeBooking: next })}
+              onChange={setAllowSpecificTimeBooking}
             />
           </li>
           <li className="settingsEdit__toggleRow">
@@ -269,7 +308,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
               label="Toggle booking into a time block"
               checked={draft.allowTimeBlockBooking}
               disabled={busy}
-              onChange={(next) => edit({ allowTimeBlockBooking: next })}
+              onChange={setAllowTimeBlockBooking}
             />
           </li>
         </ul>
@@ -299,7 +338,7 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
                 disabled={busy}
                 onChange={(e) => edit({ defaultBookingMode: e.target.value })}
               >
-                {optionsIncluding(BOOKING_MODES, draft.defaultBookingMode).map((o) => (
+                {bookingModeOptions.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>

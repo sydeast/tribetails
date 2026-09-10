@@ -93,6 +93,42 @@ internal fun optionsIncluding(
     if (options.any { it.first == current }) options
     else options + (current to "$current (not a known value)")
 
+/**
+ * ISSUE #710: the "New bookings start as" picker, narrowed to the modes that
+ * are actually on. [current] always stays in the list under its real label,
+ * even when its mode is currently off: it is a legal value the operator has
+ * to see and change deliberately, not an unknown one [optionsIncluding] would
+ * mislabel "(not a known value)".
+ */
+internal fun bookingModeOptions(
+    current: String,
+    allowSpecificTimeBooking: Boolean,
+    allowTimeBlockBooking: Boolean,
+): List<Pair<String, String>> = optionsIncluding(BOOKING_MODE_WIRE, current).filter { (wire, _) ->
+    wire == current ||
+        (wire == "SPECIFIC_TIME" && allowSpecificTimeBooking) ||
+        (wire == "TIME_BLOCK" && allowTimeBlockBooking)
+}
+
+/**
+ * ISSUE #710: the default mode to carry forward when a booking-mode toggle
+ * flips. Turning off the mode that is currently the default used to leave
+ * `defaultBookingMode` pointed at a mode that is now off, which
+ * `bookingRulesError` refuses to save until the operator finds and changes
+ * the picker by hand. Turning off the default now hands it to the mode that
+ * stayed on. Turning both off leaves [current] alone; the "leave one mode on"
+ * guard already refuses that save regardless of what the default says.
+ */
+internal fun nextDefaultBookingMode(
+    current: String,
+    allowSpecificTimeBooking: Boolean,
+    allowTimeBlockBooking: Boolean,
+): String {
+    if (current == "SPECIFIC_TIME" && !allowSpecificTimeBooking && allowTimeBlockBooking) return "TIME_BLOCK"
+    if (current == "TIME_BLOCK" && !allowTimeBlockBooking && allowSpecificTimeBooking) return "SPECIFIC_TIME"
+    return current
+}
+
 internal val HHMM_REGEX = Regex("^([01]\\d|2[0-3]):([0-5]\\d)$")
 
 /** How many bookable blocks one business may define. Mirrors the React editor. */
@@ -437,7 +473,15 @@ internal fun BookingRulesPanel(
                 leadingIcon = Lucide.Clock,
                 iconTone = AuntieStatusTone.Orange,
                 showDivider = true,
-                trailing = { AuntieToggle(checked = allowSpecific, onCheckedChange = { allowSpecific = it }) },
+                trailing = {
+                    AuntieToggle(
+                        checked = allowSpecific,
+                        onCheckedChange = { v ->
+                            mode = nextDefaultBookingMode(mode, v, allowBlock)
+                            allowSpecific = v
+                        },
+                    )
+                },
             )
             AuntieSettingRow(
                 title = "Offer time blocks",
@@ -445,7 +489,15 @@ internal fun BookingRulesPanel(
                 leadingIcon = Lucide.CalendarClock,
                 iconTone = AuntieStatusTone.Orange,
                 showDivider = false,
-                trailing = { AuntieToggle(checked = allowBlock, onCheckedChange = { allowBlock = it }) },
+                trailing = {
+                    AuntieToggle(
+                        checked = allowBlock,
+                        onCheckedChange = { v ->
+                            mode = nextDefaultBookingMode(mode, allowSpecific, v)
+                            allowBlock = v
+                        },
+                    )
+                },
             )
 
             AuntieFieldLabel(text = "Defaults")
@@ -458,11 +510,12 @@ internal fun BookingRulesPanel(
                 trailing = { AuntieToggle(checked = reminder, onCheckedChange = { reminder = it }) },
             )
 
+            val modeOptions = bookingModeOptions(mode, allowSpecific, allowBlock)
             AuntieDropdownField(
                 value = mode,
-                options = optionsIncluding(BOOKING_MODE_WIRE, mode).map { it.first },
+                options = modeOptions.map { it.first },
                 onSelect = { mode = it },
-                displayText = { wire -> optionsIncluding(BOOKING_MODE_WIRE, mode).first { it.first == wire }.second },
+                displayText = { wire -> modeOptions.first { it.first == wire }.second },
                 label = "New bookings start as",
                 modifier = Modifier.fillMaxWidth(),
             )
