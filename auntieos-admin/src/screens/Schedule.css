@@ -135,11 +135,14 @@
   width: 0.65rem;
   height: 0.65rem;
   border-radius: var(--radius-tight);
-  background: repeating-linear-gradient(
-    45deg,
-    var(--color-text-faint) 0 3px,
-    var(--color-surface-2) 3px 6px
-  );
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-text-faint) 26%, transparent) 0 3px,
+      transparent 3px 6px
+    ),
+    var(--color-surface-2);
+  border: var(--border-hairline) dashed var(--color-border-soft);
   display: inline-block;
 }
 

@@ -941,13 +941,42 @@ describe('Schedule month grid', () => {
     expect(within(cellA).getByText('First Household')).toBeInTheDocument();
     expect(within(cellA).getByText('Third Household')).toBeInTheDocument();
     expect(within(cellA).queryByText('Fourth Household')).toBeNull();
-    const more = within(cellA).getByRole('button', { name: /2 more on/ });
+    const more = within(cellA).getByRole('button', { name: /2 more visits on/ });
     expect(more).toHaveTextContent('+2 more');
 
     // The fold is never a dead end: the whole day is one click away in the
     // agenda panel, which is where the folded rows can be read.
     await user.click(more);
     expect(within(agenda()).getByText('Fifth Household')).toBeInTheDocument();
+  });
+
+  /**
+   * The cap counts VISITS. A cap over the merged list would hide the busy block
+   * on exactly the crowded day an operator is looking for a free window on,
+   * which is the tracing #697 promised from the month grid alone.
+   */
+  it('draws the busy window even on a day whose visits already fill the cap', async () => {
+    await renderMonth(
+      ['First', 'Second', 'Third', 'Fourth'].map((name, i) =>
+        sessionEntry({
+          _id: `crowd-${String(i)}`,
+          kinfolkName: `${name} Household`,
+          startTime: at(dayA, 9 + i),
+          endTime: at(dayA, 10 + i),
+        }),
+      ),
+      // Later than every visit, so a merged cap would sort it past the cut.
+      [busySlot({ _id: 'busy-late', date: dayA, startTime: '16:00', endTime: '17:00' })],
+    );
+
+    const cellA = monthCell(dayA);
+    expect(within(cellA).getByText('Busy')).toBeInTheDocument();
+    expect(within(cellA).getByText('16:00')).toBeInTheDocument();
+    // Only the fourth VISIT is folded; the busy window never counts against it.
+    expect(within(cellA).getByRole('button', { name: /1 more visit on/ })).toHaveTextContent(
+      '+1 more',
+    );
+    expect(within(cellA).queryByText('Fourth Household')).toBeNull();
   });
 
   it('a visit block is a control: clicking it opens that session’s detail sheet', async () => {

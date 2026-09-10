@@ -435,7 +435,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                  * here as above the grid, directly under the Day/Week/Month
                  * controls, still inside the Schedule panel: the minimal move
                  * that puts "Today" on screen without touching the grid the
-                 * separate month-view rebuild (#696) owns. `collapsible` lets
+                 * separate month-view rebuild (#696) owned. `collapsible` lets
                  * the operator shrink it back down on a day with a long list,
                  * so it does not push the grid itself off screen.
                  */}
@@ -651,6 +651,14 @@ function ScheduleLegend({ serviceTypes }: { serviceTypes: string[] }) {
  * busiest day makes every other row in the month jump, and six rows of that is
  * not a calendar anybody can scan. The overflow is never silent: the count says
  * how many are folded, and pressing it puts the whole day in the agenda.
+ *
+ * IT COUNTS VISITS ONLY. Busy windows are drawn whatever else is on the day,
+ * because #697's whole point is that the "Busy blocks" stat card's count can be
+ * traced to dates from the month grid alone. A cap over the merged list would
+ * hide the busy block on exactly the crowded day an operator is most likely to
+ * be looking for a free window on, which is the promise #697 made and this
+ * would quietly take back. There are three busy windows in the whole month the
+ * operator marked; visits are what fills a cell.
  */
 const MONTH_CELL_BLOCK_CAP = 3;
 
@@ -659,35 +667,53 @@ type MonthCellItem =
   | { kind: 'visit'; key: string; minute: number | null; entry: ScheduleSessionEntry }
   | { kind: 'busy'; key: string; minute: number | null; slot: BusySlotEntry };
 
+/** What one month cell draws, and how many visits it could not fit. */
+interface MonthCellContents {
+  /** Drawn blocks in clock order: every busy window, plus the first {@link MONTH_CELL_BLOCK_CAP} visits. */
+  drawn: MonthCellItem[];
+  /** Visits past the cap. Never dropped: "+N more" names them and opens the day. */
+  folded: number;
+}
+
+/** Sorts by local start, putting a row whose start does not parse LAST rather than dropping it. */
+function byStartMinute(a: MonthCellItem, b: MonthCellItem): number {
+  return (a.minute ?? Number.MAX_SAFE_INTEGER) - (b.minute ?? Number.MAX_SAFE_INTEGER);
+}
+
 /**
- * Everything on one day in clock order, visits and busy windows interleaved the
- * way the operator's mock draws them on the week calendar.
+ * One day's blocks, in clock order, visits and busy windows interleaved the way
+ * the operator's mock draws them on the week calendar.
  *
- * A row whose start does not parse sorts LAST rather than being dropped. It is
- * still a visit on the books, and the agenda panel is where its real window can
- * be read; silently omitting it is how a month view starts under-reporting the
- * day it is supposed to summarize.
+ * A visit whose start does not parse sorts LAST rather than being dropped. It
+ * is still a visit on the books, and the agenda panel is where its real window
+ * can be read; silently omitting it is how a month view starts under-reporting
+ * the day it is supposed to summarize.
  */
-function monthCellItems(visits: ScheduleSessionEntry[], busy: BusySlotEntry[]): MonthCellItem[] {
-  const items: MonthCellItem[] = [
-    ...visits.map((entry) => ({
+function monthCellContents(
+  visits: ScheduleSessionEntry[],
+  busy: BusySlotEntry[],
+): MonthCellContents {
+  const visitItems: MonthCellItem[] = visits
+    .map((entry) => ({
       kind: 'visit' as const,
       key: entry._id,
       minute: localMinutesOfDay(str(entry.startTime)),
       entry,
-    })),
-    // Busy rows store a plain `HH:mm` wall clock with no zone, which is why
-    // they read through a different parser than the sessions above.
-    ...busy.map((slot) => ({
-      kind: 'busy' as const,
-      key: slot._id,
-      minute: minutesFromHHmm(str(slot.startTime)),
-      slot,
-    })),
-  ];
-  return items.sort(
-    (a, b) => (a.minute ?? Number.MAX_SAFE_INTEGER) - (b.minute ?? Number.MAX_SAFE_INTEGER),
-  );
+    }))
+    .sort(byStartMinute);
+  // Busy rows store a plain `HH:mm` wall clock with no zone, which is why they
+  // read through a different parser than the sessions above.
+  const busyItems: MonthCellItem[] = busy.map((slot) => ({
+    kind: 'busy' as const,
+    key: slot._id,
+    minute: minutesFromHHmm(str(slot.startTime)),
+    slot,
+  }));
+  const shownVisits = visitItems.slice(0, MONTH_CELL_BLOCK_CAP);
+  return {
+    drawn: [...shownVisits, ...busyItems].sort(byStartMinute),
+    folded: visitItems.length - shownVisits.length,
+  };
 }
 
 interface MonthGridProps {
@@ -714,8 +740,9 @@ interface MonthGridProps {
  * SO EACH CELL NOW LISTS ITS DAY: a short block per visit, tinted by service
  * type through the SAME `serviceTone` the legend's pills and every service pill
  * in the app use, carrying the household and the local start time; a hatched,
- * read-only block per busy window; and "+N more" when the day runs past
- * {@link MONTH_CELL_BLOCK_CAP}.
+ * read-only block per busy window; and "+N more" when the day's VISITS run past
+ * {@link MONTH_CELL_BLOCK_CAP}. Busy windows are outside that cap and always
+ * drawn, for the reason the cap's own doc gives.
  *
  * THE CELL IS A DIV, NOT A BUTTON, and that is structural rather than
  * cosmetic. The blocks inside it are controls (a visit opens its detail sheet,
@@ -742,9 +769,7 @@ function MonthGrid({
   return (
     <div className="schedule__month" role="group" aria-label="Month">
       {days.map((day) => {
-        const items = monthCellItems(byDay.get(day) ?? [], busyByDate.get(day) ?? []);
-        const drawn = items.slice(0, MONTH_CELL_BLOCK_CAP);
-        const folded = items.length - drawn.length;
+        const { drawn, folded } = monthCellContents(byDay.get(day) ?? [], busyByDate.get(day) ?? []);
         const inMonth = day.slice(0, 7) === anchorMonth;
         return (
           <div
@@ -788,7 +813,7 @@ function MonthGrid({
                 type="button"
                 className="schedule__day-more"
                 onClick={() => onSelectDay(day)}
-                aria-label={`${folded} more on ${day}. Open this day in the agenda.`}
+                aria-label={`${folded} more visit${folded === 1 ? '' : 's'} on ${day}. Open this day in the agenda.`}
               >
                 +{folded} more
               </button>
