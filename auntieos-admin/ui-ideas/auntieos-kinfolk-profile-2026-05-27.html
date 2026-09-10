@@ -133,17 +133,33 @@
       <div class="meta">
         <h1>Lorna Wren</h1>
         <div class="where">the Wrens · Riverside · kinfolk since Jan 2025</div>
-        <div class="tags"><span class="tag">Active</span><span class="tag loyal">★ 14 months</span></div>
+        <div class="tags"><span class="tag">Active</span><span class="tag loyal">★ 14 months</span><span class="tag">Cams on Premise</span></div>
       </div>
       <div class="actions">
         <button class="act" title="Call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z"/></svg></button>
         <button class="act" title="Text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg></button>
-        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18"><path d="M5 4h11l3 3v13H5z"/><path d="M8 9h8M8 13h8"/></svg> New KinTale</button>
       </div>
     </div>
 
     <div class="cols">
-      <!-- left -->
+      <!-- left: the household's own facts -->
+      <div>
+        <div class="panel d1">
+          <h3>Contact</h3>
+          <div class="field"><span class="k">Phone</span><span class="v">(555) 014-2231</span></div>
+          <div class="field"><span class="k">Email</span><span class="v">loretta.w@example.com</span></div>
+          <div class="field"><span class="k">Address</span><span class="v">82 Creekside Ln</span></div>
+          <div class="field"><span class="k">Entry</span><span class="v">Lockbox · 4471</span></div>
+          <div class="field"><span class="k">Emergency vet</span><span class="v">Riverside Animal</span></div>
+        </div>
+
+        <div class="panel d2">
+          <h3>Auntie's notes <span class="ct">admin only</span></h3>
+          <div class="notebox">Gravy needs the harness, not the collar (slips out). Treats in the blue tin by the door. Lorna prefers a text when on the way.</div>
+        </div>
+      </div>
+
+      <!-- right: who they have, and what has happened or is coming -->
       <div>
         <div class="panel d1">
           <h3>Kin <span class="ct">2 pets</span></h3>
@@ -160,23 +176,13 @@
         </div>
 
         <div class="panel d2">
-          <h3>Household</h3>
-          <div class="field"><span class="k">Phone</span><span class="v">(555) 014-2231</span></div>
-          <div class="field"><span class="k">Email</span><span class="v">loretta.w@example.com</span></div>
-          <div class="field"><span class="k">Address</span><span class="v">82 Creekside Ln</span></div>
-          <div class="field"><span class="k">Entry</span><span class="v">Lockbox · 4471</span></div>
-          <div class="field"><span class="k">Emergency vet</span><span class="v">Riverside Animal</span></div>
+          <h3>Upcoming KinCare <span class="ct">next 7 days</span></h3>
+          <div class="visit"><span class="dot" style="background:var(--teal)"></span><span class="when">Wed 9:00a</span><small>30-min walk</small><span class="svc">Walk</span></div>
+          <div class="visit"><span class="dot" style="background:var(--orange)"></span><span class="when">Thu 1:30p</span><small>drop-in</small><span class="svc">Drop</span></div>
+          <div class="visit"><span class="dot" style="background:var(--teal)"></span><span class="when">Sat 10:00a</span><small>45-min walk</small><span class="svc">Walk</span></div>
         </div>
 
         <div class="panel d3">
-          <h3>Auntie's notes <span class="ct">admin only</span></h3>
-          <div class="notebox">Gravy needs the harness, not the collar (slips out). Treats in the blue tin by the door. Lorna prefers a text when on the way.</div>
-        </div>
-      </div>
-
-      <!-- right -->
-      <div>
-        <div class="panel d2">
           <h3>Recent KinTales <span class="ct">12 total</span></h3>
           <div class="tale">
             <i class="tphoto" style="background:radial-gradient(circle at 35% 30%,rgba(223,132,49,.5),#1e2235)"></i>
@@ -192,13 +198,6 @@
           </div>
         </div>
 
-        <div class="panel d3">
-          <h3>Upcoming visits <span class="ct">next 7 days</span></h3>
-          <div class="visit"><span class="dot" style="background:var(--teal)"></span><span class="when">Wed 9:00a</span><small>30-min walk</small><span class="svc">Walk</span></div>
-          <div class="visit"><span class="dot" style="background:var(--orange)"></span><span class="when">Thu 1:30p</span><small>drop-in</small><span class="svc">Drop</span></div>
-          <div class="visit"><span class="dot" style="background:var(--teal)"></span><span class="when">Sat 10:00a</span><small>45-min walk</small><span class="svc">Walk</span></div>
-        </div>
-
         <div class="panel d4">
           <h3>Invoices <span class="ct">$0 outstanding</span></h3>
           <div class="invrow"><span class="no">#TT-2048 · 6 visits</span><span style="display:flex;gap:10px;align-items:center">$280 <span class="pill paid">Paid</span></span></div>
@@ -208,7 +207,7 @@
       </div>
     </div>
 
-    <p class="note">// concept mockup · Kinfolk profile · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
+    <p class="note">// concept mockup · Kinfolk profile · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data. Reordered 2026-09-10 (walk admin-2026-09-10): Contact leads the left column, address folded in; Kin leads the right column; the hero carries household tags and drops "New KinTale", which now only starts from a KinCare session.
   </div>
 
   <script>
