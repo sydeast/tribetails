@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  getCoveragePackageConfig,
-  type CoveragePackageConfig,
-} from '../api/coveragePackage';
-import { saveCoveragePackageConfig } from '../api/coveragePackageWrite';
+import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import {
   DEFAULT_COVERAGE_RULES,
-  DEFAULT_DURATIONS,
+  alignPinnedToDurations,
   buildDayPatterns,
   dateLabel,
   daysBetween,
+  durationsFromServiceRates,
   effectiveVisits,
   gapWarnings,
   minutesToInput,
@@ -18,18 +15,17 @@ import {
   pricePackage,
   quoteText,
   timeToMinutes,
+  todayIso,
   uid,
   visitsFromPattern,
   visitsFromPinned,
   type CoverageRules,
   type DayPattern,
   type Duration,
-  type DurationKind,
   type Package,
   type PricedDayRow,
   type Visit,
 } from '../lib/coveragePackage';
-import { lastSavedLabel } from '../lib/settingsFormat';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -46,26 +42,31 @@ import './CoveragePackageBuilder.css';
  * rule; every seeded visit is then editable. There is NO requirement for a pinned
  * visit or an auto-filled gap — the operator can simply pick services for a client.
  *
- * TWO KINDS OF STATE, deliberately split:
- *  - CONFIG (visit menu + coverage rules) persists to `coverage_package_config/config`
- *    via an explicit Save (the Settings load/Save/last-saved model).
- *  - The in-progress QUOTE (client, dates, packages, overnight selection) persists to
- *    localStorage so a hand-built quote survives a reload; "Start new quote" clears it.
+ * WHERE THE MENU COMES FROM (issue #693). Visit lengths and prices are the
+ * operator's KinCare types, read from `business_settings.serviceRates` plus
+ * `serviceDurations` and edited in Settings. This screen no longer keeps a rate
+ * card of its own: the "Visit menu" panel that edited a second durations list in
+ * `coverage_package_config/config` is gone, so a package can only quote a price
+ * Settings actually holds.
+ *
+ * The in-progress QUOTE (client, dates, per-client rules, packages, overnight
+ * selection) is the only state this screen owns. It persists to localStorage so a
+ * hand-built quote survives a reload; "Start new quote" clears it.
  */
 export function CoveragePackageBuilder() {
-  const [config, setConfig] = useState<Async<CoveragePackageConfig>>({ status: 'loading' });
+  const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
 
   const load = useCallback(() => {
     let live = true;
-    setConfig({ status: 'loading' });
-    getCoveragePackageConfig()
-      .then((data) => live && setConfig({ status: 'ready', data }))
+    setSettings({ status: 'loading' });
+    getBusinessSettings()
+      .then((data) => live && setSettings({ status: 'ready', data }))
       .catch(
         (err: unknown) =>
           live &&
-          setConfig({
+          setSettings({
             status: 'error',
-            message: `Couldn't read package config: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Couldn't read your KinCare rates: ${err instanceof Error ? err.message : 'Load failed'}`,
             retry: load,
           }),
       );
@@ -82,19 +83,17 @@ export function CoveragePackageBuilder() {
         kicker="Care Ops · Pricing"
         title="Coverage"
         accentTail="package builder."
-        subtitle="Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. Your saved visit menu is at the foot of the screen."
+        subtitle="Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. Lengths and prices come from your KinCare types in Settings."
       />
 
       <AsyncRegion
-        state={config}
-        what="package config"
+        state={settings}
+        what="KinCare rates"
         isEmpty={() => false}
-        loading={<p className="cpb__hint">Loading package config…</p>}
-        empty={<p className="cpb__hint">No config found.</p>}
+        loading={<p className="cpb__hint">Loading your KinCare rates…</p>}
+        empty={<p className="cpb__hint">No settings found.</p>}
       >
-        {(data) => (
-          <Builder initial={data} onSaved={(saved) => setConfig({ status: 'ready', data: saved })} />
-        )}
+        {(data) => <Builder settings={data} />}
       </AsyncRegion>
     </div>
   );
@@ -103,16 +102,9 @@ export function CoveragePackageBuilder() {
 // ── the editor ────────────────────────────────────────────────────────────────
 
 interface BuilderProps {
-  initial: CoveragePackageConfig;
-  onSaved: (saved: CoveragePackageConfig) => void;
+  settings: Pick<BusinessSettings, 'serviceRates' | 'serviceDurations'>;
 }
 
-interface NewDuration {
-  label: string;
-  minutes: string;
-  price: string;
-  kind: DurationKind;
-}
 interface NewPinned {
   label: string;
   time: string;
@@ -145,37 +137,35 @@ function loadQuote(): Partial<StoredQuote> {
   }
 }
 
-function Builder({ initial, onSaved }: BuilderProps) {
-  // Persisted CONFIG — the visit menu only (Firestore, via Save).
-  const [durations, setDurations] = useState<readonly Duration[]>(initial.durations);
-  const [baseline, setBaseline] = useState<readonly Duration[]>(initial.durations);
-  const [savedAt, setSavedAt] = useState<{ updatedAt?: string; updatedBy?: string }>({
-    ...(initial.updatedAt !== undefined ? { updatedAt: initial.updatedAt } : {}),
-    ...(initial.updatedBy !== undefined ? { updatedBy: initial.updatedBy } : {}),
-  });
-  const [saveBusy, setSaveBusy] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+function Builder({ settings }: BuilderProps) {
+  // The menu is the operator's KinCare types, read-only here and edited in Settings.
+  const durations = useMemo<readonly Duration[]>(
+    () => durationsFromServiceRates(settings.serviceRates, settings.serviceDurations),
+    [settings],
+  );
 
   // In-progress QUOTE (localStorage) — includes the PER-CLIENT rules.
   const stored = useMemo(loadQuote, []);
   const [clientName, setClientName] = useState(stored.clientName ?? '');
-  const [startDate, setStartDate] = useState(stored.startDate ?? '');
+  // A fresh quote opens on today rather than blank: the operator's next stay
+  // starts on or after today, and a blank date prices nothing (issue #693).
+  const [startDate, setStartDate] = useState(stored.startDate ?? todayIso());
   const [endDate, setEndDate] = useState(stored.endDate ?? '');
-  const [rules, setRules] = useState<CoverageRules>(stored.rules ?? DEFAULT_COVERAGE_RULES);
+  const [rules, setRules] = useState<CoverageRules>(() =>
+    alignPinnedToDurations(stored.rules ?? DEFAULT_COVERAGE_RULES, durations),
+  );
   const [packages, setPackages] = useState<Package[]>(stored.packages ?? []);
   const [overnightDurationId, setOvernightDurationId] = useState(
-    stored.overnightDurationId ?? initial.durations.find((d) => d.kind === 'overnight')?.id ?? '',
+    stored.overnightDurationId ?? durations.find((d) => d.kind === 'overnight')?.id ?? '',
   );
   const [detailId, setDetailId] = useState<string | null>(null);
 
   // Draft rows + feedback.
-  const [newDuration, setNewDuration] = useState<NewDuration>({ label: '', minutes: '', price: '', kind: 'visit' });
   const [newPinned, setNewPinned] = useState<NewPinned>({ label: '', time: '', durationId: '' });
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
-  const dirty = JSON.stringify(durations) !== JSON.stringify(baseline);
   const days = daysBetween(startDate, endDate);
   const nights = Math.max(0, days - 1); // last day is a return day — client home that night
 
@@ -222,31 +212,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
   const overnightDuration = durations.find((d) => d.id === overnightDurationId);
   const visitDurations = durations.filter((d) => d.kind === 'visit');
 
-  // ── config edits ────────────────────────────────────────────────────────────
-
-  const addDuration = () => {
-    if (!newDuration.label.trim() || !newDuration.price || !newDuration.minutes) {
-      setError('Enter a name, length in minutes, and price.');
-      return;
-    }
-    setDurations([
-      ...durations,
-      {
-        id: uid(),
-        label: newDuration.label.trim(),
-        minutes: parseFloat(newDuration.minutes) || 0,
-        price: parseFloat(newDuration.price) || 0,
-        kind: newDuration.kind,
-      },
-    ]);
-    setNewDuration({ label: '', minutes: '', price: '', kind: 'visit' });
-    setError('');
-  };
-  const removeDuration = (id: string) => setDurations(durations.filter((d) => d.id !== id));
-  const updateDuration = (id: string, field: keyof Duration, value: string) => {
-    const isText = field === 'label' || field === 'kind';
-    setDurations(durations.map((d) => (d.id === id ? { ...d, [field]: isText ? value : parseFloat(value) || 0 } : d)));
-  };
+  // ── per-client rules ────────────────────────────────────────────────────────
 
   const patchRules = (patch: Partial<CoverageRules>) => setRules((r) => ({ ...r, ...patch }));
 
@@ -260,32 +226,6 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setError('');
   };
   const removePinned = (id: string) => patchRules({ pinnedTimes: rules.pinnedTimes.filter((p) => p.id !== id) });
-
-  const restoreDefaults = () => {
-    setDurations(DEFAULT_DURATIONS);
-    setError('');
-  };
-  const resetConfig = () => {
-    setDurations(baseline);
-    setError('');
-    setSaveError(null);
-  };
-
-  const saveConfig = async () => {
-    if (!dirty || saveBusy) return;
-    setSaveBusy(true);
-    setSaveError(null);
-    try {
-      const stamp = await saveCoveragePackageConfig({ durations });
-      setBaseline(durations);
-      setSavedAt(stamp);
-      onSaved({ durations, updatedAt: stamp.updatedAt, updatedBy: stamp.updatedBy });
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Save failed.');
-    } finally {
-      setSaveBusy(false);
-    }
-  };
 
   // ── packages ────────────────────────────────────────────────────────────────
 
@@ -400,9 +340,10 @@ function Builder({ initial, onSaved }: BuilderProps) {
     setPackages([]);
     setDetailId(null);
     setClientName('');
-    setStartDate('');
+    setStartDate(todayIso()); // same default a fresh load opens on
     setEndDate('');
-    setRules(DEFAULT_COVERAGE_RULES); // rules are per-client — reset for the next one
+    // Rules are per-client, so reset them for the next one, repointed at the menu.
+    setRules(alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations));
   };
 
   // ── pricing ─────────────────────────────────────────────────────────────────
@@ -457,38 +398,24 @@ function Builder({ initial, onSaved }: BuilderProps) {
     return minutesToTime(s + (Number(overnightDuration.minutes) || 0));
   };
 
-  const hasQuote = packages.length > 0 || startDate !== '' || clientName !== '';
+  // Start date now defaults to today, so it no longer signals "there is a quote
+  // here"; anything the operator actually typed does.
+  const hasQuote = packages.length > 0 || clientName !== '' || endDate !== '' || startDate !== todayIso();
 
   // ── render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="cpb">
-      <div className="cpb__savebar cpb__noprint">
-        {savedAt.updatedAt !== undefined ? (
-          <span className="cpb__saved">{lastSavedLabel(savedAt.updatedAt, savedAt.updatedBy ?? '')}</span>
-        ) : (
-          <span className="cpb__saved cpb__saved--muted">Visit menu never saved yet</span>
-        )}
-        <span className="cpb__savebarActions">
-          <GhostButton label="Revert" onClick={resetConfig} disabled={!dirty || saveBusy} />
-          <PrimaryButton
-            label={saveBusy ? 'Saving…' : dirty ? 'Save visit menu' : 'Saved'}
-            onClick={() => void saveConfig()}
-            disabled={!dirty || saveBusy}
-            busy={saveBusy}
-          />
-        </span>
-      </div>
-      {saveError ? (
-        <Banner tone="error" title="Save failed" className="cpb__banner cpb__noprint">
-          {saveError}
+      {durations.length === 0 ? (
+        <Banner tone="warning" title="No KinCare types yet" className="cpb__banner cpb__noprint">
+          Add your service lengths and prices under Settings, KinCare types. Packages price from that list.
         </Banner>
       ) : null}
 
       {/* Coverage window (dates) */}
       <DenPanel
         title="Coverage window"
-        subtitle="The stay's dates. Packages price across this range; not saved with the menu."
+        subtitle="The stay's dates. Packages price across this range."
         trailing={hasQuote ? <GhostButton label="Start new quote" onClick={startNewQuote} /> : undefined}
         className="cpb__noprint"
       >
@@ -515,7 +442,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
       </DenPanel>
 
       {/* Coverage rules */}
-      <DenPanel title="Coverage rules for this client" subtitle="Per-client — they travel with this quote, not the saved menu. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
+      <DenPanel title="Coverage rules for this client" subtitle="Per-client: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings; not a hard gate." className="cpb__noprint">
         <div className="cpb__ruleRow">
           <label className="cpb__field">
             <span className="cpb__fieldLabel">Day starts</span>
@@ -537,10 +464,14 @@ function Builder({ initial, onSaved }: BuilderProps) {
                   {d.label} — ${d.price}
                 </option>
               ))}
-              {durations.every((d) => d.kind !== 'overnight') ? <option value="">no overnight defined</option> : null}
+              {durations.every((d) => d.kind !== 'overnight') ? <option value="">no overnight in your KinCare types</option> : null}
             </select>
           </label>
         </div>
+        <p className="cpb__hint">
+          Lengths and prices come from your KinCare types in Settings. A type whose name contains "overnight" prices as a
+          window: a 12hr overnight from 9:00 PM runs to 9:00 AM, so anything before then is already covered.
+        </p>
 
         <div className="cpb__pinned">
           <p className="cpb__pinnedHeading">Pinned visits — this client's non-negotiables. New blank packages start with these.</p>
@@ -645,7 +576,7 @@ function Builder({ initial, onSaved }: BuilderProps) {
                 {nights === 0 ? (
                   <p className="cpb__miniEmpty">{days > 0 ? 'Single day — no nights.' : 'Set a date range above.'}</p>
                 ) : !overnightDuration ? (
-                  <p className="cpb__miniEmpty">No overnight duration defined (add one to the menu).</p>
+                  <p className="cpb__miniEmpty">No overnight in your KinCare types (add one in Settings).</p>
                 ) : (
                   <div className="cpb__nightChips">
                     {Array.from({ length: nights }).map((_, i) => (
@@ -701,54 +632,6 @@ function Builder({ initial, onSaved }: BuilderProps) {
             ))}
           </div>
         )}
-      </DenPanel>
-
-      {/* Visit menu */}
-      <DenPanel
-        title="Visit menu"
-        subtitle="Your service lengths, prices, and type. Overnights price as a window; visits are per-drop-in."
-        trailing={<GhostButton label="Restore defaults" onClick={restoreDefaults} />}
-        className="cpb__noprint"
-      >
-        <ul className="cpb__list">
-          {durations.map((d) => (
-            <li key={d.id} className="cpb__durationRow">
-              <input className="cpb__input cpb__input--grow" aria-label="Service name" value={d.label} onChange={(e) => updateDuration(d.id, 'label', e.target.value)} />
-              <span className="cpb__unitField">
-                <input className="cpb__input cpb__input--num" type="number" min="1" aria-label="Length in minutes" value={d.minutes} onChange={(e) => updateDuration(d.id, 'minutes', e.target.value)} />
-                <span className="cpb__unit">min</span>
-              </span>
-              <span className="cpb__unitField">
-                <span className="cpb__unit cpb__unit--lead">$</span>
-                <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" aria-label="Price" value={d.price} onChange={(e) => updateDuration(d.id, 'price', e.target.value)} />
-              </span>
-              <select className="cpb__input cpb__kindSelect" aria-label="Type" value={d.kind} onChange={(e) => updateDuration(d.id, 'kind', e.target.value)}>
-                <option value="visit">Visit</option>
-                <option value="overnight">Overnight</option>
-              </select>
-              <IconButton icon={<TrashGlyph />} label={`Remove ${d.label}`} destructive onClick={() => removeDuration(d.id)} />
-            </li>
-          ))}
-        </ul>
-        <div className="cpb__addRow">
-          <input className="cpb__input cpb__input--grow" placeholder="New service name" value={newDuration.label} onChange={(e) => setNewDuration({ ...newDuration, label: e.target.value })} />
-          <span className="cpb__unitField">
-            <input className="cpb__input cpb__input--num" type="number" min="1" placeholder="min" aria-label="New length" value={newDuration.minutes} onChange={(e) => setNewDuration({ ...newDuration, minutes: e.target.value })} />
-            <span className="cpb__unit">min</span>
-          </span>
-          <span className="cpb__unitField">
-            <span className="cpb__unit cpb__unit--lead">$</span>
-            <input className="cpb__input cpb__input--num cpb__input--price" type="number" min="0" step="0.01" placeholder="0.00" aria-label="New price" value={newDuration.price} onChange={(e) => setNewDuration({ ...newDuration, price: e.target.value })} />
-          </span>
-          <select className="cpb__input cpb__kindSelect" aria-label="New type" value={newDuration.kind} onChange={(e) => setNewDuration({ ...newDuration, kind: e.target.value as DurationKind })}>
-            <option value="visit">Visit</option>
-            <option value="overnight">Overnight</option>
-          </select>
-          <PrimaryButton label="Add" leading={<PlusGlyph />} onClick={addDuration} />
-        </div>
-        <p className="cpb__hint">
-          An overnight's length decides how much of the next morning it covers: a 12hr overnight from 9:00 PM runs to 9:00 AM, so anything before then is already covered.
-        </p>
       </DenPanel>
 
       {/* Day-by-day detail + quote (also the print surface) */}

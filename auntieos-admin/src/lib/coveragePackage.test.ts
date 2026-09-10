@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_COVERAGE_RULES,
   DEFAULT_DURATIONS,
+  alignPinnedToDurations,
   buildDayPatterns,
   coverageForDay,
   daysBetween,
+  durationsFromServiceRates,
   gapWarnings,
   minutesToTime,
   normalizePackage,
@@ -11,6 +14,7 @@ import {
   pricePackage,
   quoteText,
   timeToMinutes,
+  todayIso,
   visitsFromPattern,
   withKind,
   type Duration,
@@ -38,6 +42,68 @@ describe('time helpers', () => {
     expect(timeToMinutes('nope')).toBeNull();
     expect(minutesToTime(450)).toBe('7:30 AM');
     expect(minutesToTime(1320)).toBe('10:00 PM');
+  });
+});
+
+describe('todayIso', () => {
+  it('is the LOCAL calendar date, not the UTC one', () => {
+    // 10:30 PM local on the 9th. `toISOString().slice(0, 10)` gives the 10th
+    // anywhere west of Greenwich, which is the bug this helper exists to avoid.
+    expect(todayIso(new Date(2026, 8, 9, 22, 30))).toBe('2026-09-09');
+    expect(todayIso(new Date(2026, 0, 5, 0, 15))).toBe('2026-01-05');
+  });
+});
+
+describe('durationsFromServiceRates (issue #693)', () => {
+  const RATES = { '30Minute': '25', 'Half-Day 6Hrs': '100', Overnight: '150', Consultation: '' };
+
+  it('reads the operator KinCare types as the visit menu, keyed by name', () => {
+    const menu = durationsFromServiceRates(RATES);
+    const byId = Object.fromEntries(menu.map((d) => [d.id, d]));
+    expect(byId['30Minute']).toEqual({ id: '30Minute', label: '30Minute', minutes: 30, price: 25, kind: 'visit' });
+    expect(byId['Half-Day 6Hrs']!.minutes).toBe(360);
+    expect(byId['Half-Day 6Hrs']!.price).toBe(100);
+  });
+
+  it('reads a type named overnight as an overnight, and everything else as a visit', () => {
+    const menu = durationsFromServiceRates(RATES);
+    expect(menu.find((d) => d.id === 'Overnight')!.kind).toBe('overnight');
+    // A 6-hour day stay is long, but it is still a visit: length is not the signal.
+    expect(menu.find((d) => d.id === 'Half-Day 6Hrs')!.kind).toBe('visit');
+  });
+
+  it('takes a stated serviceDurations minute count over the length in the name', () => {
+    const menu = durationsFromServiceRates({ Overnight: '150' }, { Overnight: '720' });
+    expect(menu[0]!.minutes).toBe(720);
+  });
+
+  it('keeps a type with no price or no stated length, at 0', () => {
+    const menu = durationsFromServiceRates(RATES);
+    const consult = menu.find((d) => d.id === 'Consultation')!;
+    expect(consult.price).toBe(0);
+    expect(consult.minutes).toBe(0);
+  });
+});
+
+describe('alignPinnedToDurations (issue #693)', () => {
+  it('repoints a pinned visit whose length is not in the menu', () => {
+    const menu = durationsFromServiceRates({ '30Minute': '25', Overnight: '150' });
+    // The shipped default pins `d2`, an id from the deleted builder-owned menu.
+    const aligned = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, menu);
+    expect(aligned.pinnedTimes[0]!.durationId).toBe('30Minute');
+    // Only the id moves; the client's own label and time are untouched.
+    expect(aligned.pinnedTimes[0]!.label).toBe(DEFAULT_COVERAGE_RULES.pinnedTimes[0]!.label);
+    expect(aligned.pinnedTimes[0]!.time).toBe(DEFAULT_COVERAGE_RULES.pinnedTimes[0]!.time);
+  });
+
+  it('leaves a pinned visit that already points at a real length alone', () => {
+    const menu = durationsFromServiceRates({ '30Minute': '25', '60Minute': '45' });
+    const rules = { ...DEFAULT_COVERAGE_RULES, pinnedTimes: [{ id: 'p', label: 'Meds', time: '12:00', durationId: '60Minute' }] };
+    expect(alignPinnedToDurations(rules, menu).pinnedTimes[0]!.durationId).toBe('60Minute');
+  });
+
+  it('blanks the length when the menu holds no visit type at all', () => {
+    expect(alignPinnedToDurations(DEFAULT_COVERAGE_RULES, []).pinnedTimes[0]!.durationId).toBe('');
   });
 });
 

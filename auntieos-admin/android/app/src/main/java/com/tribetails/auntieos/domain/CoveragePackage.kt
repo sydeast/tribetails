@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.domain
 
 import androidx.annotation.Keep
+import com.tribetails.auntieos.ui.admin.serviceOptionsFromRates
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.time.temporal.ChronoUnit
@@ -186,6 +187,60 @@ fun withKind(list: List<Duration>): List<Duration> = list.map { d ->
     if (d.kind == "visit" || d.kind == "overnight") d
     else d.copy(kind = if (LEGACY_OVERNIGHT_IDS.contains(d.id)) "overnight" else "visit")
 }
+
+/**
+ * True when a KinCare type's NAME says it is an overnight.
+ *
+ * `serviceRates` carries a name, a length and a price and nothing else: there is
+ * no `kind` column for the operator to set, so the name is the only signal there
+ * is. Length is deliberately NOT a signal: a 6-hour day stay is a visit, a
+ * 12-hour stay is not. Mirrors the web `isOvernightServiceName`.
+ */
+fun isOvernightServiceName(name: String): Boolean = name.lowercase().contains("overnight")
+
+/**
+ * The operator's KinCare types (`business_settings.serviceRates` plus
+ * `serviceDurations`), read as the package builder's menu. Issue #693: the
+ * builder's own "Visit menu" was a second rate card and is gone.
+ *
+ * The service NAME is the id, because that is the key `serviceRates` stores under
+ * and the value every other reader sends. `serviceOptionsFromRates` (the same
+ * helper Schedule and the booking wizard use) does the reading and the duration
+ * precedence, so this is the one place a KinCare type becomes a [Duration].
+ * Mirrors the web `durationsFromServiceRates` field for field.
+ */
+fun durationsFromServiceRates(
+    rates: Map<String, String>,
+    durations: Map<String, String> = emptyMap(),
+): List<Duration> = serviceOptionsFromRates(rates, durations).map { option ->
+    Duration(
+        id = option.name,
+        label = option.name,
+        minutes = (option.durationMinutes ?: 0).toDouble(),
+        price = option.rate.toDoubleOrNull() ?: 0.0,
+        kind = if (isOvernightServiceName(option.name)) "overnight" else "visit",
+    )
+}
+
+/**
+ * Repoint any pinned visit whose length is not in the menu onto the first visit
+ * type there (or onto nothing, when the menu holds no visit type).
+ *
+ * The menu used to be the builder's own list with its own synthetic ids
+ * (`d1`…`d8`); it is now the KinCare types, keyed by name. The shipped default
+ * pinned visit still carries one of the old ids, which would otherwise price at
+ * $0 with no explanation. Mirrors the web `alignPinnedToDurations`.
+ */
+fun alignPinnedToDurations(rules: CoverageRules, durations: List<Duration>): CoverageRules {
+    val fallback = durations.firstOrNull { it.kind == "visit" }?.id ?: ""
+    val known = durations.map { it.id }.toSet()
+    return rules.copy(
+        pinnedTimes = rules.pinnedTimes.map { p -> if (known.contains(p.durationId)) p else p.copy(durationId = fallback) },
+    )
+}
+
+/** Today as the "YYYY-MM-DD" string the date field carries, in the device's zone. */
+fun todayIso(today: LocalDate = LocalDate.now()): String = today.toString()
 
 val DEFAULT_COVERAGE_RULES = CoverageRules(
     wakeStart = "07:00",

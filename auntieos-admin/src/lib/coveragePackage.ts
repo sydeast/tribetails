@@ -17,7 +17,17 @@
  *
  * This file is pure and unit-tested; the screen and its Android twin
  * (`domain/CoveragePackage.kt`) render it. Keep the two behaviour-identical.
+ *
+ * WHERE THE MENU COMES FROM (issue #693). The service lengths and prices are the
+ * operator's KinCare types, `business_settings.serviceRates` plus
+ * `serviceDurations`, edited in Settings and already read by Schedule, the
+ * new-visit dialog and SessionDetail. `durationsFromServiceRates` below is the
+ * one adapter. The Packages screen used to keep a second rate card of its own in
+ * `coverage_package_config/config`; that panel is gone, and with it the chance of
+ * quoting a price Settings never agreed to.
  */
+
+import { serviceOptionsFromRates } from './newBooking';
 
 // ── model ───────────────────────────────────────────────────────────────────
 
@@ -179,8 +189,72 @@ export function withKind(list: readonly Partial<Duration>[]): Duration[] {
   }));
 }
 
+/**
+ * True when a KinCare type's NAME says it is an overnight.
+ *
+ * `serviceRates` carries a name, a length and a price, and nothing else: there
+ * is no `kind` column for the operator to set, so the name is the only signal
+ * there is. Substring-matching "overnight" in a lowercased service name is the
+ * rule `denFormat.ts` and `DenScreenKit.tsx` already colour sessions by, so a
+ * type reads the same way on the calendar and here. Length is deliberately NOT
+ * a signal: a 6-hour day stay is a visit, a 12-hour stay is not.
+ */
+export function isOvernightServiceName(name: string): boolean {
+  return name.toLowerCase().includes('overnight');
+}
+
+/**
+ * The operator's KinCare types, read as the package builder's menu.
+ *
+ * `rates` is `business_settings.serviceRates` (`Record<name, price-as-string>`)
+ * and `durations` is the parallel `business_settings.serviceDurations`
+ * (`Record<name, minutes-as-string>`). `serviceOptionsFromRates` does the reading
+ * and the duration precedence (stated minutes first, then the length parsed out
+ * of the name), so this stays the one place that maps a KinCare type onto a
+ * `Duration`.
+ *
+ * The service NAME is the id. Names are the key `serviceRates` is stored under
+ * and the canonical value every other reader sends, so a visit that points at
+ * "Overnight" keeps pointing at it when Settings changes its price.
+ *
+ * A type with no stated or parseable length gets 0 minutes: it still prices, and
+ * only the overnight-coverage window and the gap-filling spacing care about
+ * length. A blank price reads as 0, which keeps the type pickable and leaves it
+ * out of the tier generator (which only fills with priced visits).
+ */
+export function durationsFromServiceRates(
+  rates: Record<string, string>,
+  durations: Record<string, string> = {},
+): Duration[] {
+  return serviceOptionsFromRates(rates, durations).map((option) => ({
+    id: option.name,
+    label: option.name,
+    minutes: option.durationMinutes ?? 0,
+    price: Number(option.rate) || 0,
+    kind: isOvernightServiceName(option.name) ? 'overnight' : 'visit',
+  }));
+}
+
+/**
+ * Repoint any pinned visit whose length no longer exists onto the first visit
+ * type in the menu (or onto nothing, when the menu has no visit type).
+ *
+ * The builder's menu used to be its own list with its own synthetic ids
+ * (`d1`…`d8`); it is now the KinCare types, keyed by name. A quote saved before
+ * that, and the shipped default pinned visit, both carry a dead id, which would
+ * otherwise render as "no duration set" and price at $0 with no explanation.
+ */
+export function alignPinnedToDurations(rules: CoverageRules, durations: readonly Duration[]): CoverageRules {
+  const fallback = durations.find((d) => d.kind === 'visit')?.id ?? '';
+  const known = new Set(durations.map((d) => d.id));
+  const pinnedTimes = rules.pinnedTimes.map((p) => (known.has(p.durationId) ? p : { ...p, durationId: fallback }));
+  return { ...rules, pinnedTimes };
+}
+
 /** The shipped default coverage rules. Pinned id is fixed (not random) so the
- *  default is stable across reads and safe to compare in tests. */
+ *  default is stable across reads and safe to compare in tests. Its `durationId`
+ *  is a menu id that no KinCare rate card carries, so the screen runs the default
+ *  through `alignPinnedToDurations` before showing it. */
 export const DEFAULT_COVERAGE_RULES: CoverageRules = {
   wakeStart: '07:00',
   wakeEnd: '22:00',
@@ -216,6 +290,22 @@ export function normalizePackage(p: Partial<Package>): Package {
 /** A short, collision-unlikely id for a client-created row. */
 export function uid(): string {
   return Math.random().toString(36).slice(2, 9);
+}
+
+/**
+ * Today as a "YYYY-MM-DD" value an `<input type="date">` accepts, in the
+ * operator's LOCAL zone.
+ *
+ * Built from `getFullYear`/`getMonth`/`getDate`, never from
+ * `toISOString().slice(0, 10)`: that converts to UTC first, so anyone west of
+ * Greenwich gets tomorrow's date after their local evening. The rest of this
+ * file already reads a date string as local wall-clock time (`daysBetween`,
+ * `dateLabel` both parse `${date}T00:00:00`), so this matches them.
+ */
+export function todayIso(now: Date = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 /** Inclusive day count between two "YYYY-MM-DD" dates; 0 if unset or reversed. */

@@ -60,7 +60,6 @@ import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.domain.CoverageRules
 import com.tribetails.auntieos.domain.DEFAULT_COVERAGE_RULES
-import com.tribetails.auntieos.domain.DEFAULT_DURATIONS
 import com.tribetails.auntieos.domain.DayPattern
 import com.tribetails.auntieos.domain.Duration
 import com.tribetails.auntieos.domain.Package
@@ -69,9 +68,11 @@ import com.tribetails.auntieos.domain.PriceContext
 import com.tribetails.auntieos.domain.PricedDayRow
 import com.tribetails.auntieos.domain.QuoteInput
 import com.tribetails.auntieos.domain.Visit
+import com.tribetails.auntieos.domain.alignPinnedToDurations
 import com.tribetails.auntieos.domain.buildDayPatterns
 import com.tribetails.auntieos.domain.dateLabel
 import com.tribetails.auntieos.domain.daysBetween
+import com.tribetails.auntieos.domain.durationsFromServiceRates
 import com.tribetails.auntieos.domain.effectiveVisits
 import com.tribetails.auntieos.domain.gapWarnings
 import com.tribetails.auntieos.domain.minutesToInput
@@ -80,6 +81,7 @@ import com.tribetails.auntieos.domain.normalizePackage
 import com.tribetails.auntieos.domain.pricePackage
 import com.tribetails.auntieos.domain.quoteText
 import com.tribetails.auntieos.domain.timeToMinutes
+import com.tribetails.auntieos.domain.todayIso
 import com.tribetails.auntieos.domain.uid
 import com.tribetails.auntieos.domain.visitsFromPattern
 import com.tribetails.auntieos.domain.visitsFromPinned
@@ -105,9 +107,15 @@ import kotlin.math.floor
 
 /**
  * Android parity with the web Coverage Package Builder (full PackageBuilder_7
- * model). Config (visit menu + rules) loads/saves through [CoveragePackageViewModel];
- * the in-progress quote (client, dates, packages) is session UI state. Schedule
- * suggestions and pricing are the pure `domain/CoveragePackage.kt` functions.
+ * model). The in-progress quote (client, dates, per-client rules, packages) is
+ * session UI state; schedule suggestions and pricing are the pure
+ * `domain/CoveragePackage.kt` functions.
+ *
+ * WHERE THE MENU COMES FROM (issue #693). Visit lengths and prices are the
+ * operator's KinCare types, read through [CoveragePackageViewModel.loadSettings]
+ * from `business_settings` and edited in Settings. The "Visit menu" panel that
+ * edited a second durations list on `coverage_package_config/config` is gone, so
+ * a package can only quote a price Settings actually holds.
  */
 private enum class DateTarget { START, END }
 
@@ -121,18 +129,21 @@ fun CoveragePackageScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val uiState by viewModel.uiState.collectAsState()
-    val config = uiState.config
+    val settings = uiState.businessSettings
 
-    LaunchedEffect(Unit) { viewModel.loadConfig() }
+    LaunchedEffect(Unit) { viewModel.loadSettings() }
 
-    // Working copy of the saveable config — the visit menu only.
-    var durations by remember { mutableStateOf(config.durations) }
-    LaunchedEffect(config) { durations = config.durations }
+    // The menu is the operator's KinCare types, read-only here and edited in Settings.
+    val durations = remember(settings) { durationsFromServiceRates(settings.serviceRates, settings.serviceDurations) }
 
     // Session quote state (rules are PER-CLIENT — never in the saved config).
     var rules by remember { mutableStateOf(DEFAULT_COVERAGE_RULES) }
+    // The shipped default pins a length id from the deleted builder-owned menu, so
+    // repoint it at a real KinCare type as soon as the menu arrives.
+    LaunchedEffect(durations) { rules = alignPinnedToDurations(rules, durations) }
     var clientName by remember { mutableStateOf("") }
-    var startDate by remember { mutableStateOf("") }
+    // A fresh quote opens on today rather than blank (issue #693).
+    var startDate by remember { mutableStateOf(todayIso()) }
     var endDate by remember { mutableStateOf("") }
     var packages by remember { mutableStateOf<List<Package>>(emptyList()) }
     var overnightDurationId by remember { mutableStateOf("") }
@@ -140,16 +151,11 @@ fun CoveragePackageScreen(
     var datePickerFor by remember { mutableStateOf<DateTarget?>(null) }
 
     // Draft rows.
-    var newDurLabel by remember { mutableStateOf("") }
-    var newDurMinutes by remember { mutableStateOf("") }
-    var newDurPrice by remember { mutableStateOf("") }
-    var newDurKind by remember { mutableStateOf("visit") }
     var newPinLabel by remember { mutableStateOf("") }
     var newPinTime by remember { mutableStateOf("07:00") }
     var newPinDurId by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
 
-    val dirty = durations != config.durations
     val days = daysBetween(startDate, endDate)
     val nights = (days - 1).coerceAtLeast(0)
 
@@ -173,21 +179,10 @@ fun CoveragePackageScreen(
     val overnightDuration = durations.firstOrNull { it.id == overnightDurationId }
     val visitDurations = durations.filter { it.kind == "visit" }
 
-    fun updateDuration(id: String, block: (Duration) -> Duration) {
-        durations = durations.map { if (it.id == id) block(it) else it }
-    }
     fun patchPackage(id: String, block: (Package) -> Package) {
         packages = packages.map { if (it.id == id) block(it) else it }
     }
 
-    fun addDuration() {
-        if (newDurLabel.isBlank() || newDurMinutes.isBlank() || newDurPrice.isBlank()) {
-            formError = "Enter a name, length in minutes, and price."
-            return
-        }
-        durations = durations + Duration(uid(), newDurLabel.trim(), newDurMinutes.toDoubleOrNull() ?: 0.0, newDurPrice.toDoubleOrNull() ?: 0.0, newDurKind)
-        newDurLabel = ""; newDurMinutes = ""; newDurPrice = ""; newDurKind = "visit"; formError = null
-    }
     fun addPinned() {
         if (newPinLabel.isBlank() || newPinTime.isBlank() || newPinDurId.isBlank()) {
             formError = "Enter a label, time, and visit length for the pinned visit."
@@ -206,8 +201,9 @@ fun CoveragePackageScreen(
         formError = null
     }
     fun startNewQuote() {
-        packages = emptyList(); detailId = null; clientName = ""; startDate = ""; endDate = ""
-        rules = DEFAULT_COVERAGE_RULES // rules are per-client — reset for the next one
+        packages = emptyList(); detailId = null; clientName = ""; startDate = todayIso(); endDate = ""
+        // Rules are per-client, so reset them for the next one, repointed at the menu.
+        rules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, durations)
     }
 
     val ctx = PriceContext(days, nights, durations, overnightDuration)
@@ -242,63 +238,23 @@ fun CoveragePackageScreen(
                 kicker = "Care Ops · Pricing",
                 title = "Coverage",
                 accentTail = "packages.",
-                subtitle = "Set the visit menu and this client's rules, then build packages — mix any visit lengths, pick which nights get an overnight. No pinned visit required.",
+                subtitle = "Set this client's rules, then build packages: mix any visit lengths, pick which nights get an overnight. Lengths and prices come from your KinCare types in Settings.",
             )
 
-            // save bar (config)
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = if (config.updatedAt.isBlank()) "Visit menu not saved yet" else "Last saved${if (config.updatedBy.isBlank()) "" else " by ${config.updatedBy}"}",
-                    style = AuntieTheme.typography.labelSmall, color = c.textFaint, modifier = Modifier.weight(1f),
-                )
-                GhostButton(label = "Revert", enabled = dirty && !uiState.isLoading, onClick = { durations = config.durations; formError = null })
-                PrimaryButton(label = if (dirty) "Save visit menu" else "Saved", enabled = dirty, onClick = { viewModel.saveConfig(durations) })
-            }
             uiState.error?.let { msg ->
                 AuntieBanner(tone = AuntieBannerTone.Error, title = "Something went wrong", icon = Lucide.TriangleAlert) {
                     Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
             }
 
-            // ── visit menu ───────────────────────────────────────────────────
-            DenPanel(
-                title = "Visit menu",
-                subtitle = "Service lengths, prices, and type. Overnights price as a window; visits are per-drop-in.",
-                trailing = { GhostButton(label = "Defaults", onClick = { durations = DEFAULT_DURATIONS }) },
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    durations.forEach { d ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                AuntieField(value = d.label, onValueChange = { v -> updateDuration(d.id) { it.copy(label = v) } }, placeholder = "Service name", modifier = Modifier.weight(1.5f))
-                                AuntieField(value = numText(d.minutes), onValueChange = { v -> updateDuration(d.id) { it.copy(minutes = v.toDoubleOrNull() ?: 0.0) } }, placeholder = "min", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                                AuntieField(value = numText(d.price), onValueChange = { v -> updateDuration(d.id) { it.copy(price = v.toDoubleOrNull() ?: 0.0) } }, placeholder = "$", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                                AuntieIconBtn(onClick = { durations = durations.filter { it.id != d.id } }) {
-                                    Icon(Lucide.Trash2, contentDescription = "Remove ${d.label}", tint = c.textDim, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                AuntieChip(selected = d.kind == "visit", onClick = { updateDuration(d.id) { it.copy(kind = "visit") } }, label = "Visit")
-                                AuntieChip(selected = d.kind == "overnight", onClick = { updateDuration(d.id) { it.copy(kind = "overnight") } }, label = "Overnight")
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AuntieField(value = newDurLabel, onValueChange = { newDurLabel = it }, placeholder = "New service", modifier = Modifier.weight(1.5f))
-                    AuntieField(value = newDurMinutes, onValueChange = { newDurMinutes = it }, placeholder = "min", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                    AuntieField(value = newDurPrice, onValueChange = { newDurPrice = it }, placeholder = "$", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                    PrimaryButton(label = "Add", onClick = { addDuration() }, leading = { Icon(Lucide.Plus, contentDescription = null, tint = c.background, modifier = Modifier.size(16.dp)) })
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                    AuntieChip(selected = newDurKind == "visit", onClick = { newDurKind = "visit" }, label = "Visit")
-                    AuntieChip(selected = newDurKind == "overnight", onClick = { newDurKind = "overnight" }, label = "Overnight")
+            if (durations.isEmpty()) {
+                AuntieBanner(tone = AuntieBannerTone.Warning, title = "No KinCare types yet", icon = Lucide.TriangleAlert) {
+                    Text("Add your service lengths and prices under Settings, KinCare types. Packages price from that list.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
             }
 
             // ── coverage rules ───────────────────────────────────────────────
-            DenPanel(title = "Coverage rules for this client", subtitle = "Per-client — they travel with this quote, not the saved menu. Seed the suggestions and gap warnings.") {
+            DenPanel(title = "Coverage rules for this client", subtitle = "Per-client: they travel with this quote, not with your KinCare types. Seed the suggestions and gap warnings.") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TimeField(label = "Day starts", value = rules.wakeStart, onChange = { rules = rules.copy(wakeStart = it) }, modifier = Modifier.weight(1f))
@@ -347,7 +303,7 @@ fun CoveragePackageScreen(
             }
 
             // ── coverage window ──────────────────────────────────────────────
-            DenPanel(title = "Coverage window", subtitle = "The stay's dates. Packages price across this range; not saved with the menu.") {
+            DenPanel(title = "Coverage window", subtitle = "The stay's dates. Packages price across this range.") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     AuntieField(value = clientName, onValueChange = { clientName = it }, label = "Client (optional)", placeholder = "Kinfolk name", modifier = Modifier.fillMaxWidth())
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -360,7 +316,9 @@ fun CoveragePackageScreen(
                             Text("$days day${if (days != 1) "s" else ""} of coverage · $nights night${if (nights != 1) "s" else ""} available", style = AuntieTheme.typography.bodyMedium, color = c.textDim)
                         }
                     }
-                    if (packages.isNotEmpty() || startDate.isNotBlank() || clientName.isNotBlank()) {
+                    // Start date now defaults to today, so it no longer signals "there
+                    // is a quote here"; anything the operator actually typed does.
+                    if (packages.isNotEmpty() || clientName.isNotBlank() || endDate.isNotBlank() || startDate != todayIso()) {
                         GhostButton(label = "Start new quote", onClick = { startNewQuote() })
                     }
                 }
