@@ -27,8 +27,9 @@ import type { HomeSectionCfg, PortalHome } from '../api/settings';
  * editable on none, which is what #519 found. What another surface happens to
  * render is not an argument about what a field is for.
  *
- * All of them are editable now (`TimeZoneSection.tsx`,
- * `BookingRulesSection.tsx`, `VisitsTrackingSection.tsx`), except the
+ * All of them are editable now (`timeZone` inside `BusinessProfileSection.tsx`
+ * since issue #709, `BookingRulesSection.tsx`, `VisitsTrackingSection.tsx`),
+ * except the
  * `notification*` triple, which was deleted from the models: nothing in
  * `mytribe/functions` ever read it, and the real channel gate lives on
  * `businessSettings/notifications` (see `api/settings.ts`). This module still

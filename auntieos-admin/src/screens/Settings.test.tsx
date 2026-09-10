@@ -388,12 +388,15 @@ describe('Settings — Business profile editor', () => {
     await userEvent.click(saveBtn);
     // `weatherLocation` rides along because this panel saves every field it
     // renders, and it renders that one since mark 16 moved it here.
+    // `timeZone` rides along too: issue #709 folded it into this panel, so it
+    // is one of the fields this Save carries, unchanged from what loaded.
     expect(saveBusinessSettings).toHaveBeenCalledWith({
       businessName: 'New Name',
       businessEmail: '',
       businessPhone: '',
       businessAddress: '',
       weatherLocation: '',
+      timeZone: 'America/New_York',
     });
     expect(await within(fields).findByText('Saved')).toBeInTheDocument();
     expect(within(fields).getByRole('button', { name: /^save$/i })).toBeDisabled();
@@ -535,14 +538,15 @@ describe('Settings — Business profile absorbed the two thin sections', () => {
     expect(within(panel).getByRole('switch', { name: /block bookings during busy events/i })).toBeInTheDocument();
     // NO Save button in the toggles' own panel. They write on every flip, so a
     // Save button beside them would be a lie about what is already stored. The
-    // two Saves in this tab belong to the sibling panels (the text fields, and
-    // #519's time-zone picker), which is why this is scoped to the toggle panel
-    // rather than counting buttons across the whole tab.
+    // one Save in this tab belongs to the sibling Business profile panel
+    // (issue #709 folded the time zone picker's Save into it), which is why
+    // this is scoped to the toggle panel rather than counting buttons across
+    // the whole tab.
     const togglePanel = panelOwning(
       within(panel).getByRole('switch', { name: /auto-confirm repeat kinfolk/i }),
     );
     expect(within(togglePanel).queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
-    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(2);
+    expect(within(panel).getAllByRole('button', { name: /^save$/i })).toHaveLength(1);
   });
 });
 describe('Settings — real editors wire through the shared persist', () => {

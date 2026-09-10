@@ -6,16 +6,10 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { lastSavedLabel } from '../lib/settingsFormat';
 import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
-import {
-  TextFieldsSection,
-  BookingBehaviorSection,
-  MyTribePortalSection,
-  PaymentOptionsSection,
-  BUSINESS_PROFILE_FIELDS,
-} from './settings/sections';
+import { BookingBehaviorSection, MyTribePortalSection, PaymentOptionsSection } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { PhoneLineSection } from './settings/PhoneLineSection';
-import { TimeZoneSection } from './settings/TimeZoneSection';
+import { BusinessProfileSection } from './settings/BusinessProfileSection';
 import { BookingRulesSection } from './settings/BookingRulesSection';
 import { VisitsTrackingSection } from './settings/VisitsTrackingSection';
 import { CalendarSection } from './settings/CalendarSection';
@@ -288,34 +282,29 @@ function renderDataSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
-    // THREE PANELS, ONE TAB. Weather area was one text box and Booking
-    // behavior was two toggles, each behind its own nav entry. Mark 16 of the
+    // TWO PANELS, ONE TAB. Weather area was one text box and Booking behavior
+    // was two toggles, each behind its own nav entry. Mark 16 of the
     // 2026-08-17 walk: "move this and weather area to related setting pages. it
     // does not need to be its own page with so little fields", and the operator
     // named Business profile as where they go.
     //
     // Booking behavior stays its own PANEL rather than being folded into the
-    // fields above, because the two save differently: the text fields stage a
-    // draft behind a Save button, the toggles write on every flip. Merging them
-    // into one panel would put a Save button next to controls that have already
-    // saved.
+    // fields above, because the two save differently: the profile fields stage
+    // a draft behind a Save button, the toggles write on every flip. Merging
+    // them into one panel would put a Save button next to controls that have
+    // already saved.
     //
-    // ISSUE #519 added the third panel here: `timeZone`. It belongs with the
-    // business's own identity rather than with the booking rules (the issue's
-    // own grouping says so), and it is its own panel rather than a row in the
-    // text fields above because it is a validated picker whose wrong value
-    // silently makes the phone line answer as open around the clock.
+    // ISSUE #519 gave the time zone its own THIRD panel here, on the reasoning
+    // that a validated picker whose wrong value silently makes the phone line
+    // answer as open around the clock deserved its own save gate. ISSUE #709
+    // overrides that: operator, 2026-09-10 walk mark 36, "Time Zone needs to be
+    // in the profile box; not its own block." `BusinessProfileSection` now
+    // carries the contact fields AND the time zone picker as one panel with one
+    // Save, and `TimeZoneSection.tsx` is deleted.
     case 'businessProfile':
       return (
         <>
-          <TextFieldsSection
-            title="Business profile"
-            subtitle="Who kinfolk and invoices contact, and the area the Home weather widgets cover."
-            data={data}
-            fields={BUSINESS_PROFILE_FIELDS}
-            onSave={persist}
-          />
-          <TimeZoneSection data={data} onSave={persist} />
+          <BusinessProfileSection data={data} onSave={persist} />
           <BookingBehaviorSection data={data} onSave={persist} />
         </>
       );
