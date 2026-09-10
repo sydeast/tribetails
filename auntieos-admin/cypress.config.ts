@@ -1,5 +1,5 @@
 import { defineConfig } from 'cypress';
-import seed, { setPassword } from './e2e/seed';
+import seed, { setPassword, put, remove } from './e2e/seed';
 import { ADMIN } from './e2e/fixtures/accounts';
 
 /**
@@ -114,6 +114,32 @@ export default defineConfig({
          */
         async resetAdminPassword() {
           await setPassword(ADMIN.email, ADMIN.password);
+          return null;
+        },
+        /**
+         * Writes one `kin_care_sessions` fixture row straight to Firestore, for a
+         * spec that needs a visit the whole-run seed does not carry (a
+         * created/start order mismatch, a stale SCHEDULED slot). `fields.createdAt`
+         * arrives as an ISO string over the task bridge (`cy.task` JSON-serializes
+         * its payload, so a `Date` would not survive the trip) and is turned back
+         * into one here, matching `e2e/seed.ts`'s own note that `createdAt` is a
+         * real Timestamp while every other stamp on this collection is a free-text
+         * string. Returns null: Cypress tasks may not resolve undefined.
+         */
+        async seedKinCareSession({
+          id,
+          fields,
+        }: {
+          id: string;
+          fields: Record<string, unknown> & { createdAt: string };
+        }) {
+          const { createdAt, ...rest } = fields;
+          await put('kin_care_sessions', id, { ...rest, createdAt: new Date(createdAt) });
+          return null;
+        },
+        /** `seedKinCareSession`'s inverse, run from the spec's own `after` hook. */
+        async deleteKinCareSession({ id }: { id: string }) {
+          await remove('kin_care_sessions', id);
           return null;
         },
       });
