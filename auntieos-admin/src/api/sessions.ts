@@ -250,7 +250,7 @@ export const SESSIONS_QUERY: CollectionSpec = {
 export const SESSIONS_PROFILE_MAX = 300;
 /**
  * Every Kin Care session for ONE household, for the household profile's
- * "Upcoming visits" card.
+ * "Upcoming KinCare" card.
  *
  * DESCENDING, then reversed in memory by `upcomingVisitsFor`, which is not an
  * oversight: the deployed pair is `kin_care_sessions (kinfolkId ASC, startTime

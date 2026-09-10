@@ -11,24 +11,26 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * What the household profile's "New KinTale" needs and the composer cannot
- * supply: WHICH VISIT this tale recaps.
+ * What a caller that knows the household but not the visit needs, and the
+ * composer cannot supply on its own: WHICH VISIT this tale recaps.
  *
  * [KinTaleReportViewModel] is already the composer, and it is keyed by a session
  * (`kintale/{sessionId}`) because a KinTale is always the write-up of one visit.
  * Every existing way into it - the Auntie Time card, the KinTale log, a
- * notification - arrives holding that session id. The profile hero does not: it
- * knows WHOSE tale this is and nothing about which visit. That gap is the only
- * reason "New KinTale" had nowhere to go on Android, and this picker is the gap.
+ * notification - arrives holding that session id. The household profile's hero
+ * used to be the one caller that did not, which is why this picker exists.
  *
- * SCOPED, NOT GLOBAL, when it is opened from a profile. [load] takes the
- * household and asks Firestore for that household's sessions
- * ([KinCareRepository.getKinCareSessionsForKinfolk]) rather than pulling every
- * session and filtering on the phone: the operator opened one household's
- * profile, and landing them in a list of every household's visits to find their
- * own is the thing the mock's hero button exists to avoid. Opened with no
- * household (the KinTale log's own "New"), it falls back to the whole list, which
- * is what that entry point has always meant.
+ * #676 removed that hero button, so nothing calls this view model today; see the
+ * comment on `Screen.NewKinTale` in `Navigation.kt` for why it is left in place
+ * rather than deleted.
+ *
+ * SCOPED, NOT GLOBAL, when [load] is given a household. It asks Firestore for
+ * that household's sessions ([KinCareRepository.getKinCareSessionsForKinfolk])
+ * rather than pulling every session and filtering on the phone: the operator
+ * opened one household's profile, and landing them in a list of every
+ * household's visits to find their own is the thing this scoping exists to
+ * avoid. Opened with no household, [load] falls back to the whole list, but
+ * nothing on Android takes that path today either.
  *
  * ELIGIBILITY IS [isKinTaleEligibleSession], the same DEPARTED-or-COMPLETED
  * positive membership the React composer applies, and applied here rather than in

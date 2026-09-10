@@ -89,7 +89,7 @@ export function horizonIso(now: Date, days: number): string {
   end.setDate(end.getDate() + days);
   return end.toISOString();
 }
-/** How far ahead the profile's "Upcoming visits" card looks, per the mock's own header. */
+/** How far ahead the profile's "Upcoming KinCare" card looks, per the mock's own header. */
 export const UPCOMING_HORIZON_DAYS = 7;
 
 /** Invoices for this household, most recent first. */

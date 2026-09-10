@@ -1,4 +1,4 @@
-/* The household profile's feed cards (Recent KinTales, Upcoming visits,
+/* The household profile's feed cards (Recent KinTales, Upcoming KinCare,
    Invoices). One row shape serves all three: a full-width anchor that fills the
    panel, so the whole row is the hit target rather than the few words inside it,
    which is what the mock draws. */

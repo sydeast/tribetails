@@ -99,11 +99,14 @@ export interface KinTaleComposeProps {
   /**
    * NARROW THE SESSION PICKER TO ONE HOUSEHOLD.
    *
-   * The household profile's "New KinTale" (the mock's hero primary) opens this
-   * screen already knowing whose KinTale it is, but not which visit it recaps.
-   * Without this the operator would land on every household's eligible sessions
-   * and have to find theirs. Absent means every household, which is what the
-   * KinTales list's own "New" still passes.
+   * Meant for a caller that already knows whose KinTale it is but not which
+   * visit it recaps, so the operator doesn't have to find theirs among every
+   * household's eligible sessions. The household profile's hero used to be
+   * that caller; #676 removed its "New KinTale" button, and nothing else
+   * passes this prop today, so it is currently dead on every call site. Left
+   * in place rather than pulled, since narrowing by household is still the
+   * right shape for whatever the next entry point into this screen turns
+   * out to be.
    */
   kinfolkId?: string;
   onClose: () => void;
