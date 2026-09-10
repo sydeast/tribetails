@@ -233,10 +233,16 @@ describe('kinfolk profile', () => {
     it('offers Clear old vet notes, and confirming it clears the banner', () => {
       cy.signIn();
       cy.visit('/directory/e2e-kf-1');
-      cy.contains('button', 'Household data').click();
+      // The Household Data sub-view is long enough that the banner and its
+      // button can land below the fold; `scrollIntoView()` makes each target
+      // actually visible before Cypress's own actionability check runs.
+      cy.contains('button', 'Household data').scrollIntoView().click();
       cy.contains('Older vet notes are still on this record', { timeout: 8_000 }).should('exist');
-      cy.contains('button', 'Clear old vet notes').click();
-      cy.contains('button', 'Clear').click();
+      cy.contains('button', 'Clear old vet notes').scrollIntoView().click();
+      // Scoped to the confirm dialog, not the page: the page behind it still
+      // carries its own "Clear old vet notes" button in the DOM while the
+      // dialog is open.
+      cy.get('[role="dialog"]').contains('button', 'Clear').scrollIntoView().click();
       cy.contains('Older vet notes are still on this record', { timeout: 8_000 }).should('not.exist');
     });
   });

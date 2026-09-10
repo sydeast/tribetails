@@ -77,9 +77,12 @@ describe('kin view and edit', () => {
     cy.contains('button', 'Done').click();
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
-    // Reload: the pill list next to the name reads `kin.tags` off a fresh
-    // fetch, not the assign field's own optimistic state.
-    cy.reload();
+    // Re-open fresh, rather than `cy.reload()`: KinView is Directory's own
+    // local state, not a route, so reloading the browser drops it and lands
+    // back on the plain list. Re-opening the same kin is what actually forces
+    // a fresh `getKin` read, so the pill list reflects `kin.tags` off
+    // Firestore rather than the assign field's own optimistic state.
+    openKinFromDirectory('Biscuit');
     cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
     cy.get('.kview__tags .kview__tag-pill').should('contain.text', TAG);
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
