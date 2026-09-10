@@ -56,18 +56,6 @@ vi.mock('@tanstack/react-router', () => ({
     );
   },
 }));
-// The KinTale composer is a screen of its own with its own suite. This asserts
-// the profile's hero primary opens it, not that it works.
-vi.mock('./KinTaleCompose', () => ({
-  KinTaleCompose: ({ kinfolkId, onClose }: { kinfolkId?: string; onClose: () => void }) => (
-    <div>
-      <p>STUB KinTaleCompose for {kinfolkId}</p>
-      <button type="button" onClick={onClose}>
-        stub close
-      </button>
-    </div>
-  ),
-}));
 // The 411 (per-kin) and the dossier (per-household) are ADMIN-ONLY point reads.
 // Both are stubbed so no spec here touches Firestore.
 const { getKin411, getDossier } = vi.hoisted(() => ({
@@ -522,13 +510,11 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.getByText('Treats in the blue tin.')).toBeInTheDocument();
     expect(screen.getByText('Short and warm.')).toBeInTheDocument();
   });
-  it('opens the KinTale composer scoped to this household from the hero primary', async () => {
+  it('no longer offers a hero "New KinTale" primary (#676)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
-    await userEvent.click(await screen.findByRole('button', { name: /new kintale/i }));
-    expect(screen.getByText('STUB KinTaleCompose for k1')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /stub close/i }));
-    expect(await screen.findByRole('button', { name: /back to directory/i })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /back to directory/i });
+    expect(screen.queryByRole('button', { name: /new kintale/i })).toBeNull();
   });
   it('carries the three feed cards, Upcoming KinCare renamed from Upcoming visits (#682)', async () => {
     getKinfolkProfile.mockResolvedValue(profile());

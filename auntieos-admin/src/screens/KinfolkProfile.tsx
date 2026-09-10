@@ -20,10 +20,8 @@ import {
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { MaskedValue } from '../components/MaskedValue';
-import { PrimaryButton } from '../components/Buttons';
 import { KinfolkEdit } from './KinfolkEdit';
 import { HouseholdData } from './HouseholdData';
-import { KinTaleCompose } from './KinTaleCompose';
 import './KinfolkProfile.css';
 
 interface KinfolkProfileProps {
@@ -130,10 +128,13 @@ function firstNonBlank(...values: string[]): string {
  * read-only screen.
  *
  * Sub-views this profile can swap in: Directory owns the Directory/profile
- * switch the same way, so the editor, the household record and the KinTale
- * composer stay local state rather than routes, matching `KinView`'s precedent.
+ * switch the same way, so the editor and the household record stay local state
+ * rather than routes, matching `KinView`'s precedent. The KinTale composer used
+ * to be a third one, opened from a hero "New KinTale" primary; #676 removed
+ * that entry point (a KinTale is only ever started from a KinCare session, not
+ * a bare household), so this profile no longer opens a composer at all.
  */
-type ProfileView = 'profile' | 'edit' | 'household' | 'kintale';
+type ProfileView = 'profile' | 'edit' | 'household';
 
 export function KinfolkProfile({
   kinfolkId,
@@ -241,13 +242,6 @@ export function KinfolkProfile({
       <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
     );
   }
-  if (view === 'kintale') {
-    // The mock's hero primary. A KinTale is always scaffolded from a Kin Care
-    // session that actually happened, so the composer opens on its own session
-    // picker; passing the household narrows that picker to THIS household's
-    // sessions rather than making the operator find them among everybody's.
-    return <KinTaleCompose kinfolkId={kinfolkId} onClose={() => setView('profile')} />;
-  }
   // B1, members and invites, used to be a fourth sub-view here. It is now
   // reached only through its own route (`/household-members/{kinfolkId}`), so
   // there is exactly one way to open it and the URL always says it is open.
@@ -354,7 +348,12 @@ export function KinfolkProfile({
           </Link>
           <GhostButton label="Edit" onClick={() => setView('edit')} />
           <GhostButton label="Back to Directory" onClick={onBack} />
-          <PrimaryButton label="New KinTale" onClick={() => setView('kintale')} />
+          {/* The hero used to end with a "New KinTale" primary. Operator ruling
+              (#676, walk admin-2026-09-10): a KinTale is only ever started from
+              a KinCare session, so a standalone entry point on the household
+              profile is gone. The KinTales list screen keeps its own "New
+              KinTale" button under the same ruling; that button is unaffected
+              by this change. */}
         </div>
       </header>
 

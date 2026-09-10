@@ -171,8 +171,10 @@
   font-size: var(--type-label-sm-size);
   color: var(--color-text-faint);
 }
-/* The hero's action cluster: quick contact, the household's other surfaces,
-   edit, back, and the New KinTale primary. */
+/* The hero's action cluster: quick contact and the household's other
+   surfaces (Household data, Members and invites, Edit, Back). #676 removed
+   the "New KinTale" primary that used to end this row; a KinTale now only
+   ever starts from a KinCare session. */
 .kinfolk-profile__actions {
   display: flex;
   flex-wrap: wrap;
