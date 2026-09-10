@@ -24,32 +24,41 @@ import { KinTaleDetail } from '../screens/KinTaleDetail';
 type KinTalesMode =
   | { kind: 'list' }
   | { kind: 'detail'; kinTaleId: string }
-  | { kind: 'compose'; kinTaleId?: string };
+  | { kind: 'compose'; kinTaleId?: string; sessionId?: string };
 
 export function KinTalesView() {
-  // `/kintales?kinTaleId=<id>` opens straight into DETAIL, the destination of a
-  // kintale notification's "Open". Initial state only, so closing the detail
-  // returns to the list rather than bouncing back off a stale URL.
-  const { kinTaleId } = useSearch({ from: '/admin/kintales' });
+  // Two entry params, two destinations, neither guessed from the other:
+  //   `?kinTaleId=` opens one report in DETAIL, the destination of a kintale
+  //     notification's "Open".
+  //   `?sessionId=` opens the COMPOSER scaffolded from that visit, which is
+  //     where Auntie Time's "Complete KinTale" button routes (#703). That visit
+  //     is departed and the write-up is the next thing owed on it, so landing
+  //     the operator on the list to hunt for it would be the wrong screen.
+  // Initial state only, so closing either one returns to the list rather than
+  // bouncing back off a stale URL.
+  const { kinTaleId, sessionId } = useSearch({ from: '/admin/kintales' });
   const navigate = useNavigate();
-  const [mode, setMode] = useState<KinTalesMode>(
-    kinTaleId ? { kind: 'detail', kinTaleId } : { kind: 'list' },
-  );
+  const [mode, setMode] = useState<KinTalesMode>(() => {
+    if (kinTaleId) return { kind: 'detail', kinTaleId };
+    if (sessionId) return { kind: 'compose', sessionId };
+    return { kind: 'list' };
+  });
 
   /**
-   * Back to the list, and drop `?kinTaleId=` on the way out. Without clearing
-   * the search param the URL keeps naming a report the operator has closed, and
-   * a reload would reopen it.
+   * Back to the list, and drop the entry param on the way out. Without clearing
+   * it the URL keeps naming a report or a visit the operator has closed, and a
+   * reload would reopen it.
    */
   function closeToList() {
     setMode({ kind: 'list' });
-    if (kinTaleId) void navigate({ to: '/kintales', search: {} });
+    if (kinTaleId || sessionId) void navigate({ to: '/kintales', search: {} });
   }
 
   if (mode.kind === 'compose') {
     return (
       <KinTaleCompose
         {...(mode.kinTaleId ? { kinTaleId: mode.kinTaleId } : {})}
+        {...(mode.sessionId ? { sessionId: mode.sessionId } : {})}
         onClose={closeToList}
       />
     );

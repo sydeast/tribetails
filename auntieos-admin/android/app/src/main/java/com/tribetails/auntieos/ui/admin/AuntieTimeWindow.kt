@@ -8,14 +8,16 @@ import com.tribetails.auntieos.data.model.KinCareSession
  * `src/lib/sessionFormat.ts`. Extracted so the rules that decide what an
  * operator sees are unit-tested rather than buried in a Composable.
  *
- * OPERATOR ISSUE #17 brought three changes here, all matching web:
+ * The three window rules, all matching web:
  *
- *  RECENT IS SEVEN DAYS, not "since yesterday". The old bound was a day-of run
- *  sheet; the operator asked for recent, and a week is how long "did that one
- *  get wrapped?" stays a live question. Measured on the WRAP day, which is
- *  completedAt when there is one and startTime otherwise, because a CANCELLED
- *  visit never gets a completedAt and dropping it would quietly empty the
- *  Cancelled view.
+ *  RECENT IS TODAY OR YESTERDAY, which is what the
+ *  `auntieos-auntie-time-2026-05-27` mock labels its Recent group. Issue #17
+ *  had widened it to a week, on the reading that "recent" meant however long
+ *  "did that one get wrapped?" stays a live question; #703 is the operator
+ *  ruling that the mock is the spec, and the mock is narrower. Measured on the
+ *  WRAP day, which is completedAt when there is one and startTime otherwise,
+ *  because a CANCELLED visit never gets a completedAt and dropping it would
+ *  quietly empty the cancelled half of Recent.
  *
  *  UPCOMING keeps the fourteen-day horizon and the one-day look-back it always
  *  had: "yesterday" still reads as today's run sheet, not yet a problem case.
@@ -40,7 +42,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
  * Upcoming or Overdue by its date, carrying its own honest status pill.
  */
 
-const val RECENT_WINDOW_DAYS = 7
+const val RECENT_WINDOW_DAYS = 1
 const val UPCOMING_WINDOW_DAYS = 14
 
 /** How far back a SCHEDULED (or unrecognized-status) visit stays visible once

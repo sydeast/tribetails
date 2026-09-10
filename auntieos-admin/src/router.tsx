@@ -199,7 +199,13 @@ const sessionsRoute = createRoute({
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
-  validateSearch: optionalIdSearch(['kinTaleId'] as const),
+  // `kinTaleId` opens one report in DETAIL (a kintale notification's "Open").
+  // `sessionId` opens the COMPOSER scaffolded from that visit, which is where
+  // Auntie Time's "Complete KinTale" button routes (#703): the write-up belongs
+  // to a visit, and the composer already takes a `sessionId` to seed a draft
+  // from one. Two ids because they name two different things and two different
+  // destinations, never one id the view has to guess the meaning of.
+  validateSearch: optionalIdSearch(['kinTaleId', 'sessionId'] as const),
   component: lazyRouteComponent(() => import('./routes/KinTalesView'), 'KinTalesView'),
 });
 

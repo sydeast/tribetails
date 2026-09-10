@@ -36,17 +36,30 @@ class AuntieTimeWindowTest {
         }
     }
 
+    // #703: Recent is today or yesterday, the mock's own bound. It was a week
+    // under #17; the mock is the ruling and it is narrower. Web's twin case is
+    // "keeps a wrap from yesterday, and drops one from the day before".
     @Test
-    fun `a wrap inside seven days is Recent, and one outside it is not`() {
+    fun `a wrap from yesterday is Recent, and one from the day before is not`() {
         assertTrue(
             isVisibleOnAuntieTime(
-                session(status = "COMPLETED", startTime = "2026-07-09T09:00:00Z", completedAt = "2026-07-09T14:00:00Z"),
+                session(status = "COMPLETED", startTime = "2026-07-15T09:00:00Z", completedAt = "2026-07-15T14:00:00Z"),
                 today,
             ),
         )
         assertFalse(
             isVisibleOnAuntieTime(
-                session(status = "COMPLETED", startTime = "2026-07-08T09:00:00Z", completedAt = "2026-07-08T14:00:00Z"),
+                session(status = "COMPLETED", startTime = "2026-07-14T09:00:00Z", completedAt = "2026-07-14T14:00:00Z"),
+                today,
+            ),
+        )
+    }
+
+    @Test
+    fun `a wrap from today is Recent, which is the group the board is mostly about`() {
+        assertTrue(
+            isVisibleOnAuntieTime(
+                session(status = "COMPLETED", startTime = "2026-07-16T09:00:00Z", completedAt = "2026-07-16T10:00:00Z"),
                 today,
             ),
         )
@@ -64,7 +77,7 @@ class AuntieTimeWindowTest {
 
     @Test
     fun `a cancellation is dated by its start, since it never gets a completedAt`() {
-        assertTrue(isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-07-14T09:00:00Z"), today))
+        assertTrue(isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-07-15T09:00:00Z"), today))
         assertFalse(isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-06-01T09:00:00Z"), today))
     }
 
@@ -192,7 +205,7 @@ class AuntieTimeWindowTest {
     fun `dateAddDays rolls over a year boundary in both directions`() {
         assertEquals("2026-01-01", dateAddDays("2025-12-31", 1))
         assertEquals("2025-12-31", dateAddDays("2026-01-01", -1))
-        assertEquals("2026-07-09", dateAddDays("2026-07-16", -RECENT_WINDOW_DAYS))
+        assertEquals("2026-07-15", dateAddDays("2026-07-16", -RECENT_WINDOW_DAYS))
         assertEquals("2026-07-30", dateAddDays("2026-07-16", UPCOMING_WINDOW_DAYS))
     }
 }

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { appendOfficeNote, lifecycleActionsFor, lifecycleNowIso } from './sessionLifecycle';
+import {
+  appendOfficeNote,
+  cardLifecycleActionsFor,
+  lifecycleActionsFor,
+  lifecycleNowIso,
+} from './sessionLifecycle';
 
 /**
  * The client half of the visit clock, tested as pure functions.
@@ -43,6 +48,44 @@ describe('which clock actions each state offers', () => {
   // a bucket, so it gets no controls rather than another state's controls.
   it('an unknown status offers nothing rather than guessing', () => {
     expect(actionsOf('unknown')).toEqual([]);
+  });
+});
+
+/**
+ * #703: the Auntie Time CARD's own clock row, transcribed from
+ * `ui-ideas/auntieos-auntie-time-2026-05-27.html` card by card.
+ */
+describe('the card labels and the card action map', () => {
+  function cardActionsOf(state: Parameters<typeof cardLifecycleActionsFor>[0]): string[] {
+    return cardLifecycleActionsFor(state).map((a) => a.cardLabel);
+  }
+
+  it('spells the clock in the run-sheet words the mock uses, not the detail sheet’s', () => {
+    expect(cardActionsOf('scheduled')).toEqual(['OMW', 'Arrived']);
+    expect(cardActionsOf('onMyWay')).toEqual(['Arrived']);
+    expect(cardActionsOf('arrived')).toEqual(['Departed', 'Undo arrived']);
+  });
+
+  it('leaves the detail sheet’s own office wording alone', () => {
+    expect(lifecycleActionsFor('scheduled').map((a) => a.label)).toEqual(['On the way', 'Clock in']);
+    expect(lifecycleActionsFor('arrived').map((a) => a.label)).toEqual([
+      'Clock out',
+      'Undo arrival',
+    ]);
+  });
+
+  // The mock's departed card carries "Complete KinTale" alone. Undoing an
+  // arrival at that point is a correction, not a step, and corrections live on
+  // the detail sheet, which still offers it.
+  it('offers no clock action on a DEPARTED card, unlike the detail sheet', () => {
+    expect(cardActionsOf('departed')).toEqual([]);
+    expect(lifecycleActionsFor('departed').map((a) => a.action)).toEqual(['UNDO_ARRIVAL']);
+  });
+
+  it('offers nothing on a terminal or unrecognized card', () => {
+    expect(cardActionsOf('completed')).toEqual([]);
+    expect(cardActionsOf('cancelled')).toEqual([]);
+    expect(cardActionsOf('unknown')).toEqual([]);
   });
 });
 

@@ -142,6 +142,30 @@ export interface SessionEntry {
   completedAt?: string | undefined;
   notes?: string | undefined;
   /**
+   * The note the HOUSEHOLD wrote for this visit ("side gate, harness on the
+   * hook"), as opposed to `notes`, which is admin-internal. Denormalized onto
+   * the session by the booking writers; `api/bookings.ts` models the same field
+   * on the envelope row it comes from.
+   *
+   * The Auntie Time card shows this one FIRST and falls back to `notes`, the
+   * preference `Bookings.tsx` and Android's own card already apply: at the
+   * door, what the family said about their own house beats what the office
+   * wrote about the booking.
+   */
+  kinfolkNotes?: string | undefined;
+  /**
+   * The invoice this visit was billed on, the reciprocal of the invoice line's
+   * own `sessionId`. Present only once the visit has been billed, which is why
+   * the Auntie Time card renders an "Invoice linked" chip on its presence
+   * rather than a "not invoiced" line on its absence: an unbilled visit is the
+   * normal state of a visit, not a problem to flag.
+   *
+   * `updateKinCareSession`'s own doc already named this field as one of several
+   * a rebuild-from-form-state save would wipe. It is modeled here now that a
+   * screen renders it.
+   */
+  invoiceId?: string | undefined;
+  /**
    * The visit's finished GPS trail: the DURABLE route copy, baked onto the
    * session when tracking stops (`LocationTrackingService#saveRoute` on
    * Android, `saveSessionGpsSummary` on both). Read by the admin route panel
@@ -237,9 +261,11 @@ export interface SessionEntry {
  *
  * NO `filters`, a single-field orderBy needs no composite index (same note as
  * `INVOICES_QUERY`/`NOTIFICATIONS_QUERY`). Any "today only" / "active only"
- * narrowing happens client-side over the already-streamed page (the filter tabs
- * in `Sessions.tsx`), same as the wasm's own client-side `visible`/`grouped`
- * filtering, just bounded now instead of run over an unbounded stream.
+ * narrowing happens client-side over the already-streamed page, same as the
+ * wasm's own client-side `visible`/`grouped` filtering, just bounded now
+ * instead of run over an unbounded stream. On the Auntie Time board that
+ * narrowing is `groupSessionsByPhase`; the filter tabs this note used to name
+ * were removed with #703, since the phase groups are the split.
  */
 export const SESSIONS_QUERY: CollectionSpec = {
   path: 'kin_care_sessions',
@@ -330,18 +356,15 @@ export function sessionsArchiveQuery(fromDay: string, toDay: string): Collection
  * Rows per "Load more" on Auntie Time.
  *
  * FOUR TIMES the other two lists' page size, and that is deliberate rather than
- * inconsistent. Auntie Time's stat strip counts across what is loaded ("In
- * flight", "Today", "Wrapped today") and its rows are grouped into Active /
- * Upcoming / Recent, so a page that stops part-way through the window makes
- * three counts and three group sizes describe a fragment. The sort is `desc`
- * (see the index note below), so a small first page would be the most FUTURE
- * visits, and today's could sit on page two.
+ * inconsistent. Auntie Time is a BOARD, not a feed: its rows are grouped into
+ * Active / Overdue / Upcoming / Recent and every group wears a count chip, so a
+ * page that stops part-way through the window makes four counts describe a
+ * fragment. The sort is `desc` (see the index note below), so a small first
+ * page would be the most FUTURE visits, and today's could sit on page two.
  *
  * 100 rows over a 45 day window is the whole window for any realistic book, so
  * the first page is normally complete and "Load more" is the overflow valve
- * rather than the usual path. The screen never assumes that: it states whether
- * the counts cover the whole window or only what is loaded, and it decides that
- * from `hasMore` rather than from this number.
+ * rather than the usual path.
  */
 export const SESSIONS_PAGE_SIZE = 100;
 

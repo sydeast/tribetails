@@ -285,26 +285,33 @@ fun KinCareSessionsScreen(
                             )
                             Spacer(Modifier.height(20.dp))
 
+                            // ISSUE #703: every phase renders, empty ones
+                            // included. The guard here used to be
+                            // `if (items.isNotEmpty())`, which is the same thing
+                            // web's `groupSessionsByPhase` was doing when it
+                            // dropped empty groups: a phase with nothing in it
+                            // had nothing to say, so the board said nothing at
+                            // all and read as broken. The mock draws all four
+                            // with their count chips whatever the data says, and
+                            // a chip that reads 0 is an answer.
                             Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
                                 Phase.entries.forEach { phase ->
                                     val items = grouped[phase].orEmpty()
-                                    if (items.isNotEmpty()) {
-                                        PhaseGroup(
-                                            phase = phase,
-                                            count = items.size,
-                                            sessions = items,
-                                            todayIso = today,
-                                            kinfolkById = { kinfolkById[it] },
-                                            kinById = kinById,
-                                            breadcrumbsFor = breadcrumbsFor,
-                                            timeBlockLabelFor = timeBlockLabelFor,
-                                            onOpenDetail = onOpenDetail,
-                                            onWriteKinTale = onWriteKinTale,
-                                            onLiveTrack = onLiveTrack,
-                                            onPatch = patchFn,
-                                            onTransition = transitionFn,
-                                        )
-                                    }
+                                    PhaseGroup(
+                                        phase = phase,
+                                        count = items.size,
+                                        sessions = items,
+                                        todayIso = today,
+                                        kinfolkById = { kinfolkById[it] },
+                                        kinById = kinById,
+                                        breadcrumbsFor = breadcrumbsFor,
+                                        timeBlockLabelFor = timeBlockLabelFor,
+                                        onOpenDetail = onOpenDetail,
+                                        onWriteKinTale = onWriteKinTale,
+                                        onLiveTrack = onLiveTrack,
+                                        onPatch = patchFn,
+                                        onTransition = transitionFn,
+                                    )
                                 }
                             }
                         }

@@ -41,6 +41,18 @@ export interface Kinfolk {
   profilePictureUrl?: string | undefined;
   status?: string | undefined; // active | inactive | archived
   /**
+   * Where the Kin Care actually happens. Written by `KinfolkEdit.tsx` through
+   * `updateKinfolk` and read back by the profile; modeled on this flat-list type
+   * as of #703, because the Auntie Time board needs an address PER CARD and one
+   * `KINFOLK_QUERY` join is the read that costs nothing extra (Android's own
+   * Auntie Time screen takes it off the same document, via
+   * `kinfolk?.serviceAddress`).
+   *
+   * Blank on a household that has never been given one, which is a real state:
+   * the card then shows no address line at all rather than an empty chip.
+   */
+  serviceAddress?: string | undefined;
+  /**
    * Admin-entered ISO date, "Admin & Relationship" section. The ONLY recency
    * signal the `kinfolk` collection carries, no `createdAt`/`updatedAt` field
    * exists anywhere in the wasm Kinfolk model, and no MyTribe function was

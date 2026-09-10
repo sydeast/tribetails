@@ -4,17 +4,13 @@ import { kinForHouseholdQuery, type Kin } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection } from '../lib/firestore';
-import {
-  setVisitLifecycle,
-  updateKinCareSession,
-  type VisitLifecycleAction,
-} from '../api/sessionsWrite';
+import { updateKinCareSession } from '../api/sessionsWrite';
 import {
   appendOfficeNote,
   lifecycleActionsFor,
   lifecycleNowIso,
-  type LifecycleActionDef,
 } from '../lib/sessionLifecycle';
+import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useBreadcrumbs, routePointsFromGpsSummary } from '../lib/breadcrumbs';
 import {
   sessionState,
@@ -140,30 +136,13 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
   const household = entry === null ? 'the household' : sessionHousehold(str(entry.kinfolkName));
 
   // ── the visit clock ────────────────────────────────────────────────────────
-  const [pending, setPending] = useState<LifecycleActionDef | null>(null);
-  const [clockWrite, setClockWrite] = useState<WriteState>({ status: 'idle' });
-
-  async function runLifecycle(action: VisitLifecycleAction) {
-    if (sessionId === null) return;
-    setClockWrite({ status: 'saving' });
-    try {
-      const res = await setVisitLifecycle(sessionId, action, { atIso: lifecycleNowIso() });
-      // `changed: false` is a real outcome, not a failure: the server found the
-      // action already true and wrote NOTHING, which is what stops a double
-      // clock-in from moving the arrival time. Saying "clocked in" there would
-      // claim a write that did not happen.
-      setClockWrite({
-        status: 'done',
-        message: res.changed
-          ? `${res.from} → ${res.status}.${
-              res.notified ? ` ${household} was notified.` : ' The household was not notified.'
-            }`
-          : `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
-      });
-    } catch (err) {
-      setClockWrite({ status: 'error', message: messageOf(err) });
-    }
-  }
+  // The four in-visit writes, the confirm gate and the sentence they produce all
+  // live in `lib/useVisitLifecycle.ts` now, because the Auntie Time CARD drives
+  // the same clock since #703 and two copies of "did the server actually change
+  // anything?" would drift. This screen keeps its own dialog and its own action
+  // row; the hook keeps the write. No refresh callback is passed here: `entry`
+  // is a LIVE `useDocById` subscription, so the document repaints itself.
+  const clock = useVisitLifecycle(sessionId, household);
 
   // ── the details edit ───────────────────────────────────────────────────────
   const currentServiceType = str(entry?.serviceType);
@@ -184,7 +163,8 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
     setDuration(typeof currentDuration === 'number' ? String(currentDuration) : '');
     setKinSelection(null);
     setEditWrite({ status: 'idle' });
-    setClockWrite({ status: 'idle' });
+    // The visit clock's own reset lives in `useVisitLifecycle`, keyed on the
+    // same id, so it is not repeated here.
     setNoteText('');
     setNoteWrite({ status: 'idle' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -383,34 +363,28 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                         <PrimaryButton
                           key={a.action}
                           label={a.label}
-                          onClick={() => {
-                            setClockWrite({ status: 'idle' });
-                            setPending(a);
-                          }}
-                          disabled={clockWrite.status === 'saving'}
+                          onClick={() => clock.ask(a)}
+                          disabled={clock.saving}
                         />
                       ) : (
                         <GhostButton
                           key={a.action}
                           label={a.label}
-                          onClick={() => {
-                            setClockWrite({ status: 'idle' });
-                            setPending(a);
-                          }}
-                          disabled={clockWrite.status === 'saving'}
+                          onClick={() => clock.ask(a)}
+                          disabled={clock.saving}
                         />
                       ),
                     )}
                   </div>
                 )}
-                {clockWrite.status === 'error' && (
+                {clock.write.status === 'error' && (
                   <ErrorHint>
-                    Couldn&rsquo;t update the visit clock. {clockWrite.message}
+                    Couldn&rsquo;t update the visit clock. {clock.write.message}
                   </ErrorHint>
                 )}
-                {clockWrite.status === 'done' && (
+                {clock.write.status === 'done' && (
                   <p className="sdetail__ok" role="status">
-                    {clockWrite.message}
+                    {clock.write.message}
                   </p>
                 )}
               </DenPanel>
@@ -656,28 +630,21 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                 )}
               </DenPanel>
 
-              {pending !== null && (
+              {clock.pending !== null && (
                 <Dialog
-                  title={pending.label}
-                  onClose={() => setPending(null)}
+                  title={clock.pending.label}
+                  onClose={clock.dismiss}
                   footer={
                     <>
-                      <GhostButton label="Not yet" onClick={() => setPending(null)} />
-                      <PrimaryButton
-                        label={pending.confirmLabel}
-                        onClick={() => {
-                          const action = pending.action;
-                          setPending(null);
-                          void runLifecycle(action);
-                        }}
-                      />
+                      <GhostButton label="Not yet" onClick={clock.dismiss} />
+                      <PrimaryButton label={clock.pending.confirmLabel} onClick={clock.confirm} />
                     </>
                   }
                 >
                   {/* Future tense, and a confirm label the operator has not
                       already pressed once: the BookingActions confirm-copy
                       rule, and the walk it came from. */}
-                  <p>{pending.confirmBody(household)}</p>
+                  <p>{clock.pending.confirmBody(household)}</p>
                 </Dialog>
               )}
             </>

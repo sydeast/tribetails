@@ -22,7 +22,20 @@ import { type VisitLifecycleAction } from '../api/sessionsWrite';
 
 export interface LifecycleActionDef {
   action: VisitLifecycleAction;
+  /** The label on the SessionDetail sheet, where the framing is the office clock. */
   label: string;
+  /**
+   * The same action's label on an Auntie Time CARD. The board is the day-of run
+   * sheet, and the mock spells the clock in the words the operator uses at the
+   * door: OMW, Arrived, Departed, Undo arrived. Transcribed from
+   * `ui-ideas/auntieos-auntie-time-2026-05-27.html`.
+   *
+   * A second field rather than a rename: "Clock in" / "Clock out" is what the
+   * detail sheet has said since #397 L19, and it is the right phrasing beside a
+   * Timing panel of stamped clock times. One action, two surfaces, two
+   * vocabularies, one definition.
+   */
+  cardLabel: string;
   tone: 'primary' | 'ghost';
   /** Future tense, per the BookingActions confirm-copy rule. */
   confirmBody: (household: string) => string;
@@ -32,6 +45,7 @@ export interface LifecycleActionDef {
 const ON_MY_WAY: LifecycleActionDef = {
   action: 'ON_MY_WAY',
   label: 'On the way',
+  cardLabel: 'OMW',
   tone: 'primary',
   confirmBody: (name) =>
     `${name} will be told their Auntie is on the way, and the visit moves to On the way.`,
@@ -41,6 +55,7 @@ const ON_MY_WAY: LifecycleActionDef = {
 const ARRIVED: LifecycleActionDef = {
   action: 'ARRIVED',
   label: 'Clock in',
+  cardLabel: 'Arrived',
   tone: 'primary',
   confirmBody: (name) =>
     `The arrival time is stamped now and ${name} is told their Auntie has arrived.`,
@@ -50,6 +65,7 @@ const ARRIVED: LifecycleActionDef = {
 const DEPARTED: LifecycleActionDef = {
   action: 'DEPARTED',
   label: 'Clock out',
+  cardLabel: 'Departed',
   tone: 'primary',
   confirmBody: (name) =>
     `The departure time is stamped now and ${name} is told the visit has finished. The visit is not Completed until you mark it so.`,
@@ -59,6 +75,7 @@ const DEPARTED: LifecycleActionDef = {
 const UNDO_ARRIVAL: LifecycleActionDef = {
   action: 'UNDO_ARRIVAL',
   label: 'Undo arrival',
+  cardLabel: 'Undo arrived',
   tone: 'ghost',
   confirmBody: () =>
     'The arrival and departure times are cleared and the visit goes back to where it was. Nobody is notified.',
@@ -101,6 +118,28 @@ export function lifecycleActionsFor(state: SessionState): readonly LifecycleActi
     case 'unknown':
       return [];
   }
+}
+
+/**
+ * The clock actions an Auntie Time CARD offers, which is the same map as
+ * `lifecycleActionsFor` in every state but one.
+ *
+ * DEPARTED shows no clock action on the board. The mock's departed card carries
+ * "Complete KinTale" alone, and that is the right reading of what the board is
+ * for: a visit that is already clocked out is finished from the operator's
+ * point of view, and the run sheet's next move on it is the write-up. Undoing
+ * an arrival at that point is a correction, not a step, and corrections belong
+ * on the detail sheet, which still offers it (a card is one click from there).
+ *
+ * `Complete`, `Complete KinTale` and `View KinTale` are NOT in this list and
+ * never will be: they are not `setVisitLifecycle` actions. Complete goes
+ * through `transitionBookingStatus` (terminal and billable, the server owns
+ * it) and the two KinTale buttons are navigation. `Sessions.tsx` owns those
+ * three.
+ */
+export function cardLifecycleActionsFor(state: SessionState): readonly LifecycleActionDef[] {
+  if (state === 'departed') return [];
+  return lifecycleActionsFor(state);
 }
 
 /**
