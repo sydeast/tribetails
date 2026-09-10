@@ -10,6 +10,7 @@ import {
   gapWarnings,
   minutesToTime,
   normalizePackage,
+  packagesFromPatterns,
   priceDay,
   pricePackage,
   quoteText,
@@ -107,6 +108,29 @@ describe('alignPinnedToDurations (issue #693)', () => {
   });
 });
 
+describe('seeding tiers off a KinCare menu (#728 rebase, issue #694)', () => {
+  it('seeds three tiers with no visit lacking a duration, even off the shipped default pin', () => {
+    // DEFAULT_COVERAGE_RULES pins `d2`, an id from the deleted builder-owned
+    // menu. #728 made the service NAME the duration id, so `d2` resolves in no
+    // real menu. Seeding tiers straight off DEFAULT_COVERAGE_RULES (skipping
+    // alignPinnedToDurations) would carry that dead pin into every tier as a
+    // touchpoint with no matching Duration: a $0 "no duration set" visit.
+    const menu = durationsFromServiceRates({ '30Minute': '25', '60Minute': '45', Overnight: '150' });
+    const rules = alignPinnedToDurations(DEFAULT_COVERAGE_RULES, menu);
+    const patterns = buildDayPatterns(menu, rules.pinnedTimes, rules.maxGapHours, rules.wakeStart, rules.wakeEnd);
+    const packages = packagesFromPatterns(patterns);
+    expect(packages).toHaveLength(3);
+    const knownIds = new Set(menu.map((d) => d.id));
+    for (const p of packages) {
+      expect(p.visits.length).toBeGreaterThan(0);
+      for (const visit of p.visits) {
+        expect(visit.durationId).not.toBe('');
+        expect(knownIds.has(visit.durationId)).toBe(true);
+      }
+    }
+  });
+});
+
 describe('withKind', () => {
   it('defaults visits and migrates the legacy overnight id', () => {
     const [visit, legacy] = withKind([
@@ -118,12 +142,73 @@ describe('withKind', () => {
   });
 });
 
-describe('buildDayPatterns (suggestions)', () => {
-  it('is empty for a reversed/degenerate window', () => {
-    expect(buildDayPatterns(DURATIONS, [], 6, '14:00', '11:00')).toEqual([]);
-    expect(buildDayPatterns(DURATIONS, [], 6, '11:00', '14:00')).toEqual([]); // 3h ≤ 6h gap, no pinned
+describe('buildDayPatterns tiers (issue #694)', () => {
+  /**
+   * The operator's live config, the one commit cd1aaab called degenerate and
+   * made return nothing: an 11:00-14:00 day inside a 6h max gap, no pinned visit.
+   * The Packages screen then offered only "New package".
+   */
+  const DEGENERATE = () => buildDayPatterns(DURATIONS, [], 6, '11:00', '14:00');
+
+  it('builds all three tiers for the config that used to build none', () => {
+    const patterns = DEGENERATE();
+    expect(patterns).toHaveLength(3);
+    // Cheapest first, and the strategy keys are the stable ids.
+    expect(patterns.map((p) => p.id)).toEqual(['cheapest', 'mid', 'richest']);
+    for (const p of patterns) expect(p.touchpoints.length).toBeGreaterThan(0);
   });
 
+  it('uses the operator\'s names: Lean, Balance, Premium', () => {
+    expect(DEGENERATE().map((p) => p.strategyLabel)).toEqual(['Lean', 'Balance', 'Premium']);
+  });
+
+  it('says on the card why a degraded tier is one check-in', () => {
+    for (const p of DEGENERATE()) {
+      expect(p.note).toMatch(/fits inside the 6h max gap/);
+      expect(p.note).toContain('12:30 PM'); // the middle of an 11:00-14:00 day
+      expect(p.touchpoints).toHaveLength(1);
+      // A length that cannot fit the 3h day is never the one it degrades to.
+      expect(DURATIONS.find((d) => d.id === p.touchpoints[0]!.durationId)!.minutes).toBeLessThanOrEqual(180);
+    }
+  });
+
+  it('builds on the shipped day when the window is reversed, and says so', () => {
+    const patterns = buildDayPatterns(DURATIONS, [], 6, '14:00', '11:00');
+    expect(patterns).toHaveLength(3);
+    for (const p of patterns) expect(p.note).toMatch(/7:00 AM to 10:00 PM/);
+  });
+
+  it('carries no note when the tier meets the rules as written', () => {
+    for (const p of buildDayPatterns(DURATIONS, [], 3, '07:00', '22:00')) expect(p.note).toBe('');
+  });
+
+  it('keeps three tiers even when they price the same', () => {
+    // One priced visit type: every strategy picks it, and the three used to
+    // dedupe down to a single card.
+    const one: readonly Duration[] = [{ id: 'v', label: 'Drop-in', minutes: 30, price: 25, kind: 'visit' }];
+    const patterns = buildDayPatterns(one, [], 6, '11:00', '14:00');
+    expect(patterns.map((p) => p.strategyLabel)).toEqual(['Lean', 'Balance', 'Premium']);
+  });
+
+  it('builds nothing when there is no priced visit to sell', () => {
+    const unpriced: readonly Duration[] = [
+      { id: 'v', label: 'Drop-in', minutes: 30, price: 0, kind: 'visit' },
+      { id: 'o', label: 'Overnight', minutes: 720, price: 150, kind: 'overnight' },
+    ];
+    expect(buildDayPatterns(unpriced, [], 6, '07:00', '22:00')).toEqual([]);
+  });
+
+  it('turns the tiers into editable packages carrying the note', () => {
+    const packages = packagesFromPatterns(DEGENERATE());
+    expect(packages.map((p) => p.name)).toEqual(['Lean', 'Balance', 'Premium']);
+    expect(packages[0]!.visits).toHaveLength(1);
+    expect(packages[0]!.note).not.toBe('');
+    // Distinct ids, so the operator can delete or edit one without the others.
+    expect(new Set(packages.map((p) => p.id)).size).toBe(3);
+  });
+});
+
+describe('buildDayPatterns (fill)', () => {
   it('only fills with visit-kind durations, never overnights', () => {
     const patterns = buildDayPatterns(DURATIONS, [], 3, '07:00', '22:00');
     expect(patterns.length).toBeGreaterThan(0);
@@ -223,14 +308,14 @@ describe('gapWarnings', () => {
 });
 
 describe('quoteText', () => {
-  const p = pkg({ name: 'Balanced', visits: [{ id: 'v', time: 12 * 60, durationId: 'd3', label: 'Lunch' }] });
+  const p = pkg({ name: 'Balance', visits: [{ id: 'v', time: 12 * 60, durationId: 'd3', label: 'Lunch' }] });
   const priced = { ...pricePackage(p, { days: 2, nights: 1, durations: DURATIONS, overnightDuration: OVERNIGHT }), pkg: p };
 
   it('renders a client-facing per-day quote', () => {
     const text = quoteText({ clientName: 'Rex', startDate: '2026-07-01', days: 2, priced });
     expect(text).toContain('TribeTails — Coverage Package');
     expect(text).toContain('Prepared for: Rex');
-    expect(text).toContain('Balanced · 2 days');
+    expect(text).toContain('Balance · 2 days');
     expect(text).toContain('Lunch (45-min visit)');
     expect(text).toContain('Total');
   });

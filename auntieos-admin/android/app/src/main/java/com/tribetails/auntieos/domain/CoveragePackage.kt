@@ -80,6 +80,12 @@ data class Package(
     val overnightBufferHours: Double = 2.0,
     val discountLabel: String = "",
     val discountPct: Double = 0.0,
+    /**
+     * One line on the card saying this package's tier could not meet the client's
+     * rules as written and what it did instead. "" on a hand-built package and on
+     * a tier that met them.
+     */
+    val note: String = "",
 )
 
 /** One visit inside a generated suggestion (pinned or gap-filling check-in). */
@@ -92,13 +98,18 @@ data class Touchpoint(
     val price: Double,
 )
 
-/** A suggested day schedule at one price point (a seed for a new package). */
+/** One tier's day schedule at one price point (Lean, Balance or Premium). */
 data class DayPattern(
     val id: String,
     val strategyLabel: String,
     val touchpoints: List<Touchpoint>,
     val dayTotal: Double,
     val signature: String,
+    /**
+     * One line saying the rules could not be met as written and what this tier did
+     * instead. "" when the tier satisfies the wake window and the max-gap rule.
+     */
+    val note: String = "",
 )
 
 /** What an overnight covers on a given day. */
@@ -254,7 +265,8 @@ fun normalizePackage(
     id: String = uid(),
     name: String = "Package",
     visits: List<Visit> = emptyList(),
-): Package = Package(id = id, name = name, visits = visits)
+    note: String = "",
+): Package = Package(id = id, name = name, visits = visits, note = note)
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
@@ -326,16 +338,35 @@ private fun <T> pick(pool: List<T>, strategy: String): T? {
     }
 }
 
+/**
+ * The operator's names for the three tiers (issue #694). The STRATEGY KEYS
+ * ("cheapest" / "mid" / "richest") are what a pattern's `id` carries and are never
+ * renamed; these are only their labels. The mid tier used to read "Balanced" and
+ * the richest one "Generous".
+ */
 private fun strategyLabel(strategy: String): String = when (strategy) {
     "cheapest" -> "Lean"
-    "richest" -> "Generous"
-    else -> "Balanced"
+    "richest" -> "Premium"
+    else -> "Balance"
 }
 
+/** The wake window every tier falls back to when the client's own is unusable. */
+private const val FALLBACK_WAKE_START = 7 * 60
+private const val FALLBACK_WAKE_END = 22 * 60
+
 /**
- * Suggest a starting day: fill any gap wider than the rule with one repeated
- * duration, at three price points. Only a SEED — every visit it produces is
- * editable afterwards. Empty suggestions are dropped (no phantom $0 seed).
+ * Build the three tiers, Lean / Balance / Premium: fill any gap wider than the
+ * client's max-gap rule with one repeated duration, at three price points. Only a
+ * SEED: every visit produced is editable afterwards.
+ *
+ * ALWAYS THREE, WHENEVER THERE IS A PRICED VISIT TO SELL (issue #694). This used
+ * to drop a tier two ways, and the operator's own menu hit both: a wake window no
+ * wider than the max gap with no pinned visit produced no touchpoints at all, and
+ * near-identical tiers deduped into one. So the Packages screen offered nothing
+ * but "New package". Now a tier that cannot satisfy the rules DEGRADES to the
+ * closest thing it can build (one check-in in the middle of the day, in a length
+ * that fits the window) and says so in `note`, and nothing is deduped. The one
+ * precondition left is a priced visit duration. Mirrors the web buildDayPatterns.
  */
 fun buildDayPatterns(
     durations: List<Duration>,
@@ -343,12 +374,19 @@ fun buildDayPatterns(
     maxGapHours: Double,
     wakeStart: String,
     wakeEnd: String,
-    dedupe: Boolean = true,
 ): List<DayPattern> {
     val maxGapMin = maxGapHours * 60.0
-    val wakeStartMin = timeToMinutes(wakeStart)
-    val wakeEndMin = timeToMinutes(wakeEnd)
-    if (wakeStartMin == null || wakeEndMin == null || wakeEndMin <= wakeStartMin) return emptyList()
+    val rawStart = timeToMinutes(wakeStart)
+    val rawEnd = timeToMinutes(wakeEnd)
+    val windowUsable = rawStart != null && rawEnd != null && rawEnd > rawStart
+    val wakeStartMin = if (windowUsable) rawStart!! else FALLBACK_WAKE_START
+    val wakeEndMin = if (windowUsable) rawEnd!! else FALLBACK_WAKE_END
+    // A window that does not end after it starts cannot be honoured, and refusing
+    // to build was the same as showing the operator nothing. Build on the shipped
+    // 7:00 AM to 10:00 PM day and say which day was used.
+    val windowNote =
+        if (windowUsable) ""
+        else "Day window is not set (the end is not after the start), so this uses 7:00 AM to 10:00 PM."
 
     data class PinnedResolved(val pin: PinnedTime, val minutes: Int)
     val pinned = pinnedTimes
@@ -356,7 +394,7 @@ fun buildDayPatterns(
         .sortedBy { it.minutes }
 
     val eligible = durations.filter { it.price > 0 && it.kind == "visit" }
-    if (eligible.isEmpty() && pinned.isEmpty()) return emptyList()
+    if (eligible.isEmpty()) return emptyList()
 
     val anchors = (listOf(wakeStartMin) + pinned.map { it.minutes } + listOf(wakeEndMin)).sorted()
 
@@ -408,17 +446,45 @@ fun buildDayPatterns(
             }
         }
 
+        // The rules asked for nobody on site: the day is no wider than the max gap
+        // and the client pinned no visit. Returning nothing here is what left the
+        // Packages screen with no tiers at all. Degrade instead: one check-in in
+        // the middle of the day, in the longest length this strategy would pick
+        // that still fits inside the window, and say so on the card.
+        var note = windowNote
+        if (touchpoints.isEmpty()) {
+            val windowSize = (wakeEndMin - wakeStartMin).toDouble()
+            val fitsWindow = sortedByPrice.filter { it.minutes <= windowSize }
+            val only = pick(if (fitsWindow.isNotEmpty()) fitsWindow else listOf(sortedByPrice.first()), strategy)!!
+            val at = ((wakeStartMin + wakeEndMin) / 2.0).roundToInt().toDouble()
+            touchpoints.add(Touchpoint(false, "Check-in", at, only.id, only.label, only.price))
+            val gapNote = "The ${formatGap(windowSize.roundToInt())} day fits inside the ${numLabel(maxGapHours)}h max gap, " +
+                "so this tier is one check-in at ${minutesToTime(at)}."
+            note = if (note.isEmpty()) gapNote else "$note $gapNote"
+        }
         touchpoints.sortBy { it.time }
-        if (touchpoints.isEmpty()) continue
+
         val dayTotal = touchpoints.sumOf { it.price }
         val signature = touchpoints.joinToString("|") { "${it.durationId}@${it.time.roundToInt()}" }
-        if (dedupe && patterns.any { it.signature == signature }) continue
-
-        patterns.add(DayPattern(strategy, strategyLabel(strategy), touchpoints.toList(), dayTotal, signature))
+        // Deliberately NOT deduped: two tiers that price the same are still two
+        // cards the operator renames and edits apart, and collapsing them is half
+        // of why the three tiers stopped appearing.
+        patterns.add(DayPattern(strategy, strategyLabel(strategy), touchpoints.toList(), dayTotal, signature, note))
     }
 
     return patterns.sortedBy { it.dayTotal }
 }
+
+/** "6" for 6.0, "5.5" for 5.5: the max gap as the operator typed it. */
+private fun numLabel(v: Double): String = if (v == floor(v)) v.toLong().toString() else v.toString()
+
+/**
+ * The three tiers as ready-to-edit packages, which is how the operator asked for
+ * them: auto-created for every quote alongside the custom package, not as seed
+ * buttons they have to find and press (issue #694).
+ */
+fun packagesFromPatterns(patterns: List<DayPattern>): List<Package> =
+    patterns.map { p -> normalizePackage(id = uid(), name = p.strategyLabel, visits = visitsFromPattern(p), note = p.note) }
 
 /** Seed a package's visit template from a suggestion. */
 fun visitsFromPattern(pattern: DayPattern): List<Visit> =

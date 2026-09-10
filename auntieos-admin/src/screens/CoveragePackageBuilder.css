@@ -240,6 +240,15 @@
   flex: 1;
   font-weight: 600;
 }
+/* One line on a tier card saying it could not meet this client's rules as
+   written and what it built instead (issue #694). */
+.cpb__pkgNote {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  border-left: var(--border-hairline) solid var(--color-primary);
+  padding-left: var(--space-2);
+  margin: var(--space-2) 0 0;
+}
 .cpb__pkgSectionLabel {
   font-size: var(--type-label-sm-size);
   letter-spacing: var(--type-label-sm-tracking);
