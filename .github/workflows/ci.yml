@@ -495,6 +495,10 @@ jobs:
     # both Cypress jobs were the ONLY ones refused with "recent account
     # payments have failed or your spending limit needs to be increased",
     # while everything else ran on the self-hosted Macs and passed.
+    # Advisory, not a gate. A red Cypress job stays visible on the run and the
+    # PR, but it does not fail the workflow. Operator ruling 2026-09-09: Cypress
+    # is back on after the 16.0.0 bump, as a signal rather than a blocker.
+    continue-on-error: true
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # The deploy guard refuses a job with no cap: without this it inherits
     # GitHub's 360 minutes, and a wedged emulator would bill six hours before
@@ -562,6 +566,10 @@ jobs:
     # both Cypress jobs were the ONLY ones refused with "recent account
     # payments have failed or your spending limit needs to be increased",
     # while everything else ran on the self-hosted Macs and passed.
+    # Advisory, not a gate. A red Cypress job stays visible on the run and the
+    # PR, but it does not fail the workflow. Operator ruling 2026-09-09: Cypress
+    # is back on after the 16.0.0 bump, as a signal rather than a blocker.
+    continue-on-error: true
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # The deploy guard refuses a job with no cap: without this it inherits
     # GitHub's 360 minutes, and a wedged emulator would bill six hours before
