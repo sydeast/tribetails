@@ -43,12 +43,11 @@ function any(...vals: string[]): boolean {
  * Kin (pet) detail view: the read-only screen Directory's onSelectKin opens
  * (Directory shipped list-only). Reads the FULL `kin/{id}` doc via `getKin` (a
  * one-shot getDoc; the list stream carries list fields only). Organized into
- * fielded sections (Basics, Behavior & care, Feeding, Health, Owner contact,
- * Notes); an all-blank section is omitted. A pet's tags render as pills next
- * to its name in the Kin box, not a separate panel; a REACTIVE pet gets a
- * small alert-toned marker attached under the Kin box, not a full-width
- * banner: a handle-with-care signal, but not one that needs to interrupt the
- * page.
+ * fielded sections (Basics, Behavior & care, Feeding, Health, Notes); an
+ * all-blank section is omitted. A pet's tags render as pills next to its
+ * name in the Kin box, not a separate panel; a REACTIVE pet gets a small
+ * alert-toned marker attached under the Kin box, not a full-width banner: a
+ * handle-with-care signal, but not one that needs to interrupt the page.
  */
 export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
@@ -236,15 +235,6 @@ export function KinView({ kinId, kinName, household, onBack }: KinViewProps) {
                     <Fact label="Vaccinations" value={k.vaccinations} />
                     <Fact label="Medication / health notes" value={k.medicationHealthNotes} />
                     <Fact label="Vet info" value={k.vetInfo} />
-                  </dl>
-                </DenPanel>
-              )}
-
-              {any(k.ownerEmail, k.ownerPhone) && (
-                <DenPanel title="Owner contact">
-                  <dl className="kview__facts">
-                    <Fact label="Email" value={k.ownerEmail} />
-                    <Fact label="Phone" value={k.ownerPhone} mono />
                   </dl>
                 </DenPanel>
               )}

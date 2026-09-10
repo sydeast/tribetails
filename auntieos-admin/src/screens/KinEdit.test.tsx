@@ -108,6 +108,27 @@ describe('KinEdit', () => {
     await userEvent.click(screen.getAllByRole('button', { name: /^cancel$/i })[0]!);
     expect(onCancel).toHaveBeenCalled();
   });
+
+  /**
+   * #687: the kinfolk IS the owner, so a second contact record on the kin doc
+   * is redundant and can drift. Dropped from the editor; the stored
+   * ownerEmail/ownerPhone values are left untouched and unread on both
+   * platforms (see api/kinView.ts and the Android Kin model).
+   */
+  it('has no Owner contact section and never sends ownerEmail/ownerPhone in the save patch', async () => {
+    getKin.mockResolvedValue(kin());
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    expect(screen.queryByText('Owner contact')).not.toBeInTheDocument();
+    expect(screen.queryByText('Owner email')).not.toBeInTheDocument();
+    expect(screen.queryByText('Owner phone')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    const [, patch] = updateKin.mock.calls[0]!;
+    expect('ownerEmail' in patch).toBe(false);
+    expect('ownerPhone' in patch).toBe(false);
+  });
 });
 /**
  * Fix-backlog 5.4 (AuntieOS_Fix_Backlog_2026-06-02.md:90): "Remove vet info box

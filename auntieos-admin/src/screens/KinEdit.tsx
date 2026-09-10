@@ -77,17 +77,13 @@ const HEALTH_FIELDS = [
   ['vaccinations', 'Vaccinations'],
   ['medicationHealthNotes', 'Medication / health notes'],
 ] as const;
-const OWNER_FIELDS = [
-  ['ownerEmail', 'Owner email'],
-  ['ownerPhone', 'Owner phone'],
-] as const;
 
 type FormState = Pick<
   KinDetail,
   | 'name' | 'species' | 'breed' | 'age' | 'sex' | 'weight' | 'colorMarkings'
   | 'spayedNeutered' | 'reactive' | 'staysAs' | 'routine' | 'trainingCommands'
   | 'feedingBrand' | 'vaccinations' | 'medicationHealthNotes'
-  | 'officeNotes' | 'ownerEmail' | 'ownerPhone' | 'status'
+  | 'officeNotes' | 'status'
 >;
 
 /**
@@ -186,8 +182,6 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         // `updateDoc`, a merge, so omitting the key preserves the stored value
         // for KinView's read-only row instead of blanking it.
         officeNotes: form.officeNotes,
-        ownerEmail: form.ownerEmail,
-        ownerPhone: form.ownerPhone,
       };
       await updateKin(kinId, patch);
       setSaving(false);
@@ -331,21 +325,6 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                         value={form[key]}
                         onChange={(e) => set(key, e.target.value)}
                         rows={2}
-                      />
-                    </label>
-                  ))}
-                </fieldset>
-              </DenPanel>
-
-              <DenPanel title="Owner contact">
-                <fieldset className="kedit__grid" disabled={busy}>
-                  {OWNER_FIELDS.map(([key, label]) => (
-                    <label key={key} className="kedit__field">
-                      <span className="kedit__label">{label}</span>
-                      <input
-                        className="kedit__input"
-                        value={form[key]}
-                        onChange={(e) => set(key, e.target.value)}
                       />
                     </label>
                   ))}

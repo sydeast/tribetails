@@ -375,8 +375,6 @@ data class Kin(
     var vetInfo: String = "",
     var checklist: String = "",
     var reactive: Boolean = false,
-    var ownerEmail: String = "",
-    var ownerPhone: String = "",
     var officeNotes: String = "",
     // Structured per-kin values for dynamic KIN form_schemas (appliesTo=KIN), e.g. the
     // precare checklist (spec 06 item 5 / 1C). Keyed by FormSchemaField.key. Supersedes

@@ -113,6 +113,19 @@ describe('KinView', () => {
     expect(screen.queryByText('Kin profile.')).toBeNull();
   });
 
+  it('renders no Owner contact panel, even when the stored doc still carries the fields', async () => {
+    // mergeKinDetail no longer reads ownerEmail/ownerPhone at all; a raw doc
+    // that still has them (an untouched legacy value) must not surface either.
+    getKin.mockResolvedValue(
+      mergeKinDetail('p1', { name: 'Willow', ownerEmail: 'a@b.com', ownerPhone: '5551234567' }),
+    );
+    render(<KinView kinId="p1" kinName="Willow" onBack={vi.fn()} />);
+    await screen.findByText('Basics');
+    expect(screen.queryByText('Owner contact')).toBeNull();
+    expect(screen.queryByText('a@b.com')).toBeNull();
+    expect(screen.queryByText('5551234567')).toBeNull();
+  });
+
   it('calls onBack from the Back control', async () => {
     getKin.mockResolvedValue(kin());
     const onBack = vi.fn();

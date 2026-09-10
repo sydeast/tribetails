@@ -48,15 +48,13 @@ export interface KinDetail {
    * than reading it as blank.
    */
   checklist: string;
-  ownerEmail: string;
-  ownerPhone: string;
 }
 
 const EMPTY: Omit<KinDetail, '_id'> = {
   kinfolkId: '', name: '', species: 'Dog', breed: '', age: '', sex: '', weight: '', status: 'active',
   profilePictureUrl: '', colorMarkings: '', spayedNeutered: false, reactive: false,
   staysAs: '', routine: '', trainingCommands: '', feedingBrand: '', vaccinations: '',
-  medicationHealthNotes: '', vetInfo: '', officeNotes: '', tags: [], checklist: '', ownerEmail: '', ownerPhone: '',
+  medicationHealthNotes: '', vetInfo: '', officeNotes: '', tags: [], checklist: '',
 };
 
 /** Defensive field-by-field merge (never `undefined`, never fabricates a value). */
@@ -91,8 +89,6 @@ export function mergeKinDetail(id: string, raw: Record<string, unknown> | undefi
     vetInfo: s(r.vetInfo, EMPTY.vetInfo),
     officeNotes: s(r.officeNotes, EMPTY.officeNotes),
     checklist: s(r.checklist, EMPTY.checklist),
-    ownerEmail: s(r.ownerEmail, EMPTY.ownerEmail),
-    ownerPhone: s(r.ownerPhone, EMPTY.ownerPhone),
   };
 }
 

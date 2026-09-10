@@ -75,8 +75,6 @@ class DirectorySaveTest {
         breed = "Corgi",
         status = "archived",
         medicationHealthNotes = "half a tablet at 8am",
-        ownerEmail = "ada@example.com",
-        ownerPhone = "5551234567",
         familyKinPath = "families/kf1/kin/k1",
         tags = listOf("senior"),
     )
@@ -292,9 +290,13 @@ class DirectorySaveTest {
      * the model precisely so android saves would stop wiping React's pet tags -
      * but the builder never populated it, so every save still sent null. It also
      * hardcoded `status = "active"`, which un-archives an archived pet.
+     *
+     * `ownerEmail` / `ownerPhone` used to be on this list too: #687 retired both
+     * from `Kin` entirely (no editor anywhere ever wrote them), so there is no
+     * longer a field for a save to wipe or preserve.
      */
     @Test
-    fun `a pet save never wipes tags, photos, owner contact or the archived status`() = runTest(testDispatcher) {
+    fun `a pet save never wipes tags, photos, or the archived status`() = runTest(testDispatcher) {
         val changes = captureKinChanges()
         val vm = kinEditor()
 
@@ -302,7 +304,7 @@ class DirectorySaveTest {
         vm.saveKinChanges()
         advanceUntilIdle()
 
-        for (untouched in listOf("tags", "photos", "ownerEmail", "ownerPhone", "status")) {
+        for (untouched in listOf("tags", "photos", "status")) {
             assertFalse(
                 "$untouched was not edited and must not be written: ${changes.captured}",
                 changes.captured.containsKey(untouched),

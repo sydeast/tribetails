@@ -202,8 +202,6 @@ export interface KinEditPatch {
   medicationHealthNotes?: string;
   vetInfo?: string;
   officeNotes?: string;
-  ownerEmail?: string;
-  ownerPhone?: string;
 }
 
 export async function updateKin(kinId: string, patch: KinEditPatch): Promise<void> {
