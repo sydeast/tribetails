@@ -27,9 +27,10 @@ class TemplateCardFieldsTest {
     private fun tpl(
         description: String? = null,
         tags: List<String> = emptyList(),
+        subject: String = "Your booking is confirmed",
     ) = TemplateRepository.EmailTemplate(
         templateId = "booking.confirmed",
-        subject = "Your booking is confirmed",
+        subject = subject,
         body = "Hi {{kinfolk_name}}",
         html = null,
         title = "Booking Confirmed",
@@ -91,5 +92,31 @@ class TemplateCardFieldsTest {
     @Test
     fun tags_noneIsAnEmptyList_notAPlaceholder() {
         assertEquals(emptyList<String>(), templateCardTags(tpl(tags = emptyList())))
+    }
+
+    // ── subject line ───────────────────────────────────────────────────────
+
+    /** Mock l.256 draws "Subject: ..." on the card, and #716 marked its absence. */
+    @Test
+    fun subject_carriesTheMocksLabel() {
+        assertEquals("Subject: Your booking is confirmed", templateCardSubjectLine(tpl()))
+    }
+
+    @Test
+    fun subject_isTrimmedBeforeItIsLabelled() {
+        assertEquals(
+            "Subject: Your booking is confirmed",
+            templateCardSubjectLine(tpl(subject = "  Your booking is confirmed  ")),
+        )
+    }
+
+    /**
+     * "Subject: No subject set" would label a sentence that is already about the
+     * missing subject, so the fallback stays bare. Same rule as the React card.
+     */
+    @Test
+    fun subject_missingKeepsTheBareFallback() {
+        assertEquals("No subject set", templateCardSubjectLine(tpl(subject = "")))
+        assertEquals("No subject set", templateCardSubjectLine(tpl(subject = "   ")))
     }
 }

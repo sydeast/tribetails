@@ -4,16 +4,16 @@ import {
   categoryCount,
   categoryMatchesFilter,
   filterTemplates,
-  isUntagged,
   templateEmptyMessage,
+  TEMPLATE_BANK_EMPTY_COPY,
   previewTags,
   templateCategoryDisplay,
   templateRowTitle,
   templateSubjectPreview,
 } from '../lib/templateFormat';
-import { type Async, asyncScalar } from '../lib/async';
+import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { Banner } from '../components/Banner';
@@ -28,16 +28,20 @@ import './Templates.css';
  * I8: the bank list loads a page at a time (server-side limit + doc-id cursor)
  * with a "Load more" control, instead of fetching the entire `emailTemplates`
  * collection up front. 50 is generous for a first screen and small enough that
- * a large bank is not one blocking read. The stat strip + category chip counts
- * derive from what is LOADED so far (they grow as pages load) rather than
- * claiming a full-collection total the paged read never fetched.
+ * a large bank is not one blocking read. The category chip counts derive from
+ * what is LOADED so far (they grow as pages load) rather than claiming a
+ * full-collection total the paged read never fetched.
  */
 const TEMPLATE_PAGE_SIZE = 50;
 
 /**
- * Admin Template Bank, ported from `TemplateBankScreen.kt#TemplateBankBody`
- * (list) plus `TemplateEditorOverlay` (create/edit), now that the editor
- * exists: see TemplateEditor.tsx.
+ * Admin Template Bank. The PAGE FRAME is the 2026-05-27 mock
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html`), per issue #716: a
+ * heading with one primary action, one controls row (category chips left,
+ * search right), and the card grid directly under it. What the list itself
+ * shows is still ported from `TemplateBankScreen.kt#TemplateBankBody` plus
+ * `TemplateEditorOverlay` (create/edit), now that the editor exists: see
+ * TemplateEditor.tsx.
  *
  *  - Reads via TWO one-shot admin callables, `listTemplates` (the
  *    `emailTemplates` collection) and `listCategories` (the hybrid managed ∪
@@ -49,10 +53,14 @@ const TEMPLATE_PAGE_SIZE = 50;
  *    `TemplateBankBody`'s `filterOptions` FlowRow, using `useState` tabs
  *    (the `Invoices.tsx`/`KinTales.tsx` `FILTERS`/`FilterKey` convention)
  *    rather than Compose chips.
- *  - The stat strip (Templates / Categories / Untagged) matches
- *    `TemplateBankBody`'s three `StatCard`s exactly, including the
- *    "Untagged" card counting blank TAGS, not a blank category (see
- *    `lib/templateFormat.ts#isUntagged`'s doc comment).
+ *  - There is NO stat strip. `TemplateBankBody` draws three `StatCard`s
+ *    (Templates / Categories / Untagged) and this port copied them; the mock
+ *    draws none, and #716 settled that the mock owns the page frame. The
+ *    counts the strip carried are still on screen: the "All" chip counts the
+ *    loaded templates, and the other chips count their own category.
+ *  - Manage assignments, Import from repo and New binding live behind the
+ *    heading's overflow menu. The mock draws one header action, and these
+ *    three are real flows the operator uses, so they move rather than go.
  *  - The editor is an OVERLAY, not a route: this screen owns opening it
  *    (a row click, or the header's "New template" action), the same way the
  *    wasm's `TemplateEditorOverlay` sits on top of `TemplateBankScreen`
@@ -100,6 +108,112 @@ function PlusGlyph() {
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
     </svg>
+  );
+}
+
+function DotsGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.7" />
+      <circle cx="12" cy="12" r="1.7" />
+      <circle cx="19" cy="12" r="1.7" />
+    </svg>
+  );
+}
+
+interface OverflowItem {
+  label: string;
+  onSelect: () => void;
+}
+
+/**
+ * The heading's secondary actions, behind one trigger.
+ *
+ * The mock draws a single "＋ New template" action on this header
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.246), and #716 is the
+ * operator saying the live four-button row is not that. Manage assignments,
+ * Import from repo and New binding are all real flows an operator uses, so
+ * they move behind this menu instead of being deleted.
+ *
+ * Written here rather than in `components/`: this is the first menu in the
+ * admin, and one caller is not yet a shared component. `GhostButton` is not
+ * reused for the trigger because its shell forwards no `aria-haspopup` /
+ * `aria-expanded`, and a menu trigger that announces neither is a menu a
+ * screen reader cannot see coming.
+ */
+function HeaderOverflowMenu({ items }: { items: readonly OverflowItem[] }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // A pointer press anywhere else on the page dismisses the menu, the way every
+  // other menu the operator uses behaves. Scoped to the wrapper, so a press on
+  // the trigger or on an item is left to their own handlers.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (wrapRef.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open]);
+
+  // Focus lands on the first item when the menu opens, so the keyboard path is
+  // the same one the mouse takes.
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  }, [open]);
+
+  function close(returnFocus: boolean) {
+    setOpen(false);
+    if (returnFocus) triggerRef.current?.focus();
+  }
+
+  return (
+    <div
+      className="templates__overflow"
+      ref={wrapRef}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          close(true);
+        }
+      }}
+    >
+      <button
+        type="button"
+        ref={triggerRef}
+        className="auntie-btn auntie-btn--ghost templates__overflow-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="auntie-btn__label">More actions</span>
+        <DotsGlyph />
+      </button>
+
+      {open && (
+        <div className="templates__overflow-menu" role="menu" aria-label="More actions" ref={menuRef}>
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className="templates__overflow-item"
+              onClick={() => {
+                close(false);
+                item.onSelect();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -279,10 +393,6 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
     loadCategories();
   }
 
-  const templateCount = asyncScalar(templates, (data) => data.length);
-  const categoryCountStat = asyncScalar(categories, (data) => data.length);
-  const untaggedCount = asyncScalar(templates, (data) => data.filter(isUntagged).length);
-
   const categoryList = categories.status === 'ready' ? categories.data : [];
 
   // Roving-tabindex keyboard nav for the category tablist below (Left/Right,
@@ -320,9 +430,13 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         subtitle="Browse the email templates SendGrid delivers."
         trailing={
           <>
-            <GhostButton label="Manage assignments" onClick={() => setView('assignments')} />
-            <GhostButton label="Import from repo" onClick={() => setView('import')} />
-            <GhostButton label="New binding" onClick={() => setBindingOpen(true)} />
+            <HeaderOverflowMenu
+              items={[
+                { label: 'Manage assignments', onSelect: () => setView('assignments') },
+                { label: 'Import from repo', onSelect: () => setView('import') },
+                { label: 'New binding', onSelect: () => setBindingOpen(true) },
+              ]}
+            />
             <PrimaryButton label="New template" onClick={handleNew} leading={<PlusGlyph />} />
           </>
         }
@@ -334,39 +448,31 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         </Banner>
       )}
 
-      <div className="templates__summary">
-        <StatCard label="Templates" value={templateCount} trend="loaded" tone="orange" feature />
-        <StatCard label="Categories" value={categoryCountStat} trend="in use" tone="purple" />
-        <StatCard label="Untagged" value={untaggedCount} trend="no tags yet" tone="teal" />
-      </div>
-
-      <DenPanel
-        title="Templates"
-        /* "card", not "row": this list has been an `EntityCardGrid` since the
-           list-shape rule landed, and the instruction has to name the control
-           the operator can actually click. */
-        subtitle="Click a card to open it. Filter by category, or search by title or key."
+      {/* No panel and no second title: the mock puts the controls row and the
+          grid straight on the page under the heading (#716). */}
+      <AsyncRegion
+        state={templates}
+        what="templates"
+        isEmpty={(rows) => rows.length === 0}
+        loading={<p className="templates__hint">Loading templates…</p>}
+        empty={<EmptyHint>{TEMPLATE_BANK_EMPTY_COPY}</EmptyHint>}
       >
-        <AsyncRegion
-          state={templates}
-          what="templates"
-          isEmpty={(rows) => rows.length === 0}
-          loading={<p className="templates__hint">Loading templates…</p>}
-          empty={<EmptyHint>No templates yet.</EmptyHint>}
-        >
-          {(rows) => {
-            const byCategory =
-              filter === ALL_FILTER ? rows : rows.filter((r) => categoryMatchesFilter(r.category, filter));
-            const visible = filterTemplates(byCategory, query);
+        {(rows) => {
+          const byCategory =
+            filter === ALL_FILTER ? rows : rows.filter((r) => categoryMatchesFilter(r.category, filter));
+          const visible = filterTemplates(byCategory, query);
 
-            return (
-              <>
-                {categories.status === 'error' && (
-                  <p className="templates__categories-error" role="alert">
-                    Categories unavailable: {categories.message}
-                  </p>
-                )}
+          return (
+            <>
+              {categories.status === 'error' && (
+                <p className="templates__categories-error" role="alert">
+                  Categories unavailable: {categories.message}
+                </p>
+              )}
 
+              {/* One row, chips left and search right, the way the mock draws
+                  its `.controls` (#716). */}
+              <div className="templates__controls">
                 <div className="templates__tabs" role="tablist" aria-label="Filter templates by category">
                   <button
                     type="button"
@@ -413,51 +519,53 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                     Ctrl K
                   </kbd>
                 </div>
+              </div>
 
-                {visible.length === 0 ? (
-                  <EmptyHint>
-                    {/*
-                      Three facts, three sentences: an empty bank, an empty
-                      category, and a search that matched nothing. The last one
-                      also names the bound, because this list is paged and the
-                      search only ever sees `rows` (see templateEmptyMessage).
-                    */}
-                    {templateEmptyMessage({
-                      loaded: rows.length,
-                      category: filter,
-                      query,
-                      hasMore: nextCursor !== null,
-                    })}
-                  </EmptyHint>
-                ) : (
-                  <EntityCardGrid label="Templates" minCardWidth="310px">
-                    {visible.map((tpl) => (
-                      <TemplateCard key={tpl.templateId} tpl={tpl} onSelect={handleSelect} />
-                    ))}
-                  </EntityCardGrid>
+              {visible.length === 0 ? (
+                <EmptyHint>
+                  {/*
+                    An empty category gets the mock's own copy. A search that
+                    matched nothing does not: the mock draws no search box
+                    result state, and this list is paged, so the message has to
+                    say what was actually searched (see templateEmptyMessage).
+                  */}
+                  {templateEmptyMessage({
+                    loaded: rows.length,
+                    category: filter,
+                    query,
+                    hasMore: nextCursor !== null,
+                  })}
+                </EmptyHint>
+              ) : (
+                <EntityCardGrid label="Templates" minCardWidth="310px">
+                  {visible.map((tpl) => (
+                    <TemplateCard key={tpl.templateId} tpl={tpl} onSelect={handleSelect} />
+                  ))}
+                </EntityCardGrid>
+              )}
+
+              {loadMoreError && (
+                <p className="templates__categories-error" role="alert">
+                  {loadMoreError}
+                </p>
+              )}
+
+              {/* Not in the mock, which draws a fixed six-card sample: this is
+                  the I8 paging control, and the bank is read a page at a time. */}
+              <div className="templates__list-actions">
+                {nextCursor !== null && (
+                  <GhostButton
+                    label={loadingMore ? 'Loading…' : 'Load more'}
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                  />
                 )}
-
-                {loadMoreError && (
-                  <p className="templates__categories-error" role="alert">
-                    {loadMoreError}
-                  </p>
-                )}
-
-                <div className="templates__list-actions">
-                  {nextCursor !== null && (
-                    <GhostButton
-                      label={loadingMore ? 'Loading…' : 'Load more'}
-                      onClick={loadMore}
-                      disabled={loadingMore}
-                    />
-                  )}
-                  <GhostButton label="Reload" onClick={load} />
-                </div>
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
+                <GhostButton label="Reload" onClick={load} />
+              </div>
+            </>
+          );
+        }}
+      </AsyncRegion>
 
       {editor ? (
         <TemplateEditor
@@ -501,18 +609,30 @@ interface TemplateCardProps {
  * cards ("Per-card category pill", "Card tap → readable view", "drag a
  * template card onto a category bucket"). The row was the accident.
  *
- * The FIELDS are unchanged, and so is every behavior: activating the card
- * still opens the editor overlay. The mock's card footer carries an "Edit"
- * ghost button next to a card-tap read-only viewer; neither is built on this
- * console (`TemplateViewOverlay` is named as not-yet-ported in the screen doc
- * above), so this card grows neither, rather than growing a button that does
- * what tapping the card already does.
+ * #716 settles the footer. This card used to end at the description and tags,
+ * on the reasoning that the mock's "Edit" ghost button sits next to a card-tap
+ * read-only viewer this console has not built, so a footer button would only
+ * repeat the card tap. The operator marked the missing footer anyway: the mock
+ * draws the button, "Edit" is the word for what opening this card does, and a
+ * card whose only affordance is the whole card reads as decoration. So the
+ * footer button ships, and both it and the card body open the editor. When
+ * `TemplateViewOverlay` is ported, the card tap becomes the viewer and this
+ * button keeps going straight to the editor.
+ *
+ * Category pill, description and tags render only when the loaded template
+ * carries them. The 50 imported templates carry none of the three, so those
+ * cards draw title, key and subject until the DATA has them (an importer job,
+ * not a rendering one).
  */
 function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
   const category = templateCategoryDisplay(tpl.category);
   const tags = previewTags(tpl.tags, 4);
   const description = tpl.description?.trim() ?? '';
   const subject = templateSubjectPreview(tpl);
+  // The prefix labels a real subject. `templateSubjectPreview` also answers
+  // "No subject set", and "Subject: No subject set" labels a sentence that is
+  // already about the missing subject.
+  const hasSubject = tpl.subject.trim() !== '';
 
   // The mock clamps the subject to one line and the description to two
   // (ll.125, 127). Nothing is unreachable behind the clamp: the full string is
@@ -527,6 +647,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
       </span>
 
       <span className="templates__card-subject" title={subject}>
+        {hasSubject ? <span className="templates__card-subject-label">Subject:</span> : null}{' '}
         {subject}
       </span>
 
@@ -550,9 +671,15 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
 
   return (
     <li className="templates__card">
+      {/* Two sibling controls, never a button inside a button: the card body
+          fills the card and stays the click target, and the footer button is
+          its own control with its own accessible name. */}
       <button type="button" className="templates__card-main" onClick={() => onSelect(tpl.templateId)}>
         {body}
       </button>
+      <div className="templates__card-foot">
+        <GhostButton label="Edit" onClick={() => onSelect(tpl.templateId)} />
+      </div>
     </li>
   );
 }

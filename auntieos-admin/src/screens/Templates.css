@@ -6,14 +6,52 @@
  * colours, radii, durations, or px spacing.
  */
 
-.templates__summary {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-5);
+/* ── heading overflow menu ───────────────────────────────────────────────── */
+
+/* The mock draws one header action (#716). The three secondary flows live
+   behind this trigger; the popup follows the BreedField suggestion-list
+   convention (components/BreedField.css) rather than inventing a second. */
+.templates__overflow {
+  position: relative;
 }
-.templates__summary > * {
-  flex: 1 1 12rem;
+
+.templates__overflow-trigger {
+  gap: var(--space-2);
+}
+
+.templates__overflow-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 12rem;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+}
+
+.templates__overflow-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.templates__overflow-item:hover,
+.templates__overflow-item:focus-visible {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .templates__hint {
@@ -27,13 +65,25 @@
   margin: 0 0 var(--space-3);
 }
 
+/* ── controls row (chips left, search right) ─────────────────────────────── */
+
+/* The mock's `.controls` (auntieos-template-bank-2026-05-27.html l.94): one
+   row carrying both, with the search pushed to the right edge. It used to be
+   two stacked rows inside a panel, which is half of what #716 marked. */
+.templates__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
 /* ── filter tabs (All + every real category, each with a live count) ────── */
 
 .templates__tabs {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin-bottom: var(--space-4);
 }
 
 .templates__tab {
@@ -75,11 +125,25 @@
 /* ── search ──────────────────────────────────────────────────────────────── */
 
 .templates__search {
-  margin-bottom: var(--space-3);
+  /* Right edge of the controls row, the way the mock pins its search box
+     (`.search { margin-left: auto }`, l.107). */
+  margin-left: auto;
+  flex: 0 1 20rem;
+  min-width: 14rem;
   /* Anchors the Ctrl-K legend inside the box, the way the mock draws it. */
   position: relative;
   display: flex;
   align-items: center;
+}
+
+/* The mock's own narrow-screen fallback (l.203): below this the chips already
+   fill the row, so the box takes the next line at full width instead of
+   squeezing in beside them. */
+@media (max-width: 780px) {
+  .templates__search {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
 }
 
 .templates__search-input {
@@ -130,6 +194,10 @@
 
 .templates__card {
   display: flex;
+  /* Column, so the footer can sit on the bottom edge under a body of any
+     height: the mock's `.tcard` is a column with `.cardfoot { margin-top:
+     auto }` (ll.112, 132). */
+  flex-direction: column;
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card-lg);
   background: var(--color-surface-glass);
@@ -164,6 +232,17 @@
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
   border-radius: var(--radius-card);
+}
+
+/* The mock's `.cardfoot` (l.132): a hairline rule, then the Edit button on the
+   right edge. */
+.templates__card-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
 }
 
 .templates__card-name {
@@ -202,6 +281,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The mock prefixes this line with "Subject:" (l.256). Dimmer than the subject
+   itself, so the label reads as the label and the string reads as the value. */
+.templates__card-subject-label {
+  color: var(--color-text-faint);
 }
 
 /* Mock l.127: up to two lines, ellipsis. Same reachability note as above. */

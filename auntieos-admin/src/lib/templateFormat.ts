@@ -75,6 +75,18 @@ export function filterTemplates(rows: TemplateSummary[], query: string): Templat
 }
 
 /**
+ * The mock's own empty-state line, verbatim
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.283), adopted under
+ * #716. It covers both settled no-search cases: "All" is one of the mock's
+ * category chips, so an empty bank and an empty category read the same
+ * sentence there, and "New" is the heading's "New template" action.
+ *
+ * A constant because the screen needs the same words in two places: here, and
+ * in the AsyncRegion empty slot for a bank with nothing in it at all.
+ */
+export const TEMPLATE_BANK_EMPTY_COPY = 'No templates in this category yet. Click New to create one.';
+
+/**
  * What to say when the bank list has nothing to render, given WHY.
  *
  * The screen used to collapse three different facts into two strings ("No
@@ -107,17 +119,19 @@ export function templateEmptyMessage({
   /** True while `nextCursor !== null`, i.e. the bank has unread pages. */
   hasMore: boolean;
 }): string {
-  if (loaded === 0) return 'No templates yet.';
+  if (loaded === 0) return TEMPLATE_BANK_EMPTY_COPY;
 
   const where = category === null ? '' : ` in ${category}`;
   const plural = loaded === 1 ? '' : 's';
   const q = query.trim();
 
   if (q === '') {
-    // A category with nothing in it. Bounded-honest only when pages remain.
+    // A category with nothing in it. The mock's copy is the settled case; with
+    // pages still unread, "create one" would be advice given over a list this
+    // screen has not finished reading, so that case keeps its own bounded line.
     return hasMore
       ? `No templates${where} among the ${loaded} loaded so far. Load more to check the rest.`
-      : `No templates${where}.`;
+      : TEMPLATE_BANK_EMPTY_COPY;
   }
 
   const scope = hasMore

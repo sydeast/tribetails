@@ -65,7 +65,6 @@ import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.AuntieSearchField
-import com.tribetails.auntieos.ui.components.StatCard
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
@@ -116,6 +115,18 @@ internal fun templateCardTags(
     tpl: TemplateRepository.EmailTemplate,
     max: Int = 4,
 ): List<String> = tpl.tags.take(max)
+
+/**
+ * The subject line the card shows, carrying the mock's "Subject:" prefix
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.256), per #716.
+ *
+ * The prefix labels a real subject. A template with no subject keeps the bare
+ * "No subject set" fallback, because "Subject: No subject set" labels a
+ * sentence that is already about the missing subject. Same rule as the React
+ * card.
+ */
+internal fun templateCardSubjectLine(tpl: TemplateRepository.EmailTemplate): String =
+    tpl.subject.trim().takeIf { it.isNotEmpty() }?.let { "Subject: $it" } ?: "No subject set"
 
 /**
  * The label for one category filter chip.
@@ -178,10 +189,16 @@ internal fun templateBankEmptyMessage(
  * Den-redesign Template Bank (admin email-template library), ported from the web
  * counterpart at web/.../admin/TemplateBankScreen.kt.
  *
- * Mono kicker + serif [DenScreenHeading], a stat strip, brand-tone filter chips,
- * and a [DenPanel] list of templates rendered as [AuntieEntityRow] lines with the
- * category / key shown as an [AuntieStatusPill]. A row tap opens a read-only
- * viewer; Edit opens the editor; New template opens the editor in create mode.
+ * Mono kicker + serif [DenScreenHeading] with one primary action, brand-tone
+ * filter chips, and a [DenPanel] list of templates rendered as [AuntieEntityRow]
+ * lines with the category / key shown as an [AuntieStatusPill]. A row tap opens
+ * a read-only viewer; Edit opens the editor; New template opens the editor in
+ * create mode.
+ *
+ * No stat strip, per #716: the mock draws none, and the chips already carry the
+ * counts it claimed. The [DenPanel] stays on this console, unlike the React
+ * screen's: its subtitle is the only place the long-press drag-to-categorize
+ * gesture is announced, and the chips inside it are that gesture's drop targets.
  *
  * Built on the real [TemplateRepository] callables (listTemplates / saveTemplate).
  * Load and save errors surface loudly in an inline [AuntieBanner] (fail-loud).
@@ -308,36 +325,10 @@ fun TemplateBankBody(
                 )
             }
 
-            // ── stat strip ──────────────────────────────────────────────────────
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    StatCard(
-                        label = "Templates",
-                        value = if (loading) "…" else templates.size.toString(),
-                        trend = "in the bank",
-                        tone = AuntieStatusTone.Orange,
-                        feature = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        label = "Categories",
-                        value = if (loading) "…" else categories.size.toString(),
-                        trend = "in use",
-                        tone = AuntieStatusTone.Purple,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StatCard(
-                        label = "Untagged",
-                        value = if (loading) "…" else templates.count { it.tags.isEmpty() }.toString(),
-                        trend = "no tags yet",
-                        tone = AuntieStatusTone.Teal,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
+            // No stat strip. This screen drew three StatCards (Templates /
+            // Categories / Untagged); the mock draws none, and #716 settled that
+            // the mock owns the page frame on both consoles. The counts they
+            // carried are still here, on the category chips below.
 
             // Fail-loud: surface load / save errors inline, never silently swallow.
             error?.let { msg ->
@@ -542,7 +533,7 @@ private fun TemplateRow(
         }
     AuntieEntityRow(
         title = tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } },
-        subtitle = tpl.subject.ifBlank { "No subject set" },
+        subtitle = templateCardSubjectLine(tpl),
         showDivider = showDivider,
         onClick = onOpen,
         modifier = Modifier
