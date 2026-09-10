@@ -154,6 +154,16 @@ describe('AppShell account chip', () => {
     const rail = screen.getByRole('complementary', { name: /primary navigation/i });
     expect(within(rail).queryByText('Account')).toBeNull();
   });
+
+  // #718: the notification gate had a pinned rail entry from #396/#435
+  // onward. The operator reversed that, so the rail no longer offers it and
+  // /notification-gate (still a real route in router.tsx) just redirects.
+  it('does NOT pin the notification gate into the rail any more (#718)', () => {
+    render(<AppShell />);
+    const rail = screen.getByRole('complementary', { name: /primary navigation/i });
+    expect(within(rail).queryByRole('link', { name: /notification gate/i })).toBeNull();
+    expect(within(rail).queryByText(/notification gate/i)).toBeNull();
+  });
 });
 
 /**

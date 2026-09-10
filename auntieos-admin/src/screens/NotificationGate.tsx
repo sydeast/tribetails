@@ -34,7 +34,7 @@ import {
 } from '../lib/notificationGateEdit';
 import { rowBadges } from '../lib/notificationProvenance';
 import { BadgeRow, GateRowDetail, UngatedSendsPanel } from './NotificationGateDetail';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Toggle } from '../components/Toggle';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -76,12 +76,14 @@ function errMessage(err: unknown): string {
  * (a per-stream overlay), never the flat fields, so a shared key gates each
  * audience's copy independently, exactly like the Compose panel.
  *
- * `onBack` is supplied when the gate is opened in place from the Settings
- * overview (it renders a "Back to settings" control); the standalone
- * `/notification-gate` route omits it and relies on the rail, like the other
- * contextual screens.
+ * Embedded in the Settings "Notifications" section is the only place this
+ * renders now (#718 retired the standalone `/notification-gate` screen and
+ * its rail entry, leaving Settings as the one way in). It no longer renders
+ * its own page heading: Settings' own heading and section tab already say
+ * where the operator is, so a second "Notification gate." heading nested
+ * inside the tab panel would only repeat that.
  */
-export function NotificationGate({ onBack }: { onBack?: () => void }) {
+export function NotificationGate() {
   const [matrix, setMatrix] = useState<NotificationMatrix | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -132,15 +134,6 @@ export function NotificationGate({ onBack }: { onBack?: () => void }) {
 
   return (
     <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Settings"
-        title="Notification"
-        accentTail="gate."
-        subtitle="For each notification, turn a channel on to offer it, lock it to force it on, or turn it off
-        to hide it. Each tab gates one audience, and a notification can serve more than one."
-        trailing={onBack ? <GhostButton label="Back to settings" onClick={onBack} /> : undefined}
-      />
-
       {saveError && (
         <Banner tone="error" title="Save failed">
           {saveError}
@@ -150,7 +143,9 @@ export function NotificationGate({ onBack }: { onBack?: () => void }) {
       <DenPanel
         title="Notification gate"
         subtitle="This is the gate: it decides which channels every notification even offers before anyone
-        picks their own preferences. Locked rows stay on for recipients and carry your reason."
+        picks their own preferences. Turn a channel on to offer it, lock it to force it on for
+        recipients and carry your reason, or turn it off to hide it. Each tab gates one audience, and
+        a notification can serve more than one."
       >
         {loading ? (
           <p className="notifgate__hint">Loading the notification gate…</p>

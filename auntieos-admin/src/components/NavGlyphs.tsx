@@ -162,12 +162,6 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <circle cx="18" cy="5" r="2.5" />
     </>
   ),
-  notificationGate: (
-    <>
-      <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z" />
-      <path d="M9 12l2 2 4-4" />
-    </>
-  ),
   // An envelope with its flap open: an invite sent and still out there. The
   // household-scoped `householdMembers` below is a person, because that screen
   // is about who is in a home; this one is about the letters.
@@ -186,7 +180,7 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
     </>
   ),
   // A stethoscope: earpieces, tubing, and the bell. Reads as veterinary care
-  // without reusing the shield the notification gate already spends.
+  // without borrowing a shape already spent on another destination.
   vetClinics: (
     <>
       <path d="M6 3v5a4 4 0 0 0 8 0V3" />

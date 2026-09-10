@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
 import { resolveAccess } from './lib/access';
+import { NOTIFICATION_GATE_REDIRECT } from './lib/nav';
 import { AppShell } from './components/AppShell';
 import { RoutePending } from './components/RoutePending';
 // Every admin screen below is code-split via lazyRouteComponent (each resolves
@@ -257,7 +258,11 @@ const inboxRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'settings',
-  component: lazyRouteComponent(() => import('./screens/Settings'), 'Settings'),
+  // `section` seeds which panel opens first (`?section=notifications`). The
+  // only caller today is the `/notification-gate` redirect below (#718); a
+  // plain visit to `/settings` carries none and opens Settings' own default.
+  validateSearch: optionalIdSearch(['section'] as const),
+  component: lazyRouteComponent(() => import('./routes/SettingsView'), 'SettingsView'),
 });
 
 const communicateRoute = createRoute({
@@ -285,10 +290,16 @@ const myNotificationsRoute = createRoute({
   ),
 });
 
+// #718: the notification gate is no longer its own screen in the rail or the
+// router; it lives only under Settings > Notifications now. This route stays
+// registered, redirect-only, so an old rail click, bookmark or shared link
+// still lands somewhere instead of 404ing.
 const notificationGateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notification-gate',
-  component: lazyRouteComponent(() => import('./screens/NotificationGate'), 'NotificationGate'),
+  beforeLoad: () => {
+    throw redirect(NOTIFICATION_GATE_REDIRECT);
+  },
 });
 
 const vetClinicsRoute = createRoute({

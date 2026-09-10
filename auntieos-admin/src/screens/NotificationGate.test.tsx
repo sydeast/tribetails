@@ -108,6 +108,17 @@ describe('NotificationGate screen', () => {
     expect(await screen.findByText(/no notification types in the catalog yet/i)).toBeInTheDocument();
   });
 
+  // #718: Settings > Notifications is the only place this renders now, and
+  // Settings already carries its own page heading. A second h1 nested inside
+  // that tab panel would repeat it, so NotificationGate no longer draws one.
+  it('renders no page heading of its own; embedded in Settings is its only surface', async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [] }));
+    render(<NotificationGate />);
+    await screen.findByText(/no notification types in the catalog yet/i);
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Notification gate', level: 2 })).toBeInTheDocument();
+  });
+
   it('turning a channel off persists a per-stream overlay through the write callable', async () => {
     getNotificationMatrix.mockResolvedValue(matrix({ catalog: [entry({ key: 'k' })] }));
     render(<NotificationGate />);

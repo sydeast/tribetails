@@ -36,7 +36,6 @@ export type Destination =
   | 'mediaGallery'
   | 'accountSettings'
   | 'myNotifications'
-  | 'notificationGate'
   | 'householdMembers'
   | 'invites'
   | 'vetClinics';
@@ -94,15 +93,14 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'kinTaleTemplates', title: 'KinTale templates', group: 'more', slug: 'kintale-templates' },
   { dest: 'formSchemas', title: 'Form Schemas', group: 'more', slug: 'form-schemas' },
   { dest: 'featureFlags', title: 'Feature Flags', group: 'more', slug: 'feature-flags' },
-  // The business notification gate: every notification the platform can send,
-  // who receives it, what fires it, which template renders it, and whether the
-  // last attempts got out. It used to be marked `contextual`, so it was
-  // reachable only by opening Settings and already knowing to look for it. That
-  // one flag is most of why the operator said "I am blind to what could be sent
-  // out to users" (#396): the screen answering the question could not be found
-  // from the rail. Pinned beside Templates and Feature Flags, the other two
-  // screens about what the platform emits rather than about one household.
-  { dest: 'notificationGate', title: 'Notification gate', group: 'more', slug: 'notification-gate' },
+  // The business notification gate had a pinned entry here from #396/#435
+  // onward (reachable at /notification-gate, beside Templates and Feature
+  // Flags as the third what-the-platform-emits screen). #718 reverses that:
+  // the operator wants exactly one way to the gate, the Notifications section
+  // under Settings, so it is no longer a destination at all. The old
+  // `/notification-gate` route still exists in router.tsx, but only to
+  // redirect into Settings > Notifications, so a bookmark or link still lands
+  // somewhere instead of 404ing.
 
   // Contextual: reachable, never pinned.
   { dest: 'mediaGallery', title: 'Media', group: 'more', slug: 'media', contextual: true },
@@ -156,6 +154,9 @@ const BY_SLUG = new Map<string, Destination>([
   // Legacy standalone template slugs resolve to the merged two-tab screen.
   ['template-bank', 'templates'],
   ['template-assignment', 'templates'],
+  // #718: the retired notification-gate destination resolves to Settings,
+  // where the gate now lives, instead of falling back to Home.
+  ['notification-gate', 'settings'],
 ]);
 
 const BY_DEST = new Map<Destination, string>(NAV.map((e) => [e.dest, e.slug]));
@@ -235,3 +236,15 @@ export function routeToHash(r: Route): string {
   if (r.detailId !== undefined) return `#/${slug}/${r.detailId}`;
   return `#/${slug}`;
 }
+
+/**
+ * Where the retired `/notification-gate` route sends the TanStack router
+ * (#718). A plain object, not wired into `Destination`/`NAV`, so `router.tsx`
+ * and this file's own test can share the literal without either side
+ * importing TanStack Router types into `nav.ts`. `section` matches the
+ * `notifications` id `screens/Settings.tsx` already uses for that tab.
+ */
+export const NOTIFICATION_GATE_REDIRECT = {
+  to: '/settings',
+  search: { section: 'notifications' },
+} as const;
