@@ -208,22 +208,28 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     }
 
     /**
-     * "New KinTale" WITH NO VISIT NAMED YET, which is the household profile's
-     * hero primary in `auntieos-admin/ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`.
+     * "New KinTale" WITH NO VISIT NAMED YET. This used to be reached from the
+     * household profile's hero primary, matching
+     * `auntieos-admin/ui-ideas/auntieos-kinfolk-profile-2026-05-27.html`.
      *
      * [KinTaleReport] above needs a session id, because a KinTale is the write-up
-     * of one visit and the composer is keyed by it. The profile knows the
-     * HOUSEHOLD and not the visit, so this route stands between the two: it picks
+     * of one visit and the composer is keyed by it. The profile knew the
+     * HOUSEHOLD and not the visit, so this route stood between the two: it picks
      * the visit, then navigates on to [KinTaleReport]. Nothing composes here.
      *
      * `kinfolkId` is optional and narrows the picker to one household, matching
-     * `KinTaleComposeProps.kinfolkId` on the React composer. Omitted, the picker
-     * offers every household's eligible visits, which is what the KinTale log's
-     * own "New" has always meant.
+     * `KinTaleComposeProps.kinfolkId` on the React composer.
      *
-     * No AdminGate, matching the two KinTale routes above it: this reaches the
-     * same composer by a different key, and gating one entrance but not the others
-     * would be a difference nobody chose.
+     * #676 (walk admin-2026-09-10, the same ruling the React profile follows):
+     * a KinTale is only ever started from a KinCare session, so the profile's
+     * hero primary that opened this picker is gone (`KinfolkProfileScreen` no
+     * longer takes an `onNewKinTale` callback). Unlike React, where the KinTales
+     * list screen keeps its own separate "New KinTale" button under the same
+     * ruling, nothing else on Android navigates here: this route, its screen
+     * (`NewKinTaleScreen`), and its view model are now unreachable from the UI.
+     * Left in place rather than deleted in this pass; removing the whole
+     * subsystem is a bigger change than this issue's scope and deserves its own
+     * review.
      */
     object NewKinTale : Screen("kintale_new?kinfolkId={kinfolkId}", "New KinTale", Lucide.Pencil) {
         fun createRoute(kinfolkId: String? = null): String =
@@ -831,13 +837,12 @@ private fun AuthenticatedNavHost(
                     onOpenReport = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },
-                    // #552: the mock's hero primary. A KinTale is always the recap
-                    // of a visit, so this opens the picker scoped to THIS
-                    // household rather than dropping the operator into every
-                    // household's visits.
-                    onNewKinTale = { kinfolkId ->
-                        navController.navigate(Screen.NewKinTale.createRoute(kinfolkId))
-                    },
+                    // #552 used to wire the hero's "New KinTale" primary here,
+                    // to the picker scoped to this household. #676 (same ruling
+                    // as the React profile) removed that entry point, so the
+                    // profile no longer takes an onNewKinTale callback. The
+                    // `NewKinTale` route/screen below is otherwise untouched;
+                    // see the comment on `Screen.NewKinTale` for why.
                 )
             }
             composable(Screen.AddKinfolk.route) {
