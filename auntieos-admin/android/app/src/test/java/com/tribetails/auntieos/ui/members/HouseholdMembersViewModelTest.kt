@@ -106,31 +106,6 @@ class HouseholdMembersViewModelTest {
         assertNull(s.invitesError)
     }
 
-    /**
-     * RULING (2026-08-04): the admin invites the PRIMARY. The secondary is
-     * invited by the household's own primary, from MyTribe. This case used
-     * to pass a role and a starting permission set, both of which describe
-     * the admin-side secondary invite the ruling removes.
-     */
-    @Test fun `HAPPY minting a primary invite reloads the list and reports the TTL`() = runTest(testDispatcher) {
-        stubLoads()
-        coEvery { repo.mintInvite(any(), any()) } returns Result.success("rq_new")
-        val vm = vm()
-        vm.load(); advanceUntilIdle()
-
-        var closed = false
-        vm.mintInvite("new@example.com") { closed = true }
-        advanceUntilIdle()
-
-        assertTrue(closed)
-        assertFalse(vm.uiState.value.minting)
-        assertTrue(vm.uiState.value.toast!!.contains("Primary invite sent"))
-        assertTrue(vm.uiState.value.toast!!.contains("new@example.com"))
-        assertTrue(vm.uiState.value.toast!!.contains("14 days"))
-        coVerify(exactly = 1) { repo.mintInvite("fam1", "new@example.com") }
-        coVerify(exactly = 2) { repo.listInvites("fam1") }
-    }
-
     @Test fun `HAPPY revoking an invite reloads the list`() = runTest(testDispatcher) {
         stubLoads()
         coEvery { repo.revokeInvite("rq_1") } returns Result.success(Unit)
@@ -265,25 +240,6 @@ class HouseholdMembersViewModelTest {
         // reads rather than by racing two calls.
         assertNull(vm.uiState.value.savingPermission)
     }
-
-    @Test fun `ERROR a failed mint keeps the dialog open and never claims an invite was sent`() =
-        runTest(testDispatcher) {
-            stubLoads()
-            coEvery { repo.mintInvite(any(), any()) } returns
-                Result.failure(RuntimeException("SMTP2GO rejected the send"))
-            val vm = vm()
-            vm.load(); advanceUntilIdle()
-
-            var closed = false
-            vm.mintInvite("new@example.com") { closed = true }
-            advanceUntilIdle()
-
-            assertFalse(closed)
-            assertNull(vm.uiState.value.toast)
-            assertTrue(vm.uiState.value.mintError!!.contains("mintInvite failed"))
-            assertTrue(vm.uiState.value.mintError!!.contains("SMTP2GO"))
-            coVerify(exactly = 1) { repo.listInvites("fam1") }
-        }
 
     @Test fun `ERROR a failed removal keeps the dialog open`() = runTest(testDispatcher) {
         stubLoads()

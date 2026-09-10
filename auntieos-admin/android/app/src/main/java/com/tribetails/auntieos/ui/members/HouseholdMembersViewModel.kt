@@ -14,15 +14,15 @@ import kotlinx.coroutines.launch
  * The flat data-class UiState + Kotlin `Result` idiom used by
  * `CoveragePackageViewModel` and `AdminSettingsViewModel`. The React mirror is
  * `auntieos-admin/src/screens/HouseholdMembers.tsx`; the two screens call the
- * same six callables and have to move together.
+ * same callables and have to move together. `mintInvite` is no longer one of
+ * them: the typed-address "Invite a primary by email" dialog is gone (issue
+ * #684), so this ViewModel has no mint state and no mint handler any more.
  *
- * FAIL LOUD, AND SEPARATELY. Each of the four writes carries its own error
- * field and its own in-flight marker rather than sharing one `error: String?`.
- * A failed revoke and a failed mint are different things to fix, and a screen
- * that reports "Save failed" for either tells the operator nothing. Nothing
- * here reports a success the server did not confirm: a permission toggle is
- * optimistic and REVERTS on failure, and a failed mint leaves the typed form
- * alone so it can be retried rather than retyped.
+ * FAIL LOUD, AND SEPARATELY. Each write carries its own error field and its
+ * own in-flight marker rather than sharing one `error: String?`. A failed
+ * revoke and a failed permission save are different things to fix, and a
+ * screen that reports "Save failed" for either tells the operator nothing. A
+ * permission toggle is optimistic and REVERTS on failure.
  *
  * `loadError` is deliberately per-list too. The member roster failing must not
  * blank the invite list, and an unreadable list must never render as an empty
@@ -42,8 +42,6 @@ data class HouseholdMembersUiState(
     /** "<uid>:<PermissionKey>" while that one toggle is in flight. */
     val savingPermission: String? = null,
     val permissionError: String? = null,
-    val minting: Boolean = false,
-    val mintError: String? = null,
     val revokingInviteId: String? = null,
     val revokeError: String? = null,
     val removingUid: String? = null,
@@ -153,38 +151,6 @@ class HouseholdMembersViewModel(
         }
     }
 
-    /**
-     * Invites this household's PRIMARY. There is no role argument because the
-     * admin has no other invite to send: the secondary is invited by the
-     * household's own primary, from MyTribe.
-     */
-    fun mintInvite(
-        invitedEmail: String,
-        onSent: () -> Unit,
-    ) {
-        if (_uiState.value.minting) return
-        _uiState.value = _uiState.value.copy(minting = true, mintError = null)
-        viewModelScope.launch {
-            repository.mintInvite(kinfolkId, invitedEmail).fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(
-                        minting = false,
-                        toast = "Primary invite sent to ${invitedEmail.trim()}. It expires in " +
-                            "${MembersRepository.INVITE_TTL_DAYS} days.",
-                    )
-                    onSent()
-                    loadInvites()
-                },
-                onFailure = { err ->
-                    _uiState.value = _uiState.value.copy(
-                        minting = false,
-                        mintError = "mintInvite failed: ${err.message ?: "The invite was not sent."}",
-                    )
-                },
-            )
-        }
-    }
-
     fun revokeInvite(invite: MembersRepository.Invite) {
         if (_uiState.value.revokingInviteId != null) return
         _uiState.value = _uiState.value.copy(revokingInviteId = invite.inviteId, revokeError = null)
@@ -242,7 +208,6 @@ class HouseholdMembersViewModel(
             membersError = null,
             invitesError = null,
             permissionError = null,
-            mintError = null,
             revokeError = null,
             removeError = null,
         )

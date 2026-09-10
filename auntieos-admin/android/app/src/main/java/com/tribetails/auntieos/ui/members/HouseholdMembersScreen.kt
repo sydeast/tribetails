@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ShieldAlert
@@ -36,7 +35,6 @@ import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieToggle
-import com.tribetails.auntieos.ui.components.BottomBorderField
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenScreenHeading
@@ -50,9 +48,9 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *
  * The Android half of the surface whose React half is
  * `auntieos-admin/src/screens/HouseholdMembers.tsx`. Both call `listMembers`,
- * `listInvites`, `mintInvite`, `revokeInvite`, `setMemberPermissions` and
- * `removeMember`, and both follow `ui-ideas/auntieos-members-2026-05-27.html`
- * and `auntieos-invites-2026-05-27.html` for layout, minus those mocks' "no UI
+ * `listInvites`, `revokeInvite`, `setMemberPermissions` and `removeMember`,
+ * and both follow `ui-ideas/auntieos-members-2026-05-27.html` and
+ * `auntieos-invites-2026-05-27.html` for layout, minus those mocks' "no UI
  * today" banners, which stopped being true with this change, and minus their
  * sample data, which is placeholder by their own admission.
  *
@@ -70,8 +68,11 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it on their behalf: the invite dialog has one field and mints a primary
- * claim.
+ * do it on their behalf. It also offers no typed-address way to invite the
+ * primary any more: "Invite a primary by email" sent the same claim link the
+ * household profile button already sends, and the operator rejected that use
+ * case (issue #684). `MembersRepository.mintInvite` stays registered
+ * (PRIMARY-only) with no caller left in this screen.
  *
  * WHAT A PRIMARY MAY LOSE: nothing. Their entitlements are inherent to the role
  * (`requirePerm` answers for a PRIMARY before it reads the flags), so a primary
@@ -119,7 +120,6 @@ fun HouseholdMembersBody(
     val state by viewModel.uiState.collectAsState()
 
     var removeTarget by remember { mutableStateOf<MembersRepository.Member?>(null) }
-    var inviteOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.load() }
 
@@ -158,7 +158,6 @@ fun HouseholdMembersBody(
             }
         }
         errorBannerItem(state.permissionError, "That permission did not save", viewModel)
-        errorBannerItem(state.mintError, "The invite was not sent", viewModel)
         errorBannerItem(state.revokeError, "The invite was not revoked", viewModel)
         errorBannerItem(state.removeError, "The member was not removed", viewModel)
 
@@ -211,9 +210,6 @@ fun HouseholdMembersBody(
                 subtitle = "Every invite this household has been sent. An invite past its expiry " +
                     "reads Expired here from the moment it lapses, even though the nightly sweep " +
                     "has not stamped it yet.",
-                trailing = {
-                    PrimaryButton(label = "Invite a primary", onClick = { inviteOpen = true })
-                },
             ) {
                 when {
                     state.invitesError != null -> {
@@ -244,14 +240,6 @@ fun HouseholdMembersBody(
                 }
             }
         }
-    }
-
-    if (inviteOpen) {
-        SendInviteDialog(
-            minting = state.minting,
-            onDismiss = { if (!state.minting) inviteOpen = false },
-            onSend = { email -> viewModel.mintInvite(email) { inviteOpen = false } },
-        )
     }
 
     removeTarget?.let { target ->
@@ -454,78 +442,13 @@ private fun InviteRow(
     }
 }
 
-/**
- * The admin invite: one address, one grant, a PRIMARY claim.
- *
- * The role chips (defaulting to Secondary), the label field and the starting
- * permission toggles are gone. Per the ruling the admin does not invite the
- * secondary, and a primary has no permission set to choose because the
- * entitlements are the role's.
- */
-@Composable
-private fun SendInviteDialog(
-    minting: Boolean,
-    onDismiss: () -> Unit,
-    onSend: (email: String) -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    var email by remember { mutableStateOf("") }
-
-    val emailReady = email.trim().isNotBlank() && email.contains("@")
-
-    AuntieDialog(
-        visible = true,
-        title = "Invite a primary by email",
-        onDismiss = onDismiss,
-        maxWidth = 620.dp,
-        hint = "The same primary claim link the household profile sends, addressed to whoever " +
-            "you type here, for a household whose record carries the wrong email or none. It " +
-            "expires in ${MembersRepository.INVITE_TTL_DAYS} days.",
-        footer = {
-            GhostButton(
-                label = "Cancel",
-                onClick = onDismiss,
-                enabled = !minting,
-                modifier = Modifier.weight(1f),
-            )
-            PrimaryButton(
-                label = if (minting) "Sending…" else "Send primary invite",
-                onClick = { onSend(email) },
-                enabled = !minting && emailReady,
-                loading = minting,
-                modifier = Modifier.weight(1f),
-            )
-        },
-    ) {
-        BottomBorderField(
-            value = email,
-            onValueChange = { email = it },
-            label = "Email address",
-            placeholder = "name@example.com",
-            required = true,
-            enabled = !minting,
-            keyboardType = KeyboardType.Email,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            "Lowercased and matched against the accepting account. Someone signing in with a " +
-                "different address cannot use this link.",
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textFaint,
-        )
-
-        Spacer(Modifier.height(dims.space3))
-        Text(
-            "Whoever accepts becomes this household's primary and holds every entitlement by " +
-                "role, so there is no role to pick and no starting permissions to set. To add a " +
-                "second co-parent, the primary invites them from MyTribe; that is not something " +
-                "the Den does on their behalf.",
-            style = AuntieTheme.typography.bodySmall,
-            color = c.textDim,
-        )
-    }
-}
+// `SendInviteDialog` lived here: the typed-email "Invite a primary by email"
+// dialog, one address, one grant, a PRIMARY claim. Removed per the operator's
+// ruling on issue #684, "Invite a primary by email is unnecessary. We already
+// have the Portal Access button": that button, on the household profile
+// (`DirectoryViewModel.inviteKinfolkToPortal`), already sends the same claim
+// link. `MembersRepository.mintInvite` stays registered (PRIMARY-only, per
+// the 2026-08-04 invite ruling) with no caller left in this screen.
 
 // ── pure display helpers, unit-tested directly ──────────────────────────────
 
