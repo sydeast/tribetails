@@ -400,7 +400,7 @@ fun CoveragePackageScreen(
 
             // ── day-by-day detail ────────────────────────────────────────────
             if (detailPkg != null && detailPriced != null && days > 0) {
-                DenPanel(title = "${if (clientName.isNotBlank()) "$clientName — " else ""}${detailPkg.name}", subtitle = "$days day${if (days != 1) "s" else ""}${if (startDate.isNotBlank()) " · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}" else ""}") {
+                DenPanel(title = "${if (clientName.isNotBlank()) "$clientName — " else ""}${detailPkg.name}", detail = "$days day${if (days != 1) "s" else ""}${if (startDate.isNotBlank()) " · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}" else ""}") {
                     val quote = quoteText(QuoteInput(clientName, startDate, days, detailPkg, detailPriced))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         GhostButton(label = "Copy quote", leading = { Icon(Lucide.Copy, contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp)) }, onClick = { clipboard.setText(AnnotatedString(quote)) })

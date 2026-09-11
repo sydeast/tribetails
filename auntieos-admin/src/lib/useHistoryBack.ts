@@ -43,10 +43,12 @@ export interface HistoryBackOptions {
  * admin and onto whatever site they were reading before it.
  *
  * ONLY FOR A BACK THAT LEAVES THE ROUTE. A sub-view held in local state
- * (SessionDetail inside Sessions, ConversationThread inside Inbox) pushed no
- * history entry when it opened, so `canGoBack()` there answers about the
- * navigation that reached the LIST, and stepping back would close the whole
- * screen instead of the detail. Those keep their own close handler.
+ * (ConversationThread inside Inbox) pushed no history entry when it opened, so
+ * `canGoBack()` there answers about the navigation that reached the LIST, and
+ * stepping back would close the whole screen instead of the detail. Those keep
+ * their own close handler. SessionDetail used to be named here as one of them
+ * and is not one any more: #753 gave it `/sessions/{id}`, so opening a Kin Care
+ * pushes a real entry.
  */
 export function useHistoryBack({ fallbackLabel, onFallback }: HistoryBackOptions): HistoryBack {
   const router = useRouter();

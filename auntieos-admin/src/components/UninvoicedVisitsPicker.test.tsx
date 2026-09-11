@@ -17,19 +17,36 @@ import type {
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     to,
+    params,
     search,
     children,
     ...rest
   }: {
     to: string;
-    search?: Record<string, string>;
+    params?: Record<string, string>;
     children: ReactNode;
+    search?: Record<string, string>;
   }) => (
-    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+    <a href={hrefOf(to, params, search)} {...rest}>
       {children}
     </a>
   ),
 }));
+
+/**
+ * The href a router `Link` would produce, path params substituted first (a
+ * visit's own route is `/sessions/$sessionId` since #753), then any search.
+ */
+function hrefOf(
+  to: string,
+  params?: Record<string, string>,
+  search?: Record<string, string>,
+): string {
+  const path = Object.entries(params ?? {}).reduce((acc, [k, v]) => acc.replace(`$${k}`, v), to);
+  const q = new URLSearchParams(search ?? {}).toString();
+  return q === '' ? path : `${path}?${q}`;
+}
+
 
 const { listUninvoicedSessions, setSessionDoNotInvoice } = vi.hoisted(() => ({
   listUninvoicedSessions: vi.fn(),
@@ -170,7 +187,7 @@ describe('UninvoicedVisitsPicker pricing', () => {
     expect(screen.queryByLabelText(/price for dog walk/i)).toBeNull();
     expect(screen.getByRole('link', { name: /open this visit/i })).toHaveAttribute(
       'href',
-      '/sessions?sessionId=s1',
+      '/sessions/s1',
     );
   });
 

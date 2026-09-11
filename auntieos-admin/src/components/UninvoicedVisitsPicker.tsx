@@ -380,8 +380,8 @@ export function UninvoicedVisitsPicker({
                             corrected on the visit, and the invoice follows. */}
                         <Link
                           className="visit-picker__visit-link"
-                          to="/sessions"
-                          search={{ sessionId: s.sessionId }}
+                          to="/sessions/$sessionId"
+                          params={{ sessionId: s.sessionId }}
                         >
                           Open this visit
                         </Link>

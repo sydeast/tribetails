@@ -21,19 +21,36 @@ import {
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     to,
+    params,
     search,
     children,
     ...rest
   }: {
     to: string;
-    search?: Record<string, string>;
+    params?: Record<string, string>;
     children: ReactNode;
+    search?: Record<string, string>;
   }) => (
-    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+    <a href={hrefOf(to, params, search)} {...rest}>
       {children}
     </a>
   ),
 }));
+
+/**
+ * The href a router `Link` would produce, path params substituted first (a
+ * visit's own route is `/sessions/$sessionId` since #753), then any search.
+ */
+function hrefOf(
+  to: string,
+  params?: Record<string, string>,
+  search?: Record<string, string>,
+): string {
+  const path = Object.entries(params ?? {}).reduce((acc, [k, v]) => acc.replace(`$${k}`, v), to);
+  const q = new URLSearchParams(search ?? {}).toString();
+  return q === '' ? path : `${path}?${q}`;
+}
+
 
 function draft(over: Partial<DraftLine> = {}): DraftLine {
   return { description: 'Dog walk', qtyText: '3', unitText: '25.00', discountText: '', ...over };
@@ -275,7 +292,7 @@ describe('bound line items', () => {
     expect(screen.queryByLabelText('Line 1 description')).toBeNull();
     expect(screen.getByRole('link', { name: /open this visit/i })).toHaveAttribute(
       'href',
-      '/sessions?sessionId=vis_1',
+      '/sessions/vis_1',
     );
     expect(screen.getByText(/its price is the visit's/i)).toBeInTheDocument();
   });
@@ -305,7 +322,7 @@ describe('bound line items', () => {
     );
     const links = screen.getAllByRole('link', { name: /open this visit/i });
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute('href', '/sessions?sessionId=vis_1');
+    expect(links[0]).toHaveAttribute('href', '/sessions/vis_1');
   });
   it('takes a caller\'s own empty hint, so extra charges do not read as "nothing was billed"', () => {
     render(

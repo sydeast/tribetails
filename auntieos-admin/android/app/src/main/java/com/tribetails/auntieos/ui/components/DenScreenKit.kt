@@ -18,15 +18,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.Info
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -103,12 +112,63 @@ fun DenBreadcrumbs(crumbs: List<DenCrumb>, modifier: Modifier = Modifier) {
     }
 }
 
+// ── the subtitle tooltip ────────────────────────────────────────────────────
+
+/**
+ * The info affordance that replaced the subtitle line (#752, web PR in the same
+ * change).
+ *
+ * "why are there so many unneeded subheadings. at most they can be tool tips,
+ * otherwise they are making the ui too busy with unneccessary text" (operator,
+ * 2026-09-11). Every panel and every page heading in the admin carried a
+ * sentence of explanation. The sentence is still worth having the first time
+ * you meet a screen, so it moves behind a hairline "i": long-press or hover the
+ * button on the way past, or tap it outright, and the tooltip appears.
+ *
+ * The icon's own content description is the EXPLANATION, not "About this
+ * section" as on web. Compose has no `aria-describedby`, so a generic label
+ * would make the sentence reachable by sighted touch only; putting it on the
+ * icon keeps TalkBack hearing it the way a web screen reader hears the
+ * description on the title.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DenInfoTip(text: String, modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    val state = rememberTooltipState()
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(text, style = AuntieTheme.typography.bodySmall) } },
+        state = state,
+        modifier = modifier,
+    ) {
+        IconButton(
+            // TooltipBox already answers long-press and hover. A tap has to be
+            // wired by hand, and without it the tip is a gesture nobody finds.
+            onClick = { scope.launch { state.show() } },
+            modifier = Modifier.size(24.dp),
+        ) {
+            Icon(
+                imageVector = Lucide.Info,
+                contentDescription = text,
+                tint = c.textDim,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
 // ── page heading ────────────────────────────────────────────────────────────
 
 /**
  * The standard Den page heading: a small uppercase mono [kicker] in brand
  * orange, then a large serif [title] with an optional italic [accentTail]
- * (the word painted in primary), and an optional [subtitle] blurb.
+ * (the word painted in primary), an info button carrying the [subtitle]
+ * explanation, and an optional [detail] value line.
+ *
+ * [subtitle] is the EXPLANATION and never reaches the screen as copy; [detail]
+ * is a VALUE that does (a count, a date, a range, a name). See DenInfoTip.
  *
  * Pass [crumbs] on a NESTED screen and the trail takes the kicker's place. Not
  * a style preference: the ten `.crumbs` mocks all put the trail exactly where a
@@ -123,6 +183,7 @@ fun DenScreenHeading(
     modifier: Modifier = Modifier,
     accentTail: String? = null,
     subtitle: String? = null,
+    detail: String? = null,
     crumbs: List<DenCrumb>? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -152,10 +213,14 @@ fun DenScreenHeading(
                         color = c.primary,
                     )
                 }
+                if (subtitle != null) {
+                    Spacer(Modifier.width(8.dp))
+                    DenInfoTip(subtitle)
+                }
             }
-            if (subtitle != null) {
+            if (detail != null) {
                 Spacer(Modifier.height(6.dp))
-                Text(subtitle, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                Text(detail, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }
         }
         if (trailing != null) {
@@ -263,9 +328,13 @@ fun StatCard(
 // ── section panel ──────────────────────────────────────────────────────────
 
 /**
- * A glass section panel with a serif [title], optional [subtitle] and [trailing]
- * slot in the header, then arbitrary [content]. The workhorse container for the
- * redesign's two-column dashboards and stacked detail pages.
+ * A glass section panel with a serif [title], an info button carrying the
+ * [subtitle] explanation, an optional [detail] value line and an optional
+ * [trailing] slot in the header, then arbitrary [content]. The workhorse
+ * container for the redesign's two-column dashboards and stacked detail pages.
+ *
+ * [subtitle] is the EXPLANATION and never reaches the screen as copy; [detail]
+ * is a VALUE that does (a count, a date, a name, a status word). See DenInfoTip.
  *
  * #445: [title] carries `Modifier.semantics { heading() }`, so TalkBack can jump
  * panel to panel with its next-heading gesture instead of swiping through
@@ -286,6 +355,7 @@ fun DenPanel(
     title: String,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    detail: String? = null,
     cornerRadius: Dp = 18.dp,
     contentPadding: Dp = 20.dp,
     // #12/#13 (2026-06-08): opt-in collapsible panel (parity with web). Default
@@ -309,17 +379,25 @@ fun DenPanel(
                 },
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        style = AuntieTheme.typography.headlineSmall,
-                        color = c.textPrimary,
-                        // #445: the accessible name is the title alone, same as
-                        // web — the subtitle stays a separate, non-heading Text.
-                        modifier = Modifier.semantics { heading() },
-                    )
-                    if (subtitle != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            title,
+                            style = AuntieTheme.typography.headlineSmall,
+                            color = c.textPrimary,
+                            // #445: the accessible name is the title alone, same
+                            // as web. Since #752 the explanation is not a Text
+                            // beneath it at all but the info button's tooltip,
+                            // which keeps it out of the heading either way.
+                            modifier = Modifier.semantics { heading() },
+                        )
+                        if (subtitle != null) {
+                            Spacer(Modifier.width(8.dp))
+                            DenInfoTip(subtitle)
+                        }
+                    }
+                    if (detail != null) {
                         Spacer(Modifier.height(4.dp))
-                        Text(subtitle, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
                 if (trailing != null) trailing()

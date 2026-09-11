@@ -308,7 +308,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinfolkSection(
 
         else -> item {
             val today = remember { java.time.LocalDate.now().toString() }
-            DenPanel(title = "Kinfolk", subtitle = "${state.displayedKinfolk.size} on file") {
+            DenPanel(title = "Kinfolk", detail = "${state.displayedKinfolk.size} on file") {
                 Column {
                     state.displayedKinfolk.forEachIndexed { index, kf ->
                         val kinNames = state.kinByKinfolkId[kf.id].orEmpty().map { it.name }
@@ -400,7 +400,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
         }
 
         else -> item {
-            DenPanel(title = "Kin", subtitle = "${allKin.size} on file") {
+            DenPanel(title = "Kin", detail = "${allKin.size} on file") {
                 Column {
                     allKin.forEachIndexed { index, kin ->
                         val ownerName = state.allKinfolk.find { it.id == kin.kinfolkId }?.displayName.orEmpty()

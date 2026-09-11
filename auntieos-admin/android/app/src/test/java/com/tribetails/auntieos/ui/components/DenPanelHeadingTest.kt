@@ -5,6 +5,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import org.junit.Rule
@@ -50,9 +51,73 @@ class DenPanelHeadingTest {
 
         // The heading node's accessible name is the title alone: a node
         // carrying both the heading marker AND the subtitle text does not
-        // exist, because the subtitle is a separate, non-heading Text.
+        // exist. Since #752 the subtitle is not a Text under the title at all,
+        // which settles the question twice over.
         rule.onNode(isHeading() and hasText("How this invoice adds up"))
             .assertDoesNotExist()
+    }
+
+    /**
+     * #752: "why are there so many unneeded subheadings. at most they can be
+     * tool tips, otherwise they are making the ui too busy with unneccessary
+     * text" (operator, 2026-09-11).
+     */
+    @Test
+    fun `the subtitle leaves the screen and becomes the info button`() {
+        rule.setContent {
+            AuntieOSTheme {
+                DenPanel(title = "Billing", subtitle = "How this invoice adds up") {}
+            }
+        }
+
+        // Not a line of copy any more.
+        rule.onNodeWithText("How this invoice adds up").assertDoesNotExist()
+        // Still reachable: Compose has no `aria-describedby`, so the sentence
+        // is the info icon's own description rather than a separate one.
+        rule.onNodeWithContentDescription("How this invoice adds up").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a detail value stays on the screen, with no info button`() {
+        rule.setContent {
+            AuntieOSTheme {
+                DenPanel(title = "Kinfolk", detail = "42 on file") {}
+            }
+        }
+
+        rule.onNodeWithText("42 on file").assertIsDisplayed()
+        rule.onNodeWithContentDescription("42 on file").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a panel shows its detail and hides its explanation at the same time`() {
+        rule.setContent {
+            AuntieOSTheme {
+                DenPanel(title = "Vet", detail = "3 of 8 on file", subtitle = "Admin only. Internal.") {}
+            }
+        }
+
+        rule.onNodeWithText("3 of 8 on file").assertIsDisplayed()
+        rule.onNodeWithText("Admin only. Internal.").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Admin only. Internal.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a page heading puts its subtitle behind the info button too`() {
+        rule.setContent {
+            AuntieOSTheme {
+                DenScreenHeading(
+                    kicker = "The Den · Schedule",
+                    title = "Schedule",
+                    subtitle = "Every Kin Care visit on the books.",
+                    detail = "Sep 1 to Sep 7",
+                )
+            }
+        }
+
+        rule.onNodeWithText("Sep 1 to Sep 7").assertIsDisplayed()
+        rule.onNodeWithText("Every Kin Care visit on the books.").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Every Kin Care visit on the books.").assertIsDisplayed()
     }
 
     @Test

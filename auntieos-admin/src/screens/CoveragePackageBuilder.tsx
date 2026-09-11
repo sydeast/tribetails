@@ -660,7 +660,7 @@ function Builder({ settings }: BuilderProps) {
 
       {/* Day-by-day detail + quote (also the print surface) */}
       {detail && days > 0 ? (
-        <DenPanel className="cpb__printSurface" title={`${clientName ? `${clientName} — ` : ''}${detail.pkg.name}`} subtitle={`${days} day${days !== 1 ? 's' : ''}${startDate ? ` · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}` : ''}`}>
+        <DenPanel className="cpb__printSurface" title={`${clientName ? `${clientName} — ` : ''}${detail.pkg.name}`} detail={`${days} day${days !== 1 ? 's' : ''}${startDate ? ` · ${dateLabel(startDate, 0)} – ${dateLabel(startDate, days - 1)}` : ''}`}>
           <div className="cpb__detailActions cpb__noprint">
             <GhostButton label={copied ? 'Copied' : 'Copy quote'} leading={copied ? <CheckGlyph /> : <CopyGlyph />} onClick={() => void copyQuote()} />
             <GhostButton label="Share" leading={<ShareGlyph />} onClick={() => void shareQuote()} />

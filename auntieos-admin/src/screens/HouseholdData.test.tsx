@@ -123,10 +123,14 @@ describe('HouseholdData: reading the record', () => {
 
   it('names the household in the heading', async () => {
     mount();
-    // Matched on the subtitle sentence rather than the bare name: since #689
-    // the Back button names the household too, and a bare /Nora Whitfield/
-    // matches both.
-    expect(await screen.findByText(/The shared record behind Nora Whitfield/)).toBeInTheDocument();
+    // The heading's `detail` line, which is where the name lives since #752:
+    // the sentence that used to carry it is a tooltip now, and a screen that
+    // never says whose record you are reading is the defect this guards. The
+    // class is part of the assertion because since #689 the Back button names
+    // the household too, and a bare /Nora Whitfield/ matches both.
+    const named = await screen.findByText('Nora Whitfield');
+    expect(named).toBeVisible();
+    expect(named).toHaveClass('den-heading-detail');
   });
 
   it('shows a blank field as "Not set" rather than hiding it, because the gaps are the point', async () => {
