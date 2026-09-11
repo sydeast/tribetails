@@ -1,8 +1,8 @@
 import { Link } from '@tanstack/react-router';
 import { AsyncRegion } from './AsyncRegion';
-import { DenPanel, EmptyHint, ServicePill, type DenTone } from './DenScreenKit';
+import { DenPanel, EmptyHint, ServicePill, StatusPill, serviceTone, type DenTone } from './DenScreenKit';
 import { useCollection } from '../lib/firestore';
-import { str } from '../lib/coerce';
+import { str, arr } from '../lib/coerce';
 import {
   kinTalesForKinfolkQuery,
   KINTALES_PROFILE_MAX,
@@ -80,7 +80,7 @@ export function RecentKinTalesPanel({ kinfolkId }: { kinfolkId: string }) {
           <ul className="kfeed">
             {rows.map((r) => (
               <li key={r._id}>
-                <Link to="/kintales" search={{ kinTaleId: r._id }} className="kfeed__row">
+                <Link to="/kintales" search={{ kinTaleId: r._id }} className="kfeed__row kfeed__row--tale">
                   <span className="kfeed__main">
                     <span className="kfeed__title">
                       {kinTaleHeadline(str(r.title), str(r.bodyCopy))}
@@ -145,15 +145,25 @@ export function UpcomingVisitsPanel({ kinfolkId, now }: { kinfolkId: string; now
           <ul className="kfeed">
             {rows.map((s) => (
               <li key={s._id}>
+                {/* The mock's `.visit` line: a dot in the service tone, the
+                    time in mono, who the visit is for, and the service pill at
+                    the far edge. The dot takes its colour through the kit's
+                    own `data-tone` resolution rather than a map of its own. */}
                 <Link
                   to="/sessions/$sessionId"
                   params={{ sessionId: s._id }}
                   className="kfeed__row kfeed__row--visit"
                 >
+                  <span
+                    className="kfeed__dot"
+                    data-tone={serviceTone(str(s.serviceType))}
+                    aria-hidden="true"
+                  />
                   <span className="kfeed__when kfeed__when--lead">
                     {sessionDayLabel(sessionDayKey(str(s.startTime)), today)}{' '}
                     {sessionClock(str(s.startTime))}
                   </span>
+                  {visitKin(s) !== '' && <span className="kfeed__sub">{visitKin(s)}</span>}
                   <ServicePill serviceType={str(s.serviceType)} />
                 </Link>
               </li>
@@ -165,6 +175,13 @@ export function UpcomingVisitsPanel({ kinfolkId, now }: { kinfolkId: string; now
   );
 }
 
+/** The pets a visit is for, named the way the session writer denormalized them. */
+function visitKin(s: SessionEntry): string {
+  return arr(s.kinNames)
+    .map((n) => str(n))
+    .filter((n) => n !== '')
+    .join(', ');
+}
 /** This household's invoices, newest first, headed by what is still owed. */
 export function HouseholdInvoicesPanel({ kinfolkId }: { kinfolkId: string }) {
   const state = useCollection<InvoiceEntry>(invoicesForKinfolkQuery(kinfolkId));
@@ -210,9 +227,10 @@ export function HouseholdInvoicesPanel({ kinfolkId }: { kinfolkId: string }) {
                     <span className="kfeed__no">{kinfolkInvoiceFeedLabel(inv)}</span>
                     <span className="kfeed__money">
                       {formatUsd(invoiceRowAmount(inv))}
-                      <span className="den-pill" data-tone={invoicePillTone(stamp.state)}>
-                        {info.label}
-                      </span>
+                      {/* The mock's `.pill.paid` / `.pill.unpaid` is the kit's
+                          uppercase status capsule, not the lowercase service
+                          pill this row used to borrow. */}
+                      <StatusPill label={info.label} tone={invoicePillTone(stamp.state)} />
                     </span>
                   </Link>
                 </li>

@@ -1,32 +1,77 @@
 /* The household profile's feed cards (Recent KinTales, Upcoming KinCare,
-   Invoices). One row shape serves all three: a full-width anchor that fills the
-   panel, so the whole row is the hit target rather than the few words inside it,
-   which is what the mock draws. */
+   Invoices). Every row is a full-width anchor that fills the panel, so the
+   whole row is the hit target rather than the few words inside it.
+
+   TWO ROW SHAPES, because the mock draws two. A KinTale is a `.tale`: a boxed
+   tile on a soft hairline that lifts and rims orange under the pointer. A
+   visit and an invoice are a `.visit` and an `.invrow`: plain lines separated
+   by a hairline, no box, nothing under the last one. The single boxed shape
+   this sheet used to give all three is what made the right column read as
+   three stacks of cards rather than as the mock's two lists and one feed. */
 .kfeed {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
 }
 .kfeed__row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
   color: inherit;
   text-decoration: none;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
 }
-.kfeed__row:hover,
-.kfeed__row:focus-visible {
-  background: var(--color-surface-2);
-  border-color: var(--color-border);
+
+/* The KinTale tile. `--line-2` in the mock is the hairline at six hundredths;
+   mixed down from the hairline token rather than declared as its own colour. */
+.kfeed__row--tale {
+  padding: var(--space-3);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-hairline) 60%, transparent);
+  border-radius: var(--radius-card-lg);
+  background: color-mix(in srgb, var(--tt-brand-navy) 40%, transparent);
+  transition:
+    border-color 0.16s ease,
+    transform 0.16s ease;
 }
+.kfeed__row--tale:hover,
+.kfeed__row--tale:focus-visible {
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 40%, transparent);
+  transform: translateY(-2px);
+}
+.kfeed li + li .kfeed__row--tale {
+  margin-top: 10px;
+}
+
+/* The visit and invoice lines: a rule between rows, none under the last. */
+.kfeed__row--visit,
+.kfeed__row--invoice {
+  padding: 10px 0;
+  border-bottom: var(--border-hairline) solid
+    color-mix(in srgb, var(--color-hairline) 60%, transparent);
+}
+.kfeed li:last-child .kfeed__row--visit,
+.kfeed li:last-child .kfeed__row--invoice {
+  border-bottom: none;
+}
+.kfeed__row--visit:hover .kfeed__when--lead,
+.kfeed__row--invoice:hover .kfeed__no,
+.kfeed__row--visit:focus-visible .kfeed__when--lead,
+.kfeed__row--invoice:focus-visible .kfeed__no {
+  color: var(--color-primary);
+}
+
+/* The mock's `.visit .dot`: 9px, in the service tone, which the kit resolves
+   from `data-tone` on the element itself. */
+.kfeed__dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--den-tone);
+}
+
 .kfeed__main {
   display: flex;
   flex-direction: column;
@@ -34,22 +79,34 @@
   min-width: 0;
 }
 .kfeed__title {
-  font-size: var(--type-body-sm-size);
+  font-size: var(--type-body-md-size);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 .kfeed__sub {
-  font-size: var(--type-label-sm-size);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
   overflow-wrap: anywhere;
 }
+/* The mock's `.tale .when`: "SENT · TODAY 9:42A", mono, tracked, faint. */
 .kfeed__when {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-text-faint);
+  margin-top: 4px;
 }
+/* The visit line's lead is a time, not a stamp: mono at reading size, in
+   cream, at the mock's 88px minimum so the descriptions line up. */
 .kfeed__when--lead {
+  font-size: var(--type-mono-size);
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--color-text-primary);
+  min-width: 88px;
+  margin-top: 0;
+  transition: color 0.16s ease;
 }
 /* The visit and invoice rows are two-part: lead on the left, stamp on the
    right, with the gap between them doing the aligning. */
@@ -63,12 +120,13 @@
   color: var(--color-text-dim);
   min-width: 0;
   overflow-wrap: anywhere;
+  transition: color 0.16s ease;
 }
 .kfeed__money {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--type-body-sm-size);
+  gap: 10px;
+  font-size: var(--type-body-md-size);
   color: var(--color-text-primary);
   white-space: nowrap;
 }
