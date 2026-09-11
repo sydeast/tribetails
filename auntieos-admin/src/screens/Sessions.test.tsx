@@ -362,22 +362,60 @@ describe('Auntie Time: one fully populated action card', () => {
   it('renders every line the mock draws', () => {
     const card = mount();
     // Kin photo circles, one per kin, each named for the animal it stands for
-    // rather than left as a decorative blob.
+    // rather than left as a decorative blob. They stand where the status tile
+    // would, so no tile is drawn beside them.
     expect(within(card).getByAltText('Biscuit')).toBeInTheDocument();
     expect(within(card).getByRole('img', { name: 'Gravy' })).toBeInTheDocument();
-    // Kinfolk name, service pill, and the "kin names · when" line.
+    expect(card.querySelector('.sessions__glyph')).toBeNull();
+    // Kinfolk name, then the mock's ONE dim line: "service · kin names · when".
+    // No service pill on it (the #755 pass): the mock writes the service as a
+    // word in the sentence.
     expect(within(card).getByText('Lorna Wren')).toBeInTheDocument();
-    expect(within(card).getByText('Dog Walk')).toBeInTheDocument();
-    expect(within(card).getByText('Biscuit & Gravy · Today · 09:00 to 09:30')).toBeInTheDocument();
+    expect(
+      within(card).getByText('Dog Walk · Biscuit & Gravy · Today · 09:00 to 09:30'),
+    ).toBeInTheDocument();
+    expect(card.querySelector('.den-pill')).toBeNull();
     // Status pill, GPS live route, address, household note, invoice chip.
     expect(within(card).getByText('ARRIVED')).toBeInTheDocument();
     expect(within(card).getByText(/GPS tracking · live route/)).toBeInTheDocument();
     expect(within(card).getByText(/82 Creekside Ln/)).toBeInTheDocument();
     expect(within(card).getByText('Side gate, harness on the hook.')).toBeInTheDocument();
     expect(within(card).getByText('Invoice linked')).toBeInTheDocument();
-    // And the ARRIVED card's own action row.
+    // And the ARRIVED card's own action row. The undo glyph is decorative, so
+    // the accessible name is still the two words.
     expect(within(card).getByRole('button', { name: 'Departed' })).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Undo arrived' })).toBeInTheDocument();
+  });
+
+  it('wears the kit status pill in the state tone, not a chip of its own', () => {
+    // The #755 fidelity pass: one capsule for every screen that shows a visit.
+    // The tone is the mock's own per-state palette (arrived is teal), resolved
+    // through the kit's `data-tone`, so this file never names a colour.
+    const card = mount();
+    const pill = within(card).getByText('ARRIVED');
+    expect(pill.classList.contains('den-statuspill')).toBe(true);
+    expect(pill.getAttribute('data-tone')).toBe('teal');
+    // The kit pill is the only capsule; the old per-state chip classes are gone.
+    expect(card.querySelector('[class*="sessions__chip--"]')).toBeNull();
+  });
+
+  it('paints the address chip as a directions link, the way the kinfolk profile does', () => {
+    const card = mount();
+    const addr = within(card).getByRole('link', { name: /82 Creekside Ln/ });
+    expect(addr.getAttribute('href')).toContain('destination=82%20Creekside%20Ln');
+    expect(addr.getAttribute('target')).toBe('_blank');
+    // Outside the card head button, so the two controls never nest.
+    expect(addr.closest('button')).toBeNull();
+  });
+
+  it('paints "Complete KinTale" teal, the mock\'s one button that is not orange or ghost', () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),
+    );
+    renderBoard({ onComposeKinTale: vi.fn() });
+    const button = screen.getByRole('button', { name: 'Complete KinTale' });
+    expect(button.classList.contains('sessions__btn--teal')).toBe(true);
+    expect(button.classList.contains('auntie-btn--primary')).toBe(true);
   });
 
   // #772: the live line is the browser tracker's status when THIS tab clocked
@@ -403,12 +441,40 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).queryByText(/live route/)).toBeNull();
     useVisitTracking.mockReturnValue({ phase: 'idle' });
   });
+
   it('falls back to the status glyph when no kin photo resolves, never a stock face', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED' })]));
     renderBoard();
     const card = screen.getByText('The Whitfields').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__glyph')).not.toBeNull();
     expect(within(card).queryByRole('img')).toBeNull();
+  });
+
+  it('tints the status glyph tile to the state, the way the mock tints its .sicon tiles', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'omw', kinfolkName: 'Bess Sparrow', status: 'ON_MY_WAY', startTime: at(0, 10) }),
+        entry({ _id: 'done', kinfolkName: 'Ada Devlin', status: 'COMPLETED', startTime: at(0, 8), completedAt: at(0, 9) }),
+      ]),
+    );
+    renderBoard();
+    const omw = screen.getByText('Bess Sparrow').closest('.sessions__card') as HTMLElement;
+    const done = screen.getByText('Ada Devlin').closest('.sessions__card') as HTMLElement;
+    expect(omw.querySelector('.sessions__glyph')?.getAttribute('data-tone')).toBe('orange');
+    expect(done.querySelector('.sessions__glyph')?.getAttribute('data-tone')).toBe('teal');
+  });
+
+  it('leaves a cancelled pill unstruck and the name undimmed, as this mock draws them', () => {
+    // SessionDetail strikes its cancelled pill; this screen's mock draws the
+    // cancelled card with the plain dim capsule and the name in full cream.
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'CANCELLED', startTime: at(0, 9) })]),
+    );
+    renderBoard();
+    const card = screen.getByText('The Whitfields').closest('.sessions__card') as HTMLElement;
+    const pill = within(card).getByText('CANCELLED');
+    expect(pill.classList.contains('den-statuspill--struck')).toBe(false);
+    expect(pill.getAttribute('data-tone')).toBe('muted');
   });
 
   it('omits the address line entirely when the household has none on file', () => {
@@ -617,6 +683,31 @@ describe('Auntie Time: the controls the mock does not have', () => {
     renderBoard();
     const archive = screen.getByRole('button', { name: 'Archive' });
     expect(archive.closest('.den-heading')).not.toBeNull();
+  });
+});
+
+/**
+ * THE #755 FIDELITY PASS: what the mock draws around the cards. Its heading is
+ * "🐾 Auntie Time" with no italic accent (the Directory mock marks its last
+ * word up; this one does not).
+ */
+describe('Auntie Time: the frame the mock draws', () => {
+  it('titles the page the way the mock does, paw first and no accent tail', () => {
+    renderBoard();
+    const title = screen.getByRole('heading', { level: 1 });
+    expect(title.textContent).toBe('🐾 Auntie Time');
+    expect(title.querySelector('.den-heading-accent')).toBeNull();
+  });
+
+  it('puts no entrance transform on a phase group, so a card dialog can still centre on the viewport', () => {
+    // base.css's `d1`..`d4` fill `both` and leave `transform` pinned; a
+    // transformed group would become the containing block of the fixed
+    // `Dialog` every lifecycle button opens from inside its card.
+    renderBoard();
+    for (const phase of ['active', 'overdue', 'upcoming', 'recent']) {
+      const group = document.querySelector(`.sessions__phase--${phase}`) as HTMLElement;
+      expect([...group.classList].some((c) => /^d[1-4]$/.test(c))).toBe(false);
+    }
   });
 });
 

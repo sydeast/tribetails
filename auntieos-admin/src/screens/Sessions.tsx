@@ -14,6 +14,7 @@ import {
   localDateIso,
   FETCH_DAYS_BACK,
   UPCOMING_WINDOW_DAYS,
+  SESSION_STATE_TONE,
   shiftDayIso,
   type SessionDayGroup,
   type SessionPhase,
@@ -24,7 +25,8 @@ import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
-import { DenScreenHeading, ServicePill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import { directionsHref } from '../lib/directions';
+import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
@@ -195,10 +197,12 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
 
   return (
     <div className="screen">
+      {/* The mock's own heading, paw and all, and with no italic accent tail:
+          the Directory mock marks its last word up as `<b>`, this one does not,
+          so the kit's optional accent stays off here. */}
       <DenScreenHeading
         kicker="The Den · Auntie Time"
-        title="Auntie"
-        accentTail="Time"
+        title="🐾 Auntie Time"
         subtitle={
           mode === 'archive'
             ? 'Older history, by day. Pick a range; the year shows on any day outside this one.'
@@ -254,6 +258,13 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
               <DayList days={groupSessionsByDay(data)} ctx={cardContext} />
             ) : (
               <>
+                {/* NO `d1`..`d4` entrance on the groups, though the mock staggers
+                    them: base.css fills those with `both`, which pins a transform on
+                    the group forever, and a transformed ancestor becomes the
+                    containing block of every `position: fixed` descendant. The
+                    lifecycle confirms are `Dialog`s rendered inside the card, so the
+                    stagger would clamp them inside the group instead of centring
+                    them on the viewport. */}
                 <ul className="sessions__phases">
                   {groupSessionsByPhase(data, todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
@@ -351,7 +362,9 @@ function DayList({ days, ctx }: { days: SessionDayGroup<SessionEntry>[]; ctx: Ca
 /**
  * The glyph standing in for a visit with no kin photos to show, transcribed from
  * the mock's own `.sicon` tiles: an arrow for a visit under way, a clock face
- * for one still ahead, a tick for a wrap, a cross for a cancellation.
+ * for one still ahead, a tick for a wrap, a cross for a cancellation. The tile
+ * takes the state's tone as well (`data-tone`, resolved by the kit's CSS), which
+ * is how the mock tints an on-my-way tile orange and a completed one teal.
  *
  * Decorative: every card names its state in the status chip beside this, so the
  * tile is `aria-hidden` at the render site rather than given a second accessible
@@ -416,12 +429,16 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   }
 
   // The mock's identity line: the service, the kin this visit covers, then when
-  // it happens. Blank parts drop out rather than leaving a stranded separator,
-  // so a session with no kin names reads "Dog Walk · Today · 09:00 to 10:00"
-  // instead of "Dog Walk ·  · Today · ...".
+  // it happens, as ONE line of dim text ("30 min · Biscuit & Gravy · 9:00 to
+  // 9:30a"). It used to open with the kit's service pill; the mock draws no
+  // pill on this line, so the service is a word in the sentence here. Blank
+  // parts drop out rather than leaving a stranded separator, so a session with
+  // no kin names reads "Dog Walk · Today · 09:00 to 10:00" instead of
+  // "Dog Walk ·  · Today · ...".
   const kinNames = arr<string>(entry.kinNames)
     .map((n) => n.trim())
     .filter((n) => n !== '');
+  const service = str(entry.serviceType).trim();
   const dayKeyValue = sessionDayKey(str(entry.startTime));
   const when = sessionWindow(str(entry.startTime), str(entry.endTime));
   const day = dayKeyValue === 'Undated' ? '' : sessionDayLabel(dayKeyValue, todayIso);
@@ -430,7 +447,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // here: the same `sessionDayKey` / `sessionDayLabel` pair the day headers used,
   // rendered per card instead.
   const whenLine = day === '' ? when : `${day} · ${when}`;
-  const metaLine = [kinNames.join(' & '), whenLine].filter((p) => p !== '').join(' · ');
+  const metaLine = [service, kinNames.join(' & '), whenLine].filter((p) => p !== '').join(' · ');
 
   const address = addressById.get(str(entry.kinfolkId)) ?? '';
   // What the FAMILY wrote about their own house first, the office's internal
@@ -474,20 +491,23 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
             ))}
           </span>
         ) : (
-          <span className="sessions__glyph" aria-hidden="true">
+          <span className="sessions__glyph" data-tone={SESSION_STATE_TONE[state]} aria-hidden="true">
             {STATE_GLYPH[state]}
           </span>
         )}
 
         <span className="sessions__card-id">
           <span className="sessions__card-name">{household}</span>
-          <span className="sessions__card-svc">
-            <ServicePill serviceType={str(entry.serviceType)} />
-            {metaLine !== '' && <span className="sessions__card-meta">{metaLine}</span>}
-          </span>
+          {metaLine !== '' && <span className="sessions__card-svc">{metaLine}</span>}
         </span>
 
-        <span className={`sessions__chip sessions__chip--${info.cssClass}`}>{info.chipLabel}</span>
+        {/* The kit's capsule, in the state's tone. Not struck through when
+            cancelled: this mock draws its cancelled pill as the plain dim
+            capsule, the same one the scheduled card wears. The wrapper span is
+            the phone-width layout hook (Sessions.css moves it above the name). */}
+        <span className="sessions__chip">
+          <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} />
+        </span>
       </button>
 
       {/* Live only while the Auntie is inside the house. A DEPARTED visit has a
@@ -499,7 +519,14 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
         <VisitTrackingIndicator sessionId={entry._id} idleText="GPS tracking · live route" />
       )}
 
-      {address !== '' && <p className="sessions__addr">📍 {address}</p>}
+      {/* The mock's address chip is a control (pointer cursor, orange rim on
+          hover), and on Android the same chip opens the maps app. Here it is
+          the directions link the kinfolk profile already uses. */}
+      {address !== '' && (
+        <a className="sessions__addr" href={directionsHref(address)} target="_blank" rel="noopener">
+          📍 {address}
+        </a>
+      )}
       {note !== '' && <p className="sessions__note">{note}</p>}
       {str(entry.invoiceId).trim() !== '' && <p className="sessions__invoice">Invoice linked</p>}
 
@@ -517,6 +544,9 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               <GhostButton
                 key={a.action}
                 label={a.cardLabel}
+                // The mock's "↶ Undo arrived". Decorative: the button's
+                // `leading` slot is aria-hidden, so the name stays the label.
+                leading={a.action === 'UNDO_ARRIVAL' ? <span>↶</span> : undefined}
                 onClick={() => clock.ask(a)}
                 disabled={clock.saving || completing}
               />
@@ -529,8 +559,17 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               disabled={clock.saving || completing}
             />
           )}
+          {/* The mock's one teal button (`.btn.teal`): the write-up is a different
+              kind of step from the clock, and it wears the KinTale hue rather
+              than brand orange. `sessions__btn--teal` recolours the kit button;
+              Buttons has no tone prop and this is its only caller. */}
           {offersCompose && onComposeKinTale !== undefined && (
-            <PrimaryButton label="Complete KinTale" onClick={() => onComposeKinTale(entry._id)} />
+            <PrimaryButton
+              label="Complete KinTale"
+              leading={<span>✈</span>}
+              className="sessions__btn--teal"
+              onClick={() => onComposeKinTale(entry._id)}
+            />
           )}
           {offersView && onViewKinTale !== undefined && firstReportId !== undefined && (
             <GhostButton label="View KinTale" onClick={() => onViewKinTale(firstReportId)} />
