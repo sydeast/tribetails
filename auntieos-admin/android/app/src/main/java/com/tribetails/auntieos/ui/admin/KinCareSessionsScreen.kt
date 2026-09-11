@@ -906,12 +906,17 @@ private fun AddressChip(address: String, context: Context) {
 
 // ── Status mapping ────────────────────────────────────────────────────────────────
 
-/** Maps a session status to the Den status tone (color signature). */
+/**
+ * Maps a session status to the Den status tone, the mock's own pill palette
+ * state by state and the twin of web's `SESSION_STATE_TONE`. Completed is
+ * teal, not success green: the mock paints a wrap in the same hue as an
+ * arrival, one shade quieter, and the label is what tells them apart.
+ */
 private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED" -> AuntieStatusTone.Teal
     "DEPARTED" -> AuntieStatusTone.Purple
-    "COMPLETED" -> AuntieStatusTone.Success
+    "COMPLETED" -> AuntieStatusTone.Teal
     "CANCELLED" -> AuntieStatusTone.Muted
     else /* SCHEDULED */ -> AuntieStatusTone.Neutral
 }

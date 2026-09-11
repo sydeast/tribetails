@@ -53,18 +53,6 @@ const PHASE_EMPTY: Record<SessionPhase, string> = {
   recent: 'Nothing wrapped today or yesterday.',
 };
 
-/**
- * The mock settles its phase groups in one after another (`.phase.p1` to
- * `.p3`, a tenth of a second apart). `styles/base.css` carries that entrance
- * as `d1` to `d4`, and the board wears them in reading order, one per group.
- */
-const PHASE_STAGGER: Record<SessionPhase, string> = {
-  active: 'd1',
-  overdue: 'd2',
-  upcoming: 'd3',
-  recent: 'd4',
-};
-
 interface SessionsProps {
   /**
    * Open one visit. REQUIRED, and the only way a card head opens anything since
@@ -269,12 +257,16 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
               <DayList days={groupSessionsByDay(data)} ctx={cardContext} />
             ) : (
               <>
+                {/* NO `d1`..`d4` entrance on the groups, though the mock staggers
+                    them: base.css fills those with `both`, which pins a transform on
+                    the group forever, and a transformed ancestor becomes the
+                    containing block of every `position: fixed` descendant. The
+                    lifecycle confirms are `Dialog`s rendered inside the card, so the
+                    stagger would clamp them inside the group instead of centring
+                    them on the viewport. */}
                 <ul className="sessions__phases">
                   {groupSessionsByPhase(data, todayIso).map((p) => (
-                    <li
-                      key={p.phase}
-                      className={`sessions__phase sessions__phase--${p.phase} ${PHASE_STAGGER[p.phase]}`}
-                    >
+                    <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
                       <h3 className="sessions__phase-header">
                         {p.label}
                         <span className="sessions__phase-count">{p.count}</span>

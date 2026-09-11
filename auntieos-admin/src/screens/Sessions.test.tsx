@@ -653,8 +653,7 @@ describe('Auntie Time: the controls the mock does not have', () => {
 /**
  * THE #755 FIDELITY PASS: what the mock draws around the cards. Its heading is
  * "🐾 Auntie Time" with no italic accent (the Directory mock marks its last
- * word up; this one does not), and its phase groups settle in one after
- * another, which base.css carries as the `d1` to `d4` entrance.
+ * word up; this one does not).
  */
 describe('Auntie Time: the frame the mock draws', () => {
   it('titles the page the way the mock does, paw first and no accent tail', () => {
@@ -664,13 +663,15 @@ describe('Auntie Time: the frame the mock draws', () => {
     expect(title.querySelector('.den-heading-accent')).toBeNull();
   });
 
-  it('staggers the four phase groups in reading order', () => {
+  it('puts no entrance transform on a phase group, so a card dialog can still centre on the viewport', () => {
+    // base.css's `d1`..`d4` fill `both` and leave `transform` pinned; a
+    // transformed group would become the containing block of the fixed
+    // `Dialog` every lifecycle button opens from inside its card.
     renderBoard();
-    const steps = ['active', 'overdue', 'upcoming', 'recent'].map((phase) => {
+    for (const phase of ['active', 'overdue', 'upcoming', 'recent']) {
       const group = document.querySelector(`.sessions__phase--${phase}`) as HTMLElement;
-      return [...group.classList].find((c) => /^d[1-4]$/.test(c));
-    });
-    expect(steps).toEqual(['d1', 'd2', 'd3', 'd4']);
+      expect([...group.classList].some((c) => /^d[1-4]$/.test(c))).toBe(false);
+    }
   });
 });
 
