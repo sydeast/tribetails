@@ -39,7 +39,38 @@ bad()  { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
 # mtime <file>: seconds since epoch. BSD stat and GNU stat disagree on the flag,
 # and this test has to run on the operator's mac and on an ubuntu runner.
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
+#
+# THE `||` FALLBACK ALONE WAS NOT ENOUGH, and on Linux it reported a defect that
+# did not exist. This used to be `stat -f %m "$1" 2>/dev/null || stat -c %Y`. On
+# GNU stat, `-f` is not "format", it is `--file-system`, so that first command
+# does not simply fail: it prints the whole FILESYSTEM REPORT for the file's
+# mount to stdout, then exits non-zero over the unrecognised `%m` operand, and
+# the fallback's real answer is appended to that. The caller got a multi-line
+# blob with the volume's free-block count inside it, and a live runner's free
+# blocks change between two calls seconds apart. So a dry run that had not
+# touched `.release-state` at all was reported as having MUTATED it, with
+# identical checksums and two "mtimes" that differed only in how much disk the
+# runner had left. It fired for the first time on 2026-09-11, on the hosted
+# ubuntu runner, because this job only runs when a release or workflow file is
+# touched and the self-hosted macs had always taken it before.
+#
+# The fix is to stop trusting exit status and check the ANSWER. An mtime is a
+# bare integer; anything else means that stat was the wrong one. GNU is tried
+# first because its failure on BSD puts nothing on stdout.
+mtime() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m=''
+  case "$m" in
+    '' | *[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)" ;;
+  esac
+  case "$m" in
+    '' | *[!0-9]*)
+      echo "mtime: neither GNU nor BSD stat answered for $1" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$m"
+}
 
 # ---------------------------------------------------------------------------
 # make_repo: a synthetic tribetails, echoed back as its path.
@@ -328,6 +359,7 @@ FULL_STORE=(
   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1
   PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
   ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key
+  ADMIN_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token-admin
 )
 
 # run_release <dir> [VAR=VAL ...]: run the script under test, stdout+stderr
@@ -1147,6 +1179,11 @@ if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_MAPBOX_
 else
   bad "the portal build did not see the Mapbox token"; printf '%s\n' "$SEEN"
 fi
+if printf '%s' "$SEEN" | grep -q "auntieos-admin/.env.production.local VITE_MAPBOX_PUBLIC_TOKEN='pk.example-not-a-real-token-admin'"; then
+  ok "the admin build sees its OWN Mapbox token, not the portal's"
+else
+  bad "the admin build did not see its own Mapbox token"; printf '%s\n' "$SEEN"
+fi
 # The one that a single exported environment could not have got right.
 if printf '%s' "$SEEN" | grep -q "mytribe/web/.env.production.local VITE_SENTRY_DSN='https://examplepublickey@o0.ingest.us.sentry.io/1'"; then
   ok "each app gets its OWN VITE_SENTRY_DSN, not one shared value"
@@ -1175,7 +1212,8 @@ fi
 D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
                   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
-                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key
+                  ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  ADMIN_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token-admin
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 FCALLS="$D/firebase-calls"
 RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets" FIREBASE_CALL_LOG="$FCALLS")"
@@ -1214,6 +1252,7 @@ D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
                   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
                   ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
+                  ADMIN_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token-admin \
                   PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
@@ -1237,7 +1276,8 @@ fi
 D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/0 \
                   PORTAL_WEB_SENTRY_DSN=https://examplepublickey@o0.ingest.us.sentry.io/1 \
-                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token \
+                  ADMIN_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token-admin
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 RC="$(run_release "$D" RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
 OUT="$(cat "$D/out")"
@@ -1268,7 +1308,8 @@ fi
 # read as though something is broken.
 D="$(make_repo)"; write_stubs "$D"
 secret_store "$D" ADMIN_WEB_APPCHECK_SITE_KEY=6LcEXAMPLE-not-a-real-site-key \
-                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token
+                  PORTAL_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token \
+                  ADMIN_WEB_MAPBOX_PUBLIC_TOKEN=pk.example-not-a-real-token-admin
 fixture_all_green "$D/fixtures/$(cd "$D/repo" && git rev-parse HEAD)"
 RC="$(run_release "$D" DRY_RUN=1 RELEASE_YES=1 GCLOUD_SECRETS_DIR="$D/secrets")"
 OUT="$(cat "$D/out")"
