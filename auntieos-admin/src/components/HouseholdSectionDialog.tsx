@@ -79,8 +79,8 @@ export function HouseholdSectionDialog({ section, kinfolkName, record, onClose, 
         <Banner tone="error" title="This section has no text form">
           <p>
             {section.title} is chosen from the shared vet bank by search, so there is nothing here
-            to type. Nothing was changed. Close this and use Edit veterinary, which searches the
-            bank.
+            to type. Nothing was changed. Close this and use Edit veterinary information, which
+            searches the bank.
           </p>
         </Banner>
       </Dialog>

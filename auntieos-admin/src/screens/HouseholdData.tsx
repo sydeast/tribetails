@@ -501,7 +501,7 @@ function VeterinarySection({
       title={section.title}
       subtitle={section.blurb}
       {...(stagger !== undefined ? { className: stagger } : {})}
-      trailing={<GhostButton label="Edit veterinary" onClick={onEdit} />}
+      trailing={<GhostButton label={`Edit ${section.title.toLowerCase()}`} onClick={onEdit} />}
     >
       {clinics.status === 'loading' && <p className="hdata__notes-lede">Reading the shared clinic catalog…</p>}
       {clinics.status === 'error' && (

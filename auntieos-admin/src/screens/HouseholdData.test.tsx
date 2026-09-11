@@ -487,7 +487,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
   it('is edited HERE, since this record owns the vet', async () => {
     mount();
     await screen.findByText('Pantry, second shelf');
-    expect(screen.getByRole('button', { name: 'Edit veterinary' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit veterinary information' })).toBeInTheDocument();
   });
 
   it('says so when the record is not linked to the catalog', async () => {
@@ -573,7 +573,7 @@ describe('HouseholdData: editing the vet', () => {
     );
     mount();
     await screen.findByText('Pantry, second shelf');
-    await user.click(screen.getByRole('button', { name: 'Edit veterinary' }));
+    await user.click(screen.getByRole('button', { name: 'Edit veterinary information' }));
     return screen.getByRole('dialog');
   }
 
@@ -662,7 +662,7 @@ describe('HouseholdData: editing the vet', () => {
     getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
     mount();
     await screen.findByText('Pantry, second shelf');
-    await user.click(screen.getByRole('button', { name: 'Edit veterinary' }));
+    await user.click(screen.getByRole('button', { name: 'Edit veterinary information' }));
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
