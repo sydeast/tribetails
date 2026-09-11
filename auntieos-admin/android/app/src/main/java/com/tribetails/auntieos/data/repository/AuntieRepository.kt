@@ -107,7 +107,7 @@ class AuntieRepository(
             val token = auth.currentUser?.getIdToken(true)?.await()
             if (token?.claims?.get("admin") != true) {
                 endSession()
-                error("This account does not have the admin claim.")
+                error("This account does not have admin access.")
             }
             AuntieLog.i("Admin sign-in successful: ${auth.currentUser?.uid}")
         }
