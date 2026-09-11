@@ -36,13 +36,25 @@ import './Communicate.css';
  * landing view, with the two compose surfaces behind heading buttons. Opening a
  * writing tool on a list of things already written is backwards.
  *
- * ── THREE MODES, WHERE THE ARCHIVE HAD TWO ──────────────────────────────────
- * The archive's picker was Personalize / Broadcast, and its "Recent" was a
- * collapsible panel down the right-hand column beside a live preview. This port
- * had already built Recent as a full screen with its own channel filter and day
- * grouping, which is more than the archive's panel ever did, so it becomes the
- * third mode rather than being demoted back into a sidebar. That is a
- * deliberate divergence, not a restoration.
+ * ── TWO MODES AND A RIGHT COLUMN, THE MOCK'S SHAPE ──────────────────────────
+ * The mock (`ui-ideas/auntieos-communicate-2026-05-27.html`) has one heading,
+ * a two-segment Personalize / Broadcast switch beside it, the compose panel in
+ * the left column and two panels in the right: the live preview of what is
+ * being written, and Recent. Recent was a third mode here for a while (commit
+ * 83413fa made it one on the grounds that it had grown a channel filter and
+ * day grouping the archive's side panel never had). The #755 sweep put the mock
+ * back in charge of layout, so Recent is the right-hand panel again, with the
+ * filter and the grouping it grew intact. It is always mounted, so
+ * `listRecentSends` now runs once per visit to this screen rather than once per
+ * visit to a tab; one bounded callable, and the panel the mock shows on every
+ * visit is shown on every visit.
+ *
+ * The compose surfaces return FRAGMENTS, and that is what places the preview.
+ * `.communicate__cols` is the grid; a fragment's children become the grid's
+ * own children, so Broadcast's `.communicate__preview` lands in the right
+ * column above Recent without its form state being lifted out of the surface
+ * that owns it. Personalize renders no preview (its draft is the editable
+ * text itself), so Recent moves up to fill the column.
  *
  * Recent's own channel filter stays exactly as it was: a tablist over
  * `sendChannelOf`'s enumerated `SendChannel`, every predicate a POSITIVE
@@ -50,37 +62,30 @@ import './Communicate.css';
  * stays visible under All instead of being force-fit into a named tab.
  */
 
-type Mode = 'personalize' | 'broadcast' | 'recent';
+type Mode = 'personalize' | 'broadcast';
 
 interface ModeDef {
   key: Mode;
   label: string;
-  title: string;
-  accentTail?: string;
   subtitle: string;
 }
 
+/**
+ * The heading is the mock's, and it does not change with the mode: "Talk to
+ * your kinfolk" over both surfaces. Only the explanation behind the info
+ * button follows the switch.
+ */
 const MODES: readonly ModeDef[] = [
   {
     key: 'personalize',
     label: 'Personalize',
-    title: 'Talk to your',
-    accentTail: 'kinfolk.',
     subtitle:
       'Give Auntie the notes, pick a tone and a length, then read the draft and approve it before it goes home.',
   },
   {
     key: 'broadcast',
     label: 'Broadcast',
-    title: 'One message,',
-    accentTail: 'many homes.',
     subtitle: 'Send to a saved audience or one you build here, across in-app, email, text, and push.',
-  },
-  {
-    key: 'recent',
-    label: 'Recent',
-    title: 'Recent',
-    subtitle: 'Sent messages to kinfolk, with delivery and open counts as providers report them.',
   },
 ];
 
@@ -115,8 +120,8 @@ export function Communicate() {
     <div className="screen">
       <DenScreenHeading
         kicker="The Den · Communicate"
-        title={active.title}
-        {...(active.accentTail !== undefined ? { accentTail: active.accentTail } : {})}
+        title="Talk to your"
+        accentTail="kinfolk"
         subtitle={active.subtitle}
         trailing={
           <div className="communicate__modes" role="tablist" aria-label="Communicate mode">
@@ -137,12 +142,14 @@ export function Communicate() {
         }
       />
 
-      {/* Mounted per mode rather than hidden with CSS: Recent's `listRecentSends`
-          call belongs to Recent, and a hidden-but-mounted Recent would fetch on
-          every visit to a compose surface that never shows it. */}
-      {mode === 'personalize' && <CommunicatePersonalize />}
-      {mode === 'broadcast' && <CommunicateCompose />}
-      {mode === 'recent' && <RecentSends />}
+      <div className="communicate__cols">
+        {/* The compose surfaces mount per mode rather than hide with CSS, so a
+            surface's in-flight state (a draft, a confirm) belongs to the visit
+            that started it. */}
+        {mode === 'personalize' && <CommunicatePersonalize />}
+        {mode === 'broadcast' && <CommunicateCompose />}
+        <RecentSends />
+      </div>
     </div>
   );
 }
@@ -202,7 +209,11 @@ function RecentSends() {
       : 0;
 
   return (
-    <DenPanel title="Sent messages" subtitle="Every external send on the books, newest first.">
+    <DenPanel
+      title="Recent"
+      subtitle="Every external send on the books, newest first, with delivery and open counts as providers report them."
+      className="communicate__recent"
+    >
       {failedCount > 0 ? <span className="communicate__badge">{failedCount} failed</span> : null}
 
       <AsyncRegion
@@ -281,6 +292,8 @@ function SendRow({ row }: SendRowProps) {
 
   return (
     <li className="communicate__row">
+      {/* The mock's `.br .ic`: a 9px dot in the channel's tone, leading the row. */}
+      <span className="communicate__row-dot" data-channel={sendChannelOf(row.channel)} aria-hidden="true" />
       <span className="communicate__row-who">
         <span className="communicate__row-name">
           {channelLabel(row.channel)} · {recipient}
