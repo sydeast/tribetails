@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, type FsTime } from './time';
 import { localDateIso } from './invoiceFormat';
+import { type DenTone } from '../components/DenScreenKit';
 
 /**
  * Pure Sessions ("Auntie Time") classification + display helpers, kept out of
@@ -183,25 +184,34 @@ export interface SessionStateInfo {
   label: string;
   chipLabel: string;
   cssClass: string;
+  /**
+   * The brand tone the kit's `StatusPill` wears for this state. ONE map for the
+   * board card and the detail hero, since #755: the detail used to carry its
+   * own record and the board its own seven CSS rules, and two copies of the
+   * same seven colours is how they drift.
+   */
+  tone: DenTone;
 }
 
-/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. */
+/** Friendly label, chip class and pill tone per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. */
 export function sessionStateInfo(state: SessionState): SessionStateInfo {
   switch (state) {
     case 'scheduled':
-      return { label: 'Scheduled', chipLabel: 'SCHEDULED', cssClass: 'scheduled' };
+      return { label: 'Scheduled', chipLabel: 'SCHEDULED', cssClass: 'scheduled', tone: 'neutral' };
     case 'onMyWay':
-      return { label: 'On the way', chipLabel: 'ON THE WAY', cssClass: 'onmyway' };
+      return { label: 'On the way', chipLabel: 'ON THE WAY', cssClass: 'onmyway', tone: 'orange' };
     case 'arrived':
-      return { label: 'Arrived', chipLabel: 'ARRIVED', cssClass: 'arrived' };
+      return { label: 'Arrived', chipLabel: 'ARRIVED', cssClass: 'arrived', tone: 'teal' };
     case 'departed':
-      return { label: 'Departed', chipLabel: 'DEPARTED', cssClass: 'departed' };
+      return { label: 'Departed', chipLabel: 'DEPARTED', cssClass: 'departed', tone: 'purple' };
     case 'completed':
-      return { label: 'Completed', chipLabel: 'COMPLETED', cssClass: 'completed' };
+      return { label: 'Completed', chipLabel: 'COMPLETED', cssClass: 'completed', tone: 'success' };
     case 'cancelled':
-      return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled' };
+      // Not a stage of the visit: the visit is not happening. Muted, and the
+      // pill strikes it through wherever it is drawn.
+      return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled', tone: 'muted' };
     case 'unknown':
-      return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' };
+      return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown', tone: 'warning' };
   }
 }
 

@@ -24,7 +24,7 @@ import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
-import { DenScreenHeading, ServicePill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import { DenScreenHeading, ServicePill, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
@@ -486,7 +486,12 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           </span>
         </span>
 
-        <span className={`sessions__chip sessions__chip--${info.cssClass}`}>{info.chipLabel}</span>
+        {/* The kit's pill, since #755. This card drew its own for a year, in a
+            fourth size and a third shape; the wrapper is only the phone rule's
+            hook for moving it above the name. */}
+        <span className="sessions__card-status">
+          <StatusPill label={info.chipLabel} tone={info.tone} struck={state === 'cancelled'} />
+        </span>
       </button>
 
       {/* Live only while the Auntie is inside the house. A DEPARTED visit has a

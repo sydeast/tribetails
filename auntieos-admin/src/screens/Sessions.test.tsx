@@ -357,8 +357,11 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).getByText('Lorna Wren')).toBeInTheDocument();
     expect(within(card).getByText('Dog Walk')).toBeInTheDocument();
     expect(within(card).getByText('Biscuit & Gravy · Today · 09:00 to 09:30')).toBeInTheDocument();
-    // Status pill, GPS live route, address, household note, invoice chip.
-    expect(within(card).getByText('ARRIVED')).toBeInTheDocument();
+    // Status pill, GPS live route, address, household note, invoice chip. The
+    // pill is the KIT's since #755, not a card-local chip: one object on every
+    // screen that shows a visit, tinted from its tone.
+    expect(within(card).getByText('ARRIVED')).toHaveClass('den-statuspill');
+    expect(within(card).getByText('ARRIVED')).toHaveAttribute('data-tone', 'teal');
     expect(within(card).getByText(/GPS tracking · live route/)).toBeInTheDocument();
     expect(within(card).getByText(/82 Creekside Ln/)).toBeInTheDocument();
     expect(within(card).getByText('Side gate, harness on the hook.')).toBeInTheDocument();
@@ -549,6 +552,8 @@ describe('Auntie Time: the card runs the visit', () => {
     renderBoard();
     const card = screen.getByText('The Whitfields').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__acts')).toBeNull();
+    // And its pill is struck through, the way every mock draws a cancellation.
+    expect(within(card).getByText('CANCELLED')).toHaveClass('den-statuspill--struck');
   });
 });
 

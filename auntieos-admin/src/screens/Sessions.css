@@ -4,9 +4,8 @@
  * convention), so nothing here needs to land in shared styles/screens.css.
  *
  * Every value comes from styles/tokens.css: no literal colours, radii,
- * durations or px spacing outside the chip palette below, which mirrors
- * Invoices.css's own chip block because session states need more distinct hues
- * than the shared DenTone palette carries.
+ * durations or px spacing. The status pill is the kit's `StatusPill` since
+ * #755; the seven per-state chip rules this file carried are gone with it.
  *
  * THE PALETTE IS NOT THIS FILE'S JOB. The mock draws a dark navy ground with
  * mesh blobs; that is the theme system's ruling (admin default in Branding,
@@ -343,53 +342,10 @@
   flex: 1 1 8rem;
 }
 
-/* ── status chip ─────────────────────────────────────────────────────────── */
-
-.sessions__chip {
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-  text-align: center;
-}
-.sessions__chip--scheduled {
-  background: var(--color-surface-2);
-  color: var(--color-text-dim);
-}
-.sessions__chip--onmyway {
-  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-  color: var(--color-primary);
-}
-.sessions__chip--arrived {
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  color: var(--color-accent);
-}
-.sessions__chip--departed {
-  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
-  color: var(--color-tertiary);
-}
-.sessions__chip--completed {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
-}
-.sessions__chip--cancelled {
-  background: var(--color-surface-2);
-  color: var(--color-text-faint);
-  text-decoration: line-through;
-}
-.sessions__chip--unknown {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
-}
-
 /* ── Phone width ──────────────────────────────────────────────────────────
-   Measured at 390x844: the header's three parts (photos, identity, chip) fit
+   Measured at 390x844: the header's three parts (photos, identity, pill) fit
    one line only while the identity column has room to ellipsise. Below that the
-   chip moves above the name rather than squeezing "Constance
+   pill moves above the name rather than squeezing "Constance
    Fairweather-Okonkwo" down to eight characters, and the action row stacks so
    no lifecycle button ends up too narrow to read its own label. */
 @media (max-width: 720px) {
@@ -400,7 +356,7 @@
     flex: 1 1 100%;
     order: 2;
   }
-  .sessions__chip {
+  .sessions__card-status {
     order: 1;
     margin-left: auto;
   }
