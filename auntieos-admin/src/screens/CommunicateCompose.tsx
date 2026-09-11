@@ -570,8 +570,9 @@ interface BroadcastResultPanelProps {
 }
 
 /**
- * The subtitle sentence: who the segment matched, and how many of them the
- * broadcast actually reached.
+ * The panel's detail line: who the segment matched, and how many of them the
+ * broadcast actually reached. A count, so it stays on screen rather than
+ * going behind the info button with the explanations (#752).
  *
  * This used to read "Reached N kinfolk" off `recipientCount`, which is the
  * number the SEGMENT matched, not the number that heard anything. Since
@@ -602,7 +603,7 @@ function reachSentence(result: SendBroadcastResult): string {
  */
 function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResultPanelProps) {
   return (
-    <DenPanel title="Broadcast sent" subtitle={reachSentence(result)}>
+    <DenPanel title="Broadcast sent" detail={reachSentence(result)}>
       <ul className="compose__result-list">
         {channels.map((ch) => {
           const counts = channelCountsOf(result.perChannel, ch);

@@ -143,7 +143,7 @@ function ClinicBank({
       {pending.length > 0 && (
         <DenPanel
           title="Pending approval"
-          subtitle={`${pending.length} submitted by a household`}
+          detail={`${pending.length} submitted by a household`}
         >
           <p className="vetbank-blurb">
             A household added these from its own record. Approving publishes a clinic to the
@@ -167,7 +167,7 @@ function ClinicBank({
 
       <DenPanel
         title="Catalog"
-        subtitle={`${active.length} of ${activeClinics(rows).length} clinics`}
+        detail={`${active.length} of ${activeClinics(rows).length} clinics`}
         trailing={
           <input
             className="vetbank-search"
@@ -198,7 +198,7 @@ function ClinicBank({
       </DenPanel>
 
       {retired.length > 0 && (
-        <DenPanel title="Retired" subtitle={`${retired.length} out of the bank`}>
+        <DenPanel title="Retired" detail={`${retired.length} out of the bank`}>
           <p className="vetbank-blurb">
             Retired clinics are hidden from every picker and from the kinfolk portal. They are
             kept, not deleted: a household already on one still reads the name, phone and

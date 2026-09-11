@@ -513,7 +513,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       kicker="The Den · KinTales"
       title={kinTaleId ? 'Edit the' : 'Compose a'}
       accentTail="KinTale."
-      subtitle={draft ? `Goes to ${draft.kinfolkName || 'Kinfolk'}.` : 'The recap that goes home after a visit.'}
+      detail={draft ? `Goes to ${draft.kinfolkName || 'Kinfolk'}.` : undefined}
+      subtitle="The recap that goes home after a visit."
       trailing={<GhostButton label="Close" onClick={onClose} />}
     />
   );
@@ -1066,7 +1067,7 @@ function PhotoBlock({ draft, attached, onOpenUpload, onRemove, disabled }: Photo
   return (
     <DenPanel
       title="Photos"
-      subtitle={count === 0 ? 'Nothing attached yet.' : `${count} attached to this tale.`}
+      detail={count === 0 ? 'Nothing attached yet.' : `${count} attached to this tale.`}
     >
       <ul className="kintale-compose__photos">
         {attached.map((media) => {

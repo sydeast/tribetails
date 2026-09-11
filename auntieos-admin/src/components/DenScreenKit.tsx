@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { type ResolvedScalar } from '../lib/async';
 import './DenScreenKit.css';
@@ -101,13 +101,93 @@ function CrumbStep({ crumb }: { crumb: Crumb }) {
   return <span aria-current="page">{crumb.label}</span>;
 }
 
+// ── subtitle tooltip ────────────────────────────────────────────────────────
+
+/**
+ * The info affordance that replaced the subtitle line.
+ *
+ * 153 call sites across 75 files filled `subtitle`, so every panel and every
+ * page heading in the admin carried a sentence of explanation and the screens
+ * read as busy: "at most they can be tool tips, otherwise they are making the
+ * ui too busy with unneccessary text" (operator, 2026-09-11). The sentence is
+ * still worth having the first time you meet a screen, so it moves behind a
+ * hairline "i": hover or focus the button and it appears, leaving, blurring or
+ * Escape puts it away.
+ *
+ * The text is NEVER unmounted. `aria-describedby` on the title resolves only
+ * against an element that exists, and the accessible-description computation
+ * reads a hidden node when it is referenced directly, so a screen reader is
+ * handed the sentence without anyone hovering anything. A tip that rendered
+ * only while open would be a description that exists only for sighted mouse
+ * users, which is how this change would have quietly cost more than it saved.
+ *
+ * `bodyClassName` carries `.den-panel-subtitle` / `.den-heading-subtitle`
+ * through to the tip body: screen stylesheets target those names, and what
+ * changed here is where the text sits, not what it is.
+ */
+function KitTooltip({
+  id,
+  text,
+  bodyClassName,
+}: {
+  id: string;
+  text: string;
+  bodyClassName: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    // On the document, not the button: a tip opened by the POINTER has nothing
+    // of ours focused, so a handler on the trigger would never see the key.
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
+  return (
+    <span className="kit-tip">
+      <button
+        type="button"
+        className="kit-tip-button"
+        aria-label="About this section"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        // Opens, never toggles. A click arrives after the pointer has already
+        // opened the tip, so toggling here would shut it on the way in.
+        onClick={() => setOpen(true)}
+      >
+        <span aria-hidden="true">i</span>
+      </button>
+      <span id={id} role="tooltip" className={`kit-tip-body ${bodyClassName}`} hidden={!open}>
+        {text}
+      </span>
+    </span>
+  );
+}
+
 // ── page heading ────────────────────────────────────────────────────────────
 
 interface DenScreenHeadingBase {
   title: string;
   /** Painted in primary and italic, the way the Den heading emphasises its last word. */
   accentTail?: string;
-  subtitle?: string;
+  /**
+   * The EXPLANATION of the screen. Never rendered as copy: it becomes the info
+   * button's tooltip. Write the sentence you would have written before.
+   */
+  subtitle?: string | undefined;
+  /**
+   * A VALUE that belongs on the screen: a count, a date, a range, a name. This
+   * is the half of the old `subtitle` that survived the 2026-09-11 ruling,
+   * because "Sep 1 - Sep 7" is the screen telling you what you are looking at,
+   * where "Every Kin Care visit on the books" is telling you what a schedule is.
+   */
+  detail?: string | undefined;
   trailing?: ReactNode;
   className?: string;
 }
@@ -131,8 +211,11 @@ type DenScreenHeadingProps = DenScreenHeadingBase &
 
 /**
  * The standard Den page heading: uppercase mono kicker (or a breadcrumb trail
- * in its place), serif title with an optional italic accent tail, optional
- * subtitle blurb, optional trailing slot.
+ * in its place), serif title with an optional italic accent tail, an info
+ * button carrying the explanation, an optional `detail` value line, optional
+ * trailing slot.
+ *
+ * The explanation is a tooltip rather than a line of copy. See KitTooltip.
  */
 export function DenScreenHeading({
   kicker,
@@ -140,9 +223,11 @@ export function DenScreenHeading({
   title,
   accentTail,
   subtitle,
+  detail,
   trailing,
   className,
 }: DenScreenHeadingProps) {
+  const tipId = useId();
   return (
     <header className={className ? `den-heading ${className}` : 'den-heading'}>
       <div className="den-heading-main">
@@ -153,11 +238,23 @@ export function DenScreenHeading({
         ) : (
           <DenBreadcrumbs crumbs={crumbs} />
         )}
-        <h1 className="den-heading-title">
-          {accentTail ? `${title} ` : title}
-          {accentTail !== undefined && <em className="den-heading-accent">{accentTail}</em>}
-        </h1>
-        {subtitle !== undefined && <p className="den-heading-subtitle">{subtitle}</p>}
+        {/* The button sits BESIDE the h1, never inside it: a button is phrasing
+            content and would be legal there, but its label would join the
+            heading's accessible name and every screen would announce itself as
+            "Schedule About this section". */}
+        <div className="den-heading-titlerow">
+          <h1
+            className="den-heading-title"
+            aria-describedby={subtitle !== undefined ? tipId : undefined}
+          >
+            {accentTail ? `${title} ` : title}
+            {accentTail !== undefined && <em className="den-heading-accent">{accentTail}</em>}
+          </h1>
+          {subtitle !== undefined && (
+            <KitTooltip id={tipId} text={subtitle} bodyClassName="den-heading-subtitle" />
+          )}
+        </div>
+        {detail !== undefined && <p className="den-heading-detail">{detail}</p>}
       </div>
       {trailing !== undefined && <div className="den-heading-trailing">{trailing}</div>}
     </header>
@@ -297,7 +394,20 @@ function StatBody({ label, value, trend, formatValue }: StatBodyProps) {
 
 interface DenPanelProps {
   title: string;
-  subtitle?: string;
+  /**
+   * The EXPLANATION of the section. Never rendered as copy: it becomes the info
+   * button's tooltip. Write the sentence you would have written before.
+   */
+  subtitle?: string | undefined;
+  /**
+   * A VALUE that belongs on the screen: a count, a date, a name, a status word.
+   * Sits under the title in plain sight, where the old subtitle line used to.
+   *
+   * Distinct from `meta`, which is the mocks' right-aligned mono note on the
+   * header rule. `detail` is the left-hand, full-width half of the same idea and
+   * takes the longer strings ("3 of 8 on file", "5 days, Sep 1 to Sep 5").
+   */
+  detail?: string | undefined;
   /** Header becomes a disclosure button. Collapses tall stacks above the fold. */
   collapsible?: boolean;
   initiallyExpanded?: boolean;
@@ -328,12 +438,16 @@ interface DenPanelProps {
 }
 
 /**
- * A glass section panel with a serif title, optional subtitle and trailing slot,
+ * A glass section panel with a serif title, an info button carrying the
+ * explanation, an optional `detail` value line and an optional trailing slot,
  * then arbitrary content. The workhorse container for Den dashboards.
+ *
+ * The explanation is a tooltip rather than a line of copy. See KitTooltip.
  */
 export function DenPanel({
   title,
   subtitle,
+  detail,
   collapsible = false,
   initiallyExpanded = true,
   hoverLift = false,
@@ -345,6 +459,7 @@ export function DenPanel({
 }: DenPanelProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const contentId = useId();
+  const tipId = useId();
   const showContent = !collapsible || expanded;
 
   // `lift` is the shared utility in styles/base.css, and it replaces the old
@@ -359,10 +474,29 @@ export function DenPanel({
   const hasTitle = title.trim() !== '';
   const TitleTag = hasTitle ? (`h${headingLevel}` as 'h2' | 'h3' | 'h4') : 'span';
 
+  const info =
+    subtitle !== undefined ? (
+      <KitTooltip id={tipId} text={subtitle} bodyClassName="den-panel-subtitle" />
+    ) : null;
+
   const heading = (
     <span className="den-panel-heading">
-      <TitleTag className="den-panel-title">{title}</TitleTag>
-      {subtitle !== undefined && <span className="den-panel-subtitle">{subtitle}</span>}
+      <span className="den-panel-titlerow">
+        <TitleTag
+          className="den-panel-title"
+          aria-describedby={subtitle !== undefined ? tipId : undefined}
+        >
+          {title}
+        </TitleTag>
+        {/* A collapsible panel wraps this whole heading in the disclosure
+            button, and a button inside a button is invalid markup the outer one
+            swallows the clicks of. So the info button moves out to sit beside
+            the toggle instead, after the chevron. Two panels in the app are
+            both collapsible and explained (HouseholdData's dossier, Schedule's
+            day list), which is a small enough price for valid markup. */}
+        {!collapsible && info}
+      </span>
+      {detail !== undefined && <span className="den-panel-detail">{detail}</span>}
     </span>
   );
 
@@ -370,16 +504,19 @@ export function DenPanel({
     <section className={classes}>
       <div className="den-panel-header">
         {collapsible ? (
-          <button
-            type="button"
-            className="den-panel-toggle"
-            aria-expanded={expanded}
-            aria-controls={contentId}
-            onClick={() => setExpanded((e) => !e)}
-          >
-            {heading}
-            <Chevron expanded={expanded} />
-          </button>
+          <>
+            <button
+              type="button"
+              className="den-panel-toggle"
+              aria-expanded={expanded}
+              aria-controls={contentId}
+              onClick={() => setExpanded((e) => !e)}
+            >
+              {heading}
+              <Chevron expanded={expanded} />
+            </button>
+            {info}
+          </>
         ) : (
           heading
         )}

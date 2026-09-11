@@ -398,7 +398,7 @@ export function sectionErrors(
   return own;
 }
 
-/** How many of [section]'s fields carry a real value. Drives the "3 of 7 on file" subtitle. */
+/** How many of [section]'s fields carry a real value. Drives the "3 of 7 on file" detail line. */
 export function sectionFilledCount(section: HouseholdSectionSpec, values: HouseholdFields): number {
   return section.fields.filter((field) => values[field.key].trim() !== '').length;
 }

@@ -85,7 +85,12 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataP
         kicker="The Den · Directory"
         title="Household"
         accentTail="data"
-        subtitle={`The shared record behind ${household}: vet, supplies, routines, and who covers Auntie.`}
+        // The household's NAME is the one thing on this heading that is a
+        // value rather than an explanation, and before #752 it was buried in
+        // the sentence. The sentence moved into the tooltip; the name stayed,
+        // because otherwise nothing on the screen says whose record this is.
+        detail={household}
+        subtitle="The shared record behind this household: vet, supplies, routines, and who covers Auntie."
         // Names the screen the click actually lands on (#689). This is a
         // sub-view of the household PROFILE, held in that screen's state, so
         // closing it never leaves `/directory/{id}`. "Back to household" named
@@ -346,7 +351,8 @@ function Sections({
           <DenPanel
             key={section.id}
             title={section.title}
-            subtitle={`${filled} of ${total} on file · ${section.blurb}`}
+            detail={`${filled} of ${total} on file`}
+            subtitle={section.blurb}
             trailing={
               <GhostButton label={`Edit ${section.title.toLowerCase()}`} onClick={() => onEdit(section)} />
             }
