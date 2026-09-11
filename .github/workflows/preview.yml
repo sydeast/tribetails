@@ -193,6 +193,13 @@ jobs:
         env:
           VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
           VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+          # The Kin Care route map (#760). Its OWN secret name, not the
+          # portal's, even where the value is the same token: the two sites are
+          # URL-restricted and rotated separately. A preview host is not on the
+          # token's referrer list, so the map falls back to the SVG polyline in
+          # a preview even with this set, which is the fallback working rather
+          # than a preview being broken.
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ADMIN_WEB_MAPBOX_PUBLIC_TOKEN }}
           # Derived, never stored: the commit this preview was built from, so a
           # Sentry event raised in a preview names the code it came from.
           VITE_SENTRY_RELEASE: ${{ github.event.pull_request.head.sha }}
@@ -201,13 +208,14 @@ jobs:
         env:
           VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
           VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ADMIN_WEB_MAPBOX_PUBLIC_TOKEN }}
         run: |
           missing=""
-          for v in VITE_SENTRY_DSN VITE_ADMIN_APPCHECK_SITE_KEY; do
+          for v in VITE_SENTRY_DSN VITE_ADMIN_APPCHECK_SITE_KEY VITE_MAPBOX_PUBLIC_TOKEN; do
             [ -n "${!v}" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then
-            echo "::warning title=Preview built without client config::This admin preview compiled empty values for:$missing. Sentry reporting is off in it and App Check reads 'unconfigured'. Fork PRs never get repo secrets; on a same-repo PR, mirror the Secret Manager value: gh secret set ADMIN_WEB_SENTRY_DSN --repo sydeast/tribetails"
+            echo "::warning title=Preview built without client config::This admin preview compiled empty values for:$missing. Sentry reporting is off in it, App Check reads 'unconfigured', and the Kin Care route falls back to the SVG polyline instead of the satellite map. Fork PRs never get repo secrets; on a same-repo PR, mirror the Secret Manager value: gh secret set ADMIN_WEB_MAPBOX_PUBLIC_TOKEN --repo sydeast/tribetails"
           else
             echo "All declared admin client config was present."
           fi

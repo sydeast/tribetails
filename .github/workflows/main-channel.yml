@@ -150,6 +150,13 @@ jobs:
         env:
           VITE_SENTRY_DSN: ${{ secrets.ADMIN_WEB_SENTRY_DSN }}
           VITE_ADMIN_APPCHECK_SITE_KEY: ${{ secrets.ADMIN_WEB_APPCHECK_SITE_KEY }}
+          # The Kin Care route map (#760). Its OWN secret name, not the
+          # portal's, even where the value is the same token: the two sites are
+          # URL-restricted and rotated separately. Empty here is not a failure,
+          # it is the SVG polyline, so this does not gate the publish. The
+          # token's referrer list must name this channel's host or the tiles are
+          # refused and the panel falls back with a valid token in the bundle.
+          VITE_MAPBOX_PUBLIC_TOKEN: ${{ secrets.ADMIN_WEB_MAPBOX_PUBLIC_TOKEN }}
           # The commit this channel was built from, so a Sentry event raised
           # while walking it names the code it came from.
           VITE_SENTRY_RELEASE: ${{ github.sha }}
