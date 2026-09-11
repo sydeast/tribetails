@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,9 +51,10 @@ import com.tribetails.auntieos.ui.components.AuntieSearchField
 import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
-import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
+import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.GlassSurface
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.formatTime
@@ -58,18 +62,25 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 import java.time.LocalDate
 
 /**
- * Activity log (hash-chain audit trail) in the Den aesthetic. Ported from the
- * web Den layout (web/.../screens/activity/ActivityLogScreen.kt) while keeping
+ * Activity log (hash-chain audit trail) in the Den aesthetic, drawn to
+ * `ui-ideas/auntieos-activity-log-2026-05-27.html` (issue #755) while keeping
  * the Android [AdminDataViewModel] contract: entries come from
  * [AdminDataViewModel.activityLog] and refresh runs through [loadActivityLog].
  *
- * Fail-loud honesty (per project policy), mirroring the web spec:
- *  - The cryptographic "Chain verified" badge, the "Re-verify" action
- *    (verifyActivityLogChain via [AdminDataViewModel.verifyChain]), and the
- *    per-entry seq/hash column from the Den mockup are all live. The Android
- *    [ActivityLogEntry] model carries the real seq/prevHash/entryHash fields,
- *    so a sealed row shows "#seq · <hash8>" and a legacy row that predates the
- *    chain shows an honest "unchained" pill. Nothing is fabricated.
+ * The mock, top to bottom: the heading with the chain badge beside it, a row
+ * of six category chips and the search box, then one untitled glass panel of
+ * day separators and rows (time, category glyph tile, humanised title with the
+ * raw code, actor and target, and the seq and hash on the right).
+ *
+ * Fail-loud honesty (per project policy), mirroring the web screen:
+ *  - The "Chain verified" badge, the "Re-verify" action (verifyActivityLogChain
+ *    via [AdminDataViewModel.verifyChain]), and the per-entry seq/hash column
+ *    are all live. The Android [ActivityLogEntry] model carries the real
+ *    seq/prevHash/entryHash fields, so a sealed row shows "#seq" over the first
+ *    eight characters of its hash and a legacy row that predates the chain says
+ *    "legacy" in the same column. Nothing is fabricated.
+ *  - The chain is verified on arrival, as web has done since its Den port and
+ *    as the mock's badge assumes; Re-verify runs it again.
  *  - Timestamp parsing tolerates non-ISO values without silently collapsing
  *    every row into one "Undated" group; if a meaningful share of rows have
  *    unparseable timestamps we raise a visible Warning banner so the
@@ -114,7 +125,14 @@ fun ActivityLogScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val chainVerify by viewModel.chainVerify.collectAsState()
 
-    LaunchedEffect(Unit) { viewModel.loadActivityLog() }
+    // Verify on arrival as well as on demand: the mock's badge reads "Chain
+    // verified" the moment the screen opens, and web has verified on mount
+    // since its Den port. Before this the badge said "Tap Re-verify" until
+    // someone did.
+    LaunchedEffect(Unit) {
+        viewModel.loadActivityLog()
+        viewModel.verifyChain()
+    }
 
     var filter by remember { mutableStateOf(ActivityFilter.All) }
     var query by remember { mutableStateOf("") }
@@ -141,25 +159,30 @@ fun ActivityLogScreen(
                     kicker     = "The Den · Activity log",
                     title      = "Every move,",
                     accentTail = "sealed.",
-                    subtitle   = "The append-only audit trail. Every login, edit, and system event the app records, sealed into the hash chain.",
+                    subtitle   = "A tamper-evident audit trail, newest first. Every login, edit and system event the app records, sealed into the SHA-256 hash chain. Tap an entry for the full record. Re-verify walks the chain server-side.",
                 )
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(12.dp))
 
-                ChainIntegrityPanel(
-                    entryCount  = entries.size,
+                // The mock draws this badge in the heading's right-hand slot.
+                // On a phone the serif title and a three-part badge do not fit
+                // one row, so it sits under the heading until the kit's hero
+                // band and its badges slot land (#780).
+                ChainBadge(
                     verifyState = chainVerify,
                     onVerify    = { viewModel.verifyChain() },
                 )
                 Spacer(Modifier.height(16.dp))
 
                 FilterChipRow(selected = filter, onSelect = { filter = it })
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
+                // The kit field draws the mock's magnifier when no leading
+                // icon is supplied; the Activity glyph it used to carry was
+                // not the mock's.
                 AuntieSearchField(
                     value         = query,
                     onValueChange = { query = it },
                     placeholder   = "Search actor, action, target",
-                    leadingIcon   = Lucide.Activity,
                     onClear       = { query = "" },
                     modifier      = Modifier.fillMaxWidth(),
                 )
@@ -185,66 +208,66 @@ private fun LogPanel(
     query: String,
     onRowClick: (ActivityLogEntry) -> Unit,
 ) {
-    DenPanel(
-        title    = "Sealed events",
-        subtitle = "Newest first. Grouped by day.",
-    ) {
-        if (all.isEmpty()) {
-            if (isLoading) {
-                com.tribetails.auntieos.ui.components.EmptyHint("Loading the audit trail.")
-            } else {
-                EmptyState()
+    // The mock's `.log`: one glass panel with no title, rows running edge to
+    // edge, so this is the kit surface rather than a DenPanel with a heading
+    // nothing in the mock draws.
+    GlassSurface(cornerRadius = 20.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            if (all.isEmpty()) {
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    if (isLoading) {
+                        EmptyHint("Loading the audit trail.")
+                    } else {
+                        EmptyState()
+                    }
+                }
+                return@GlassSurface
             }
-            return@DenPanel
-        }
 
-        // VM already sorts newest-first (loadActivityLog), but re-sort defensively
-        // so a different feed path can't quietly reorder the rendered list.
-        val sortedAll = all.sortedByDescending { it.timestamp }
+            // VM already sorts newest-first (loadActivityLog), but re-sort defensively
+            // so a different feed path can't quietly reorder the rendered list.
+            val sortedAll = all.sortedByDescending { it.timestamp }
 
-        // Timestamp-contract guard: if a meaningful share of rows have unparseable
-        // timestamps, the writer may be storing Firestore Timestamp objects instead
-        // of ISO-8601 strings. Surface that loudly rather than collapsing to one
-        // "Undated" bucket and pretending the ordering is meaningful.
-        val unparseable = sortedAll.count { !isParseableTimestamp(it.timestamp) }
-        if (unparseable > 0 && unparseable >= sortedAll.size / 2) {
-            AuntieBanner(
-                tone   = AuntieBannerTone.Warning,
-                title  = "Timestamps look unparseable",
-                icon   = Lucide.TriangleAlert,
-                dashed = true,
-            ) {
-                Text(
-                    "$unparseable of ${sortedAll.size} entries have a timestamp this screen can't read as ISO-8601. " +
-                        "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
-                        "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = AuntieTheme.colors.textDim,
-                )
+            // Timestamp-contract guard: if a meaningful share of rows have unparseable
+            // timestamps, the writer may be storing Firestore Timestamp objects instead
+            // of ISO-8601 strings. Surface that loudly rather than collapsing to one
+            // "Undated" bucket and pretending the ordering is meaningful.
+            val unparseable = sortedAll.count { !isParseableTimestamp(it.timestamp) }
+            if (unparseable > 0 && unparseable >= sortedAll.size / 2) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    AuntieBanner(
+                        tone   = AuntieBannerTone.Warning,
+                        title  = "Timestamps look unparseable",
+                        icon   = Lucide.TriangleAlert,
+                        dashed = true,
+                    ) {
+                        Text(
+                            "$unparseable of ${sortedAll.size} entries have a timestamp this screen can't read as ISO-8601. " +
+                                "The audit writer may be storing a Firestore Timestamp object instead of a string, " +
+                                "which breaks day-grouping and ordering. Day/time shown as best-effort below.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-        }
 
-        val visible = sortedAll
-            .filter { filter.matches(it.actionType) }
-            .filter { matchesQuery(it, query) }
+            val visible = sortedAll
+                .filter { filter.matches(it.actionType) }
+                .filter { matchesQuery(it, query) }
 
-        if (visible.isEmpty()) {
-            NoMatchesState()
-            return@DenPanel
-        }
+            if (visible.isEmpty()) {
+                Column(Modifier.padding(horizontal = 20.dp)) { NoMatchesState() }
+                return@GlassSurface
+            }
 
-        // Stable insertion-ordered grouping; list is already newest-first.
-        val todayKey = LocalDate.now().toString()
-        val yesterdayKey = isoDateMinusOneDay(todayKey)
-        val grouped = visible.groupBy { it.timestamp.take(10) }
+            // Stable insertion-ordered grouping; list is already newest-first.
+            val todayKey = LocalDate.now().toString()
+            val yesterdayKey = isoDateMinusOneDay(todayKey)
+            val grouped = visible.groupBy { it.timestamp.take(10) }
 
-        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             grouped.forEach { (dateIso, dayEntries) ->
-                DaySeparator(
-                    label = relativeDayLabel(dateIso, todayKey, yesterdayKey),
-                    count = dayEntries.size,
-                )
+                DaySeparator(label = relativeDayLabel(dateIso, todayKey, yesterdayKey))
                 dayEntries.forEach { entry -> ActivityRow(entry, onClick = { onRowClick(entry) }) }
             }
         }
@@ -252,69 +275,69 @@ private fun LogPanel(
 }
 
 /**
- * The Den "chain integrity" surface.
+ * The mock's `.chain`: a lit dot, the verdict, a mono line of numbers and the
+ * Re-verify button, on the panel glass behind a teal hairline.
  *
  * Re-verify calls the deployed `verifyActivityLogChain` admin callable (via
- * AdminDataViewModel.verifyChain) and renders the REAL verdict: a teal "Chain
- * verified" badge with the sealed seq range + scanned count, or a fail-loud
- * coral break naming the first anomalous seq/code. Nothing is fabricated: before
- * the first run it just reports the real loaded entry count. The per-row
- * seq/entryHash seal renders in LogPanel from the real entry model fields.
+ * AdminDataViewModel.verifyChain) and renders the REAL verdict. The dot is teal
+ * and lit only for a verified chain, coral for a broken one or a failed call,
+ * and while the callable is in flight the dot gives way to the spinner (issue
+ * #714: verifyActivityLogChain cold-starts at up to 8.3s, and a surface that
+ * only changed its button label left 8 seconds with nothing moving). A broken
+ * chain also raises the loud banner under the badge.
  */
 @Composable
-internal fun ChainIntegrityPanel(
-    entryCount: Int,
+internal fun ChainBadge(
     verifyState: ChainVerifyUiState,
     onVerify: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     val verifying = verifyState is ChainVerifyUiState.Loading
-    DenPanel(
-        title    = "Hash chain",
-        subtitle = "writeAuditEntry seals each event into a SHA-256 chain.",
-        trailing = {
-            GhostButton(
-                label = if (verifying) "Verifying..." else "Re-verify",
-                onClick = onVerify,
-                enabled = !verifying,
-            )
-        },
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxWidth(),
+    val alarming = verifyState is ChainVerifyUiState.Error ||
+        (verifyState as? ChainVerifyUiState.Done)?.result?.ok == false
+    val verified = (verifyState as? ChainVerifyUiState.Done)?.result?.ok == true
+    val rim = when {
+        alarming -> c.error.copy(alpha = 0.55f)
+        else -> c.kinTeal.copy(alpha = 0.45f)
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        GlassSurface(
+            cornerRadius = 15.dp,
+            modifier = Modifier.fillMaxWidth().border(1.dp, rim, RoundedCornerShape(15.dp)),
         ) {
-            val verdictOk = (verifyState as? ChainVerifyUiState.Done)?.result?.ok == true
-            AuntieIconTile(
-                icon = Lucide.ShieldCheck,
-                tone = if (verdictOk) AuntieStatusTone.Success else AuntieStatusTone.Teal,
-                size = 36.dp,
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    "$entryCount ${if (entryCount == 1) "entry" else "entries"} loaded",
-                    style = AuntieTheme.typography.titleSmall,
-                    color = c.textPrimary,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Issue #714: verifyActivityLogChain cold-starts at up to
-                    // 8.3s. Before this the row only changed the Re-verify
-                    // button's label, so 8 seconds went by with nothing moving.
-                    if (verifying) {
-                        AuntieSpinner(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = c.textDim)
-                        Spacer(Modifier.width(6.dp))
-                    }
-                    Text(
-                        text  = chainVerdictLine(verifyState),
-                        style = AuntieTheme.typography.mono,
-                        color = when (verifyState) {
-                            is ChainVerifyUiState.Error -> c.error
-                            is ChainVerifyUiState.Done  -> if (verifyState.result.ok) c.textDim else c.error
-                            else -> c.textDim
-                        },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 11.dp),
+            ) {
+                if (verifying) {
+                    AuntieSpinner(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = c.textDim)
+                } else {
+                    AuntieStatusPill(
+                        label = "",
+                        dotOnly = true,
+                        glow = verified,
+                        tone = if (alarming) AuntieStatusTone.Error else AuntieStatusTone.Teal,
                     )
                 }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        chainVerdict(verifyState),
+                        style = AuntieTheme.typography.titleSmall,
+                        color = c.textPrimary,
+                    )
+                    Text(
+                        text  = chainVerdictLine(verifyState),
+                        style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
+                        color = if (alarming) c.error else c.textDim,
+                    )
+                }
+                GhostButton(
+                    label = "Re-verify",
+                    onClick = onVerify,
+                    enabled = !verifying,
+                )
             }
         }
 
@@ -342,58 +365,71 @@ internal fun ChainIntegrityPanel(
     }
 }
 
-/**
- * Per-row hash-chain seal label: "#<seq> · <first 8 of entryHash>" when the entry
- * is sealed, or null when it has no seq (legacy/unchained). Never fabricates a
- * hash. Mirrors the web seqHashLabel. Pure; unit-tested.
- */
-internal fun seqHashLabel(seq: Long?, entryHash: String): String? {
-    if (seq == null) return null
-    val short = entryHash.take(8)
-    return if (short.isNotBlank()) "#$seq · $short" else "#$seq"
+/** The badge's bold word for each verify state; never a pass that was not read. */
+internal fun chainVerdict(state: ChainVerifyUiState): String = when (state) {
+    is ChainVerifyUiState.Idle, is ChainVerifyUiState.Loading -> "Verifying the chain"
+    is ChainVerifyUiState.Error -> "Verification call failed"
+    is ChainVerifyUiState.Done -> if (state.result.ok) "Chain verified" else "Chain broken"
 }
 
-/** Honest one-line verdict for the chain panel; never fabricates a pass. */
+/**
+ * The badge's mono line: the mock's "1,482 entries · seq 1..1482 · 0 anomalies",
+ * with the legacy count appended when there is one. Same words as the web
+ * badge, so the two clients report one verdict. Never fabricates a pass.
+ */
 internal fun chainVerdictLine(state: ChainVerifyUiState): String = when (state) {
-    is ChainVerifyUiState.Idle -> "Tap Re-verify to check the chain integrity."
-    is ChainVerifyUiState.Loading -> "Verifying the SHA-256 chain..."
-    is ChainVerifyUiState.Error -> "Chain verification failed: ${state.message}"
+    is ChainVerifyUiState.Idle, is ChainVerifyUiState.Loading -> "Walking the SHA-256 chain server-side."
+    is ChainVerifyUiState.Error -> state.message
     is ChainVerifyUiState.Done -> {
         val r = state.result
         if (r.ok) {
-            val seq = if (r.firstSeq != null && r.lastSeq != null) "seq ${r.firstSeq}..${r.lastSeq}, " else ""
-            val unchained = if (r.unchainedCount > 0) ", ${r.unchainedCount} legacy unchained" else ""
-            "Chain verified, ${seq}${r.scanned} scanned, 0 anomalies$unchained"
+            val seq = if (r.firstSeq != null && r.lastSeq != null) " · seq ${r.firstSeq}..${r.lastSeq}" else ""
+            val unchained = if (r.unchainedCount > 0) " · ${r.unchainedCount} legacy outside the chain" else ""
+            "${r.scanned} entries$seq · 0 anomalies$unchained"
         } else {
-            "Chain BROKEN" + (r.anomalyCode?.let { " ($it)" } ?: "")
+            buildString {
+                append("First break")
+                r.anomalySeq?.let { append(" at seq $it") }
+                r.anomalyCode?.let { append(": $it") }
+                append(". Scanned ${r.scanned}.")
+            }
         }
     }
 }
 
+/**
+ * The mock's `.fchip` row: six chips, the active one cream filled with navy
+ * text (`.fchip.on`), not the kit chip's orange. Scrolls sideways on a phone
+ * rather than wrapping, so the row stays the one line the mock draws.
+ */
 @Composable
 private fun FilterChipRow(selected: ActivityFilter, onSelect: (ActivityFilter) -> Unit) {
+    val c = AuntieTheme.colors
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         ActivityFilter.entries.forEach { f ->
             AuntieChip(
                 label    = f.label,
                 selected = f == selected,
                 onClick  = { onSelect(f) },
+                selectedContainerColor = c.textPrimary,
+                selectedLabelColor = c.background,
             )
         }
     }
 }
 
+/** The mock's `.daysep`: mono, uppercase, letter-spaced, dim, at the log's edge padding. */
 @Composable
-private fun DaySeparator(label: String, count: Int) {
+private fun DaySeparator(label: String) {
     val c = AuntieTheme.colors
     Text(
-        text     = "${label.uppercase()} · $count",
-        style    = AuntieTheme.typography.mono,
+        text     = label.uppercase(),
+        style    = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 1.4.sp),
         color    = c.textFaint,
-        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
     )
 }
 
@@ -594,6 +630,16 @@ internal fun activityPayloadRows(entry: ActivityLogEntry): List<Pair<String, Str
     return out
 }
 
+/**
+ * The mock's `.row`: time, a 26dp category tile, the humanised title with the
+ * raw code, the actor and target line, and on the right the seq over the
+ * first eight characters of the hash behind a lit teal dot.
+ *
+ * No status pill: the mock draws none, and a failure row reads at a glance
+ * from its coral warning tile (see [actionIcon]). The status itself is in the
+ * opened record. A legacy row that predates the chain says "legacy" where the
+ * seq would be; it never wears a made-up seal.
+ */
 @Composable
 internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
     val c = AuntieTheme.colors
@@ -605,6 +651,7 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
         title    = humanizeAction(entry.actionType),
         subtitle = rowContext(entry).ifBlank { null },
         onClick  = onClick,
+        modifier = Modifier.padding(horizontal = 8.dp),
         leading = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -612,42 +659,62 @@ internal fun ActivityRow(entry: ActivityLogEntry, onClick: () -> Unit) {
             ) {
                 Text(
                     text     = shortTime(entry.timestamp),
-                    style    = AuntieTheme.typography.mono,
-                    color    = c.textFaint,
+                    style    = AuntieTheme.typography.mono.copy(fontSize = 11.5.sp),
+                    color    = c.textDim,
                     modifier = Modifier.width(54.dp),
                 )
                 AuntieIconTile(
                     icon = actionIcon(entry.actionType, entry.status),
                     tone = tone,
-                    size = 30.dp,
+                    size = 26.dp,
                 )
             }
         },
-        trailing = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (entry.status.isNotBlank()) {
-                    AuntieStatusPill(
-                        label = entry.status,
-                        tone  = statusTone(entry.status),
-                        mono  = true,
-                    )
-                }
-                // Per-row seq + entryHash column (Den mockup right rail), always on.
-                // Bound to the REAL hash-chain seal: a sealed entry shows
-                // "#seq · <hash8>"; a legacy entry that predates the chain shows the
-                // honest "unchained" pill. Never fabricates a hash.
-                val sealLabel = seqHashLabel(entry.seq, entry.entryHash)
-                if (sealLabel != null) {
-                    AuntieStatusPill(label = sealLabel, tone = AuntieStatusTone.Teal, mono = true)
-                } else {
-                    AuntieStatusPill(label = "unchained", tone = AuntieStatusTone.Muted, mono = true)
-                }
+        supporting = {
+            // The mock sets the raw code beside the title; on a phone it goes
+            // under it, still in the mono the mock gives it.
+            if (entry.actionType.isNotBlank()) {
+                Text(
+                    text  = entry.actionType,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
+                    color = c.textDim,
+                )
             }
         },
+        trailing = { SeqColumn(seq = entry.seq, entryHash = entry.entryHash) },
     )
+}
+
+/** The mock's `.seq`: "#1482" in cream over the hash in teal behind a lit dot. */
+@Composable
+private fun SeqColumn(seq: Long?, entryHash: String) {
+    val c = AuntieTheme.colors
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (seq == null) {
+            Text(
+                text  = "legacy",
+                style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
+                color = c.textDim,
+            )
+            return@Column
+        }
+        Text(
+            text  = "#$seq",
+            style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
+            color = c.textPrimary,
+        )
+        val short = entryHash.take(8)
+        if (short.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                AuntieStatusPill(label = "", dotOnly = true, tone = AuntieStatusTone.Teal)
+                Text(
+                    text  = short,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
+                    color = c.kinTeal.copy(alpha = 0.85f),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -761,8 +828,10 @@ private fun actionIcon(actionType: String, status: String): ImageVector {
     }
 }
 
-private fun humanizeAction(actionType: String): String =
-    actionType.lowercase().replace('_', ' ').replaceFirstChar { it.uppercaseChar() }
+internal fun humanizeAction(actionType: String): String {
+    val lower = actionType.lowercase().replace('_', ' ').trim()
+    return if (lower.isEmpty()) "Event" else lower.replaceFirstChar { it.uppercaseChar() }
+}
 
 /** True when [iso] looks like a parseable ISO-8601 date-time (at least yyyy-MM-dd). */
 private fun isParseableTimestamp(iso: String): Boolean = runCatching {

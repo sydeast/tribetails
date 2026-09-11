@@ -1,0 +1,365 @@
+/**
+ * Activity log, drawn to `ui-ideas/auntieos-activity-log-2026-05-27.html`
+ * (issue #755). Every value comes from styles/tokens.css: no literal colours,
+ * radii, or durations.
+ *
+ * What lives here is only what the mock draws and the kit does not: the chain
+ * badge that sits in the hero's trailing slot, the filter chips and the search
+ * box, the day separators, and the row grid (time, glyph tile, meta, seq). The
+ * hero, the panel, the glyph tile, the hints and the ghost button are the
+ * kit's own.
+ *
+ * The screen used to wear `.log__*` from styles/screens.css. Those rules are
+ * still in that file (it is frozen for the seven concurrent #755 sweeps) and
+ * nothing wears them now.
+ */
+
+/* ── chain badge: the mock's `.chain` in the hero band ─────────────────── */
+
+.activity__chain {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 15px;
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: var(--radius-16);
+  color: var(--color-text-primary);
+}
+/* A broken chain or a failed call reddens the rim, so the verdict reads from
+   across the room and not only from the word. */
+.activity__chain[data-state='broken'],
+.activity__chain[data-state='failed'] {
+  border-color: color-mix(in srgb, var(--color-error) 55%, transparent);
+}
+
+/* The mock's `.led`: 10px, teal, glowing. The tone follows the verdict. */
+.activity__led {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 10px var(--color-accent);
+}
+.activity__chain[data-state='broken'] .activity__led,
+.activity__chain[data-state='failed'] .activity__led {
+  background: var(--color-error);
+  box-shadow: 0 0 10px var(--color-error);
+}
+
+.activity__chain-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity__chain-verdict {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.activity__chain-line {
+  font-family: var(--type-mono-family);
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+  overflow-wrap: anywhere;
+}
+.activity__chain .auntie-btn {
+  margin-left: 6px;
+}
+
+/* ── filters row: chips then the search box, between the hero and the log ── */
+
+.activity__filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 16px;
+}
+.activity__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* The status facet came after the mock (R5, 2026-08-03) and stays. It sits
+   behind a hairline so the two groups read as two questions. */
+.activity__chips--status {
+  padding-left: 10px;
+  border-left: var(--border-hairline) solid var(--color-hairline);
+}
+
+/* The mock's `.fchip`: navy-3 on a hairline, cream-dim text; `.on` is cream
+   filled with navy text. */
+.activity__chip {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 13px;
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.activity__chip:hover {
+  color: var(--color-text-primary);
+}
+.activity__chip[aria-selected='true'] {
+  background: var(--color-text-primary);
+  color: var(--color-background);
+  border-color: var(--color-text-primary);
+}
+.activity__chip:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The mock's `.search`: glyph then field in one navy-3 box, pushed right. */
+.activity__search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-left: auto;
+  min-width: 200px;
+  padding: 9px 13px;
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-13);
+  color: var(--color-text-dim);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.activity__search:focus-within {
+  border-color: var(--color-primary);
+}
+.activity__search-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.activity__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+.activity__search-input::placeholder {
+  color: var(--color-text-dim);
+}
+
+/* ── the log ─────────────────────────────────────────────────────────────── */
+
+/* The mock's `.log` has no header and its rows run to the panel edge. The kit
+   panel pads 22px; the rows take that back so the day separators and the row
+   hover fill the width the mock gives them. */
+.activity__log .den-panel-content {
+  margin: 0 -22px -22px;
+}
+/* The hint states (loading, empty, nothing matching) carry no row padding of
+   their own, so they take the rows' inset here rather than sitting on the
+   glass edge. */
+.activity__log .den-panel-content > .den-hint,
+.activity__log .den-panel-content > .loadingRow {
+  padding-left: 20px;
+  padding-right: 20px;
+  padding-bottom: 20px;
+}
+
+/* The mock's `.daysep`. */
+.activity__day-label {
+  margin: 0;
+  padding: 14px 20px 8px;
+  font-family: var(--type-mono-family);
+  font-size: 10px;
+  font-weight: var(--type-mono-weight);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  opacity: 0.6;
+}
+
+.activity__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.activity__row {
+  border-top: var(--border-hairline) solid var(--color-hairline);
+}
+
+/* The mock's `.row` grid: time, 26px tile, meta, seq. The whole row is the
+   disclosure button (R5: every entry opens), so the grid sits on the button. */
+.activity__summary {
+  display: grid;
+  grid-template-columns: 62px 26px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 13px 20px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+.activity__summary:hover,
+.activity__row--open .activity__summary {
+  background: var(--color-surface-2);
+}
+.activity__summary:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.activity__time {
+  font-family: var(--type-mono-family);
+  font-size: 11.5px;
+  color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The mock's `.ico` glyphs are text, and the kit tile is sized for an SVG, so
+   the glyph is given a size of its own here. */
+.activity__ico .icon-tile-glyph {
+  width: auto;
+  height: auto;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.activity__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.activity__code {
+  margin-left: 6px;
+  font-family: var(--type-mono-family);
+  font-size: 10px;
+  font-weight: var(--type-mono-weight);
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  opacity: 0.8;
+}
+.activity__ctx {
+  font-size: 12.5px;
+  color: var(--color-text-dim);
+  overflow-wrap: anywhere;
+}
+
+/* The mock's `.seq`: the number in cream, the hash in teal behind a lit dot. */
+.activity__seq {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-family: var(--type-mono-family);
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+.activity__seq-n {
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+.activity__hash {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--color-accent);
+  opacity: 0.85;
+}
+.activity__lk {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+/* ── the opened record (R5, 2026-08-03) ──────────────────────────────────── */
+
+.activity__detail {
+  padding: 4px 20px 16px;
+}
+.activity__detail-heading {
+  margin: 14px 0 5px;
+  font-family: var(--type-mono-family);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+.activity__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.15rem 1.25rem;
+  margin: 0;
+}
+.activity__field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.activity__field-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+.activity__field-value {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.activity__fields--mono .activity__field-value {
+  font-family: var(--type-mono-family);
+  font-size: 0.76rem;
+}
+.activity__fields--mono .activity__field-label {
+  font-family: var(--type-mono-family);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* The mock at 720px: the seq column goes, the time column narrows. */
+@media (max-width: 720px) {
+  .activity__summary {
+    grid-template-columns: 54px 24px minmax(0, 1fr);
+  }
+  .activity__seq {
+    display: none;
+  }
+  .activity__log .den-panel-content {
+    margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+  }
+  .activity__log .den-panel-content > .den-hint,
+  .activity__log .den-panel-content > .loadingRow {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+    padding-bottom: var(--space-4);
+  }
+  .activity__search {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
+}
