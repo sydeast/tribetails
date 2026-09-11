@@ -551,18 +551,26 @@ describe('SessionDetail: the route header strip', () => {
     expect(screen.getByText(/Departed at 1:09pm/)).toBeInTheDocument();
     expect(screen.queryByText(/Completed at 1:09pm/)).toBeNull();
   });
-  // A visit still being walked has no departure stamp. The strip drops that
-  // clause rather than printing a blank one, and still reports the distance so
-  // far, which is the number the office is watching.
-  it('leaves out the clauses a live visit does not have yet', () => {
+  /**
+   * A visit still being walked has no departure stamp. The strip drops that
+   * clause rather than printing a blank one, and still reports the distance so
+   * far, which is the number the office is watching.
+   *
+   * AND IT MUST NOT SAY "COMPLETED IN". These are real epoch-millisecond
+   * breadcrumbs seven minutes apart, so the map hands the strip a live, growing
+   * duration; a length printed from it would report a completion the Auntie has
+   * not reached. Toy `t: 1, t: 2` timestamps would pass this by accident.
+   */
+  it('leaves out the clauses a live visit does not have yet, the length included', () => {
     useBreadcrumbs.mockReturnValue({
-      points: [crumb(30.2, -97.7, 1), crumb(30.21, -97.71, 2)],
+      points: [crumb(30.2, -97.7, 1_700_000_000_000), crumb(30.21, -97.71, 1_700_000_420_000)],
       error: null,
       ready: true,
     });
     render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: ARRIVED })} onBack={vi.fn()} />);
     expect(screen.getByText(/^Arrived at 12:05pm - /)).toBeInTheDocument();
     expect(screen.queryByText(/Departed at/)).toBeNull();
+    expect(screen.queryByText(/Completed in/)).toBeNull();
   });
   // Placement, which is the whole of the operator's sentence: the map is
   // "usually listed under the arrival departure times". The Route panel already

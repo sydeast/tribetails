@@ -175,6 +175,12 @@ internal fun relativeAge(iso: String?, nowMillis: Long): String {
  * `transitionBookingStatus` can stamp the second without the first. Naming one
  * as the other would put an invented completion time directly under a Lifecycle
  * section that prints the real one.
+ *
+ * A VISIT STILL IN FLIGHT GETS NO LENGTH AT ALL, whatever number the caller
+ * passes, for the same reason: "Completed in 0:07" over a walk the Auntie is in
+ * the middle of states a completion that has not happened. The departure stamp
+ * is the gate, and `gpsSummary.durationSeconds` is only baked at DEPARTED
+ * anyway, so a finished visit loses nothing.
  */
 internal fun routeHeaderStrip(
     arrivedAt: String?,
@@ -193,12 +199,12 @@ internal fun routeHeaderStrip(
     clockTime(departedAt).takeIf { it.isNotEmpty() }?.let { clauses += "Departed at $it" }
     if (distanceMeters != null && !distanceMeters.isNaN()) clauses += formatMiles(distanceMeters)
 
-    val clock = formatClockDuration(seconds)
+    val clock = if (departed == null) "" else formatClockDuration(seconds)
     return RouteHeaderStrip(
         lead = if (clock.isEmpty()) "" else "Completed in $clock",
         detail = clauses.joinToString(" - "),
-        // From the END of the visit where there is one: a route still being
-        // walked is "just now" whatever time it started.
+        // From the END of the visit where there is one, and from the arrival
+        // where there is not, so a visit in flight ages from the clock-in.
         age = relativeAge(departedAt, nowMillis).ifEmpty { relativeAge(arrivedAt, nowMillis) },
     )
 }

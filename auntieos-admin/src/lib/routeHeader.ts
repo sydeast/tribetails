@@ -126,6 +126,14 @@ export function relativeAge(iso: string | undefined, now: Date = new Date()): st
  * arrival and departure times with no GPS summary at all (breadcrumbs off, or
  * purged past the retention window) and the office still wants to know it ran
  * an hour.
+ *
+ * A VISIT STILL IN FLIGHT GETS NO LENGTH AT ALL, whatever number the caller
+ * passes. RouteMap hands this `durationFromPoints(route)` when the session has
+ * no `gpsSummary`, which on an ARRIVED visit is the span of the breadcrumbs so
+ * far, and printing "Completed in 0:07" over a walk the Auntie is in the middle
+ * of would be this screen stating a completion that has not happened. The
+ * departure stamp is the gate: `gpsSummary.durationSeconds` is only baked at
+ * DEPARTED anyway, so a finished visit loses nothing.
  */
 export function routeHeaderStrip(input: RouteHeaderInput): RouteHeaderStrip {
   const arrived = instant(input.arrivedAt);
@@ -134,7 +142,7 @@ export function routeHeaderStrip(input: RouteHeaderInput): RouteHeaderStrip {
   const spanSeconds =
     arrived && departed ? Math.max(0, Math.round((departed.getTime() - arrived.getTime()) / 1000)) : 0;
   const seconds = input.durationSeconds !== undefined && input.durationSeconds > 0 ? input.durationSeconds : spanSeconds;
-  const clock = formatClockDuration(seconds);
+  const clock = departed === null ? '' : formatClockDuration(seconds);
 
   const clauses: string[] = [];
   const arrivedClock = clockTime(input.arrivedAt);
@@ -148,8 +156,10 @@ export function routeHeaderStrip(input: RouteHeaderInput): RouteHeaderStrip {
   return {
     lead: clock === '' ? '' : `Completed in ${clock}`,
     detail: clauses.join(' - '),
-    // Measured from the END of the visit where there is one: a route that is
-    // still being walked is "just now" whatever time it started.
+    // Measured from the END of the visit where there is one, and from the
+    // arrival where there is not. A visit in flight therefore ages from when
+    // the Auntie clocked in, which is the honest reading of "how old is what I
+    // am looking at" and is also how long she has been at the house.
     age: relativeAge(input.departedAt ?? '', input.now) || relativeAge(input.arrivedAt ?? '', input.now),
   };
 }

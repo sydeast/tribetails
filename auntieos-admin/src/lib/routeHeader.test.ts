@@ -140,6 +140,26 @@ describe('routeHeaderStrip', () => {
     expect(strip.age).toBe('30 minutes ago');
   });
 
+  /**
+   * THE LIVE-VISIT CASE, and it is not covered by the one above. RouteMap has
+   * no `gpsSummary` to read on an ARRIVED visit, so it falls back to
+   * `durationFromPoints(route)` and hands this function the span of the
+   * breadcrumbs so far, which is a real positive number. Printing "Completed
+   * in 0:07" from it would state a completion that has not happened, on the
+   * screen whose own header carries the ruling that arriving, departing and
+   * completing are three different events.
+   */
+  it('refuses to report a length for a visit with no departure stamp, however long the pings run', () => {
+    const strip = routeHeaderStrip({
+      arrivedAt: '2026-09-11T11:30:00',
+      durationSeconds: 420,
+      distanceMeters: 200,
+      now: NOW,
+    });
+    expect(strip.lead).toBe('');
+    expect(strip.detail).toBe('Arrived at 11:30am - 0.1 miles');
+  });
+
   it('leaves every clause out rather than printing a blank one', () => {
     const strip = routeHeaderStrip({ now: NOW });
     expect(strip).toEqual({ lead: '', detail: '', age: '' });

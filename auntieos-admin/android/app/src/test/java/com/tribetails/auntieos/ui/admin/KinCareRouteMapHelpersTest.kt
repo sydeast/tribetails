@@ -143,6 +143,25 @@ class KinCareRouteMapHelpersTest {
         assertEquals("30 minutes ago", strip.age)
     }
 
+    /**
+     * The departure stamp is the gate on the length, not merely the source of
+     * it. Printing "Completed in 0:07" over a walk the Auntie is in the middle
+     * of would state a completion that has not happened, directly under a
+     * Lifecycle section showing Departed and Completed as still empty.
+     */
+    @Test
+    fun `the strip reports no length for a visit with no departure stamp`() {
+        val strip = routeHeaderStrip(
+            arrivedAt = "2026-09-11T11:30:00",
+            departedAt = "",
+            distanceMeters = 200.0,
+            durationSeconds = 420L,
+            nowMillis = now,
+        )
+        assertEquals("", strip.lead)
+        assertEquals("Arrived at 11:30am - 0.1 miles", strip.detail)
+    }
+
     @Test
     fun `a visit with nothing on file leaves every clause out`() {
         val strip = routeHeaderStrip(null, null, null, null, now)
