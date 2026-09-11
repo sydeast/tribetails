@@ -19,6 +19,7 @@
     - Five SubsectionLabel sections (rendered .uppercase() in source):
         Veterinary Information / Household Items & Locations /
         Routines & Preferences / Emergency & Safety / Service Providers
+        (the last two removed on 2026-08-04, see AMENDED below)
     - Every field label and its single/multi-line + row grouping, verbatim:
         BottomBorderField = bottom-border-only single line input
         MultilineField    = glass textarea
@@ -35,6 +36,16 @@
        surfaced in the current screen).
   All sample household values are illustrative placeholder, not real kinfolk
   data. User authors all real customer-facing copy; gaps left as TODO.
+
+  AMENDED 2026-09-11 (#755 sweep). Two of the five sections are gone from this
+  mock because the operator removed them from the product on 2026-08-04:
+    "I dont need this Emergency & Safety or Service Provider boxes."
+  Emergency & Safety and Service Providers are no longer drawn; their ten
+  fields stay on the record (lib/householdDataSchema.ts, DynamicFields.kt) with
+  no panel. The emergency-contact half is headed for the household/family-page
+  redesign's "Emergency Must Knows" section. Three sections remain, in this
+  order: Veterinary Information / Household Items & Locations / Routines &
+  Preferences.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -227,29 +238,7 @@
       </div>
     </div>
 
-    <!-- ===== Emergency & Safety ===== -->
-    <div class="panel d4">
-      <div class="seclbl">Emergency &amp; Safety</div>
-      <div class="grid2">
-        <div class="bbf full"><label>Poison control number</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="mlf full"><label>Emergency contacts priority</label><div class="area l2" contenteditable data-ph=""></div></div>
-        <div class="mlf full"><label>Evacuation plan</label><div class="area l2" contenteditable data-ph=""></div></div>
-        <div class="bbf full"><label>Important documents location</label><div class="in" contenteditable data-ph=""></div></div>
-      </div>
-    </div>
-
-    <!-- ===== Service Providers ===== -->
-    <div class="panel d5">
-      <div class="seclbl">Service Providers</div>
-      <div class="grid2">
-        <div class="bbf"><label>Groomer name</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="bbf"><label>Groomer phone</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="bbf"><label>Trainer name</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="bbf"><label>Trainer phone</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="bbf full"><label>Backup pet sitter</label><div class="in" contenteditable data-ph=""></div></div>
-        <div class="bbf full"><label>Backup dog walker</label><div class="in" contenteditable data-ph=""></div></div>
-      </div>
-    </div>
+    <!-- Emergency & Safety and Service Providers: removed 2026-08-04 by operator ruling, see the header comment. -->
 
     <!-- footer: GhostButton "Back" + PrimaryButton "Save Household Data" -->
     <div class="actions">

@@ -249,7 +249,14 @@ export function KinfolkProfile({
   }
   if (view === 'household') {
     return (
-      <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
+      <HouseholdData
+        kinfolkId={kinfolkId}
+        kinfolkName={kinfolkName}
+        onBack={() => setView('profile')}
+        // The trail's Kinfolk step is this profile's own Back: the list's
+        // kinfolk tab.
+        onKinfolkList={onBack}
+      />
     );
   }
   // B1, members and invites, used to be a fourth sub-view here. It is now
