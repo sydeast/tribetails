@@ -499,9 +499,17 @@
   max-width: min(260px, calc(100vw - 48px));
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  background: var(--color-surface);
+  /* The app's glass recipe, the same one `.den-panel` and `.glass-surface`
+     wear: the translucent token fill plus a blur of what shows through. The
+     blur is not decoration here, it is what keeps the panel copy underneath
+     from reading as text through a 0.6-alpha fill in dark. */
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: var(--border-hairline) solid var(--color-border);
   border-radius: var(--radius-card);
+  /* The popover shadow this app already uses (BreedField, TagAssignField,
+     AddressAutofillField, VetClinicPicker), not the card lift's geometry. */
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
   text-align: left;
   white-space: normal;
