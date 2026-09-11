@@ -83,6 +83,23 @@ export function upcomingVisitsFor(
     .sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)))
     .slice(0, limit);
 }
+
+/**
+ * Whether a row that names the pets it covers (`kinIds` on a session or a
+ * KinTale) covers THIS pet. The kin detail screen narrows the household's
+ * feeds through this.
+ *
+ * ABSENT means legacy, and legacy is kept: a session written before the server
+ * materialized the roster (`mytribe/functions/src/lib/kinRoster.ts`) names no
+ * pets at all, and dropping it would empty a pet's history for a bookkeeping
+ * reason. An EMPTY array is a different fact: the writer looked and found no
+ * pets, so it covers none, this one included.
+ */
+export function coversKin(kinIds: readonly string[] | undefined, kinId: string): boolean {
+  if (kinIds === undefined) return true;
+  return kinIds.includes(kinId);
+}
+
 /** The mock's "next 7 days" bound, as an ISO instant [days] out from [now]. */
 export function horizonIso(now: Date, days: number): string {
   const end = new Date(now.getTime());

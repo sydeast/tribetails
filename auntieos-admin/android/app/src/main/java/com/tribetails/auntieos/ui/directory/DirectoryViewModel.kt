@@ -29,6 +29,8 @@ import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.media.MediaUploadManager
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
+import com.tribetails.auntieos.util.SortOption
+import com.tribetails.auntieos.data.model.updatedAtIso
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -80,18 +82,55 @@ internal fun matchesDirectoryTag(tags: List<String>, filter: String): Boolean {
 }
 
 /**
- * The Kin tab's list: name/species/breed search, then the tag filter, then
- * alphabetical. Lifted out of the composable so the filter is unit-testable
+ * The Kin tab's list: name/species/breed search, then the tag filter, then the
+ * chosen [sort]. Lifted out of the composable so the filter is unit-testable
  * without an Android runtime. Pure; tested.
+ *
+ * The flat `kin` collection has no createdAt, so "Recently Created" has nothing
+ * to order by and falls back to A to Z, the same fallback the web admin's
+ * `filterSortKin` makes; the screen does not offer it on this tab.
  */
-internal fun filterKinDirectory(kin: List<Kin>, search: String, tag: String): List<Kin> =
-    kin.filter { k ->
+internal fun filterKinDirectory(
+    kin: List<Kin>,
+    search: String,
+    tag: String,
+    sort: SortOption = SortOption.AlphaAsc,
+): List<Kin> {
+    val rows = kin.filter { k ->
         val matchesSearch = search.isBlank() ||
             k.name.contains(search, ignoreCase = true) ||
             k.species.contains(search, ignoreCase = true) ||
             k.breed.contains(search, ignoreCase = true)
         matchesSearch && matchesDirectoryTag(k.tagNames(), tag)
-    }.sortedBy { it.name.lowercase() }
+    }
+    return when (sort) {
+        SortOption.AlphaAsc, SortOption.RecentlyCreated -> rows.sortedBy { it.name.lowercase() }
+        SortOption.AlphaDesc -> rows.sortedByDescending { it.name.lowercase() }
+        SortOption.RecentlyUpdated -> rows.sortedByDescending { it.updatedAtIso() }
+    }
+}
+
+/** The sort options the Kin tab offers: every one with a field behind it. */
+internal val KIN_SORT_OPTIONS: List<SortOption> =
+    listOf(SortOption.AlphaAsc, SortOption.AlphaDesc, SortOption.RecentlyUpdated)
+
+/**
+ * The Kinfolk tab's order. A to Z is by surname with a first-name tiebreak
+ * (03-directory item 3, parity with web); Z to A is that reversed; the two
+ * recency sorts read `joinDate` and `updatedAt`, the same two fields the web
+ * admin's `filterSortKinfolk` reads, newest first. Pure; tested.
+ */
+internal fun sortKinfolkDirectory(rows: List<Kinfolk>, sort: SortOption): List<Kinfolk> {
+    val surname = { kf: Kinfolk ->
+        com.tribetails.auntieos.domain.kinfolkSurnameSortKey(kf.firstName, kf.lastName, kf.displayName)
+    }
+    return when (sort) {
+        SortOption.AlphaAsc -> rows.sortedBy(surname)
+        SortOption.AlphaDesc -> rows.sortedByDescending(surname)
+        SortOption.RecentlyCreated -> rows.sortedByDescending { it.joinDate }
+        SortOption.RecentlyUpdated -> rows.sortedByDescending { it.updatedAtIso() }
+    }
+}
 
 data class DirectoryUiState(
     val allKinfolk: List<Kinfolk> = emptyList(),
@@ -112,6 +151,12 @@ data class DirectoryUiState(
      * `addTag`), so it can never collide with a real one.
      */
     val tagFilter: String = TAG_FILTER_ALL,
+    /**
+     * The Kinfolk tab's order. The mock draws a Sort pill beside the search
+     * (#755) and the web admin has carried one since the port; this is the
+     * Android half. Applied in [DirectoryViewModel.applyFilters].
+     */
+    val sortOption: SortOption = SortOption.Default,
     val error: String? = null
 )
 
@@ -532,6 +577,13 @@ class DirectoryViewModel(
         applyFilters()
     }
 
+    /** Order the household list. See [DirectoryUiState.sortOption]. */
+    fun setSortOption(option: SortOption) {
+        AuntieLog.d("Directory sort: ${option.key}")
+        _directoryState.value = _directoryState.value.copy(sortOption = option)
+        applyFilters()
+    }
+
     /** #713: narrow the household list to one tag. [TAG_FILTER_ALL] clears it. */
     fun setTagFilter(tag: String) {
         AuntieLog.d("Directory filter by tag: $tag")
@@ -558,11 +610,9 @@ class DirectoryViewModel(
             // either, so "Active households tagged VIP" is one list.
             matchesStatus && matchesSearch && matchesDirectoryTag(kf.tagNames(), state.tagFilter)
         }
-        // 03-directory item 3: order the directory by surname (last name), parity with web.
-        val sorted = filtered.sortedBy {
-            com.tribetails.auntieos.domain.kinfolkSurnameSortKey(it.firstName, it.lastName, it.displayName)
-        }
-        _directoryState.value = state.copy(displayedKinfolk = sorted)
+        // 03-directory item 3: A to Z is by surname (last name), parity with web.
+        // The other three orders are the Sort pill's (#755).
+        _directoryState.value = state.copy(displayedKinfolk = sortKinfolkDirectory(filtered, state.sortOption))
     }
 
     fun loadProfile(kinfolkId: String) {

@@ -5,6 +5,7 @@ import com.composables.icons.lucide.Lucide
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,13 +18,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.ContactOverride
 import com.tribetails.auntieos.data.model.HouseholdData
+import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Kin
+import com.tribetails.auntieos.data.model.KinCareReport
+import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.FormSchema
@@ -32,16 +37,17 @@ import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.UPCOMING_HORIZON_DAYS
 import com.tribetails.auntieos.domain.feedCountMeta
 import com.tribetails.auntieos.domain.freeTextDateLabel
+import com.tribetails.auntieos.domain.invoiceStateOrNull
 import com.tribetails.auntieos.domain.kinfolkInvoiceFeedLabel
 import com.tribetails.auntieos.domain.tenureLabel
 import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.ui.components.*
-import com.tribetails.auntieos.util.formatJoinDate
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -92,12 +98,14 @@ fun KinfolkProfileScreen(
         viewModel.loadProfile(kinfolkId)
     }
 
+    val back = {
+        viewModel.clearProfile()
+        onBack()
+    }
+
     AuntieScreenScaffold(
         title = state.kinfolk?.displayName ?: "Profile",
-        onBack = {
-            viewModel.clearProfile()
-            onBack()
-        },
+        onBack = back,
         actions = if (state.kinfolk != null) ({
             AuntieIconBtn(onClick = { onEdit(state.kinfolk!!.id) }) {
                 Icon(Lucide.Pencil, contentDescription = "Edit Profile", tint = AuntieTheme.colors.kinfolkOrange)
@@ -115,6 +123,14 @@ fun KinfolkProfileScreen(
             }
         } else {
             val kinfolk = state.kinfolk!!
+            // ONE COLUMN, in the order the web profile reads (#678/#679/#682,
+            // walk admin-2026-09-10): the hero, then the household's own facts
+            // (the web's left column), then who they have and what has happened
+            // or is coming (the web's right column). Auntie's notes is pinned
+            // last (#683, "pin to the bottom"). Every section is the kit's
+            // DenPanel with the mock's serif title and its right-aligned mono
+            // count; the uppercase orange kickers on plain cards this screen
+            // used to draw were the pre-kit world (#755).
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -122,34 +138,37 @@ fun KinfolkProfileScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
-                item { ProfileHeader(kinfolk) }
+                item {
+                    ProfileHero(
+                        kinfolk = kinfolk,
+                        onDirectory = back,
+                        onEdit = { onEdit(kinfolk.id) },
+                        onHouseholdData = { onNavigateToHouseholdData(kinfolk.id, kinfolk.displayName) },
+                        onMembers = { onNavigateToMembers(kinfolk.id, kinfolk.displayName) },
+                        onMedia = { onNavigateToMediaGallery(kinfolk.id, kinfolk.displayName) },
+                    )
+                }
                 kinfolk.contactOverride?.takeIf { it.channel.isNotBlank() }?.let { override ->
                     item { ContactOverrideBanner(override, kinfolk.preferredContactMethod) }
                 }
-                item { QuickContactBar(kinfolk) }
                 // #552 used to put "New KinTale" here, below the contact row, as
                 // the hero's primary action. #676 (walk admin-2026-09-10, same
                 // ruling as the React profile) removed it: a KinTale is only
                 // ever started from a KinCare session, so a standalone entry
                 // point on the household profile is gone.
-                item { ContactInfoCard(kinfolk, state.householdVet) }
+                item { ContactPanel(kinfolk) }
+                item { HomeAccessPanel(kinfolk) }
+                if (listOf(kinfolk.emergencyContactName, kinfolk.emergencyContactPhone, kinfolk.emergencyContactRelation).any { it.isNotBlank() }) {
+                    item { EmergencyContactsPanel(kinfolk) }
+                }
+                item { VetPanel(state.householdVet) }
                 if (hasDynamicFieldValues(state.kinfolkSchemas, kinfolk.formValues)) {
-                    item { AdditionalInfoCard(state.kinfolkSchemas, kinfolk.formValues) }
+                    item { AdditionalInfoPanel(state.kinfolkSchemas, kinfolk.formValues) }
                 } else if (state.schemaError != null && kinfolk.formValues.isNotEmpty()) {
                     // Fail loud: saved custom values exist but their labels couldn't load.
                     item {
-                        AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(
-                                modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Text("ADDITIONAL INFO", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-                                Text(
-                                    "Couldn't load the custom field labels. ${state.schemaError}",
-                                    style = AuntieTheme.typography.bodySmall,
-                                    color = AuntieTheme.colors.error,
-                                )
-                            }
+                        DenPanel(title = "Additional info") {
+                            EmptyHint("Couldn't load the custom field labels. ${state.schemaError}", error = true)
                         }
                     }
                 }
@@ -183,107 +202,67 @@ fun KinfolkProfileScreen(
                         )
                     }
                 }
+                // The two household-level actions that are not navigation: get
+                // the household into the portal, and rebuild what Auntie knows
+                // about them. The sentences that used to sit under each button
+                // are gone (#758: explanatory copy is a tooltip at most, and a
+                // button's label already says what it does).
                 item {
-                    PrimaryButton(
-                        label   = if (inviteBusy) "Sending…" else "Invite to portal",
-                        onClick = { viewModel.inviteKinfolkToPortal(kinfolk.id, kinfolk.displayName) },
-                        enabled = !inviteBusy && kinfolk.email.isNotBlank(),
-                        loading = inviteBusy,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                // B1: the members-and-invites surface for THIS household. It sits
-                // next to "Invite to portal" because the two are the same job at
-                // different stages: that button gets the household in, this
-                // screen manages who else is in and what each of them may do.
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        GhostButton(
-                            label = "Members and invites",
-                            onClick = { onNavigateToMembers(kinfolk.id, kinfolk.displayName) },
-                            modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        PrimaryButton(
+                            label   = if (inviteBusy) "Sending…" else "Invite to portal",
+                            onClick = { viewModel.inviteKinfolkToPortal(kinfolk.id, kinfolk.displayName) },
+                            enabled = !inviteBusy && kinfolk.email.isNotBlank(),
+                            loading = inviteBusy,
+                            modifier = Modifier.weight(1f),
                         )
-                        Text(
-                            "Who else can reach this household in MyTribe, what each of them may " +
-                                "do, and every invite it has been sent.",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.textDim,
-                        )
-                    }
-                }
-                // Phase 3: rebuild this household's dossier + every pet's 411 from
-                // recent history via the synthesize callable. In-flight guarded; the
-                // result toasts (success or fail-loud).
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Phase 3: rebuild this household's dossier + every pet's
+                        // 411 from recent history via the synthesize callable.
+                        // In-flight guarded; the result toasts (success or fail-loud).
                         GhostButton(
                             label = if (isSynthesizing) "Refreshing…" else "Refresh intelligence",
                             enabled = !isSynthesizing,
                             onClick = { viewModel.synthesizeProfile(kinfolk.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "Rebuilds this household's dossier and every pet's 411 from recent history.",
-                            style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.textDim,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
-                item { HouseholdManagementCard(kinfolk, onNavigateToHouseholdData, onNavigateToMediaGallery) }
-                item { DossierCard(kinfolk, state.dossier) }
 
                 // K3 (A8): the household-notes migration box (a mutating "Clear from
                 // dossier" action) moved OFF this read-only profile and onto the Edit
                 // screen, where editing belongs. See EditKinfolkScreen.
 
-                // Kin (Pets) Section
+                // Kin: the mock's `.pet` rows, one tap opening the pet. On Android
+                // the pet's own screen is its editor, so that is where a row goes.
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // The count sits BESIDE the section name, not inside it,
-                        // the same shape the React admin's DenPanel meta slot
-                        // gives this panel. Absent while the read is in flight:
-                        // "0 kin" on a load that has not landed is a claim.
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("KIN (PETS)", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
-                            if (!state.isLoading) {
-                                Text(
-                                    if (state.kinList.size == 1) "1 kin" else "${state.kinList.size} kin",
-                                    style = AuntieTheme.typography.labelSmall,
-                                    color = AuntieTheme.colors.textDim,
+                    DenPanel(
+                        title = "Kin",
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // The count sits BESIDE the section name, not inside
+                                // it, the same shape the React admin's DenPanel meta
+                                // slot gives this panel. Absent while the read is in
+                                // flight: "0 kin" on a load that has not landed is a claim.
+                                if (!state.isLoading) {
+                                    PanelMeta(if (state.kinList.size == 1) "1 kin" else "${state.kinList.size} kin")
+                                }
+                                GhostButton(
+                                    label   = "Add kin",
+                                    onClick = { onAddKin(kinfolk.id, kinfolk.displayName) },
                                 )
                             }
-                        }
-                        PrimaryButton(
-                            label   = "+ Add Kin",
-                            onClick = { onAddKin(kinfolk.id, kinfolk.displayName) },
-                        )
-                    }
-                }
-
-                if (state.kinList.isNotEmpty()) {
-                    items(state.kinList.size) { index ->
-                        val kin = state.kinList[index]
-                        KinDetailsCard(kin = kin, kin411 = state.kin411Map[kin.id], onEdit = onEditKin)
-                    }
-                } else {
-                    item {
-                        AuntieCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            containerColor = AuntieTheme.colors.surface2,
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "No kin profiles yet. Add the pets for this kinfolk!",
-                                    style = AuntieTheme.typography.bodyMedium,
-                                    color = AuntieTheme.colors.textDim
-                                )
+                        },
+                    ) {
+                        if (state.kinList.isEmpty()) {
+                            EmptyHint("No kin on file for this household.")
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                state.kinList.forEach { kin ->
+                                    KinRow(kin = kin, kin411 = state.kin411Map[kin.id], onOpen = { onEditKin(kin.id) })
+                                }
                             }
                         }
                     }
@@ -291,384 +270,582 @@ fun KinfolkProfileScreen(
 
                 // Profile feeds (parity with web): real per-kinfolk joins.
                 // #678/#682 (parity with the React admin's right column):
-                // Upcoming KinCare before Recent KinTales, renamed from
-                // "Upcoming visits" to the product word.
+                // Upcoming KinCare before Recent KinTales, then Invoices.
                 item {
-                    ProfileFeedSection(
-                        title = "UPCOMING KINCARE",
-                        // The window has a far edge now (the mock's own header),
-                        // so the card says what it is rather than implying it
+                    DenPanel(
+                        title = "Upcoming KinCare",
+                        // The window has a far edge (the mock's own header), so
+                        // the card says what it is rather than implying it
                         // shows everything ahead.
-                        meta = "next $UPCOMING_HORIZON_DAYS days",
-                        emptyMsg = "No visits booked in the next $UPCOMING_HORIZON_DAYS days.",
-                        lines = state.upcomingVisits.map { s ->
-                            (s.serviceType.ifBlank { "Visit" }) to s.startTime.take(16).replace('T', ' ')
-                        },
-                    )
+                        trailing = { PanelMeta("next $UPCOMING_HORIZON_DAYS days") },
+                    ) {
+                        if (state.upcomingVisits.isEmpty()) {
+                            EmptyHint("No visits booked in the next $UPCOMING_HORIZON_DAYS days.")
+                        } else {
+                            Column {
+                                state.upcomingVisits.forEachIndexed { index, s -> VisitLine(s, last = index == state.upcomingVisits.lastIndex) }
+                            }
+                        }
+                    }
                 }
                 item {
-                    ProfileFeedSection(
-                        title = "RECENT KINTALES",
-                        meta = feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false),
-                        emptyMsg = "No KinTales sent to this kinfolk yet.",
-                        lines = state.recentTales.map { r ->
-                            (r.title.ifBlank { r.serviceType.orEmpty().ifBlank { "KinTale" } }) to
-                                (r.sentAt.orEmpty().ifBlank { r.visitDate }).take(10)
-                        },
-                        // K1 (A8): tap a recent tale to open its report.
-                        onRowClick = { idx ->
-                            state.recentTales.getOrNull(idx)?.sessionId
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { onOpenReport(it) }
-                        },
-                    )
+                    DenPanel(
+                        title = "Recent KinTales",
+                        trailing = { PanelMeta(feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false)) },
+                    ) {
+                        if (state.recentTales.isEmpty()) {
+                            EmptyHint("No KinTales sent to this household yet.")
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                state.recentTales.forEach { r ->
+                                    // K1 (A8): tap a recent tale to open its report.
+                                    TaleTile(
+                                        report = r,
+                                        onOpen = r.sessionId.takeIf { it.isNotBlank() }?.let { id -> { onOpenReport(id) } },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 item {
-                    ProfileFeedSection(
-                        title = "INVOICES",
-                        meta = feedCountMeta(state.kinfolkInvoices.size, state.invoiceCount, capped = false),
-                        emptyMsg = "No invoices for this kinfolk yet.",
-                        lines = state.kinfolkInvoices.map { inv ->
-                            // `invoices.date` is free text (PR #241 confirmed it in
-                            // production). The label is built in the domain so what
-                            // it does with that string is testable.
-                            kinfolkInvoiceFeedLabel(inv) to
-                                ("$" + "%.2f".format(if (inv.amountDue > 0) inv.amountDue else inv.total))
-                        },
-                    )
+                    DenPanel(
+                        title = "Invoices",
+                        trailing = { PanelMeta(feedCountMeta(state.kinfolkInvoices.size, state.invoiceCount, capped = false)) },
+                    ) {
+                        if (state.kinfolkInvoices.isEmpty()) {
+                            EmptyHint("No invoices for this household yet.")
+                        } else {
+                            Column {
+                                state.kinfolkInvoices.forEachIndexed { index, inv -> InvoiceLine(inv, last = index == state.kinfolkInvoices.lastIndex) }
+                            }
+                        }
+                    }
+                }
+                // Auntie's notes, LAST (#683: "Admin Notes should be pin to the
+                // bottom when viewing the kinfolk IF notes exist"). Admin-only,
+                // on an admin surface: dossiers never reach a kinfolk-facing screen.
+                if (dossierHasAnything(kinfolk, state.dossier)) {
+                    item { AuntieNotesPanel(kinfolk, state.dossier) }
                 }
             }
         }
     }
 }
 
+/** The mocks' `.ct`: a right-aligned mono note on the panel header, a count or a window. */
 @Composable
-private fun ProfileFeedSection(
-    title: String,
-    emptyMsg: String,
-    /** The mock's `.ct`: a count or a window, beside the title and never inside it. */
-    meta: String? = null,
-    lines: List<Pair<String, String>>,
-    // K1 (A8): when set, each row is tappable — index maps back to the source list so the
-    // caller can open the underlying record (e.g. a recent KinTale's report).
-    onRowClick: ((Int) -> Unit)? = null,
+private fun PanelMeta(text: String) {
+    Text(text, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+}
+
+/**
+ * The mock's hero: the trail, the household's identity, the `.tags` row and
+ * the actions that act on the household.
+ *
+ * `DenScreenHeading` is the kit's hero, and it carries the trail and the
+ * title. It has no slot for the avatar or a row of pills, and on Android it
+ * paints no band at all, so the avatar sits beside it and the pills and the
+ * action row sit under it. Both gaps are named in the PR that made this
+ * change (#755) as the kit change the mock needs; nothing here paints a band
+ * of its own to stand in for one.
+ *
+ * #681: household tags are read-only pills here, next to the status and the
+ * tenure. Editing them is unchanged on this screen (`ProfileTagsSection`
+ * further down still owns the write). Every pill is the kit's status capsule,
+ * which is the mock's `.tag`: teal for the status and the tags, purple for
+ * the tenure (`.tag.loyal`). Teal is reserved for an active household; any
+ * other status word wears the neutral tone rather than a colour the mock
+ * never drew.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ProfileHero(
+    kinfolk: Kinfolk,
+    onDirectory: () -> Unit,
+    onEdit: () -> Unit,
+    onHouseholdData: () -> Unit,
+    onMembers: () -> Unit,
+    onMedia: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+    val c = AuntieTheme.colors
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            val initials = kinfolk.displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
+            AuntieAvatar(
+                imageUrl = kinfolk.profilePictureUrl,
+                initials = initials.ifBlank { "?" },
+                size = 84.dp,
+                shape = RoundedCornerShape(24.dp),
+                gradientSeed = kinfolk.id,
+            )
+            // WHEN THEY JOINED, spelled for the operator rather than left as
+            // stored. `freeTextDateLabel` formats what it can read and prints
+            // the rest exactly as stored, so a legacy free-text join date never
+            // renders as an error and never becomes a different date.
+            val joined = freeTextDateLabel(kinfolk.joinDate)
+            DenScreenHeading(
+                kicker = "The Den · Directory",
+                crumbs = listOf(
+                    DenCrumb("Directory", onDirectory),
+                    DenCrumb(kinfolk.displayName),
+                ),
+                title = kinfolk.displayName,
+                detail = if (joined.isNotBlank()) "Joined $joined" else null,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // The tenure chip is ABSENT when the stored join date is not one
+        // anybody can read, rather than a fabricated "0 months". Same rule,
+        // same branches, as the React admin's hero.
+        val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
+        val active = kinfolk.status.trim().equals("active", ignoreCase = true)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(title, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
-            if (meta != null) {
-                Text(meta, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+            AuntieStatusPill(
+                label = kinfolk.status.trim().ifBlank { "no status" }.lowercase(),
+                tone = if (active) AuntieStatusTone.Teal else AuntieStatusTone.Neutral,
+                mono = true,
+            )
+            if (tenure != null) {
+                AuntieStatusPill(label = tenure, tone = AuntieStatusTone.Purple, mono = true)
+            }
+            kinfolk.tagNames().forEach { tag ->
+                AuntieStatusPill(label = tag, tone = AuntieStatusTone.Teal, mono = true)
             }
         }
-        AuntieCard(modifier = Modifier.fillMaxWidth(), containerColor = AuntieTheme.colors.surface2) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (lines.isEmpty()) {
-                    Text(emptyMsg, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textDim)
-                } else {
-                    lines.forEachIndexed { index, (label, value) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(if (onRowClick != null) Modifier.clickable { onRowClick(index) } else Modifier),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                label,
-                                style = AuntieTheme.typography.bodyMedium,
-                                color = AuntieTheme.colors.textPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (value.isNotBlank()) {
-                                Text(value, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
-                            }
-                        }
-                    }
-                }
+        // The action row: Call and Text on the real number, then the household's
+        // other surfaces. Call and Text render only once there is a number to
+        // dial, never as dead controls; Email the same on the address.
+        val context = LocalContext.current
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (kinfolk.phoneNumber.isNotBlank()) {
+                GhostButton(
+                    label = "Call",
+                    leading = { Icon(Lucide.Phone, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                    onClick = { context.startActivity(Intent(Intent.ACTION_DIAL).apply { data = Uri.parse("tel:${kinfolk.phoneNumber}") }) },
+                )
+                GhostButton(
+                    label = "Text",
+                    leading = { Icon(Lucide.MessageCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW).apply { data = Uri.parse("sms:${kinfolk.phoneNumber}") }) },
+                )
             }
+            if (kinfolk.email.isNotBlank()) {
+                GhostButton(
+                    label = "Email",
+                    leading = { Icon(Lucide.Mail, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                    onClick = { context.startActivity(Intent(Intent.ACTION_SENDTO).apply { data = Uri.parse("mailto:${kinfolk.email}") }) },
+                )
+            }
+            GhostButton(label = "Household data", onClick = onHouseholdData)
+            // B1: who can reach this household in MyTribe, and its invites.
+            GhostButton(label = "Members and invites", onClick = onMembers)
+            GhostButton(label = "Media", onClick = onMedia)
+            GhostButton(label = "Edit", onClick = onEdit)
+        }
+    }
+}
+
+/** One of the mock's `.field` rows, declared so a panel can lay a run of them out. */
+private class Field(
+    val label: String,
+    val value: String,
+    val mono: Boolean = false,
+    /**
+     * The value opens Google Maps directions (#685), the same destination URL
+     * the React admin's `Fact` renders for the service address and the vet
+     * clinic address.
+     */
+    val directions: Boolean = false,
+)
+/**
+ * A run of the mock's `.field` rows: label left in dim, value right, a
+ * hairline under every row but the last. A blank value renders nothing, and
+ * so does the "()" a half-filled emergency contact used to print, so the
+ * hairlines land between the rows that are actually there.
+ */
+@Composable
+private fun FieldRows(vararg fields: Field) {
+    val shown = fields.filter { it.value.isNotBlank() && !it.value.contains("()") }
+    val context = LocalContext.current
+    Column {
+        shown.forEachIndexed { index, f ->
+            AuntieKeyValueRow(
+                label = f.label,
+                value = f.value,
+                valueMono = f.mono,
+                showDivider = index < shown.lastIndex,
+                onValueClick = if (f.directions) ({
+                    val uri = Uri.parse(
+                        "https://www.google.com/maps/dir/?api=1&destination=" + Uri.encode(f.value),
+                    )
+                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                }) else null,
+            )
+        }
+    }
+}
+/**
+ * CONTACT FIRST under the hero (#679): the household's own facts, the service
+ * address folded in (an address is a way to reach the household the same as a
+ * phone number is). K2 (A8): "Preferred contact" is not read here, per the
+ * operator; the model field is kept.
+ */
+@Composable
+private fun ContactPanel(kinfolk: Kinfolk) {
+    DenPanel(title = "Contact") {
+        val any = listOf(
+            kinfolk.phoneNumber, kinfolk.secondaryPhone, kinfolk.email, kinfolk.secondaryEmail,
+            kinfolk.bestTimeToContact, kinfolk.serviceAddress,
+        ).any { it.isNotBlank() }
+        if (!any) {
+            EmptyHint("No contact details on file.")
+        } else {
+            val balance = kinfolk.outstandingBalance.takeIf { it.isNotBlank() && it != "0.00" }?.let { "$$it" }.orEmpty()
+            FieldRows(
+                Field("Phone", kinfolk.phoneNumber, mono = true),
+                Field("Email", kinfolk.email),
+                Field("Secondary phone", kinfolk.secondaryPhone, mono = true),
+                Field("Secondary email", kinfolk.secondaryEmail),
+                Field("Best time to reach", kinfolk.bestTimeToContact),
+                // #685 (parity with the React admin): the address opens Google
+                // Maps directions, the same destination URL the web Fact renders.
+                Field("Service address", kinfolk.serviceAddress, directions = true),
+                Field("Outstanding balance", balance, mono = true),
+            )
         }
     }
 }
 
 /**
- * #681 (parity with the React admin's hero): household tags shown as read-only
- * pills next to the name and the status/tenure chips. Editing them is unchanged
- * on this screen (`ProfileTagsSection` further down still owns the write), same
- * as the standing pattern where the picker's own panel keeps the write.
+ * ALWAYS RENDERED, empty or not (#407): a household with no gate code and no
+ * parking note still needs to see this panel as a thing it could fill in, not
+ * have it vanish. The address lives in Contact (#679); what is here is about
+ * getting into the home once an Auntie has already found it.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ProfileHeader(kinfolk: Kinfolk) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(80.dp)
-                .clip(CircleShape)
-                .background(AuntieTheme.colors.surface2),
-            contentAlignment = Alignment.Center
-        ) {
-            val initials = kinfolk.displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
-            Text(if (initials.isNotBlank()) initials else "?", color = AuntieTheme.colors.kinfolkOrange, style = AuntieTheme.typography.headlineLarge)
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(kinfolk.displayName, style = AuntieTheme.typography.headlineSmall, color = AuntieTheme.colors.textPrimary)
-
-        // WHEN THEY JOINED, spelled for the operator rather than left as stored.
-        // `freeTextDateLabel` formats what it can read and prints the rest exactly
-        // as stored, so a legacy free-text join date never renders as an error and
-        // never becomes a different date.
-        val joined = freeTextDateLabel(kinfolk.joinDate)
-        if (joined.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Joined $joined",
-                style = AuntieTheme.typography.bodySmall,
-                color = AuntieTheme.colors.textDim,
+private fun HomeAccessPanel(kinfolk: Kinfolk) {
+    DenPanel(title = "Home & access") {
+        val any = listOf(kinfolk.gateCode, kinfolk.parkingInstructions, kinfolk.entryNotes, kinfolk.wifiName, kinfolk.wifiPassword)
+            .any { it.isNotBlank() }
+        if (!any) {
+            EmptyHint("No entry details on file.")
+        } else {
+            FieldRows(
+                Field("Gate code", kinfolk.gateCode, mono = true),
+                Field("Parking", kinfolk.parkingInstructions),
+                Field("Entry notes", kinfolk.entryNotes),
+                // The network name and the password are two rows, the way the
+                // web profile shows them, not one "name / password" string.
+                Field("Wi-Fi network", kinfolk.wifiName),
+                Field("Wi-Fi password", kinfolk.wifiPassword, mono = true),
             )
         }
-        val statusColor = if (kinfolk.status == "active") AuntieTheme.colors.success else AuntieTheme.colors.textDim
-        // The mock's two hero chips: the status, and how long they have been a
-        // client. The tenure chip is ABSENT when the stored join date is not one
-        // anybody can read, rather than a fabricated "0 months". Same rule, same
-        // branches, as the React admin's hero.
-        val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
-        Row(
-            modifier = Modifier.padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(statusColor.copy(alpha = 0.15f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(kinfolk.status.uppercase(), style = AuntieTheme.typography.labelSmall, color = statusColor)
-            }
-            if (tenure != null) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(AuntieTheme.colors.familyPurple.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        tenure.uppercase(),
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.familyPurple,
-                    )
-                }
-            }
-        }
-        val tags = kinfolk.tagNames()
-        if (tags.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                tags.forEach { tag ->
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(AuntieTheme.colors.packPink.copy(alpha = 0.15f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(tag.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.packPink)
-                    }
-                }
-            }
-        }
     }
 }
 
+/**
+ * #680 (parity with the React admin): "Emergency Contacts", so it reads apart
+ * from the emergency vet below rather than the singular that could be misread
+ * as naming the same thing. Rendered only when at least one part is filled.
+ */
 @Composable
-private fun QuickContactBar(kinfolk: Kinfolk) {
-    val context = LocalContext.current
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        QuickActionBtn(
-            modifier = Modifier.weight(1f),
-            icon     = { Icon(Lucide.Phone, contentDescription = null, modifier = Modifier.size(18.dp), tint = AuntieTheme.colors.kinfolkOrange) },
-            label    = "Call",
-            onClick  = {
-                if (kinfolk.phoneNumber.isNotBlank()) {
-                    context.startActivity(Intent(Intent.ACTION_DIAL).apply { data = Uri.parse("tel:${kinfolk.phoneNumber}") })
-                }
-            }
-        )
-        QuickActionBtn(
-            modifier = Modifier.weight(1f),
-            icon     = { Icon(Lucide.MessageCircle, contentDescription = null, modifier = Modifier.size(18.dp), tint = AuntieTheme.colors.kinfolkOrange) },
-            label    = "Message",
-            onClick  = {
-                if (kinfolk.phoneNumber.isNotBlank()) {
-                    context.startActivity(Intent(Intent.ACTION_VIEW).apply { data = Uri.parse("sms:${kinfolk.phoneNumber}") })
-                }
-            }
-        )
-        QuickActionBtn(
-            modifier = Modifier.weight(1f),
-            icon     = { Icon(Lucide.Mail, contentDescription = null, modifier = Modifier.size(18.dp), tint = AuntieTheme.colors.kinfolkOrange) },
-            label    = "Email",
-            onClick  = {
-                if (kinfolk.email.isNotBlank()) {
-                    context.startActivity(Intent(Intent.ACTION_SENDTO).apply { data = Uri.parse("mailto:${kinfolk.email}") })
-                }
-            }
+private fun EmergencyContactsPanel(kinfolk: Kinfolk) {
+    DenPanel(title = "Emergency Contacts") {
+        FieldRows(
+            Field("Name", kinfolk.emergencyContactName),
+            Field("Phone", kinfolk.emergencyContactPhone, mono = true),
+            Field("Relation", kinfolk.emergencyContactRelation),
         )
     }
 }
 
+/**
+ * THE VET IS READ, NOT OWNED. Operator ruling 2026-08-01: "vet info lives on
+ * household data, it can be seen on the kin profile". It used to read
+ * kinfolk.vetClinic*, the copy that made the vet authored in two places at
+ * once; it now resolves through household data's clinic id, so what is shown
+ * here is the same single record the Household Data screen edits. The
+ * emergency clinic is a DISTINCT practice, never folded into the primary:
+ * "who to call" and "who to call at 2am" differ.
+ */
 @Composable
-private fun QuickActionBtn(
-    modifier: Modifier = Modifier,
-    icon: @Composable () -> Unit,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(AuntieTheme.colors.surface2)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            icon()
-            Text(label, style = AuntieTheme.typography.labelMedium, color = AuntieTheme.colors.kinfolkOrange)
-        }
-    }
-}
-
-@Composable
-private fun ContactInfoCard(kinfolk: Kinfolk, householdVet: HouseholdVet) {
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("CONTACT & IDENTITY", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-            ProfileField("Primary Phone", kinfolk.phoneNumber)
-            ProfileField("Secondary Phone", kinfolk.secondaryPhone)
-            ProfileField("Primary Email", kinfolk.email)
-            ProfileField("Secondary Email", kinfolk.secondaryEmail)
-            // K2 (A8): "Preferred Contact" read removed per operator — the value the
-            // comms-reconcile pipeline set was noise on the profile. Model field kept.
-            // #685 (parity with the React admin): the address opens Google Maps
-            // directions, the same destination URL the web Fact renders.
-            DirectionsProfileField("Service Address", kinfolk.serviceAddress)
-            ProfileField("Parking Instructions", kinfolk.parkingInstructions)
-            // Show emergency contact only when at least one part is filled (no "() -" noise).
-            val emergency = listOfNotNull(
-                kinfolk.emergencyContactName.takeIf { it.isNotBlank() },
-                kinfolk.emergencyContactPhone.takeIf { it.isNotBlank() }?.let { "($it)" },
-                kinfolk.emergencyContactRelation.takeIf { it.isNotBlank() }?.let { "- $it" },
-            ).joinToString(" ")
-            // #680 (parity with the React admin): "Emergency Contacts", so it
-            // reads apart from "Emergency vet" below rather than the singular
-            // that could be misread as naming the same thing.
-            if (emergency.isNotBlank()) ProfileField("Emergency Contacts", emergency)
-
-            // The household vet is DISPLAYED here and authored on Household Data
-            // (operator ruling 2026-08-01). It used to read kinfolk.vetClinic*,
-            // the copy that made the vet authored in two places at once.
-            val vet = listOf(householdVet.primary.name, householdVet.primary.phone, householdVet.primary.address)
-                .filter { it.isNotBlank() }.joinToString(" · ")
-            ProfileField("Veterinarian (household)", vet.ifBlank { "No household vet on file yet" })
-            val erVet = listOf(householdVet.emergency.name, householdVet.emergency.phone, householdVet.emergency.address)
-                .filter { it.isNotBlank() }.joinToString(" · ")
-            // The emergency clinic is a DISTINCT practice, never folded into the
-            // line above: "who to call" and "who to call at 2am" differ.
-            if (erVet.isNotBlank()) ProfileField("Emergency vet (household)", erVet)
-
-            if (kinfolk.outstandingBalance != "0.00" && kinfolk.outstandingBalance.isNotBlank()) {
-                ProfileField("Outstanding Balance", "$${kinfolk.outstandingBalance}")
+private fun VetPanel(householdVet: HouseholdVet) {
+    val primary = householdVet.primary
+    val er = householdVet.emergency
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        DenPanel(title = "Vet clinic") {
+            if (listOf(primary.name, primary.phone, primary.address).all { it.isBlank() }) {
+                EmptyHint("No household vet on file yet.")
+            } else {
+                FieldRows(
+                    Field("Clinic", primary.name),
+                    Field("Phone", primary.phone, mono = true),
+                    Field("Address", primary.address, directions = true),
+                )
             }
-
-            // Tags moved OUT of this card and onto their own panel below: they are
-            // now a managed vocabulary with colors, icons, and inline editing, not
-            // a comma-joined string squeezed into a read-only row.
+        }
+        if (listOf(er.name, er.phone, er.address).any { it.isNotBlank() }) {
+            DenPanel(title = "Emergency vet", subtitle = "The 24 hour clinic for this household.") {
+                FieldRows(
+                    Field("Clinic", er.name),
+                    Field("Phone", er.phone, mono = true),
+                    Field("Address", er.address, directions = true),
+                )
+            }
         }
     }
 }
 
 /** Read-only display of admin-authored KINFOLK custom field VALUES on the profile. */
 @Composable
-private fun AdditionalInfoCard(schemas: List<FormSchema>, values: Map<String, String>) {
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("ADDITIONAL INFO", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
+private fun AdditionalInfoPanel(schemas: List<FormSchema>, values: Map<String, String>) {
+    DenPanel(title = "Additional info") {
+        Column {
             DynamicFormFieldsReadOnly(schemas, values) { label, value ->
-                ProfileField(label, value)
+                if (value.isNotBlank()) AuntieKeyValueRow(label = label, value = value)
             }
         }
     }
 }
 
+/** True when the dossier band has anything to say, the web panel's own rule (#683). */
+private fun dossierHasAnything(kinfolk: Kinfolk, dossier: com.tribetails.auntieos.data.model.Dossier?): Boolean =
+    kinfolk.internalNotes.isNotBlank() || kinfolk.referralSource.isNotBlank() ||
+        (dossier != null && listOf(
+            dossier.tldr, dossier.rawSummary, dossier.householdNotes,
+            dossier.communicationStyle, dossier.relationshipWithAuntie,
+        ).any { it.isNotBlank() })
+
+/**
+ * The mock's "Auntie's notes · admin only": the dossier summary in the dashed
+ * note box, then the structured notes under it. Internal notes and the
+ * referral source are the two kinfolk-doc fields that belong beside them
+ * rather than on Contact; they stay visible here so nothing persisted goes
+ * dark on this platform.
+ *
+ * ADMIN-ONLY, and only ever on an admin surface: dossiers never reach a
+ * kinfolk-facing screen. READ-ONLY: the one mutating action it ever had
+ * (clearing migrated household notes) lives on the Edit screen (K3/A8).
+ */
 @Composable
-private fun DossierCard(
+private fun AuntieNotesPanel(
     kinfolk: Kinfolk,
     dossier: com.tribetails.auntieos.data.model.Dossier?,
 ) {
-    if (dossier == null || dossier.needsMoreSamples) {
-        NeedsMoreSamplesBanner(
-            message = "Not enough comms history yet to summarize this kinfolk. Send/receive a few more messages.",
-        )
-    }
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("HOUSEHOLD & ADMIN", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-                val reconciledAt = dossier?.lastReconciledAt.orEmpty()
-                if (reconciledAt.isNotBlank()) {
+    val c = AuntieTheme.colors
+    DenPanel(
+        title = "Auntie's notes",
+        trailing = { PanelMeta("admin only") },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (dossier == null || dossier.needsMoreSamples) {
+                NeedsMoreSamplesBanner(
+                    message = "Not enough comms history yet to summarize this kinfolk. Send/receive a few more messages.",
+                )
+            }
+            val summary = listOf(dossier?.tldr.orEmpty(), dossier?.rawSummary.orEmpty())
+                .map { stripDossierSources(it) }
+                .firstOrNull { it.isNotBlank() }
+            if (summary != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(c.surface2)
+                        .border(1.dp, c.border, RoundedCornerShape(12.dp))
+                        .padding(13.dp),
+                ) {
                     Text(
-                        "Last enriched ${reconciledAt.take(10)}",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.textFaint,
+                        summary,
+                        style = AuntieTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
+                        color = c.textDim,
                     )
                 }
             }
-            ProfileField("Entry Notes", kinfolk.entryNotes)
-            ProfileField("Gate Code", kinfolk.gateCode)
-            ProfileField("WiFi Network", "${kinfolk.wifiName} / ${kinfolk.wifiPassword}")
-            ProfileField("Internal Notes", kinfolk.internalNotes)
-            ProfileField("Referral Source", kinfolk.referralSource)
-            // Read in the operator's locale. A legacy value formatJoinDate cannot
-            // read prints exactly as stored rather than as "Invalid Date".
-            ProfileField("Join Date", formatJoinDate(kinfolk.joinDate))
-            if (!dossier?.rawSummary.isNullOrBlank()) {
-                ProfileField("Reconciled Summary", stripDossierSources(dossier!!.rawSummary))
-            }
-            if (!dossier?.communicationStyle.isNullOrBlank()) {
-                ProfileField("Communication Style", stripDossierSources(dossier!!.communicationStyle))
-            }
+            FieldRows(
+                Field("Household notes", dossier?.householdNotes.orEmpty()),
+                Field("Communication style", stripDossierSources(dossier?.communicationStyle.orEmpty())),
+                Field("Relationship with Auntie", dossier?.relationshipWithAuntie.orEmpty()),
+                Field("Internal notes", kinfolk.internalNotes),
+                Field("Referral source", kinfolk.referralSource),
+                Field("Last enriched", dossier?.lastReconciledAt.orEmpty().take(10), mono = true),
+            )
         }
     }
+}
+
+/**
+ * The mock's `.pet` row: photo, name, one dim line of facts and the pet's own
+ * line from its 411, a chevron, and the whole row opens the pet. Under the row,
+ * the three 411 facts this profile has always shown (medical, feeding, potty),
+ * because the 411 is admin-only and this profile is the one Android surface
+ * that reads them per pet: dropping them for the mock's one line would take
+ * them off the platform.
+ */
+@Composable
+private fun KinRow(kin: Kin, kin411: Kin411?, onOpen: () -> Unit) {
+    val c = AuntieTheme.colors
+    val facts = listOf(kin.species, kin.breed, kin.age.takeIf { it.isNotBlank() }?.let { "$it yrs" }.orEmpty())
+        .filter { it.isNotBlank() }
+    val own = kin411?.let { f -> listOf(f.tldr, f.personality, f.quirksAndPreferences).firstOrNull { it.isNotBlank() } }
+        ?.let { stripDossierSources(it) }.orEmpty()
+    val line = (facts + listOfNotNull(own.takeIf { it.isNotBlank() })).joinToString(" · ")
+    val medical = kin411?.medicalNotes.orEmpty()
+    val feeding = listOfNotNull(kin411?.feedingAmount, kin411?.feedingFrequency).filter { it.isNotBlank() }.joinToString(" / ")
+    val potty = kin411?.pottyRoutine.orEmpty()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, c.borderSoft, RoundedCornerShape(14.dp)),
+    ) {
+        AuntieEntityRow(
+            title = kin.name,
+            subtitle = line.ifBlank { null },
+            leading = {
+                AuntieAvatar(
+                    imageUrl = kin.profilePictureUrl,
+                    initials = kin.name.take(1),
+                    size = 52.dp,
+                    gradientSeed = kin.id.ifBlank { kin.name },
+                )
+            },
+            trailing = {
+                Icon(Lucide.ChevronRight, contentDescription = null, tint = c.textDim, modifier = Modifier.size(18.dp))
+            },
+            supporting = if (listOf(medical, feeding, potty).any { it.isNotBlank() }) ({
+                if (kin411 == null || kin411.needsMoreSamples) {
+                    NeedsMoreSamplesBanner(message = "Not enough notes about ${kin.name} yet.")
+                }
+                FieldRows(
+                    Field("Medical notes", medical),
+                    Field("Feeding", feeding),
+                    Field("Potty routine", potty),
+                )
+            }) else null,
+            onClick = onOpen,
+        )
+    }
+}
+
+/**
+ * The mock's `.visit` line: a dot in the service tone, the time in mono, what
+ * the visit is, and the service pill at the far edge. A hairline under every
+ * line but the last.
+ */
+@Composable
+private fun VisitLine(s: KinCareSession, last: Boolean) {
+    val c = AuntieTheme.colors
+    val tone = serviceTone(s.serviceType)
+    val description = if (s.serviceDurationMinutes > 0) {
+        "${s.serviceDurationMinutes}-min ${s.serviceType.ifBlank { "visit" }.lowercase()}"
+    } else {
+        s.serviceType.ifBlank { "visit" }.lowercase()
+    }
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(9.dp).clip(CircleShape).background(tone.color(c)))
+            Text(
+                "${s.startTime.take(10)} ${formatTime(s.startTime)}",
+                style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
+                color = c.textPrimary,
+            )
+            Text(description, style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.weight(1f))
+            ServicePill(serviceType = s.serviceType, tone = tone)
+        }
+        if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSoft))
+    }
+}
+
+/**
+ * The mock's `.tale` tile: a boxed row on a soft hairline with the title, a
+ * line of the body and a "SENT · <when>" stamp. Tappable when the report has a
+ * session to open.
+ */
+@Composable
+private fun TaleTile(report: KinCareReport, onOpen: (() -> Unit)?) {
+    val c = AuntieTheme.colors
+    val title = report.title.ifBlank { report.serviceType.orEmpty().ifBlank { "KinTale" } }
+    val body = report.bodyCopy.trim().lineSequence().firstOrNull().orEmpty()
+    val whenStamp = (report.sentAt.orEmpty().ifBlank { report.visitDate }).take(10)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.background.copy(alpha = 0.4f))
+            .border(1.dp, c.borderSoft, RoundedCornerShape(14.dp))
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(title, style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+        if (body.isNotBlank()) {
+            Text(body, style = AuntieTheme.typography.bodySmall, color = c.textDim, maxLines = 2)
+        }
+        if (whenStamp.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "SENT · $whenStamp".uppercase(),
+                style = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
+                color = c.textFaint,
+            )
+        }
+    }
+}
+
+/**
+ * The mock's `.invrow`: the invoice's number and visit count in mono on the
+ * left, the amount and the state capsule on the right, a hairline under every
+ * line but the last. The capsule carries the state the server STAMPED, through
+ * the same reader the Invoices screen uses (never a two-value paid/unpaid guess
+ * off the money); an unstamped legacy doc reads as what it says.
+ */
+@Composable
+private fun InvoiceLine(inv: Invoice, last: Boolean) {
+    val c = AuntieTheme.colors
+    val (label, tone) = invoiceFeedPill(inv)
+    val amount = if (inv.amountDue > 0) inv.amountDue else inv.total
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                kinfolkInvoiceFeedLabel(inv),
+                style = AuntieTheme.typography.mono.copy(fontSize = 11.5.sp),
+                color = c.textDim,
+                modifier = Modifier.weight(1f),
+            )
+            Text("$" + "%.2f".format(amount), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            AuntieStatusPill(label = label, tone = tone, mono = true)
+        }
+        if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSoft))
+    }
+}
+
+/** Label and tone for one invoice's stamped state, mirroring the web feed's `invoicePillTone`. */
+internal fun invoiceFeedPill(inv: Invoice): Pair<String, AuntieStatusTone> = when (invoiceStateOrNull(inv)) {
+    InvoiceState.PAID -> "Paid" to AuntieStatusTone.Teal
+    InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Teal
+    InvoiceState.OPEN -> "Unpaid" to AuntieStatusTone.Orange
+    InvoiceState.QUOTE -> "Quote" to AuntieStatusTone.Purple
+    InvoiceState.DRAFT -> "Draft" to AuntieStatusTone.Muted
+    InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
+    InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
+    InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
+    null -> inv.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
 }
 
 /**
@@ -709,166 +886,15 @@ internal fun HouseholdNotesMigrationCard(
     }
 }
 
-@Composable
-private fun KinDetailsCard(kin: Kin, kin411: Kin411?, onEdit: (String) -> Unit = {}) {
-    AuntieCard(
-        modifier = Modifier.fillMaxWidth(),
-        containerColor = AuntieTheme.colors.surface2,
-    ) {
-        Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(kin.name, style = AuntieTheme.typography.titleMedium, color = AuntieTheme.colors.kinfolkOrange)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(kin.species.uppercase(), style = AuntieTheme.typography.labelMedium, color = AuntieTheme.colors.textDim)
-                    AuntieIconBtn(
-                        onClick  = { onEdit(kin.id) },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Lucide.Pencil,
-                            contentDescription = "Edit ${kin.name}",
-                            tint     = AuntieTheme.colors.kinfolkOrange,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-
-            ProfileField("Breed", kin.breed)
-            ProfileField("Age/Sex/Weight", "${kin.age} / ${kin.sex} / ${kin.weight}")
-
-            Box(modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(AuntieTheme.colors.border))
-
-            if (kin411 == null || kin411.needsMoreSamples) {
-                NeedsMoreSamplesBanner(
-                    message = "Not enough notes about ${kin.name} yet.",
-                )
-            }
-
-            Text("MEDICAL & ROUTINE", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-            // Vet is household-level now (single-source on the Kinfolk, shown in
-            // ContactInfoCard). Removed the per-kin kin411 vet line to stop double-authoring (1D).
-            ProfileField("Medical Notes", kin411?.medicalNotes.orEmpty())
-            ProfileField("Feeding", listOf(kin411?.feedingAmount, kin411?.feedingFrequency).filterNotNull().filter { it.isNotBlank() }.joinToString(" / "))
-            ProfileField("Potty Routine", kin411?.pottyRoutine.orEmpty())
-        }
-    }
-}
-
-@Composable
-private fun ProfileField(label: String, value: String) {
-    if (value.isBlank() || value.contains("()")) return
-    Column {
-        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
-        Spacer(Modifier.height(2.dp))
-        Text(value, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
-    }
-}
-
-/**
- * A profile field whose value opens Google Maps directions (#685), same
- * destination URL the React admin's `Fact` renders for the service address and
- * the vet clinic address. Blank the same way `ProfileField` is: nothing to show
- * is nothing rendered.
- */
-@Composable
-private fun DirectionsProfileField(label: String, address: String) {
-    if (address.isBlank()) return
-    val context = LocalContext.current
-    Column {
-        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
-        Spacer(Modifier.height(2.dp))
-        Text(
-            address,
-            style = AuntieTheme.typography.bodyMedium,
-            color = AuntieTheme.colors.kinfolkOrange,
-            textDecoration = TextDecoration.Underline,
-            modifier = Modifier.clickable {
-                val uri = Uri.parse(
-                    "https://www.google.com/maps/dir/?api=1&destination=" + Uri.encode(address),
-                )
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-            },
-        )
-    }
-}
-
 /**
  * D1 (A8): the comms-reconcile pipeline embeds `[[source:msg-123]]` citation tags in
- * dossier free-text. They're internal provenance, not for the operator's eyes — strip
- * them (and the leading whitespace they trail) before render. Mirror of web
- * stripDossierSources. Pure + unit-tested in StripDossierSourcesTest.
+ * dossier free-text. They are internal provenance, not for the operator's eyes, so
+ * they are stripped (with the leading whitespace they trail) before render. Mirror
+ * of web stripDossierSources. Pure + unit-tested in StripDossierSourcesTest.
  */
 private val DOSSIER_SOURCE_TAG = Regex("""\s*\[\[source:[^]]*]]""")
 fun stripDossierSources(raw: String): String =
     DOSSIER_SOURCE_TAG.replace(raw, "").trim()
-
-@Composable
-private fun HouseholdManagementCard(
-    kinfolk: Kinfolk,
-    onNavigateToHouseholdData: (String, String) -> Unit,
-    onNavigateToMediaGallery: (String, String) -> Unit
-) {
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("HOUSEHOLD MANAGEMENT", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AuntieTheme.colors.surface2)
-                        .clickable { onNavigateToHouseholdData(kinfolk.id, kinfolk.displayName) }
-                        .padding(horizontal = 8.dp, vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(Lucide.House, contentDescription = null, modifier = Modifier.size(20.dp), tint = AuntieTheme.colors.kinfolkOrange)
-                        Text("Household", style = AuntieTheme.typography.labelMedium, color = AuntieTheme.colors.kinfolkOrange)
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AuntieTheme.colors.surface2)
-                        .clickable { onNavigateToMediaGallery(kinfolk.id, kinfolk.displayName) }
-                        .padding(horizontal = 8.dp, vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(Lucide.Images, contentDescription = null, modifier = Modifier.size(20.dp), tint = AuntieTheme.colors.kinfolkOrange)
-                        Text("Media", style = AuntieTheme.typography.labelMedium, color = AuntieTheme.colors.kinfolkOrange)
-                    }
-                }
-            }
-
-            Text(
-                "Manage shared household information and view photos/videos for this family",
-                style = AuntieTheme.typography.bodySmall,
-                color = AuntieTheme.colors.textDim
-            )
-        }
-    }
-}
 
 @Composable
 private fun NeedsMoreSamplesBanner(message: String) {

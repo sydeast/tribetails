@@ -4,14 +4,14 @@
  * convention), so nothing here needs to land in shared styles/screens.css.
  *
  * Every value comes from styles/tokens.css: no literal colours, radii,
- * durations or px spacing. The status pill is the kit's `StatusPill` since
- * #755; the seven per-state chip rules this file carried are gone with it.
+ * durations or px spacing. The status capsule is the kit's `StatusPill`, tinted
+ * through its `data-tone`, so this file no longer carries a chip palette of its
+ * own; the status glyph tile borrows the same `--den-tone` the kit resolves.
  *
  * THE PALETTE IS NOT THIS FILE'S JOB. The mock draws a dark navy ground with
- * mesh blobs; that is the theme system's ruling (admin default in Branding,
- * per-user override in profile, following the OS), so the shapes and the
- * spacing here come from the mock and the colours come from whatever theme is
- * loaded.
+ * mesh blobs; since the glass kit (#759) that navy is the app's own default
+ * scheme, so the shapes and the spacing here come from the mock and the
+ * colours come from the tokens.
  */
 
 .sessions__hint {
@@ -90,26 +90,29 @@
   gap: var(--space-3);
 }
 
-/* Mock `.phlab`: mono uppercase label with the count in a hairline pill. */
+/* Mock `.phlab`: mono uppercase label (11px, tracked) with the count in a
+   hairline pill beside it. */
 .sessions__phase-header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--type-label-md-size);
-  font-weight: var(--type-label-md-weight);
-  letter-spacing: var(--type-label-md-tracking);
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: var(--type-label-sm-tracking);
   text-transform: uppercase;
   color: var(--color-text-primary);
 }
 
+/* Mock `.ct`: a hairline capsule on the raised surface, dim mono digits. */
 .sessions__phase-count {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-md-size);
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-mono-weight);
   color: var(--color-text-dim);
   background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-pill);
   padding: 0 var(--space-2);
 }
@@ -161,26 +164,33 @@
   gap: var(--space-2);
 }
 
-/* Mock `.card`: a soft surface panel, not a table row. */
+/* Mock `.card`: the same glass the kit's panel is cut from (the 160deg navy
+   gradient on a hairline), one radius step under the panel, on 15px of padding
+   that rounds to the spacing scale's 16. A flat surface fill here read as a
+   card sitting on the page rather than as glass cut out of it, which is what
+   the kit's panel comment says of the panel, and the mock draws both the same. */
 .sessions__card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-3);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-panel);
+  padding: var(--space-4);
 }
 
-/* Mock `.card.live`: the visit happening right now reads warmer than the ones
-   around it. Only ARRIVED, matching the GPS line's own rule. */
+/* Mock `.card.live`: a teal radial from the top-left corner over the same
+   gradient, and the hairline lifted to teal at half strength. Only ARRIVED,
+   matching the GPS line's own rule. */
 .sessions__card--arrived {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));
-}
-
-.sessions__card--cancelled .sessions__card-name {
-  color: var(--color-text-dim);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background:
+    radial-gradient(
+      120% 130% at 0% 0%,
+      color-mix(in srgb, var(--color-accent) 10%, transparent),
+      transparent 50%
+    ),
+    linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
 }
 
 .sessions__card-head {
@@ -215,17 +225,20 @@
   margin-left: calc(var(--space-3) * -1);
 }
 
-/* Mock `.sicon`: the status tile shown when no kin photo resolves. */
+/* Mock `.sicon`: the status tile shown when no kin photo resolves, tinted to
+   the state the way the mock tints it (orange on the way, teal when wrapped,
+   the dim raised surface for scheduled and cancelled). `--den-tone` is what the
+   kit's `[data-tone]` rules resolve, so one rule covers every state. */
 .sessions__glyph {
   flex: 0 0 auto;
   width: 2.625rem;
   height: 2.625rem;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
-  color: var(--color-text-dim);
-  font-size: var(--type-title-md-size);
+  border-radius: var(--radius-card-lg);
+  background: color-mix(in srgb, var(--den-tone) 16%, var(--color-surface-2));
+  color: color-mix(in srgb, var(--den-tone) 55%, var(--tt-brand-cream));
+  font-size: var(--type-title-lg-size);
 }
 
 .sessions__card-id {
@@ -236,25 +249,19 @@
   gap: var(--space-1);
 }
 
+/* Mock `.id b`: the household in the serif, at title weight. */
 .sessions__card-name {
-  font-family: var(--font-hanken);
-  font-size: var(--type-title-md-size);
-  font-weight: var(--type-title-md-weight);
+  font-family: var(--type-title-lg-family);
+  font-size: var(--type-title-lg-size);
+  font-weight: var(--type-title-lg-weight);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Mock `.svc`: one dim line, "service · kin · when". */
 .sessions__card-svc {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
-  min-width: 0;
-}
-
-.sessions__card-meta {
   font-family: var(--type-body-sm-family);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
@@ -265,43 +272,30 @@
 
 /* ── the card's own lines ────────────────────────────────────────────────── */
 
-/* Mock `.gpslive`: a pulsing dot beside a mono label. */
-.sessions__gps {
+/* The mock's `.gpslive` line is `VisitTrackingIndicator` since #772, and its
+   stylesheet carries the dot and the label; nothing of it is left here. */
+
+/* Mock `.addr`: the door, in its own soft chip, and a control: it opens
+   directions, so the rim goes brand orange under the pointer. */
+.sessions__addr {
+  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  text-transform: uppercase;
-  color: var(--color-accent);
-}
-
-.sessions__gps-dot {
-  width: 0.4375rem;
-  height: 0.4375rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  animation: sessions-pulse 1.6s var(--ease-standard) infinite;
-}
-
-@keyframes sessions-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-/* Mock `.addr`: the door, in its own soft chip. */
-.sessions__addr {
-  align-self: flex-start;
-  margin: 0;
   background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-card);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
+  text-decoration: none;
+  cursor: pointer;
+}
+.sessions__addr:hover,
+.sessions__addr:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  color: var(--color-text-primary);
 }
 
 .sessions__note {
@@ -332,20 +326,46 @@
   color: var(--color-success);
 }
 
-/* Mock `.acts`: the lifecycle row, buttons sharing the width evenly. */
+/* Mock `.acts`: the lifecycle row, a step under the card's own gap, buttons
+   sharing the width evenly. */
 .sessions__acts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 .sessions__acts > * {
   flex: 1 1 8rem;
 }
 
+/* Mock `.btn.teal`, worn by "Complete KinTale" alone: the kit's primary button
+   recoloured to the KinTale teal. The hover and active rules are restated at
+   higher specificity because Buttons.css sets them at `button.auntie-btn--primary
+   :hover:not(:disabled)`, which would flash the brand orange back on hover. */
+.sessions__acts .sessions__btn--teal {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+.sessions__acts button.sessions__btn--teal:hover:not(:disabled),
+.sessions__acts button.sessions__btn--teal:active:not(:disabled) {
+  background-color: var(--color-accent);
+  filter: brightness(1.08);
+}
+
+/* ── status pill ─────────────────────────────────────────────────────────── */
+
+/* The capsule itself is the kit's `StatusPill`; this span is only where it sits
+   in the header row, and the phone rule below moves it above the name. */
+.sessions__chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
 /* ── Phone width ──────────────────────────────────────────────────────────
-   Measured at 390x844: the header's three parts (photos, identity, pill) fit
+   Measured at 390x844: the header's three parts (photos, identity, chip) fit
    one line only while the identity column has room to ellipsise. Below that the
-   pill moves above the name rather than squeezing "Constance
+   chip moves above the name rather than squeezing "Constance
    Fairweather-Okonkwo" down to eight characters, and the action row stacks so
    no lifecycle button ends up too narrow to read its own label. */
 @media (max-width: 720px) {
@@ -356,7 +376,7 @@
     flex: 1 1 100%;
     order: 2;
   }
-  .sessions__card-status {
+  .sessions__chip {
     order: 1;
     margin-left: auto;
   }

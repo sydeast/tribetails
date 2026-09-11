@@ -28,7 +28,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
@@ -103,22 +106,43 @@ private fun startGpsTracking(context: Context, sessionId: String, kinfolkId: Str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auntie Time, the day-of run screen, ported to the Den layout from the web
-// counterpart (web/.../screens/sessions/KinCareSessionsScreen.kt). Mono kicker +
-// serif heading, a StatCard row computed from the live list, then a DenPanel per
-// phase (Active / Upcoming / Recent) of KinCare cards built from AuntieIconTile +
-// ServicePill + AuntieStatusPill + statusLabel/formatTime. Drives entirely off the
-// existing AdminDataViewModel UiState; preserves the visit-lifecycle actions, the
-// office-note flow, the GPS foreground-service bits, and the fail-loud banners.
+// Auntie Time, the day-of run screen, drawn to
+// `ui-ideas/auntieos-auntie-time-2026-05-27.html` (the operator's ruling in
+// #703: the mock is the spec, and #755 is the fidelity pass against it). Mono
+// kicker + serif heading, then four phase groups, each a mono label with a
+// count chip over a stack of glass action cards (AuntieIconTile or the kin
+// photos, the household in the serif, one "service · kin · when" line, the
+// AuntieStatusPill, GPS line, address chip, note, invoice chip, lifecycle row).
+//
+// GONE SINCE #755, because the mock has none of them and the web board dropped
+// them in #703: the three-card StatRow, the soonest/latest sort chips, and the
+// whole-board EmptyState that replaced the four groups when the window was
+// empty. The groups render whatever the data says, count chips and all, and a
+// single line under them says the window is empty on purpose. Drives entirely
+// off the existing AdminDataViewModel UiState; preserves the visit-lifecycle
+// actions, the office-note flow, the GPS foreground-service bits, and the
+// fail-loud banners.
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum class Phase(val label: String, val tone: AuntieStatusTone) {
-    Active("Active", AuntieStatusTone.Teal),
+private enum class Phase(val label: String) {
+    Active("Active"),
     // issue #702: a SCHEDULED visit whose slot already passed gets its own
     // phase, between Active and Upcoming, rather than being dropped outright.
-    Overdue("Overdue", AuntieStatusTone.Warning),
-    Upcoming("Upcoming", AuntieStatusTone.Orange),
-    CompletedToday("Recent", AuntieStatusTone.Muted),
+    Overdue("Overdue"),
+    Upcoming("Upcoming"),
+    CompletedToday("Recent"),
+}
+
+/**
+ * What an EMPTY phase group says, per phase, word for word the web board's
+ * `PHASE_EMPTY`. The count chip beside the heading already reads 0; each line
+ * answers what the chip cannot, which is what the group covers.
+ */
+private fun phaseEmptyLine(phase: Phase): String = when (phase) {
+    Phase.Active -> "No visit is in flight."
+    Phase.Overdue -> "No scheduled visit has slipped past its slot."
+    Phase.Upcoming -> "Nothing booked in the next $UPCOMING_WINDOW_DAYS days."
+    Phase.CompletedToday -> "Nothing wrapped today or yesterday."
 }
 
 @Composable
@@ -175,18 +199,12 @@ fun KinCareSessionsScreen(
     val today = LocalDate.now().toString()
     val visible = sessions.filter { isVisibleOnAuntieTime(it, today) }
 
-    // Operator issue #17: soonest or latest first, applied WITHIN each phase so
-    // "latest first" can never float Recent above Active.
-    var sort by remember { mutableStateOf(AuntieTimeSort.Soonest) }
-
+    // A run sheet reads forwards: ascending by start within each phase. The
+    // soonest/latest sort control #17 added is gone since #755 (the mock has
+    // no sort, and the web board dropped its Sort select in #703).
     val grouped = visible
         .groupBy { phaseFor(it, today) }
-        .mapValues { (_, rows) -> sortSessions(rows, sort) }
-
-    val activeCount = grouped[Phase.Active].orEmpty().size
-    val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { it.startTime.take(10) == today }
-    val recentDone = grouped[Phase.CompletedToday].orEmpty()
-        .count { it.status.uppercase() == "COMPLETED" && it.completedAt.orEmpty().take(10) == today }
+        .mapValues { (_, rows) -> sortSessions(rows) }
 
     val patchFn: (String, Map<String, Any>, String) -> Unit = { id, patch, msg ->
         viewModel.patchKinCareSession(id, patch) { err ->
@@ -226,17 +244,16 @@ fun KinCareSessionsScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
-                    // Den editorial header: mono kicker + Fraunces title + sub, mirrors
-                    // the Auntie Time mockup head.
+                    // The mock's own heading, paw and all, and with no italic accent
+                    // tail: the Directory mock marks its last word up, this one does
+                    // not. Same title string as the web board. The subtitle is the
+                    // info button's tooltip (the #758 ruling), never a line of copy.
                     // This screen OWNS the "today's route / active visits / upcoming care
                     // windows" framing (spec 13 item 1 / spec 14): the route map (§A.10)
-                    // renders below on the in-flight card; Active/Upcoming/Recent phases
-                    // cover the rest. The mislabeled Schedule subtitle was removed; that
-                    // content lives here. TODO(auntie copy): subtitle reword is author-owned.
+                    // renders below on the in-flight card; the phases cover the rest.
                     DenScreenHeading(
                         kicker = "The Den · Auntie Time",
-                        title = "Auntie",
-                        accentTail = "Time.",
+                        title = "🐾 Auntie Time",
                         subtitle = "Day-of view. Clock in, clock out, every Kin Care in flight.",
                     )
                     Spacer(Modifier.height(16.dp))
@@ -265,26 +282,7 @@ fun KinCareSessionsScreen(
                             }
                         }
 
-                        visible.isEmpty() -> EmptyState()
-
                         else -> {
-                            // Live stat row, computed from the same list (no extra fetch).
-                            StatRow(
-                                activeCount = activeCount,
-                                upcomingToday = upcomingToday,
-                                recentDone = recentDone,
-                            )
-                            Spacer(Modifier.height(16.dp))
-
-                            AuntieChipGroup(
-                                options = AuntieTimeSort.entries.toList(),
-                                selected = setOf(sort),
-                                onSelectionChange = { next -> next.firstOrNull()?.let { sort = it } },
-                                label = { it.label },
-                                singleSelect = true,
-                            )
-                            Spacer(Modifier.height(20.dp))
-
                             // ISSUE #703: every phase renders, empty ones
                             // included. The guard here used to be
                             // `if (items.isNotEmpty())`, which is the same thing
@@ -293,8 +291,10 @@ fun KinCareSessionsScreen(
                             // had nothing to say, so the board said nothing at
                             // all and read as broken. The mock draws all four
                             // with their count chips whatever the data says, and
-                            // a chip that reads 0 is an answer.
-                            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                            // a chip that reads 0 is an answer. #755 extends the
+                            // same rule to the whole board: an empty window no
+                            // longer swaps the four groups for one empty state.
+                            Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                                 Phase.entries.forEach { phase ->
                                     val items = grouped[phase].orEmpty()
                                     PhaseGroup(
@@ -314,6 +314,22 @@ fun KinCareSessionsScreen(
                                     )
                                 }
                             }
+
+                            // Under a board that is genuinely holding nothing. The
+                            // four groups above have already said each phase is
+                            // empty; this says that is not a fault. DRAFT and
+                            // PENDING bookings are the Bookings screen's queue by
+                            // design, so an empty window here is where a new
+                            // booking sits until it is approved.
+                            if (visible.isEmpty()) {
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = "Nothing on the books in this window. New bookings land " +
+                                        "here once you approve them on the Bookings screen.",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
                         }
                     }
                 }
@@ -330,38 +346,7 @@ fun KinCareSessionsScreen(
     }
 }
 
-// ── Stat row (Den StatCards) ──────────────────────────────────────────────────
-// On a phone the three cards stack vertically rather than crowding one row.
-
-@Composable
-private fun StatRow(activeCount: Int, upcomingToday: Int, recentDone: Int) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatCard(
-            label = "In flight",
-            value = activeCount.toString(),
-            trend = "on the way, arrived, departed",
-            tone = AuntieStatusTone.Teal,
-            feature = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        StatCard(
-            label = "Up next today",
-            value = upcomingToday.toString(),
-            trend = "scheduled for today",
-            tone = AuntieStatusTone.Orange,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        StatCard(
-            label = "Wrapped today",
-            value = recentDone.toString(),
-            trend = "completed Kin Cares",
-            tone = AuntieStatusTone.Success,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-// ── Phase panel ────────────────────────────────────────────────────────────────
+// ── Phase group ─────────────────────────────────────────────────────────────────
 
 @Composable
 private fun PhaseGroup(
@@ -381,42 +366,80 @@ private fun PhaseGroup(
     /** A3: operator status transitions, server-owned and audited. See `transitionFn`. */
     onTransition: (String, BookingTransitionAction, String, String) -> Unit,
 ) {
-    // Each phase is a Den glass panel; the count rides in the trailing slot as a
-    // toned status pill.
-    DenPanel(
-        title = phase.label,
-        modifier = Modifier.fillMaxWidth(),
-        trailing = {
+    // The mock's `.phlab`: a mono uppercase label with the count in a small
+    // capsule beside it, over a bare stack of cards. Not a DenPanel: the mock
+    // draws no panel around a phase (the cards are the glass), and the web board
+    // dropped its panel wrapper in #703 for the same reason.
+    val c = AuntieTheme.colors
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Text(
+                text = phase.label.uppercase(),
+                style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 1.3.sp),
+                color = c.textPrimary,
+                // A heading, so TalkBack can hop phase to phase the way the web
+                // board's `h3` lets a screen reader.
+                modifier = Modifier.semantics { heading() },
+            )
             AuntieStatusPill(
                 label = count.toString(),
-                tone = phase.tone,
+                tone = AuntieStatusTone.Neutral,
                 mono = true,
             )
-        },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            sessions.forEach { session ->
-                val kinfolk = kinfolkById(session.kinfolkId)
-                KinCareCard(
-                    session = session,
-                    todayIso = todayIso,
-                    address = kinfolk?.serviceAddress.orEmpty(),
-                    phone = kinfolk?.phoneNumber.orEmpty(),
-                    email = kinfolk?.email.orEmpty(),
-                    kinAvatars = com.tribetails.auntieos.domain.kinAvatarsForSession(session, kinById),
-                    breadcrumbsFor = breadcrumbsFor,
-                    timeBlockLabel = timeBlockLabelFor(session),
-                    onOpenDetail = { onOpenDetail(session.id) },
-                    onWriteKinTale = { onWriteKinTale(session.id) },
-                    onLiveTrack = { onLiveTrack(session.id, session.kinfolkId, session.kinfolkName) },
-                    onPatch = { patch, msg -> onPatch(session.id, patch, msg) },
-                    onTransition = { action, completedAt, msg ->
-                        onTransition(session.id, action, completedAt, msg)
-                    },
-                )
+        }
+        if (sessions.isEmpty()) {
+            // An empty phase keeps its heading, because the count chip beside it
+            // is the answer. This line only says the group is empty ON PURPOSE.
+            Text(
+                text = phaseEmptyLine(phase),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textFaint,
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                sessions.forEach { session ->
+                    val kinfolk = kinfolkById(session.kinfolkId)
+                    KinCareCard(
+                        session = session,
+                        todayIso = todayIso,
+                        address = kinfolk?.serviceAddress.orEmpty(),
+                        phone = kinfolk?.phoneNumber.orEmpty(),
+                        email = kinfolk?.email.orEmpty(),
+                        kinAvatars = com.tribetails.auntieos.domain.kinAvatarsForSession(session, kinById),
+                        kinNames = kinNamesForSession(session, kinById),
+                        breadcrumbsFor = breadcrumbsFor,
+                        timeBlockLabel = timeBlockLabelFor(session),
+                        onOpenDetail = { onOpenDetail(session.id) },
+                        onWriteKinTale = { onWriteKinTale(session.id) },
+                        onLiveTrack = { onLiveTrack(session.id, session.kinfolkId, session.kinfolkName) },
+                        onPatch = { patch, msg -> onPatch(session.id, patch, msg) },
+                        onTransition = { action, completedAt, msg ->
+                            onTransition(session.id, action, completedAt, msg)
+                        },
+                    )
+                }
             }
         }
     }
+}
+
+/**
+ * The kin this visit covers, by name, for the card's identity line. The same
+ * id resolution `kinAvatarsForSession` uses (the `kinIds` list, else the older
+ * single `kinId`), so the names and the photo circles always describe the same
+ * animals. A kin the directory has not loaded yet drops out rather than
+ * rendering as a blank between two separators.
+ */
+private fun kinNamesForSession(
+    session: KinCareSession,
+    kinById: Map<String, com.tribetails.auntieos.data.model.Kin>,
+): List<String> {
+    val ids = if (session.kinIds.isNotEmpty()) session.kinIds
+              else listOfNotNull(session.kinId.ifBlank { null })
+    return ids.mapNotNull { kinById[it]?.name?.trim()?.ifBlank { null } }
 }
 
 // ── KinCare card ────────────────────────────────────────────────────────────────
@@ -429,6 +452,8 @@ private fun KinCareCard(
     phone: String,
     email: String,
     kinAvatars: List<com.tribetails.auntieos.domain.KinAvatar>,
+    /** The kin by name, in the same order as [kinAvatars]. */
+    kinNames: List<String>,
     breadcrumbsFor: (String) -> kotlinx.coroutines.flow.Flow<Result<List<com.tribetails.auntieos.data.model.LocationPoint>>>,
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
@@ -459,7 +484,7 @@ private fun KinCareCard(
                 .padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            // ---- Header: status glyph tile + identity + status pill ----
+            // ---- Header: kin photos (or the status tile) + identity + status pill ----
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -471,44 +496,46 @@ private fun KinCareCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                AuntieIconTile(
-                    icon = statusGlyph(session.status),
-                    size = 42.dp,
-                    tone = tone,
-                )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        text = session.kinfolkName.ifBlank { "Unnamed Kinfolk" },
-                        style = AuntieTheme.typography.titleMedium,
-                        color = c.textPrimary,
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        if (session.serviceType.isNotBlank()) {
-                            ServicePill(serviceType = session.serviceType)
-                        }
-                        Text(
-                            text = sessionWindow(session, todayIso),
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
-                        )
-                    }
-                }
-                // Stage 2 Step 2: stacked per-kin avatars for this stop (multi-pet).
-                // Joined from the session's kinIds; absent when no kin resolve (never
-                // a placeholder face). Sits between identity and the status pills.
+                // The mock leads the row with the kin's photo circles and falls
+                // back to the toned status tile only when no kin resolves (never a
+                // placeholder face). The two stand in the same slot; #755 moved
+                // the stack here from after the identity column, where it used to
+                // sit beside a tile that was always drawn.
                 if (kinAvatars.isNotEmpty()) {
                     AuntieAvatarStack(
                         avatars = kinAvatars.map { AvatarSpec(imageUrl = it.imageUrl.ifBlank { null }, initials = it.initials) },
-                        max = 4,
-                        avatarSize = 28.dp,
+                        max = 3,
+                        avatarSize = 34.dp,
+                        overlap = 10.dp,
+                    )
+                } else {
+                    AuntieIconTile(
+                        icon = statusGlyph(session.status),
+                        size = 42.dp,
+                        tone = tone,
                     )
                 }
-                // §A.8: Business-Settings time-block descriptor (e.g. "Evening block").
-                timeBlockLabel?.let { block ->
-                    AuntieStatusPill(label = "$block block", tone = AuntieStatusTone.Muted, mono = true)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    // Mock `.id b`: the household in the serif.
+                    Text(
+                        text = session.kinfolkName.ifBlank { "Unnamed Kinfolk" },
+                        style = AuntieTheme.typography.titleLarge,
+                        color = c.textPrimary,
+                    )
+                    // Mock `.svc`: ONE dim line, "service · kin · when", with the
+                    // Business-Settings time block (§A.8) as its last part. It used
+                    // to be a service pill, a clock, and a separate block pill; the
+                    // mock writes all of it as one sentence.
+                    Text(
+                        text = auntieTimeIdentityLine(
+                            service = session.serviceType,
+                            kinNames = kinNames,
+                            window = sessionWindow(session, todayIso),
+                            timeBlockLabel = timeBlockLabel,
+                        ),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
                 }
                 AuntieStatusPill(
                     label = statusLabel(session.status),
@@ -877,39 +904,21 @@ private fun AddressChip(address: String, context: Context) {
     }
 }
 
-// ── Empty state ──────────────────────────────────────────────────────────────────
-
-@Composable
-private fun EmptyState() {
-    // Migration-aware empty state. DRAFT/PENDING bookings are filtered out by
-    // design (the Bookings screen owns that queue), and a wrapped visit older
-    // than RECENT_WINDOW_DAYS ages out too, so an empty screen here is a
-    // data-coverage outcome, not a code bug. A SCHEDULED visit is no longer in
-    // that "ages out" bucket, issue #702: it stays visible as Overdue back
-    // through OVERDUE_WINDOW_DAYS, so this copy says so.
-    GlassSurface(cornerRadius = 16.dp, modifier = Modifier.fillMaxWidth()) {
-        AuntieEmptyState(
-            title = "Nothing in flight right now",
-            message = "Approved Kin Cares for today and the next two weeks land here, still-scheduled " +
-                "visits whose slot already passed, and anything completed or cancelled since yesterday. " +
-                "New bookings show up once you approve them on the Bookings screen.",
-            icon = Lucide.PawPrint,
-        )
-    }
-}
-
 // ── Status mapping ────────────────────────────────────────────────────────────────
 
 /**
- * Maps a session status to the Den status tone (color signature). Internal
- * since #755: the Kin Care detail's hero pill reads the same map, so the card
- * and the detail cannot drift on which grey a cancelled visit takes.
+ * Maps a session status to the Den status tone, the mock's own pill palette
+ * state by state and the twin of web's `SESSION_STATE_TONE`. Completed is
+ * teal, not success green: the mock paints a wrap in the same hue as an
+ * arrival, one shade quieter, and the label is what tells them apart.
+ * Internal since #755: the Kin Care detail's hero pill reads the same map, so
+ * the card and the detail cannot drift on which hue a state takes.
  */
 internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED" -> AuntieStatusTone.Teal
     "DEPARTED" -> AuntieStatusTone.Purple
-    "COMPLETED" -> AuntieStatusTone.Success
+    "COMPLETED" -> AuntieStatusTone.Teal
     "CANCELLED" -> AuntieStatusTone.Muted
     else /* SCHEDULED */ -> AuntieStatusTone.Neutral
 }
@@ -938,9 +947,10 @@ private fun phaseFor(s: KinCareSession, today: String): Phase = when {
 }
 
 /**
- * The window, sort and date-label rules moved to `AuntieTimeWindow.kt` when
- * operator issue #17 changed them (Recent is now seven days, the year shows
- * outside the current one, and the operator can flip the sort). They are pure
- * functions with their own unit tests there; this file stays the Composable.
+ * The window, order and date-label rules live in `AuntieTimeWindow.kt` (Recent
+ * is today or yesterday per the mock, the year shows outside the current one,
+ * each phase reads forwards by start time, and the identity line is built
+ * there too). They are pure functions with their own unit tests; this file
+ * stays the Composable.
  */
 

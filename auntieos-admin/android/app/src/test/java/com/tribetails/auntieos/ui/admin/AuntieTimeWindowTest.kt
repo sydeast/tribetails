@@ -145,28 +145,46 @@ class AuntieTimeWindowTest {
         assertFalse(isVisibleOnAuntieTime(session(startTime = ""), today))
     }
 
-    // ── sort ────────────────────────────────────────────────────────────────
+    // ── order ───────────────────────────────────────────────────────────────
 
     @Test
-    fun `soonest first is ascending by start time`() {
+    fun `a phase reads forwards, ascending by start time, with no sort switch left to flip`() {
         val rows = listOf(
             session(id = "late", startTime = "2026-07-16T15:00:00Z"),
             session(id = "early", startTime = "2026-07-16T09:00:00Z"),
+            session(id = "tomorrow", startTime = "2026-07-17T09:00:00Z"),
         )
-        assertEquals(listOf("early", "late"), sortSessions(rows, AuntieTimeSort.Soonest).map { it.id })
+        assertEquals(listOf("early", "late", "tomorrow"), sortSessions(rows).map { it.id })
+    }
+
+    // ── the identity line (#755, the mock's `.svc`) ─────────────────────────
+
+    @Test
+    fun `the identity line is service, kin and when, joined with middle dots`() {
+        assertEquals(
+            "30 min · Biscuit & Gravy · 9:00 to 9:30",
+            auntieTimeIdentityLine("30 min", listOf("Biscuit", "Gravy"), "9:00 to 9:30", null),
+        )
     }
 
     @Test
-    fun `latest first is the exact mirror of soonest first`() {
-        val rows = listOf(
-            session(id = "a", startTime = "2026-07-16T09:00:00Z"),
-            session(id = "b", startTime = "2026-07-16T15:00:00Z"),
-            session(id = "c", startTime = "2026-07-17T09:00:00Z"),
+    fun `a blank part drops out instead of leaving a stranded separator`() {
+        assertEquals(
+            "Dog Walk · Jul 16 · 14:00 to 15:00",
+            auntieTimeIdentityLine("Dog Walk", emptyList(), "Jul 16 · 14:00 to 15:00", null),
         )
-        val soonest = sortSessions(rows, AuntieTimeSort.Soonest).map { it.id }
-        val latest = sortSessions(rows, AuntieTimeSort.Latest).map { it.id }
-        assertEquals(listOf("a", "b", "c"), soonest)
-        assertEquals(soonest.reversed(), latest)
+        assertEquals(
+            "Pepper · 10:30",
+            auntieTimeIdentityLine("", listOf(" Pepper ", ""), "10:30", ""),
+        )
+    }
+
+    @Test
+    fun `the time block rides last, as the mock writes "Evening block"`() {
+        assertEquals(
+            "Overnight · Clover & Sage · Jul 16 · 18:00 to 08:00 · Evening block",
+            auntieTimeIdentityLine("Overnight", listOf("Clover", "Sage"), "Jul 16 · 18:00 to 08:00", "Evening"),
+        )
     }
 
     // ── year display ────────────────────────────────────────────────────────

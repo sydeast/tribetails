@@ -1,11 +1,14 @@
 /* The mock's `.notebox`: a dashed, quiet, italic block holding the dossier
-   summary, with the structured notes listed under it. */
+   summary, with the structured notes listed under it. The dash is the mocks'
+   hairline and the fill is their navy-3, the hero's lower stop, not the
+   opaque `--color-border` and `--color-surface-2` it used to take, which on
+   the navy ground drew a box brighter than the panel around it. */
 .auntie-notes__box {
   margin: 0 0 var(--space-3);
-  padding: var(--space-3);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
+  padding: 13px;
+  border: var(--border-hairline) dashed var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-hero-bottom);
   font-size: var(--type-body-sm-size);
   font-style: italic;
   color: var(--color-text-dim);

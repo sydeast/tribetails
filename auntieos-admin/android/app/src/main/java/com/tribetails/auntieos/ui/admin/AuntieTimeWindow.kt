@@ -3,7 +3,7 @@ package com.tribetails.auntieos.ui.admin
 import com.tribetails.auntieos.data.model.KinCareSession
 
 /**
- * Auntie Time's window, sort and date labels: the pure half of
+ * Auntie Time's window, order, date labels and identity line: the pure half of
  * [KinCareSessionsScreen], and the Kotlin twin of the web admin's
  * `src/lib/sessionFormat.ts`. Extracted so the rules that decide what an
  * operator sees are unit-tested rather than buried in a Composable.
@@ -49,12 +49,6 @@ const val UPCOMING_WINDOW_DAYS = 14
  * its slot has passed. See the ISSUE #702 note above for why Android needs an
  * explicit cap here where web does not. */
 const val OVERDUE_WINDOW_DAYS = 30
-
-/** Sort direction the operator picks. Applied WITHIN a phase, never across phases. */
-enum class AuntieTimeSort(val label: String) {
-    Soonest("Soonest first"),
-    Latest("Latest first"),
-}
 
 /** The booking-queue states the Bookings screen owns; never shown on Auntie Time. */
 private val BOOKING_QUEUE_STATUSES = setOf("DRAFT", "PENDING", "REJECTED")
@@ -118,16 +112,33 @@ internal fun isOverdueScheduled(session: KinCareSession, today: String): Boolean
 }
 
 /**
- * One phase's sessions in the operator's chosen direction. Ascending by
- * startTime is the natural order; "latest first" is that same order reversed,
- * so the two are always exact mirrors.
+ * One phase's sessions in reading order: ascending by startTime, since a run
+ * sheet reads forwards. The soonest/latest switch #17 added was removed in
+ * #755 with the chip row that drove it (the mock has no sort control).
  */
-internal fun sortSessions(
-    sessions: List<KinCareSession>,
-    sort: AuntieTimeSort,
-): List<KinCareSession> {
-    val ascending = sessions.sortedBy { it.startTime }
-    return if (sort == AuntieTimeSort.Latest) ascending.reversed() else ascending
+internal fun sortSessions(sessions: List<KinCareSession>): List<KinCareSession> =
+    sessions.sortedBy { it.startTime }
+
+/**
+ * The card's identity line, the mock's `.svc`: "service · kin · when", one
+ * dim sentence under the household name ("30 min · Biscuit & Gravy · 9:00 to
+ * 9:30a"), with the Business-Settings time block as a last part when the
+ * visit falls in one ("· Evening block"). Blank parts drop out rather than
+ * leaving a stranded separator, and two kin are joined with an ampersand the
+ * way the mock writes them. The web board builds the same line in
+ * `Sessions.tsx` (`metaLine`).
+ */
+internal fun auntieTimeIdentityLine(
+    service: String,
+    kinNames: List<String>,
+    window: String,
+    timeBlockLabel: String?,
+): String {
+    val kin = kinNames.map { it.trim() }.filter { it.isNotBlank() }.joinToString(" & ")
+    val block = timeBlockLabel?.trim().orEmpty().let { if (it.isBlank()) "" else "$it block" }
+    return listOf(service.trim(), kin, window.trim(), block)
+        .filter { it.isNotBlank() }
+        .joinToString(" · ")
 }
 
 private val MONTHS =

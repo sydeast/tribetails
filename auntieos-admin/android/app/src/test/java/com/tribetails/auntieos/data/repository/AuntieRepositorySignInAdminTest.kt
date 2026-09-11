@@ -78,7 +78,7 @@ class AuntieRepositorySignInAdminTest {
         val refused = runBlocking { repo.signInAdmin("nobody@example.com", "hunter2") }
 
         assertTrue(refused.isFailure)
-        assertEquals("This account does not have the admin claim.", refused.exceptionOrNull()?.message)
+        assertEquals("This account does not have admin access.", refused.exceptionOrNull()?.message)
         verify { auth.signOut() }
 
         // A plain admin, in no sandbox at all, signs in next. If the refusal

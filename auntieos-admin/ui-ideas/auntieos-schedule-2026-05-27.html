@@ -8,6 +8,17 @@
   AuntieOS redesign concept · Schedule (week view).
   Standalone HTML/CSS mockup. Same "Den" aesthetic. No em dashes.
   Brand palette from AuntieColors.kt. Sample content is illustrative placeholder.
+
+  Operator overrides carried into this mock (#755 sweep, 2026-09-11), so a later
+  pass does not restore the earlier layout:
+    - The title reads "Schedule" plus the active view, not "This week's runs":
+      the label follows the view and the range (spec 13 item 1).
+    - Two stat cards under the head: the visible range's session count and the
+      Busy blocks count, which is clickable when there is a busy day to jump to
+      (#697).
+    - A collapsible "Today" agenda panel above the calendar (#695, "move the
+      Today block up one").
+    - "Block time" beside "New visit" (#397 M11).
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -59,6 +70,43 @@
     font-size:14px;padding:11px 17px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);
     display:inline-flex;align-items:center;gap:8px;}
   .add:hover{transform:translateY(-2px);box-shadow:0 12px 28px -10px rgba(223,132,49,.6)}
+  .ghost{background:transparent;color:var(--cream);border:1px solid var(--line);font-family:"Hanken Grotesk";font-weight:600;
+    font-size:14px;padding:10px 16px;border-radius:13px;cursor:pointer;transition:.2s var(--ease);}
+  .ghost:hover{border-color:var(--orange);color:var(--orange)}
+  .head .title h2 em{font-style:italic;color:var(--orange)}
+
+  /* stat cards (#697): the range count, and the Busy count that jumps to the busy days */
+  .stats{display:grid;grid-template-columns:repeat(2,minmax(12rem,1fr));gap:12px;margin-bottom:20px;
+    opacity:0;animation:rise .6s var(--ease) .08s forwards;}
+  .stat{background:rgba(27,29,43,.6);border:1px solid var(--line);border-radius:12px;padding:16px;text-align:left;
+    color:var(--cream);font-family:"Hanken Grotesk";display:flex;flex-direction:column;gap:6px;}
+  .stat .lab{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--cream-dim)}
+  .stat .val{font-family:"Fraunces",serif;font-size:28px;font-weight:600;line-height:1}
+  .stat .trend{font-size:12px;color:var(--cream-dim)}
+  .stat.feature{border-color:var(--orange);cursor:pointer;
+    background:radial-gradient(circle at top right,rgba(223,132,49,.3),transparent 70%),rgba(27,29,43,.6)}
+  .stat.feature .val{color:var(--orange);font-size:36px}
+  .stat.feature:hover{transform:translateY(-3px)}
+
+  /* Today agenda (#695): the selected day's visits, above the calendar, collapsible */
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;margin-bottom:16px;opacity:0;animation:rise .6s var(--ease) .12s forwards;}
+  .panel .ph{display:flex;align-items:center;gap:8px}
+  .panel .ph h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;flex:1}
+  .panel .ph .chev{color:var(--cream-dim);font-size:14px}
+  .agenda{list-style:none;margin:14px 0 0}
+  .agenda li{display:grid;grid-template-columns:auto 1.8fr auto;align-items:center;gap:16px;padding:12px 8px;
+    border-bottom:1px solid var(--line-2)}
+  .agenda li:last-child{border-bottom:none}
+  .agenda .when{font-family:"Spline Sans Mono",monospace;font-size:12px;color:var(--cream-dim);white-space:nowrap}
+  .agenda .who{display:flex;align-items:center;gap:12px;font-weight:600;font-size:14px}
+  .agenda .svc{font-family:"Spline Sans Mono",monospace;font-size:10.5px;padding:4px 9px;border-radius:8px;text-transform:lowercase}
+  .agenda .svc.walk{background:rgba(10,133,149,.14);color:var(--teal)}
+  .agenda .svc.drop{background:rgba(223,132,49,.14);color:var(--orange)}
+  .statuspill{font-family:"Spline Sans Mono",monospace;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    padding:8px 14px;border-radius:20px;white-space:nowrap;
+    background:rgba(10,133,149,.18);color:#a9dbe1;border:1px solid rgba(10,133,149,.45)}
+  .statuspill.neutral{background:rgba(207,206,198,.12);color:var(--cream-dim);border-color:rgba(207,206,198,.3)}
 
   /* legend */
   .legend{display:flex;gap:18px;margin-bottom:14px;font-size:12.5px;color:var(--cream-dim);
@@ -132,7 +180,7 @@
     <div class="head">
       <div class="title">
         <div class="kick">The Den · Schedule</div>
-        <h2>This week's runs</h2>
+        <h2>Schedule <em>week.</em></h2>
       </div>
       <div class="spacer"></div>
       <div class="nav">
@@ -144,6 +192,23 @@
         <button>Day</button><button class="on">Week</button><button>Month</button>
       </div>
       <button class="add">＋ New visit</button>
+      <button class="ghost">Block time</button>
+    </div>
+
+    <!-- #697: the visible range's counts. Busy blocks is a button when there is a busy day to jump to. -->
+    <div class="stats">
+      <div class="stat"><span class="lab">WEEK SESSIONS</span><span class="val">17</span><span class="trend">in the visible range</span></div>
+      <button class="stat feature"><span class="lab">BUSY BLOCKS</span><span class="val">3</span><span class="trend">Google Calendar + manually blocked. Click to jump to the busy days.</span></button>
+    </div>
+
+    <!-- #695: the selected day's agenda sits above the calendar, and folds. -->
+    <div class="panel">
+      <div class="ph"><h3>Today</h3><span class="chev">⌄</span></div>
+      <ul class="agenda">
+        <li><span class="when">9:00 AM to 9:40 AM</span><span class="who">Biscuit &amp; Gravy <span class="svc walk">dog walk</span></span><span class="statuspill">Arrived</span></li>
+        <li><span class="when">10:30 AM to 11:00 AM</span><span class="who">Marigold <span class="svc drop">drop-in</span></span><span class="statuspill neutral">Scheduled</span></li>
+        <li><span class="when">12:00 PM to 1:00 PM</span><span class="who">Busy</span><span class="statuspill neutral">Blocked</span></li>
+      </ul>
     </div>
 
     <div class="legend">

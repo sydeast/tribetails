@@ -1,7 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, type FsTime } from './time';
 import { localDateIso } from './invoiceFormat';
-import { type DenTone } from '../components/DenScreenKit';
 
 /**
  * Pure Sessions ("Auntie Time") classification + display helpers, kept out of
@@ -184,37 +183,55 @@ export interface SessionStateInfo {
   label: string;
   chipLabel: string;
   cssClass: string;
-  /**
-   * The brand tone the kit's `StatusPill` wears for this state. ONE map for the
-   * board card and the detail hero, since #755: the detail used to carry its
-   * own record and the board its own seven CSS rules, and two copies of the
-   * same seven colours is how they drift.
-   */
-  tone: DenTone;
 }
 
-/** Friendly label, chip class and pill tone per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. */
+/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. The pill tone is `SESSION_STATE_TONE` below, one map for the board card and the detail hero. */
 export function sessionStateInfo(state: SessionState): SessionStateInfo {
   switch (state) {
     case 'scheduled':
-      return { label: 'Scheduled', chipLabel: 'SCHEDULED', cssClass: 'scheduled', tone: 'neutral' };
+      return { label: 'Scheduled', chipLabel: 'SCHEDULED', cssClass: 'scheduled' };
     case 'onMyWay':
-      return { label: 'On the way', chipLabel: 'ON THE WAY', cssClass: 'onmyway', tone: 'orange' };
+      return { label: 'On the way', chipLabel: 'ON THE WAY', cssClass: 'onmyway' };
     case 'arrived':
-      return { label: 'Arrived', chipLabel: 'ARRIVED', cssClass: 'arrived', tone: 'teal' };
+      return { label: 'Arrived', chipLabel: 'ARRIVED', cssClass: 'arrived' };
     case 'departed':
-      return { label: 'Departed', chipLabel: 'DEPARTED', cssClass: 'departed', tone: 'purple' };
+      return { label: 'Departed', chipLabel: 'DEPARTED', cssClass: 'departed' };
     case 'completed':
-      return { label: 'Completed', chipLabel: 'COMPLETED', cssClass: 'completed', tone: 'success' };
+      return { label: 'Completed', chipLabel: 'COMPLETED', cssClass: 'completed' };
     case 'cancelled':
-      // Not a stage of the visit: the visit is not happening. Muted, and the
-      // pill strikes it through wherever it is drawn.
-      return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled', tone: 'muted' };
+      return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled' };
     case 'unknown':
-      return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown', tone: 'warning' };
+      return { label: 'Unknown', chipLabel: 'UNKNOWN', cssClass: 'unknown' };
   }
 }
 
+/**
+ * The brand tone each session state wears in the kit's `StatusPill`, the one
+ * capsule every screen that shows a visit is moving onto.
+ *
+ * A total record over `SessionState` rather than a switch with a default, so a
+ * state added to the lifecycle fails the typecheck here instead of quietly
+ * rendering in whatever colour the default happened to be. The values are the
+ * `auntieos-auntie-time-2026-05-27` mock's own pill palette, state by state:
+ * the scheduled pill is the dim hairline capsule, on-my-way is orange, arrived
+ * and completed are teal, departed is purple, and cancelled is the dim capsule
+ * again. `DenTone` is a string union in the kit, so it is named here as its
+ * members rather than imported: a lib file has no business pulling a component
+ * module in, and the kit's `data-tone` CSS resolves each word to a token.
+ */
+export type SessionStateTone = 'neutral' | 'orange' | 'teal' | 'purple' | 'muted' | 'warning';
+
+export const SESSION_STATE_TONE: Record<SessionState, SessionStateTone> = {
+  scheduled: 'neutral',
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
+  // Teal, not success green: the mock paints a wrap in the same hue as an
+  // arrival, one shade quieter, and the label is what tells them apart.
+  completed: 'teal',
+  cancelled: 'muted',
+  unknown: 'warning',
+};
 /** True for the three "in flight" states (ports the wasm `Phase.Active` / `isInFlight` grouping). A positive membership test, not a negation of the other four. */
 export function isSessionActive(state: SessionState): boolean {
   return state === 'onMyWay' || state === 'arrived' || state === 'departed';

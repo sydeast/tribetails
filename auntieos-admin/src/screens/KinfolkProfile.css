@@ -5,17 +5,18 @@
 
 /* THE HERO. The mock's identity block: avatar, name, where they stand, then the
    actions. It replaces the old page-heading-plus-"Household"-panel pair, which
-   printed the household's name twice. */
+   printed the household's name twice.
+
+   The BAND is the kit's. The header wears `.den-heading` (DenScreenKit.css),
+   which is the mocks' hero: the navy gradient on a hairline at the hero radius,
+   lit from the top-left corner. This sheet used to paint a flat
+   `--color-surface` card at the panel radius over it, which on the navy ground
+   read as a grey slab rather than as the lid of the page. Nothing about the
+   band is painted here any more; what is left is the layout of what sits in
+   it, since `DenScreenHeading` has no slot for an avatar or a row of pills. */
 .kprofile__hero {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
   flex-wrap: wrap;
-  padding: var(--space-4);
   margin-bottom: var(--space-4);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
 }
 .kprofile__hero-text {
   display: flex;
@@ -23,49 +24,28 @@
   gap: var(--space-1);
   min-width: 0;
 }
-.kprofile__hero-name {
+/* The face and size come from `.den-heading-title`, which the h1 also wears.
+   The kit puts a 6px top margin under the kicker line it expects above the
+   title; there is none here (the trail sits above the band), so it is zeroed.
+   Two classes, so this wins on specificity wherever the bundler emits the
+   kit sheet, rather than tying with `.den-heading-title` on emit order. */
+.kprofile__hero .kprofile__hero-name {
   margin: 0;
-  font-family: var(--type-display-md-family);
-  font-size: var(--type-display-md-size);
-  font-weight: var(--type-display-md-weight);
-  letter-spacing: var(--type-display-md-tracking);
-  color: var(--color-text-primary);
 }
 .kprofile__hero-where {
   margin: 0;
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+/* The mock's `.tags` row: status, tenure and the household tags, every one of
+   them the kit's status pill (`.den-statuspill`), which is the mock's own
+   capsule. Teal for the status and the tags, purple for the tenure, exactly as
+   the mock draws `.tag` and `.tag.loyal`. */
 .kprofile__chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-1);
-}
-.kprofile__chip {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-dim);
-}
-.kprofile__chip[data-tone='active'] {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-.kprofile__chip--tenure {
-  border-color: var(--color-tertiary);
-  color: var(--color-tertiary);
-}
-/* Household tags, read-only pills next to the name (#681). Only the border
-   takes the tag hue; `--color-secondary` reads Pack Pink correctly as a
-   background/border but not as text (styles/tokenUsage.test.ts), so the label
-   stays the same dim text every other chip starts from. */
-.kprofile__chip--tag {
-  border-color: var(--color-secondary);
 }
 /* TWO COLUMNS, at the mock's own 860px breakpoint and in its own 1 : 1.2
    proportion. Below it the columns stack, which is what the mock's own media
@@ -87,30 +67,52 @@
   flex-direction: column;
   gap: var(--space-4);
 }
+/* The mock's `.field` rows: label on the left in dim, value on the right in
+   semibold, a soft hairline between rows and none under the last. A column of
+   these reads as one grouped surface, which the old two-column grid with no
+   rules did not. The softer rule is the mock's `--line-2`, the hairline at
+   six hundredths instead of ten, so it is mixed down from the hairline token
+   rather than declared as a second colour. */
 .kprofile__facts {
-  display: grid;
-  grid-template-columns: minmax(8rem, max-content) 1fr;
-  gap: var(--space-2) var(--space-4);
+  display: flex;
+  flex-direction: column;
   margin: 0;
 }
 
 .kprofile__fact {
-  display: contents;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 9px 0;
+  border-bottom: var(--border-hairline) solid
+    color-mix(in srgb, var(--color-hairline) 60%, transparent);
+}
+.kprofile__fact:last-child {
+  border-bottom: none;
 }
 
-.kprofile__fact-label {
-  font-size: var(--type-label-sm-size);
+/* Element selectors, not a value class: `HouseholdVetPanels` renders the same
+   `.kprofile__fact` rows with a bare `<dd>`, and the vet rows have to take the
+   same shape as the contact rows above them. */
+.kprofile__fact > dt {
+  flex: none;
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
 
-.kprofile__fact-value {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
+.kprofile__fact > dd {
   margin: 0;
+  min-width: 0;
+  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-align: right;
   word-break: break-word;
 }
 
-.kprofile__fact-value--mono {
+.kprofile__fact-value--mono,
+.kprofile__fact > dd.mono {
   font-family: var(--font-mono);
 }
 
@@ -120,56 +122,68 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 9px;
 }
 
+/* The mock's `.pet` row: a soft hairline around every row, a card radius, and
+   a photo with a cream ring. The ring and the row border are the two things
+   that make a pet read as a card inside the panel rather than as a list line. */
 .kprofile__kin-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-card);
+  padding: 11px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-hairline) 60%, transparent);
+  border-radius: var(--radius-card-lg);
   text-align: left;
   color: inherit;
 }
-/* A kin row that opens the pet is a real button, so it gets the affordance: a
-   border on hover and a chevron saying there is somewhere to go. */
+.kprofile__kin-row .avatar {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tt-brand-cream) 25%, transparent);
+}
+/* A kin row that opens the pet is a real button, so it gets the affordance: the
+   mock's fill and full hairline on hover, a nudge to the right, and a chevron
+   saying there is somewhere to go. */
 .kprofile__kin-row--open {
   background: none;
   font: inherit;
   cursor: pointer;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
 }
 .kprofile__kin-row--open:hover,
 .kprofile__kin-row--open:focus-visible {
-  background: var(--color-surface-2);
-  border-color: var(--color-border-soft);
+  background: var(--color-hero-bottom);
+  border-color: var(--color-hairline);
+  transform: translateX(3px);
 }
 .kprofile__kin-chev {
   margin-left: auto;
-  color: var(--color-text-faint);
-}
-.kprofile__kin-note {
-  font-size: var(--type-label-sm-size);
   color: var(--color-text-dim);
-  font-style: italic;
 }
 
 .kprofile__kin-text {
   display: flex;
   flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .kprofile__kin-name {
-  font-size: var(--type-body-sm-size);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
   color: var(--color-text-primary);
 }
 
-.kprofile__kin-detail {
+/* The mock's one `small` line under the name: species, breed, age and the
+   pet's own line from its 411, all in the same dim face, dotted together. */
+.kprofile__kin-detail,
+.kprofile__kin-note {
   font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+  color: var(--color-text-dim);
 }
 /* The hero's action cluster: quick contact and the household's other
    surfaces (Household data, Members and invites, Edit, Back). #676 removed
