@@ -29,6 +29,7 @@ import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { VisitTrackingIndicator } from '../components/VisitTrackingIndicator';
 import './Sessions.css';
 
 /** Which body of data the screen is showing: the day-of board, or older history. */
@@ -491,12 +492,11 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
 
       {/* Live only while the Auntie is inside the house. A DEPARTED visit has a
           finished route on the detail sheet, and claiming a live one here would
-          be a claim about a phone that has stopped pinging. */}
+          be a claim about a phone that has stopped pinging. When THIS browser
+          clocked the visit in (#772) the line says so, and says when it could
+          not track; the mock's own line stands in when the phone is the tracker. */}
       {state === 'arrived' && (
-        <p className="sessions__gps">
-          <span className="sessions__gps-dot" aria-hidden="true" />
-          GPS tracking · live route
-        </p>
+        <VisitTrackingIndicator sessionId={entry._id} idleText="GPS tracking · live route" />
       )}
 
       {address !== '' && <p className="sessions__addr">📍 {address}</p>}

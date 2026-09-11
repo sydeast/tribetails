@@ -52,6 +52,18 @@ vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   return { ...actual, useBreadcrumbs: () => ({ points: [], error: null, ready: true }) };
 });
 
+// The browser tracker (#772) is mocked whole: `useVisitTracking` feeds the
+// card's live line, and the three clock hooks must exist so an Arrived click
+// does not reach jsdom's missing `navigator.geolocation`.
+const { useVisitTracking } = vi.hoisted(() => ({
+  useVisitTracking: vi.fn<() => import('../lib/visitTracking').VisitTrackingStatus>(() => ({ phase: 'idle' })),
+}));
+vi.mock('../lib/visitTracking', () => ({
+  useVisitTracking,
+  beginVisitTracking: vi.fn(),
+  endVisitTracking: vi.fn(),
+  stopVisitTracking: vi.fn(),
+}));
 import { Sessions } from './Sessions';
 
 /**
@@ -368,6 +380,29 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(within(card).getByRole('button', { name: 'Undo arrived' })).toBeInTheDocument();
   });
 
+  // #772: the live line is the browser tracker's status when THIS tab clocked
+  // the visit in. The mock's own line above is the idle case: the phone may be
+  // the tracker, and the card does not know.
+  it('names this browser as the tracker on an arrived card while its watch is on', () => {
+    useVisitTracking.mockReturnValue({ phase: 'on', fixes: 4 });
+    const card = mount();
+    expect(within(card).getByText('Tracking on from this browser · 4 pings saved')).toBeInTheDocument();
+    expect(within(card).queryByText(/GPS tracking · live route/)).toBeNull();
+    useVisitTracking.mockReturnValue({ phase: 'idle' });
+  });
+  it('says tracking is off for the visit, and why, when this browser was denied location', () => {
+    useVisitTracking.mockReturnValue({
+      phase: 'off',
+      reason: 'denied',
+      message: 'location was denied in this browser.',
+    });
+    const card = mount();
+    expect(
+      within(card).getByText('Tracking off for this visit: location was denied in this browser.'),
+    ).toBeInTheDocument();
+    expect(within(card).queryByText(/live route/)).toBeNull();
+    useVisitTracking.mockReturnValue({ phase: 'idle' });
+  });
   it('falls back to the status glyph when no kin photo resolves, never a stock face', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED' })]));
     renderBoard();

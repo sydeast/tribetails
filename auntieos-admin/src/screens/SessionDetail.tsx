@@ -11,6 +11,11 @@ import {
   lifecycleNowIso,
 } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
+import { useVisitTracking } from '../lib/visitTracking';
+import {
+  VisitTrackingIndicator,
+  routeEmptyTextWhileArrived,
+} from '../components/VisitTrackingIndicator';
 import { useBreadcrumbs, routePointsFromGpsSummary } from '../lib/breadcrumbs';
 import { useHouseholdLocation } from '../lib/householdLocation';
 import {
@@ -188,6 +193,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // row; the hook keeps the write. No refresh callback is passed here: `entry`
   // is a LIVE `useDocById` subscription, so the document repaints itself.
   const clock = useVisitLifecycle(sessionId, household);
+  // Whether THIS browser is writing the route (#772). Drives the live line
+  // under the clock and the Route panel's empty sentence while ARRIVED.
+  const tracking = useVisitTracking(sessionId);
 
   // ── the details edit ───────────────────────────────────────────────────────
   const currentServiceType = str(entry?.serviceType);
@@ -456,6 +464,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     )}
                   </div>
                 )}
+                {state === 'arrived' && sessionId !== null && (
+                  <VisitTrackingIndicator sessionId={sessionId} />
+                )}
                 {clock.write.status === 'error' && (
                   <ErrorHint>
                     Couldn&rsquo;t update the visit clock. {clock.write.message}
@@ -492,7 +503,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                 ) : route.length === 0 ? (
                   <EmptyHint>
                     {state === 'arrived'
-                      ? 'Waiting for the first GPS ping. The field app writes one about every five seconds while a visit is in flight.'
+                      ? routeEmptyTextWhileArrived(tracking)
                       : inFlight
                         ? 'No GPS breadcrumbs were recorded for this Kin Care.'
                         : state === 'completed' || state === 'cancelled' || state === 'unknown'
