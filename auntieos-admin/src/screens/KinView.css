@@ -1,34 +1,57 @@
+/* Kin detail, against ui-ideas/auntieos-kin-detail-2026-05-27.html. The hero
+   band, panels, pills and hints are the kit's; what is here is the identity
+   strip the band cannot yet hold, the two-column grid, and the mock's own row
+   shapes (.field, .ck, .d11 .row, .notebox) in tokens. Nothing in this file
+   names a scheme: navy is the default and every colour is a role token. */
+
 .kview__hint {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
 
-.kview__head {
+/* ── identity strip ─────────────────────────────────────────────────────────
+   The mock's hero photo, "belongs to" line and tag row. They sit directly under
+   the kit's hero band, not inside a panel, until DenScreenHeading grows a
+   leading slot; see the note in KinView.tsx. */
+.kview__identity {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 22px;
+  margin-top: var(--space-4);
 }
 
-.kview__head-text {
+.kview__identity-text {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
-.kview__name {
-  font-size: var(--type-title-md-size);
-  font-weight: 600;
+/* The mock's `.hero .owner`: 14px body, the household as an accent-toned link. */
+.kview__owner {
+  margin: 0;
+  font-size: var(--type-body-md-size);
   color: var(--color-text-primary);
 }
 
-.kview__detail {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
+.kview__owner-step {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.kview__status {
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+.kview__owner-step:hover {
+  text-decoration: underline;
+}
+
+.kview__owner-step:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .kview__tags {
@@ -36,21 +59,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-
-.kview__tag-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: var(--radius-pill);
-  border: var(--border-hairline) solid var(--color-border);
-  background: var(--color-surface-2);
-  color: var(--color-text-dim);
-  font-family: var(--type-label-lg-family);
-  font-size: var(--type-label-lg-size);
-  font-weight: var(--type-label-lg-weight);
-  line-height: 1.2;
 }
 
 .kview__tags-edit {
@@ -67,59 +75,143 @@
   text-decoration: underline;
 }
 
-/* The reactive marker: an alert-toned pill attached under the Kin box,
-   matching the `.tag.alert` pattern in ui-ideas/auntieos-kin-detail-2026-05-27.html,
-   in place of a full-width page Banner. */
-.kview__flag-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border-radius: var(--radius-pill);
-  border: var(--border-hairline) solid color-mix(in srgb, var(--color-warning) 42%, transparent);
-  background: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
-  color: var(--color-text-primary);
-  font-family: var(--type-label-lg-family);
-  font-size: var(--type-label-lg-size);
-  font-weight: var(--type-label-lg-weight);
+/* #690: the reactive marker, a kit StatusPill on its own line under the
+   identity strip. Under the box, per the ruling, not in the tag row. */
+.kview__flags {
+  margin-top: var(--space-3);
 }
 
-[data-theme='dark'] .kview__flag-pill {
-  border-color: color-mix(in srgb, var(--color-warning) 50%, transparent);
-  background: color-mix(in srgb, var(--color-warning) 20%, var(--color-surface));
-}
-
-.kview__facts {
+/* ── two columns ────────────────────────────────────────────────────────────
+   The mock's `.cols`: 1fr / 1.15fr at its own 860px breakpoint, stacked below. */
+.kview__cols {
   display: grid;
-  grid-template-columns: minmax(9rem, max-content) 1fr;
-  gap: var(--space-2) var(--space-4);
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-top: var(--space-4);
+}
+
+@media (min-width: 861px) {
+  .kview__cols {
+    grid-template-columns: 1fr 1.15fr;
+  }
+}
+
+.kview__col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── the mock's `.field` ────────────────────────────────────────────────────
+   A dim key on the left, a bold value on the right, a hairline between rows. */
+.kview__fields {
   margin: 0;
 }
 
-.kview__fact {
-  display: contents;
+.kview__field {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 9px 0;
+  font-size: var(--type-body-md-size);
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
 }
 
-.kview__fact-label {
-  font-size: var(--type-label-sm-size);
+.kview__field:last-child {
+  border-bottom: none;
+}
+
+.kview__field-k {
   color: var(--color-text-dim);
+  flex: none;
 }
 
-.kview__fact-value {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
+.kview__field-v {
   margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.kview__fact-value--mono {
-  font-family: var(--font-mono);
-}
-
-.kview__notes {
-  font-size: var(--type-body-sm-size);
+  font-weight: 600;
+  text-align: right;
   color: var(--color-text-primary);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── the mock's `.ck` ───────────────────────────────────────────────────────
+   One care instruction per row. The legacy checklist is free text, so a row is
+   its line and there is no box to tick: ticking happens on the visit's KinTale. */
+.kview__checklist {
+  list-style: none;
   margin: 0;
+  padding: 0;
+}
+
+.kview__fields + .kview__checklist {
+  margin-top: var(--space-2);
+}
+
+.kview__ck {
+  padding: 10px 0;
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
+}
+
+.kview__ck:last-child {
+  border-bottom: none;
+}
+
+/* ── the mock's `.d11 .row` ─────────────────────────────────────────────────
+   A mono uppercase question over a prose answer, for the 411. */
+.kview__rows {
+  margin: 0;
+}
+
+.kview__row {
+  padding: 10px 0;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
+}
+
+.kview__row:last-child {
+  border-bottom: none;
+}
+
+.kview__q {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  margin-bottom: 4px;
+}
+
+.kview__a {
+  margin: 0;
+  font-size: var(--type-body-md-size);
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+}
+
+/* ── the mock's `.notebox` ──────────────────────────────────────────────────
+   Auntie's notes: a dashed hairline box, italic, dim. */
+.kview__notebox {
+  margin: 0;
+  padding: 13px;
+  border: var(--border-hairline) dashed var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  font-size: var(--type-body-md-size);
+  font-style: italic;
+  line-height: 1.55;
+  color: var(--color-text-dim);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 860px) {
+  .kview__identity {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
 }

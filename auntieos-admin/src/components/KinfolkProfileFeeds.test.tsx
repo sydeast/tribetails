@@ -123,6 +123,36 @@ describe('RecentKinTalesPanel', () => {
     render(<RecentKinTalesPanel kinfolkId="k1" />);
     expect(screen.getByText('No KinTales sent to this household yet.')).toBeInTheDocument();
   });
+
+  /**
+   * The kin detail screen's narrowing: the same household read, kept to the
+   * tales that name this pet. A legacy tale naming no pets stays (it may well
+   * be about this one), a tale naming only the other pet goes, and the count
+   * says how many are about THIS pet, not how many the household has.
+   */
+  it('narrows to one pet, keeps legacy rows, and heads the panel with the pet', () => {
+    useCollection.mockReturnValue(
+      ready([
+        { _id: 'r1', kinfolkId: 'k1', status: 'SENT', title: 'Both dogs', kinIds: ['p1', 'p2'], sentAt: '2026-08-10T09:00:00Z' },
+        { _id: 'r2', kinfolkId: 'k1', status: 'SENT', title: 'Only Gravy', kinIds: ['p2'], sentAt: '2026-08-09T09:00:00Z' },
+        { _id: 'r3', kinfolkId: 'k1', status: 'SENT', title: 'Legacy, unnamed', sentAt: '2026-08-08T09:00:00Z' },
+        { _id: 'r4', kinfolkId: 'k1', status: 'SENT', title: 'Nobody', kinIds: [], sentAt: '2026-08-07T09:00:00Z' },
+      ]),
+    );
+    render(<RecentKinTalesPanel kinfolkId="k1" kin={{ kinId: 'p1', kinName: 'Biscuit' }} />);
+    expect(screen.getByRole('heading', { name: "Biscuit's KinTales" })).toBeInTheDocument();
+    expect(screen.getByText('Both dogs')).toBeInTheDocument();
+    expect(screen.getByText('Legacy, unnamed')).toBeInTheDocument();
+    expect(screen.queryByText('Only Gravy')).toBeNull();
+    expect(screen.queryByText('Nobody')).toBeNull();
+    expect(screen.getByText('2 total')).toBeInTheDocument();
+  });
+
+  it('names the pet in its empty line', () => {
+    useCollection.mockReturnValue(ready([]));
+    render(<RecentKinTalesPanel kinfolkId="k1" kin={{ kinId: 'p1', kinName: 'Biscuit' }} />);
+    expect(screen.getByText('No KinTales about Biscuit yet.')).toBeInTheDocument();
+  });
 });
 
 describe('UpcomingVisitsPanel', () => {
@@ -150,6 +180,26 @@ describe('UpcomingVisitsPanel', () => {
     render(<UpcomingVisitsPanel kinfolkId="k1" now={now} />);
     expect(screen.getByText('next 7 days')).toBeInTheDocument();
     expect(screen.getByText('No visits booked in the next 7 days.')).toBeInTheDocument();
+  });
+
+  it('narrows to one pet, and says so when nothing is booked for it', () => {
+    useCollection.mockReturnValue(
+      ready([
+        { _id: 'mine', kinfolkId: 'k1', status: 'SCHEDULED', startTime: '2026-08-19T09:00:00Z', serviceType: 'Walk', kinIds: ['p1'] },
+        { _id: 'theirs', kinfolkId: 'k1', status: 'SCHEDULED', startTime: '2026-08-20T09:00:00Z', serviceType: 'Drop-in', kinIds: ['p2'] },
+      ]),
+    );
+    const { unmount } = render(
+      <UpcomingVisitsPanel kinfolkId="k1" kin={{ kinId: 'p1', kinName: 'Biscuit' }} now={now} />,
+    );
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+    expect(screen.getByText('Walk')).toBeInTheDocument();
+    expect(screen.queryByText('Drop-in')).toBeNull();
+    unmount();
+
+    useCollection.mockReturnValue(ready([]));
+    render(<UpcomingVisitsPanel kinfolkId="k1" kin={{ kinId: 'p1', kinName: 'Biscuit' }} now={now} />);
+    expect(screen.getByText('No visits booked for Biscuit in the next 7 days.')).toBeInTheDocument();
   });
 });
 
