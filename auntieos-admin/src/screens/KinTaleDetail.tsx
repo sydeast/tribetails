@@ -441,7 +441,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit }: KinTaleDetailBo
     <>
       <DenPanel
         title="The tale"
-        subtitle={when}
+        detail={when}
         trailing={onEdit ? <GhostButton label="Edit" onClick={() => onEdit(entry._id)} /> : undefined}
       >
         <div className="kintale-detail__tale-head">
@@ -670,7 +670,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit }: KinTaleDetailBo
       )}
 
       {mediaCount > 0 && (
-        <DenPanel title="Photos" subtitle={`${mediaCount} attached.`}>
+        <DenPanel title="Photos" detail={`${mediaCount} attached.`}>
           <AsyncRegion
             state={media}
             what="photos"

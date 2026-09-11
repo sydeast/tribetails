@@ -436,11 +436,103 @@
     flex-wrap: wrap;
   }
   /* Below the toggle, full width, rather than a fourth item crushed into the
-     same line as the title, the subtitle and the chevron. */
+     same line as the title, the info button and the chevron. */
   .den-panel-trailing {
     flex: 1 1 100%;
   }
   .den-panel {
     padding: var(--space-4);
   }
+}
+/* ── the subtitle tooltip ─────────────────────────────────────────────────
+   "why are there so many unneeded subheadings. at most they can be tool tips,
+   otherwise they are making the ui too busy with unneccessary text" (operator,
+   2026-09-11). Every panel and every page heading carried a sentence, so the
+   explanation moved behind a hairline "i" and the screens kept their titles.
+   `.den-panel-subtitle` and `.den-heading-subtitle` keep their names and their
+   face: they now dress the tip body instead of a line on the page, so a screen
+   stylesheet that targets either one still reaches the same words. The rules
+   below come last in the file on purpose, which is how the position and the
+   zeroed margin win against those two one-class rules without a fight. */
+.kit-tip {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.kit-tip-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  background: none;
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-faint);
+  font-family: var(--type-body-sm-family);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1;
+  /* `help`, not `pointer`: clicking it opens the same words hovering does, so a
+     pointing hand would promise a navigation that is not there. */
+  cursor: help;
+}
+.kit-tip-button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.kit-tip-button:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.kit-tip-body {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 5;
+  width: max-content;
+  /* Wide enough for a sentence, never wider than a phone. */
+  max-width: min(260px, calc(100vw - 48px));
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+  text-align: left;
+  white-space: normal;
+}
+/* Spelled out because it has to be: `.kit-tip-body` sets `display` through
+   `position`/`width`, and ANY author declaration beats the UA sheet's
+   `[hidden] { display: none }` whatever the specificity says. Without this rule
+   every tip on the page is permanently open. */
+.kit-tip-body[hidden] {
+  display: none;
+}
+.den-panel-titlerow,
+.den-heading-titlerow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* The visible half of the old subtitle: a count, a date, a range, a name. Same
+   face the explanation used to wear, since it sits in the same place. */
+.den-panel-detail {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  line-height: var(--type-body-sm-line);
+  color: var(--color-text-dim);
+}
+.den-heading-detail {
+  margin: 6px 0 0;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  font-weight: var(--type-body-md-weight);
+  line-height: var(--type-body-md-line);
+  color: var(--color-text-dim);
 }

@@ -207,12 +207,78 @@ describe('DenScreenHeading', () => {
     expect(screen.getByRole('heading', { name: 'Good morning, Auntie' })).toBeInTheDocument();
   });
 
-  it('renders the subtitle and trailing slot when given', () => {
+  it('puts the subtitle behind the info button instead of on the page', () => {
     render(
-      <DenScreenHeading kicker="k" title="t" subtitle="Three visits today." trailing={<button type="button">New</button>} />,
+      <DenScreenHeading
+        kicker="k"
+        title="t"
+        subtitle="Day-of view. Clock in, clock out."
+        trailing={<button type="button">New</button>}
+      />,
     );
-    expect(screen.getByText('Three visits today.')).toBeInTheDocument();
+    expect(screen.getByText('Day-of view. Clock in, clock out.')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'About this section' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New' })).toBeInTheDocument();
+  });
+
+  it('renders a detail value as visible copy, with no info button', () => {
+    // The half of the old subtitle that survived: a range is the screen saying
+    // what you are looking at, not explaining what a schedule is.
+    render(<DenScreenHeading kicker="k" title="Schedule" detail="Sep 1 to Sep 7" />);
+    expect(screen.getByText('Sep 1 to Sep 7')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'About this section' })).not.toBeInTheDocument();
+  });
+
+  it('reveals the explanation on hover and puts it away again', async () => {
+    render(<DenScreenHeading kicker="k" title="t" subtitle="Three visits today." />);
+    const info = screen.getByRole('button', { name: 'About this section' });
+
+    await userEvent.hover(info);
+    expect(screen.getByText('Three visits today.')).toBeVisible();
+
+    await userEvent.unhover(info);
+    expect(screen.getByText('Three visits today.')).not.toBeVisible();
+  });
+
+  it('reveals the explanation on keyboard focus, so it is not mouse-only', async () => {
+    render(<DenScreenHeading kicker="k" title="t" subtitle="Three visits today." />);
+
+    await userEvent.tab();
+
+    expect(screen.getByRole('button', { name: 'About this section' })).toHaveFocus();
+    expect(screen.getByText('Three visits today.')).toBeVisible();
+  });
+
+  it('closes on Escape even when the pointer opened it', async () => {
+    // Opened by hover, nothing of ours is focused, so the key listener has to be
+    // on the document rather than on the trigger.
+    render(<DenScreenHeading kicker="k" title="t" subtitle="Three visits today." />);
+    await userEvent.hover(screen.getByRole('button', { name: 'About this section' }));
+    expect(screen.getByText('Three visits today.')).toBeVisible();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.getByText('Three visits today.')).not.toBeVisible();
+  });
+
+  it('describes the title with the tooltip, so a screen reader still gets the sentence', () => {
+    render(<DenScreenHeading kicker="k" title="Schedule" subtitle="Three visits today." />);
+    const tip = screen.getByText('Three visits today.');
+
+    expect(tip).toHaveAttribute('role', 'tooltip');
+    expect(screen.getByRole('heading', { name: 'Schedule' })).toHaveAttribute(
+      'aria-describedby',
+      tip.id,
+    );
+  });
+
+  it('keeps the tooltip mounted while it is closed, or the description points at nothing', () => {
+    // `aria-describedby` resolves only against an element that exists, and the
+    // description computation deliberately reads a hidden node it references.
+    // Unmounting the closed tip would hand the sentence to sighted mouse users
+    // and to nobody else.
+    render(<DenScreenHeading kicker="k" title="Schedule" subtitle="Three visits today." />);
+    expect(screen.getByText('Three visits today.')).toBeInTheDocument();
   });
 
   it('omits the optional parts when not given', () => {
@@ -315,15 +381,108 @@ describe('DenBreadcrumbs', () => {
 });
 
 describe('DenPanel', () => {
-  it('renders title, subtitle, and content', () => {
+  it('renders title and content, with the subtitle behind the info button', () => {
     render(
-      <DenPanel title="Today's Pack" subtitle="3 visits">
+      <DenPanel title="Today's Pack" subtitle="Your visit run for the day.">
         <p>Ranger, 9:00a</p>
       </DenPanel>,
     );
-    expect(screen.getByText("Today's Pack")).toBeInTheDocument();
-    expect(screen.getByText('3 visits')).toBeInTheDocument();
-    expect(screen.getByText('Ranger, 9:00a')).toBeInTheDocument();
+    expect(screen.getByText("Today's Pack")).toBeVisible();
+    expect(screen.getByText('Ranger, 9:00a')).toBeVisible();
+    // The complaint this answers: 153 panels and headings each carried a
+    // sentence of explanation. The sentence is still here, just not on screen.
+    expect(screen.getByText('Your visit run for the day.')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'About this section' })).toBeInTheDocument();
+  });
+
+  it('renders a detail value as visible copy, with no info button', () => {
+    render(
+      <DenPanel title="Photos" detail="3 attached.">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByText('3 attached.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'About this section' })).not.toBeInTheDocument();
+  });
+
+  it('shows the detail and the explanation at once, each in its own place', () => {
+    render(
+      <DenPanel title="Vet" detail="3 of 8 on file" subtitle="Admin only. Internal.">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(screen.getByText('3 of 8 on file')).toBeVisible();
+    expect(screen.getByText('Admin only. Internal.')).not.toBeVisible();
+  });
+
+  it('reveals the explanation on hover and on focus, and Escape puts it away', async () => {
+    render(
+      <DenPanel title="Today's Pack" subtitle="Your visit run for the day.">
+        <p>content</p>
+      </DenPanel>,
+    );
+    const info = screen.getByRole('button', { name: 'About this section' });
+
+    await userEvent.hover(info);
+    expect(screen.getByText('Your visit run for the day.')).toBeVisible();
+    await userEvent.unhover(info);
+    expect(screen.getByText('Your visit run for the day.')).not.toBeVisible();
+
+    await userEvent.tab();
+    expect(info).toHaveFocus();
+    expect(screen.getByText('Your visit run for the day.')).toBeVisible();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByText('Your visit run for the day.')).not.toBeVisible();
+  });
+
+  it('describes the panel heading with the tooltip', () => {
+    render(
+      <DenPanel title="Today's Pack" subtitle="Your visit run for the day.">
+        <p>content</p>
+      </DenPanel>,
+    );
+    const tip = screen.getByText('Your visit run for the day.');
+
+    expect(tip).toHaveAttribute('role', 'tooltip');
+    expect(screen.getByRole('heading', { name: "Today's Pack" })).toHaveAttribute(
+      'aria-describedby',
+      tip.id,
+    );
+  });
+
+  it('keeps the tooltip body wearing the class screen stylesheets target', () => {
+    // `.den-panel-subtitle` moved from a line on the page to the tip body
+    // rather than being deleted, so a screen sheet that styles it still lands.
+    const { container } = render(
+      <DenPanel title="Today's Pack" subtitle="Your visit run for the day.">
+        <p>content</p>
+      </DenPanel>,
+    );
+    expect(container.querySelector('.den-panel-subtitle')).toHaveTextContent(
+      'Your visit run for the day.',
+    );
+  });
+
+  it('keeps the info button OUT of the disclosure toggle on a collapsible panel', async () => {
+    // A button inside a button is invalid markup and the outer one eats the
+    // click, so the explained collapsible panels (HouseholdData's dossier,
+    // Schedule's day list) put the info button beside the toggle instead.
+    render(
+      <DenPanel title="From the dossier" subtitle="Admin only. Internal." collapsible>
+        <p>content</p>
+      </DenPanel>,
+    );
+    const toggle = screen.getByRole('button', { name: /From the dossier/ });
+    const info = screen.getByRole('button', { name: 'About this section' });
+    expect(toggle).not.toContainElement(info);
+
+    await userEvent.hover(info);
+
+    expect(screen.getByText('Admin only. Internal.')).toBeVisible();
+    // Opening the tip must not have collapsed the panel underneath it.
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('content')).toBeVisible();
   });
 
   /**
@@ -445,15 +604,19 @@ describe('DenPanel', () => {
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument();
   });
 
-  it('excludes the subtitle from the heading\'s accessible name', () => {
+  it('keeps the explanation and the info button out of the heading\'s accessible name', () => {
+    // The heading is the section's NAME. Neither the sentence nor the button's
+    // own label may join it, or every panel announces itself as "Today's Pack
+    // About this section".
     render(
-      <DenPanel title="Today's Pack" subtitle="3 visits">
+      <DenPanel title="Today's Pack" detail="3 visits" subtitle="Your visit run for the day.">
         <p>content</p>
       </DenPanel>,
     );
     expect(screen.getByRole('heading', { name: "Today's Pack" })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /3 visits/ })).not.toBeInTheDocument();
-    expect(screen.getByText('3 visits')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /visit run/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /About this section/ })).not.toBeInTheDocument();
   });
 
   it('does not emit an empty heading when there is no title', () => {

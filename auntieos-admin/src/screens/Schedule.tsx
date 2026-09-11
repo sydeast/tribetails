@@ -355,7 +355,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
         kicker="The Den · Schedule"
         title="Schedule"
         accentTail={`${view}.`}
-        subtitle={rangeLabel(selected, view)}
+        detail={rangeLabel(selected, view)}
       />
 
       <div className="schedule__actions">
