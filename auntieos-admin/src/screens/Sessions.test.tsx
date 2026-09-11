@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
@@ -151,13 +151,14 @@ async function act(button: RegExp, confirm: RegExp) {
 
 // TZ pinned to a west-of-UTC zone so the AO-18 day assertions below are
 // meaningful on any CI runner (see the identical rationale in
-// lib/sessionFormat.test.ts). Restored afterAll for any sibling test file
-// sharing this worker.
-let originalTz: string | undefined;
-beforeAll(() => {
-  originalTz = process.env.TZ;
-  process.env.TZ = 'America/Chicago';
-});
+// lib/sessionFormat.test.ts). Pinned at MODULE scope, not in beforeAll: the
+// `describe` bodies below build their fixtures with `at()` while the file is
+// collected, which runs before any hook. With the pin in beforeAll, a UTC
+// runner built "09:00" in UTC and rendered it in Chicago as "04:00"; the Mac
+// runner never showed it because its machine zone was already Chicago.
+// Restored afterAll for any sibling test file sharing this worker.
+const originalTz: string | undefined = process.env.TZ;
+process.env.TZ = 'America/Chicago';
 afterAll(() => {
   if (originalTz === undefined) delete process.env.TZ;
   else process.env.TZ = originalTz;
