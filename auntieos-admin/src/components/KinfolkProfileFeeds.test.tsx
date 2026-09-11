@@ -142,6 +142,28 @@ describe('UpcomingVisitsPanel', () => {
     expect(links[0]).toHaveAttribute('href', '/sessions/s1');
     expect(screen.getByText('Walk')).toBeInTheDocument();
   });
+  it('draws each visit as the mock line: a dot in the service tone, then who it is for (#755)', () => {
+    useCollection.mockReturnValue(
+      ready([
+        {
+          _id: 's1',
+          kinfolkId: 'k1',
+          status: 'SCHEDULED',
+          startTime: '2026-08-19T09:00:00Z',
+          serviceType: 'Drop-in',
+          kinNames: ['Biscuit', 'Gravy'],
+        },
+      ]),
+    );
+    const { container } = render(<UpcomingVisitsPanel kinfolkId="k1" now={now} />);
+    // A separated line, not a boxed tile: the visit row is the mock's `.visit`.
+    const row = container.querySelector('.kfeed__row--visit');
+    expect(row).not.toBeNull();
+    // The dot resolves its colour through the kit's tone attribute, so a drop-in
+    // is orange here for the same reason its service pill is.
+    expect(row!.querySelector('.kfeed__dot')).toHaveAttribute('data-tone', 'orange');
+    expect(within(row as HTMLElement).getByText('Biscuit, Gravy')).toBeInTheDocument();
+  });
 
   it('says how far ahead it is looking, and drops a visit beyond that', () => {
     useCollection.mockReturnValue(
@@ -191,6 +213,20 @@ describe('HouseholdInvoicesPanel', () => {
     expect(screen.getByText('Open')).toBeInTheDocument();
     // A cancelled bill is never dressed up as paid.
     expect(screen.queryByText('Paid')).toBeNull();
+    // The state wears the kit's uppercase status capsule (the mock's `.pill`),
+    // in the tone the state earns: an open bill is orange.
+    const open = screen.getByText('Open');
+    expect(open).toHaveClass('den-statuspill');
+    expect(open).toHaveAttribute('data-tone', 'orange');
+  });
+  it('draws a paid invoice as a teal capsule on a separated line, not a boxed tile (#755)', () => {
+    useCollection.mockReturnValue(ready([invoice()]));
+    const { container } = render(<HouseholdInvoicesPanel kinfolkId="k1" />);
+    const row = container.querySelector('.kfeed__row--invoice');
+    expect(row).not.toBeNull();
+    const paid = within(row as HTMLElement).getByText('Paid');
+    expect(paid).toHaveClass('den-statuspill');
+    expect(paid).toHaveAttribute('data-tone', 'teal');
   });
 
   it('shows the balance while one is owed and the total once it is settled', () => {

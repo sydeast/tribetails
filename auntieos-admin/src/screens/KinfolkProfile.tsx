@@ -9,7 +9,7 @@ import { directionsHref } from '../lib/directions';
 import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { useHistoryBack } from '../lib/useHistoryBack';
-import { DenBreadcrumbs, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { DenBreadcrumbs, DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
 import { AuntieNotesPanel } from '../components/AuntieNotesPanel';
@@ -289,18 +289,24 @@ export function KinfolkProfile({
         It sits OUTSIDE the AsyncRegion on purpose. The Directory hands the name
         down, so the hero can name the household before the doc lands, and Back
         stays reachable while the read is in flight or failing.
+
+        It wears the kit's `den-heading` band rather than a band of its own
+        (#755): `DenScreenHeading` is the mocks' hero, but it has no slot for
+        the avatar or the row of pills this mock puts in it, so the header
+        borrows the band's class and the title's class and lays out its own
+        contents inside. The local sheet paints no band of its own any more.
       */}
-      <header className="kprofile__hero">
+      <header className="den-heading kprofile__hero">
         <Avatar
           label={heroName}
           {...(loaded !== null ? { imageUrl: loaded.profilePictureUrl } : {})}
           initials={initialsOf(heroName)}
-          size={72}
+          size={84}
           shape="rounded"
           gradientSeed={kinfolkId}
         />
         <div className="kprofile__hero-text">
-          <h1 className="kprofile__hero-name">{heroName}</h1>
+          <h1 className="den-heading-title kprofile__hero-name">{heroName}</h1>
           {loaded !== null && loaded.joinDate.trim() !== '' && (
             /*
               Read in the operator's locale, not in storage's. A legacy value
@@ -309,25 +315,27 @@ export function KinfolkProfile({
             */
             <p className="kprofile__hero-where">Joined {formatJoinDate(loaded.joinDate)}</p>
           )}
+          {/* The mock's `.tags` row, every entry the kit's status pill: the
+              mock's `.tag` IS that capsule (teal, mono, uppercase, a hairline
+              of its own hue), and `.tag.loyal` is the same capsule in purple.
+              Teal is the mock's colour for a household in good standing, so it
+              is reserved for an active status; any other status word wears
+              the neutral tone rather than a colour the mock never drew. */}
           <div className="kprofile__chips">
             {loaded !== null && (
-              <span className="kprofile__chip" data-tone={loaded.status.toLowerCase()}>
-                {loaded.status.trim() === '' ? 'no status' : loaded.status.toLowerCase()}
-              </span>
+              <StatusPill
+                label={loaded.status.trim() === '' ? 'no status' : loaded.status.toLowerCase()}
+                tone={loaded.status.trim().toLowerCase() === 'active' ? 'teal' : 'neutral'}
+              />
             )}
             {/* Tenure, from the join date. Absent when the stored date is one
                 nobody can read, rather than a fabricated "0 months". */}
-            {tenure !== null && <span className="kprofile__chip kprofile__chip--tenure">{tenure}</span>}
+            {tenure !== null && <StatusPill label={tenure} tone="purple" />}
             {/* Household tags, read-only pills next to the name and status
                 (#681). The mock's hero draws its `.tags` row this way; editing
                 them is a Kinfolk edit rather than a hero action, so it lives on
                 the Edit form (`KinfolkEdit`'s own Tags panel), not here. */}
-            {loaded !== null &&
-              loaded.tags.map((tag) => (
-                <span key={tag} className="kprofile__chip kprofile__chip--tag">
-                  {tag}
-                </span>
-              ))}
+            {loaded !== null && loaded.tags.map((tag) => <StatusPill key={tag} label={tag} tone="teal" />)}
           </div>
         </div>
         <div className="kinfolk-profile__actions">
@@ -501,20 +509,28 @@ export function KinfolkProfile({
                     .filter((s) => s !== '')
                     .join(' · ');
                   const note = kinNotes[k._id] ?? '';
+                  // ONE line under the name, the way the mock's `small` runs
+                  // "Labrador · 5 yrs · loves sticks, hates the mailman": the
+                  // facts and the pet's own line dotted together, not stacked.
                   const body = (
                     <>
                       <Avatar
                         label={name}
                         imageUrl={k.profilePictureUrl}
                         initials={initialsOf(name)}
-                        size={44}
+                        size={52}
                         shape="circle"
                         gradientSeed={k._id !== '' ? k._id : name}
                       />
                       <span className="kprofile__kin-text">
                         <span className="kprofile__kin-name">{name}</span>
-                        {detail !== '' && <span className="kprofile__kin-detail">{detail}</span>}
-                        {note !== '' && <span className="kprofile__kin-note">{note}</span>}
+                        {(detail !== '' || note !== '') && (
+                          <span className="kprofile__kin-detail">
+                            {detail}
+                            {detail !== '' && note !== '' && ' · '}
+                            {note !== '' && <span className="kprofile__kin-note">{note}</span>}
+                          </span>
+                        )}
                       </span>
                     </>
                   );
