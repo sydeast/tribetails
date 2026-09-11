@@ -7,45 +7,24 @@
    actions. It replaces the old page-heading-plus-"Household"-panel pair, which
    printed the household's name twice.
 
-   The BAND is the kit's. The header wears `.den-heading` (DenScreenKit.css),
-   which is the mocks' hero: the navy gradient on a hairline at the hero radius,
-   lit from the top-left corner. This sheet used to paint a flat
-   `--color-surface` card at the panel radius over it, which on the navy ground
-   read as a grey slab rather than as the lid of the page. Nothing about the
-   band is painted here any more; what is left is the layout of what sits in
-   it, since `DenScreenHeading` has no slot for an avatar or a row of pills. */
+   It is the kit's `DenScreenHeading` outright (#780): the band, the trail, the
+   title, the avatar in `leading`, the joined line on `detail`, the status,
+   tenure and tag pills in `badges`. This sheet used to lay those out itself
+   while the band had no slot for them, and before that painted a flat
+   `--color-surface` card over the band. All that is left to say here is that
+   the hero may wrap: the mock's own 860px rule sends `.actions` under the
+   identity when the row is too narrow for both. */
 .kprofile__hero {
   flex-wrap: wrap;
   margin-bottom: var(--space-4);
 }
-.kprofile__hero-text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+/* The kit's trailing block is `flex: none`, which suits one or two buttons.
+   This one holds up to seven, so it must be allowed to shrink and wrap its
+   own row rather than run out of the band between the phone rule and a wide
+   desktop. Two classes, so it wins wherever the bundler emits the kit sheet. */
+.kprofile__hero .den-heading-trailing {
+  flex: 0 1 auto;
   min-width: 0;
-}
-/* The face and size come from `.den-heading-title`, which the h1 also wears.
-   The kit puts a 6px top margin under the kicker line it expects above the
-   title; there is none here (the trail sits above the band), so it is zeroed.
-   Two classes, so this wins on specificity wherever the bundler emits the
-   kit sheet, rather than tying with `.den-heading-title` on emit order. */
-.kprofile__hero .kprofile__hero-name {
-  margin: 0;
-}
-.kprofile__hero-where {
-  margin: 0;
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-dim);
-}
-/* The mock's `.tags` row: status, tenure and the household tags, every one of
-   them the kit's status pill (`.den-statuspill`), which is the mock's own
-   capsule. Teal for the status and the tags, purple for the tenure, exactly as
-   the mock draws `.tag` and `.tag.loyal`. */
-.kprofile__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
 }
 /* TWO COLUMNS, at the mock's own 860px breakpoint and in its own 1 : 1.2
    proportion. Below it the columns stack, which is what the mock's own media

@@ -524,7 +524,9 @@ private fun KinfolkDirectoryCard(
         }
         badge?.let { (label, tone) ->
             Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                AuntieStatusPill(label = label, tone = tone, mono = true)
+                // The mock's `.badge` is 9.5px on 4px 9px: the kit's compact
+                // size (#780), where the default capsule sat larger.
+                AuntieStatusPill(label = label, tone = tone, mono = true, compact = true)
             }
         }
     }
@@ -607,7 +609,9 @@ private fun KinDirectoryCard(kin: Kin, ownerName: String, onClick: () -> Unit) {
         }
         badge?.let { (label, tone) ->
             Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                AuntieStatusPill(label = label, tone = tone, mono = true)
+                // The mock's `.badge` is 9.5px on 4px 9px: the kit's compact
+                // size (#780), where the default capsule sat larger.
+                AuntieStatusPill(label = label, tone = tone, mono = true, compact = true)
             }
         }
     }

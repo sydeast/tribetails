@@ -408,17 +408,33 @@ describe('KinfolkProfile: the mock', () => {
     const hero = container.querySelector('header.den-heading');
     expect(hero).not.toBeNull();
     expect(within(hero as HTMLElement).getByRole('heading', { level: 1 })).toHaveClass('den-heading-title');
+    // #780: the band is the kit's `DenScreenHeading` outright. The trail rides
+    // inside it, the avatar is its `leading` slot at the mock's 84px, and the
+    // pills are its `badges` row; nothing is laid out around the band.
+    expect(within(hero as HTMLElement).getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
+    const avatar = hero!.querySelector('.den-heading-leading .avatar') as HTMLElement;
+    expect(avatar).not.toBeNull();
+    expect(avatar.style.getPropertyValue('--avatar-size')).toBe('84px');
+    expect(avatar).toHaveAttribute('data-shape', 'rounded');
+    const badges = hero!.querySelector('.den-heading-badges') as HTMLElement;
+    expect(badges).not.toBeNull();
     // The mock's `.tag` row: status and tags teal, tenure purple (`.tag.loyal`).
     const pill = (text: string) => {
-      const el = within(hero as HTMLElement).getByText(text);
+      const el = within(badges).getByText(text);
       expect(el).toHaveClass('den-statuspill');
       return el;
     };
     expect(pill('active')).toHaveAttribute('data-tone', 'teal');
     expect(pill('14 months')).toHaveAttribute('data-tone', 'purple');
     expect(pill('Cams on premise')).toHaveAttribute('data-tone', 'teal');
-    // Nothing local is left painting a chip.
+    // The actions ride in the band's trailing slot.
+    expect(
+      within(hero!.querySelector('.den-heading-trailing') as HTMLElement).getByRole('button', { name: 'Edit' }),
+    ).toBeInTheDocument();
+    // Nothing local is left painting a chip or laying the hero out.
     expect(container.querySelector('.kprofile__chip')).toBeNull();
+    expect(container.querySelector('.kprofile__chips')).toBeNull();
+    expect(container.querySelector('.kprofile__hero-text')).toBeNull();
   });
   it('gives a status other than active the neutral tone rather than a colour the mock never drew', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ status: 'prospect' }));

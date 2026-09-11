@@ -54,6 +54,11 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  *                SCREAMING_SNAKE status codes (e.g. IN_PROGRESS, AWAITING_VET).
  *  - [glow]      marks a LIVE indicator. The dot gains a soft pulsing halo and the
  *                pill border lifts to the tone color so it reads as active.
+ *  - [compact]   the mocks' `.badge` (Directory, a card corner) and `.pill`
+ *                (Auntie Time, a card row): the same capsule at 9.5sp on 4dp by
+ *                9dp, web's `StatusPill size="compact"` (#780). The default is
+ *                the detail screens' `.statuspill`, which on a card sat larger
+ *                than the mock draws it.
  *
  * Read-only by design: no onClick. Pills report state, they do not mutate it.
  */
@@ -67,6 +72,7 @@ fun AuntieStatusPill(
     mono: Boolean = false,
     glow: Boolean = false,
     leadingIcon: ImageVector? = null,
+    compact: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val toneColor = tone.color(c)
@@ -117,12 +123,17 @@ fun AuntieStatusPill(
         else -> toneColor.copy(alpha = 0.28f)
     }
 
-    val labelStyle = if (mono) {
+    val baseStyle = if (mono) {
         AuntieTheme.typography.mono.copy(letterSpacing = 0.6.sp)
     } else {
         AuntieTheme.typography.labelSmall
     }
+    // Compact keeps the face and the tracking and takes only the size down:
+    // the mock's `.badge` is the same mono capsule at 9.5px.
+    val labelStyle = if (compact) baseStyle.copy(fontSize = 9.5.sp) else baseStyle
     val labelText = if (mono) label.uppercase() else label
+    val horizontalPad = if (compact) 9.dp else AuntieTheme.dims.space3
+    val verticalPad = if (compact) 4.dp else AuntieTheme.dims.space1
 
     Box(
         modifier = modifier
@@ -134,7 +145,7 @@ fun AuntieStatusPill(
             )
             // Hover-only interaction source: no indication, no onClick (read-only).
             .hoverable(interaction)
-            .padding(horizontal = AuntieTheme.dims.space3, vertical = AuntieTheme.dims.space1),
+            .padding(horizontal = horizontalPad, vertical = verticalPad),
         contentAlignment = Alignment.Center,
     ) {
         Row(
