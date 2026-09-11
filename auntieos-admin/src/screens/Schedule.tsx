@@ -16,6 +16,7 @@ import {
 } from '../lib/scheduleFormat';
 import {
   sessionState,
+  type SessionState,
   sessionStateInfo,
   sessionHousehold,
   sessionWindow,
@@ -45,7 +46,16 @@ import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint, serviceTone } from '../components/DenScreenKit';
+import {
+  DenScreenHeading,
+  DenPanel,
+  StatCard,
+  ServicePill,
+  StatusPill,
+  EmptyHint,
+  serviceTone,
+  type DenTone,
+} from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -60,6 +70,27 @@ const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
   { key: 'week', label: 'Week' },
   { key: 'month', label: 'Month' },
 ];
+
+/**
+ * The brand tone each session state wears in the kit's status pill.
+ *
+ * The same seven-line record `SessionDetail.tsx` carries, kept as a twin
+ * rather than imported from it: the two screens are swept by different PRs
+ * (#755) and a shared export would put one file in both diffs. A total record
+ * over `SessionState`, so a state added to the lifecycle fails the typecheck
+ * here instead of rendering in whatever colour a default happened to be.
+ */
+const SESSION_STATE_TONE: Record<SessionState, DenTone> = {
+  scheduled: 'neutral',
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
+  completed: 'success',
+  // Not a stage of the visit: the visit is not happening. Muted and struck
+  // through, which is how the agenda chip drew it before it became this pill.
+  cancelled: 'muted',
+  unknown: 'warning',
+};
 
 interface ScheduleProps {
   /**
@@ -81,7 +112,7 @@ interface ScheduleProps {
  *
  * WHAT THIS IS: a calendar of the SAME `kin_care_sessions` collection
  * Sessions.tsx ("Auntie Time") reads, viewed as a Day/Week/Month grid with a
- * per-day agenda below, plus a read-only "Busy" overlay from
+ * per-day agenda above it (#695), plus a read-only "Busy" overlay from
  * `booking_time_slots` (Google Calendar sync + manually-blocked windows).
  * Confirmed against the wasm reference (`ScheduleScreen.kt`) before writing
  * a line of this: it is fundamentally a calendar/agenda, not the business
@@ -351,17 +382,37 @@ export function Schedule({ onSelect }: ScheduleProps) {
 
   return (
     <div className="screen">
+      {/*
+       * The mock's head: kicker and title on the left, and on the right the
+       * range navigator, the Day/Week/Month segment and "New visit", all in the
+       * one band. The title stays "Schedule" plus the view word rather than
+       * the mock's "This week's runs": that line was reframed on both
+       * platforms (spec 13 item 1, recorded on the Android screen) so the label
+       * follows the active view, and the mock is amended to match. The range
+       * itself reads off the navigator, the way the mock draws it, so it is
+       * not repeated on `detail`. "Block time" (#397 M11) sits beside "New
+       * visit"; the mock has only the one button and is amended for that too.
+       */}
       <DenScreenHeading
         kicker="The Den · Schedule"
         title="Schedule"
         accentTail={`${view}.`}
-        detail={rangeLabel(selected, view)}
+        subtitle="Every Kin Care visit on the books, from the latest 300, with Google Calendar busy windows and your own blocked time laid over them."
+        className="schedule__heading"
+        trailing={
+          <div className="schedule__actions">
+            <ScheduleControls
+              rangeLabel={rangeLabel(selected, view)}
+              view={view}
+              onViewChange={setView}
+              onPrev={() => setSelected(shiftRange(selected, view, -1))}
+              onNext={() => setSelected(shiftRange(selected, view, 1))}
+            />
+            <PrimaryButton label="New visit" onClick={() => setNewVisitOpen(true)} />
+            <GhostButton label="Block time" onClick={() => setBlockTimeOpen(true)} />
+          </div>
+        }
       />
-
-      <div className="schedule__actions">
-        <PrimaryButton label="New visit" onClick={() => setNewVisitOpen(true)} />
-        <GhostButton label="Block time" onClick={() => setBlockTimeOpen(true)} />
-      </div>
 
       <div className="schedule__summary">
         <StatCard
@@ -384,169 +435,169 @@ export function Schedule({ onSelect }: ScheduleProps) {
         />
       </div>
 
-      <DenPanel title="Schedule" subtitle="Every Kin Care visit on the books, from the latest 300.">
-        <AsyncRegion
-          state={sessionsState}
-          what="the schedule"
-          // Empty only when BOTH sources have nothing: a proven-empty sessions
-          // stream must not hide a real busy block (closes over `busyState`
-          // rather than deriving from `data` alone, since AsyncRegion's
-          // `isEmpty` only sees the sessions side of this two-collection
-          // screen). Anything other than a READY, zero-length busy list
-          // (loading/error) does not count as "proven non-empty" here, its
-          // own inline error/loading note still surfaces separately below.
-          isEmpty={(data) => data.length === 0 && !(busyState.status === 'ready' && busyState.data.length > 0)}
-          loading={<p className="schedule__hint">Loading the schedule…</p>}
-          empty={<EmptyHint>Nothing on the schedule yet.</EmptyHint>}
-        >
-          {(sessions) => {
-            const byDay = sessionsByLocalDay(sessions);
-            const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
-            // SCOPED to the days on screen (`daysInView`, the same set the "in
-            // view" stat card counts from), never the whole bounded 300-session
-            // stream and never the operator's whole configured set: navigating
-            // the date range or switching Day/Week/Month changes `daysInView`,
-            // which changes the legend along with it, and a view with nothing
-            // scheduled yields an empty legend rather than a stale full list.
-            const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
-            const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
-            const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
-            const selectedBusy = busyByDate.get(selected) ?? [];
-            // Re-resolved from the stream every render, so the sheet closes on
-            // its own if the session leaves the page (deleted, or pushed out of
-            // the bounded 300) rather than showing a row that no longer exists.
-            const openSession =
-              openSessionId === null ? undefined : sessions.find((s) => s._id === openSessionId);
+      {/*
+       * No panel around the calendar. The mock's `.cal` is its own glass
+       * surface with no title and no padding, so a DenPanel titled "Schedule"
+       * under a hero that already says Schedule was a second lid on the same
+       * box. The agenda panel below is a DenPanel; the grid paints the panel
+       * gradient itself (see `ScheduleWeekGrid.css`).
+       */}
+      <AsyncRegion
+        state={sessionsState}
+        what="the schedule"
+        // Empty only when BOTH sources have nothing: a proven-empty sessions
+        // stream must not hide a real busy block (closes over `busyState`
+        // rather than deriving from `data` alone, since AsyncRegion's
+        // `isEmpty` only sees the sessions side of this two-collection
+        // screen). Anything other than a READY, zero-length busy list
+        // (loading/error) does not count as "proven non-empty" here, its
+        // own inline error/loading note still surfaces separately below.
+        isEmpty={(data) => data.length === 0 && !(busyState.status === 'ready' && busyState.data.length > 0)}
+        loading={<p className="schedule__hint">Loading the schedule…</p>}
+        empty={<EmptyHint>Nothing on the schedule yet.</EmptyHint>}
+      >
+        {(sessions) => {
+          const byDay = sessionsByLocalDay(sessions);
+          const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
+          // SCOPED to the days on screen (`daysInView`, the same set the "in
+          // view" stat card counts from), never the whole bounded 300-session
+          // stream and never the operator's whole configured set: navigating
+          // the date range or switching Day/Week/Month changes `daysInView`,
+          // which changes the legend along with it, and a view with nothing
+          // scheduled yields an empty legend rather than a stale full list.
+          const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
+          const legend = sortServiceTypesByDuration(distinctServiceTypes(sessionsInView), serviceDurations);
+          const selectedSessions = (byDay.get(selected) ?? []).slice().sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)));
+          const selectedBusy = busyByDate.get(selected) ?? [];
+          // Re-resolved from the stream every render, so the sheet closes on
+          // its own if the session leaves the page (deleted, or pushed out of
+          // the bounded 300) rather than showing a row that no longer exists.
+          const openSession =
+            openSessionId === null ? undefined : sessions.find((s) => s._id === openSessionId);
 
-            return (
-              <>
-                <ScheduleControls
-                  rangeLabel={rangeLabel(selected, view)}
-                  view={view}
-                  onViewChange={setView}
-                  onPrev={() => setSelected(shiftRange(selected, view, -1))}
-                  onNext={() => setSelected(shiftRange(selected, view, 1))}
-                />
-
-                {/*
-                 * #695: this panel used to sit after the week/month grid, off
-                 * the bottom of the screen behind a 540px time grid until the
-                 * operator scrolled to it. "Move the Today block up one" reads
-                 * here as above the grid, directly under the Day/Week/Month
-                 * controls, still inside the Schedule panel: the minimal move
-                 * that puts "Today" on screen without touching the grid the
-                 * separate month-view rebuild (#696) owned. `collapsible` lets
-                 * the operator shrink it back down on a day with a long list,
-                 * so it does not push the grid itself off screen.
-                 */}
-                <DenPanel
-                  title={sessionDayLabel(selected, todayIso)}
-                  subtitle="Kin Care visits on this day."
-                  className="schedule__agenda-panel"
-                  collapsible
-                >
-                  {unblockError !== null && (
-                    <Banner tone="error" title="Couldn’t remove that block">
-                      <p>{unblockError}</p>
-                    </Banner>
-                  )}
-                  {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
-                    <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
-                  ) : (
-                    <ul className="schedule__agenda-list">
-                      {selectedSessions.map((entry) => (
-                        <AgendaRow
-                          key={entry._id}
-                          entry={entry}
-                          onSelect={onSelect ?? setOpenSessionId}
-                        />
-                      ))}
-                      {selectedBusy.map((slot) => (
-                        <BusyRow
-                          key={slot._id}
-                          slot={slot}
-                          pending={unblockingId === slot._id}
-                          busy={unblockingId !== null}
-                          onUnblock={() => void unblock(slot._id)}
-                        />
-                      ))}
-                    </ul>
-                  )}
-                </DenPanel>
-
-                {legend.length > 0 && <ScheduleLegend serviceTypes={legend} />}
-
-                {busyState.status === 'error' && (
-                  <p className="schedule__busy-error" role="alert">
-                    Busy blocks unavailable: {busyState.message}
-                  </p>
-                )}
-
-                {dropError !== null && (
-                  <Banner tone="error" title="Couldn’t move that visit">
-                    <p>{dropError}</p>
-                    {dropRetry !== null && (
-                      <>
-                        <p>{overrideHint(dropRetry.kind)}</p>
-                        <GhostButton
-                          label="Move anyway"
-                          onClick={() => void commitDrop(dropRetry.drop, dropRetry.kind)}
-                          disabled={pendingSessionId !== null}
-                        />
-                      </>
-                    )}
+          return (
+            <>
+              {/*
+               * #695: this panel used to sit after the week/month grid, off
+               * the bottom of the screen behind a 540px time grid until the
+               * operator scrolled to it. "Move the Today block up one" reads
+               * here as above the grid: the operator's own addition to a mock
+               * that draws no agenda at all, so it stays through the #755
+               * sweep and the mock is amended to carry it. It is the first
+               * thing under the stat cards now that the Day/Week/Month
+               * controls live in the hero band. `collapsible` lets the
+               * operator shrink it back down on a day with a long list, so it
+               * does not push the grid itself off screen.
+               */}
+              <DenPanel
+                title={sessionDayLabel(selected, todayIso)}
+                subtitle="Kin Care visits on this day."
+                className="schedule__agenda-panel"
+                collapsible
+              >
+                {unblockError !== null && (
+                  <Banner tone="error" title="Couldn’t remove that block">
+                    <p>{unblockError}</p>
                   </Banner>
                 )}
-
-                {view === 'week' && (
-                  <ScheduleWeekGrid
-                    days={weekDays(selected)}
-                    today={todayIso}
-                    selected={selected}
-                    byDay={byDay}
-                    busyByDate={busyByDate}
-                    snapMinutes={snapMinutes}
-                    pendingSessionId={pendingSessionId}
-                    scrollToBusyRequestId={busyScrollRequestId}
-                    onSelectDay={setSelected}
-                    onOpenSession={onSelect ?? setOpenSessionId}
-                    onDrop={handleDrop}
-                  />
+                {selectedSessions.length === 0 && selectedBusy.length === 0 ? (
+                  <EmptyHint>No Kin Care sessions on this day.</EmptyHint>
+                ) : (
+                  <ul className="schedule__agenda-list">
+                    {selectedSessions.map((entry) => (
+                      <AgendaRow
+                        key={entry._id}
+                        entry={entry}
+                        onSelect={onSelect ?? setOpenSessionId}
+                      />
+                    ))}
+                    {selectedBusy.map((slot) => (
+                      <BusyRow
+                        key={slot._id}
+                        slot={slot}
+                        pending={unblockingId === slot._id}
+                        busy={unblockingId !== null}
+                        onUnblock={() => void unblock(slot._id)}
+                      />
+                    ))}
+                  </ul>
                 )}
+              </DenPanel>
 
-                {view === 'month' && (
-                  <MonthGrid
-                    days={monthGridDays(selected)}
-                    anchorMonth={selected.slice(0, 7)}
-                    today={todayIso}
-                    selected={selected}
-                    byDay={byDay}
-                    busyByDate={busyByDate}
-                    onSelectDay={setSelected}
-                    onOpenSession={onSelect ?? setOpenSessionId}
-                  />
-                )}
+              {legend.length > 0 && (
+                <ScheduleLegend serviceTypes={legend} dragHint={view === 'week' ? dragHint(snapMinutes) : null} />
+              )}
 
-                {openSession !== undefined && (
-                  <BookingDetailModal
-                    entry={openSession}
-                    onClose={() => setOpenSessionId(null)}
-                    onOpenKinfolk={(kinfolkId) =>
-                      void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
-                    }
-                    onOpenKinTale={(kinTaleId) =>
-                      // Search param, not a path: `lib/notificationActions.ts`
-                      // set that convention for invoice and kintale deep links,
-                      // and one convention beats two that drift.
-                      void navigate({ to: '/kintales', search: { kinTaleId } })
-                    }
-                  />
-                )}
-              </>
-            );
-          }}
-        </AsyncRegion>
-      </DenPanel>
+              {busyState.status === 'error' && (
+                <p className="schedule__busy-error" role="alert">
+                  Busy blocks unavailable: {busyState.message}
+                </p>
+              )}
+
+              {dropError !== null && (
+                <Banner tone="error" title="Couldn’t move that visit">
+                  <p>{dropError}</p>
+                  {dropRetry !== null && (
+                    <>
+                      <p>{overrideHint(dropRetry.kind)}</p>
+                      <GhostButton
+                        label="Move anyway"
+                        onClick={() => void commitDrop(dropRetry.drop, dropRetry.kind)}
+                        disabled={pendingSessionId !== null}
+                      />
+                    </>
+                  )}
+                </Banner>
+              )}
+
+              {view === 'week' && (
+                <ScheduleWeekGrid
+                  days={weekDays(selected)}
+                  today={todayIso}
+                  selected={selected}
+                  byDay={byDay}
+                  busyByDate={busyByDate}
+                  snapMinutes={snapMinutes}
+                  pendingSessionId={pendingSessionId}
+                  scrollToBusyRequestId={busyScrollRequestId}
+                  onSelectDay={setSelected}
+                  onOpenSession={onSelect ?? setOpenSessionId}
+                  onDrop={handleDrop}
+                />
+              )}
+
+              {view === 'month' && (
+                <MonthGrid
+                  days={monthGridDays(selected)}
+                  anchorMonth={selected.slice(0, 7)}
+                  today={todayIso}
+                  selected={selected}
+                  byDay={byDay}
+                  busyByDate={busyByDate}
+                  onSelectDay={setSelected}
+                  onOpenSession={onSelect ?? setOpenSessionId}
+                />
+              )}
+
+              {openSession !== undefined && (
+                <BookingDetailModal
+                  entry={openSession}
+                  onClose={() => setOpenSessionId(null)}
+                  onOpenKinfolk={(kinfolkId) =>
+                    void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
+                  }
+                  onOpenKinTale={(kinTaleId) =>
+                    // Search param, not a path: `lib/notificationActions.ts`
+                    // set that convention for invoice and kintale deep links,
+                    // and one convention beats two that drift.
+                    void navigate({ to: '/kintales', search: { kinTaleId } })
+                  }
+                />
+              )}
+            </>
+          );
+        }}
+      </AsyncRegion>
 
       {/* Outside AsyncRegion on purpose: an operator must be able to block time
           or add a visit on a day the sessions stream is still loading, or has
@@ -625,18 +676,42 @@ function ScheduleControls({ rangeLabel: label, view, onViewChange, onPrev, onNex
 
 // ── legend ──────────────────────────────────────────────────────────────────
 
-function ScheduleLegend({ serviceTypes }: { serviceTypes: string[] }) {
+/**
+ * The mock's own words for the legend's right-hand note, with the real snap
+ * value in place of its placeholder: "snaps to 15 min" is only true when the
+ * operator turned the Settings switch on, and the other reading is a minute.
+ */
+function dragHint(snapMinutes: number): string {
+  return snapMinutes === SNAP_MINUTES_ON
+    ? `Drag a visit to reschedule · snaps to ${SNAP_MINUTES_ON} min`
+    : 'Drag a visit to reschedule · to the minute';
+}
+
+/**
+ * The mock's `.legend`: a small square swatch and a plain label per service
+ * type, the hatched Busy swatch, and the drag note pushed to the right edge.
+ *
+ * A SWATCH, NOT A PILL. The 2026-09-10 pass drew each type as a `ServicePill`
+ * here, and the pill is the right object on a row (it says what THAT visit
+ * is); the legend is a key to the colours on the grid, and the mock keys them
+ * with a square of the colour. `data-tone` carries the same `serviceTone`
+ * mapping the month blocks and week blocks read, so the swatch and the block
+ * it stands for resolve to one token.
+ */
+function ScheduleLegend({ serviceTypes, dragHint }: { serviceTypes: string[]; dragHint: string | null }) {
   return (
     <div className="schedule__legend" aria-label="Service type legend">
       {serviceTypes.map((type) => (
-        <span key={type} className="schedule__legend-item">
-          <ServicePill serviceType={type} />
+        <span key={type} className="schedule__legend-item" data-tone={serviceTone(type)}>
+          <span className="schedule__legend-swatch" />
+          {type}
         </span>
       ))}
       <span className="schedule__legend-item schedule__legend-item--busy">
-        <span className="schedule__legend-swatch" />
+        <span className="schedule__legend-swatch schedule__legend-swatch--busy" />
         Busy
       </span>
+      {dragHint !== null && <span className="schedule__legend-hint">{dragHint}</span>}
     </div>
   );
 }
@@ -903,7 +978,9 @@ function AgendaRow({ entry, onSelect }: AgendaRowProps) {
         <span className="schedule__row-name">{household}</span>
         <ServicePill serviceType={str(entry.serviceType)} />
       </span>
-      <span className={`schedule__chip schedule__chip--${info.cssClass}`}>{info.chipLabel}</span>
+      <span className="schedule__row-status">
+        <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} struck={state === 'cancelled'} />
+      </span>
     </>
   );
 
@@ -964,7 +1041,9 @@ function BusyRow({
         <span className="schedule__row-who">
           <span className="schedule__row-name">Busy</span>
         </span>
-        <span className="schedule__chip schedule__chip--busy">BLOCKED</span>
+        <span className="schedule__row-status">
+          <StatusPill label="Blocked" tone="muted" />
+        </span>
         {removable ? (
           <GhostButton
             label={pending ? 'Removing…' : 'Unblock'}
