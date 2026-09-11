@@ -1,9 +1,11 @@
 /**
  * AuntieOS Den design tokens.
  *
- * Ported 2026-07-15 from the LIVE Compose source, cross-checked against
- * TribeTails_Docs/auntieos_design_system.md (2026-06-17), which turned out to be
- * accurate and more complete than this port's first pass:
+ * Ported 2026-07-15 from the LIVE Compose source, cross-checked at the time
+ * against a TribeTails_Docs/auntieos_design_system.md (2026-06-17) that is not
+ * in this repo and cannot be opened from it. Where the body below still cites
+ * that doc, it is recording what the port read then, never an instruction to go
+ * and consult it. The Compose files are what this is a port OF:
  *   theme/AuntieColors.kt      brand constants + Light/DarkAuntieColors
  *   theme/AuntieTypography.kt  the 15-style scale
  *   theme/AuntieFonts.kt       rememberDenTypography (family + WEIGHT binding)
@@ -13,9 +15,9 @@
  *
  * THE MOCKS ARE THE DESIGN SOURCE (operator ruling, 2026-09-11, issue #751).
  * An earlier header here told readers to ignore `ui-ideas/*.html` and to follow
- * `auntieos_design_system.md` instead. That file is in no directory of this
- * repo, so six parity PRs on 2026-09-10 read the instruction, found nothing to
- * follow, and left the palette alone. The 29 mocks under `auntieos-admin/
+ * the design-system doc instead, which nobody working in this repo can open, so
+ * six parity PRs on 2026-09-10 read the instruction, found nothing to follow,
+ * and left the palette alone. The 29 mocks under `auntieos-admin/
  * ui-ideas/` are the spec: navy ground, drifting mesh blobs, a grain overlay,
  * gradient glass panels, a hero band with a radial orange wash.
  *

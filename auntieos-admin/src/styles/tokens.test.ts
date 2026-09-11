@@ -5,13 +5,15 @@ import { describe, expect, it } from 'vitest';
 /**
  * Guards the token port against the two ways it can rot.
  *
- * 1. SCHEME DRIFT: a role gets added to light and forgotten in dark, so dark
- *    silently inherits light's value (or nothing). Nobody notices until an
- *    operator with dark mode on hits an unreadable screen.
+ * 1. SCHEME DRIFT: a role gets added to one scheme and forgotten in the other,
+ *    so it silently inherits the wrong value, or nothing. Nobody notices until
+ *    a screen turns up unreadable.
  * 2. BRAND DRIFT: someone "tidies" a hex. These seven constants are the brand;
  *    they are the one thing in here that is not a judgement call. The values are
- *    pinned from AuntieColors.kt, which is the live spec (the design doc and the
- *    mockups are ~7 weeks stale and disagree with the app).
+ *    pinned from AuntieColors.kt, and the mocks agree with it hue for hue: the
+ *    kincare-detail mock's `:root` carries the same seven. Which is worth saying
+ *    here, because this comment used to call the mockups stale and wrong, and
+ *    the 2026-09-11 ruling makes them the design source (issue #751).
  *
  * Deliberately parsing the CSS as text rather than mounting it in jsdom:
  * getComputedStyle resolves var() chains, which would happily report a dark value
