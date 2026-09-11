@@ -99,3 +99,45 @@ export function formatDuration(seconds: number): string {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
+
+/**
+ * `H:MM` for a visit length, the shape the visit report's header strip uses:
+ * "Completed in 1:04". Different from `formatDuration` on purpose and both are
+ * kept. `formatDuration` writes a unit-labelled "1h 4m" for a statistics row
+ * that has a "Duration" label of its own; this one writes the bare clock figure
+ * that follows the words "Completed in", where a second unit would be noise.
+ *
+ * Seconds are dropped, not rounded up: a visit is reported at the minute it
+ * reached, never at a minute it did not.
+ *
+ * `''` for zero or a negative length, so a caller can leave the clause out
+ * rather than print "Completed in 0:00" over a visit whose length is unknown.
+ */
+export function formatClockDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  const total = Math.trunc(seconds / 60);
+  const h = Math.trunc(total / 60);
+  const m = total % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+const METERS_PER_MILE = 1609.344;
+
+/**
+ * Distance in miles, one decimal: "0.1 miles".
+ *
+ * MILES, NOT KILOMETRES, and that is not a duplicate of `formatDistance`. The
+ * operator reads this figure, the operator is in Texas, and the reference
+ * report they compared this screen against reads "0.1 miles". `formatDistance`
+ * stays as it is: it is what the kinfolk portal and the Android canvas both
+ * already print, and changing it would silently restate every route the
+ * households have already seen.
+ *
+ * Truncated rather than rounded, matching `formatDistance`, so the figure never
+ * claims ground that was not walked.
+ */
+export function formatMiles(meters: number): string {
+  if (!Number.isFinite(meters) || meters <= 0) return '0 miles';
+  const miles = Math.trunc((meters / METERS_PER_MILE) * 10) / 10;
+  return `${miles.toFixed(1)} miles`;
+}

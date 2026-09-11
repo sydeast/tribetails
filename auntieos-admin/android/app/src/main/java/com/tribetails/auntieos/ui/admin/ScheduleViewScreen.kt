@@ -289,13 +289,14 @@ fun ScheduleViewScreen(
             item {
                 // Reframed as a calendar (spec 13 item 1): label follows active view +
                 // range, not "this week's runs". The mislabeled route/active/upcoming
-                // subtitle moved to Auntie Time (spec 14). TODO(auntie copy): any final
-                // descriptive subtitle wording is author-owned; range below is derived.
+                // subtitle moved to Auntie Time (spec 14). The range rides on `detail`
+                // rather than `subtitle` since #752: `subtitle` is the explanation and
+                // is a tooltip now, and a date range is a value the screen owes you.
                 DenScreenHeading(
                     kicker = "The Den · Schedule",
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
-                    subtitle = rangeLabel,
+                    detail = rangeLabel,
                 )
             }
 
@@ -510,7 +511,7 @@ fun ScheduleViewScreen(
             }
             if (state.visitRequestsLoading) {
                 item {
-                    DenPanel(title = "Change requests", subtitle = "Checking for requests…") {
+                    DenPanel(title = "Change requests", detail = "Checking for requests…") {
                         AuntieLinearProgress(modifier = Modifier.fillMaxWidth())
                     }
                 }
@@ -536,7 +537,7 @@ fun ScheduleViewScreen(
                 }
             } else if (state.visitRequestsError == null) {
                 item {
-                    DenPanel(title = "Change requests", subtitle = "No visit requests waiting.") {}
+                    DenPanel(title = "Change requests", detail = "No visit requests waiting.") {}
                 }
             }
 

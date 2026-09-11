@@ -22,14 +22,13 @@ import {
 import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { usePagedCollection } from '../lib/usePagedCollection';
-import { useCollection, useDocById } from '../lib/firestore';
+import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
 import { DenScreenHeading, ServicePill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { SessionDetail } from './SessionDetail';
 import './Sessions.css';
 
 /** Which body of data the screen is showing: the day-of board, or older history. */
@@ -54,21 +53,13 @@ const PHASE_EMPTY: Record<SessionPhase, string> = {
 
 interface SessionsProps {
   /**
-   * Opens this visit's detail on mount. Set by the router from
-   * `/sessions?sessionId=<id>`, which is where an invoice line bound to a visit
-   * routes (#408): a bound line's money is corrected on the visit, so every
-   * surface that shows one offers the way there.
+   * Open one visit. REQUIRED, and the only way a card head opens anything since
+   * #753: selecting a card navigates to `/sessions/{id}`, which
+   * `routes/SessionsView.tsx` supplies. This screen no longer holds a detail of
+   * its own, so a mount without this prop would draw 30 card heads that do
+   * nothing (the `ControlShell` dead-control rule).
    */
-  initialSessionId?: string;
-  /**
-   * Card-select override. The router mounts this screen propless, and by default
-   * selecting a card opens the in-screen `SessionDetail`, fed from a live by-id
-   * read (see the `detailEntry` lookup below). Passing `onSelect` explicitly
-   * overrides that default (a future detail ROUTE, or a test, owns selection
-   * instead); when overridden this screen's own detail view never renders (see
-   * the `!onSelect` guard).
-   */
-  onSelect?: (sessionId: string) => void;
+  onSelect: (sessionId: string) => void;
   /**
    * Open the KinTale composer on this visit ("Complete KinTale" on a departed
    * card). Supplied by `routes/SessionsView.tsx`, which owns the navigation.
@@ -124,18 +115,17 @@ interface SessionsProps {
  * SessionDetail is still one click away, from the card's own header, and it
  * remains the home of the details editor, the note to office, the full route map
  * and the Timing panel. The board is the run sheet; the sheet is the record.
+ *
+ * THE DETAIL IS A ROUTE NOW, NOT A VIEW OF THIS SCREEN (#753). "KinCares should
+ * have their own id numbers in the params. I don't want to refresh the KinCare."
+ * It used to open in local state here, so the URL never changed and a refresh, a
+ * shared link or the browser Back button lost the open visit. A card head
+ * navigates to `/sessions/{id}` instead, and `routes/SessionDetailView.tsx`
+ * mounts SessionDetail over the same by-id subscription this screen used to run.
+ * That is why nothing below reads `kin_care_sessions` by id any more.
  */
-export function Sessions({
-  onSelect,
-  initialSessionId,
-  onComposeKinTale,
-  onViewKinTale,
-}: SessionsProps) {
+export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: SessionsProps) {
   const [mode, setMode] = useState<ViewMode>('window');
-  // The detail view's own selection state, used only when no external onSelect
-  // is supplied (see SessionsProps's doc above).
-  const [detailId, setDetailId] = useState<string | null>(initialSessionId ?? null);
-  const handleSelect = onSelect ?? setDetailId;
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
@@ -192,37 +182,11 @@ export function Sessions({
     return map;
   }, [kinState]);
 
-  // The row SessionDetail shows, resolved by a LIVE by-id subscription.
-  //
-  // THE DEEP-LINK HALF (issue #389's rule, applied to visits) was always the
-  // reason this read existed: a link into this screen names a visit, and
-  // resolving it by searching the rows this board happens to have loaded answers
-  // a different question, since an invoice line routes here for work that is by
-  // definition old enough to have been billed. A blank id issues no read at all
-  // (see useDocById), so a board with nothing open pays nothing for it.
-  //
-  // The streamed row is still used, as the PLACEHOLDER while the subscription's
-  // first snapshot is in flight, so opening a visit the board already holds
-  // paints instantly rather than flashing "unavailable".
-  const streamedEntry =
-    detailId !== null && rows.status === 'ready'
-      ? (rows.data.find((r) => r._id === detailId) ?? null)
-      : null;
-  const liveEntry = useDocById<SessionEntry>('kin_care_sessions', detailId);
-  const detailEntry = liveEntry.status === 'ready' ? liveEntry.data : streamedEntry;
-
-  // Only this screen's OWN selection takes over with its own detail view; an
-  // external onSelect (see the prop's doc) means the caller owns the detail UI
-  // instead. A sibling VIEW of the board, the Directory/KinfolkProfile pattern.
-  if (!onSelect && detailId !== null) {
-    return <SessionDetail entry={detailEntry} onBack={() => setDetailId(null)} />;
-  }
-
   const cardContext: CardContext = {
     todayIso,
     addressById,
     kinById,
-    onSelect: handleSelect,
+    onSelect,
     onWritten: reload,
     ...(onComposeKinTale ? { onComposeKinTale } : {}),
     ...(onViewKinTale ? { onViewKinTale } : {}),

@@ -424,7 +424,7 @@ fun InvoicesScreen(
                         item {
                             DenPanel(
                                 title = "Invoices",
-                                subtitle = invoiceListSubtitle(visible.size, inScope.size, archivedHidden),
+                                detail = invoiceListSubtitle(visible.size, inScope.size, archivedHidden),
                             ) {
                                 if (visible.isEmpty()) {
                                     AuntieEmptyState(

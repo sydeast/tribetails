@@ -13,8 +13,16 @@ const { setVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/sessionsWrite', () => ({ setVisitLifecycle, updateKinCareSession }));
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+// `useDocById` joined the list with #760: the Route panel's purple house marker
+// reads `kinfolk/{id}.serviceLocation` through `lib/householdLocation.ts`, which
+// subscribes to that document. Mocked at `lib/firestore` rather than at
+// `lib/householdLocation`, so the real `readHouseholdPoint` still runs and a
+// spec drives the raw document shape Firestore would actually hand back.
+const { useCollection, useDocById } = vi.hoisted(() => ({
+  useCollection: vi.fn(),
+  useDocById: vi.fn(),
+}));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
 const { useBreadcrumbs } = vi.hoisted(() => ({ useBreadcrumbs: vi.fn() }));
@@ -32,6 +40,10 @@ beforeEach(() => {
   updateKinCareSession.mockReset();
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [] });
+  useDocById.mockReset();
+  // The household on file has no stored coordinate by default, which is the
+  // common case and the one that must draw no house marker at all.
+  useDocById.mockReturnValue({ status: 'ready', data: null });
   getBusinessSettings.mockReset();
   getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
   useBreadcrumbs.mockReset();
@@ -133,9 +145,34 @@ describe('SessionDetail', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('shows an honest unavailable state when the entry does not resolve (null), never a blank detail', () => {
+  /**
+   * THE THREE NO-ROW ANSWERS (#753). The detail is a route now, so a refresh on
+   * `/sessions/<id>` mounts this screen with nothing resolved yet and a failed
+   * read mounts it with nothing at all. One "no longer available" line for all
+   * three would accuse a slow network of deleting a visit.
+   */
+  it('says the session is not on file when the read settled on nothing', () => {
     render(<SessionDetail entry={null} onBack={vi.fn()} />);
-    expect(screen.getByText(/no longer available/i)).toBeInTheDocument();
+    expect(screen.getByText(/no Kin Care session is on file under this id/i)).toBeInTheDocument();
+  });
+  it('says it is still looking while the by-id read is in flight, not that the session is gone', () => {
+    render(<SessionDetail entry={null} read={{ status: 'loading' }} onBack={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Looking this Kin Care session up…');
+    expect(screen.queryByText(/not on file/i)).toBeNull();
+  });
+  it('surfaces a failed by-id read with its message and a retry, never as a missing session', async () => {
+    const retry = vi.fn();
+    render(
+      <SessionDetail
+        entry={null}
+        read={{ status: 'error', message: 'backend unreachable', retry }}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('backend unreachable');
+    expect(screen.queryByText(/not on file/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it('AO-12 guard: an unrecognized status reads UNKNOWN, never a fabricated SCHEDULED', () => {
@@ -396,20 +433,22 @@ describe('SessionDetail: GPS', () => {
       error: null,
       ready: true,
     });
-    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    const { container } = render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Live visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
     expect(screen.getByText('Pings')).toBeInTheDocument();
   });
   it('is not live once the visit is DEPARTED: a replay must not claim movement', () => {
     useBreadcrumbs.mockReturnValue({ points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)], error: null, ready: true });
-    render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
+    const { container } = render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
   });
   // `purgeOldVisitRoutes` deletes breadcrumbs past the retention window, so a
   // completed visit's only route is the saved summary. A panel that read
   // breadcrumbs alone would be blank on exactly the visits an operator reviews.
   it('falls back to the saved summary on a completed visit, and says it is the down-sampled copy', () => {
-    render(
+    const { container } = render(
       <SessionDetail
         entry={entry({
           status: 'COMPLETED',
@@ -427,6 +466,7 @@ describe('SessionDetail: GPS', () => {
       />,
     );
     expect(screen.getByRole('img', { name: 'Visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
     expect(screen.getByText(/down-sampled copy/i)).toBeInTheDocument();
   });
   it('tells "waiting for the first ping" apart from "no route was recorded"', () => {
@@ -434,7 +474,56 @@ describe('SessionDetail: GPS', () => {
     expect(screen.getByText(/waiting for the first gps ping/i)).toBeInTheDocument();
     unmount();
     render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
-    expect(screen.getByText(/no gps breadcrumbs were recorded/i)).toBeInTheDocument();
+    expect(screen.getByText('No GPS breadcrumbs were recorded for this Kin Care.')).toBeInTheDocument();
+  });
+  // #754: a finished visit with no breadcrumbs AND no gpsSummary was never
+  // tracked (never clocked in from Android with location on). The old copy
+  // ("older breadcrumbs are cleared... leaving the saved summary") implied a
+  // summary existed even when one never did, which is what the walked visit
+  // showed.
+  it('names a finished visit with no breadcrumbs and no summary as never tracked', () => {
+    render(<SessionDetail entry={entry({ status: 'COMPLETED', completedAt: '2026-07-16T18:00:00Z' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/retention window/i)).toBeNull();
+    expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
+  });
+  // #754: a gpsSummary can exist (distance/duration were saved) with no usable
+  // route points, e.g. an empty or missing `route` array. That is a different
+  // true fact from "never tracked" and must not draw a polyline either.
+  it('names a saved summary with no route points as summary only, not never tracked', () => {
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          completedAt: '2026-07-16T18:00:00Z',
+          gpsSummary: { distanceMeters: 400, durationSeconds: 300, route: [] },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText('A GPS summary was saved for this Kin Care, but it has no route points to draw.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/never tracked/i)).toBeNull();
+    expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
+  });
+  // #754 regression guard: a SCHEDULED or ON_MY_WAY visit has no arrivedAt, no
+  // breadcrumbs, and no gpsSummary either, the same shape as a truly
+  // never-tracked finished visit. Without this carve-out "never tracked" would
+  // render on a booking that has not happened yet.
+  it('says tracking has not started on a scheduled visit, not never tracked', () => {
+    const { unmount } = render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/never tracked/i)).toBeNull();
+    unmount();
+    render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+    ).toBeInTheDocument();
   });
   // A dead subscription and an unmoved Auntie render identically if the caller
   // only receives an array. This is the case that keeps them apart.
@@ -463,5 +552,123 @@ describe('SessionDetail: GPS', () => {
     useBreadcrumbs.mockReturnValue({ points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)], error: null, ready: true });
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Live visit route' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #760. The operator's reference is the previous system's visit report, and
+ * what it puts under the arrival and departure times is a map with a strip of
+ * facts over it. These cases pin the strip and its placement; the map itself,
+ * its four markers and its fallback are `components/RouteMap.test.tsx`, which
+ * mocks mapbox-gl. No token is configured under vitest, so what renders here is
+ * the SVG fallback, and the strip has to be on it just the same: the times and
+ * the distance are facts about the visit, not decoration on a basemap.
+ */
+describe('SessionDetail: the route header strip', () => {
+  const crumb = (lat: number, lng: number, t: number) => ({ lat, lng, t });
+  // LOCAL instants, no trailing Z: the strip prints the operator's wall clock
+  // (lib/time.ts's AO-18 rule), so a UTC literal would assert a different hour
+  // on a runner in a different zone.
+  const ARRIVED = '2026-07-16T12:05:00';
+  const DEPARTED = '2026-07-16T13:09:00';
+
+  it('states the visit length, both clock times and the distance', () => {
+    useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          arrivedAt: ARRIVED,
+          departedAt: DEPARTED,
+          gpsSummary: {
+            distanceMeters: 200,
+            durationSeconds: 3852,
+            route: [
+              { lat: 30.2, lng: -97.7, t: 1 },
+              { lat: 30.3, lng: -97.8, t: 2 },
+            ],
+          },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Completed in 1:04')).toBeInTheDocument();
+    expect(screen.getByText('Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles')).toBeInTheDocument();
+  });
+  /**
+   * DEPARTED IS NOT COMPLETED, and the strip must not say it is. The reference
+   * report labels this clause "Completed at", over what this system stores as
+   * `departedAt`. This screen already carries the ruling that the two are
+   * different events and that `transitionBookingStatus` can stamp completion
+   * without a departure ever being stamped, so a strip using the report's word
+   * would put a second, invented completion time on a screen that prints the
+   * real one a panel above.
+   */
+  it('names the departure as a departure, never as a completion', () => {
+    useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          arrivedAt: ARRIVED,
+          departedAt: DEPARTED,
+          completedAt: '2026-07-16T15:00:00',
+          gpsSummary: {
+            distanceMeters: 200,
+            durationSeconds: 3852,
+            route: [
+              { lat: 30.2, lng: -97.7, t: 1 },
+              { lat: 30.3, lng: -97.8, t: 2 },
+            ],
+          },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Departed at 1:09pm/)).toBeInTheDocument();
+    expect(screen.queryByText(/Completed at 1:09pm/)).toBeNull();
+  });
+  /**
+   * A visit still being walked has no departure stamp. The strip drops that
+   * clause rather than printing a blank one, and still reports the distance so
+   * far, which is the number the office is watching.
+   *
+   * AND IT MUST NOT SAY "COMPLETED IN". These are real epoch-millisecond
+   * breadcrumbs seven minutes apart, so the map hands the strip a live, growing
+   * duration; a length printed from it would report a completion the Auntie has
+   * not reached. Toy `t: 1, t: 2` timestamps would pass this by accident.
+   */
+  it('leaves out the clauses a live visit does not have yet, the length included', () => {
+    useBreadcrumbs.mockReturnValue({
+      points: [crumb(30.2, -97.7, 1_700_000_000_000), crumb(30.21, -97.71, 1_700_000_420_000)],
+      error: null,
+      ready: true,
+    });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: ARRIVED })} onBack={vi.fn()} />);
+    expect(screen.getByText(/^Arrived at 12:05pm - /)).toBeInTheDocument();
+    expect(screen.queryByText(/Departed at/)).toBeNull();
+    expect(screen.queryByText(/Completed in/)).toBeNull();
+  });
+  // Placement, which is the whole of the operator's sentence: the map is
+  // "usually listed under the arrival departure times". The Route panel already
+  // follows the Timing panel, so this asserts the order rather than trusting it.
+  it('sits after the panel that carries the arrival and departure times', () => {
+    useBreadcrumbs.mockReturnValue({
+      points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)],
+      error: null,
+      ready: true,
+    });
+    const { container } = render(
+      <SessionDetail
+        entry={entry({ status: 'DEPARTED', arrivedAt: ARRIVED, departedAt: DEPARTED })}
+        onBack={vi.fn()}
+      />,
+    );
+    const timing = screen.getByText('Timing');
+    const strip = screen.getByText(/Arrived at 12:05pm/);
+    expect(timing.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // And nothing else sits between the two panels.
+    const panels = [...container.querySelectorAll('h2, h3, h4')].map((h) => h.textContent);
+    expect(panels.indexOf('Route')).toBe(panels.indexOf('Timing') + 1);
   });
 });

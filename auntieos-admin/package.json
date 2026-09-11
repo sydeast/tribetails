@@ -31,6 +31,7 @@
     "@tanstack/react-router": "^1.170.32",
     "@tribetails/geo": "*",
     "firebase": "^12.18.0",
+    "mapbox-gl": "^3.29.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zod": "^4.5.4",

@@ -401,7 +401,7 @@ export function CommunicatePersonalize() {
                 state taking up the screen. */}
             {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
             {draft !== null && (
-              <DenPanel title="Auntie AI draft" subtitle={draftSubtitle(draft)}>
+              <DenPanel title="Auntie AI draft" detail={draftSubtitle(draft)}>
                 <div className="personalize__form">
                   {draft.draftWriteFailed && (
                     <Banner tone="warning" title="Draft not saved">

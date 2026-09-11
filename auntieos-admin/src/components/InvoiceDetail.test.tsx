@@ -9,25 +9,43 @@ import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.gener
 
 /**
  * The router's `Link`, rendered as the anchor it becomes. The linked-visits
- * panel routes to `/sessions?sessionId=` (#408), and this sheet is unit-
- * rendered without a router. Same stub as `Invites.test.tsx`.
+ * panel routes to the visit's own route, `/sessions/{id}` (#408, moved onto a
+ * path param by #753), and this sheet is unit-rendered without a router. Same
+ * stub as `Invites.test.tsx`.
  */
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     to,
+    params,
     search,
     children,
     ...rest
   }: {
     to: string;
+    params?: Record<string, string>;
     search?: Record<string, string>;
     children: ReactNode;
   }) => (
-    <a href={search ? `${to}?${new URLSearchParams(search).toString()}` : to} {...rest}>
+    <a href={hrefOf(to, params, search)} {...rest}>
       {children}
     </a>
   ),
 }));
+
+/**
+ * The href a router `Link` would produce, path params substituted first (a
+ * visit's own route is `/sessions/$sessionId` since #753), then any search.
+ */
+function hrefOf(
+  to: string,
+  params?: Record<string, string>,
+  search?: Record<string, string>,
+): string {
+  const path = Object.entries(params ?? {}).reduce((acc, [k, v]) => acc.replace(`$${k}`, v), to);
+  const q = new URLSearchParams(search ?? {}).toString();
+  return q === '' ? path : `${path}?${q}`;
+}
+
 const {
   sendInvoiceReminder,
   markInvoicePaid,

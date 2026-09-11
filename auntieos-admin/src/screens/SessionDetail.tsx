@@ -12,6 +12,7 @@ import {
 } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useBreadcrumbs, routePointsFromGpsSummary } from '../lib/breadcrumbs';
+import { useHouseholdLocation } from '../lib/householdLocation';
 import {
   sessionState,
   type SessionState,
@@ -61,19 +62,29 @@ const SESSION_STATE_TONE: Record<SessionState, DenTone> = {
 
 interface SessionDetailProps {
   /**
-   * The session row. Sessions.tsx now resolves it through `useDocById`, a LIVE
-   * document subscription, rather than by value out of its paged list: this
-   * screen hosts writes, and `useDocById`'s own header states the rule --
-   * "a frozen copy of the record would disagree with the list behind it the
-   * moment one landed". A clock-in here therefore repaints this screen from the
-   * document the server actually wrote, never from what the client hoped it
-   * wrote, so an optimistic status can never survive a refusal.
+   * The session row. `routes/SessionDetailView.tsx` resolves it through
+   * `useDocById`, a LIVE document subscription, rather than by value out of the
+   * board's paged list: this screen hosts writes, and `useDocById`'s own header
+   * states the rule -- "a frozen copy of the record would disagree with the list
+   * behind it the moment one landed". A clock-in here therefore repaints this
+   * screen from the document the server actually wrote, never from what the
+   * client hoped it wrote, so an optimistic status can never survive a refusal.
    *
-   * `null` means the id no longer resolves to a row (the read is not ready yet,
-   * or a stale/removed id): that gets its own honest "unavailable" state below,
-   * never a blank or a fabricated detail.
+   * `null` means the read produced no row. WHICH kind of no row it is comes from
+   * `read` below, never from this prop on its own.
    */
   entry: SessionEntry | null;
+  /**
+   * What the by-id read is doing while it is not `ready`, so a null `entry` is
+   * reported as the thing it actually is.
+   *
+   * Three answers, not one. A read still in flight is not a removed visit, and a
+   * refused read is not one either, so calling either of them "no longer
+   * available" would be this screen inventing a fact about the record. Absent
+   * means the caller already holds a settled answer, and a null entry there is a
+   * visit that genuinely is not on file.
+   */
+  read?: { status: 'loading' } | { status: 'error'; message: string; retry?: () => void };
   onBack: () => void;
 }
 
@@ -139,7 +150,11 @@ function messageOf(err: unknown): string {
  *                       newest-first ordering included.
  *   the route           `ui/components/RouteMap.kt` + `LiveTrackingScreen.kt`:
  *                       a polyline over the breadcrumb subcollection, live only
- *                       while ARRIVED.
+ *                       while ARRIVED. Since #760 that polyline is drawn over a
+ *                       Mapbox satellite basemap with the visit's times on a
+ *                       strip above it, and the Android Kin Care detail carries
+ *                       the same map; the Canvas polyline is the fallback on
+ *                       both platforms, not the target.
  *
  * THE BUTTONS ARE A COURTESY, THE SERVER IS THE GUARD. `lifecycleActionsFor`
  * only OFFERS what applies to the state being rendered, so the operator is not
@@ -154,7 +169,7 @@ function messageOf(err: unknown): string {
  * `lib/breadcrumbs.ts`'s header for the two citations. An admin's read is
  * untouched by it, so this panel draws the route whatever the switch says.
  */
-export function SessionDetail({ entry, onBack }: SessionDetailProps) {
+export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // "Today" doesn't change mid-view; computed once (the Sessions.tsx todayIso
   // rationale). Called unconditionally, above the null branch, per Rules of Hooks.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
@@ -299,6 +314,10 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
   );
   const route = crumbs.points.length > 0 ? crumbs.points : summaryRoute;
   const gpsSummary = entry?.gpsSummary;
+  // The purple house marker's coordinate (#760). Read from the household's own
+  // record, never geocoded here: `lib/householdLocation.ts` says why, and the
+  // map simply draws no house when the record has none.
+  const house = useHouseholdLocation(str(entry?.kinfolkId));
 
   return (
     <div className="screen">
@@ -306,8 +325,8 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
         // "Auntie Time" is the rail's name for /sessions (lib/nav.ts: "the rail
         // says Auntie Time; the slug and the code say sessions"), and a crumb
         // that called it anything else would name a screen the operator cannot
-        // find. `onSelect`: this detail is a sibling view of the list, opened
-        // without a URL change.
+        // find. `onSelect` runs the same `onBack` the trailing button does, and
+        // since #753 that is a real route move back to `/sessions`.
         crumbs={[{ label: 'Auntie Time', onSelect: onBack }, { label: sessionLabel }]}
         title={sessionLabel}
         subtitle="Kin Care session detail."
@@ -315,12 +334,38 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
       />
 
       {entry === null ? (
-        <DenPanel title="Session unavailable">
-          <EmptyHint>
-            This Kin Care session is no longer available. It may have been removed, or the list is still
-            loading.
-          </EmptyHint>
-        </DenPanel>
+        // THE THREE NO-ROW ANSWERS, kept apart (#753). A refresh on
+        // `/sessions/<id>` now mounts this screen with nothing resolved yet, so
+        // the old single "no longer available" line would have accused every
+        // reload of naming a removed visit.
+        read?.status === 'loading' ? (
+          <DenPanel title="Kin Care session">
+            {/* The Bookings by-id sheet says "Looking this booking up…" for the
+                same moment, and the same voice is the point: the operator should
+                not have to learn two sentences for one wait. */}
+            <p className="den-hint" role="status">
+              Looking this Kin Care session up…
+            </p>
+          </DenPanel>
+        ) : read?.status === 'error' ? (
+          <DenPanel title="Session unavailable">
+            <ErrorHint>
+              Couldn&rsquo;t read this Kin Care session. {read.message}
+              {read.retry && (
+                <button type="button" className="async-retry" onClick={read.retry}>
+                  Retry
+                </button>
+              )}
+            </ErrorHint>
+          </DenPanel>
+        ) : (
+          <DenPanel title="Session unavailable">
+            <EmptyHint>
+              No Kin Care session is on file under this id. It may have been removed. Back to Auntie
+              Time returns to the board.
+            </EmptyHint>
+          </DenPanel>
+        )
       ) : (
         (() => {
           // Every field is read through `str()`/`arr()`: `SessionEntry` is a cast
@@ -450,7 +495,11 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                       ? 'Waiting for the first GPS ping. The field app writes one about every five seconds while a visit is in flight.'
                       : inFlight
                         ? 'No GPS breadcrumbs were recorded for this Kin Care.'
-                        : 'No route on file for this Kin Care. Tracking runs while an Auntie is clocked in; older breadcrumbs are cleared once past the retention window, leaving the saved summary.'}
+                        : state === 'completed' || state === 'cancelled' || state === 'unknown'
+                          ? gpsSummary != null
+                            ? 'A GPS summary was saved for this Kin Care, but it has no route points to draw.'
+                            : 'No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'
+                          : 'Tracking starts once an Auntie clocks in for this Kin Care.'}
                   </EmptyHint>
                 ) : (
                   <>
@@ -459,6 +508,9 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                       live={state === 'arrived'}
                       distanceMeters={gpsSummary?.distanceMeters}
                       durationSeconds={gpsSummary?.durationSeconds}
+                      arrivedAt={str(entry.arrivedAt)}
+                      departedAt={str(entry.departedAt)}
+                      house={house}
                     />
                     {crumbs.points.length === 0 && summaryRoute.length > 0 && (
                       <p className="sdetail__hint">

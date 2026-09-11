@@ -1,8 +1,14 @@
 /**
- * RouteMap styling. Every value from styles/tokens.css, no literals.
+ * RouteMap styling.
  *
- * The panel mirrors `ui/components/RouteMap.kt`'s Compose surface: a hairline
- * card holding a fixed-aspect canvas with the three stats beneath it.
+ * The panel is a hairline card holding a fixed-aspect stage with the three
+ * stats beneath it. The stage holds the dark header strip and, under it, either
+ * the Mapbox satellite canvas or the SVG polyline that stands in for it (#760).
+ *
+ * Values come from styles/tokens.css with ONE documented exception, the strip's
+ * own ground: it sits over aerial imagery rather than over an app surface, so
+ * it has to stay dark in both schemes. It is written as brand navy with an
+ * alpha, which a var() reference cannot carry.
  */
 
 .routemap {
@@ -78,4 +84,75 @@
   font-size: var(--type-title-md-size);
   font-weight: var(--type-title-md-weight);
   color: var(--color-text-primary);
+}
+
+/* The stage: strip on top, map or polyline filling the rest. `relative` so the
+   strip can sit over the map's own top edge the way the reference report has
+   it, rather than pushing the imagery down. */
+.routemap__stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+/* Brand navy (--tt-brand-navy, #11131f) at 82%, not a token reference: the
+   strip lies on satellite imagery in BOTH schemes, so a role token that flips
+   with the theme would put cream text on cream in light mode. */
+.routemap__strip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(17, 19, 31, 0.82);
+  color: var(--tt-brand-cream);
+}
+
+.routemap__strip-facts {
+  margin: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.routemap__strip-lead {
+  font-weight: 600;
+}
+
+/* The reference report's pipe between the length and the timeline. Decorative:
+   it is `aria-hidden` in the markup so a screen reader reads two clauses, not
+   a punctuation mark between them. */
+.routemap__strip-sep {
+  opacity: 0.45;
+}
+
+.routemap__strip-age {
+  margin: 0;
+  margin-left: auto;
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  opacity: 0.75;
+}
+
+/* mapbox-gl sizes itself to its container and paints nothing without one, so
+   the height is stated here rather than left to the canvas. Same 400:180 the
+   SVG fallback draws at, so the panel does not jump when the map takes over. */
+.routemap__map {
+  width: 100%;
+  aspect-ratio: 400 / 180;
+  min-height: 180px;
+  background: var(--color-surface-glass);
+}
+
+/* The SDK's own chrome. The zoom control and the attribution ride inside the
+   stage, and the stage clips its corners, so neither needs a radius of its own. */
+.routemap__map .mapboxgl-ctrl-attrib {
+  font-size: 10px;
 }

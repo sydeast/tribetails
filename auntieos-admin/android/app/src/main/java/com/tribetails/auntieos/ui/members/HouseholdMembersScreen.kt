@@ -315,7 +315,7 @@ private fun MemberBlock(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    DenPanel(title = member.label, subtitle = member.uid) {
+    DenPanel(title = member.label, detail = member.uid) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(dims.space2),

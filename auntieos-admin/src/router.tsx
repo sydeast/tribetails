@@ -198,11 +198,37 @@ const bookingsRoute = createRoute({
 const sessionsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'sessions',
-  // `sessionId` is where an invoice line bound to a visit routes (#408): a
-  // bound line's money is corrected on the visit itself, so the invoice, the
-  // composer and the ledger all offer the way here.
+  // `sessionId` is where an invoice line bound to a visit used to route (#408):
+  // a bound line's money is corrected on the visit itself, so the invoice, the
+  // composer and the ledger all offer the way here. Since #753 the visit has a
+  // route of its own and those links point at it, so this search param survives
+  // only to forward the old shape, which is stored in records and in bookmarks.
   validateSearch: optionalIdSearch(['sessionId'] as const),
+  // Annotated rather than inferred: TanStack builds a route's `beforeLoad`
+  // context from the same object literal that declares `validateSearch`, so the
+  // validator's own return type is not available to it yet and `search` widens
+  // to `{}`. The annotation is the validator's shape, written once.
+  beforeLoad: ({ search }: { search: { sessionId?: string } }) => {
+    if (search.sessionId !== undefined) {
+      throw redirect({ to: '/sessions/$sessionId', params: { sessionId: search.sessionId } });
+    }
+  },
   component: lazyRouteComponent(() => import('./routes/SessionsView'), 'SessionsView'),
+});
+
+/**
+ * ONE Kin Care session, addressable (#753). "KinCares should have their own id
+ * numbers in the params. I don't want to refresh the KinCare."
+ *
+ * The detail was a local-state view of the board, so opening one changed no URL
+ * and a refresh, a bookmark, a shared link or browser Back lost it. The param is
+ * the `kin_care_sessions` document id, which is the id every other admin surface
+ * already names a visit by.
+ */
+const sessionDetailRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'sessions/$sessionId',
+  component: lazyRouteComponent(() => import('./routes/SessionDetailView'), 'SessionDetailView'),
 });
 
 const kinTalesRoute = createRoute({
@@ -331,7 +357,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({

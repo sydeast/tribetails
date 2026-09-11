@@ -174,10 +174,18 @@ describe('Invites', () => {
 
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    // The ONLY buttons on this screen are the four status filters. Naming them
-    // exhaustively is the assertion: any control added later — Send, Resend,
-    // Revoke, a permission toggle — fails here rather than shipping quietly.
-    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
+    // The ONLY things you can act on here are the four status filters. Naming
+    // them exhaustively is the assertion: any control added later (Send,
+    // Resend, Revoke, a permission toggle) fails here rather than shipping
+    // quietly. The two info buttons are excluded by name rather than listed,
+    // because they act on nothing: since #752 a heading or panel that carries
+    // an explanation shows it in a tooltip instead of a line of copy, so every
+    // explained section on every screen grows one and counting them here would
+    // turn this guard into a tally of how many sentences the screen has.
+    const actions = screen
+      .getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-label') !== 'About this section');
+    expect(actions.map((b) => b.textContent?.trim())).toEqual([
       'Outstanding 1',
       'Accepted 0',
       'Revoked 0',

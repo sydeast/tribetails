@@ -262,7 +262,7 @@ export function buildGeneratePayload(
   };
 }
 
-/** The archive's draft-callout subtitle: whatever the response actually told us, joined with the archive's separator. */
+/** The archive's draft-callout detail line: whatever the response actually told us, joined with the archive's separator. */
 export function draftSubtitle(r: {
   kinfolk_name: string | null;
   communication_type: string;
