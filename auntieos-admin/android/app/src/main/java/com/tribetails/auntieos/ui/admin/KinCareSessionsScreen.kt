@@ -439,7 +439,7 @@ private fun KinCareCard(
     onTransition: (BookingTransitionAction, String, String) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val tone = statusTone(session.status)
+    val tone = kinCareStatusTone(session.status)
     val isArrived = session.status.equals("ARRIVED", ignoreCase = true)
     val isInFlight = session.status.uppercase() in setOf("ARRIVED", "DEPARTED")
     val context = LocalContext.current
@@ -900,8 +900,12 @@ private fun EmptyState() {
 
 // ── Status mapping ────────────────────────────────────────────────────────────────
 
-/** Maps a session status to the Den status tone (color signature). */
-private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+/**
+ * Maps a session status to the Den status tone (color signature). Internal
+ * since #755: the Kin Care detail's hero pill reads the same map, so the card
+ * and the detail cannot drift on which grey a cancelled visit takes.
+ */
+internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED" -> AuntieStatusTone.Teal
     "DEPARTED" -> AuntieStatusTone.Purple
