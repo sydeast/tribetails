@@ -1,8 +1,9 @@
 import { useCallback, useState, type ReactNode } from 'react';
+import { linkOptions } from '@tanstack/react-router';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
-import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { DenPanel, DenScreenHeading, EmptyHint, type Crumb } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { MaskedValue } from '../components/MaskedValue';
@@ -36,6 +37,12 @@ interface HouseholdDataProps {
   /** From the household profile, so the heading names the household before the read lands. */
   kinfolkName: string;
   onBack: () => void;
+  /**
+   * The trail's "Kinfolk" step: the Directory's kinfolk tab, which is the
+   * profile's own Back. The profile passes its `onBack` through; a caller with
+   * no list to return to leaves it out and the trail drops that step.
+   */
+  onKinfolkList?: (() => void) | undefined;
 }
 
 /**
@@ -54,7 +61,8 @@ interface HouseholdDataProps {
  * and in `HouseholdRecord`, just unrendered here, pending the household/
  * family-page redesign that gives emergency contacts a home of their own. See
  * the removal comment there before adding either section back or deleting
- * their fields.
+ * their fields. The mock carries the same removal (#755), so a later pass
+ * against it does not draw the two panels back.
  *
  *  READ FIRST, EDIT ON REQUEST. The resting state is a legible record: what is
  *  on file, what is still blank, section by section. This screen is read at a
@@ -68,8 +76,22 @@ interface HouseholdDataProps {
  *  fields, so the gaps ARE the content. `KinfolkProfile`'s convention of hiding
  *  blank facts is the right call there and the wrong one here.
  */
-export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataProps) {
+export function HouseholdData({ kinfolkId, kinfolkName, onBack, onKinfolkList }: HouseholdDataProps) {
   const household = kinfolkName.trim() === '' ? kinfolkId : kinfolkName;
+
+  // The mock's trail: Directory / Kinfolk / <Name> / Household. Directory is
+  // a real route and so an anchor; Kinfolk is the list's own tab, a sibling
+  // view; the household's name closes this sub-view back down to the profile
+  // (the same click as the Back button, see #689); Household is where you
+  // are. The kicker this heading used to wear read word for word what the
+  // Directory says two levels up, so it could not tell an operator which of
+  // the two they had open.
+  const crumbs: Crumb[] = [
+    { label: 'Directory', link: linkOptions({ to: '/directory' }) },
+    ...(onKinfolkList !== undefined ? [{ label: 'Kinfolk', onSelect: onKinfolkList }] : []),
+    { label: household, onSelect: onBack },
+    { label: 'Household' },
+  ];
 
   // `household_data` is `allow read, write: if isAuntie()` with no test-admin
   // branch (firestore.rules:601), so a sandbox account is denied outright and
@@ -81,16 +103,20 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack }: HouseholdDataP
 
   return (
     <div className="screen">
+      {/*
+        The mock's hero: "<Name> Household" in the title, the sentence behind
+        the info button. The name used to sit on the detail line under a
+        "Household data" title (#752); the mock puts it in the h1, so a screen
+        reader's first announcement says whose record this is.
+
+        The mock also leads the title with a House icon. `DenScreenHeading` has
+        no leading slot until #780 lands, so the icon waits on that rather than
+        being drawn beside the band by hand.
+      */}
       <DenScreenHeading
-        kicker="The Den · Directory"
-        title="Household"
-        accentTail="data"
-        // The household's NAME is the one thing on this heading that is a
-        // value rather than an explanation, and before #752 it was buried in
-        // the sentence. The sentence moved into the tooltip; the name stayed,
-        // because otherwise nothing on the screen says whose record this is.
-        detail={household}
-        subtitle="The shared record behind this household: vet, supplies, routines, and who covers Auntie."
+        crumbs={crumbs}
+        title={`${household} Household`}
+        subtitle="The shared record behind this household: vet, supplies and routines, for every pet in the home."
         // Names the screen the click actually lands on (#689). This is a
         // sub-view of the household PROFILE, held in that screen's state, so
         // closing it never leaves `/directory/{id}`. "Back to household" named
@@ -225,16 +251,16 @@ function HouseholdRecordView({
         empty={null}
       >
         {(text) => (
+          // "Admin only" is a statement about the panel, so it is the mock's
+          // right-aligned mono note (`meta`); the sentence that used to open
+          // the body is the explanation, so it is the tooltip (#758).
           <DenPanel
             title="From the dossier"
-            subtitle="Admin only. Internal."
+            subtitle="Loose notes written before this record existed. Copy what belongs into the sections below; the dossier keeps its own copy either way."
+            meta="admin only"
             collapsible
             initiallyExpanded
           >
-            <p className="hdata__notes-lede">
-              Loose notes written before this record existed. Copy what belongs into the sections
-              below; the dossier keeps its own copy either way.
-            </p>
             <p className="hdata__notes">{text}</p>
           </DenPanel>
         )}
@@ -317,6 +343,23 @@ function EmptyRecord({
   );
 }
 
+/**
+ * The entrance steps, literal so the stylesheet scan in
+ * `styles/tokenUsage.test.ts` can see a gapless d1, d2, d3.
+ */
+const STAGGER: readonly ('d1' | 'd2' | 'd3')[] = ['d1', 'd2', 'd3'];
+
+/**
+ * A cell of the mock's two-column grid. A multiline field spans both columns
+ * (its value is a paragraph), and so does a single-line field the mock gives
+ * a full row to (`wide` on the spec).
+ */
+function factClass(field: HouseholdFieldSpec): string {
+  return field.kind === 'multiline' || field.wide === true
+    ? 'hdata__fact hdata__fact--wide'
+    : 'hdata__fact';
+}
+
 function Sections({
   record,
   onEdit,
@@ -330,7 +373,11 @@ function Sections({
 }) {
   return (
     <>
-      {HOUSEHOLD_SECTIONS.map((section) => {
+      {HOUSEHOLD_SECTIONS.map((section, index) => {
+        // The mock's panels enter one after another (`.panel.d1` to `.d5`).
+        // Three sections remain, so three steps; the kit pins the fill mode
+        // so a staggered panel is never left transformed.
+        const stagger = STAGGER[index];
         // The veterinary section is read through from the household profile
         // (punchlist A2), so it renders its own panel rather than this one.
         if (section.editor === 'vetPicker') {
@@ -342,6 +389,7 @@ function Sections({
               clinics={clinics}
               onEdit={() => onEdit(section)}
               onCleared={onCleared}
+              stagger={stagger}
             />
           );
         }
@@ -353,6 +401,7 @@ function Sections({
             title={section.title}
             detail={`${filled} of ${total} on file`}
             subtitle={section.blurb}
+            {...(stagger !== undefined ? { className: stagger } : {})}
             trailing={
               <GhostButton label={`Edit ${section.title.toLowerCase()}`} onClick={() => onEdit(section)} />
             }
@@ -366,7 +415,7 @@ function Sections({
               {section.fields.map((field) => {
                 const value = record[field.key];
                 return (
-                  <div className="hdata__fact" key={field.key}>
+                  <div className={factClass(field)} key={field.key}>
                     <dt className="hdata__fact-label">{field.label}</dt>
                     <dd className="hdata__fact-value">
                       {field.secret === true ? (
@@ -410,12 +459,14 @@ function VeterinarySection({
   clinics,
   onEdit,
   onCleared,
+  stagger,
 }: {
   section: HouseholdSectionSpec;
   record: HouseholdRecord;
   clinics: Async<VetClinic[]>;
   onEdit: () => void;
   onCleared: (next: HouseholdRecord) => void;
+  stagger: 'd1' | 'd2' | 'd3' | undefined;
 }) {
   const vet = clinics.status === 'ready' ? resolveHouseholdVet(record, clinics.data) : null;
   // Leftovers are only worth flagging when the slot is LINKED. On an unlinked
@@ -449,6 +500,7 @@ function VeterinarySection({
     <DenPanel
       title={section.title}
       subtitle={section.blurb}
+      {...(stagger !== undefined ? { className: stagger } : {})}
       trailing={<GhostButton label="Edit veterinary" onClick={onEdit} />}
     >
       {clinics.status === 'loading' && <p className="hdata__notes-lede">Reading the shared clinic catalog…</p>}
@@ -515,8 +567,10 @@ function LeftoverFacts({
   leftovers: readonly HouseholdFieldSpec[];
   record: HouseholdRecord;
 }) {
+  // Stacked, not the section grid: this list sits inside a banner and inside
+  // the confirm dialog, and two columns in a dialog's width crush the values.
   return (
-    <dl className="hdata__facts">
+    <dl className="hdata__facts hdata__facts--stack">
       {leftovers.map((field) => (
         <div className="hdata__fact" key={field.key}>
           <dt className="hdata__fact-label">{field.label}</dt>
@@ -529,15 +583,17 @@ function LeftoverFacts({
 function VetFacts({ vet }: { vet: HouseholdVet }) {
   return (
     <>
+      {/* The mock's rows: the name on a row of its own, phone beside hours,
+          the address on its own row, for each of the two clinics. */}
       <dl className="hdata__facts">
-        <VetRow label="Primary vet" value={vet.primary.name} />
+        <VetRow label="Primary vet" value={vet.primary.name} wide />
         <VetRow label="Primary vet phone" value={vet.primary.phone} />
         <VetRow label="Primary vet hours" value={vet.primary.hours} />
-        <VetRow label="Primary vet address" value={vet.primary.address} />
-        <VetRow label="Emergency vet" value={vet.emergency.name} />
+        <VetRow label="Primary vet address" value={vet.primary.address} wide />
+        <VetRow label="Emergency vet" value={vet.emergency.name} wide />
         <VetRow label="Emergency vet phone" value={vet.emergency.phone} />
         <VetRow label="Emergency vet hours" value={vet.emergency.hours} />
-        <VetRow label="Emergency vet address" value={vet.emergency.address} />
+        <VetRow label="Emergency vet address" value={vet.emergency.address} wide />
       </dl>
       {vet.primary.dangling && (
         <Banner tone="warning" title="This household's vet no longer exists">
@@ -556,9 +612,9 @@ function VetFacts({ vet }: { vet: HouseholdVet }) {
     </>
   );
 }
-function VetRow({ label, value }: { label: string; value: string }) {
+function VetRow({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
   return (
-    <div className="hdata__fact">
+    <div className={wide ? 'hdata__fact hdata__fact--wide' : 'hdata__fact'}>
       <dt className="hdata__fact-label">{label}</dt>
       <dd className="hdata__fact-value">
         {value.trim() === '' ? <span className="hdata__unset">Not set</span> : value}

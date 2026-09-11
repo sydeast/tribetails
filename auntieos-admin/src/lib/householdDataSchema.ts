@@ -198,6 +198,15 @@ export interface HouseholdFieldSpec {
    * in the editor. See the SECRETS note below for why these two and no others.
    */
   readonly secret?: true;
+  /**
+   * Spans both columns of the section grid. The mock
+   * (`ui-ideas/auntieos-household-data-2026-05-27.html`) lays every section out
+   * as two columns and gives a full row to the fields whose values run long
+   * (its `.full`); a multiline field always spans, this flag marks the
+   * single-line ones the mock spans too. Read by the record view and the
+   * section editor alike, so the two draw the same grid.
+   */
+  readonly wide?: true;
 }
 
 export interface HouseholdSectionSpec {
@@ -256,7 +265,9 @@ export interface HouseholdSectionSpec {
 export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
   {
     id: 'veterinary',
-    title: 'Veterinary',
+    // The three titles are the mock's own words (#755), which are also the
+    // words the Android form has always used for the same three cards.
+    title: 'Veterinary Information',
     blurb: 'Who to call, and who to call at 2am. Chosen from the shared vet bank.',
     editor: 'vetPicker',
     fields: [
@@ -275,7 +286,7 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
   },
   {
     id: 'items',
-    title: 'Items and locations',
+    title: 'Household Items & Locations',
     blurb: 'Where everything lives, so nobody has to open every cupboard.',
     fields: [
       { key: 'foodLocation', label: 'Food', kind: 'line' },
@@ -284,12 +295,12 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
       { key: 'toysLocation', label: 'Toys', kind: 'line' },
       { key: 'beddingLocation', label: 'Bedding', kind: 'line' },
       { key: 'leashesPoopBagsLocation', label: 'Leashes and bags', kind: 'line' },
-      { key: 'cleaningSuppliesLocation', label: 'Cleaning supplies', kind: 'line' },
+      { key: 'cleaningSuppliesLocation', label: 'Cleaning supplies', kind: 'line', wide: true },
     ],
   },
   {
     id: 'routines',
-    title: 'Routines and preferences',
+    title: 'Routines & Preferences',
     blurb: 'How this household runs when Auntie is the one running it.',
     fields: [
       { key: 'householdRules', label: 'Household rules', kind: 'multiline' },
@@ -297,7 +308,7 @@ export const HOUSEHOLD_SECTIONS: readonly HouseholdSectionSpec[] = [
       { key: 'neighborhoodHazards', label: 'Neighborhood hazards', kind: 'multiline' },
       { key: 'securitySystemInfo', label: 'Security system', kind: 'line', secret: true },
       { key: 'thermostatInstructions', label: 'Thermostat', kind: 'line' },
-      { key: 'lightingPreferences', label: 'Lighting', kind: 'line' },
+      { key: 'lightingPreferences', label: 'Lighting', kind: 'line', wide: true },
     ],
   },
   // REMOVED 2026-08-04: "Emergency and safety" (poisonControlNumber,

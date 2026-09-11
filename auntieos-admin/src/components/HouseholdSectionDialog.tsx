@@ -176,7 +176,13 @@ function SectionField({ field, value, error, onChange }: SectionFieldProps) {
   const invalid = error !== null;
 
   return (
-    <div className={field.kind === 'multiline' ? 'hsection__field hsection__field--wide' : 'hsection__field'}>
+    <div
+      className={
+        field.kind === 'multiline' || field.wide === true
+          ? 'hsection__field hsection__field--wide'
+          : 'hsection__field'
+      }
+    >
       <label className="hsection__label" htmlFor={inputId}>
         {field.label}
       </label>

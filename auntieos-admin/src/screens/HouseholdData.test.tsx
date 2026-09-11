@@ -2,8 +2,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { ToastProvider } from '../components/Toast';
 import { blankHouseholdRecord, type HouseholdRecord } from '../api/householdData';
+
+// The trail's Directory step is a real route link, and a real `Link` wants a
+// RouterProvider no suite in this tree mounts (KinView.test.tsx convention).
+vi.mock('@tanstack/react-router', () => ({
+  linkOptions: (o: unknown) => o,
+  Link: ({ to, children, ...rest }: { to: string; children: ReactNode }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 /**
  * The screen raises a toast on a landed save, and `useToast` throws outside its
@@ -104,9 +116,14 @@ describe('HouseholdData: reading the record', () => {
     mount();
     expect(await screen.findByText('Pantry, second shelf')).toBeInTheDocument();
 
-    for (const title of ['Veterinary', 'Items and locations', 'Routines and preferences']) {
-      expect(screen.getByText(title)).toBeInTheDocument();
-    }
+    // The mock's own words for the three sections (#755), as panel titles in
+    // the mock's order.
+    const titles = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(titles).toEqual([
+      'Veterinary Information',
+      'Household Items & Locations',
+      'Routines & Preferences',
+    ]);
   });
 
   it('no longer renders Emergency and safety or Service providers, dropped 2026-08-04', async () => {
@@ -121,16 +138,78 @@ describe('HouseholdData: reading the record', () => {
     expect(screen.queryByText('Paws and Claws Grooming')).not.toBeInTheDocument();
   });
 
-  it('names the household in the heading', async () => {
+  it('names the household in the heading, the way the mock titles it', async () => {
     mount();
-    // The heading's `detail` line, which is where the name lives since #752:
-    // the sentence that used to carry it is a tooltip now, and a screen that
-    // never says whose record you are reading is the defect this guards. The
-    // class is part of the assertion because since #689 the Back button names
-    // the household too, and a bare /Nora Whitfield/ matches both.
-    const named = await screen.findByText('Nora Whitfield');
-    expect(named).toBeVisible();
-    expect(named).toHaveClass('den-heading-detail');
+    // "<Name> Household" is the mock's h1 (#755). Asserted by role because
+    // since #689 the Back button names the household too, and a bare
+    // /Nora Whitfield/ matches both.
+    const h1 = await screen.findByRole('heading', { level: 1 });
+    expect(h1).toHaveTextContent('Nora Whitfield Household');
+    expect(h1).toHaveClass('den-heading-title');
+    // The explanation is the info button's tooltip, never a line of copy: the
+    // h1 describes itself by the tip's id, and the tip stays hidden until asked.
+    const tipId = h1.getAttribute('aria-describedby');
+    expect(tipId).not.toBeNull();
+    const tip = document.getElementById(tipId as string);
+    expect(tip).toHaveAttribute('role', 'tooltip');
+    expect(tip).toHaveTextContent(/shared record behind this household/);
+    expect(tip).not.toBeVisible();
+  });
+
+  it('wears the mock trail in place of the kicker: Directory / Kinfolk / name / Household', async () => {
+    const onBack = vi.fn();
+    const onKinfolkList = vi.fn();
+    render(
+      <HouseholdData
+        kinfolkId="kf1"
+        kinfolkName="Nora Whitfield"
+        onBack={onBack}
+        onKinfolkList={onKinfolkList}
+      />,
+    );
+    const trail = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    const steps = within(trail).getAllByRole('listitem').map((li) => li.textContent?.replace('/', '').trim());
+    expect(steps).toEqual(['Directory', 'Kinfolk', 'Nora Whitfield', 'Household']);
+    expect(screen.queryByText('The Den · Directory')).not.toBeInTheDocument();
+    // Directory is a real route, so it is an anchor; the household's name and
+    // the kinfolk tab are sibling views, so they are buttons that do what the
+    // profile's own steps do.
+    expect(within(trail).getByRole('link', { name: 'Directory' })).toHaveAttribute('href', '/directory');
+    await user.click(within(trail).getByRole('button', { name: 'Nora Whitfield' }));
+    expect(onBack).toHaveBeenCalledOnce();
+    await user.click(within(trail).getByRole('button', { name: 'Kinfolk' }));
+    expect(onKinfolkList).toHaveBeenCalledOnce();
+    expect(within(trail).getByText('Household')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('drops the Kinfolk step when no list was handed down, rather than a dead button', async () => {
+    mount();
+    const trail = await screen.findByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(trail).queryByRole('button', { name: 'Kinfolk' })).not.toBeInTheDocument();
+    expect(within(trail).getAllByRole('listitem')).toHaveLength(3);
+  });
+
+  it('lays each section out as the mock grid: two columns, wide cells spanning both', async () => {
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    // Food sits in one column; the mock gives Cleaning supplies a full row.
+    expect(screen.getByText('Food').closest('.hdata__fact')).not.toHaveClass('hdata__fact--wide');
+    expect(screen.getByText('Cleaning supplies').closest('.hdata__fact')).toHaveClass('hdata__fact--wide');
+    // A multiline value always spans, and so does the mock's full-row Lighting.
+    expect(screen.getByText('Household rules').closest('.hdata__fact')).toHaveClass('hdata__fact--wide');
+    expect(screen.getByText('Lighting').closest('.hdata__fact')).toHaveClass('hdata__fact--wide');
+    // The vet grid: name and address full width, phone beside hours.
+    expect(screen.getByText('Primary vet').closest('.hdata__fact')).toHaveClass('hdata__fact--wide');
+    expect(screen.getByText('Primary vet phone').closest('.hdata__fact')).not.toHaveClass('hdata__fact--wide');
+  });
+
+  it('enters the three sections in the mock stagger, d1 to d3, in order', async () => {
+    mount();
+    await screen.findByText('Pantry, second shelf');
+    const panels = screen.getAllByRole('heading', { level: 2 }).map((h) => h.closest('.den-panel'));
+    expect(panels.map((p) => p?.classList.contains('d1'))).toEqual([true, false, false]);
+    expect(panels.map((p) => p?.classList.contains('d2'))).toEqual([false, true, false]);
+    expect(panels.map((p) => p?.classList.contains('d3'))).toEqual([false, false, true]);
   });
 
   it('shows a blank field as "Not set" rather than hiding it, because the gaps are the point', async () => {
@@ -144,6 +223,21 @@ describe('HouseholdData: reading the record', () => {
     mount();
     // Items and locations: 1 of 7 filled by the fixture.
     expect(await screen.findByText(/1 of 7 on file/)).toBeInTheDocument();
+  });
+
+  it('marks the dossier panel admin only in the mock mono note, with the explanation behind the info button', async () => {
+    getDossierHouseholdNotes.mockResolvedValue('Gate code 2210, dog is shy of hats.');
+    mount();
+    await screen.findByText('Gate code 2210, dog is shy of hats.');
+    const panel = screen.getByRole('heading', { level: 2, name: 'From the dossier' }).closest('.den-panel');
+    expect(panel).not.toBeNull();
+    expect(within(panel as HTMLElement).getByText('admin only')).toHaveClass('den-panel-meta');
+    // #758: no sentence under the title. The one that used to open the body
+    // is the tooltip now.
+    expect(within(panel as HTMLElement).getByRole('tooltip', { hidden: true })).toHaveTextContent(
+      /Copy what belongs into the sections below/,
+    );
+    expect(screen.queryByText('Admin only. Internal.')).not.toBeInTheDocument();
   });
 
   it('shows the dossier reference only when there is prose to migrate', async () => {
@@ -166,7 +260,7 @@ describe('HouseholdData: empty and error are not the same thing', () => {
     mount();
     expect(await screen.findByText(/Nothing on file yet/)).toBeInTheDocument();
     // Still editable: the first save starts the record from any section.
-    expect(screen.getByRole('button', { name: 'Edit items and locations' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit household items & locations' })).toBeInTheDocument();
   });
 
   it('fails loud on a read rejection, and NEVER renders the empty state over it', async () => {
@@ -230,13 +324,13 @@ describe('HouseholdData: editing a section', () => {
   async function openItems() {
     mount();
     await screen.findByText('Pantry, second shelf');
-    await user.click(screen.getByRole('button', { name: 'Edit items and locations' }));
+    await user.click(screen.getByRole('button', { name: 'Edit household items & locations' }));
     return screen.getByRole('dialog');
   }
 
   it('opens a modal that names the section and the household', async () => {
     const dialog = await openItems();
-    expect(within(dialog).getByText('Items and locations · Nora Whitfield')).toBeInTheDocument();
+    expect(within(dialog).getByText('Household Items & Locations · Nora Whitfield')).toBeInTheDocument();
   });
 
   it('seeds the form from the record rather than opening blank', async () => {
@@ -285,7 +379,7 @@ describe('HouseholdData: editing a section', () => {
     expect(patch).not.toHaveProperty('primaryVetName');
 
     expect(await screen.findByText('Top pantry shelf')).toBeInTheDocument();
-    expect(await screen.findByText(/Saved items and locations for Nora Whitfield/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved household items & locations for Nora Whitfield/)).toBeInTheDocument();
   });
 
   it('surfaces a rejected save in a persistent banner and keeps the operator-s edits', async () => {
@@ -300,7 +394,7 @@ describe('HouseholdData: editing a section', () => {
     expect(await within(dialog).findByText(/permission-denied/)).toBeInTheDocument();
     // Still open, still holding what was typed. A failed save is not a lost edit.
     expect(within(dialog).getByLabelText('Food')).toHaveValue('Top pantry shelf');
-    expect(screen.queryByText(/Saved items and locations/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Saved household items & locations/)).not.toBeInTheDocument();
   });
 
   it('starts the record from the empty state, so a first save is not a special case', async () => {
@@ -315,7 +409,7 @@ describe('HouseholdData: editing a section', () => {
     mount();
     await screen.findByText(/Nothing on file yet/);
 
-    await user.click(screen.getByRole('button', { name: 'Edit items and locations' }));
+    await user.click(screen.getByRole('button', { name: 'Edit household items & locations' }));
     const dialog = screen.getByRole('dialog');
     await user.type(within(dialog).getByLabelText('Food'), 'Pantry, second shelf');
     await user.click(within(dialog).getByRole('button', { name: /Save section/ }));
@@ -329,7 +423,7 @@ describe('HouseholdData: editing a section', () => {
   it('hides a typed secret behind a reveal in the editor too', async () => {
     mount();
     await screen.findByText('Pantry, second shelf');
-    await user.click(screen.getByRole('button', { name: 'Edit routines and preferences' }));
+    await user.click(screen.getByRole('button', { name: 'Edit routines & preferences' }));
     const dialog = screen.getByRole('dialog');
 
     const input = within(dialog).getByLabelText('Security system');
@@ -358,6 +452,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
     expect(screen.getByText('(512) 555 0100')).toBeInTheDocument();
   });
+
   it('reads HOURS from the clinic, not from the household', async () => {
     getHouseholdData.mockResolvedValue(
       record({ primaryVetClinicId: 'clinic_riverside', primaryVetHours: 'STALE' }),
@@ -365,6 +460,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     mount();
     expect(await screen.findByText('Mon to Fri 8a to 6p')).toBeInTheDocument();
   });
+
   it('shows a correction to the clinic with no household write at all', async () => {
     useCollection.mockReturnValue({
       status: 'ready',
@@ -374,6 +470,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     mount();
     expect(await screen.findByText('(512) 555 0199')).toBeInTheDocument();
   });
+
   it('keeps the emergency vet a DISTINCT clinic from the primary', async () => {
     getHouseholdData.mockResolvedValue(
       record({ primaryVetClinicId: 'clinic_riverside', emergencyVetClinicId: 'clinic_er' }),
@@ -386,11 +483,13 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
     expect(screen.getByText('Austin Pet ER')).toBeInTheDocument();
   });
+
   it('is edited HERE, since this record owns the vet', async () => {
     mount();
     await screen.findByText('Pantry, second shelf');
     expect(screen.getByRole('button', { name: 'Edit veterinary' })).toBeInTheDocument();
   });
+
   it('says so when the record is not linked to the catalog', async () => {
     // Without a clinic id there is nothing for a correction to match on, and
     // that is worth stating rather than leaving as an invisible difference.
@@ -400,12 +499,14 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     mount();
     expect(await screen.findByText(/not linked to the catalog/i)).toBeInTheDocument();
   });
+
   it('does not cry unlinked when the vet IS linked', async () => {
     getHouseholdData.mockResolvedValue(record({ primaryVetClinicId: 'clinic_riverside' }));
     mount();
     await screen.findByText('Riverside Animal Hospital');
     expect(screen.queryByText(/not linked to the catalog/i)).not.toBeInTheDocument();
   });
+
   it('fails loud on a dangling clinic id rather than showing stale text', async () => {
     getHouseholdData.mockResolvedValue(
       record({ primaryVetClinicId: 'gone', primaryVetName: 'Stale Clinic' }),
@@ -413,6 +514,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     mount();
     expect(await screen.findByText(/no longer exists/i)).toBeInTheDocument();
   });
+
   it('flags superseded free text once the record is LINKED', async () => {
     // Linked, so the clinic supplies the vet and the old strings are genuinely
     // unused. They are shown rather than dropped: deleting them silently would
@@ -424,6 +526,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     expect(await screen.findByText(/Older vet notes are still on this record/)).toBeInTheDocument();
     expect(screen.getByText('Barton Creek Animal Hospital')).toBeInTheDocument();
   });
+
   it('does NOT call the free text superseded while it is still the vet on show', async () => {
     // Unlinked: that text IS the vet rendered above, so calling it "not used
     // anywhere" would be duplicative and untrue.
@@ -432,6 +535,7 @@ describe('HouseholdData: the vet is owned here, and catalog-linked', () => {
     await screen.findByText('Barton Creek Animal Hospital');
     expect(screen.queryByText(/Older vet notes/)).not.toBeInTheDocument();
   });
+
   it('fails loud when the clinic catalog cannot be read', async () => {
     useCollection.mockReturnValue({ status: 'error', message: 'permission-denied' });
     mount();
@@ -539,7 +643,7 @@ describe('HouseholdData: editing the vet', () => {
     await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(await screen.findByText(/Saved veterinary for Nora Whitfield/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved veterinary information for Nora Whitfield/)).toBeInTheDocument();
   });
 
   it('keeps a rejected save on screen with the reason, never a silent failure', async () => {
@@ -548,7 +652,7 @@ describe('HouseholdData: editing the vet', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /^Save/ }));
     expect(await within(dialog).findByText(/permission-denied/)).toBeInTheDocument();
-    expect(screen.queryByText(/Saved veterinary/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Saved veterinary information/)).not.toBeInTheDocument();
   });
 
   it('refuses to save against a catalog that has not loaded, rather than clearing the link', async () => {
