@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.data.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Modifier
@@ -351,5 +352,36 @@ class BusinessSettingsDiffTest {
                 "${BUSINESS_SETTINGS_DIFF_FIELDS.keys.intersect(receipt)}",
             BUSINESS_SETTINGS_DIFF_FIELDS.keys.intersect(receipt).isEmpty(),
         )
+    }
+
+    // ── The KinCare rate card (issue #755): written whole, so a removed type stays removed ──
+
+    /**
+     * `SetOptions.merge()` merges a nested map key by key, which is how a
+     * `serviceRates` write that dropped "Walk" used to leave "Walk" in the
+     * document. A write naming either rate-card map goes out under
+     * `mergeFields` instead; everything else keeps the merge that protects
+     * `mytribePortal`.
+     */
+    @Test
+    fun `a rate-card write replaces its fields, and the removed type is absent from it`() {
+        val withTwo = loaded.copy(serviceRates = mapOf("Walk" to "10.00", "Overnight" to "80.00"))
+        val edited = withTwo.copy(serviceRates = mapOf("Overnight" to "80.00"))
+        val changes = businessSettingsFieldChanges(withTwo, edited)
+        assertEquals(mapOf("serviceRates" to mapOf("Overnight" to "80.00")), changes)
+        assertTrue(businessSettingsReplacesWholeFields(changes))
+    }
+
+    @Test
+    fun `a duration-only edit is also a whole-map write`() {
+        val edited = loaded.copy(serviceDurations = mapOf("Walk" to "45"))
+        assertTrue(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
+    }
+
+    @Test
+    fun `every other write keeps the key-by-key merge`() {
+        val edited = loaded.copy(venmoHandle = "@new-venmo")
+        assertFalse(businessSettingsReplacesWholeFields(businessSettingsFieldChanges(loaded, edited)))
+        assertFalse(businessSettingsReplacesWholeFields(emptyMap()))
     }
 }

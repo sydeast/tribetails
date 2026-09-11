@@ -1282,9 +1282,17 @@ class AuntieRepository(
             "updatedAt" to getCurrentTimestamp(),
             "updatedBy" to updatedBy,
         )
+        // A whole-map field (the KinCare rate card) must REPLACE what is stored,
+        // or a removed key survives the key-by-key merge. See
+        // BUSINESS_SETTINGS_WHOLE_MAP_FIELDS.
+        val options = if (businessSettingsReplacesWholeFields(changes)) {
+            com.google.firebase.firestore.SetOptions.mergeFields(payload.keys.toList())
+        } else {
+            com.google.firebase.firestore.SetOptions.merge()
+        }
         firestore.collection("business_settings")
             .document("business_settings")
-            .set(payload, com.google.firebase.firestore.SetOptions.merge())
+            .set(payload, options)
             .await()
         AuntieLog.d("Business settings saved successfully")
         Unit

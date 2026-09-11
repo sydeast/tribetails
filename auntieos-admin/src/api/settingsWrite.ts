@@ -43,13 +43,40 @@ export interface SaveStamp {
   updatedBy: string;
 }
 
+/**
+ * Map fields the editor always sends WHOLE, where a key it left out is a key
+ * the operator removed.
+ *
+ * `merge: true` merges a nested map key by key, so a `serviceRates` patch that
+ * no longer carries "Walk" leaves the stored "Walk" exactly where it was: the
+ * KinCare types editor's Remove button dropped the row on screen and the next
+ * load brought it back (the one case it worked was removing the LAST type,
+ * because an empty map does overwrite). The rate card is a flat name-to-value
+ * map that one editor owns outright, so a patch naming it is written with
+ * `mergeFields`, which replaces each named top-level field wholesale and still
+ * leaves every field the patch does not name untouched.
+ *
+ * Not the default for every patch: `mytribePortal` is a nested map that more
+ * than one section writes a slice of, and the key-by-key merge is what keeps
+ * one section's save from clobbering another's.
+ */
+export const WHOLE_MAP_FIELDS: ReadonlySet<keyof BusinessSettings> = new Set<keyof BusinessSettings>([
+  'serviceRates',
+  'serviceDurations',
+]);
+
+function writesWholeMap(patch: Partial<BusinessSettings>): boolean {
+  return Object.keys(patch).some((key) => WHOLE_MAP_FIELDS.has(key as keyof BusinessSettings));
+}
+
 export async function saveBusinessSettings(patch: Partial<BusinessSettings>): Promise<SaveStamp> {
   const updatedAt = new Date().toISOString();
   const updatedBy = auth.currentUser?.email ?? auth.currentUser?.uid ?? '';
+  const body = { ...patch, updatedAt, updatedBy };
   await setDoc(
     doc(db, 'business_settings', BUSINESS_SETTINGS_DOC_ID),
-    { ...patch, updatedAt, updatedBy },
-    { merge: true },
+    body,
+    writesWholeMap(patch) ? { mergeFields: Object.keys(body) } : { merge: true },
   );
   return { updatedAt, updatedBy };
 }

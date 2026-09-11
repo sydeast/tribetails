@@ -78,6 +78,7 @@ import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.ArrowUp
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.ClipboardList
+import com.composables.icons.lucide.ListOrdered
 import com.tribetails.auntieos.ui.components.AuntieIconButton
 import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.PawPrint
@@ -216,6 +217,13 @@ internal enum class SettingsSection(
     // different question: this is what a booking is ALLOWED to be, Business
     // operations is what happens once you are out on the visit. Panels live in
     // `BusinessRulesPanels.kt`.
+    // ISSUE #755: the KinCare types rate card, `business_settings.serviceRates`
+    // plus `serviceDurations`. Decoded, diffed and read by the schedule, the
+    // booking wizard and the package builder, and until this section nothing
+    // on the phone could edit it. Sits before Booking rules as it does on web
+    // (KinCare Settings, then Booking rules). Panel lives in
+    // `KinCareTypesPanel.kt`.
+    KinCareTypes("KinCare types", "Names, lengths and prices the booking screen offers", Lucide.ListOrdered),
     BookingRules("Booking rules", "Time zone, booking modes, and bookable blocks", Lucide.CalendarClock),
     BusinessOperations("Business operations", "Booking modes, tracking, retention", Lucide.Building2),
     Payments("Payments", "Handles clients pay you through", Lucide.Wallet),
@@ -485,6 +493,12 @@ fun AdminSettingsScreen(
                             navConfig = uiState.profile.navConfig,
                             canSave = uiState.profile.uid.isNotBlank(),
                             onSave = { viewModel.saveNavConfig(it) },
+                        )
+
+                        SettingsSection.KinCareTypes -> KinCareTypesPanel(
+                            settings = uiState.businessSettings,
+                            isLoading = uiState.isLoading,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
                         )
 
                         SettingsSection.BookingRules -> BookingRulesPanel(
