@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { DEFAULT_COVERAGE_RULES, todayIso } from '../lib/coveragePackage';
 
 const getBusinessSettings = vi.fn();
@@ -160,6 +160,10 @@ describe('CoveragePackageBuilder tiers (issue #694)', () => {
     // duration set" line the operator never asked for.
     render(<CoveragePackageBuilder />);
     await packageNames();
+    // The names paint before the persist effect has written the quote, so on
+    // a slow runner the item is still null right after the names resolve.
+    // Wait for the write itself rather than for its side effect on screen.
+    await waitFor(() => expect(window.localStorage.getItem('tt-coverage-quote-v1')).not.toBeNull());
     const stored = JSON.parse(window.localStorage.getItem('tt-coverage-quote-v1')!);
     const knownIds = new Set(Object.keys(SETTINGS.serviceRates));
     expect(stored.packages.length).toBeGreaterThan(0);
