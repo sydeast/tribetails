@@ -19,16 +19,16 @@ import { type CollectionSpec } from '../lib/firestore';
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 /**
- * The by-id read behind the deep link (#408), plus the two directory joins the
- * card needs (`kinfolk` for the service address, `kin` for the photos). Mocked
- * at the module boundary rather than stubbed out, because which spec each read
- * asks for is part of what these cases check.
+ * The two directory joins the card needs (`kinfolk` for the service address,
+ * `kin` for the photos). Mocked at the module boundary rather than stubbed out,
+ * because which spec each read asks for is part of what these cases check.
+ *
+ * No by-id read here any more: opening a visit is a route now (#753), so the
+ * `kin_care_sessions/{id}` subscription lives in `routes/SessionDetailView.tsx`
+ * and is driven from `routes/SessionDetailView.test.tsx`.
  */
-const { useDocById, useCollection } = vi.hoisted(() => ({
-  useDocById: vi.fn(),
-  useCollection: vi.fn(),
-}));
-vi.mock('../lib/firestore', () => ({ useDocById, useCollection }));
+const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
+vi.mock('../lib/firestore', () => ({ useCollection }));
 /**
  * The writes. `setVisitLifecycle` is the card's own clock (through
  * `lib/useVisitLifecycle.ts`, the hook SessionDetail shares) and
@@ -164,12 +164,19 @@ afterAll(() => {
 });
 
 const user = userEvent.setup();
+/**
+ * Every case mounts the board the way the router does: with an `onSelect` that
+ * opens the visit's own route (#753). It is required now, because a card head
+ * that opened nothing would be a dead control, so the mock stands in for the
+ * navigate `routes/SessionsView.tsx` passes.
+ */
+const onSelect = vi.fn();
+function renderBoard(props: Partial<Parameters<typeof Sessions>[0]> = {}) {
+  return render(<Sessions onSelect={onSelect} {...props} />);
+}
 
 beforeEach(() => {
-  // 'loading' by default, which is what a just-mounted subscription really is:
-  // the detail then renders the placeholder row the board already holds. A case
-  // that cares what the LIVE document says sets this itself.
-  useDocById.mockReset().mockReturnValue({ status: 'loading' });
+  onSelect.mockReset();
   useCollection.mockReset();
   directory();
   loadMore.mockReset();
@@ -203,7 +210,7 @@ beforeEach(() => {
 describe('Auntie Time: the four phase groups', () => {
   it('renders all four groups over NO data at all, each with a zero count', () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     expect(phaseHeadings()).toEqual(['Active', 'Overdue', 'Upcoming', 'Recent']);
     for (const label of ['Active', 'Overdue', 'Upcoming', 'Recent']) {
       expect(phaseCount(label)).toBe('0');
@@ -215,7 +222,7 @@ describe('Auntie Time: the four phase groups', () => {
     // cannot: whether Overdue is empty because nothing slipped, or because the
     // board is not looking.
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText('No visit is in flight.')).toBeInTheDocument();
     expect(screen.getByText('No scheduled visit has slipped past its slot.')).toBeInTheDocument();
     expect(screen.getByText('Nothing booked in the next 14 days.')).toBeInTheDocument();
@@ -224,7 +231,7 @@ describe('Auntie Time: the four phase groups', () => {
 
   it('still says where the older visits went, under the empty groups rather than instead of them', () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText(/older visits are in the archive/i)).toBeInTheDocument();
     expect(phaseHeadings()).toHaveLength(4);
   });
@@ -245,7 +252,7 @@ describe('Auntie Time: the four phase groups', () => {
         }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(phaseCount('Active')).toBe('2');
     expect(phaseCount('Overdue')).toBe('1');
     expect(phaseCount('Upcoming')).toBe('1');
@@ -267,7 +274,7 @@ describe('Auntie Time: the four phase groups', () => {
         }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     const phaseOf = (name: string) => screen.getByText(name).closest('.sessions__phase')?.className;
     expect(phaseOf('In Flight')).toContain('sessions__phase--active');
     expect(phaseOf('Ten Days Late')).toContain('sessions__phase--overdue');
@@ -287,14 +294,14 @@ describe('Auntie Time: the four phase groups', () => {
         }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByText('Last Week')).toBeNull();
     expect(phaseCount('Recent')).toBe('0');
   });
 
   it('fetches a bounded date range rather than the flat latest 300', () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     const spec = lastSpec();
     // A PAGE size, not a cap: a busy window is reachable rather than silently
     // truncated at the far end of the sort.
@@ -335,7 +342,7 @@ describe('Auntie Time: one fully populated action card', () => {
   function mount() {
     usePagedCollection.mockReturnValue(paged([populated]));
     directory(households, kin);
-    render(<Sessions />);
+    renderBoard();
     return screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
   }
 
@@ -362,7 +369,7 @@ describe('Auntie Time: one fully populated action card', () => {
 
   it('falls back to the status glyph when no kin photo resolves, never a stock face', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED' })]));
-    render(<Sessions />);
+    renderBoard();
     const card = screen.getByText('The Whitfields').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__glyph')).not.toBeNull();
     expect(within(card).queryByRole('img')).toBeNull();
@@ -371,7 +378,7 @@ describe('Auntie Time: one fully populated action card', () => {
   it('omits the address line entirely when the household has none on file', () => {
     usePagedCollection.mockReturnValue(paged([populated]));
     directory([{ _id: 'kf-wren', serviceAddress: '' }], kin);
-    render(<Sessions />);
+    renderBoard();
     const card = screen.getByText('Lorna Wren').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__addr')).toBeNull();
   });
@@ -380,13 +387,13 @@ describe('Auntie Time: one fully populated action card', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByText(/GPS tracking/)).toBeNull();
   });
 
   it('shows no invoice chip on a visit that has not been billed', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByText('Invoice linked')).toBeNull();
   });
 
@@ -398,7 +405,7 @@ describe('Auntie Time: one fully populated action card', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status: 'ARRIVED', startTime: eveningToday, endTime: at(0, 21, 30) })]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText(/Today · 20:00 to 21:30/)).toBeInTheDocument();
     expect(screen.queryByText(/Tomorrow · 20:00/)).toBeNull();
   });
@@ -414,13 +421,13 @@ describe('Auntie Time: one fully populated action card', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status, startTime: at(0, 9), completedAt: at(0, 10) })]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText(chip)).toBeInTheDocument();
   });
 
   it('AO-12-style regression guard: an unrecognized status renders UNKNOWN, never a fabricated SCHEDULED', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'some_new_code', startTime: at(1) })]));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
     expect(screen.queryByText('SCHEDULED')).toBeNull();
   });
@@ -434,7 +441,7 @@ describe('Auntie Time: one fully populated action card', () => {
 describe('Auntie Time: the card runs the visit', () => {
   function mount(over: Partial<SessionEntry>) {
     usePagedCollection.mockReturnValue(paged([entry(over)]));
-    render(<Sessions />);
+    renderBoard();
   }
 
   it('OMW on a scheduled card calls setVisitLifecycle with ON_MY_WAY', async () => {
@@ -495,7 +502,7 @@ describe('Auntie Time: the card runs the visit', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'sess-dep', status: 'DEPARTED', startTime: at(0, 8) })]),
     );
-    render(<Sessions onComposeKinTale={onComposeKinTale} />);
+    renderBoard({ onComposeKinTale });
     await user.click(screen.getByRole('button', { name: 'Complete KinTale' }));
     expect(onComposeKinTale).toHaveBeenCalledWith('sess-dep');
   });
@@ -513,7 +520,7 @@ describe('Auntie Time: the card runs the visit', () => {
         }),
       ]),
     );
-    render(<Sessions onViewKinTale={onViewKinTale} />);
+    renderBoard({ onViewKinTale });
     await user.click(screen.getByRole('button', { name: 'View KinTale' }));
     expect(onViewKinTale).toHaveBeenCalledWith('rep-9');
   });
@@ -530,7 +537,7 @@ describe('Auntie Time: the card runs the visit', () => {
         }),
       ]),
     );
-    render(<Sessions onViewKinTale={vi.fn()} />);
+    renderBoard({ onViewKinTale: vi.fn() });
     expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
   });
 
@@ -538,7 +545,7 @@ describe('Auntie Time: the card runs the visit', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status: 'CANCELLED', startTime: at(0, 9) })]),
     );
-    render(<Sessions />);
+    renderBoard();
     const card = screen.getByText('The Whitfields').closest('.sessions__card') as HTMLElement;
     expect(card.querySelector('.sessions__acts')).toBeNull();
   });
@@ -553,57 +560,58 @@ describe('Auntie Time: the controls the mock does not have', () => {
   });
 
   it('has no filter tabs', () => {
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
     expect(screen.queryByRole('tablist')).toBeNull();
   });
 
   it('has no Sort select', () => {
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByLabelText('Sort')).toBeNull();
   });
 
   it('has no stat strip and no "counts cover N visits" line', () => {
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByText('In flight')).toBeNull();
     expect(screen.queryByText('Wrapped today')).toBeNull();
     expect(screen.queryByText(/These counts cover/)).toBeNull();
   });
 
   it('keeps Archive as a single link in the heading', () => {
-    render(<Sessions />);
+    renderBoard();
     const archive = screen.getByRole('button', { name: 'Archive' });
     expect(archive.closest('.den-heading')).not.toBeNull();
   });
 });
 
+/**
+ * #753 MOVED THE DETAIL OUT OF THIS SCREEN. A card head asks to open a visit and
+ * nothing more; what that opens is `/sessions/{id}`, which
+ * `routes/SessionDetailView.test.tsx` drives. So the cases here are about the
+ * REQUEST, and about the one press that must not make it.
+ */
 describe('Auntie Time: opening one visit', () => {
-  it('clicking a card calls onSelect with the session id', async () => {
+  it('clicking a card asks for that session id, so the route is the only way in', async () => {
     usePagedCollection.mockReturnValue(paged([entry({ _id: 'sess-42' })]));
-    const onSelect = vi.fn();
-    render(<Sessions onSelect={onSelect} />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
     expect(onSelect).toHaveBeenCalledWith('sess-42');
   });
-
-  it('propless, the card header opens the in-screen SessionDetail view', async () => {
+  it('renders no detail of its own, whatever is clicked', async () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: /The Whitfields/i }));
-    // The detail view has taken over the screen (Directory/KinfolkProfile
-    // pattern): its Back control is present, and the household is its heading.
-    expect(screen.getByRole('button', { name: /back to auntie time/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
-    // And the trail, which is how the operator knows the board is still behind
-    // this view rather than replaced by it.
-    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
-  });
-
-  it('the lifecycle buttons do NOT open the detail, so a clock press cannot lose the board', async () => {
-    usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED', startTime: at(1) })]));
-    render(<Sessions />);
-    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    // The board is still the board: no Back control, no detail trail, and the
+    // four phase groups still standing.
+    expect(screen.queryByRole('button', { name: /back to auntie time/i })).toBeNull();
     expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(phaseHeadings()).toEqual(['Active', 'Overdue', 'Upcoming', 'Recent']);
+  });
+  it('the lifecycle buttons do NOT ask to open the visit, so a clock press cannot lose the board', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SCHEDULED', startTime: at(1) })]));
+    renderBoard();
+    await user.click(screen.getByRole('button', { name: /^OMW$/ }));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
@@ -612,7 +620,7 @@ describe('Auntie Time: reads that fail', () => {
     usePagedCollection.mockReturnValue(
       paged([], { state: { status: 'error', message: 'permission-denied' } }),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText('permission-denied', { selector: '.async-error-detail' })).toBeInTheDocument();
     // Not even the four empty groups: an error means there is no fact about the
     // board, and four zero chips would be four claims.
@@ -624,14 +632,14 @@ describe('Auntie Time: reads that fail', () => {
     usePagedCollection.mockReturnValue(
       paged([], { state: { status: 'error', message: 'deadline-exceeded', retry: reload } }),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText('deadline-exceeded', { selector: '.async-error-detail' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
   it('makes no board claim at all while the first page is in flight', () => {
     usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByRole('status')).toBeInTheDocument();
     expect(phaseHeadings()).toHaveLength(0);
   });
@@ -640,7 +648,7 @@ describe('Auntie Time: reads that fail', () => {
 describe('Auntie Time: the Archive', () => {
   it('swaps in a date-ranged PAGED query over the operator-chosen range', async () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
 
     const spec = lastSpec();
@@ -652,7 +660,7 @@ describe('Auntie Time: the Archive', () => {
 
   it('defaults to the range just BEFORE the day-of window, so it never re-shows the same rows', async () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     const from = (screen.getByLabelText('From') as HTMLInputElement).value;
     const to = (screen.getByLabelText('To') as HTMLInputElement).value;
@@ -674,7 +682,7 @@ describe('Auntie Time: the Archive', () => {
         }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(phaseHeadings()).toHaveLength(0);
     expect(
@@ -695,7 +703,7 @@ describe('Auntie Time: the Archive', () => {
         }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.queryByText('Old News')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.getByText('Old News')).toBeInTheDocument();
@@ -703,7 +711,7 @@ describe('Auntie Time: the Archive', () => {
 
   it('goes back to the board, restoring the four groups', async () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(phaseHeadings()).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: /back to auntie time/i }));
@@ -712,7 +720,7 @@ describe('Auntie Time: the Archive', () => {
 
   it('shows the ordinary empty state in the Archive, where there is no board to count', async () => {
     usePagedCollection.mockReturnValue(paged([]));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     expect(screen.getByText('No Kin Cares in this range.')).toBeInTheDocument();
   });
@@ -726,17 +734,17 @@ describe('Auntie Time: the Archive', () => {
 describe('Auntie Time: paging', () => {
   it('offers Load more only while the cursor says there may be another page', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
-    const { unmount } = render(<Sessions />);
+    const { unmount } = renderBoard();
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
     unmount();
     usePagedCollection.mockReturnValue(paged([entry({})], { hasMore: true }));
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
   });
 
   it('asks the hook for the next page, and never re-implements the cursor itself', async () => {
     usePagedCollection.mockReturnValue(paged([entry({})], { hasMore: true }));
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Load more' }));
     expect(loadMore).toHaveBeenCalledOnce();
   });
@@ -745,7 +753,7 @@ describe('Auntie Time: paging', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({})], { hasMore: true, more: { status: 'loading' } }),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByRole('button', { name: 'Loading more…' })).toBeDisabled();
   });
 
@@ -755,7 +763,7 @@ describe('Auntie Time: paging', () => {
         hasMore: true,
       }),
     );
-    render(<Sessions />);
+    renderBoard();
     await user.click(screen.getByRole('button', { name: 'Archive' }));
     await user.click(screen.getByRole('button', { name: 'Load more' }));
     expect(loadMore).toHaveBeenCalledOnce();
@@ -773,7 +781,7 @@ describe('Auntie Time: paging', () => {
       }),
     );
     usePagedCollection.mockReturnValue(paged(many));
-    render(<Sessions />);
+    renderBoard();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(250);
     expect(phaseCount('Upcoming')).toBe('250');
     expect(screen.getByText('Household 249')).toBeInTheDocument();
@@ -797,7 +805,7 @@ describe('Auntie Time: every fetched row lands in a group', () => {
 
   it('renders all nine overdue rows under Overdue, with the count to match', () => {
     usePagedCollection.mockReturnValue(paged(nineOverdue));
-    render(<Sessions />);
+    renderBoard();
     expect(phaseCount('Overdue')).toBe('9');
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(9);
     expect(screen.queryByText(/nothing on the books in this window/i)).toBeNull();
@@ -811,7 +819,7 @@ describe('Auntie Time: every fetched row lands in a group', () => {
         entry({ _id: 'tomorrow', kinfolkName: 'Next Up', status: 'SCHEDULED', startTime: at(1) }),
       ]),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(11);
     expect(phaseCount('Active')).toBe('1');
     expect(phaseCount('Overdue')).toBe('9');
@@ -824,7 +832,7 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     usePagedCollection.mockReturnValue(
       paged([], { state: { status: 'error', message: 'permission-denied', retry: reload } }),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(
       screen.getByText('permission-denied', { selector: '.async-error-detail' }),
     ).toBeInTheDocument();
@@ -840,7 +848,7 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
         more: { status: 'error', message: 'deadline-exceeded', retry: loadMore },
       }),
     );
-    render(<Sessions />);
+    renderBoard();
     expect(screen.getByText('Still Here')).toBeInTheDocument();
     expect(document.querySelectorAll('.sessions__card')).toHaveLength(1);
     const alert = screen.getByRole('alert');
@@ -856,66 +864,9 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
         more: { status: 'error', message: 'deadline-exceeded', retry: loadMore },
       }),
     );
-    render(<Sessions />);
+    renderBoard();
     await user.click(within(screen.getByRole('alert')).getByRole('button', { name: /retry/i }));
     expect(loadMore).toHaveBeenCalledOnce();
     expect(reload).not.toHaveBeenCalled();
-  });
-});
-
-/**
- * #408: an invoice line drawn from a visit routes to `/sessions?sessionId=<id>`,
- * because a bound line's money is corrected on the visit and the invoice
- * follows. The link has to open work that is by definition old enough to have
- * been billed, which is exactly the work this screen's window does not hold.
- */
-describe('Auntie Time: the deep link into one visit', () => {
-  it('opens the named visit straight from the board when the window holds it', () => {
-    usePagedCollection.mockReturnValue(paged([entry({ _id: 'vis_1', serviceType: 'Dog Walk' })]));
-    // The subscription has not delivered yet; the row the board holds is the
-    // placeholder, so the detail paints immediately instead of flashing
-    // "unavailable".
-    useDocById.mockReturnValue({ status: 'loading' });
-    render(<Sessions initialSessionId="vis_1" />);
-    expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
-    expect(screen.getByText(/Dog Walk/)).toBeInTheDocument();
-  });
-
-  /**
-   * #397 L19. This read used to be a FALLBACK, running only when the paged rows
-   * did not hold the id, and the streamed copy won otherwise. That was right
-   * while the detail was read-only and wrong the moment it gained the visit
-   * clock: `usePagedCollection` is a one-shot `getDocs`, so a clock-in would
-   * have written the document and left the screen rendering the row it was
-   * opened with. The live document is now what the detail renders, whether or
-   * not the board happens to hold the same visit.
-   */
-  it('subscribes to the visit even when the board already holds it, because the detail writes', () => {
-    usePagedCollection.mockReturnValue(paged([entry({ _id: 'vis_1', serviceType: 'Dog Walk' })]));
-    useDocById.mockReturnValue({
-      status: 'ready',
-      data: entry({ _id: 'vis_1', serviceType: 'Dog Walk', status: 'ARRIVED' }),
-    });
-    render(<Sessions initialSessionId="vis_1" />);
-    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_1');
-    // The LIVE status, not the one the paged row was fetched with.
-    expect(screen.getByText('ARRIVED')).toBeInTheDocument();
-  });
-
-  it('READS a visit the window does not hold, rather than reporting it unavailable', () => {
-    usePagedCollection.mockReturnValue(paged([]));
-    useDocById.mockReturnValue({
-      status: 'ready',
-      data: entry({ _id: 'vis_old', serviceType: 'Overnight', startTime: at(-90, 20) }),
-    });
-    render(<Sessions initialSessionId="vis_old" />);
-    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_old');
-    expect(screen.getByText(/Overnight/)).toBeInTheDocument();
-  });
-
-  it('issues no read at all when nobody deep-linked', () => {
-    usePagedCollection.mockReturnValue(paged([entry({})]));
-    render(<Sessions />);
-    expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', null);
   });
 });

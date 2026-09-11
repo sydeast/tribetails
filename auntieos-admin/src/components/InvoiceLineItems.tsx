@@ -153,9 +153,16 @@ export function draftFromLineItem(li: InvoiceLineItem): DraftLine {
  * A `<Link>` rather than a bare href everywhere it is used: this is an
  * in-app move between two admin screens, and an anchor would reload the whole
  * application to make it.
+ *
+ * The visit's own route since #753, `/sessions/{id}`, rather than the board
+ * carrying the id in its search. The old `/sessions?sessionId=` shape still
+ * forwards (the redirect on the list route), so stored links keep working; new
+ * links are written in the shape the operator can refresh and share.
  */
-export function visitLinkProps(sessionId: string): { to: '/sessions'; search: { sessionId: string } } {
-  return { to: '/sessions', search: { sessionId } };
+export function visitLinkProps(
+  sessionId: string,
+): { to: '/sessions/$sessionId'; params: { sessionId: string } } {
+  return { to: '/sessions/$sessionId', params: { sessionId } };
 }
 
 export interface DraftParseResult {

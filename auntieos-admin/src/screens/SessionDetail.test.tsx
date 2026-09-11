@@ -133,9 +133,34 @@ describe('SessionDetail', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('shows an honest unavailable state when the entry does not resolve (null), never a blank detail', () => {
+  /**
+   * THE THREE NO-ROW ANSWERS (#753). The detail is a route now, so a refresh on
+   * `/sessions/<id>` mounts this screen with nothing resolved yet and a failed
+   * read mounts it with nothing at all. One "no longer available" line for all
+   * three would accuse a slow network of deleting a visit.
+   */
+  it('says the session is not on file when the read settled on nothing', () => {
     render(<SessionDetail entry={null} onBack={vi.fn()} />);
-    expect(screen.getByText(/no longer available/i)).toBeInTheDocument();
+    expect(screen.getByText(/no Kin Care session is on file under this id/i)).toBeInTheDocument();
+  });
+  it('says it is still looking while the by-id read is in flight, not that the session is gone', () => {
+    render(<SessionDetail entry={null} read={{ status: 'loading' }} onBack={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Looking this Kin Care session up…');
+    expect(screen.queryByText(/not on file/i)).toBeNull();
+  });
+  it('surfaces a failed by-id read with its message and a retry, never as a missing session', async () => {
+    const retry = vi.fn();
+    render(
+      <SessionDetail
+        entry={null}
+        read={{ status: 'error', message: 'backend unreachable', retry }}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('backend unreachable');
+    expect(screen.queryByText(/not on file/i)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it('AO-12 guard: an unrecognized status reads UNKNOWN, never a fabricated SCHEDULED', () => {

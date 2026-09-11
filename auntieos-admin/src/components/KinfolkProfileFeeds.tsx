@@ -145,7 +145,11 @@ export function UpcomingVisitsPanel({ kinfolkId, now }: { kinfolkId: string; now
           <ul className="kfeed">
             {rows.map((s) => (
               <li key={s._id}>
-                <Link to="/sessions" search={{ sessionId: s._id }} className="kfeed__row kfeed__row--visit">
+                <Link
+                  to="/sessions/$sessionId"
+                  params={{ sessionId: s._id }}
+                  className="kfeed__row kfeed__row--visit"
+                >
                   <span className="kfeed__when kfeed__when--lead">
                     {sessionDayLabel(sessionDayKey(str(s.startTime)), today)}{' '}
                     {sessionClock(str(s.startTime))}
