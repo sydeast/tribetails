@@ -217,6 +217,41 @@ export async function put(
 }
 
 /**
+ * Merges the given fields into one document, CREATING it if it does not exist.
+ * For a Cypress spec's own `before`/`after` setup of a fixture `put` did not
+ * anticipate (a pending booking-request notification, a household tag), where
+ * `put`'s plain `POST ...?documentId=` would fail with ALREADY_EXISTS on a
+ * second `cypress open` run against a database an earlier run already seeded.
+ *
+ * `updateMask.fieldPaths` is what makes this a MERGE rather than the full-
+ * document replace a bare `PATCH` would be: only the named fields are
+ * touched, so upserting `{ tags: [...] }` onto a seeded `kinfolk` doc leaves
+ * its `firstName`/`lastName`/`email` alone. Firestore's REST `patch` creates
+ * the document when it is absent, so this is safe to call whether or not the
+ * target already exists.
+ */
+export async function upsert(
+  collection: string,
+  id: string,
+  doc: Record<string, unknown>,
+): Promise<void> {
+  const mask = Object.keys(doc)
+    .map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`)
+    .join('&');
+  const url = `${FIRESTORE}/v1/projects/${PROJECT}/databases/(default)/documents/${collection}/${id}?${mask}`;
+  const fields = Object.fromEntries(Object.entries(doc).map(([k, v]) => [k, enc(v)]));
+  await seedFetch(
+    url,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...OWNER },
+      body: JSON.stringify({ fields }),
+    },
+    `${collection}/${id} (upsert)`,
+  );
+}
+
+/**
  * Deletes one document by id, `put`'s inverse.
  *
  * FOR A SPEC-OWNED FIXTURE that only one test needs and no other spec reads: a
