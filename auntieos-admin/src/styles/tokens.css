@@ -11,18 +11,20 @@
  *   theme/AuntieDimensions.kt  space1..space12 + border + structural widths
  *   theme/Gradients.kt         tribe/orangeToPink/tealToPurple/rainbowAccent
  *
- * IGNORE docs/2026-05-31-den-redesign-design.md and ui-ideas/*.html. Both were
- * last touched 2026-05-28/31 and all 179 commonMain files changed after them.
- * That doc is an implementation PLAN for the Compose redesign, not a spec.
- * auntieos_design_system.md is the real one.
+ * THE MOCKS ARE THE DESIGN SOURCE (operator ruling, 2026-09-11, issue #751).
+ * An earlier header here told readers to ignore `ui-ideas/*.html` and to follow
+ * `auntieos_design_system.md` instead. That file is in no directory of this
+ * repo, so six parity PRs on 2026-09-10 read the instruction, found nothing to
+ * follow, and left the palette alone. The 29 mocks under `auntieos-admin/
+ * ui-ideas/` are the spec: navy ground, drifting mesh blobs, a grain overlay,
+ * gradient glass panels, a hero band with a radial orange wash.
  *
- * THEME DEFAULT, unresolved on purpose: `AuntieAppTheme(themeMode = ThemeMode.DARK)`
- * and the design doc both say the app defaults to DARK, but the live admin renders
- * cream because the operator's stored preference is light. This file keeps LIGHT
- * on bare `:root` so an unstyled first paint matches what the operator actually
- * sees today. The app must set `data-theme` explicitly from resolved state either
- * way; the `:root` default only governs the pre-hydration flash. Revisit when the
- * shell wires theme resolution.
+ * THE MOCK WORLD IS THE ONLY SCHEME. The navy set is declared on bare `:root`,
+ * so an unstyled first paint is already the right one, and index.html carries
+ * `data-theme="dark"` so every scheme-scoped selector resolves the same way.
+ * The cream set is kept below, reachable only by an explicit opt-in attribute;
+ * nothing in the app selects it. The admin does not follow the OS scheme: a
+ * light-mode Mac painting the app cream is the complaint this ruling answers.
  *
  * PORTING TRAP, do not undo: AuntieTypography's base styles declare Bold for
  * display/headline, but rememberDenTypography OVERRIDES that to Normal/Medium when
@@ -48,36 +50,18 @@
   --tt-brand-navy: #11131f;
 }
 
-/* ── Light scheme (default: cream + navy, playful and welcoming) ─────────── */
+/* ── The scheme (deep-navy base, NOT pure black; cream text) ────────────────
+   On bare `:root`, which is the 2026-09-11 ruling: the mocks' world is what the
+   admin paints, with no first paint in another palette to flash past. The
+   attribute selector rides along so that every dark-scoped rule already written
+   elsewhere in the app keeps resolving once index.html sets the attribute.
+
+   The three panel values below are the mocks' own, not a shade of the surface
+   roles: every mock draws a panel as `linear-gradient(160deg, #171A2A,
+   rgba(30,34,53,.5))` over a 1px `rgba(251,251,249,.10)` hairline. They are
+   roles rather than one component's locals because the hero band, the panel and
+   the screen cards all read from them. */
 :root,
-[data-theme='light'] {
-  --color-background: var(--tt-brand-cream);
-  --color-surface: #f4f2ec;
-  --color-surface-2: #eae6dc;
-  --color-surface-glass: rgba(248, 246, 240, 0.8);
-  --color-border: #d8d1c2;
-  --color-border-soft: #e7e2d5;
-
-  --color-primary: var(--tt-kinfolk-orange);
-  --color-primary-dim: #b36724;
-  --color-secondary: var(--tt-pack-pink);
-  --color-accent: var(--tt-kin-teal);
-  --color-tertiary: var(--tt-family-purple);
-  --color-coral: var(--tt-snuggle-coral);
-
-  --color-text-primary: var(--tt-brand-navy);
-  --color-text-dim: #5a5860;
-  --color-text-faint: #9a98a2;
-
-  --color-success: #2e7d52;
-  --color-warning: #c77d1a;
-  --color-error: var(--tt-snuggle-coral);
-  --color-error-container: rgba(213, 83, 90, 0.2);
-
-  color-scheme: light;
-}
-
-/* ── Dark scheme (deep-navy base, NOT pure black; cream text) ─────────────── */
 [data-theme='dark'] {
   --color-background: var(--tt-brand-navy);
   --color-surface: #1b1d2b;
@@ -85,6 +69,11 @@
   --color-surface-glass: rgba(27, 29, 43, 0.6);
   --color-border: #353748;
   --color-border-soft: #2a2c3c;
+
+  --color-panel-top: #171a2a;
+  --color-panel-bottom: rgba(30, 34, 53, 0.5);
+  --color-hero-bottom: #1e2235;
+  --color-hairline: rgba(251, 251, 249, 0.1);
 
   /* Brand roles brighten for contrast on navy. primaryDim falls back to the
      unbrightened brand orange, which is why it is not var(--color-primary). */
@@ -105,6 +94,44 @@
   --color-error-container: rgba(231, 110, 117, 0.2);
 
   color-scheme: dark;
+}
+
+/* ── The cream set, kept and unselected ─────────────────────────────────────
+   Nothing in the app writes this attribute, so these values render nowhere.
+   They are the port of LightAuntieColors and stay here so the Compose theme's
+   other half is not lost, and so a role added above has an obvious twin to add
+   here (both scheme tests hold the two in step). Do not point the app at it:
+   the cream page IS the complaint that issue #751 answers. */
+[data-theme='light'] {
+  --color-background: var(--tt-brand-cream);
+  --color-surface: #f4f2ec;
+  --color-surface-2: #eae6dc;
+  --color-surface-glass: rgba(248, 246, 240, 0.8);
+  --color-border: #d8d1c2;
+  --color-border-soft: #e7e2d5;
+
+  --color-panel-top: #f4f2ec;
+  --color-panel-bottom: rgba(234, 230, 220, 0.5);
+  --color-hero-bottom: #eae6dc;
+  --color-hairline: rgba(17, 19, 31, 0.1);
+
+  --color-primary: var(--tt-kinfolk-orange);
+  --color-primary-dim: #b36724;
+  --color-secondary: var(--tt-pack-pink);
+  --color-accent: var(--tt-kin-teal);
+  --color-tertiary: var(--tt-family-purple);
+  --color-coral: var(--tt-snuggle-coral);
+
+  --color-text-primary: var(--tt-brand-navy);
+  --color-text-dim: #5a5860;
+  --color-text-faint: #9a98a2;
+
+  --color-success: #2e7d52;
+  --color-warning: #c77d1a;
+  --color-error: var(--tt-snuggle-coral);
+  --color-error-container: rgba(213, 83, 90, 0.2);
+
+  color-scheme: light;
 }
 
 /* ── Brand gradients ────────────────────────────────────────────────────────
@@ -291,6 +318,11 @@
   --radius-card-lg: 12px;
   --radius-panel: 16px;
   --radius-lg: 20px;
+  /* The hero band, and only the hero band. Every mock draws its top band one
+     step rounder than the panels below it (24 against 20), which is how the
+     band reads as the page's lid rather than as the first panel. Added as a
+     named step instead of a raw px so the "no raw radii" rule above holds. */
+  --radius-hero: 24px;
   --radius-pill: 999px;
 
   /* DEPRECATED numeric aliases: kept only so in-flight ported components resolve

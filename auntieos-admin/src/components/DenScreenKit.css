@@ -108,13 +108,39 @@
   color: var(--color-text-faint);
 }
 
-/* ── page heading ─────────────────────────────────────────────────────────── */
+/* ── page heading ─────────────────────────────────────────────────────────
+   The mocks' `.hero`, which is a BAND and not a bare row of text: the same navy
+   gradient the panels take, lit from the top-left corner by a wide radial of
+   brand orange, on a hairline, one radius step rounder than a panel. Every mock
+   with a page title draws it this way, and the admin drew none of them, which
+   is most of why the screens read as a document rather than as the Den.
 
+   The orange is `color-mix` of the brand constant rather than the role token:
+   `rgba(223,132,49,.26)` in the mocks is Kinfolk Orange itself, not the
+   brightened role, and the wash is the hero's continuation of the orange orb
+   behind the same corner (styles/base.css `.orb.a`).
+
+   `backwards`, NOT `both`. The entrance must cover its own delay, which is what
+   `backwards` does, and must then hand the element back to the ordinary
+   cascade. `both` leaves the final keyframe's `transform: translateY(0)` in
+   force forever, and an animation declaration outranks any author rule, so a
+   surface that also lifts on hover would never move again. */
 .den-heading {
   display: flex;
-  align-items: flex-end;
-  gap: 16px;
+  align-items: center;
+  gap: 18px;
   width: 100%;
+  padding: 22px;
+  background:
+    radial-gradient(
+      130% 170% at 0% 0%,
+      color-mix(in srgb, var(--tt-kinfolk-orange) 26%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(160deg, var(--color-panel-top), var(--color-hero-bottom));
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-hero);
+  animation: rise var(--dur-rise) var(--ease-emphasized) 0.05s backwards;
 }
 
 .den-heading-main {
@@ -132,10 +158,16 @@
   margin: 0;
 }
 
+/* 28px at weight 440 is the mocks' hero h1, and both numbers are off the type
+   scale on purpose. The scale's displayMedium is 30px/400, which is the size
+   for a title standing on the page; inside a band with 22px of padding around
+   it, 28 is the size that leaves the band reading as a lid. 440 is a variable
+   axis position between the scale's 400 and 500, and Fraunces is a variable
+   face, so it is a real weight here rather than a rounding. */
 .den-heading-title {
   font-family: var(--type-display-md-family);
-  font-size: var(--type-display-md-size);
-  font-weight: var(--type-display-md-weight);
+  font-size: 28px;
+  font-weight: 440;
   letter-spacing: var(--type-display-md-tracking);
   color: var(--color-text-primary);
   margin: 6px 0 0;
@@ -289,11 +321,27 @@
 
 /* ── section panel ───────────────────────────────────────────────────────── */
 
+/* The mocks' `.panel`, which is a gradient and not a tint: navy-2 falling to
+   navy-3 at half alpha across 160deg, on the same hairline the hero takes, at
+   20px. The flat `--color-surface-glass` fill it used to carry is what made a
+   panel read as a card sitting on the page rather than as glass cut out of it.
+
+   NO `backdrop-filter`, and that is the mocks' choice rather than an omission:
+   not one of the 29 uses it. The gradient's lower stop is translucent, so the
+   ground already shows through the bottom of every panel, and a blur on top of
+   that would grey the wash instead of letting it read.
+
+   `backwards` fill, for the reason the hero states: `both` would pin the final
+   transform forever and take the hover lift with it. */
 .den-panel {
-  background: var(--color-surface-glass);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-card-lg);
-  padding: 20px;
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  /* 22px is the mocks' padding and sits between --space-5 and --space-6, which
+     is why it is written out. The phone rule at the foot of this file still
+     drops it to --space-4. */
+  padding: 22px;
+  animation: rise var(--dur-rise) var(--ease-emphasized) backwards;
   /* `hoverLift` puts `lift` on the section (styles/base.css), which is where the
      rise, the shadow and the transition now come from; `den-panel--lift` is
      gone. A panel that rose 3px with no shadow read as a jump rather than as
@@ -304,6 +352,32 @@
      for the lift to feel alive under the pointer, and a coloured rim on
      something you cannot click would promise a click. */
   --lift-border-color: var(--color-border);
+}
+
+/* The mocks' `.panel.d1` through `.d4` delays, and they are TWO-CLASS selectors
+   deliberately. `.d1` in styles/base.css sets the whole `animation` shorthand,
+   which would reset the delay declared above depending on nothing but which
+   sheet the bundler emitted second. At 0,2,0 these win on specificity instead,
+   so a panel wearing a stagger class staggers wherever the sheets land. The
+   fill mode is pinned here for the same reason: that shorthand carries `both`,
+   and `both` on a panel that also lifts would freeze it in place. */
+.den-panel.d1,
+.den-panel.d2,
+.den-panel.d3,
+.den-panel.d4 {
+  animation-fill-mode: backwards;
+}
+.den-panel.d1 {
+  animation-delay: 0.12s;
+}
+.den-panel.d2 {
+  animation-delay: 0.2s;
+}
+.den-panel.d3 {
+  animation-delay: 0.28s;
+}
+.den-panel.d4 {
+  animation-delay: 0.34s;
 }
 
 .den-panel-header {
@@ -393,6 +467,39 @@
   font-size: 10.5px;
   font-weight: var(--type-mono-weight);
   text-transform: lowercase;
+}
+
+/* ── status pill ─────────────────────────────────────────────────────────────
+   The mocks' `.statuspill`: mono, uppercase, tracked, in a rounded tinted
+   capsule with a hairline of the same hue. It is a different object from the
+   service pill above, and the mocks draw both on one screen: the service pill
+   is lowercase and says what the visit IS, this one is uppercase and says where
+   the visit has GOT to.
+
+   Every value is mixed from `--den-tone`, so one rule covers all seven session
+   states instead of a block per state. The mocks' own capsule is the teal one,
+   which is the tone this pill takes when a caller names none. The text is the
+   tone lifted towards cream, because the tone itself at 11px on a tinted
+   capsule is too close to its own background to read. */
+.den-statuspill {
+  display: inline-block;
+  font-family: var(--type-label-sm-family);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 8px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--den-tone) 18%, transparent);
+  color: color-mix(in srgb, var(--den-tone) 55%, var(--tt-brand-cream));
+  border: var(--border-hairline) solid color-mix(in srgb, var(--den-tone) 45%, transparent);
+}
+
+/* Cancelled is the one state that is not a stage of the visit but the absence
+   of one, and the mocks strike it through wherever they show it. */
+.den-statuspill--struck {
+  text-decoration: line-through;
 }
 
 /* ── hints ───────────────────────────────────────────────────────────────── */

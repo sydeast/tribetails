@@ -53,12 +53,19 @@ function optionalIdSearch<K extends string>(keys: readonly K[]) {
 }
 
 /**
- * Shared chrome: the three drifting orbs behind every screen (Den background).
+ * Shared chrome: the mocks' ground, behind every screen. Three drifting orbs,
+ * and the grain sheet over them.
  *
- * Three, not two, because the ambient wash in all 39 `ui-ideas/*.html` mocks and
- * in the shipped MyTribe portal is a purple / orange / teal triad. Two of the
- * three brand hues cannot read as the Tribe palette. Purely decorative, so
- * aria-hidden; the drift and the blend live in styles/base.css.
+ * Three orbs, not two, because the ambient wash in every `ui-ideas/*.html` mock
+ * and in the shipped MyTribe portal is a three-hue mesh. Two of the three brand
+ * hues cannot read as the Tribe palette. The order is the mocks' own: orange,
+ * teal, pink, running out from the top-left corner.
+ *
+ * The grain comes LAST of the four, and markup order is the whole of how it is
+ * layered. All four sit at `z-index: -1`, so the one written last paints over
+ * the others and still under the screen, which is how the mocks stack them
+ * (mesh, then grain, then content). Purely decorative, so aria-hidden; the
+ * geometry lives in styles/base.css.
  */
 function RootLayout() {
   return (
@@ -66,6 +73,7 @@ function RootLayout() {
       <span className="orb a" aria-hidden="true" />
       <span className="orb b" aria-hidden="true" />
       <span className="orb c" aria-hidden="true" />
+      <span className="grain" aria-hidden="true" />
       <Outlet />
     </>
   );

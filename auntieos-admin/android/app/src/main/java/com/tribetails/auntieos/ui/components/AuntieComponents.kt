@@ -319,9 +319,17 @@ fun AuntieTopBar(
 // AuntieScreenScaffold - page primitive
 // Wraps optional AuntieTopBar + content slot. Always applies statusBarsPadding()
 // so screens are edge-to-edge safe. Opt-in imePadding() for screens with input
-// fields. Paints AuntieTheme.colors.background unless backgroundFullBleed = true
-// (which lets callers render AnimatedMeshBackground or similar full-bleed art).
+// fields. Paints AuntieTheme.colors.background AND the drifting mesh ground
+// unless backgroundFullBleed = true, which hands the whole ground to the caller
+// (a screen doing its own full-bleed art must not get a second mesh under it).
 // NEVER use M3 Scaffold - this primitive replaces it.
+//
+// The mesh is the Android half of issue #751: every mock draws the screens on a
+// navy ground with three drifting brand-coloured blobs behind the panels, the
+// web shell has painted them since the port, and Compose had AnimatedMeshBackground
+// sitting in AuntieGlass.kt with almost nothing calling it. Putting it here, in
+// the one primitive every screen goes through, is what makes the two platforms
+// the same world rather than the same palette.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -334,19 +342,26 @@ fun AuntieScreenScaffold(
     backgroundFullBleed: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    var root: Modifier = Modifier.fillMaxSize()
+    var ground: Modifier = Modifier.fillMaxSize()
     if (!backgroundFullBleed) {
-        root = root.background(AuntieTheme.colors.background)
+        ground = ground.background(AuntieTheme.colors.background)
     }
-    root = root.statusBarsPadding()
+    // The insets stay on the CONTENT, not on the ground: a mesh that stopped at
+    // the status bar would draw a hard edge across the top of every screen.
+    var inner: Modifier = Modifier.fillMaxSize().statusBarsPadding()
     if (imePaddingEnabled) {
-        root = root.imePadding()
+        inner = inner.imePadding()
     }
-    Column(modifier = root.then(modifier)) {
-        if (title != null || onBack != null) {
-            AuntieTopBar(title = title ?: "", onBack = onBack, actions = actions)
+    Box(modifier = ground.then(modifier)) {
+        if (!backgroundFullBleed) {
+            AnimatedMeshBackground(Modifier.matchParentSize())
         }
-        content()
+        Column(modifier = inner) {
+            if (title != null || onBack != null) {
+                AuntieTopBar(title = title ?: "", onBack = onBack, actions = actions)
+            }
+            content()
+        }
     }
 }
 
