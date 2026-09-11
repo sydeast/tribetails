@@ -22,7 +22,7 @@ setup('operator signs in', async ({ page }) => {
   await page.goto('/signin');
 
   await page.getByLabel('Email').fill(ADMIN.email);
-  await page.getByLabel('Password').fill(ADMIN.password);
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 
   // The route change is the gate's verdict. Asserting on it, rather than on
