@@ -12,6 +12,7 @@ import {
 } from '../lib/sessionLifecycle';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useBreadcrumbs, routePointsFromGpsSummary } from '../lib/breadcrumbs';
+import { useHouseholdLocation } from '../lib/householdLocation';
 import {
   sessionState,
   sessionStateInfo,
@@ -119,7 +120,11 @@ function messageOf(err: unknown): string {
  *                       newest-first ordering included.
  *   the route           `ui/components/RouteMap.kt` + `LiveTrackingScreen.kt`:
  *                       a polyline over the breadcrumb subcollection, live only
- *                       while ARRIVED.
+ *                       while ARRIVED. Since #760 that polyline is drawn over a
+ *                       Mapbox satellite basemap with the visit's times on a
+ *                       strip above it, and the Android Kin Care detail carries
+ *                       the same map; the Canvas polyline is the fallback on
+ *                       both platforms, not the target.
  *
  * THE BUTTONS ARE A COURTESY, THE SERVER IS THE GUARD. `lifecycleActionsFor`
  * only OFFERS what applies to the state being rendered, so the operator is not
@@ -279,6 +284,10 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   );
   const route = crumbs.points.length > 0 ? crumbs.points : summaryRoute;
   const gpsSummary = entry?.gpsSummary;
+  // The purple house marker's coordinate (#760). Read from the household's own
+  // record, never geocoded here: `lib/householdLocation.ts` says why, and the
+  // map simply draws no house when the record has none.
+  const house = useHouseholdLocation(str(entry?.kinfolkId));
 
   return (
     <div className="screen">
@@ -465,6 +474,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       live={state === 'arrived'}
                       distanceMeters={gpsSummary?.distanceMeters}
                       durationSeconds={gpsSummary?.durationSeconds}
+                      arrivedAt={str(entry.arrivedAt)}
+                      departedAt={str(entry.departedAt)}
+                      house={house}
                     />
                     {crumbs.points.length === 0 && summaryRoute.length > 0 && (
                       <p className="sdetail__hint">
