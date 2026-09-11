@@ -7,23 +7,37 @@ import type { Async } from '../lib/async';
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     to,
+    params,
     search,
     className,
     children,
   }: {
     to: string;
+    params?: Record<string, string>;
     search?: Record<string, string>;
     className?: string;
     children: ReactNode;
-  }) => {
-    const q = new URLSearchParams(search ?? {}).toString();
-    return (
-      <a href={q === '' ? to : `${to}?${q}`} className={className}>
-        {children}
-      </a>
-    );
-  },
+  }) => (
+    <a href={hrefOf(to, params, search)} className={className}>
+      {children}
+    </a>
+  ),
 }));
+
+/**
+ * The href a router `Link` would produce, path params substituted first (a
+ * visit's own route is `/sessions/$sessionId` since #753), then any search.
+ */
+function hrefOf(
+  to: string,
+  params?: Record<string, string>,
+  search?: Record<string, string>,
+): string {
+  const path = Object.entries(params ?? {}).reduce((acc, [k, v]) => acc.replace(`$${k}`, v), to);
+  const q = new URLSearchParams(search ?? {}).toString();
+  return q === '' ? path : `${path}?${q}`;
+}
+
 
 const useCollection = vi.fn();
 vi.mock('../lib/firestore', async (orig) => ({
@@ -125,7 +139,7 @@ describe('UpcomingVisitsPanel', () => {
 
     const links = screen.getAllByRole('link');
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute('href', '/sessions?sessionId=s1');
+    expect(links[0]).toHaveAttribute('href', '/sessions/s1');
     expect(screen.getByText('Walk')).toBeInTheDocument();
   });
 
