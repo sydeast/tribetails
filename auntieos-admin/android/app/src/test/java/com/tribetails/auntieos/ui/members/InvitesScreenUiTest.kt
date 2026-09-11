@@ -111,6 +111,46 @@ class InvitesScreenUiTest {
         assertEquals("fam_77" to "the Demos", opened)
     }
 
+    /**
+     * The mock's shape (#755): the kit hero with the mock's kicker, no panel
+     * around the sections, a section heading with the mono status note beside
+     * it, and every invite one row with the address, the household, the
+     * provenance line and the pills.
+     */
+    // A tall viewport so the whole list composes: LazyColumn only lays out
+    // what fits, and this asserts on the second row.
+    @Test
+    @Config(sdk = [35], qualifiers = "w1080dp-h4000dp-xhdpi")
+    fun `draws the mock, hero kicker, bare section with its status note, and one row per invite`() {
+        composeRule.setContent {
+            AuntieOSTheme {
+                InvitesBody(
+                    viewModel = vmReturning(
+                        listOf(
+                            row(id = "i1", status = MembersRepository.InviteStatus.EMAIL_SENT),
+                            row(id = "i2", household = "the Marlowes", tribeId = "f2"),
+                        ),
+                    ),
+                    onOpenHousehold = { _, _ -> },
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("THE DEN · INVITES").assertIsDisplayed()
+        composeRule.onNodeWithText("Pending").assertIsDisplayed()
+        composeRule.onNodeWithText("status: PENDING / EMAIL_SENT · 2").assertIsDisplayed()
+        // The old wrapper panel and its title are gone; the sections sit on the ground.
+        assertEquals(0, composeRule.onAllNodesWithText("Pending (2)").fetchSemanticsNodes().size)
+        // One row per invite: address, household and provenance each their own node.
+        assertEquals(2, composeRule.onAllNodesWithText("jane@example.com").fetchSemanticsNodes().size)
+        composeRule.onNodeWithText("the Marlowes").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent 2026-08-01 · expires 2026-08-15 · inviteId i1").assertIsDisplayed()
+        // The status pill in the mock's words, the role pill beside it.
+        composeRule.onNodeWithText("EMAIL SENT").assertIsDisplayed()
+        assertEquals(2, composeRule.onAllNodesWithText("PRIMARY").fetchSemanticsNodes().size)
+    }
+
     /** "Nobody was invited" and "we could not find out" are opposite facts. */
     @Test
     fun `a failed read shows the failure, never the empty state`() {
