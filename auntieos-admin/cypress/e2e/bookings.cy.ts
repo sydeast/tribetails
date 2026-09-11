@@ -240,7 +240,7 @@ describe('bookings', () => {
       .then((nameBox) => {
         cy.contains('.bookings__row-name', SEEDED_BOOKINGS.scheduled.kinfolkName)
           .closest('.bookings__row-who')
-          .find('.bookings__chip')
+          .find('.den-statuspill')
           .then(($chip) => {
             const chipBox = $chip.get(0).getBoundingClientRect();
             expect(chipBox.top, 'the pill is below the name').to.be.at.least(nameBox.bottom - 1);
