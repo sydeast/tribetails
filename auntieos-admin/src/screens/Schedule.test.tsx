@@ -702,10 +702,11 @@ describe('Schedule screen', () => {
 
   /**
    * #695: "Today" used to render after the week/month grid, off screen behind
-   * a 540px time grid until the operator scrolled. It now sits directly under
-   * the Day/Week/Month controls, above the grid, inside the same Schedule panel.
+   * a 540px time grid until the operator scrolled. It now sits above the grid,
+   * after the hero band that holds the Day/Week/Month controls (#755 moved
+   * them there) and the stat cards.
    */
-  it('renders the Today agenda panel above the week grid, directly under the Day/Week/Month controls (#695)', () => {
+  it('renders the Today agenda panel after the hero controls and above the week grid (#695)', () => {
     withFixedToday(() => {
       mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
       render(<Schedule />);
