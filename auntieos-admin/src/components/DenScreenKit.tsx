@@ -570,6 +570,41 @@ export function ServicePill({ serviceType, tone }: ServicePillProps) {
   );
 }
 
+// ── status pill ─────────────────────────────────────────────────────────────
+
+interface StatusPillProps {
+  /** Already in the words the operator reads. The CSS uppercases it. */
+  label: string;
+  /** Teal is the mocks' own capsule, and the state most of them draw. */
+  tone?: DenTone;
+  /** Strikes the label through, for a state that is the absence of a visit. */
+  struck?: boolean;
+}
+
+/**
+ * The mocks' `.statuspill`: where a visit has got to, in one uppercase mono
+ * capsule tinted to its tone.
+ *
+ * It lives in the kit rather than on a screen because it is the same object on
+ * every screen that shows a session or a booking, and until now it was not:
+ * SessionDetail, Sessions, Directory and HouseholdMembers each drew their own,
+ * with four different sizes and three different shapes. This is the one they
+ * all move onto; SessionDetail is the first, being the screen the mock draws.
+ *
+ * The label is the caller's, not a lookup here. The kit has no business knowing
+ * the session lifecycle, and `sessionStateInfo` already names every state once.
+ */
+export function StatusPill({ label, tone, struck = false }: StatusPillProps) {
+  return (
+    <span
+      className={struck ? 'den-statuspill den-statuspill--struck' : 'den-statuspill'}
+      data-tone={tone ?? 'teal'}
+    >
+      {label}
+    </span>
+  );
+}
+
 // ── hints ───────────────────────────────────────────────────────────────────
 
 /**

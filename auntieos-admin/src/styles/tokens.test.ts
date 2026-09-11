@@ -5,13 +5,15 @@ import { describe, expect, it } from 'vitest';
 /**
  * Guards the token port against the two ways it can rot.
  *
- * 1. SCHEME DRIFT: a role gets added to light and forgotten in dark, so dark
- *    silently inherits light's value (or nothing). Nobody notices until an
- *    operator with dark mode on hits an unreadable screen.
+ * 1. SCHEME DRIFT: a role gets added to one scheme and forgotten in the other,
+ *    so it silently inherits the wrong value, or nothing. Nobody notices until
+ *    a screen turns up unreadable.
  * 2. BRAND DRIFT: someone "tidies" a hex. These seven constants are the brand;
  *    they are the one thing in here that is not a judgement call. The values are
- *    pinned from AuntieColors.kt, which is the live spec (the design doc and the
- *    mockups are ~7 weeks stale and disagree with the app).
+ *    pinned from AuntieColors.kt, and the mocks agree with it hue for hue: the
+ *    kincare-detail mock's `:root` carries the same seven. Which is worth saying
+ *    here, because this comment used to call the mockups stale and wrong, and
+ *    the 2026-09-11 ruling makes them the design source (issue #751).
  *
  * Deliberately parsing the CSS as text rather than mounting it in jsdom:
  * getComputedStyle resolves var() chains, which would happily report a dark value
@@ -74,8 +76,13 @@ describe('brand constants', () => {
 });
 
 describe('light and dark schemes stay in step', () => {
-  const light = declaredIn(":root,\n[data-theme='light']");
-  const dark = declaredIn("[data-theme='dark']");
+  // The two blocks swapped places on 2026-09-11 (#751). The navy set is the one
+  // on bare `:root` now, because the mocks' world is the default and the only
+  // scheme the app selects; the cream set is kept behind its opt-in attribute
+  // and nothing points at it. They are still held in step, because a role added
+  // to one and forgotten in the other is the same bug whichever is default.
+  const dark = declaredIn(":root,\n[data-theme='dark']");
+  const light = declaredIn("[data-theme='light'] {");
 
   it('dark defines every role light defines', () => {
     const missing = [...light].filter((k) => !dark.has(k) && k !== 'color-scheme');
@@ -117,14 +124,47 @@ describe('light and dark schemes stay in step', () => {
   });
 });
 
-describe('dark is a real scheme, not a copy of light', () => {
+describe('the navy scheme is the default, and a real scheme', () => {
+  it('puts the navy set on bare :root, so an unstyled first paint is already right', () => {
+    // THE #751 RULING. The cream set sat here until 2026-09-11, so the admin
+    // painted cream on a machine that never set `data-theme`, which is every
+    // machine: nothing in src/ set it. The navy block must carry the bare
+    // `:root` selector, not merely exist.
+    expect(css).toContain(":root,\n[data-theme='dark'] {");
+    expect(valueIn(":root,\n[data-theme='dark']", '--color-background')).toBe(
+      'var(--tt-brand-navy)',
+    );
+  });
+
+  it('leaves the cream set reachable only by the opt-in attribute', () => {
+    // Kept, not deleted: it is the port of LightAuntieColors. Selected by
+    // nothing, because a light-mode machine painting the app cream IS the
+    // complaint. If `:root` ever appears on this block again, the default
+    // silently depends on which of the two blocks the browser reads last.
+    expect(css).toContain("[data-theme='light'] {");
+    expect(css).not.toContain(":root,\n[data-theme='light']");
+    expect(valueIn("[data-theme='light'] {", '--color-background')).toBe('var(--tt-brand-cream)');
+  });
+
+  it('carries the mocks panel gradient stops and hairline in both sets', () => {
+    // The mocks draw every panel as navy-2 falling to navy-3 at half alpha, and
+    // the hero one stop further. Pinned as ROLES so the kit reads them rather
+    // than writing the hexes into a component stylesheet.
+    expect(valueIn(":root,\n[data-theme='dark']", '--color-panel-top')).toBe('#171a2a');
+    expect(valueIn(":root,\n[data-theme='dark']", '--color-panel-bottom')).toBe(
+      'rgba(30, 34, 53, 0.5)',
+    );
+    expect(valueIn(":root,\n[data-theme='dark']", '--color-hero-bottom')).toBe('#1e2235');
+    expect(valueIn(":root,\n[data-theme='dark']", '--color-hairline')).toBe(
+      'rgba(251, 251, 249, 0.1)',
+    );
+  });
+
   it('re-points brand roles at the brightened variants', () => {
     // Dark brightens primary/secondary/accent for contrast on navy. If these
     // ever equal light's, the port collapsed the two schemes.
     expect(valueIn("[data-theme='dark']", '--color-primary')).toBe('#f09446');
-    expect(valueIn(":root,\n[data-theme='light']", '--color-primary')).toBe(
-      'var(--tt-kinfolk-orange)',
-    );
+    expect(valueIn("[data-theme='light'] {", '--color-primary')).toBe('var(--tt-kinfolk-orange)');
   });
 
   it('keeps primary-dim on the UNbrightened brand orange', () => {
@@ -134,7 +174,22 @@ describe('dark is a real scheme, not a copy of light', () => {
 
   it('sets color-scheme so form controls and scrollbars follow', () => {
     expect(valueIn("[data-theme='dark']", 'color-scheme')).toBe('dark');
-    expect(valueIn(":root,\n[data-theme='light']", 'color-scheme')).toBe('light');
+    expect(valueIn("[data-theme='light'] {", 'color-scheme')).toBe('light');
+  });
+
+  it('names the hero radius as a step rather than leaving 24px raw in the kit', () => {
+    expect(valueOf('--radius-hero')).toBe('24px');
+  });
+});
+
+describe('the document declares the scheme it paints', () => {
+  const html = readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8');
+
+  it('stamps data-theme on the root element in the shipped HTML', () => {
+    // Written into index.html rather than by the app: it has to hold for the
+    // first paint, before a module loads, and there is no state to resolve it
+    // from. Every scheme-scoped selector in the CSS depends on it.
+    expect(html).toMatch(/<html[^>]*\sdata-theme="dark"/);
   });
 });
 

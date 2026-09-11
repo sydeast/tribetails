@@ -61,47 +61,13 @@
   word-break: break-word;
 }
 
-/* ── status chip (mirrors Sessions.css's chip palette, token-based) ────────── */
-
-.sdetail__chip {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-  text-align: center;
-}
-.sdetail__chip--scheduled {
-  background: var(--color-surface-2);
-  color: var(--color-text-dim);
-}
-.sdetail__chip--onmyway {
-  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-  color: var(--color-primary);
-}
-.sdetail__chip--arrived {
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-  color: var(--color-accent);
-}
-.sdetail__chip--departed {
-  background: color-mix(in srgb, var(--color-tertiary) 18%, transparent);
-  color: var(--color-tertiary);
-}
-.sdetail__chip--completed {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
-}
-.sdetail__chip--cancelled {
-  background: var(--color-surface-2);
-  color: var(--color-text-faint);
-  text-decoration: line-through;
-}
-.sdetail__chip--unknown {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
-}
+/* ── status chip ──────────────────────────────────────────────────────────
+   Gone, and deliberately not replaced here. This screen's eight rules (a base
+   plus one per state) drew the same object the mocks call `.statuspill`, at a
+   different size and shape from the four other screens drawing their own. It
+   is `StatusPill` in the kit now (issue #751), tinted from `--den-tone`, and
+   the state-to-tone map lives beside the markup in SessionDetail.tsx. Sessions,
+   Directory and HouseholdMembers still draw their own; they move next. */
 /* ── write surface (#397 L19) ─────────────────────────────────────────────
    The visit clock, the details editor and the note composer. Every value from
    styles/tokens.css; the form controls deliberately reuse the same box the

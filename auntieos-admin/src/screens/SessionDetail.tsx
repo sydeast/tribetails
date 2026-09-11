@@ -15,6 +15,7 @@ import { useBreadcrumbs, routePointsFromGpsSummary } from '../lib/breadcrumbs';
 import { useHouseholdLocation } from '../lib/householdLocation';
 import {
   sessionState,
+  type SessionState,
   sessionStateInfo,
   sessionHousehold,
   sessionWindow,
@@ -24,11 +25,40 @@ import {
   localDateIso,
 } from '../lib/sessionFormat';
 import { str, arr } from '../lib/coerce';
-import { DenScreenHeading, DenPanel, ServicePill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import {
+  DenScreenHeading,
+  DenPanel,
+  ServicePill,
+  StatusPill,
+  EmptyHint,
+  ErrorHint,
+  type DenTone,
+} from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { RouteMap } from '../components/RouteMap';
 import './SessionDetail.css';
+
+/**
+ * The brand tone each session state wears in the kit's status pill.
+ *
+ * A total record over `SessionState` rather than a switch with a default, so a
+ * state added to the lifecycle fails the typecheck here instead of quietly
+ * rendering in whatever colour the default happened to be. The seven are the
+ * colours this screen already drew, moved off seven per-state CSS rules and
+ * onto the one pill the mocks draw (issue #751).
+ */
+const SESSION_STATE_TONE: Record<SessionState, DenTone> = {
+  scheduled: 'neutral',
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
+  completed: 'success',
+  // Not a stage of the visit: the visit is not happening. Muted and struck
+  // through, which is how this screen has always drawn it.
+  cancelled: 'muted',
+  unknown: 'warning',
+};
 
 interface SessionDetailProps {
   /**
@@ -379,7 +409,11 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
               <DenPanel title="Status">
                 <div className="sdetail__head">
                   <div className="sdetail__head-tags">
-                    <span className={`sdetail__chip sdetail__chip--${info.cssClass}`}>{info.chipLabel}</span>
+                    <StatusPill
+                      label={info.chipLabel}
+                      tone={SESSION_STATE_TONE[state]}
+                      struck={state === 'cancelled'}
+                    />
                     <ServicePill serviceType={serviceTypeNow} />
                   </div>
                   {state === 'unknown' && (

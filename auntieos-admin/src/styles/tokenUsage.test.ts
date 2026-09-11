@@ -272,6 +272,34 @@ describe('the Den entrance and ambient wash', () => {
     expect([...router.matchAll(/className="orb [abc]" aria-hidden="true"/g)]).toHaveLength(3);
   });
 
+  it('lays the grain sheet over the wash, in the markup and in the stylesheet', () => {
+    // The other half of the mocks' ground (#751), and the half the admin never
+    // had: three enormous blurred discs with no noise over them read as a flat
+    // gradient. All four decorations sit at the same z-index, so the grain
+    // coming LAST in RootLayout is the whole of how it lands over the orbs and
+    // still under the screen.
+    const router = readFileSync(join(srcDir, 'router.tsx'), 'utf8');
+    expect(router).toContain('className="grain" aria-hidden="true"');
+    expect(router.indexOf('className="grain"')).toBeGreaterThan(
+      router.indexOf('className="orb c"'),
+    );
+
+    const grain = base.slice(base.indexOf('.grain {'));
+    expect(grain).toContain('position: fixed');
+    expect(grain).toContain('opacity: 0.05');
+    expect(grain).toContain('feTurbulence');
+  });
+
+  it('mutes the wash only where the cream scheme is asked for by name', () => {
+    // This rule read `:root:not([data-theme='dark'])` while cream was the
+    // default, and that form became a trap the moment navy became the default:
+    // it matches every document NOT carrying the attribute, so it would
+    // multiply the wash down to a quarter wherever the attribute is missing,
+    // jsdom included. Scoped to the opt-in attribute, it matches nothing today.
+    expect(base).toContain("[data-theme='light'] .orb");
+    expect(base).not.toContain(":root:not([data-theme='dark'])");
+  });
+
   it('staggers gaplessly from d1 on every screen that takes the entrance', () => {
     // Home, Directory and KinTales are the surfaces the 2026-07-25 audit picked
     // as worth the entrance; a screen with no `d*` class hard-cuts into place,
@@ -299,9 +327,88 @@ describe('the Den entrance and ambient wash', () => {
     const orbs = base.slice(base.indexOf('.orb {'), base.indexOf('@keyframes orb-drift'));
     // `.orb.b` used to name `--color-teal`, which nothing declares, so it took a
     // literal and was the one element on the page that ignored dark mode.
-    expect(orbs).toContain('var(--color-tertiary)');
+    //
+    // The three hues are the mocks' own since #751: orange, teal, pink, running
+    // out from the top-left corner. Purple is not in the mocks' mesh, and the
+    // orange belongs at the corner the hero band lights from.
     expect(orbs).toContain('var(--color-primary)');
     expect(orbs).toContain('var(--color-accent)');
+    expect(orbs).toContain('var(--color-secondary)');
+    expect(orbs).not.toContain('var(--color-tertiary)');
+  });
+});
+
+describe('the panel and the hero are the mocks glass, not a flat tint', () => {
+  const kit = readFileSync(join(srcDir, 'components', 'DenScreenKit.css'), 'utf8');
+  const block = (selector: string) =>
+    kit.slice(kit.indexOf(`${selector} {`), kit.indexOf('}', kit.indexOf(`${selector} {`)));
+
+  it('draws the panel as the mocks 160deg navy gradient on a hairline', () => {
+    // A flat `--color-surface-glass` fill is what made a panel read as a card
+    // laid on the page rather than as glass cut out of it.
+    const panel = block('.den-panel');
+    expect(panel).toContain(
+      'linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom))',
+    );
+    expect(panel).toContain('var(--color-hairline)');
+    expect(panel).toContain('border-radius: var(--radius-lg)');
+    expect(panel).toContain('padding: 22px');
+  });
+
+  it('gives the hero band the radial orange wash over the same gradient', () => {
+    const hero = block('.den-heading');
+    expect(hero).toContain('radial-gradient');
+    expect(hero).toContain('var(--tt-kinfolk-orange)');
+    expect(hero).toContain('border-radius: var(--radius-hero)');
+  });
+
+  it('keeps backdrop-filter off the panel and the hero, which is the mocks own choice', () => {
+    // Not one of the 29 mocks blurs a panel. The gradient's lower stop is
+    // already translucent, so the ground reads through the bottom of every
+    // panel, and a blur over that greys the wash instead of letting it show.
+    //
+    // The two RULE BLOCKS, not the whole file, and that is the claim: a blur on
+    // either of these two surfaces is the mistake. `.kit-tip-body`, the subtitle
+    // tooltip from #758, does blur, deliberately: it is an element the mocks do
+    // not draw at all, it floats over panel copy rather than over the ground,
+    // and without the blur that copy reads through its 0.6-alpha fill.
+    for (const selector of ['.den-panel', '.den-heading']) {
+      expect(block(selector), `${selector} blurs what is behind it`).not.toMatch(
+        /backdrop-filter\s*:/,
+      );
+    }
+  });
+
+  it('rises with backwards fill, never both, so a panel that lifts can still lift', () => {
+    // `both` leaves the last keyframe's `transform: translateY(0)` applied for
+    // good, and an animation declaration outranks any author rule, so
+    // `.lift:hover { transform: ... }` would never move the card again.
+    // `backwards` covers the delay and then hands the element back.
+    for (const selector of ['.den-panel', '.den-heading']) {
+      expect(block(selector), `${selector} does not rise`).toMatch(
+        /animation: rise var\(--dur-rise\)[^;]*backwards/,
+      );
+    }
+    expect(kit).not.toMatch(/animation: rise[^;]*\bboth\b/);
+  });
+
+  it('pins the stagger at two classes, so the bundler cannot decide the delay', () => {
+    // `.d1` in base.css sets the whole `animation` shorthand, which resets both
+    // the delay and the fill mode declared on `.den-panel`. Whichever sheet the
+    // bundler emits second would otherwise win, so the overrides are 0,2,0.
+    for (const step of ['d1', 'd2', 'd3', 'd4']) {
+      expect(kit).toContain(`.den-panel.${step}`);
+    }
+    expect(kit).toMatch(/\.den-panel\.d4,?\s*\{[^}]*animation-fill-mode: backwards/);
+  });
+
+  it('gives the status pill one tone-driven rule instead of one rule per state', () => {
+    // The mocks' `.statuspill`. Four screens drew their own version of this in
+    // four sizes; the kit owns it now and mixes every value from `--den-tone`.
+    const pill = block('.den-statuspill');
+    expect(pill).toContain('text-transform: uppercase');
+    expect(pill).toContain('var(--type-label-sm-family)');
+    expect(pill).toContain('var(--den-tone)');
   });
 });
 

@@ -16,8 +16,37 @@ import { usingFixtureAdmin } from '../support/commands';
  * #686 writes a real tag through the screen's own "Edit tags" control (a
  * genuine Firestore write via `updateKinTags`) and removes it again through the
  * same control before the test ends, so the fixture is left exactly as it was
- * seeded.
+ * seeded. Both writes are waited on: see the comment inside that test.
+ *
+ * Fixed by Cypress Author, 2026-09-11.
  */
+
+/**
+ * The Firestore WebChannel path every `updateDoc` in the app goes out on. The
+ * same channel carries its own handshakes, so a route on the URL alone matches
+ * traffic that has nothing to do with the write under test; the handler below
+ * aliases on the BODY, which names the document and carries the new field.
+ */
+const FIRESTORE_WRITE = '**/google.firestore.v1.Firestore/Write/**';
+
+/** Biscuit's document, as `e2e/seed.ts` writes it. Named in the header above. */
+const BISCUIT_DOC = 'kin/vis-kin-1';
+
+/**
+ * The request body as searchable text, whatever shape Cypress hands over.
+ * WebChannel posts a form-encoded envelope, so the document path arrives
+ * percent-encoded and `kin/vis-kin-1` will not match until it is decoded.
+ */
+function writeBody(body: unknown): string {
+  const raw = typeof body === 'string' ? body : JSON.stringify(body ?? '');
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    // A malformed escape sequence: search the raw text rather than throwing
+    // inside a route handler, where the failure would surface as a timeout.
+    return raw;
+  }
+}
 
 /** Opens KinView from the Directory's Kin tab, by the pet's name. */
 function openKinFromDirectory(petName: string) {
@@ -66,6 +95,28 @@ describe('kin view and edit', () => {
 
   it('#686 pet tags render as pills next to the kin name, with no standing Tags panel', () => {
     const TAG = 'Cuddly';
+
+    // WAIT FOR THE WRITE, DO NOT RACE IT (2026-09-11). `ProfileTagsSection`
+    // paints the chip optimistically and fires `updateKinTags`, a bare
+    // `updateDoc` that nothing on the screen awaits, and `KinView` reads the
+    // pet once through `getKin` rather than subscribing, so the only way to see
+    // the saved tags is to open the screen again. Re-opening starts with
+    // `cy.visit`, which tears the page down, and a mutation the SDK has not
+    // flushed dies with it: the pill was there or not depending on which won.
+    // This spec had already been rewritten once for the same step (`cy.reload`
+    // to `openKinFromDirectory`) and the race survived that.
+    //
+    // Aliasing from the body, not the URL: the Write channel also carries
+    // handshakes, and the vocabulary write that adds "Cuddly" to the business
+    // tag list goes out on the same channel in the same tick. Requiring
+    // Biscuit's own document path picks out the two writes this test makes, and
+    // the tag name then tells the assignment from the teardown that clears it.
+    cy.intercept('POST', FIRESTORE_WRITE, (req) => {
+      const body = writeBody(req.body);
+      if (!body.includes(BISCUIT_DOC)) return;
+      req.alias = body.includes(TAG) ? 'tagAssigned' : 'tagCleared';
+    });
+
     cy.signIn();
     openKinFromDirectory('Biscuit');
     cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
@@ -76,6 +127,11 @@ describe('kin view and edit', () => {
     cy.contains('.tag-chip__name', TAG).should('exist');
     cy.contains('button', 'Done').click();
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
+
+    // The emulator has answered the assignment, so the next read is reading
+    // something that exists. This is the line that makes the re-open below a
+    // test of what was SAVED rather than a test of who won a race.
+    cy.wait('@tagAssigned');
 
     // Re-open fresh, rather than `cy.reload()`: KinView is Directory's own
     // local state, not a route, so reloading the browser drops it and lands
@@ -93,6 +149,10 @@ describe('kin view and edit', () => {
     cy.get(`[aria-label="Remove ${TAG} tag"]`).click();
     cy.contains('.tag-chip__name', TAG).should('not.exist');
     cy.contains('button', 'Done').click();
+    // Waited on for the same reason as the assignment, and it matters more
+    // here: the next spec's first command is a `cy.visit`, so an unflushed
+    // clear would leave Biscuit tagged for everything that runs after it.
+    cy.wait('@tagCleared');
   });
 
   it('#689 the crumb step that is not the current screen is a real link, opened from the Directory Kin tab', () => {

@@ -1,5 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+  `data-theme="dark"` is written here, in the shipped HTML, rather than set by
+  the app at runtime: it has to be true of the very first paint, before any
+  module loads, and there is no stored state to resolve it from. The mocks'
+  glass world is the only scheme the admin paints (issue #751, operator ruling
+  2026-09-11), so the attribute is a constant. tokens.css already carries that
+  set on bare `:root`; this line is what the scheme-scoped selectors elsewhere
+  in the CSS need in order to resolve.
+-->
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
