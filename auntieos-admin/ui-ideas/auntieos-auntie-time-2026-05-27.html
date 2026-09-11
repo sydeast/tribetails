@@ -7,10 +7,15 @@
 <!--
   AuntieOS redesign concept · Auntie Time. Standalone mockup, Den aesthetic. No em dashes.
   Mirrors the real AuntieTimeListScreen (KinCareSessionsScreen.kt): day-of view to run +
-  complete KinCares. Phases Active / Upcoming / Recent. Status lifecycle SCHEDULED ->
+  complete KinCares. Phases Active / Overdue / Upcoming / Recent. Status lifecycle SCHEDULED ->
   ON_MY_WAY -> ARRIVED (GPS starts) -> DEPARTED -> COMPLETED. State-aware actions:
   SCHEDULED [OMW][Arrived], ON_MY_WAY [Arrived], ARRIVED [Departed][Undo Arrived],
   DEPARTED [Complete KinTale]. Kin shown via profile photo. Palette from AuntieColors.kt.
+
+  Amended 2026-09-11 (issue #755 pass): the OVERDUE phase is the operator's ruling in
+  issue #702 ("Scheduled is not showing KinCare with the schedule status"). A visit still
+  SCHEDULED after its slot has passed used to fall off the board entirely; it now keeps
+  its own group between Active and Upcoming, same card, same actions. Both apps draw it.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -41,7 +46,7 @@
   .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:3px}
 
   .phase{margin-bottom:24px;opacity:0;transform:translateY(14px);animation:rise .65s var(--ease) forwards}
-  .phase.p1{animation-delay:.1s}.phase.p2{animation-delay:.2s}.phase.p3{animation-delay:.3s}
+  .phase.p1{animation-delay:.1s}.phase.p2{animation-delay:.2s}.phase.p3{animation-delay:.3s}.phase.p4{animation-delay:.4s}
   .phlab{display:flex;align-items:center;gap:9px;margin-bottom:11px}
   .phlab b{font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--cream)}
   .phlab .ct{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);background:var(--navy-3);border:1px solid var(--line);border-radius:20px;padding:2px 8px}
@@ -135,8 +140,23 @@
       </div>
     </div>
 
-    <!-- UPCOMING: SCHEDULED today..+14 -->
+    <!-- OVERDUE: still SCHEDULED after the slot passed (issue #702 ruling) -->
     <div class="phase p2">
+      <div class="phlab"><b>Overdue</b><span class="ct">1</span></div>
+
+      <div class="card">
+        <div class="top">
+          <div class="sicon" style="background:var(--navy-3);color:var(--cream-dim)">◷</div>
+          <div class="id"><b>Ned Harlow</b><div class="svc">30 min · Juniper · Tue May 19 · 4:00 to 4:30p</div></div>
+          <span class="pill scheduled">Scheduled</span>
+        </div>
+        <div class="addr">📍 3 Willow Bend Rd</div>
+        <div class="acts"><button class="btn go">OMW</button><button class="btn gh">Arrived</button><button class="btn gh">Complete</button></div>
+      </div>
+    </div>
+
+    <!-- UPCOMING: SCHEDULED today..+14 -->
+    <div class="phase p3">
       <div class="phlab"><b>Upcoming</b><span class="ct">2</span></div>
 
       <div class="card">
@@ -160,7 +180,7 @@
     </div>
 
     <!-- RECENT: COMPLETED / CANCELLED today or yesterday -->
-    <div class="phase p3">
+    <div class="phase p4">
       <div class="phlab"><b>Recent</b><span class="ct">2</span></div>
 
       <div class="card">
@@ -181,7 +201,7 @@
       </div>
     </div>
 
-    <p class="note">// concept mockup · Auntie Time (mirrors AuntieTimeListScreen) · Active/Upcoming/Recent + lifecycle actions + GPS · palette from AuntieColors.kt</p>
+    <p class="note">// concept mockup · Auntie Time (mirrors AuntieTimeListScreen) · Active/Overdue/Upcoming/Recent + lifecycle actions + GPS · palette from AuntieColors.kt · Overdue added per issue #702</p>
   </div>
 
   <script>
