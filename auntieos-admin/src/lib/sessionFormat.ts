@@ -185,7 +185,7 @@ export interface SessionStateInfo {
   cssClass: string;
 }
 
-/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. */
+/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. The pill tone is `SESSION_STATE_TONE` below, one map for the board card and the detail hero. */
 export function sessionStateInfo(state: SessionState): SessionStateInfo {
   switch (state) {
     case 'scheduled':

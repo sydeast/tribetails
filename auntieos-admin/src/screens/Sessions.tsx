@@ -117,7 +117,7 @@ interface SessionsProps {
  *
  * SessionDetail is still one click away, from the card's own header, and it
  * remains the home of the details editor, the note to office, the full route map
- * and the Timing panel. The board is the run sheet; the sheet is the record.
+ * and the lifecycle stepper with its stamps. The board is the run sheet; the sheet is the record.
  *
  * THE DETAIL IS A ROUTE NOW, NOT A VIEW OF THIS SCREEN (#753). "KinCares should
  * have their own id numbers in the params. I don't want to refresh the KinCare."
