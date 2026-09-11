@@ -362,13 +362,21 @@ describe('the panel and the hero are the mocks glass, not a flat tint', () => {
     expect(hero).toContain('border-radius: var(--radius-hero)');
   });
 
-  it('carries NO backdrop-filter, which is the mocks own choice', () => {
-    // Not one of the 29 mocks uses it. The gradient's lower stop is already
-    // translucent, so the ground reads through the bottom of every panel, and a
-    // blur over that greys the wash instead of letting it show.
-    // A DECLARATION, so the comment in the stylesheet explaining the rule does
-    // not trip the rule.
-    expect(kit).not.toMatch(/backdrop-filter\s*:/);
+  it('keeps backdrop-filter off the panel and the hero, which is the mocks own choice', () => {
+    // Not one of the 29 mocks blurs a panel. The gradient's lower stop is
+    // already translucent, so the ground reads through the bottom of every
+    // panel, and a blur over that greys the wash instead of letting it show.
+    //
+    // The two RULE BLOCKS, not the whole file, and that is the claim: a blur on
+    // either of these two surfaces is the mistake. `.kit-tip-body`, the subtitle
+    // tooltip from #758, does blur, deliberately: it is an element the mocks do
+    // not draw at all, it floats over panel copy rather than over the ground,
+    // and without the blur that copy reads through its 0.6-alpha fill.
+    for (const selector of ['.den-panel', '.den-heading']) {
+      expect(block(selector), `${selector} blurs what is behind it`).not.toMatch(
+        /backdrop-filter\s*:/,
+      );
+    }
   });
 
   it('rises with backwards fill, never both, so a panel that lifts can still lift', () => {
