@@ -14,6 +14,7 @@ import {
   outstandingTotal,
   feedCountMeta,
   tenureLabel,
+  coversKin,
 } from './kinfolkProfileFeeds';
 
 function tale(over: Partial<KinTaleEntry> = {}): KinTaleEntry {
@@ -139,6 +140,22 @@ describe('upcomingVisitsFor', () => {
     expect(upcomingVisitsFor(rows, 'k1', now, null).map((r) => r._id)).toEqual(['inside', 'beyond']);
   });
 });
+
+describe('coversKin', () => {
+  it('keeps a legacy row that names no pets at all', () => {
+    expect(coversKin(undefined, 'p1')).toBe(true);
+  });
+
+  it('drops a row whose writer found no pets, since that is a fact and not a gap', () => {
+    expect(coversKin([], 'p1')).toBe(false);
+  });
+
+  it('matches on the id, never on position', () => {
+    expect(coversKin(['p2', 'p1'], 'p1')).toBe(true);
+    expect(coversKin(['p2'], 'p1')).toBe(false);
+  });
+});
+
 describe('horizonIso', () => {
   it('lands the requested number of days out', () => {
     expect(horizonIso(new Date('2026-08-17T12:00:00Z'), 7).slice(0, 10)).toBe('2026-08-24');

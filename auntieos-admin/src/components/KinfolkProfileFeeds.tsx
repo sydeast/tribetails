@@ -25,6 +25,7 @@ import {
   outstandingTotal,
   feedCountMeta,
   horizonIso,
+  coversKin,
   UPCOMING_HORIZON_DAYS,
 } from '../lib/kinfolkProfileFeeds';
 import { kinTaleHeadline, bodyPreview, kinTaleWhen } from '../lib/kinTaleFormat';
@@ -55,26 +56,48 @@ import './KinfolkProfileFeeds.css';
  * instruction; a link also means middle-click, copy and back all work.
  */
 
-/** Recent KinTales sent to this household, newest first. */
-export function RecentKinTalesPanel({ kinfolkId }: { kinfolkId: string }) {
+/**
+ * The narrowing the kin detail screen applies to a household feed: the same
+ * household-scoped read, kept to the rows that cover ONE pet (`coversKin`), and
+ * headed with the pet's name the way its mock heads them ("Biscuit's KinTales").
+ * The read stays household-scoped because that is the indexed query; a pet is a
+ * filter over it, never a second index.
+ */
+export interface KinScope {
+  kinId: string;
+  kinName: string;
+}
+
+/** Recent KinTales sent to this household, newest first, or about one of its pets when [kin] is given. */
+export function RecentKinTalesPanel({ kinfolkId, kin }: { kinfolkId: string; kin?: KinScope }) {
   const state = useCollection<KinTaleEntry>(kinTalesForKinfolkQuery(kinfolkId));
-  const loaded = state.status === 'ready' ? state.data.filter(isSent).length : null;
+  const inScope = (r: KinTaleEntry) => kin === undefined || coversKin(r.kinIds, kin.kinId);
+  const loaded =
+    state.status === 'ready' ? state.data.filter(isSent).filter(inScope).length : null;
   // Cappedness is a fact about the RAW read, not about the sent subset counted
   // above: 150 sent rows out of a read that came back holding all 200 it was
   // allowed is still a truncated collection. See `feedCountMeta`.
   const capped = state.status === 'ready' && state.data.length >= KINTALES_PROFILE_MAX;
-  const rows = state.status === 'ready' ? recentTalesFor(state.data, kinfolkId) : [];
+  const rows =
+    state.status === 'ready' ? recentTalesFor(state.data.filter(inScope), kinfolkId) : [];
+  const who = kin === undefined ? 'this household' : kin.kinName;
 
   return (
     <DenPanel
-      title="Recent KinTales"
+      title={kin === undefined ? 'Recent KinTales' : `${kin.kinName}'s KinTales`}
       {...(loaded !== null ? { meta: feedCountMeta(rows.length, loaded, capped) } : {})}
     >
       <AsyncRegion
         state={state}
-        what="this household's KinTales"
+        what={`${who}'s KinTales`}
         isEmpty={() => rows.length === 0}
-        empty={<EmptyHint>No KinTales sent to this household yet.</EmptyHint>}
+        empty={
+          <EmptyHint>
+            {kin === undefined
+              ? 'No KinTales sent to this household yet.'
+              : `No KinTales about ${kin.kinName} yet.`}
+          </EmptyHint>
+        }
       >
         {() => (
           <ul className="kfeed">
@@ -124,22 +147,40 @@ function whenInput(r: KinTaleEntry): {
  *
  * [now] is injectable so a test can pin the window instead of racing the clock.
  */
-export function UpcomingVisitsPanel({ kinfolkId, now }: { kinfolkId: string; now?: Date }) {
+export function UpcomingVisitsPanel({
+  kinfolkId,
+  kin,
+  now,
+}: {
+  kinfolkId: string;
+  kin?: KinScope;
+  now?: Date;
+}) {
   const state = useCollection<SessionEntry>(sessionsForKinfolkQuery(kinfolkId));
   const clock = now ?? new Date();
   const nowIso = clock.toISOString();
   const through = horizonIso(clock, UPCOMING_HORIZON_DAYS);
   const today = localDateIso(clock);
+  const inScope = (s: SessionEntry) => kin === undefined || coversKin(s.kinIds, kin.kinId);
   const rows =
-    state.status === 'ready' ? upcomingVisitsFor(state.data, kinfolkId, nowIso, through) : [];
+    state.status === 'ready'
+      ? upcomingVisitsFor(state.data.filter(inScope), kinfolkId, nowIso, through)
+      : [];
+  const who = kin === undefined ? 'this household' : kin.kinName;
 
   return (
     <DenPanel title="Upcoming KinCare" meta={`next ${UPCOMING_HORIZON_DAYS} days`}>
       <AsyncRegion
         state={state}
-        what="this household's visits"
+        what={`${who}'s visits`}
         isEmpty={() => rows.length === 0}
-        empty={<EmptyHint>No visits booked in the next {UPCOMING_HORIZON_DAYS} days.</EmptyHint>}
+        empty={
+          <EmptyHint>
+            {kin === undefined
+              ? `No visits booked in the next ${UPCOMING_HORIZON_DAYS} days.`
+              : `No visits booked for ${kin.kinName} in the next ${UPCOMING_HORIZON_DAYS} days.`}
+          </EmptyHint>
+        }
       >
         {() => (
           <ul className="kfeed">

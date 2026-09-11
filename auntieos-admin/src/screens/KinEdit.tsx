@@ -64,7 +64,7 @@ const CARE_FIELDS = [
  * migration, because a second populated copy that merely looks authoritative is
  * the whole defect.
  *
- * The stored `kin.vetInfo` field is deliberately NOT deleted: `KinView.tsx:182`
+ * The stored `kin.vetInfo` field is deliberately NOT deleted: `KinView.tsx` (its Medical panel)
  * renders it read-only and legacy docs still carry real data (HANDOFF_2026-05-28
  * :152). Dropping it from the write path is safe for that data because
  * `directoryWrite.ts#updateKin` sends its patch through `updateDoc`, a
