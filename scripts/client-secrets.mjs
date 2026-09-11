@@ -168,6 +168,30 @@ export const CLIENT_VARS = [
       'and breaks nothing; the day #587 merges the value is already there.',
   },
   {
+    app: 'admin',
+    variable: 'VITE_MAPBOX_PUBLIC_TOKEN',
+    secret: 'ADMIN_WEB_MAPBOX_PUBLIC_TOKEN',
+    kind: 'secret-manager',
+    required: true,
+    sensitive: false,
+    why:
+      'The URL-restricted `web-maps-public` token (styles:tiles, styles:read, ' +
+      'fonts:read) that draws the Kin Care visit route over a satellite ' +
+      'basemap on the Auntie Time detail (#760, operator ruling 2026-09-11). ' +
+      'ITS OWN SECRET NAME, not the portal\'s, even though the VALUE may be ' +
+      'the same token: one name per app is what lets the operator rotate or ' +
+      're-restrict one site without reading the other app\'s build to find ' +
+      'out what broke, and it is the same reason the two Sentry DSNs are two ' +
+      'names. Required for the reason the portal row gives: RouteMap degrades ' +
+      'to its SVG polyline without a token, so a release that lost it would ' +
+      'look entirely healthy while quietly handing the office the plainer ' +
+      'map. The token must also carry auntie.tribetails.com and the main ' +
+      'channel host in its URL restrictions, or the tiles 403 and the admin ' +
+      'lands on that same fallback with a valid token in the bundle. NOT the ' +
+      'server-side tokens-API secret revoked on 2026-09-03, and NOT the ' +
+      'search-scoped token `api/mapbox.ts` proxies through a callable.',
+  },
+  {
     app: 'portal',
     variable: 'VITE_SENTRY_DSN',
     secret: 'PORTAL_WEB_SENTRY_DSN',

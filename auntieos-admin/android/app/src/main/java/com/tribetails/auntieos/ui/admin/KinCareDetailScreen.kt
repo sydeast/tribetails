@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.model.GpsPoint
 import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.KinCareReport
@@ -81,6 +82,13 @@ fun KinCareDetailScreen(
     onBack: () -> Unit,
     onLiveTrack: (sessionId: String, kinfolkId: String, kinfolkName: String) -> Unit = { _, _, _ -> },
     onViewRoute: (routeId: String, kinfolkName: String) -> Unit = { _, _ -> },
+    // #760: the purple house marker's coordinate, read raw off the household
+    // document rather than carried on the `Kinfolk` model, because a field on
+    // that model would be rebuilt from form state the next time somebody saved
+    // the household from a screen that has no control for it. Injected so a
+    // spec can hand the map a coordinate without Firebase; the default never
+    // throws and answers null wherever Firestore is unreachable.
+    householdLocation: suspend (String) -> HouseholdPoint? = ::fetchHouseholdServiceLocation,
     repo: AuntieRepository = AuntieOSApp.instance.repository,
     // W4-3: the visit and its KinTales read from the KinCare repo; the kinfolk,
     // kin and 411 reads on this screen are Directory domain and stay on [repo].
@@ -94,6 +102,13 @@ fun KinCareDetailScreen(
     var kinById    by remember(kinCareId) { mutableStateOf<Map<String, Kin>>(emptyMap()) }
     var fourOnes   by remember(kinCareId) { mutableStateOf<Map<String, Kin411>>(emptyMap()) }
     var reports    by remember(kinCareId) { mutableStateOf<List<KinCareReport>>(emptyList()) }
+    // #760: the GPS trail under the visit times. Live breadcrumbs while the
+    // visit is in flight, the durable `gpsSummary` copy once it is not, because
+    // `purgeOldVisitRoutes` deletes breadcrumbs past the retention window and a
+    // panel that read them alone would be blank on exactly the visits the
+    // office reviews. Same split the web admin's Route panel makes.
+    var crumbs     by remember(kinCareId) { mutableStateOf<List<GpsPoint>>(emptyList()) }
+    var house      by remember(kinCareId) { mutableStateOf<HouseholdPoint?>(null) }
     var loading    by remember(kinCareId) { mutableStateOf(true) }
     // A genuine read failure, kept apart from "not available" below - see the
     // useDocById mirror in the doc comment above.
@@ -121,6 +136,13 @@ fun KinCareDetailScreen(
                         kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
                             reports = list.sortedByDescending { it.sentAt.orEmpty().ifBlank { it.createdAt } }
                         }
+                        // #760. A failed breadcrumb read leaves the list empty,
+                        // which falls through to the saved summary below rather
+                        // than blanking the panel.
+                        kinCareRepo.getBreadcrumbs(kinCareId).onSuccess { pts ->
+                            crumbs = pts.map { GpsPoint(lat = it.latitude, lng = it.longitude, t = it.timestamp) }
+                        }
+                        house = householdLocation(s.kinfolkId)
                     }
                 }
                 .onFailure { err ->
@@ -295,23 +317,76 @@ fun KinCareDetailScreen(
 
             val isActive = !s.arrivedAt.isNullOrBlank() && s.departedAt.isNullOrBlank()
             val hasRoute = s.visitRouteId.isNotBlank()
-            if (isActive || hasRoute) {
-                item {
-                    DetailSection("Location") {
-                        if (isActive) {
-                            PrimaryButton(
-                                label = "Open live tracking",
-                                onClick = { onLiveTrack(s.id, s.kinfolkId, s.kinfolkName) },
-                                modifier = Modifier.fillMaxWidth(),
+
+            // #760: the route map, DIRECTLY under the Lifecycle section, which
+            // is where the arrival and departure times are. Operator ruling
+            // 2026-09-11: "this is what the map looks like and is usually
+            // listed under the arrival departure times".
+            run {
+                val summaryRoute = s.gpsSummary?.route.orEmpty()
+                val trail = if (crumbs.isNotEmpty()) crumbs else summaryRoute
+                if (trail.isNotEmpty()) {
+                    item {
+                        DetailSection("Visit route") {
+                            KinCareRouteMap(
+                                points = trail,
+                                header = routeHeaderStrip(
+                                    arrivedAt = s.arrivedAt,
+                                    departedAt = s.departedAt,
+                                    distanceMeters = s.gpsSummary?.distanceMeters,
+                                    durationSeconds = s.gpsSummary?.durationSeconds,
+                                    nowMillis = System.currentTimeMillis(),
+                                ),
+                                house = house,
+                                live = isActive,
                             )
+                            if (crumbs.isEmpty() && summaryRoute.isNotEmpty()) {
+                                EmptyHint(
+                                    "Replay from the route saved on this visit. The per-ping " +
+                                        "breadcrumbs are not being read, so this is the " +
+                                        "down-sampled copy.",
+                                )
+                            }
                         }
-                        if (hasRoute) {
-                            PrimaryButton(
-                                label = "View visit route",
-                                onClick = { onViewRoute(s.visitRouteId, s.kinfolkName) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                    }
+                }
+            }
+
+            // Not yet clocked in: "never tracked" would be a false verdict on a
+            // visit that has not happened yet, so SCHEDULED/ON_MY_WAY get their
+            // own forward-looking line instead of the two below.
+            val notYetStarted = s.status.equals("SCHEDULED", ignoreCase = true) ||
+                s.status.equals("ON_MY_WAY", ignoreCase = true)
+            // #754: the section used to be OMITTED entirely once neither button
+            // applied, so a finished visit with no route told the office nothing.
+            // It now always renders and names which of the two facts is true,
+            // matching the web admin's Route panel split on the same field.
+            item {
+                DetailSection("Location") {
+                    if (isActive) {
+                        PrimaryButton(
+                            label = "Open live tracking",
+                            onClick = { onLiveTrack(s.id, s.kinfolkId, s.kinfolkName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (hasRoute) {
+                        PrimaryButton(
+                            label = "View visit route",
+                            onClick = { onViewRoute(s.visitRouteId, s.kinfolkName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (!isActive && !hasRoute) {
+                        EmptyHint(
+                            if (notYetStarted) {
+                                "Tracking starts once an Auntie clocks in for this Kin Care."
+                            } else if (s.gpsSummary != null) {
+                                "A GPS summary was saved for this Kin Care, but it has no route to view."
+                            } else {
+                                "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
+                            }
+                        )
                     }
                 }
             }

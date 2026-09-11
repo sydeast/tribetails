@@ -13,8 +13,16 @@ const { setVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/sessionsWrite', () => ({ setVisitLifecycle, updateKinCareSession }));
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+// `useDocById` joined the list with #760: the Route panel's purple house marker
+// reads `kinfolk/{id}.serviceLocation` through `lib/householdLocation.ts`, which
+// subscribes to that document. Mocked at `lib/firestore` rather than at
+// `lib/householdLocation`, so the real `readHouseholdPoint` still runs and a
+// spec drives the raw document shape Firestore would actually hand back.
+const { useCollection, useDocById } = vi.hoisted(() => ({
+  useCollection: vi.fn(),
+  useDocById: vi.fn(),
+}));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
 const { useBreadcrumbs } = vi.hoisted(() => ({ useBreadcrumbs: vi.fn() }));
@@ -32,6 +40,10 @@ beforeEach(() => {
   updateKinCareSession.mockReset();
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [] });
+  useDocById.mockReset();
+  // The household on file has no stored coordinate by default, which is the
+  // common case and the one that must draw no house marker at all.
+  useDocById.mockReturnValue({ status: 'ready', data: null });
   getBusinessSettings.mockReset();
   getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
   useBreadcrumbs.mockReset();
@@ -463,5 +475,115 @@ describe('SessionDetail: GPS', () => {
     useBreadcrumbs.mockReturnValue({ points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)], error: null, ready: true });
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Live visit route' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #760. The operator's reference is the previous system's visit report, and
+ * what it puts under the arrival and departure times is a map with a strip of
+ * facts over it. These cases pin the strip and its placement; the map itself,
+ * its four markers and its fallback are `components/RouteMap.test.tsx`, which
+ * mocks mapbox-gl. No token is configured under vitest, so what renders here is
+ * the SVG fallback, and the strip has to be on it just the same: the times and
+ * the distance are facts about the visit, not decoration on a basemap.
+ */
+describe('SessionDetail: the route header strip', () => {
+  const crumb = (lat: number, lng: number, t: number) => ({ lat, lng, t });
+  // LOCAL instants, no trailing Z: the strip prints the operator's wall clock
+  // (lib/time.ts's AO-18 rule), so a UTC literal would assert a different hour
+  // on a runner in a different zone.
+  const ARRIVED = '2026-07-16T12:05:00';
+  const DEPARTED = '2026-07-16T13:09:00';
+
+  it('states the visit length, both clock times and the distance', () => {
+    useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          arrivedAt: ARRIVED,
+          departedAt: DEPARTED,
+          gpsSummary: {
+            distanceMeters: 200,
+            durationSeconds: 3852,
+            route: [
+              { lat: 30.2, lng: -97.7, t: 1 },
+              { lat: 30.3, lng: -97.8, t: 2 },
+            ],
+          },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Completed in 1:04')).toBeInTheDocument();
+    expect(screen.getByText('Arrived at 12:05pm - Departed at 1:09pm - 0.1 miles')).toBeInTheDocument();
+  });
+  /**
+   * DEPARTED IS NOT COMPLETED, and the strip must not say it is. The reference
+   * report labels this clause "Completed at", over what this system stores as
+   * `departedAt`. This screen already carries the ruling that the two are
+   * different events and that `transitionBookingStatus` can stamp completion
+   * without a departure ever being stamped, so a strip using the report's word
+   * would put a second, invented completion time on a screen that prints the
+   * real one a panel above.
+   */
+  it('names the departure as a departure, never as a completion', () => {
+    useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          arrivedAt: ARRIVED,
+          departedAt: DEPARTED,
+          completedAt: '2026-07-16T15:00:00',
+          gpsSummary: {
+            distanceMeters: 200,
+            durationSeconds: 3852,
+            route: [
+              { lat: 30.2, lng: -97.7, t: 1 },
+              { lat: 30.3, lng: -97.8, t: 2 },
+            ],
+          },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Departed at 1:09pm/)).toBeInTheDocument();
+    expect(screen.queryByText(/Completed at 1:09pm/)).toBeNull();
+  });
+  // A visit still being walked has no departure stamp. The strip drops that
+  // clause rather than printing a blank one, and still reports the distance so
+  // far, which is the number the office is watching.
+  it('leaves out the clauses a live visit does not have yet', () => {
+    useBreadcrumbs.mockReturnValue({
+      points: [crumb(30.2, -97.7, 1), crumb(30.21, -97.71, 2)],
+      error: null,
+      ready: true,
+    });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: ARRIVED })} onBack={vi.fn()} />);
+    expect(screen.getByText(/^Arrived at 12:05pm - /)).toBeInTheDocument();
+    expect(screen.queryByText(/Departed at/)).toBeNull();
+  });
+  // Placement, which is the whole of the operator's sentence: the map is
+  // "usually listed under the arrival departure times". The Route panel already
+  // follows the Timing panel, so this asserts the order rather than trusting it.
+  it('sits after the panel that carries the arrival and departure times', () => {
+    useBreadcrumbs.mockReturnValue({
+      points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)],
+      error: null,
+      ready: true,
+    });
+    const { container } = render(
+      <SessionDetail
+        entry={entry({ status: 'DEPARTED', arrivedAt: ARRIVED, departedAt: DEPARTED })}
+        onBack={vi.fn()}
+      />,
+    );
+    const timing = screen.getByText('Timing');
+    const strip = screen.getByText(/Arrived at 12:05pm/);
+    expect(timing.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // And nothing else sits between the two panels.
+    const panels = [...container.querySelectorAll('h2, h3, h4')].map((h) => h.textContent);
+    expect(panels.indexOf('Route')).toBe(panels.indexOf('Timing') + 1);
   });
 });

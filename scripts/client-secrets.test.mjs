@@ -51,6 +51,7 @@ function fullStore(overrides = {}) {
     ADMIN_WEB_SENTRY_DSN: FAKE_DSN,
     PORTAL_WEB_SENTRY_DSN: FAKE_DSN,
     PORTAL_WEB_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN,
+    ADMIN_WEB_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN,
     ADMIN_WEB_APPCHECK_SITE_KEY: FAKE_SITE_KEY,
     ...overrides,
   });
@@ -81,6 +82,16 @@ test('a release with everything stored resolves every variable from the store', 
     dsns.map((r) => r.secret).sort(),
     ['ADMIN_WEB_SENTRY_DSN', 'PORTAL_WEB_SENTRY_DSN'],
   );
+  // Same shape for the Mapbox public token since #760, and here the VALUES may
+  // legitimately be one token. The names still have to be two: a token gets
+  // rotated or re-restricted per site, and one shared name would mean rotating
+  // the admin's map by editing the portal's secret.
+  const tokens = rows.filter((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  assert.equal(tokens.length, 2);
+  assert.deepEqual(
+    tokens.map((r) => r.secret).sort(),
+    ['ADMIN_WEB_MAPBOX_PUBLIC_TOKEN', 'PORTAL_WEB_MAPBOX_PUBLIC_TOKEN'],
+  );
 });
 
 test('a required client secret missing from the store refuses, BY NAME', () => {
@@ -105,7 +116,7 @@ test('a stored-but-EMPTY value refuses too, and is not reported as missing', () 
   const store = fullStore({ PORTAL_WEB_MAPBOX_PUBLIC_TOKEN: '   \n' });
   const { refusals } = resolveClientVars({ fetchSecret: store, release: 'abc1234' });
 
-  const token = refusals.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  const token = refusals.find((r) => r.app === 'portal' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
   assert.ok(token, 'an empty stored value must refuse');
   assert.equal(token.status, 'empty');
   // An empty secret already exists, so telling the operator to CREATE it is
@@ -123,7 +134,7 @@ test('a local .env does NOT excuse a value the store is missing, and the refusal
     release: 'abc1234',
   });
 
-  const token = refusals.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  const token = refusals.find((r) => r.app === 'portal' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
   assert.ok(token);
   assert.equal(token.localAlso, true);
 });
@@ -221,7 +232,11 @@ test('with NO fetcher at all, a local .env carries the build', () => {
   const { rows, refusals } = resolveClientVars({
     fetchSecret: null,
     localEnv: {
-      admin: { VITE_SENTRY_DSN: FAKE_DSN, VITE_ADMIN_APPCHECK_SITE_KEY: FAKE_SITE_KEY },
+      admin: {
+        VITE_SENTRY_DSN: FAKE_DSN,
+        VITE_ADMIN_APPCHECK_SITE_KEY: FAKE_SITE_KEY,
+        VITE_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN,
+      },
       portal: { VITE_SENTRY_DSN: FAKE_DSN, VITE_MAPBOX_PUBLIC_TOKEN: FAKE_TOKEN },
     },
     release: 'abc1234',
@@ -238,6 +253,7 @@ test('with no fetcher and no local value either, a required variable still refus
   const names = refusals.map((r) => `${r.app}:${r.variable}`).sort();
   assert.deepEqual(names, [
     'admin:VITE_ADMIN_APPCHECK_SITE_KEY',
+    'admin:VITE_MAPBOX_PUBLIC_TOKEN',
     'portal:VITE_MAPBOX_PUBLIC_TOKEN',
   ]);
 });
@@ -249,9 +265,14 @@ test('with no fetcher, an inherited process.env value outranks the local file', 
     localEnv: { portal: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.example-from-dotenv' } },
     release: 'abc1234',
   });
-  const token = rows.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  const token = rows.find((r) => r.app === 'portal' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
   assert.equal(token.source, 'process-env');
   assert.equal(token.value, 'pk.example-from-ci');
+  // One process.env name, two apps reading it: an exported override reaches
+  // BOTH, which is what a CI job passing one repo secret to one build already
+  // relies on and is why each app still gets its own .env.production.local.
+  const adminToken = rows.find((r) => r.app === 'admin' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  assert.equal(adminToken.source, 'process-env');
 });
 
 test('the store outranks a local .env when both have a value', () => {
@@ -260,7 +281,11 @@ test('the store outranks a local .env when both have a value', () => {
     localEnv: { portal: { VITE_MAPBOX_PUBLIC_TOKEN: 'pk.example-from-dotenv' } },
     release: 'abc1234',
   });
-  const token = rows.find((r) => r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
+  // BY APP, not by variable name: both apps declare VITE_MAPBOX_PUBLIC_TOKEN
+  // since #760 and only the portal's secret was overridden here, so a bare
+  // find() would have asserted against whichever row happened to be declared
+  // first.
+  const token = rows.find((r) => r.app === 'portal' && r.variable === 'VITE_MAPBOX_PUBLIC_TOKEN');
   assert.equal(token.source, 'secret-manager');
   assert.equal(token.value, 'pk.example-from-the-store');
 });
