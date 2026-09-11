@@ -33,12 +33,18 @@ import com.tribetails.auntieos.util.SortOption
 /**
  * Reusable "Sort: <option>" pill. Tap → dropdown of [SortOption] values.
  * Used by Directory, KinTales, Kin sub-directory.
+ *
+ * [options] narrows the list a screen offers. The Directory's Kin tab has no
+ * backing field for "Recently Created" (the flat `kin` collection carries no
+ * createdAt), so it leaves that option out rather than offering a sort that
+ * changes nothing. Defaults to every option.
  */
 @Composable
 fun SortMenu(
     selected: SortOption,
     onSelect: (SortOption) -> Unit,
     modifier: Modifier = Modifier,
+    options: List<SortOption> = SortOption.entries,
 ) {
     val c = AuntieTheme.colors
     var expanded by remember { mutableStateOf(false) }
@@ -69,7 +75,7 @@ fun SortMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            SortOption.entries.forEach { opt ->
+            options.forEach { opt ->
                 DropdownMenuItem(
                     text = { Text(opt.label, color = c.textPrimary) },
                     leadingIcon = if (opt == selected) {
