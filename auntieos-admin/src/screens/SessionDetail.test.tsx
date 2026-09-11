@@ -34,8 +34,19 @@ vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/breadcrumbs')>();
   return { ...actual, useBreadcrumbs };
 });
+// The browser tracker (#772), mocked whole for the same reason as the live
+// listener: jsdom has no `navigator.geolocation`, and the sheet's cases are
+// about what each tracker phase reads as, not about the watch.
+const { useVisitTracking } = vi.hoisted(() => ({ useVisitTracking: vi.fn() }));
+vi.mock('../lib/visitTracking', () => ({
+  useVisitTracking,
+  beginVisitTracking: vi.fn(),
+  endVisitTracking: vi.fn(),
+  stopVisitTracking: vi.fn(),
+}));
 import { SessionDetail } from './SessionDetail';
 beforeEach(() => {
+  useVisitTracking.mockReturnValue({ phase: 'idle' });
   setVisitLifecycle.mockReset();
   updateKinCareSession.mockReset();
   useCollection.mockReset();
@@ -475,6 +486,37 @@ describe('SessionDetail: GPS', () => {
     unmount();
     render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
     expect(screen.getByText('No GPS breadcrumbs were recorded for this Kin Care.')).toBeInTheDocument();
+  });
+  // #772: the sheet must not leave a denied browser "waiting for the first
+  // ping" from a field app that is not running. The tracker's status decides
+  // the sentence, and the live line under the clock says the same thing.
+  it('says tracking is off for this visit when this browser was denied location', () => {
+    useVisitTracking.mockReturnValue({
+      phase: 'off',
+      reason: 'denied',
+      message: 'location was denied in this browser.',
+    });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText(
+        'No route is being recorded from this browser. Tracking is off for this visit: location was denied in this browser.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/waiting for the first gps ping/i)).toBeNull();
+    expect(
+      screen.getByText('Tracking off for this visit: location was denied in this browser.'),
+    ).toBeInTheDocument();
+  });
+  it('shows the live line under the clock and waits on this browser while it is tracking', () => {
+    useVisitTracking.mockReturnValue({ phase: 'on', fixes: 0 });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    expect(screen.getByText('Tracking on from this browser')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for the first GPS ping from this browser.')).toBeInTheDocument();
+  });
+  it('shows no tracker line on a visit that is not ARRIVED, whatever the store says', () => {
+    useVisitTracking.mockReturnValue({ phase: 'on', fixes: 3 });
+    render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
+    expect(screen.queryByTestId('visit-tracking')).toBeNull();
   });
   // #754: a finished visit with no breadcrumbs AND no gpsSummary was never
   // tracked (never clocked in from Android with location on). The old copy
