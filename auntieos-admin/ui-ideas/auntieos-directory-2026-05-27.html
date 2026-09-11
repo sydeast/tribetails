@@ -133,6 +133,14 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
         <input placeholder="Search by name, pet, or phone…" />
       </div>
+      <!-- Tag filter (#713). Operator ruling 2026-09-10: "tags are just labels and
+           not actual tags which act like a filter." The Directory narrows each tab
+           by one tag now, so the controls row carries a Tag pill beside Sort. It is
+           drawn only when some row on the tab carries a tag. -->
+      <div class="sortpill" id="tag">
+        <span class="mono">Tag</span> All tags
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      </div>
       <div class="sortpill" id="sort">
         <span class="mono">Sort</span> Recently active
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
