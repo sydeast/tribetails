@@ -123,7 +123,7 @@ describe('account', () => {
     cy.get('.signin__card', { timeout: 30_000 }).should('exist');
     cy.get('.signin__form input[type="email"]').type(ADMIN.email);
     cy.get('.signin__form input[type="password"]').type('not-the-password', { log: false });
-    cy.contains('.signin__form button', 'Sign in').click();
+    cy.contains('.signin__form button', 'Jump back in!').click();
     // The mapped line, not a raw `auth/invalid-credential`: proves
     // `SignIn.authMessage` was reached, not just that something red appeared.
     cy.get('.signin__card [role="alert"]').should('contain.text', 'Email or password is incorrect.');

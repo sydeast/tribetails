@@ -22,8 +22,8 @@ test('a wrong password is refused with a line the operator can act on', async ({
   await page.goto('/signin');
 
   await page.getByLabel('Email').fill(ADMIN.email);
-  await page.getByLabel('Password').fill('not-the-password');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByLabel('Password', { exact: true }).fill('not-the-password');
+  await page.getByRole('button', { name: 'Jump back in!' }).click();
 
   await expect(page.getByText('Email or password is incorrect.')).toBeVisible();
   // Not a raw `auth/invalid-credential`: `SignIn.authMessage` maps the code,
@@ -36,11 +36,11 @@ test('a kinfolk account authenticates and is still denied the admin app', async 
   await page.goto('/signin');
 
   await page.getByLabel('Email').fill(KINFOLK.email);
-  await page.getByLabel('Password').fill(KINFOLK.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByLabel('Password', { exact: true }).fill(KINFOLK.password);
+  await page.getByRole('button', { name: 'Jump back in!' }).click();
 
   await expect(
-    page.getByText('This account is not authorized for the AuntieOS admin app.'),
+    page.getByText('This account does not have admin access.'),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/signin$/);
 
@@ -56,7 +56,7 @@ test('a kinfolk account authenticates and is still denied the admin app', async 
   // whether or not the user was signed out. An earlier draft of this test did
   // exactly that against localStorage. Reloading and watching what the app
   // decides cannot pass for the wrong reason: a surviving session re-renders
-  // the denial banner through the effect at SignIn.tsx:44.
+  // the denial banner through SignIn's mount effect.
   await page.reload();
   await expect(page.getByLabel('Email')).toBeVisible();
   // A settling window is unavoidable for a "this does not happen" assertion:
@@ -64,7 +64,7 @@ test('a kinfolk account authenticates and is still denied the admin app', async 
   // first paint. Two seconds is far longer than the emulator needs.
   await page.waitForTimeout(2000);
   await expect(
-    page.getByText('This account is not authorized for the AuntieOS admin app.'),
+    page.getByText('This account does not have admin access.'),
     'the denied kinfolk was still signed in after a reload',
   ).toBeHidden();
 });
@@ -73,8 +73,8 @@ test('the seeded admin gets in and lands on Home', async ({ page }) => {
   await page.goto('/signin');
 
   await page.getByLabel('Email').fill(ADMIN.email);
-  await page.getByLabel('Password').fill(ADMIN.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Jump back in!' }).click();
 
   await page.waitForURL('**/home', { timeout: 30_000 });
   await expect(page.locator('.signin__card')).toHaveCount(0);
