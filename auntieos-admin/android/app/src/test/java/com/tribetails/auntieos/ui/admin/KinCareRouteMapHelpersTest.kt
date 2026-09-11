@@ -1,8 +1,12 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.config.MapboxConfig
 import com.tribetails.auntieos.data.model.GpsPoint
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -196,6 +200,47 @@ class KinCareRouteMapHelpersTest {
         assertNull(
             readHouseholdServiceLocation(mapOf("serviceLocation" to mapOf("lat" to 134.2, "lng" to -119.2))),
         )
+    }
+
+    /**
+     * `MapboxConfig.resetForTests` is process-wide mutable state in a
+     * single-JVM suite, which is what cost this codebase issue #425, so it is
+     * restored whatever the three cases below do.
+     */
+    @After
+    fun restoreMapboxConfig() = MapboxConfig.resetForTests()
+
+    /**
+     * THE THIRD FALLBACK CONDITION, and the one a boolean could not have
+     * carried. `applyAccessToken` records `Delivered(token, deliveryError)`
+     * when the native handover throws, which is an `UnsatisfiedLinkError` on
+     * any device or JVM whose Mapbox native library did not load. Startup was
+     * willing and there is still no usable credential, so the Kin Care detail
+     * has to draw the Canvas polyline rather than build a MapView that cannot
+     * work. The web admin's equivalent is mapbox-gl throwing in the
+     * constructor after `canRenderMapboxMap()` already said yes.
+     */
+    @Test
+    fun `a token the SDK refused does not count as a token`() {
+        MapboxConfig.resetForTests { throw UnsatisfiedLinkError("no mapbox native library here") }
+        MapboxConfig.applyAccessToken("pk.example-not-a-real-token")
+        assertFalse(hasMapboxToken())
+    }
+
+    @Test
+    fun `a token the SDK took does count`() {
+        MapboxConfig.resetForTests { }
+        MapboxConfig.applyAccessToken("pk.example-not-a-real-token")
+        assertTrue(hasMapboxToken())
+    }
+
+    @Test
+    fun `a build with no token at all falls back without ever asking the SDK`() {
+        var handed = false
+        MapboxConfig.resetForTests { handed = true }
+        MapboxConfig.applyAccessToken("")
+        assertFalse(hasMapboxToken())
+        assertFalse(handed)
     }
 
     /**

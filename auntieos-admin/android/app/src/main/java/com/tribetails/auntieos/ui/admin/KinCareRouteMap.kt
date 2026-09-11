@@ -64,10 +64,12 @@ import kotlinx.coroutines.tasks.await
  *
  * THE CANVAS POLYLINE IS THE FALLBACK, NOT THE TARGET. `ui/components/
  * RouteMap.kt` still draws every visit on a build with no Mapbox token:
- * `MapboxConfig.applyAccessToken` records `NoTokenConfigured` at startup and
- * [hasMapboxToken] reads that, so a tokenless build shows the plainer map
- * rather than a grey rectangle. That is the same split the web admin makes with
- * `canRenderMapboxMap()`.
+ * `MapboxConfig.applyAccessToken` records `NoTokenConfigured` at startup, and
+ * a handover that threw inside the SDK is recorded too. [hasMapboxToken] reads
+ * both, so a build with no token and a device whose native library did not load
+ * each show the plainer map rather than a grey rectangle or a crash. That is
+ * the same split the web admin makes with `canRenderMapboxMap()` plus its
+ * catch around the SDK's constructor.
  *
  * The map setup is `ui/location/RouteViewerScreen.kt`'s, reused rather than
  * re-derived: the same lifecycle observer, the same annotation managers, the
@@ -250,9 +252,24 @@ internal suspend fun fetchHouseholdServiceLocation(kinfolkId: String): Household
     }.getOrNull()
 }
 
-/** True when the build handed the Maps SDK a token at startup. */
-internal fun hasMapboxToken(): Boolean =
-    MapboxConfig.startupTokenApplication is MapboxConfig.TokenApplication.Delivered
+/**
+ * True when the Maps SDK actually TOOK a token at startup.
+ *
+ * DELIVERED WITH A deliveryError IS A NO, and that is exactly why `MapboxConfig`
+ * records the failure instead of a boolean: the handover threw inside the SDK,
+ * so there is no usable credential on the device however willing startup was.
+ * `applyAccessToken`'s own header names the case, an `UnsatisfiedLinkError` from
+ * the native call, and building a `MapView` after one would turn a missing
+ * native library into a crash on a screen that has a perfectly good Canvas
+ * polyline to fall back to.
+ *
+ * The web admin's third fallback condition is the same shape: `canRenderMapboxMap()`
+ * says yes, mapbox-gl then fails to construct, and RouteMap draws the SVG.
+ */
+internal fun hasMapboxToken(): Boolean {
+    val applied = MapboxConfig.startupTokenApplication
+    return applied is MapboxConfig.TokenApplication.Delivered && applied.deliveryError == null
+}
 
 /**
  * The panel: the strip, then the satellite map, or the Canvas polyline when
