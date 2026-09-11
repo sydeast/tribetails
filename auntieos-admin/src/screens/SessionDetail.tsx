@@ -323,7 +323,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           <DenPanel title="Session unavailable">
             <EmptyHint>
               No Kin Care session is on file under this id. It may have been removed. Back to Auntie
-              Time above returns to the board.
+              Time returns to the board.
             </EmptyHint>
           </DenPanel>
         )
