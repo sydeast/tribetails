@@ -416,7 +416,11 @@ export function SessionDetail({ entry, onBack }: SessionDetailProps) {
                       ? 'Waiting for the first GPS ping. The field app writes one about every five seconds while a visit is in flight.'
                       : inFlight
                         ? 'No GPS breadcrumbs were recorded for this Kin Care.'
-                        : 'No route on file for this Kin Care. Tracking runs while an Auntie is clocked in; older breadcrumbs are cleared once past the retention window, leaving the saved summary.'}
+                        : state === 'completed' || state === 'cancelled' || state === 'unknown'
+                          ? gpsSummary != null
+                            ? 'A GPS summary was saved for this Kin Care, but it has no route points to draw.'
+                            : 'No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'
+                          : 'Tracking starts once an Auntie clocks in for this Kin Care.'}
                   </EmptyHint>
                 ) : (
                   <>

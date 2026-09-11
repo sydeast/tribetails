@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.tribetails.auntieos.data.model.GpsSummary
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
@@ -176,5 +177,88 @@ class KinCareDetailScreenTest {
 
         rule.onNodeWithText("The Devlins").assertIsDisplayed()
         rule.onNodeWithText("Network unreachable").assertDoesNotExist()
+    }
+
+    /**
+     * #754: the Location section used to be OMITTED once the visit was
+     * neither active nor carried a `visitRouteId`, so a finished visit that
+     * was simply never clocked in with GPS on told the office nothing at all.
+     */
+    @Test
+    fun `a finished visit with no route and no GPS summary names itself never tracked`() {
+        val session = KinCareSession(
+            id = "vis_ses1",
+            kinfolkId = "fam1",
+            kinfolkName = "The Osei family",
+            status = "COMPLETED",
+            arrivedAt = "",
+            departedAt = "",
+            visitRouteId = "",
+            gpsSummary = null,
+        )
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+
+        mount(kinCareRepo)
+
+        rule.onNodeWithText(
+            "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.",
+        ).assertIsDisplayed()
+    }
+
+    /**
+     * #754: a `gpsSummary` can exist (distance/duration saved on DEPARTED)
+     * with no `visitRouteId` ever set, which is a different true fact from
+     * never tracked and must say so rather than reusing that sentence.
+     */
+    @Test
+    fun `a finished visit with a GPS summary but no route to view names itself summary-only`() {
+        val session = KinCareSession(
+            id = "vis_ses1",
+            kinfolkId = "fam1",
+            kinfolkName = "The Osei family",
+            status = "COMPLETED",
+            arrivedAt = "2026-08-19T14:00:00",
+            departedAt = "2026-08-19T14:30:00",
+            visitRouteId = "",
+            gpsSummary = GpsSummary(distanceMeters = 400.0, durationSeconds = 300L),
+        )
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+
+        mount(kinCareRepo)
+
+        rule.onNodeWithText(
+            "A GPS summary was saved for this Kin Care, but it has no route to view.",
+        ).assertIsDisplayed()
+    }
+
+    /**
+     * #754 regression guard: a session that has not been clocked into yet also
+     * has no `arrivedAt`, no `visitRouteId`, and no `gpsSummary` - the same
+     * shape as a truly never-tracked finished visit. Without the SCHEDULED /
+     * ON_MY_WAY carve-out, "never tracked" would render on a booking that
+     * simply has not happened yet.
+     */
+    @Test
+    fun `a scheduled visit says tracking has not started, not never tracked`() {
+        val session = KinCareSession(
+            id = "vis_ses1",
+            kinfolkId = "fam1",
+            kinfolkName = "The Osei family",
+            status = "SCHEDULED",
+            arrivedAt = "",
+            departedAt = "",
+            visitRouteId = "",
+            gpsSummary = null,
+        )
+        val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
+        coEvery { kinCareRepo.getKinCareSession("vis_ses1") } returns Result.success(session)
+
+        mount(kinCareRepo)
+
+        rule.onNodeWithText(
+            "Tracking starts once an Auntie clocks in for this Kin Care.",
+        ).assertIsDisplayed()
     }
 }

@@ -295,23 +295,41 @@ fun KinCareDetailScreen(
 
             val isActive = !s.arrivedAt.isNullOrBlank() && s.departedAt.isNullOrBlank()
             val hasRoute = s.visitRouteId.isNotBlank()
-            if (isActive || hasRoute) {
-                item {
-                    DetailSection("Location") {
-                        if (isActive) {
-                            PrimaryButton(
-                                label = "Open live tracking",
-                                onClick = { onLiveTrack(s.id, s.kinfolkId, s.kinfolkName) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        if (hasRoute) {
-                            PrimaryButton(
-                                label = "View visit route",
-                                onClick = { onViewRoute(s.visitRouteId, s.kinfolkName) },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+            // Not yet clocked in: "never tracked" would be a false verdict on a
+            // visit that has not happened yet, so SCHEDULED/ON_MY_WAY get their
+            // own forward-looking line instead of the two below.
+            val notYetStarted = s.status.equals("SCHEDULED", ignoreCase = true) ||
+                s.status.equals("ON_MY_WAY", ignoreCase = true)
+            // #754: the section used to be OMITTED entirely once neither button
+            // applied, so a finished visit with no route told the office nothing.
+            // It now always renders and names which of the two facts is true,
+            // matching the web admin's Route panel split on the same field.
+            item {
+                DetailSection("Location") {
+                    if (isActive) {
+                        PrimaryButton(
+                            label = "Open live tracking",
+                            onClick = { onLiveTrack(s.id, s.kinfolkId, s.kinfolkName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (hasRoute) {
+                        PrimaryButton(
+                            label = "View visit route",
+                            onClick = { onViewRoute(s.visitRouteId, s.kinfolkName) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (!isActive && !hasRoute) {
+                        EmptyHint(
+                            if (notYetStarted) {
+                                "Tracking starts once an Auntie clocks in for this Kin Care."
+                            } else if (s.gpsSummary != null) {
+                                "A GPS summary was saved for this Kin Care, but it has no route to view."
+                            } else {
+                                "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
+                            }
+                        )
                     }
                 }
             }

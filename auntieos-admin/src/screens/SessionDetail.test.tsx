@@ -396,20 +396,22 @@ describe('SessionDetail: GPS', () => {
       error: null,
       ready: true,
     });
-    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    const { container } = render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Live visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
     expect(screen.getByText('Pings')).toBeInTheDocument();
   });
   it('is not live once the visit is DEPARTED: a replay must not claim movement', () => {
     useBreadcrumbs.mockReturnValue({ points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)], error: null, ready: true });
-    render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
+    const { container } = render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
   });
   // `purgeOldVisitRoutes` deletes breadcrumbs past the retention window, so a
   // completed visit's only route is the saved summary. A panel that read
   // breadcrumbs alone would be blank on exactly the visits an operator reviews.
   it('falls back to the saved summary on a completed visit, and says it is the down-sampled copy', () => {
-    render(
+    const { container } = render(
       <SessionDetail
         entry={entry({
           status: 'COMPLETED',
@@ -427,6 +429,7 @@ describe('SessionDetail: GPS', () => {
       />,
     );
     expect(screen.getByRole('img', { name: 'Visit route' })).toBeInTheDocument();
+    expect(container.querySelector('path')).not.toBeNull();
     expect(screen.getByText(/down-sampled copy/i)).toBeInTheDocument();
   });
   it('tells "waiting for the first ping" apart from "no route was recorded"', () => {
@@ -434,7 +437,56 @@ describe('SessionDetail: GPS', () => {
     expect(screen.getByText(/waiting for the first gps ping/i)).toBeInTheDocument();
     unmount();
     render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
-    expect(screen.getByText(/no gps breadcrumbs were recorded/i)).toBeInTheDocument();
+    expect(screen.getByText('No GPS breadcrumbs were recorded for this Kin Care.')).toBeInTheDocument();
+  });
+  // #754: a finished visit with no breadcrumbs AND no gpsSummary was never
+  // tracked (never clocked in from Android with location on). The old copy
+  // ("older breadcrumbs are cleared... leaving the saved summary") implied a
+  // summary existed even when one never did, which is what the walked visit
+  // showed.
+  it('names a finished visit with no breadcrumbs and no summary as never tracked', () => {
+    render(<SessionDetail entry={entry({ status: 'COMPLETED', completedAt: '2026-07-16T18:00:00Z' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('No GPS breadcrumbs were recorded for this Kin Care because it was never tracked.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/retention window/i)).toBeNull();
+    expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
+  });
+  // #754: a gpsSummary can exist (distance/duration were saved) with no usable
+  // route points, e.g. an empty or missing `route` array. That is a different
+  // true fact from "never tracked" and must not draw a polyline either.
+  it('names a saved summary with no route points as summary only, not never tracked', () => {
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          completedAt: '2026-07-16T18:00:00Z',
+          gpsSummary: { distanceMeters: 400, durationSeconds: 300, route: [] },
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText('A GPS summary was saved for this Kin Care, but it has no route points to draw.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/never tracked/i)).toBeNull();
+    expect(screen.queryByRole('img', { name: /visit route/i })).toBeNull();
+  });
+  // #754 regression guard: a SCHEDULED or ON_MY_WAY visit has no arrivedAt, no
+  // breadcrumbs, and no gpsSummary either, the same shape as a truly
+  // never-tracked finished visit. Without this carve-out "never tracked" would
+  // render on a booking that has not happened yet.
+  it('says tracking has not started on a scheduled visit, not never tracked', () => {
+    const { unmount } = render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/never tracked/i)).toBeNull();
+    unmount();
+    render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText('Tracking starts once an Auntie clocks in for this Kin Care.'),
+    ).toBeInTheDocument();
   });
   // A dead subscription and an unmoved Auntie render identically if the caller
   // only receives an array. This is the case that keeps them apart.
