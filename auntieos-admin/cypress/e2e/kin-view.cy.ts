@@ -45,6 +45,14 @@ const BISCUIT_DOC = 'kin/vis-kin-1';
 const KIN_NAME = 'h1.den-heading-title';
 
 /**
+ * The h1 shows the name Directory passed in, before `getKin` has answered, so
+ * it no longer proves the kin is loaded the way the old `.kview__name` (drawn
+ * from the loaded record) did. Anything read off the record itself waits this
+ * long for the read.
+ */
+const KIN_LOAD = { timeout: 8_000 } as const;
+
+/**
  * The request body as searchable text, whatever shape Cypress hands over.
  * WebChannel posts a form-encoded envelope, so the document path arrives
  * percent-encoded and `kin/vis-kin-1` will not match until it is decoded.
@@ -90,7 +98,7 @@ describe('kin view and edit', () => {
     openKinFromDirectory('Marbles');
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Marbles');
     // Under the Kin box: a sibling of it, not inside it.
-    cy.get('.kview__flags .den-statuspill').should('contain.text', 'Reactive: handle with care');
+    cy.get('.kview__flags .den-statuspill', KIN_LOAD).should('contain.text', 'Reactive: handle with care');
     // Not a page banner: nothing on the page is announced as an alert.
     cy.get('[role="alert"]').should('not.exist');
   });
@@ -134,7 +142,7 @@ describe('kin view and edit', () => {
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
-    cy.contains('button', 'Edit tags').click();
+    cy.contains('button', 'Edit tags', KIN_LOAD).click();
     cy.get('[aria-label="Add a pet tag"]').type(`${TAG}{enter}`);
     cy.contains('.tag-chip__name', TAG).should('exist');
     cy.contains('button', 'Done').click();
@@ -152,7 +160,7 @@ describe('kin view and edit', () => {
     // Firestore rather than the assign field's own optimistic state.
     openKinFromDirectory('Biscuit');
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
-    cy.contains('.kview__tags .den-statuspill', TAG).should('exist');
+    cy.contains('.kview__tags .den-statuspill', TAG, KIN_LOAD).should('exist');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
     // Teardown: remove the tag through the same control, leaving the fixture
