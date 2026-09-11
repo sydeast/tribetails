@@ -92,7 +92,7 @@ function plural(count: number, unit: string): string {
  * "1 month ago", "2 years ago".
  *
  * COARSE ON PURPOSE. The precise instant is already on this screen, twice: the
- * Timing panel prints it and the strip's own middle clause prints the clock
+ * lifecycle stepper stamps it and the strip's own middle clause prints the clock
  * time. What this line answers is the one thing those do not, which is whether
  * the operator is looking at this morning's visit or at one from the spring.
  *
