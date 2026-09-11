@@ -5,19 +5,29 @@
  * drag lift's shadow, which has no token and follows the same neutral-alpha
  * form Dialog.css and Toast.css already use for theirs.
  *
- * The two column templates below are the same track list on purpose — the head
+ * The two column templates below are the same track list on purpose: the head
  * and the body have to line up to the pixel or the 9am label sits beside the
  * 10am row. `56px` is the gutter width the mock and the desktop grid both use;
  * it is a layout dimension, not a colour, so it is stated here rather than
  * invented as a token nothing else would use.
+ *
+ * THE GRID IS ITS OWN GLASS (#755). The mock's `.cal` takes the same 160deg
+ * navy gradient and hairline every panel takes, at 22px, and nothing else: no
+ * title, no padding, the day row and the columns run to its edges. That is
+ * not a DenPanel, which carries a heading and 22px of padding, so the surface
+ * is painted here from the panel's own three tokens rather than by wrapping
+ * the grid in a panel it would then have to fight. The screen used to do
+ * exactly that (a "Schedule" panel around a flat card) and the calendar read
+ * as a spreadsheet dropped into a box.
  */
 
 .schedule-grid {
   margin: var(--space-4) 0;
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--color-surface);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  animation: rise var(--dur-rise) var(--ease-emphasized) 0.16s backwards;
 }
 
 .schedule-grid__head,
@@ -26,22 +36,26 @@
   grid-template-columns: 56px repeat(7, minmax(0, 1fr));
 }
 
+/* The mock rules the day row off with the hairline and separates the columns
+   with something fainter still (`--line-2`, cream at 5.5%). `--color-border-soft`
+   is the nearest token to that second value; `--color-border`, which these
+   lines used to take, is the card rim and drew a lattice over the whole grid. */
 .schedule-grid__head {
-  border-bottom: var(--border-hairline) solid var(--color-border);
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
 }
 
 .schedule-grid__gutter-head {
-  border-right: var(--border-hairline) solid var(--color-border);
+  border-right: var(--border-hairline) solid var(--color-border-soft);
 }
 
 .schedule-grid__day-head {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-1);
+  gap: 3px;
+  padding: 13px 10px;
   border: none;
-  border-right: var(--border-hairline) solid var(--color-border);
+  border-right: var(--border-hairline) solid var(--color-border-soft);
   background: none;
   color: var(--color-text-dim);
   font: inherit;
@@ -50,25 +64,46 @@
 .schedule-grid__day-head:last-child {
   border-right: none;
 }
+/* The selected day has no mark in the mock (it draws no agenda); it is the
+   day the agenda panel above is showing, so it gets the faintest possible
+   lift rather than a fill that would compete with today's coral. */
 .schedule-grid__day-head--selected {
-  background: var(--color-surface-2);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
   color: var(--color-text-primary);
 }
+/* Today, the mock's way: the number sits in a 34px coral square, one radius
+   step under the card, and the weekday above it goes coral too. Coral is the
+   one brand colour no block on the grid uses, which is why it also draws the
+   now line below. */
+.schedule-grid__day-head--today .schedule-grid__dow {
+  color: var(--color-coral);
+  opacity: 1;
+}
 .schedule-grid__day-head--today .schedule-grid__dnum {
-  background: var(--color-primary);
-  color: var(--color-background);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-top: -2px;
+  border-radius: var(--radius-card-lg);
+  background: var(--color-coral);
+  color: var(--tt-brand-cream);
 }
 
 .schedule-grid__dow {
-  font-size: var(--type-label-sm-size);
-  letter-spacing: 0.08em;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  opacity: 0.7;
 }
+/* The serif number, the mock's `.dnum`: Fraunces at 21px, weight 500. */
 .schedule-grid__dnum {
-  font-size: var(--type-body-md-size);
-  font-weight: 600;
+  font-family: var(--type-display-md-family);
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--color-text-primary);
 }
 
 .schedule-grid__body {
@@ -78,32 +113,46 @@
 .schedule-grid__times {
   display: flex;
   flex-direction: column;
-  border-right: var(--border-hairline) solid var(--color-border);
+  border-right: var(--border-hairline) solid var(--color-border-soft);
 }
 .schedule-grid__time {
   display: block;
   text-align: right;
-  padding: 0 var(--space-2) 0 0;
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+  padding: 2px var(--space-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+  opacity: 0.6;
+  /* The mock pulls each label up so it sits ON its hour line, not under it. */
+  transform: translateY(-7px);
 }
 
 .schedule-grid__day {
   position: relative;
-  border-right: var(--border-hairline) solid var(--color-border);
+  border-right: var(--border-hairline) solid var(--color-border-soft);
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
     transparent 53px,
-    var(--color-border) 53px,
-    var(--color-border) 54px
+    var(--color-border-soft) 53px,
+    var(--color-border-soft) 54px
   );
 }
 .schedule-grid__day:last-child {
   border-right: none;
 }
+/* Today's column: the mock washes it coral from the top, at 5%, over the same
+   hour lines. A flat surface fill (what this was) read as a selected column. */
 .schedule-grid__day--today {
-  background-color: var(--color-surface-2);
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 53px,
+      var(--color-border-soft) 53px,
+      var(--color-border-soft) 54px
+    ),
+    linear-gradient(180deg, color-mix(in srgb, var(--tt-snuggle-coral) 5%, transparent), transparent);
 }
 
 /* Read-only overlay: `booking_time_slots` denies every client write, so this
@@ -117,26 +166,44 @@
    calendar wears. */
 .schedule-grid__busy {
   position: absolute;
-  left: 2px;
-  right: 2px;
-  border-radius: var(--radius-card);
-  border: var(--border-hairline) dashed var(--color-border-soft);
+  left: 5px;
+  right: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border-radius: var(--radius-card-lg);
+  border: var(--border-hairline) dashed color-mix(in srgb, var(--color-text-dim) 40%, transparent);
   background:
     repeating-linear-gradient(
       45deg,
       color-mix(in srgb, var(--color-text-faint) 26%, transparent) 0 3px,
       transparent 3px 6px
     ),
-    var(--color-surface-2);
-  color: var(--color-text-faint);
+    var(--color-hero-bottom);
+  color: var(--color-text-dim);
   cursor: not-allowed;
   overflow: hidden;
-  padding: var(--space-1);
+  padding: 7px 9px;
 }
 .schedule-grid__busy-label {
-  font-size: var(--type-label-sm-size);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--type-body-sm-size);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  opacity: 0.9;
+}
+.schedule-grid__busy-lock {
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  font-size: 11px;
+  opacity: 0.6;
+}
+.schedule-grid__busy-source {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
 }
 
 /* The "now" line (#696), drawn across today's column only.
@@ -167,30 +234,37 @@
 }
 .schedule-grid__now-label {
   position: absolute;
-  left: 12px;
-  top: -0.7rem;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-tight);
-  background: var(--color-surface);
+  left: 6px;
+  top: -19px;
+  padding: 1px 6px;
+  border-radius: var(--radius-chip);
+  background: var(--color-background);
   color: var(--color-coral);
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
+  font-size: 9.5px;
+  white-space: nowrap;
 }
 
+/* A visit block wears its service tone (`data-tone`, resolved to `--den-tone`
+   by the kit), the mock's way: the tone at 18% behind, at 50% on the rim, and
+   the text lifted from the tone towards cream. The same three mixes the month
+   cell's block uses, so a visit is one colour in both views and in the
+   legend. The orange rim every block used to share was the one mark on the
+   calendar the legend did not describe. */
 .schedule-grid__block {
   position: absolute;
-  left: 3px;
-  right: 3px;
+  left: 5px;
+  right: 5px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 2px;
   overflow: hidden;
-  padding: var(--space-1) var(--space-2);
-  border: var(--border-hairline) solid var(--color-primary);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
+  padding: 7px 9px;
+  border: var(--border-hairline) solid color-mix(in srgb, var(--den-tone) 50%, transparent);
+  border-radius: var(--radius-card-lg);
+  background: color-mix(in srgb, var(--den-tone) 18%, transparent);
+  color: color-mix(in srgb, var(--den-tone) 35%, var(--tt-brand-cream));
   font: inherit;
   text-align: left;
   cursor: grab;
@@ -214,12 +288,15 @@
 }
 
 .schedule-grid__block-time {
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-dim);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
 }
 .schedule-grid__block-name {
-  font-size: var(--type-body-sm-size);
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -229,7 +306,7 @@
 .schedule-grid__note {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-top: var(--border-hairline) solid var(--color-border);
+  border-top: var(--border-hairline) solid var(--color-hairline);
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }

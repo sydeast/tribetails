@@ -301,8 +301,9 @@ describe('Schedule screen', () => {
     withFixedToday(() => {
       mockCollections({ busy: { status: 'ready', data: [busySlot({ date: '2026-07-16' })] } });
       render(<Schedule />);
-      expect(screen.getByText('8:00 AM to 9:00 AM')).toBeInTheDocument();
-      expect(screen.getByText('BLOCKED')).toBeInTheDocument();
+      expect(within(agenda()).getByText('8:00 AM to 9:00 AM')).toBeInTheDocument();
+      // The kit's StatusPill: "Blocked" in the DOM, uppercased by the stylesheet.
+      expect(within(agenda()).getByText('Blocked')).toBeInTheDocument();
     });
   });
 
@@ -344,7 +345,9 @@ describe('Schedule screen', () => {
       });
       render(<Schedule />);
       expect(screen.queryByRole('button', { name: 'Unblock' })).toBeNull();
-      expect(screen.getByText('From Google Calendar')).toBeInTheDocument();
+      // Scoped to the agenda: the week grid's busy block names the same
+      // source since #755, so an unscoped query would match twice.
+      expect(within(agenda()).getByText('From Google Calendar')).toBeInTheDocument();
     });
   });
 
@@ -381,7 +384,7 @@ describe('Schedule screen', () => {
     await screen.findByText('Couldn’t remove that block');
     expect(screen.getByText(/mirror of an event on the connected Google Calendar/)).toBeInTheDocument();
     // No optimistic removal: the row is still drawn, because nothing was deleted.
-    expect(within(agenda()).getByText('BLOCKED')).toBeInTheDocument();
+    expect(within(agenda()).getByText('Blocked')).toBeInTheDocument();
   });
 
   it('drops a busy slot with an unrecognized slotType (AO-12-style: never assumed BLOCKED)', () => {
@@ -390,7 +393,7 @@ describe('Schedule screen', () => {
         busy: { status: 'ready', data: [busySlot({ date: '2026-07-16', slotType: 'SOMETHING_NEW' })] },
       });
       render(<Schedule />);
-      expect(screen.queryByText('BLOCKED')).toBeNull();
+      expect(screen.queryByText('Blocked')).toBeNull();
     });
   });
 
@@ -544,7 +547,7 @@ describe('Schedule screen', () => {
     withFixedToday(() => {
       mockCollections({ busy: { status: 'ready', data: [busySlot({ date: '2026-07-16' })] } });
       render(<Schedule onSelect={vi.fn()} />);
-      expect(screen.getByText('BLOCKED')).toBeInTheDocument();
+      expect(within(agenda()).getByText('Blocked')).toBeInTheDocument();
       // Scoped to the agenda: since #697 the "Busy blocks" StatCard is itself a
       // clickable button when there is a busy day to jump to, so an unscoped
       // query here would match that card instead of the row this test is about.
@@ -1154,5 +1157,150 @@ describe('Schedule write surfaces', () => {
       serviceType: '30Minute',
       serviceDurationMinutes: 30,
     });
+  });
+});
+
+/**
+ * #755, the Schedule line: the screen against `ui-ideas/auntieos-schedule-2026-05-27.html`
+ * on the navy ground. What the mock draws that the 2026-09-10 pass did not:
+ * the controls in the hero band, a swatch legend with the drag note on its
+ * right, tone-tinted week blocks, busy blocks that say where they came from,
+ * and no second panel around the calendar. The operator's own additions to
+ * the mock (stat cards #697, the Today panel #695, Block time #397 M11) stay.
+ */
+describe('Schedule on the glass ground (#755)', () => {
+  /** A visit at 9:00-10:30 LOCAL today, inside the drawn 8a-6p window in any zone. */
+  function gridSession(over: Partial<ScheduleSessionEntry> = {}): ScheduleSessionEntry {
+    const today = new Date();
+    return sessionEntry({
+      _id: 'sess-42',
+      startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0, 0, 0).toISOString(),
+      endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 10, 30, 0, 0).toISOString(),
+      ...over,
+    });
+  }
+  function hero(): HTMLElement {
+    return document.querySelector('.den-heading') as HTMLElement;
+  }
+  function grid(): HTMLElement {
+    return document.querySelector('.schedule-grid') as HTMLElement;
+  }
+
+  it('puts the range navigator, the view segment and both write buttons in the hero band', () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    const band = hero();
+    expect(within(band).getByRole('heading', { level: 1 })).toHaveTextContent(/^Schedule week\.$/);
+    expect(within(band).getByRole('button', { name: 'Previous' })).toBeInTheDocument();
+    expect(within(band).getByRole('button', { name: 'Next' })).toBeInTheDocument();
+    expect(within(band).getByRole('tablist', { name: 'Schedule view' })).toBeInTheDocument();
+    expect(within(band).getByRole('button', { name: 'New visit' })).toBeInTheDocument();
+    expect(within(band).getByRole('button', { name: 'Block time' })).toBeInTheDocument();
+    // The range reads off the navigator, the mock's way, and is not repeated
+    // as a detail line under the title.
+    expect(band.querySelector('.den-heading-detail')).toBeNull();
+    // The explanation is the info tooltip, never a line of copy (#758).
+    expect(within(band).getByRole('tooltip', { hidden: true })).toHaveTextContent(/latest 300/);
+  });
+
+  it('draws no "Schedule" panel around the calendar: the agenda panel is the only titled panel', () => {
+    withFixedToday(() => {
+      mockCollections({ sessions: { status: 'ready', data: [sessionEntry({})] } });
+      render(<Schedule />);
+      const panelTitles = Array.from(document.querySelectorAll('.den-panel-title')).map((el) => el.textContent);
+      expect(panelTitles).toEqual(['Today']);
+      // Order under the hero: stat cards, the Today panel, the legend, the grid.
+      const summary = document.querySelector('.schedule__summary') as HTMLElement;
+      const legend = document.querySelector('.schedule__legend') as HTMLElement;
+      expect(summary.compareDocumentPosition(agenda()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(agenda().compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(legend.compareDocumentPosition(grid()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  });
+
+  it('keys the legend with a tone swatch per service type, and writes the drag note on its right', async () => {
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [gridSession({ _id: 'a', serviceType: 'Dog Walk' }), gridSession({ _id: 'b', serviceType: 'House Sit' })],
+      },
+    });
+    render(<Schedule />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    const legend = document.querySelector('.schedule__legend') as HTMLElement;
+    const walk = within(legend).getByText('Dog Walk').closest('.schedule__legend-item') as HTMLElement;
+    const sit = within(legend).getByText('House Sit').closest('.schedule__legend-item') as HTMLElement;
+    expect(walk).toHaveAttribute('data-tone', 'teal');
+    expect(sit).toHaveAttribute('data-tone', 'purple');
+    expect(walk.querySelector('.schedule__legend-swatch')).not.toBeNull();
+    // Not a pill: the legend keys colours, it does not label a visit.
+    expect(legend.querySelector('.den-pill')).toBeNull();
+    // Snap is off in this suite's default settings, so the note says so.
+    expect(within(legend).getByText('Drag a visit to reschedule · to the minute')).toBeInTheDocument();
+    // The old note under the grid is gone: nothing is outside the window.
+    expect(grid().querySelector('.schedule-grid__note')).toBeNull();
+  });
+
+  it('the drag note reads the operator’s snap setting', async () => {
+    getBusinessSettings.mockResolvedValue({ serviceDurations: {}, serviceRates: {}, snapRescheduleTo15Min: true });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    expect(await screen.findByText('Drag a visit to reschedule · snaps to 15 min')).toBeInTheDocument();
+  });
+
+  it('the drag note is a week-view thing: the month legend has none', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    await user.click(screen.getByRole('tab', { name: 'Month' }));
+    const legend = document.querySelector('.schedule__legend') as HTMLElement;
+    expect(legend).not.toBeNull();
+    expect(legend.querySelector('.schedule__legend-hint')).toBeNull();
+  });
+
+  it('tints each week block by its service type, the same tone its legend swatch wears', () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession({ serviceType: 'Drop-in' })] } });
+    render(<Schedule />);
+    const block = within(grid()).getByRole('button', { name: /The Whitfields/ });
+    expect(block).toHaveAttribute('data-tone', 'orange');
+  });
+
+  it('the agenda row wears the kit status pill in the state’s tone, struck through when cancelled', () => {
+    withFixedToday(() => {
+      mockCollections({
+        sessions: {
+          status: 'ready',
+          data: [sessionEntry({ _id: 's1', status: 'ARRIVED' }), sessionEntry({ _id: 's2', status: 'CANCELLED' })],
+        },
+      });
+      render(<Schedule />);
+      const arrived = within(agenda()).getByText('ARRIVED');
+      expect(arrived).toHaveClass('den-statuspill');
+      expect(arrived).toHaveAttribute('data-tone', 'teal');
+      const cancelled = within(agenda()).getByText('CANCELLED');
+      expect(cancelled).toHaveClass('den-statuspill--struck');
+      expect(cancelled).toHaveAttribute('data-tone', 'muted');
+      expect(agenda().querySelector('.schedule__chip')).toBeNull();
+    });
+  });
+
+  it('a busy block on the grid names its start and, for a mirror, where it came from', () => {
+    const today = localDateIso(new Date());
+    mockCollections({
+      busy: {
+        status: 'ready',
+        data: [
+          busySlot({ _id: 'g', date: today, startTime: '09:00', endTime: '10:00', source: 'GOOGLE_BUSY_IMPORT' }),
+          busySlot({ _id: 'm', date: today, startTime: '11:00', endTime: '12:00', source: 'INTERNAL_MANUAL' }),
+        ],
+      },
+    });
+    render(<Schedule />);
+    const blocks = Array.from(grid().querySelectorAll('.schedule-grid__busy')) as HTMLElement[];
+    expect(blocks).toHaveLength(2);
+    const [mirror, manual] = blocks as [HTMLElement, HTMLElement];
+    expect(mirror).toHaveTextContent('09:00');
+    expect(mirror).toHaveTextContent('From Google Calendar');
+    expect(manual).toHaveTextContent('11:00');
+    expect(manual).not.toHaveTextContent('From Google Calendar');
   });
 });

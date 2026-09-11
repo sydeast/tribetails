@@ -20,7 +20,9 @@ import {
 import { visitDurationMinutes } from '../lib/bookingDetailFormat';
 import { sessionHousehold } from '../lib/sessionFormat';
 import { busyWindowLabel, weekdayAbbrev } from '../lib/scheduleFormat';
+import { isOperatorBlock } from '../api/scheduleWrite';
 import { str } from '../lib/coerce';
+import { serviceTone } from './DenScreenKit';
 import './ScheduleWeekGrid.css';
 
 /**
@@ -325,7 +327,7 @@ export function ScheduleWeekGrid({
                 style={{ top: `${previewTopPx(nowMinute)}px` }}
                 aria-hidden="true"
               >
-                <span className="schedule-grid__now-label">{hhmmFromMinutes(nowMinute)}</span>
+                <span className="schedule-grid__now-label">now {hhmmFromMinutes(nowMinute)}</span>
               </div>
             )}
 
@@ -339,7 +341,20 @@ export function ScheduleWeekGrid({
                   style={{ top: `${place.topPx}px`, height: `${place.heightPx}px` }}
                   title={busyWindowLabel(slot.startTime, slot.endTime)}
                 >
+                  {/* The mock's lock: the one glyph that says "not yours to drag"
+                      before the cursor gets there. Decorative; the title above
+                      and the agenda row carry the words. */}
+                  <span className="schedule-grid__busy-lock" aria-hidden="true">
+                    🔒
+                  </span>
+                  <span className="schedule-grid__block-time">{str(slot.startTime)}</span>
                   <span className="schedule-grid__busy-label">Busy</span>
+                  {/* Where the block came from, in the agenda row's own words
+                      (#574): a mirror says so because the remedy is in Google
+                      Calendar, and an operator's own block says nothing more. */}
+                  {!isOperatorBlock(slot.source) && (
+                    <span className="schedule-grid__busy-source">From Google Calendar</span>
+                  )}
                 </div>
               );
             })}
@@ -364,6 +379,11 @@ export function ScheduleWeekGrid({
                   }}
                   data-session-id={entry._id}
                   data-start-minute={startMinute}
+                  // The mock tints every block by its service type, and the
+                  // month cell and the legend swatch already read the same
+                  // `serviceTone`; a week block in plain orange was the one
+                  // mark on the calendar the legend did not describe.
+                  data-tone={serviceTone(str(entry.serviceType))}
                   aria-label={`${sessionHousehold(str(entry.kinfolkName))} at ${hhmmFromMinutes(startMinute)}. Open to reschedule.`}
                   disabled={pending}
                   onPointerDown={(e) => onBlockPointerDown(e, entry, dayIndex, place.topPx, startMinute)}
@@ -393,11 +413,14 @@ export function ScheduleWeekGrid({
         ))}
       </div>
 
-      <p className="schedule-grid__note">
-        {offWindow > 0
-          ? `${offWindow} visit${offWindow === 1 ? '' : 's'} outside the ${hourLabel(GRID_START_HOUR)} to ${hourLabel(GRID_END_HOUR)} window. Open that day below to see all of its visits.`
-          : `Drag a visit to move it. Or open one and use Reschedule.`}
-      </p>
+      {/* The drag hint moved up beside the legend, where the mock writes it.
+          What is left here is the one line the mock has no equivalent for: a
+          visit the drawn window cannot show is still counted and named. */}
+      {offWindow > 0 && (
+        <p className="schedule-grid__note">
+          {`${offWindow} visit${offWindow === 1 ? '' : 's'} outside the ${hourLabel(GRID_START_HOUR)} to ${hourLabel(GRID_END_HOUR)} window. Open that day below to see all of its visits.`}
+        </p>
+      )}
     </div>
   );
 }
