@@ -67,6 +67,12 @@ class KinCareDetailScreenTest {
         coEvery { repo.getKinByIds(any()) } returns Result.success(emptyMap())
         coEvery { repo.get411ByKinIds(any()) } returns Result.success(emptyMap())
         coEvery { kinCareRepo.getReportsForSession(any()) } returns Result.success(emptyList())
+        // #760's route panel reads the breadcrumb subcollection, so this joins
+        // the list above for the reason stated above rather than as
+        // boilerplate: left to the relaxed default, `onSuccess` on the returned
+        // value throws ClassCastException the moment a session actually
+        // resolves, which is every test below that renders a visit.
+        coEvery { kinCareRepo.getBreadcrumbs(any()) } returns Result.success(emptyList())
         val notesRepo = mockk<BookingNotesRepository>(relaxed = true)
         every { notesRepo.streamKinfolkFacingNotes(any(), any()) } returns flowOf(emptyList())
         every { notesRepo.streamInternalNotes(any(), any()) } returns flowOf(emptyList())
@@ -75,6 +81,12 @@ class KinCareDetailScreenTest {
                 KinCareDetailScreen(
                     kinCareId = "vis_ses1",
                     onBack = {},
+                    // No household coordinate, so no purple house marker. The
+                    // production default answers null under Robolectric anyway
+                    // (it catches the uninitialised FirebaseApp), but saying so
+                    // here keeps this screen's specs off Firebase by contract
+                    // rather than by a caught exception.
+                    householdLocation = { null },
                     repo = repo,
                     kinCareRepo = kinCareRepo,
                     notesRepo = notesRepo,
