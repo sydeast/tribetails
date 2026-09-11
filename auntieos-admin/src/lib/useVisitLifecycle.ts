@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { setVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
 import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
+import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visitTracking';
 
 /**
  * The visit clock, as one hook, shared by the two surfaces that drive it.
@@ -80,8 +81,9 @@ export function useVisitLifecycle(
     setWrite({ status: 'idle' });
   }, [sessionId]);
 
-  async function run(action: VisitLifecycleAction) {
-    if (sessionId === null) return;
+  /** Resolves true once the server holds the visit where the action put it. */
+  async function run(action: VisitLifecycleAction): Promise<boolean> {
+    if (sessionId === null) return false;
     setWrite({ status: 'saving' });
     try {
       const res = await setVisitLifecycle(sessionId, action, { atIso: lifecycleNowIso() });
@@ -98,8 +100,10 @@ export function useVisitLifecycle(
           : `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
       });
       if (res.changed && onWritten) onWritten();
+      return true;
     } catch (err) {
       setWrite({ status: 'error', message: messageOf(err) });
+      return false;
     }
   }
 
@@ -116,7 +120,20 @@ export function useVisitLifecycle(
       if (pending === null) return;
       const action = pending.action;
       setPending(null);
-      void run(action);
+      const accepted = run(action);
+      // Still inside the confirm click, on purpose (#772): the browser ties
+      // its location prompt to a user gesture, and `beginVisitTracking` asks
+      // for the first fix synchronously. The callable above runs alongside;
+      // a denied location still arrives the visit, untracked. Departing writes
+      // the last fix and stops the watch; an undo stops it with no fix.
+      if (sessionId === null) return;
+      if (action === 'ARRIVED') beginVisitTracking(sessionId, accepted);
+      else if (action === 'DEPARTED') endVisitTracking(sessionId, accepted);
+      else if (action === 'UNDO_ARRIVAL') {
+        void accepted.then((ok) => {
+          if (ok) stopVisitTracking(sessionId);
+        });
+      }
     },
   };
 }
