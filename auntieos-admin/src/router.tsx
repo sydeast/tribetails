@@ -311,6 +311,13 @@ const communicateRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/Communicate'), 'Communicate'),
 });
 
+// Scheduled campaigns: Communicate's sibling, the same act at a later time.
+const marketingBlastsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'marketing-blasts',
+  component: lazyRouteComponent(() => import('./screens/MarketingBlasts'), 'MarketingBlasts'),
+});
+
 // AccountRouteView (not Account) so the screen's "Open my notification
 // settings" control is a live button that lands on /my-notifications. Mounting
 // Account bare left that control as a dead static span, which is how the
@@ -357,7 +364,7 @@ const mediaRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
 ]);
 
 export const router = createRouter({

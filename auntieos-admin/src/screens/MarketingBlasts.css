@@ -1,0 +1,245 @@
+/**
+ * Marketing blasts screen styling. Scoped to this screen and imported directly
+ * by MarketingBlasts.tsx (the CommunicateCompose.css / FormSchemas.css
+ * convention), so nothing here lands in the shared styles/screens.css. Every
+ * value comes from styles/tokens.css: no literal colours, radii, durations or
+ * px spacing.
+ *
+ * Two columns at desk width, one on a phone, which is the mock's own layout and
+ * the Communicate screen's.
+ */
+
+.blasts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.blasts__cols {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.blasts__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.blasts__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.blasts__fieldset {
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.blasts__legend {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  padding: 0 var(--space-2);
+}
+
+.blasts__radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.blasts__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+.blasts__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.blasts__field-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.blasts__text-input,
+.blasts__textarea {
+  width: 100%;
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--type-body-md-size);
+}
+
+.blasts__textarea {
+  resize: vertical;
+}
+
+.blasts__text-input:focus-visible,
+.blasts__textarea:focus-visible {
+  outline: var(--border-hairline) solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+
+.blasts__merge-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: var(--space-3);
+}
+
+.blasts__when {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.blasts__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.blasts__hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  margin: 0;
+}
+
+.blasts__code {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+/* ── reach ────────────────────────────────────────────────────────────────
+   A definition list, not a stat grid: these are four readings of one audience
+   that only make sense read together, and three of them are subtractions from
+   the first. */
+.blasts__reach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.blasts__reach-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.blasts__reach-row dt {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+
+.blasts__reach-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--color-text-primary);
+}
+
+.blasts__reach-row--total {
+  border-top: var(--border-hairline) solid var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.blasts__reach-row--total dt,
+.blasts__reach-row--total dd {
+  color: var(--color-text-primary);
+  font-weight: var(--type-label-md-weight);
+}
+
+/* ── campaign list ───────────────────────────────────────────────────────── */
+
+.blasts__listhead {
+  font-family: var(--font-fraunces);
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.blasts__listhead:first-child {
+  margin-top: 0;
+}
+
+.blasts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.blasts__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+}
+
+.blasts__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.blasts__row-name {
+  font-size: var(--type-body-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-primary);
+}
+
+.blasts__row-meta {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+
+.blasts__row-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .blasts__cols,
+  .blasts__merge-row,
+  .blasts__when {
+    grid-template-columns: 1fr;
+  }
+
+  .blasts__row {
+    flex-wrap: wrap;
+  }
+}

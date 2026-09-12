@@ -85,6 +85,16 @@ const GLYPH_PATHS: Record<Destination, ReactNode> = {
       <path d="M16 8a5 5 0 0 1 0 8" />
     </>
   ),
+  // A calendar with a send arrow inside it: a message that has a date on it,
+  // which is the one thing separating this from Communicate's speaker.
+  marketingBlasts: (
+    <>
+      <path d="M4 6h16v14H4z" />
+      <path d="M4 10h16" />
+      <path d="M8 4v3M16 4v3" />
+      <path d="M8 15l8-3-3 8-1.6-3.4z" />
+    </>
+  ),
   inbox: (
     <>
       <path d="M4 13l2-8h12l2 8v6H4z" />
