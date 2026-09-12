@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import type { ActivityLogEntry } from '../api/activityLog';
 import {
+  activityCategoryOf,
   activityChainRows,
+  activityDayLabel,
   activityDetailRows,
+  activityIsFailure,
+  activityMatchesCategory,
   activityMatchesQuery,
   activityMatchesStatus,
   activityPayloadRows,
+  humanizeAction,
+  localDayKey,
 } from './activityDetail';
 
 function entry(over: Partial<ActivityLogEntry> = {}): ActivityLogEntry {
@@ -215,5 +221,73 @@ describe('activityMatchesStatus', () => {
     expect(activityMatchesStatus(noStatus, 'all')).toBe(true);
     expect(activityMatchesStatus(noStatus, 'success')).toBe(false);
     expect(activityMatchesStatus(noStatus, 'problems')).toBe(false);
+  });
+});
+
+/**
+ * Issue #755: the mock's six category chips, the same predicates Android's
+ * `ActivityFilter.matches` applies, so an entry lands under the same chip on
+ * both clients.
+ */
+describe('activityMatchesCategory', () => {
+  it('passes everything through on All', () => {
+    expect(activityMatchesCategory(entry({ actionType: '' }), 'all')).toBe(true);
+  });
+
+  it('buckets by the Android prefix rules', () => {
+    expect(activityMatchesCategory(entry({ actionType: 'AUTH_LOGIN_SUCCESS' }), 'auth')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'LOGIN' }), 'auth')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'BOOKING_SUBMITTED' }), 'bookings')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'KINCARE_ARRIVED' }), 'bookings')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'DRAFT_APPROVED' }), 'kintales')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'NOTIFICATION_VIEWED' }), 'notifications')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'UPDATE_SETTINGS' }), 'admin')).toBe(true);
+    expect(activityMatchesCategory(entry({ actionType: 'LOGIN' }), 'bookings')).toBe(false);
+  });
+
+  it('lets one entry answer two chips, since a category is a question and not a partition', () => {
+    const triage = entry({ actionType: 'ADMIN_TRIAGE_ORPHAN_REPORT' });
+    expect(activityMatchesCategory(triage, 'admin')).toBe(true);
+    expect(activityMatchesCategory(triage, 'kintales')).toBe(true);
+    // The tile takes the first match in the fixed order, which is what Android paints.
+    expect(activityCategoryOf(triage)).toBe('kintales');
+  });
+
+  it('claims nothing for an action no chip recognises', () => {
+    expect(activityCategoryOf(entry({ actionType: 'RECONCILE_RUN' }))).toBeNull();
+  });
+});
+
+describe('the collapsed row, per the mock', () => {
+  it('humanises the action code the way Android does', () => {
+    expect(humanizeAction('KINCARE_ARRIVED')).toBe('Kincare arrived');
+    expect(humanizeAction('LOGIN')).toBe('Login');
+    expect(humanizeAction('')).toBe('Event');
+  });
+
+  it('reads FAILURE and the legacy ERROR spelling as failure, in any casing', () => {
+    expect(activityIsFailure(entry({ status: 'FAILURE' }))).toBe(true);
+    expect(activityIsFailure(entry({ status: 'error' }))).toBe(true);
+    expect(activityIsFailure(entry({ status: 'SUCCESS' }))).toBe(false);
+    expect(activityIsFailure(entry({ status: '' }))).toBe(false);
+  });
+
+  it('labels the day as Today, Yesterday, then the short date', () => {
+    expect(activityDayLabel('2026-05-27', '2026-05-27')).toBe('Today · May 27');
+    expect(activityDayLabel('2026-05-26', '2026-05-27')).toBe('Yesterday · May 26');
+    expect(activityDayLabel('2026-05-04', '2026-05-27')).toBe('May 4');
+  });
+
+  it('finds yesterday across a month and a year boundary', () => {
+    expect(activityDayLabel('2026-04-30', '2026-05-01')).toBe('Yesterday · Apr 30');
+    expect(activityDayLabel('2025-12-31', '2026-01-01')).toBe('Yesterday · Dec 31');
+  });
+
+  it('passes a non-date key through untouched', () => {
+    expect(activityDayLabel('Undated', '2026-05-27')).toBe('Undated');
+  });
+
+  it('keys a Date in local time, the shape the label compares against', () => {
+    expect(localDayKey(new Date(2026, 4, 7, 23, 30))).toBe('2026-05-07');
   });
 });
