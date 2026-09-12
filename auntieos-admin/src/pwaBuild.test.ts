@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createContext, runInContext } from 'node:vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { build } from 'vite';
 
@@ -135,5 +136,223 @@ describe('the built admin', () => {
       expect(html).toContain('registerSW.js');
       expect(html).toContain('rel="apple-touch-icon"');
     });
+  });
+});
+
+/**
+ * Runs the BUILT service worker in a fake ServiceWorkerGlobalScope and lets a
+ * spec dispatch real events at it.
+ *
+ * WHY GO THIS FAR. Everything else in this file reads the build's output as
+ * text, which proves a file was emitted and what is listed in it. It cannot
+ * prove the one thing that actually matters on a driveway: that a navigation
+ * to a route this device has never opened, with no network, comes back as the
+ * app instead of as nothing. That answer lives in the interaction between
+ * Workbox's NavigationRoute, the precache and our own fallback, so the only
+ * honest way to check it is to run the worker.
+ *
+ * The scope below is a stub of the parts of the worker global the bundle
+ * touches. Two of them are worth knowing about:
+ *
+ * `Request` is subclassed because Node's requires an absolute URL while a real
+ * worker resolves a relative one against `location`. Without the shim
+ * `createHandlerBoundToURL('/index.html')` throws for a reason the browser
+ * would never produce.
+ *
+ * `FetchEvent` has to exist as a constructor, because Workbox branches on
+ * `event instanceof FetchEvent` when deciding whether it was handed an event
+ * or a plain options object.
+ */
+class FakeExtendableEvent {
+  readonly waits: Array<Promise<unknown>> = [];
+  constructor(readonly type: string) {}
+  waitUntil(p: Promise<unknown>) {
+    this.waits.push(p);
+  }
+}
+
+class FakeFetchEvent extends FakeExtendableEvent {
+  responded: Promise<Response> | undefined;
+  readonly preloadResponse = Promise.resolve(undefined);
+  constructor(readonly request: Request) {
+    super('fetch');
+  }
+  respondWith(p: Promise<Response>) {
+    this.responded = p;
+  }
+}
+
+/** The answer a dispatched navigation produced. */
+interface Answer {
+  /** False when no route matched and the browser would have gone to the network itself. */
+  handled: boolean;
+  /** True when the worker took the request and then failed to produce anything. */
+  failed: boolean;
+  status?: number;
+  body?: string;
+}
+
+async function bootWorker(swSource: string, origin: string) {
+  const SHELL_BODY = '<!DOCTYPE html><title>the precached shell</title>';
+  let online = true;
+  const caches = new Map<string, Map<string, Response>>();
+  const cacheFor = (name: string) => {
+    const existing = caches.get(name);
+    if (existing) return existing;
+    const created = new Map<string, Response>();
+    caches.set(name, created);
+    return created;
+  };
+  const asKey = (r: Request | string) => (typeof r === 'string' ? new URL(r, origin).href : r.url);
+  const wrap = (store: Map<string, Response>) => ({
+    match: async (r: Request | string) => store.get(asKey(r))?.clone(),
+    put: async (r: Request | string, response: Response) => {
+      store.set(asKey(r), response.clone());
+    },
+    delete: async () => true,
+    keys: async () => [...store.keys()].map((u) => new Request(u)),
+  });
+
+  class ScopedRequest extends Request {
+    constructor(input: RequestInfo, init?: RequestInit) {
+      super(typeof input === 'string' ? new URL(input, origin).href : input, init);
+    }
+  }
+
+  const listeners = new Map<string, Array<(event: unknown) => void>>();
+  const scope: Record<string, unknown> = {
+    location: new URL(origin + '/'),
+    registration: { scope: origin + '/', showNotification: async () => undefined },
+    clients: { claim: async () => undefined, matchAll: async () => [], openWindow: async () => undefined },
+    skipWaiting: async () => undefined,
+    addEventListener: (type: string, fn: (event: unknown) => void) => {
+      const existing = listeners.get(type);
+      if (existing) existing.push(fn);
+      else listeners.set(type, [fn]);
+    },
+    removeEventListener: () => undefined,
+    fetch: async (input: Request | string) => {
+      if (!online) throw new TypeError('Failed to fetch');
+      const url = typeof input === 'string' ? input : input.url;
+      const body = url.includes('index.html') ? SHELL_BODY : `asset for ${url}`;
+      return new Response(body, { status: 200, headers: { 'Content-Type': 'text/html' } });
+    },
+    caches: {
+      open: async (name: string) => wrap(cacheFor(name)),
+      match: async (r: Request | string) => {
+        for (const store of caches.values()) {
+          const hit = await wrap(store).match(r);
+          if (hit) return hit;
+        }
+        return undefined;
+      },
+      keys: async () => [...caches.keys()],
+      delete: async (name: string) => caches.delete(name),
+    },
+    ExtendableEvent: FakeExtendableEvent,
+    FetchEvent: FakeFetchEvent,
+    Request: ScopedRequest,
+    Response,
+    Headers,
+    URL,
+    URLSearchParams,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    queueMicrotask,
+    console,
+    crypto,
+    navigator: { userAgent: 'vitest' },
+  };
+  scope['self'] = scope;
+  scope['globalThis'] = scope;
+
+  runInContext(swSource, createContext(scope), { filename: 'sw.js' });
+
+  async function dispatch(event: FakeExtendableEvent) {
+    for (const fn of listeners.get(event.type) ?? []) fn(event);
+    await Promise.all(event.waits);
+  }
+
+  // Install and activate while the network still works, exactly as a first
+  // visit does, so the precache is populated by the worker itself rather than
+  // by the test reaching into the cache and putting the shell there.
+  await dispatch(new FakeExtendableEvent('install'));
+  await dispatch(new FakeExtendableEvent('activate'));
+
+  async function request(path: string, mode: RequestMode): Promise<Answer> {
+    const target = new URL(path, origin).href;
+    // The scope's OWN Request class, not the ambient one. Vitest runs with
+    // NODE_ENV=test, so the worker bundles Workbox's development variant, which
+    // asserts `request instanceof Request` against the constructor it can see.
+    // That variant is stricter than the one that ships rather than weaker, so
+    // it is worth satisfying instead of working around.
+    const req = new ScopedRequest(target);
+    Object.defineProperty(req, 'mode', { value: mode });
+    const event = new FakeFetchEvent(req);
+    await dispatch(event);
+    if (event.responded === undefined) return { handled: false, failed: false };
+    try {
+      const response = await event.responded;
+      return { handled: true, failed: false, status: response.status, body: await response.text() };
+    } catch {
+      return { handled: true, failed: true };
+    }
+  }
+
+  return {
+    SHELL_BODY,
+    goOffline: () => {
+      online = false;
+    },
+    /** A top-level page load, the thing a deep link produces. */
+    navigate: (path: string) => request(path, 'navigate'),
+    /** Anything the page itself fetches: an API call, an asset. */
+    subresource: (path: string) => request(path, 'cors'),
+  };
+}
+
+describe('the worker, actually running, with the network gone', () => {
+  const ORIGIN = 'https://auntie.tribetails.com';
+  let worker: Awaited<ReturnType<typeof bootWorker>>;
+  beforeAll(async () => {
+    worker = await bootWorker(read('sw.js'), ORIGIN);
+    worker.goOffline();
+  }, 120_000);
+  it.each(['/bookings/bk-2291', '/sessions/se-18', '/directory/kf-4', '/home'])(
+    'answers a cold deep link to %s with the precached shell',
+    async (path) => {
+      // The whole point of the ruling. The operator is on mobile web BECAUSE
+      // Android already failed, and they reach one booking by link, not from
+      // the home screen. This device has never opened that URL, so the page
+      // cache has nothing for it; the precached shell is the only answer.
+      const answer = await worker.navigate(path);
+      expect(answer.handled).toBe(true);
+      expect(answer.status).toBe(200);
+      expect(answer.body).toBe(worker.SHELL_BODY);
+    },
+  );
+  it('refuses to answer a Firestore read from cache, offline or not', async () => {
+    const answer = await worker.subresource(
+      'https://firestore.googleapis.com/v1/projects/auntieos-ttpc/databases/(default)/documents/bookings',
+    );
+    expect(answer.failed).toBe(true);
+    expect(answer.body).toBeUndefined();
+  });
+  it('refuses to answer a Cloud Function call from cache', async () => {
+    const answer = await worker.subresource(
+      'https://us-central1-auntieos-ttpc.cloudfunctions.net/listBookings',
+    );
+    expect(answer.failed).toBe(true);
+  });
+  it('never hands the app shell to an /api/* rewrite', async () => {
+    const answer = await worker.navigate('/api/generate');
+    expect(answer.body).not.toBe(worker.SHELL_BODY);
+  });
+  it('never hands the app shell to something asking for a file', async () => {
+    const answer = await worker.navigate('/assets/does-not-exist-Xy12.js');
+    expect(answer.body).not.toBe(worker.SHELL_BODY);
   });
 });

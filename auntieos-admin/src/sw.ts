@@ -19,14 +19,20 @@
  * scope, for the reason the portal's vite.config.ts records.
  */
 
-import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
-import { registerRoute } from 'workbox-routing';
+import {
+  precacheAndRoute,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+} from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst, NetworkOnly } from 'workbox-strategies';
 import {
   NAVIGATION_CACHE_NAME,
+  NAVIGATION_FALLBACK_DENYLIST,
+  NAVIGATION_FALLBACK_URL,
   NAVIGATION_NETWORK_TIMEOUT_SECONDS,
-  isNavigationRequest,
   isNeverCachedHost,
+  navigationHandler,
 } from './lib/swPolicy';
 
 declare const self: ServiceWorkerGlobalScope & {
@@ -36,22 +42,44 @@ declare const self: ServiceWorkerGlobalScope & {
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Navigations: network-first, falling back to the cached shell once the network
-// has had its short turn. Both the strategy and the length of that turn are
-// decisions with reasoning behind them; lib/swPolicy.ts carries it.
-registerRoute(
-  ({ request }) => isNavigationRequest(request),
-  new NetworkFirst({
-    cacheName: NAVIGATION_CACHE_NAME,
-    networkTimeoutSeconds: NAVIGATION_NETWORK_TIMEOUT_SECONDS,
-  }),
-);
-
 // Functions / Firestore / Auth traffic: never cached, must be live. Breaking
 // this rule blocks the auth SDK, and in an admin it would also mean showing a
 // cached booking or invoice as though it were current, which is exactly the
 // silent degradation this repo refuses.
+//
+// REGISTERED FIRST so it wins by registration order: nothing below may cache
+// these, whatever else might match them.
 registerRoute(({ url }) => isNeverCachedHost(url, self.location.origin), new NetworkOnly());
+
+// Navigations: network-first, falling back to the cached shell once the network
+// has had its short turn. Both the strategy and the length of that turn are
+// decisions with reasoning behind them; lib/swPolicy.ts carries it.
+//
+// AND WHEN THE NETWORK LOSES, THE PRECACHED SHELL ANSWERS, whatever route was
+// asked for. NetworkFirst on its own can only fall back to a page it has
+// already seen, keyed by that exact URL, so a driveway navigation to one
+// booking got nothing: the one journey this whole ruling is about, since the
+// operator is reaching for mobile web BECAUSE Android already failed and gets
+// to a record by deep link rather than from the home screen. Every route in
+// this app resolves to the same shell, and firebase.json rewrites `**` to
+// /index.html, so answering any navigation with the precached index.html is
+// what the server does online, not a compromise. swPolicy.ts carries the
+// denylist and why a 404 never reaches this path.
+const networkFirstPage = new NetworkFirst({
+  cacheName: NAVIGATION_CACHE_NAME,
+  networkTimeoutSeconds: NAVIGATION_NETWORK_TIMEOUT_SECONDS,
+});
+const precachedShell = createHandlerBoundToURL(NAVIGATION_FALLBACK_URL);
+
+registerRoute(
+  new NavigationRoute(
+    navigationHandler({
+      fromNetwork: (options) => networkFirstPage.handle(options),
+      fromPrecachedShell: (options) => precachedShell(options),
+    }),
+    { denylist: NAVIGATION_FALLBACK_DENYLIST },
+  ),
+);
 
 // registerType: 'autoUpdate' expects the worker to activate itself immediately
 // rather than wait for all tabs to close (injectManifest doesn't do this for
