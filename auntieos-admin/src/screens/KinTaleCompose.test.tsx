@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../components/Toast';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
@@ -362,6 +362,57 @@ describe('KinTaleCompose: NEW from a given sessionId', () => {
     mockStreams({ sessions: { status: 'ready', data: [] } });
     render(<KinTaleCompose sessionId="ghost" onClose={vi.fn()} />);
     expect(await screen.findByText(/no kin care session found/i)).toBeInTheDocument();
+  });
+});
+
+describe('KinTaleCompose: the composer mock', () => {
+  it('heads the screen with the trail, the page name, the visit line and the Draft pill', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    const hero = document.querySelector('.den-heading') as HTMLElement;
+    const nav = within(hero).getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByText('New tale')).toHaveAttribute('aria-current', 'page');
+    expect(within(hero).getByRole('heading', { level: 1 })).toHaveTextContent(/^New tale$/);
+    // The mock's cover eyebrow, "Visit · <when> · <service>", as the detail line.
+    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent(/^Visit · 07-16 \d\d:\d\d · Dog Walk$/);
+    expect(within(hero).getByText('Draft')).toHaveClass('den-statuspill');
+    expect(within(hero).getByText('Draft')).toHaveAttribute('data-tone', 'orange');
+    // A nested screen carries the trail, never the list's kicker.
+    expect(hero.querySelector('.den-heading-kicker')).toBeNull();
+  });
+
+  it('names an existing report Edit tale', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'A great day at the park' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Edit tale' })).toBeInTheDocument();
+  });
+
+  it('lays the editor out in the mock order beside the Goes to rail', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    const editor = document.querySelector('.kintale-compose__col:not(.kintale-compose__rail)') as HTMLElement;
+    const titles = Array.from(editor.querySelectorAll(':scope > .den-panel > .den-panel-header .den-panel-title')).map(
+      (el) => el.textContent,
+    );
+    // No route on this visit, so the mock's four blocks read as three.
+    expect(titles).toEqual(['The tale', 'Photos', 'Moments']);
+    const rail = screen.getByRole('complementary', { name: 'Goes to' });
+    expect(within(rail).getByRole('heading', { name: 'Goes to' })).toBeInTheDocument();
+    expect(within(rail).getByText('Kin').nextElementSibling).toHaveTextContent('1 kin on this visit');
+  });
+
+  it('draws the photo strip as the mock: a dashed add tile, and the count as the mono note', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', mediaFileIds: ['m1', 'm2'] })] },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.getByText('2 attached')).toHaveClass('den-panel-meta');
+    expect(screen.getByRole('button', { name: 'Add a photo' })).toHaveClass('kintale-compose__photo-add');
+    expect(screen.queryByText('Nothing attached yet.')).toBeNull();
   });
 });
 
