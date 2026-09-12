@@ -72,6 +72,7 @@ import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.DenPanel
+import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.DynamicFormFields
 import com.tribetails.auntieos.ui.components.EmptyHint
@@ -181,40 +182,60 @@ fun KinTaleReportScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    // ── Den heading: mono kicker + serif title + Back / status trailing ──
+                    // ── Den heading: the mocks' bar. A nested screen carries the
+                    // trail ("KinTales / New tale", or "/ KinTale" once sent) in
+                    // the kicker's place, the Sent / Draft pill sits on the band's
+                    // badge row, and Back is the band's control. The mocks' cover
+                    // eyebrow ("KinTale · Visit Recap") is on the cover below. ──
                     DenScreenHeading(
-                        kicker = "KinTale · Visit Recap",
+                        kicker = "The Den · KinTales",
+                        crumbs = listOf(
+                            DenCrumb("KinTales") {
+                                viewModel.persistDraft()
+                                onBack()
+                            },
+                            DenCrumb(if (isSent) "KinTale" else "New tale"),
+                        ),
                         title = "KinTale",
                         accentTail = "Update.",
                         subtitle = "Tell the story of today's visit, then send it home.",
-                        trailing = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                if (isSent) {
-                                    AuntieStatusPill(label = "Sent", tone = AuntieStatusTone.Success, showDot = true)
-                                } else {
-                                    AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Orange, showDot = true)
-                                }
-                                GhostButton(
-                                    label = "Back",
-                                    onClick = {
-                                        viewModel.persistDraft()
-                                        onBack()
-                                    },
-                                    leading = {
-                                        Icon(
-                                            Lucide.ArrowLeft,
-                                            contentDescription = null,
-                                            tint = AuntieTheme.colors.textPrimary,
-                                            modifier = Modifier.size(15.dp),
-                                        )
-                                    },
-                                )
+                        badges = {
+                            if (isSent) {
+                                AuntieStatusPill(label = "Sent", tone = AuntieStatusTone.Success, showDot = true)
+                            } else {
+                                AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Orange, showDot = true)
                             }
                         },
+                        trailing = {
+                            GhostButton(
+                                label = "Back",
+                                onClick = {
+                                    viewModel.persistDraft()
+                                    onBack()
+                                },
+                                leading = {
+                                    Icon(
+                                        Lucide.ArrowLeft,
+                                        contentDescription = null,
+                                        tint = AuntieTheme.colors.textPrimary,
+                                        modifier = Modifier.size(15.dp),
+                                    )
+                                },
+                            )
+                        },
                     )
+
+                    // ── The report mock's `.sentbanner`, its words verbatim from
+                    // the source screen's SentBanner(). ──
+                    if (isSent) {
+                        AuntieBanner(tone = AuntieBannerTone.Success, icon = Lucide.Check) {
+                            Text(
+                                "This KinTale has been sent.",
+                                style = AuntieTheme.typography.bodyMedium,
+                                color = AuntieTheme.colors.textPrimary,
+                            )
+                        }
+                    }
 
                     // ── Cover hero: orange→pink brand gradient. Editable headline + author/recipient line. ──
                     ReportCover(
@@ -569,19 +590,14 @@ private fun PhotosSection(
 ) {
     val c = AuntieTheme.colors
     val attachedCount = if (media.isNotEmpty()) media.size else attachedIdCount
+    // The mocks' "Photos · 3 attached": the count is the panel's mono note.
     DenPanel(
         title = "Photos",
-        trailing = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "$attachedCount attached",
-                    style = AuntieTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
-                    color = c.primary,
-                )
-                if (isUploading) {
-                    AuntieSpinner(modifier = Modifier.size(18.dp), color = c.kinfolkOrange, strokeWidth = 2.dp)
-                }
-            }
+        meta = "$attachedCount attached",
+        trailing = if (isUploading) {
+            { AuntieSpinner(modifier = Modifier.size(18.dp), color = c.kinfolkOrange, strokeWidth = 2.dp) }
+        } else {
+            null
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

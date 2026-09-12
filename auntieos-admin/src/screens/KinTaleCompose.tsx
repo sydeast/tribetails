@@ -25,7 +25,8 @@ import { kinTaleGpsBlock } from '../lib/kinTaleGps';
 import { projectRoute } from '@tribetails/geo';
 import { sessionState } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
-import { DenScreenHeading, DenPanel, EmptyHint, ServicePill } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, EmptyHint, ServicePill, StatusPill } from '../components/DenScreenKit';
+import { kinTaleWhen } from '../lib/kinTaleFormat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
@@ -508,13 +509,32 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     }
   }
 
+  /**
+   * The composer mock's bar: the trail "KinTales / New tale", then the Draft
+   * pill. A nested screen carries the trail in the kicker's place (the kit's
+   * one-or-the-other rule), and the mock's cover eyebrow ("Visit · Tue May 27 ·
+   * 9:00") is the band's detail line once a draft exists. The headline itself
+   * is typed in the panel below: the kit band takes a string title, and the
+   * mock's cover input is the one thing the band cannot be.
+   */
+  const page = kinTaleId ? 'Edit tale' : 'New tale';
+  const visitLine =
+    draft !== null
+      ? [
+          'Visit',
+          kinTaleWhen({ visitDate: draft.visitDate, arrivedAt: draft.arrivedAt, sentAt: '', createdAt: '' }),
+          draft.serviceType.trim() !== '' ? draft.serviceType : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' · ')
+      : undefined;
   const heading = (
     <DenScreenHeading
-      kicker="The Den · KinTales"
-      title={kinTaleId ? 'Edit the' : 'Compose a'}
-      accentTail="KinTale."
-      detail={draft ? `Goes to ${draft.kinfolkName || 'Kinfolk'}.` : undefined}
+      crumbs={[{ label: 'KinTales', onSelect: onClose }, { label: page }]}
+      title={page}
+      detail={visitLine}
       subtitle="The recap that goes home after a visit."
+      badges={draft !== null ? <StatusPill label="Draft" tone="orange" /> : undefined}
       trailing={<GhostButton label="Close" onClick={onClose} />}
     />
   );
@@ -785,109 +805,131 @@ function ComposeForm({
   });
   const hasErrors = Object.keys(errors).length > 0;
 
+  const kinCount = draft.kinIds.length;
+
+  // The mock's right rail: the "Goes to" card, sticky beside the editor. The
+  // template row is not in the mock and stays: it decides which moments the
+  // operator is offered below, so a checklist that looks wrong for the visit is
+  // explained by this row rather than being a mystery. It is shown, not chosen:
+  // both Kotlin composers resolve the template from the service type and offer
+  // no override, and the way to change what a Dog Walk asks for is to edit the
+  // Dog Walk template, which is a durable fix rather than a per-tale one.
+  const goesTo = (
+    <DenPanel title="Goes to" subtitle="Read-only: the household and visit this recap belongs to.">
+      <dl className="kintale-compose__meta">
+        <div className="kintale-compose__meta-row">
+          <dt>Household</dt>
+          <dd>{draft.kinfolkName || 'Unnamed Kinfolk'}</dd>
+        </div>
+        {kinCount > 0 && (
+          <div className="kintale-compose__meta-row">
+            <dt>Kin</dt>
+            <dd>{`${String(kinCount)} kin on this visit`}</dd>
+          </div>
+        )}
+        <div className="kintale-compose__meta-row">
+          <dt>Service</dt>
+          <dd>{draft.serviceType || 'Visit'}</dd>
+        </div>
+        <div className="kintale-compose__meta-row">
+          <dt>Session</dt>
+          <dd>
+            <code>{draft.sessionId}</code>
+          </dd>
+        </div>
+        <div className="kintale-compose__meta-row">
+          <dt>Template</dt>
+          <dd>
+            {template === null ? (
+              'Resolving…'
+            ) : (
+              <>
+                {template.name || 'Untitled template'}
+                {draft.templateId === '' && (
+                  <span className="kintale-compose__provenance">
+                    {' '}
+                    Built in. Nothing in the Template Bank matches
+                    {draft.serviceType ? ` ${draft.serviceType}` : ' this visit'} yet.
+                  </span>
+                )}
+              </>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </DenPanel>
+  );
+
   return (
-    <>
-      <DenPanel title="Goes to" subtitle="Read-only: the household and visit this recap belongs to.">
-        <dl className="kintale-compose__meta">
-          <div className="kintale-compose__meta-row">
-            <dt>Household</dt>
-            <dd>{draft.kinfolkName || 'Unnamed Kinfolk'}</dd>
-          </div>
-          <div className="kintale-compose__meta-row">
-            <dt>Service</dt>
-            <dd>{draft.serviceType || 'Visit'}</dd>
-          </div>
-          <div className="kintale-compose__meta-row">
-            <dt>Session</dt>
-            <dd>
-              <code>{draft.sessionId}</code>
-            </dd>
-          </div>
-          {/*
-            WHICH TEMPLATE, named rather than assumed. It decides which moments
-            the operator is offered below, so a checklist that looks wrong for
-            the visit is explained by this row rather than being a mystery. It is
-            shown, not chosen: both Kotlin composers resolve the template from
-            the service type and offer no override, and the way to change what a
-            Dog Walk asks for is to edit the Dog Walk template, which is a
-            durable fix rather than a per-tale one.
-          */}
-          <div className="kintale-compose__meta-row">
-            <dt>Template</dt>
-            <dd>
-              {template === null ? (
-                'Resolving…'
-              ) : (
-                <>
-                  {template.name || 'Untitled template'}
-                  {draft.templateId === '' && (
-                    <span className="kintale-compose__provenance">
-                      {' '}
-                      Built in. Nothing in the Template Bank matches
-                      {draft.serviceType ? ` ${draft.serviceType}` : ' this visit'} yet.
-                    </span>
-                  )}
-                </>
-              )}
-            </dd>
-          </div>
-        </dl>
-      </DenPanel>
-
-      <DenPanel title="The tale">
-        <label className="kintale-compose__field">
-          <span className="kintale-compose__label">Headline</span>
-          <input
-            type="text"
-            value={draft.title}
-            onChange={(e) => onTitleChange(e.target.value)}
-            placeholder={`Checking on ${draft.kinfolkName || 'Kinfolk'}`}
-            className="kintale-compose__input"
-            aria-invalid={errors.title !== undefined}
-            aria-describedby={errors.title !== undefined ? 'kintale-title-error' : undefined}
+    <div className="kintale-compose__cols">
+      {/* The mock's editor column, in its order: the tale, the photos, the
+          route, the moments, then the actions. */}
+      <div className="kintale-compose__col">
+        <DenPanel title="The tale">
+          <label className="kintale-compose__field">
+            <span className="kintale-compose__label">Headline</span>
+            <input
+              type="text"
+              value={draft.title}
+              onChange={(e) => onTitleChange(e.target.value)}
+              placeholder={`Checking on ${draft.kinfolkName || 'Kinfolk'}`}
+              className="kintale-compose__input kintale-compose__input--headline"
+              aria-invalid={errors.title !== undefined}
+              aria-describedby={errors.title !== undefined ? 'kintale-title-error' : undefined}
+            />
+            {errors.title !== undefined && (
+              <span id="kintale-title-error" className="kintale-compose__error" role="alert">
+                {errors.title}
+              </span>
+            )}
+            {draft.titleGeneratedByAi && errors.title === undefined && (
+              <span className="kintale-compose__provenance">
+                Auntie wrote this headline. Type over it to make it yours.
+              </span>
+            )}
+          </label>
+          <label className="kintale-compose__field">
+            <span className="kintale-compose__label">What you&rsquo;d like the kinfolk to know</span>
+            <textarea
+              value={draft.bodyCopy}
+              onChange={(e) => onBodyChange(e.target.value)}
+              placeholder="Tell the tale. How was the visit?"
+              className="kintale-compose__textarea"
+              rows={8}
+              aria-invalid={errors.bodyCopy !== undefined}
+              aria-describedby={errors.bodyCopy !== undefined ? 'kintale-body-error' : undefined}
+            />
+            {errors.bodyCopy !== undefined && (
+              <span id="kintale-body-error" className="kintale-compose__error" role="alert">
+                {errors.bodyCopy}
+              </span>
+            )}
+          </label>
+          <GenerateButton
+            communicationType="visit_report"
+            recipient={draft.kinfolkName}
+            rawNotes={draft.bodyCopy}
+            wantTitle
+            currentBody={draft.bodyCopy}
+            onGenerated={onGenerated}
+            onError={onGenerateError}
+            disabled={isSaving || isSending}
           />
-          {errors.title !== undefined && (
-            <span id="kintale-title-error" className="kintale-compose__error" role="alert">
-              {errors.title}
-            </span>
-          )}
-          {draft.titleGeneratedByAi && errors.title === undefined && (
-            <span className="kintale-compose__provenance">
-              Auntie wrote this headline. Type over it to make it yours.
-            </span>
-          )}
-        </label>
-        <label className="kintale-compose__field">
-          <span className="kintale-compose__label">What you&rsquo;d like the kinfolk to know</span>
-          <textarea
-            value={draft.bodyCopy}
-            onChange={(e) => onBodyChange(e.target.value)}
-            placeholder="Tell the tale. How was the visit?"
-            className="kintale-compose__textarea"
-            rows={8}
-            aria-invalid={errors.bodyCopy !== undefined}
-            aria-describedby={errors.bodyCopy !== undefined ? 'kintale-body-error' : undefined}
-          />
-          {errors.bodyCopy !== undefined && (
-            <span id="kintale-body-error" className="kintale-compose__error" role="alert">
-              {errors.bodyCopy}
-            </span>
-          )}
-        </label>
-        <GenerateButton
-          communicationType="visit_report"
-          recipient={draft.kinfolkName}
-          rawNotes={draft.bodyCopy}
-          wantTitle
-          currentBody={draft.bodyCopy}
-          onGenerated={onGenerated}
-          onError={onGenerateError}
-          disabled={isSaving || isSending}
-        />
-      </DenPanel>
+        </DenPanel>
 
-      {template && (
-        <>
+        {template && template.photoShowcaseEnabled && (
+          <PhotoBlock
+            draft={draft}
+            attached={attachedMedia}
+            onOpenUpload={onOpenUpload}
+            onRemove={onRemoveMedia}
+            disabled={isSaving || isSending}
+          />
+        )}
+
+        <GpsBlock gps={gps} />
+
+        {template && (
           <ChecklistBlock
             template={template}
             ctx={checklistCtx}
@@ -895,32 +937,25 @@ function ComposeForm({
             onToggle={onChecklistToggle}
             disabled={isSending}
           />
-          {template.photoShowcaseEnabled && (
-            <PhotoBlock
-              draft={draft}
-              attached={attachedMedia}
-              onOpenUpload={onOpenUpload}
-              onRemove={onRemoveMedia}
-              disabled={isSaving || isSending}
-            />
-          )}
-        </>
-      )}
+        )}
 
-      <GpsBlock gps={gps} />
+        {!contentReady && !banner && <Banner tone="info">{NOTHING_YET_HINT}</Banner>}
+        {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
 
-      {!contentReady && !banner && <Banner tone="info">{NOTHING_YET_HINT}</Banner>}
-      {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
-
-      <div className="kintale-compose__actions">
-        <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
-        <PrimaryButton
-          label={isSending ? 'Sending…' : sendLabel}
-          onClick={onOpenSendConfirm}
-          disabled={!contentReady || hasErrors || isSaving || isSending}
-          busy={isSending}
-        />
+        <div className="kintale-compose__actions">
+          <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
+          <PrimaryButton
+            label={isSending ? 'Sending…' : sendLabel}
+            onClick={onOpenSendConfirm}
+            disabled={!contentReady || hasErrors || isSaving || isSending}
+            busy={isSending}
+          />
+        </div>
       </div>
+
+      <aside className="kintale-compose__col kintale-compose__rail" aria-label="Goes to">
+        {goesTo}
+      </aside>
 
       {confirmSend && (
         <Dialog
@@ -945,7 +980,7 @@ function ComposeForm({
           </p>
         </Dialog>
       )}
-    </>
+    </div>
   );
 }
 // ── moments: the per-item checklist ─────────────────────────────────────────
@@ -1065,18 +1100,25 @@ function PhotoBlock({ draft, attached, onOpenUpload, onRemove, disabled }: Photo
   // honest about what will actually be sent.
   const count = draft.mediaFileIds.length;
   return (
+    // The mock's "Photos · 3 attached": the count is the panel's mono note.
+    // "Nothing attached yet." stays as the detail line when there is nothing
+    // to count, so an empty strip never reads as a strip still loading.
     <DenPanel
       title="Photos"
-      detail={count === 0 ? 'Nothing attached yet.' : `${count} attached to this tale.`}
+      {...(count === 0 ? { detail: 'Nothing attached yet.' } : { meta: `${String(count)} attached` })}
     >
+      {/* The mock's `.photos`: a four-up grid of square tiles, and the dashed
+          "+" tile at the end is the add control. */}
       <ul className="kintale-compose__photos">
         {attached.map((media) => {
           const preview = mediaPreviewUrl(media);
           return (
             <li key={media._id} className="kintale-compose__photo">
-              {preview !== undefined && (
-                <img src={preview} alt={mediaCaption(media)} className="kintale-compose__photo-img" />
-              )}
+              <span className="kintale-compose__photo-tile">
+                {preview !== undefined && (
+                  <img src={preview} alt={mediaCaption(media)} className="kintale-compose__photo-img" />
+                )}
+              </span>
               <span className="kintale-compose__photo-caption">{mediaCaption(media)}</span>
               <GhostButton
                 label="Remove from tale"
@@ -1086,8 +1128,18 @@ function PhotoBlock({ draft, attached, onOpenUpload, onRemove, disabled }: Photo
             </li>
           );
         })}
+        <li className="kintale-compose__photo">
+          <button
+            type="button"
+            className="kintale-compose__photo-add"
+            onClick={onOpenUpload}
+            disabled={disabled}
+            aria-label="Add a photo"
+          >
+            <span aria-hidden="true">+</span>
+          </button>
+        </li>
       </ul>
-      <GhostButton label="Add a photo" onClick={onOpenUpload} disabled={disabled} />
     </DenPanel>
   );
 }
@@ -1115,26 +1167,30 @@ function GpsBlock({ gps }: { gps: ReturnType<typeof kinTaleGpsBlock> }) {
   const last = points[points.length - 1];
   return (
     <DenPanel title="Visit route" subtitle="Captured by the phone while the visit was happening.">
-      <svg
-        className="kintale-compose__route"
-        viewBox={`0 0 ${GPS_WIDTH} ${GPS_HEIGHT}`}
-        role="img"
-        aria-label={`Route of ${gps.distanceLabel} over ${gps.durationLabel}`}
-      >
-        <polyline points={path} fill="none" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-        {points[0] && <circle cx={points[0].x} cy={points[0].y} r={5} className="kintale-compose__route-start" />}
-        {last && <circle cx={last.x} cy={last.y} r={5} className="kintale-compose__route-end" />}
-      </svg>
-      <dl className="kintale-compose__meta">
-        <div className="kintale-compose__meta-row">
-          <dt>Distance</dt>
-          <dd>{gps.distanceLabel}</dd>
-        </div>
-        <div className="kintale-compose__meta-row">
-          <dt>Duration</dt>
-          <dd>{gps.durationLabel}</dd>
-        </div>
-      </dl>
+      {/* The mock's `.route`: the trail in a framed box with the stat line
+          sitting inside its bottom-left corner. */}
+      <div className="kintale-compose__route-box">
+        <svg
+          className="kintale-compose__route"
+          viewBox={`0 0 ${GPS_WIDTH} ${GPS_HEIGHT}`}
+          role="img"
+          aria-label={`Route of ${gps.distanceLabel} over ${gps.durationLabel}`}
+        >
+          <polyline points={path} fill="none" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          {points[0] && <circle cx={points[0].x} cy={points[0].y} r={5} className="kintale-compose__route-start" />}
+          {last && <circle cx={last.x} cy={last.y} r={5} className="kintale-compose__route-end" />}
+        </svg>
+        <dl className="kintale-compose__route-stat">
+          <div>
+            <dt>dist</dt>
+            <dd>{gps.distanceLabel}</dd>
+          </div>
+          <div>
+            <dt>time</dt>
+            <dd>{gps.durationLabel}</dd>
+          </div>
+        </dl>
+      </div>
     </DenPanel>
   );
 }

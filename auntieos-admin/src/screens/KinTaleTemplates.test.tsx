@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
@@ -12,6 +13,17 @@ import {
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// The trail's KinTales step is a real route link, and a real `Link` wants a
+// RouterProvider no suite in this tree mounts (HouseholdData.test.tsx idiom).
+vi.mock('@tanstack/react-router', () => ({
+  linkOptions: (o: unknown) => o,
+  Link: ({ to, children, ...rest }: { to: string; children: ReactNode }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 const { saveKinTaleTemplate } = vi.hoisted(() => ({ saveKinTaleTemplate: vi.fn() }));
 vi.mock('../api/kinTaleTemplatesWrite', () => ({ saveKinTaleTemplate }));
@@ -281,6 +293,34 @@ describe('KinTaleTemplates: load + picker', () => {
     expect(screen.getByRole('checkbox', { name: 'Drop-in' })).not.toBeChecked();
   });
 
+  it('heads the screen with the mock trail, KinTales / Templates, in place of a kicker', () => {
+    mockStream({ status: 'ready', data: [] });
+    render(<KinTaleTemplates />);
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(nav).getByRole('link', { name: 'KinTales' })).toHaveAttribute('href', '/kintales');
+    expect(within(nav).getByText('Templates')).toHaveAttribute('aria-current', 'page');
+    expect(document.querySelector('.den-heading-kicker')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('KinTale templates.');
+  });
+
+  it('tags the rows with the kit pill: Default in orange, Inactive muted, both compact', () => {
+    mockStream({
+      status: 'ready',
+      data: [
+        tpl({ _id: 't1', name: 'Walk recap', isDefault: true }),
+        tpl({ _id: 't2', name: 'Sit recap', isDefault: false, isActive: false }),
+      ],
+    });
+    render(<KinTaleTemplates />);
+    const def = screen.getByText('Default');
+    expect(def).toHaveClass('den-statuspill', 'den-statuspill--compact');
+    expect(def).toHaveAttribute('data-tone', 'orange');
+    const inactive = screen.getByText('Inactive');
+    expect(inactive).toHaveClass('den-statuspill', 'den-statuspill--compact');
+    expect(inactive).toHaveAttribute('data-tone', 'muted');
+    expect(document.querySelector('.ktt__tag')).toBeNull();
+  });
+
   it('lists templates with a Default tag and switches when another is picked', async () => {
     mockStream({
       status: 'ready',
@@ -538,7 +578,7 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
 describe('KinTaleTemplates: checklist bank quick-add', () => {
   /**
    * The quick-add row of the checklist step currently on screen. One step is
-   * rendered at a time now, so this needs no panel scoping — but it still has to
+   * rendered at a time now, so this needs no panel scoping, but it still has to
    * be a container query rather than a name query: once an item is added, its own
    * row actions ("Move X up", "Remove X") also match a name query for that text,
    * so an unscoped query would find the row it was meant to prove had gone.

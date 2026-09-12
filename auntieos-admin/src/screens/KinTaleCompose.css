@@ -4,11 +4,45 @@
  * nothing here needs to land in the shared styles/screens.css. Every value
  * comes from styles/tokens.css, no literal colours, radii, durations, or px
  * spacing.
+ *
+ * The layout is the composer mock (`ui-ideas/auntieos-kintale-composer-2026-05-27.html`):
+ * the editor on the left, the "Goes to" rail on the right, the mock's square
+ * photo tiles with a dashed add tile, its filled "on" chips, and the route
+ * box with the stat line inside it.
  */
 
 .kintale-compose__hint {
   color: var(--color-text-dim);
   margin: 0;
+}
+
+/* ── the two columns ─────────────────────────────────────────────────────── */
+
+/* The mock's `.composer` grid: editor wide, rail narrow, at its 1.45:1, one
+   column under its own 920px breakpoint. */
+.kintale-compose__cols {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (min-width: 921px) {
+  .kintale-compose__cols {
+    grid-template-columns: 1.45fr 1fr;
+  }
+}
+.kintale-compose__col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+/* The mock's `.side`: the rail stays in view while the editor scrolls. */
+@media (min-width: 921px) {
+  .kintale-compose__rail {
+    position: sticky;
+    top: var(--space-5);
+  }
 }
 
 /* ── read-only "goes to" meta ────────────────────────────────────────────── */
@@ -82,6 +116,14 @@
 .kintale-compose__textarea {
   min-height: 8rem;
   line-height: var(--type-body-md-line);
+}
+/* The mock's `.titlein`: the headline in the serif display face, since it is
+   the cover title the kinfolk reads first. */
+.kintale-compose__input--headline {
+  font-family: var(--type-display-md-family);
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+  letter-spacing: var(--type-display-md-tracking);
 }
 
 /* ── actions ─────────────────────────────────────────────────────────────── */
@@ -214,13 +256,13 @@
 .kintale-compose__chip:hover {
   background: var(--color-surface-2);
 }
-/* Ticked reads as a claim: filled, in brand colour, and darker text. Unticked
-   stays quiet, because an unticked moment is not yet a statement about the
-   visit. */
+/* Ticked reads as a claim: the mock's `.chip.on`, filled cream on navy.
+   Unticked stays quiet, because an unticked moment is not yet a statement
+   about the visit. */
 .kintale-compose__chip:has(input:checked) {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  color: var(--color-text-primary);
+  background: var(--color-text-primary);
+  border-color: var(--color-text-primary);
+  color: var(--color-background);
 }
 .kintale-compose__chip:has(input:focus-visible) {
   outline: 2px solid var(--color-primary);
@@ -231,32 +273,69 @@
   opacity: 0.6;
 }
 /* ── Photos ─────────────────────────────────────────────────────────────────
-   A wrapping row of attached media. Each row keeps its caption even when the
-   thumbnail cannot load, so a dead URL costs a picture rather than the whole
-   entry (the BrandLogo.tsx pattern). */
+   The mock's `.photos`: a four-up grid of square tiles at the card radius on a
+   hairline, and the add control is the dashed "+" tile at the end. Each tile
+   keeps its caption even when the thumbnail cannot load, so a dead URL costs a
+   picture rather than the whole entry (the BrandLogo.tsx pattern). */
 .kintale-compose__photos {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
   list-style: none;
-  margin: 0 0 var(--space-3);
+  margin: 0;
   padding: 0;
 }
-.kintale-compose__photos:empty {
-  margin-bottom: 0;
+@media (max-width: 560px) {
+  .kintale-compose__photos {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 .kintale-compose__photo {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  width: 140px;
+  min-width: 0;
+}
+.kintale-compose__photo-tile,
+.kintale-compose__photo-add {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius-card);
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: linear-gradient(160deg, var(--color-hero-bottom), var(--color-panel-top));
+  overflow: hidden;
 }
 .kintale-compose__photo-img {
-  width: 140px;
-  height: 105px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
+  display: block;
+}
+/* The mock's `.ph.add`: dashed, dim, a light "+", orange under the pointer. */
+.kintale-compose__photo-add {
+  border-style: dashed;
+  color: var(--color-text-dim);
+  font-size: 30px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.kintale-compose__photo-add:hover:not(:disabled),
+.kintale-compose__photo-add:focus-visible {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.kintale-compose__photo-add:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+.kintale-compose__photo-add:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 .kintale-compose__photo-caption {
   font-size: 0.8125rem;
@@ -264,24 +343,53 @@
   color: var(--color-text-faint);
   overflow-wrap: anywhere;
 }
+
 /* ── GPS route ──────────────────────────────────────────────────────────────
-   A plain SVG polyline. Stroke colours live here rather than as attributes so
-   the trail follows the operator's theme, which a hardcoded hex cannot. */
+   The mock's `.route`: the trail in a framed box on the darker panel stop,
+   with the stat line ("dist 1.4 mi   time 32 min") sitting inside its
+   bottom-left corner in mono, the values in teal. Stroke colours live here
+   rather than as attributes so the trail follows the tokens. */
+.kintale-compose__route-box {
+  position: relative;
+  border-radius: var(--radius-card-lg);
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: linear-gradient(160deg, var(--color-hero-bottom), var(--color-background));
+  overflow: hidden;
+}
 .kintale-compose__route {
   display: block;
   width: 100%;
-  max-width: 400px;
   height: auto;
-  margin-bottom: var(--space-3);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
 }
 .kintale-compose__route polyline {
-  stroke: var(--color-primary);
+  stroke: var(--color-accent);
 }
 .kintale-compose__route-start {
-  fill: var(--color-success);
+  fill: var(--color-primary);
 }
 .kintale-compose__route-end {
-  fill: var(--color-accent);
+  fill: var(--color-secondary);
+}
+.kintale-compose__route-stat {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+.kintale-compose__route-stat > div {
+  display: flex;
+  gap: 5px;
+}
+.kintale-compose__route-stat dt {
+  margin: 0;
+}
+.kintale-compose__route-stat dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-accent);
 }

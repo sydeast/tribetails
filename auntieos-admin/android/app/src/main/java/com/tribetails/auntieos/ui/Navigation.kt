@@ -1052,7 +1052,9 @@ private fun AuthenticatedNavHost(
             composable(Screen.AdminKinTaleLogs.route) {
                 AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
                     KinTaleLogsScreen(
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        // The logs mock's "Edit templates" head control.
+                        onOpenTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                     )
                 }
             }

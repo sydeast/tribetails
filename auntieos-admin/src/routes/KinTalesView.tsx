@@ -13,7 +13,7 @@ import { KinTaleDetail } from '../screens/KinTaleDetail';
  *   detail    KinTaleDetail.tsx, VIEWING one report: the recap, comment
  *             thread, and reaction. Reached by clicking a row (`onSelect`).
  *   compose   KinTaleCompose.tsx, EDITING (an existing `kinTaleId`) or
- *             starting a brand-new draft (`onNew`, no id).
+ *             starting a brand-new draft from a visit (`?sessionId=`).
  *
  * `onSelect` opens DETAIL, not compose: clicking a row in a list is a "view
  * this" gesture (the Inbox.tsx/Sessions.tsx convention for a row click),
@@ -72,10 +72,9 @@ export function KinTalesView() {
       />
     );
   }
-  return (
-    <KinTales
-      onNew={() => setMode({ kind: 'compose' })}
-      onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })}
-    />
-  );
+  // No `onNew`: a KinTale is only ever started from a Kin Care (operator
+  // ruling 2026-09-10, #676), and that entry is Auntie Time's "Complete
+  // KinTale", which lands here with `?sessionId=`. The list offers no blank
+  // composer of its own.
+  return <KinTales onSelect={(id) => setMode({ kind: 'detail', kinTaleId: id })} />;
 }
