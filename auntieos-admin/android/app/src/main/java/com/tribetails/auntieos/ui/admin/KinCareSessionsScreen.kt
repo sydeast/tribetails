@@ -537,10 +537,13 @@ private fun KinCareCard(
                         color = c.textDim,
                     )
                 }
+                // The mock's card-row `.pill` is 9.5px: the kit's compact size
+                // (#780), where the default capsule sat larger on the card.
                 AuntieStatusPill(
                     label = statusLabel(session.status),
                     tone = tone,
                     mono = true,
+                    compact = true,
                 )
             }
 

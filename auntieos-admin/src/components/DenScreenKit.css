@@ -191,6 +191,48 @@
   flex: none;
 }
 
+/* ── the hero slots (#780) ─────────────────────────────────────────────────
+   The profile mocks put more in the band than a title: `.hero .photo` or
+   `.hero .ava` before the text, `.owner` or `.where` under the detail line,
+   and a `.tags` row last. Until the band held them, the kin detail and the
+   kinfolk profile each laid their own hero out around it. Every rule here is
+   for a slot that is absent from the forty-odd list headings, which render
+   exactly as before. */
+
+/* The caller sizes what it puts here (120px on the kin detail, 84px on the
+   kinfolk profile); the band's job is to keep it from being squeezed by a
+   long title. */
+.den-heading-leading {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+/* The mock's `.owner` / `.where`: 14px body, 9px under the line above. Links
+   inside are the screen's; the band sets only the face and the gap. */
+.den-heading-extra {
+  margin-top: 9px;
+  font-family: var(--type-body-md-family);
+  font-size: var(--type-body-md-size);
+  font-weight: var(--type-body-md-weight);
+  line-height: var(--type-body-md-line);
+  color: var(--color-text-primary);
+}
+
+.den-heading-extra > p {
+  margin: 0;
+}
+
+/* The mock's `.hero .tags`: 8px between capsules, 12px under the line above
+   (the two profile mocks say 11 and 13; the scale's step is between them). */
+.den-heading-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 /* ── stat card ───────────────────────────────────────────────────────────── */
 
 .den-stat {
@@ -502,6 +544,15 @@
   text-decoration: line-through;
 }
 
+/* The mocks' `.badge` (Directory, a card corner) and `.pill` (Auntie Time, a
+   card row): the same capsule at 9.5px on 4px 9px. The 11px capsule above is
+   the detail screens' `.statuspill`, and on a card it sat larger than the
+   mock draws it (#780). Same tone mix, same face, only the size. */
+.den-statuspill--compact {
+  font-size: 9.5px;
+  padding: 4px 9px;
+}
+
 /* ── hints ───────────────────────────────────────────────────────────────── */
 
 .den-hint {
@@ -527,10 +578,20 @@
    Below the breakpoint the trailing block goes under the text instead of beside
    it and is allowed to wrap. Nothing about the desktop row changes. */
 @media (max-width: 720px) {
+  /* Wrapped, not stacked into a column. A column would put the hero photo
+     above the title, and the profile mocks at their own 860px breakpoint keep
+     the photo beside the text and send only `.actions` under it. The main
+     block's basis is zero and it may shrink, so the first line is always the
+     photo and the text; the trailing block takes the whole next line. */
   .den-heading {
-    flex-direction: column;
-    align-items: stretch;
+    flex-wrap: wrap;
     gap: var(--space-3);
+  }
+  .den-heading-main {
+    flex: 1 1 0;
+  }
+  .den-heading-trailing {
+    flex: 1 1 100%;
   }
   .den-heading-trailing,
   .den-panel-trailing {

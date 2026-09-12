@@ -501,12 +501,13 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           {metaLine !== '' && <span className="sessions__card-svc">{metaLine}</span>}
         </span>
 
-        {/* The kit's capsule, in the state's tone. Not struck through when
-            cancelled: this mock draws its cancelled pill as the plain dim
+        {/* The kit's capsule, in the state's tone, at the compact size the
+            mock's `.pill` draws on a card row (9.5px, #780). Not struck through
+            when cancelled: this mock draws its cancelled pill as the plain dim
             capsule, the same one the scheduled card wears. The wrapper span is
             the phone-width layout hook (Sessions.css moves it above the name). */}
         <span className="sessions__chip">
-          <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} />
+          <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} size="compact" />
         </span>
       </button>
 

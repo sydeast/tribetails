@@ -395,6 +395,8 @@ describe('Auntie Time: one fully populated action card', () => {
     const pill = within(card).getByText('ARRIVED');
     expect(pill.classList.contains('den-statuspill')).toBe(true);
     expect(pill.getAttribute('data-tone')).toBe('teal');
+    // At the kit's compact size (#780): the mock's card-row `.pill` is 9.5px.
+    expect(pill.classList.contains('den-statuspill--compact')).toBe(true);
     // The kit pill is the only capsule; the old per-state chip classes are gone.
     expect(card.querySelector('[class*="sessions__chip--"]')).toBeNull();
   });
