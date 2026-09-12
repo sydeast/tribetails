@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
  *
  * WHAT THIS HARNESS CAN AND CANNOT PROVE HERE. `npm run e2e` starts
  * `--only auth,firestore` (see package.json): there is NO functions emulator,
- * so `listAllInvites` — a callable, not a Firestore query — cannot succeed in
+ * so `listAllInvites` (a callable, not a Firestore query) cannot succeed in
  * this environment and no assertion about seeded invite ROWS is possible. That
  * is a limit of the harness, not of the screen, and inventing a mock callable
  * to fake a green list would prove nothing about either.
@@ -31,7 +31,11 @@ test('the rail entry lands on the invites screen', async ({ page }) => {
     .click();
 
   await expect(page).toHaveURL(/\/invites$/);
-  await expect(page.getByRole('heading', { name: "Every household's invites." })).toBeVisible();
+  // The kit hero is the landmark: the page h1 and the mock's kicker above it
+  // (#755). No section heading can be asserted here, since without a functions
+  // emulator the read fails and no section renders; the second test covers that.
+  await expect(page.getByRole('heading', { level: 1, name: 'Invites' })).toBeVisible();
+  await expect(page.locator('.den-heading-kicker')).toHaveText('The Den · Invites');
 });
 
 test('a failing read says so and names the callable, instead of an empty shelf', async ({
