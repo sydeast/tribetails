@@ -39,8 +39,9 @@ const BISCUIT_DOC = 'kin/vis-kin-1';
  * The kin's name is the kit hero band's title since PR #776 restyled the screen
  * (the local `.kview__name` is gone). KinView takes over the whole Directory
  * screen while a kin is open, so this h1 is the only one on the page. The tag
- * pills and the reactive marker are the kit's `StatusPill` for the same reason,
- * matched below by `.den-statuspill` inside the row that owns them.
+ * pills sit in the band's `badges` slot since PR #788 (`.den-heading-badges`),
+ * and the reactive marker stays under the band in `.kview__flags`; both are the
+ * kit's `StatusPill`, matched by `.den-statuspill` inside the row that owns them.
  */
 const KIN_NAME = 'h1.den-heading-title';
 
@@ -160,7 +161,7 @@ describe('kin view and edit', () => {
     // Firestore rather than the assign field's own optimistic state.
     openKinFromDirectory('Biscuit');
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
-    cy.contains('.kview__tags .den-statuspill', TAG, KIN_LOAD).should('exist');
+    cy.contains('.den-heading-badges .den-statuspill', TAG, KIN_LOAD).should('exist');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
     // Teardown: remove the tag through the same control, leaving the fixture

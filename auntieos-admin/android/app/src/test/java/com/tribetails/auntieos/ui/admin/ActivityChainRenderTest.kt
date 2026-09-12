@@ -17,12 +17,13 @@ import org.robolectric.annotation.Config
 
 /**
  * Slice 9 Robolectric compose UI test for the Activity-log hash-chain surfaces
- * (spec 22 item 2). Renders the real [ChainIntegrityPanel] and [ActivityRow] and
- * asserts the fail-loud verdict + broken banner render: a passing verdict shows
- * "Chain verified...", an in-band anomaly shows "Chain BROKEN..." + the loud
- * "Hash chain integrity broken" banner, and a verify failure surfaces the message.
- * The per-row pill is always on: "#16 · A1B2C3D4" (mono uppercase) for a sealed
- * row, and an "UNCHAINED" pill for a legacy row with no seq.
+ * (spec 22 item 2), redrawn to the mock in #755. Renders the real [ChainBadge]
+ * and [ActivityRow] and asserts the fail-loud verdict + broken banner render: a
+ * passing verdict shows "Chain verified" over the mono numbers line, an in-band
+ * anomaly shows "Chain broken" + the loud "Hash chain integrity broken" banner,
+ * and a verify failure surfaces the message. The per-row seq column is always
+ * on: "#16" over the first eight characters of the hash for a sealed row, and
+ * "legacy" for a row with no seq.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -41,28 +42,28 @@ class ActivityChainRenderTest {
     fun `panel verified pass shows verified verdict`() {
         composeRule.setContent {
             AuntieOSTheme {
-                ChainIntegrityPanel(
-                    entryCount = 16,
+                ChainBadge(
                     verifyState = ChainVerifyUiState.Done(result(ok = true)),
                     onVerify = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Chain verified, seq 1..16, 16 scanned, 0 anomalies").assertIsDisplayed()
+        composeRule.onNodeWithText("Chain verified").assertIsDisplayed()
+        composeRule.onNodeWithText("16 entries · seq 1..16 · 0 anomalies").assertIsDisplayed()
     }
 
     @Test
     fun `panel anomaly shows broken verdict and loud banner`() {
         composeRule.setContent {
             AuntieOSTheme {
-                ChainIntegrityPanel(
-                    entryCount = 16,
+                ChainBadge(
                     verifyState = ChainVerifyUiState.Done(result(ok = false, anomalyCode = "entry_hash_mismatch", anomalySeq = 7)),
                     onVerify = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Chain BROKEN (entry_hash_mismatch)").assertIsDisplayed()
+        composeRule.onNodeWithText("Chain broken").assertIsDisplayed()
+        composeRule.onNodeWithText("First break at seq 7: entry_hash_mismatch. Scanned 16.").assertIsDisplayed()
         composeRule.onNodeWithText("Hash chain integrity broken").assertIsDisplayed()
     }
 
@@ -70,18 +71,18 @@ class ActivityChainRenderTest {
     fun `panel error surfaces the message`() {
         composeRule.setContent {
             AuntieOSTheme {
-                ChainIntegrityPanel(
-                    entryCount = 16,
+                ChainBadge(
                     verifyState = ChainVerifyUiState.Error("permission-denied"),
                     onVerify = {},
                 )
             }
         }
-        composeRule.onNodeWithText("Chain verification failed: permission-denied").assertIsDisplayed()
+        composeRule.onNodeWithText("Verification call failed").assertIsDisplayed()
+        composeRule.onNodeWithText("permission-denied").assertIsDisplayed()
     }
 
     @Test
-    fun `row sealed entry shows seq hash pill`() {
+    fun `row sealed entry shows seq over hash`() {
         composeRule.setContent {
             AuntieOSTheme {
                 ActivityRow(
@@ -90,12 +91,15 @@ class ActivityChainRenderTest {
                 )
             }
         }
-        // AuntieStatusPill mono=true uppercases the label at render time.
-        composeRule.onNodeWithText("#16 · A1B2C3D4").assertIsDisplayed()
+        // The mock's seq column: the number, then the first eight of the hash
+        // as written on the wire (the hash is a value, so it is not uppercased).
+        composeRule.onNodeWithText("#16").assertIsDisplayed()
+        composeRule.onNodeWithText("a1b2c3d4").assertIsDisplayed()
+        composeRule.onAllNodesWithText("legacy").assertCountEquals(0)
     }
 
     @Test
-    fun `row legacy entry shows unchained pill`() {
+    fun `row legacy entry says legacy in the seq column`() {
         composeRule.setContent {
             AuntieOSTheme {
                 ActivityRow(
@@ -104,20 +108,23 @@ class ActivityChainRenderTest {
                 )
             }
         }
-        composeRule.onNodeWithText("UNCHAINED").assertIsDisplayed()
+        composeRule.onNodeWithText("legacy").assertIsDisplayed()
     }
 
     @Test
-    fun `row sealed entry shows no unchained pill`() {
+    fun `row carries no status pill, the tile tone carries a failure`() {
         composeRule.setContent {
             AuntieOSTheme {
                 ActivityRow(
-                    entry = ActivityLogEntry(id = "e3", actionType = "LOGIN", status = "SUCCESS", timestamp = "2026-05-27T09:41:00Z", seq = 9L, entryHash = "deadbeef00"),
+                    entry = ActivityLogEntry(id = "e3", actionType = "LOGIN", status = "FAILURE", timestamp = "2026-05-27T09:41:00Z", seq = 9L, entryHash = "deadbeef00"),
                     onClick = {},
                 )
             }
         }
-        // Negative: a sealed row shows its seq/hash pill, never the "unchained" pill.
-        composeRule.onAllNodesWithText("UNCHAINED").assertCountEquals(0)
+        // The mock draws no status word on the row; the status is in the
+        // opened record, and the coral warning tile marks the failure.
+        composeRule.onAllNodesWithText("FAILURE").assertCountEquals(0)
+        composeRule.onNodeWithText("Login").assertIsDisplayed()
+        composeRule.onNodeWithText("LOGIN").assertIsDisplayed()
     }
 }

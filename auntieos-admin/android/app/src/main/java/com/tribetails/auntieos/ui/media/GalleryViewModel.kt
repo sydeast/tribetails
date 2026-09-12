@@ -20,6 +20,14 @@ data class GalleryUiState(
     val kinfolk: List<Kinfolk> = emptyList(),
     val isLoading: Boolean = true,
     val error: String? = null,
+    /**
+     * A refused ACTION (a delete the callable turned down), shown as a banner
+     * above the grid. Kept apart from [error], which describes the LOAD:
+     * blanking a working grid because one action was refused would hide the
+     * very rows the operator needs to see to understand what happened. The
+     * same split the web Gallery and MediaGalleryViewModel already make.
+     */
+    val actionError: String? = null,
     val filter: GalleryFilter = GalleryFilter(),
 )
 
@@ -56,6 +64,35 @@ class GalleryViewModel(
 
     fun setFilter(f: GalleryFilter) {
         _uiState.value = _uiState.value.copy(filter = f)
+    }
+    fun clearActionError() {
+        _uiState.value = _uiState.value.copy(actionError = null)
+    }
+    /**
+     * Delete one file through the `deleteMediaFile` callable (#755, the
+     * Android half of what the web Gallery has done since #692). NO `entityId`
+     * scope is sent: this grid spans every household, so it has no scope to
+     * assert; the entity-scoped MediaGalleryViewModel passes its row's own and
+     * this one deliberately does not (see AuntieRepository.deleteMediaFile).
+     *
+     * Spliced out of state ONLY once the callable resolved: this screen loads
+     * with a one-shot read rather than a live listener, so without the splice
+     * the tile would stay until the next load and a real delete would read as a
+     * no-op. A refusal leaves the row where it is and lands in [GalleryUiState.actionError].
+     */
+    fun deleteMedia(mediaId: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            repository.deleteMediaFile(mediaId).onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    media = _uiState.value.media.filter { it.id != mediaId },
+                    actionError = null,
+                )
+                onDone(true)
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(actionError = "Deleting this file did not go through: ${e.message}")
+                onDone(false)
+            }
+        }
     }
 
     /**

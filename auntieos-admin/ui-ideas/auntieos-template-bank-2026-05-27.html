@@ -368,6 +368,10 @@ Your {{service}} for {{kin_names}} on {{date}} is all set. See you then!
       </div>
 
       <div class="mactions">
+        <!-- Delete: edit mode only. Operator ruling (2026-09): the operator may delete a template
+             from the bank, and row 32 was deleted on purpose. The React editor ships this as a
+             ghost action with a confirm step; a later pass must not strip it to "match the mock". -->
+        <button class="ghost" id="deleteEdit" style="justify-content:center">Delete</button>
         <button class="ghost" id="cancelEdit" style="justify-content:center">Cancel</button>
         <!-- Save: enabled only when subject + body are both non-blank -->
         <button class="primary" id="saveEdit">Save</button>
@@ -440,6 +444,14 @@ Your {{service}} for {{kin_names}} on {{date}} is all set. See you then!
   it. A later pass that wants this header to match the mock should leave that menu alone: the
   mock is one action, not one flow. The React screen also keeps a "Load more" control under the
   grid, because the bank is read a page at a time and this mock draws a fixed six-card sample.
+  RULINGS THAT POSTDATE THIS PAGE (recorded here so the #755 pass is not undone):
+    - Templates arrive by the importer ("Import from repo") and by UI authoring here. Never by a
+      seed script. The importer flow behind "More actions" is the whole of that ruling.
+    - The operator may delete a template. The editor overlay above carries a Delete action for
+      that reason (row 32 was deleted on purpose); "Cancel / Save" alone is no longer the footer.
+    - Category and tag capsules on the card are the kit's compact status pill (purple, orange)
+      rather than the .catpill / .tag drawn above: one capsule shape across every card in the
+      admin, per the glass kit (#759, #788).
 -->
 </body>
 </html>

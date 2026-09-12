@@ -3,72 +3,39 @@
  * for issue #719: a hero, then two columns. Every value comes from
  * styles/tokens.css; the mock's literal colours are its own concept palette and
  * do not cross over.
+ *
+ * #755 sweep: the hero is the kit band (`DenScreenHeading` with its #788
+ * slots), so nothing here draws a hero surface, a name, a role line or a
+ * badge any more; what is left of the hero is the action row and the hidden
+ * file input. The profile fields are the mock's bottom-rule pair (`.lab` over
+ * `.fld`), not boxed inputs on a surface fill.
  */
 .account__hint {
   color: var(--color-text-dim);
   padding: var(--space-4) 0;
 }
 /* ── hero ─────────────────────────────────────────────────────────────────── */
-.account__hero {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  padding: var(--space-4);
-  margin-bottom: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-panel);
-  background: var(--color-surface);
-}
-.account__heroMeta {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  flex: 1 1 14rem;
-}
-.account__heroName {
-  font-family: var(--font-fraunces);
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-.account__heroRole {
-  color: var(--color-accent);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
+/* The mock's `.hero .meta .email`: dim, 13.5px, under the role line. The band
+   supplies the slot and the gap; this is only the face. */
 .account__heroEmail {
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
-  font-size: 0.9rem;
   overflow-wrap: anywhere;
-}
-.account__badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.account__badge {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-dim);
-}
-.account__badge--sole,
-.account__badge--uid {
-  color: var(--color-text-primary);
 }
 .account__heroActions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: auto;
   flex-wrap: wrap;
+}
+/* What the camera tile is doing while an upload runs. Mono because it is a
+   status word, not copy; the tile itself is disabled for the duration. */
+.account__photoStage {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
 }
 /* The real <input type="file"> is visually hidden but still focusable and
    labelled, so a keyboard user and a test both reach the picker without the
@@ -83,9 +50,10 @@
   white-space: nowrap;
 }
 /* ── two columns ──────────────────────────────────────────────────────────── */
+/* The mock's `.cols`: the right column a little wider (1fr 1.15fr). */
 .account__cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1.15fr;
   gap: var(--space-4);
   align-items: start;
 }
@@ -95,10 +63,6 @@
 @media (max-width: 60rem) {
   .account__cols {
     grid-template-columns: 1fr;
-  }
-  .account__heroActions {
-    margin-left: 0;
-    width: 100%;
   }
 }
 /* ── inline profile fields ────────────────────────────────────────────────── */
@@ -123,25 +87,38 @@
   gap: var(--space-1);
   min-width: 0;
 }
+/* The mock's `.lab`: mono, 10px, .12em tracking, uppercase, dim. */
 .account__label {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-text-dim);
 }
+/* The mock's `.fld`, made editable: no box and no fill, 9px above and below,
+   a hairline under, 15px at 500. The rule goes brand orange on focus, the
+   same move the sign-in fields make. */
 .account__input {
   width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
+  padding: 9px 0;
+  border: 0;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
+  border-radius: 0;
+  background: transparent;
   color: var(--color-text-primary);
   font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.account__input::placeholder {
+  color: var(--color-text-dim);
+  font-weight: 400;
+  font-style: italic;
 }
 .account__input:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
+  outline: none;
+  border-bottom-color: var(--color-primary);
 }
 .account__input:disabled {
   opacity: 0.6;
@@ -158,12 +135,14 @@
   display: flex;
   flex-direction: column;
 }
+/* The mock's `.trow`: icon tile, text, switch at the right, a soft hairline
+   between rows. */
 .account__toggleRow {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
 }
 .account__toggleRow:first-child {
   padding-top: 0;
@@ -180,6 +159,7 @@
 }
 .account__toggleTitle {
   font-size: 0.95rem;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
 .account__toggleDetail {
