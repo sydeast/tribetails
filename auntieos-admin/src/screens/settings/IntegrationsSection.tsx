@@ -13,6 +13,8 @@ import { AsyncRegion } from '../../components/AsyncRegion';
 import { DenPanel } from '../../components/DenScreenKit';
 import { Banner } from '../../components/Banner';
 import { GhostButton } from '../../components/Buttons';
+import { IconTile } from '../../components/IconTile';
+import { gradientForSeed } from '../../components/Avatar';
 import { CalendarSection } from './CalendarSection';
 import { LoadingRow } from '../../components/LoadingRow';
 import './IntegrationsSection.css';
@@ -20,6 +22,13 @@ import './IntegrationsSection.css';
 /**
  * Settings > Integrations: whether the outside services this business runs on
  * are actually working.
+ *
+ * DRAWN AS THE MOCK'S CARD GRID (issue #755 pass, `ui-ideas/auntieos-settings-
+ * 2026-05-27.html` `.intgrid` / `.int`): one card per service, a gradient
+ * monogram tile, the name and purpose, the server's report, and the state as
+ * an LED with its words on the card's last line. The mock's "Manage" and
+ * "Connect" buttons are not drawn: nothing here connects anything (below),
+ * and the one flow that exists, Google Calendar, keeps its own button.
  *
  * EVERY WORD OF THE VERDICT COMES FROM THE SERVER. A browser cannot see a Cloud
  * Functions secret, so a status decided here would be a guess dressed as a fact.
@@ -104,11 +113,18 @@ export function IntegrationsSection({ settings, onSaveCalendar }: Props) {
 
   useEffect(() => load(), [load]);
 
+  // The panel header carries the two things that are about the whole report:
+  // WHEN it was made (a value, so `detail`) and the control that makes it
+  // again (`trailing`). Both wait for an answer; a failed read offers Retry
+  // through AsyncRegion instead, so there is never a second button beside it.
+  const ready = state.status === 'ready';
   return (
     <>
       <DenPanel
         title="Integrations"
         subtitle="The outside services this business runs on, checked on the server. Nothing here is guessed from your browser."
+        detail={ready ? checkedLabel(state.data.checkedAt) : undefined}
+        trailing={ready ? <GhostButton label="Check again" onClick={load} /> : undefined}
       >
         <AsyncRegion
           state={state}
@@ -131,14 +147,9 @@ export function IntegrationsSection({ settings, onSaveCalendar }: Props) {
                 </Banner>
               ) : null}
 
-              <div className="integrations__meta">
-                <span className="integrations__checked">{checkedLabel(data.checkedAt)}</span>
-                <GhostButton label="Check again" onClick={load} />
-              </div>
-
-              <ul className="integrations__list">
+              <ul className="integrations__grid">
                 {data.integrations.map((integration) => (
-                  <IntegrationRow
+                  <IntegrationCard
                     key={integration.key}
                     integration={integration}
                     declaredKnown={data.declaredKnown}
@@ -156,58 +167,82 @@ export function IntegrationsSection({ settings, onSaveCalendar }: Props) {
   );
 }
 
-interface RowProps {
+interface CardProps {
   integration: IntegrationHealth;
   declaredKnown: boolean;
   calendarOpen: boolean;
   onToggleCalendar: () => void;
 }
 
-function IntegrationRow({ integration, declaredKnown, calendarOpen, onToggleCalendar }: RowProps) {
+/** The mock's `.logo` letter: the first character of the service's name. */
+function monogram(name: string): string {
+  const first = name.trim().charAt(0);
+  return first === '' ? '?' : first.toUpperCase();
+}
+
+/**
+ * One outside service as the mock's `.int` card (issue #755 pass): a brand
+ * gradient tile carrying the service's monogram, the name, what it is for,
+ * then the server's report, and last the mock's `.foot`: the state as an LED
+ * and its words, beside the one control a row can have.
+ *
+ * The report is the part the mock has no room for and the part that cannot
+ * go: the summary, each credential's state, the remediation to paste and the
+ * console step are the whole reason this panel exists. They sit between the
+ * purpose line and the foot so the foot stays the bottom line of the card,
+ * as it is in the mock.
+ */
+function IntegrationCard({ integration, declaredKnown, calendarOpen, onToggleCalendar }: CardProps) {
   const tone = STATUS_TONE[integration.status];
   return (
-    <li className="integrations__row" data-status={integration.status}>
-      <div className="integrations__head">
-        <div className="integrations__naming">
-          <h4 className="integrations__name">{integration.name}</h4>
-          <p className="integrations__purpose">{integration.purpose}</p>
+    <li className="integrations__card" data-status={integration.status}>
+      <IconTile
+        icon={<span className="integrations__monogram">{monogram(integration.name)}</span>}
+        background={gradientForSeed(integration.key)}
+        size={40}
+      />
+      <div className="integrations__body">
+        <h4 className="integrations__name">{integration.name}</h4>
+        <p className="integrations__purpose">{integration.purpose}</p>
+
+        <p className="integrations__summary">{integration.summary}</p>
+
+        <ul className="integrations__secrets">
+          {integration.secrets.map((secret) => (
+            <SecretLine key={secret.name} secret={secret} declaredKnown={declaredKnown} />
+          ))}
+        </ul>
+
+        {integration.remediation !== '' ? (
+          <div className="integrations__remediation">
+            <span className="integrations__remediationLabel">What to do</span>
+            {/* Verbatim, selectable, and pre-wrapped: it is a command to paste. */}
+            <pre className="integrations__command">{integration.remediation}</pre>
+          </div>
+        ) : null}
+
+        {integration.externalStep !== '' ? (
+          <p className="integrations__external">{integration.externalStep}</p>
+        ) : null}
+
+        <div className="integrations__foot">
+          {/* The mock's `.conn`: an LED and the state in mono caps. The words
+              come with the colour, never colour alone: this panel is read by
+              whoever is on call, on whatever screen they have, and half of
+              them will not see the tint. The words are the server's, through
+              STATUS_LABEL, so Android and this card say the same thing. */}
+          <span className="integrations__conn" data-tone={tone}>
+            <i className="integrations__led" aria-hidden="true" />
+            {STATUS_LABEL[integration.status]}
+          </span>
+          {integration.ownedBySection !== '' ? (
+            <GhostButton
+              label={calendarOpen ? 'Hide Google Calendar settings' : 'Open Google Calendar settings'}
+              onClick={onToggleCalendar}
+            />
+          ) : null}
         </div>
-        {/* The pill carries its own words as well as its colour. Colour alone is
-            not a status: this panel is read by whoever is on call, on whatever
-            screen they have, and half of them will not see the tint. */}
-        <span className="integrations__pill" data-tone={tone}>
-          {STATUS_LABEL[integration.status]}
-        </span>
       </div>
-
-      <p className="integrations__summary">{integration.summary}</p>
-
-      <ul className="integrations__secrets">
-        {integration.secrets.map((secret) => (
-          <SecretLine key={secret.name} secret={secret} declaredKnown={declaredKnown} />
-        ))}
-      </ul>
-
-      {integration.remediation !== '' ? (
-        <div className="integrations__remediation">
-          <span className="integrations__remediationLabel">What to do</span>
-          {/* Verbatim, selectable, and pre-wrapped: it is a command to paste. */}
-          <pre className="integrations__command">{integration.remediation}</pre>
-        </div>
-      ) : null}
-
-      {integration.externalStep !== '' ? (
-        <p className="integrations__external">{integration.externalStep}</p>
-      ) : null}
-
-      {integration.ownedBySection !== '' ? (
-        <div className="integrations__handoff">
-          <GhostButton
-            label={calendarOpen ? 'Hide Google Calendar settings' : 'Open Google Calendar settings'}
-            onClick={onToggleCalendar}
-          />
-        </div>
-      ) : null}
     </li>
   );
 }

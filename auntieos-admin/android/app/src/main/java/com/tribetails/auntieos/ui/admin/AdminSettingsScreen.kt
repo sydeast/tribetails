@@ -63,14 +63,9 @@ import com.composables.icons.lucide.X
 import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChevronLeft
-import com.composables.icons.lucide.ChevronRight
-import com.composables.icons.lucide.Database
-import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Mail
-import com.composables.icons.lucide.Map
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Trash2
@@ -79,13 +74,10 @@ import com.composables.icons.lucide.ArrowUp
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.ClipboardList
 import com.tribetails.auntieos.ui.components.AuntieIconButton
-import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.PawPrint
 import com.composables.icons.lucide.Plane
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.AtSign
-import com.composables.icons.lucide.ShieldCheck
-import com.composables.icons.lucide.Smartphone
 import com.composables.icons.lucide.Stethoscope
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
@@ -100,7 +92,6 @@ import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
-import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
@@ -118,6 +109,12 @@ import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.GlassSurface
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.tribetails.auntieos.ui.theme.BrandCream
+import com.tribetails.auntieos.ui.theme.TribeGradients
 import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatusToast
@@ -202,6 +199,13 @@ import kotlinx.coroutines.launch
  * instead of one endless scroll: this enum drives BOTH the tappable list
  * [AdminSettingsSectionNav] renders and the `when` in [AdminSettingsScreen] that
  * renders the matching panel. Order mirrors the web Settings section nav.
+ *
+ * [blurb] is no longer drawn (issue #755 pass): the settings mock's `.secnav`
+ * is an icon and a label per row, and the operator's 2026-09-11 ruling on
+ * explanatory copy (#752) applies to a row's sub line as it does to a panel's.
+ * The field stays on the constructor so every entry, including ones added by
+ * PRs in flight, keeps compiling; it is the one-line description a future
+ * tooltip would carry.
  */
 internal enum class SettingsSection(
     val title: String,
@@ -224,7 +228,10 @@ internal enum class SettingsSection(
     CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
     TimeOff("Time off", "Holidays observed and Den closures", Lucide.Plane),
     Notifications("Notifications", "The per-notification channel gate", Lucide.Bell),
-    BookingBehavior("Booking behavior", "Auto-confirm and drag-to-snap", Lucide.Check),
+    // "Scheduling" is the settings mock's title for these three switches
+    // (issue #755 pass); web's panel of the same name sits under Business
+    // profile.
+    BookingBehavior("Scheduling", "Auto-confirm and drag-to-snap", Lucide.Check),
     Integrations("Integrations", "Connected services and their status", Lucide.Webhook),
     Tags("Tags", "Household and pet tag banks", Lucide.Tag),
     // ISSUE #397 M10: the kinfolk PORTAL's Home layout (not this app's own
@@ -241,7 +248,8 @@ internal enum class SettingsSection(
  * testable without standing up the heavy [AdminSettingsViewModel]:
  *
  *  - [selected] null  -> the section LIST: an optional [listHeader] (the
- *    navigate-away buttons) above one tappable [AuntieEntityRow] per section.
+ *    navigate-away buttons) above the mock's `.secnav`, a glass panel of one
+ *    tappable icon-and-label row per section (issue #755 pass).
  *  - [selected] set   -> that section's DETAIL: an "All settings" affordance
  *    back to the list, then the caller's [detail] slot for that section. A
  *    [BackHandler] routes the system back gesture to the list too, so back never
@@ -280,29 +288,36 @@ internal fun AdminSettingsSectionNav(
             listHeader()
             Spacer(Modifier.height(dims.space4))
 
-            SettingsSection.entries.forEachIndexed { index, section ->
-                AuntieEntityRow(
-                    title = section.title,
-                    subtitle = section.blurb,
-                    leading = {
-                        Icon(
-                            imageVector = section.icon,
-                            contentDescription = null,
-                            tint = colors.textDim,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    trailing = {
-                        Icon(
-                            imageVector = Lucide.ChevronRight,
-                            contentDescription = null,
-                            tint = colors.textFaint,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    showDivider = index < SettingsSection.entries.lastIndex,
-                    onClick = { onSelect(section) },
-                )
+            // The mock's `.secnav`: a glass panel one radius step under a
+            // DenPanel, 10dp inside, each row a 17dp glyph and a 14sp label
+            // at 10dp by 12dp on an 11dp corner. No sub line and no chevron:
+            // the mock draws neither, and the row itself is the affordance.
+            GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SettingsSection.entries.forEach { section ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(11.dp))
+                                .clickable { onSelect(section) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = section.icon,
+                                contentDescription = null,
+                                tint = colors.textDim,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            Text(
+                                text = section.title,
+                                style = AuntieTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = colors.textDim,
+                            )
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -883,9 +898,6 @@ private fun BusinessOperationsPanel(
     DenPanel(
         title = "Business operations",
         subtitle = "GPS tracking, liability protection, and visit defaults.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.Building2, tone = AuntieStatusTone.Orange, size = 40.dp)
-        },
     ) {
         Column {
             AuntieSettingRow(
@@ -1011,9 +1023,6 @@ private fun BusinessHoursPanel(
     DenPanel(
         title = "Business hours",
         subtitle = "When the Den is open for visits. Use 24h times like 09:00 to 17:00.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.CalendarClock, tone = AuntieStatusTone.Purple, size = 40.dp)
-        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             hours.forEach { row ->
@@ -1088,7 +1097,6 @@ private fun PaymentOptionsPanel(
     DenPanel(
         title = "Payment options",
         subtitle = "Handles clients pay you through. Shown on invoices and the invoice PDF. Leave a field blank to hide that method.",
-        trailing = { AuntieIconTile(icon = Lucide.Wallet, tone = AuntieStatusTone.Success, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = venmo, onValueChange = { venmo = it }, label = "Venmo handle", placeholder = "@your-venmo")
@@ -1120,7 +1128,6 @@ private fun WeatherAreaPanel(
     DenPanel(
         title = "Weather area",
         subtitle = "Where the Home weather widgets forecast for. A city, metro, or ZIP (e.g. \"Austin, TX\"), not your street address. For a metro the centre point covers the whole area.",
-        trailing = { AuntieIconTile(icon = Lucide.CloudSun, tone = AuntieStatusTone.Teal, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = area, onValueChange = { area = it }, label = "City, metro, or ZIP", placeholder = "Austin, TX")
@@ -1193,7 +1200,6 @@ private fun NotificationMatrixPanel() {
         subtitle = "For each notification, switch a channel On to make it available in the recipient's own " +
             "notification settings, or Off to hide it. Lock forces a channel on so they can't change it. " +
             "Off across all channels hides the notification entirely. Pick the audience with the tabs below.",
-        trailing = { AuntieIconTile(icon = Lucide.Bell, tone = AuntieStatusTone.Teal, size = 40.dp) },
     ) {
         Column {
             when {
@@ -1800,31 +1806,36 @@ private fun BookingBehaviorPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
+    // The settings mock's "Scheduling" panel (issue #755 pass): its `.trow`
+    // rows in its order, each a bold label with the mock's one-line note
+    // under it and the switch at the right, no leading icon. The mock's
+    // fourth row, "Sync Google Calendar busy events", is the free/busy
+    // import, which lives on the Scheduling options screen (#715 on web).
     DenPanel(
-        title = "Booking behavior",
-        subtitle = "How new bookings are confirmed and adjusted.",
+        title = "Scheduling",
+        subtitle = "How new bookings are confirmed and adjusted. Each switch saves the moment it is flipped.",
     ) {
         // #9 (2026-06-08): real persisted toggles (parity with web). Each flip merges
         // the change onto the business_settings doc via updateBusinessSettings.
         Column {
+            // #517: parity with web. Writes enableConflictDetection, the field
+            // EnhancedSchedulingViewModel already gates its availability check on
+            // and that guardBookingBusyConflict now reads server-side before every
+            // booking write. Defaults ON, so the switch starts where the model does.
             AuntieSettingRow(
-                title = "Auto-confirm repeat kinfolk",
-                description = "Kinfolk who have booked before skip the manual approval queue. New kinfolk still need approval.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                title = "Block bookings during busy events",
+                description = "Stop new visits from landing on top of a Google Calendar block.",
                 showDivider = true,
                 trailing = {
                     AuntieToggle(
-                        checked = settings.autoConfirmRepeatKinfolk,
-                        onCheckedChange = { next -> onSettingsChange(settings.copy(autoConfirmRepeatKinfolk = next)) },
+                        checked = settings.enableConflictDetection,
+                        onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
                     )
                 },
             )
             AuntieSettingRow(
                 title = "Snap drag-to-reschedule to 15 min",
-                description = "Visits align to quarter-hour slots when dragged on the schedule.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                description = "Visits align to quarter-hour slots when dragged.",
                 showDivider = true,
                 trailing = {
                     AuntieToggle(
@@ -1833,20 +1844,14 @@ private fun BookingBehaviorPanel(
                     )
                 },
             )
-            // #517: parity with web. Writes enableConflictDetection, the field
-            // EnhancedSchedulingViewModel already gates its availability check on
-            // and that guardBookingBusyConflict now reads server-side before every
-            // booking write. Defaults ON, so the switch starts where the model does.
             AuntieSettingRow(
-                title = "Block bookings during busy events",
-                description = "Refuse a new visit that lands on a busy block imported from Google Calendar.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                title = "Auto-confirm repeat kinfolk",
+                description = "Trusted kinfolk bookings skip manual approval.",
                 showDivider = false,
                 trailing = {
                     AuntieToggle(
-                        checked = settings.enableConflictDetection,
-                        onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
+                        checked = settings.autoConfirmRepeatKinfolk,
+                        onCheckedChange = { next -> onSettingsChange(settings.copy(autoConfirmRepeatKinfolk = next)) },
                     )
                 },
             )
@@ -2018,16 +2023,28 @@ private fun IntegrationsPanel(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
+    // The header carries what is about the whole report: WHEN it was made (a
+    // value, so `detail`) and the control that makes it again (`trailing`).
+    // Both wait for an answer; a failed read offers Try again on its banner
+    // instead, so there is never a second button beside it. Mirrors web.
     DenPanel(
         title = "Integrations",
-        subtitle = "The outside services this business runs on, checked on the server. The last two rows are about this phone.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.LayoutGrid, tone = AuntieStatusTone.Orange, size = 40.dp)
+        subtitle = "The outside services this business runs on, checked on the server. The rows under This phone are about this handset.",
+        detail = health?.let { integrationsCheckedLabel(it.checkedAt) },
+        trailing = if (health != null) {
+            {
+                GhostButton(
+                    label = if (loading) "Checking..." else "Check again",
+                    onClick = onRetry,
+                    enabled = !loading,
+                )
+            }
+        } else {
+            null
         },
     ) {
-        Column {
+        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
             Text("OUTSIDE SERVICES", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
 
             when {
                 error != null -> {
@@ -2082,40 +2099,21 @@ private fun IntegrationsPanel(
                                 )
                             },
                         )
-                        Spacer(Modifier.height(dims.space2))
                     }
-                    health.integrations.forEachIndexed { idx, row ->
-                        ServerIntegrationRow(
+                    health.integrations.forEach { row ->
+                        ServerIntegrationCard(
                             row = row,
                             declaredKnown = health.declaredKnown,
-                            showDivider = idx < health.integrations.lastIndex,
                             onOpenGoogleCalendar = onOpenGoogleCalendar,
                         )
-                    }
-                    Spacer(Modifier.height(dims.space2))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            integrationsCheckedLabel(health.checkedAt),
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textFaint,
-                            modifier = Modifier.weight(1f),
-                        )
-                        GhostButton(label = if (loading) "Checking..." else "Check again", onClick = onRetry, enabled = !loading)
                     }
                 }
             }
 
-            Spacer(Modifier.height(dims.space3))
-
             // The two facts a server genuinely cannot see, kept for that reason
             // and labelled so they are never read as claims about the business.
             Text("THIS PHONE", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
-            deviceProbes.forEachIndexed { idx, row ->
-                IntegrationRow(row, showDivider = idx < deviceProbes.lastIndex)
-            }
-
-            Spacer(Modifier.height(dims.space3))
+            deviceProbes.forEach { row -> DeviceProbeCard(row) }
 
             // Stripe CONNECT, which is not the same thing as the Stripe row
             // above: that one is card payments on an invoice, this is paying a
@@ -2123,23 +2121,29 @@ private fun IntegrationsPanel(
             // code in this repo holds, so it is named rather than staged behind
             // a button that could not work.
             Text("PAYOUTS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
-            IntegrationNeedsKeysRow(
+            IntegrationCard(
                 name = "Stripe Connect",
-                detail = "Paying out to a connected account, separate from card payments on an invoice",
-                hint = "Connecting needs your Stripe Connect client ID and secret from dashboard.stripe.com/settings/connect. Card payments on invoices work without it.",
+                purpose = "Paying out to a connected account, separate from card payments on an invoice",
+                stateLabel = "Needs your keys",
+                stateTone = AuntieStatusTone.Warning,
+                report = {
+                    Text(
+                        "Connecting needs your Stripe Connect client ID and secret from dashboard.stripe.com/settings/connect. Card payments on invoices work without it.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                },
             )
 
-            Spacer(Modifier.height(dims.space3))
-
             // #8: optional third-party ADD-ONS (Zapier, to-do apps, etc.). None are built
-            // yet - shown honestly as "Coming soon", never faked as connected.
+            // yet: shown honestly as "Coming soon", never faked as connected. The
+            // operator's 2026-08-29 ruling keeps these three rows visible as
+            // reminders of planned work; building the connect flows waits until
+            // the apps are fully functional in everything else.
             Text("ADD-ONS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
             AddOnComingSoon("Zapier", "Automate workflows across thousands of apps")
             AddOnComingSoon("Make", "Visual multi-step automations")
             AddOnComingSoon("Google Tasks", "Push KinCare to-dos to your task list")
-            Spacer(Modifier.height(dims.space2))
             Text(
                 "Add-ons aren't available yet: connecting one needs an OAuth / connect flow that does not exist yet. The system services above power the Den.",
                 style = AuntieTheme.typography.bodySmall,
@@ -2150,75 +2154,139 @@ private fun IntegrationsPanel(
 }
 
 /**
- * #8: an integration that is a NAMED external-secret defer (Stripe Connect). Shown
- * honestly as "Needs your keys" with the exact secret named; never faked, never a
- * dead Manage button. Manage activates once the operator supplies the keys.
+ * The settings mock's `.int` card (issue #755 pass), the Android twin of the
+ * web `.integrations__card`: a 40dp brand-gradient tile carrying the
+ * service's monogram, the name, what it is for, the caller's [report], and
+ * last the mock's `.foot`: the state as an LED with its words, beside the
+ * one [control] a row can have. On the raised surface, a hairline at 15dp,
+ * 15dp inside.
  */
 @Composable
-private fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) {
+private fun IntegrationCard(
+    name: String,
+    purpose: String,
+    stateLabel: String,
+    stateTone: AuntieStatusTone,
+    stateGlow: Boolean = false,
+    control: (@Composable () -> Unit)? = null,
+    report: (@Composable ColumnScope.() -> Unit)? = null,
+) {
     val c = AuntieTheme.colors
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+    val dims = AuntieTheme.dims
+    val shape = RoundedCornerShape(15.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surface2)
+            .border(dims.borderHairline, c.border, shape)
+            .padding(15.dp),
+        horizontalArrangement = Arrangement.spacedBy(13.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        IntegrationMonogramTile(name)
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = AuntieTheme.typography.bodyMedium.copy(fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold),
+                color = c.textPrimary,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(purpose, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            if (report != null) {
+                Spacer(Modifier.height(dims.space2))
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) { report() }
             }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .border(AuntieTheme.dims.borderHairline, c.warning, RoundedCornerShape(999.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text("Needs your keys", style = AuntieTheme.typography.labelSmall, color = c.warning)
+            Spacer(Modifier.height(11.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IntegrationStateLine(stateLabel, stateTone, stateGlow, Modifier.weight(1f))
+                control?.invoke()
             }
         }
-        Text(hint, style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
 /**
- * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built; never
- * faked as connected). The #397 audit flagged these as invented scope and recommended
- * deleting them; the operator OVERRULED that on 2026-08-26 ("these a[re] soon to be
- * implementations") — they stay, as a ruled, planned backlog item, not an unexplained
- * placeholder. When the connect flow ships, this becomes connect + settings + link.
+ * The mock's `.logo`: the service's first letter in the serif, cream, on a
+ * brand gradient picked by the name so the same service always reads with
+ * the same colour signature (the web card seeds `gradientForSeed` the same
+ * way). Decorative: the name beside it is the accessible text.
+ */
+@Composable
+private fun IntegrationMonogramTile(name: String) {
+    val gradients = listOf(TribeGradients.orangeToPink(), TribeGradients.tealToPurple(), TribeGradients.tribe())
+    val brush: Brush = gradients[integrationGradientIndex(name, gradients.size)]
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(brush),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            integrationMonogram(name),
+            style = AuntieTheme.typography.headlineSmall.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+            color = BrandCream,
+        )
+    }
+}
+
+/**
+ * The mock's `.conn`: a 7dp LED and the state in mono caps, both in the
+ * tone. The words come with the colour, never colour alone: whoever is on
+ * call reads this on whatever screen they have.
+ */
+@Composable
+private fun IntegrationStateLine(
+    label: String,
+    tone: AuntieStatusTone,
+    glow: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val c = AuntieTheme.colors
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        AuntieStatusPill(label = label, tone = tone, dotOnly = true, glow = glow)
+        Text(
+            label.uppercase(),
+            style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp),
+            color = tone.color(c),
+        )
+    }
+}
+
+/**
+ * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built;
+ * never faked as connected). The #397 audit flagged these as invented scope and
+ * recommended deleting them; the operator OVERRULED that on 2026-08-26 ("these
+ * a[re] soon to be implementations") and again on 2026-08-29: they stay, as a
+ * ruled, planned backlog item, not an unexplained placeholder. When the connect
+ * flow ships, this becomes connect + settings + link. Drawn as the same card as
+ * a live service, with no Connect button: a button that could not work is the
+ * fake the ruling forbids.
  */
 @Composable
 private fun AddOnComingSoon(name: String, detail: String) {
-    val c = AuntieTheme.colors
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-            Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(999.dp))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text("Coming soon", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-        }
-    }
+    IntegrationCard(
+        name = name,
+        purpose = detail,
+        stateLabel = "Coming soon",
+        stateTone = AuntieStatusTone.Muted,
+    )
 }
 
 /**
  * One outside service, exactly as the server described it.
  *
  * NOTHING IS DECIDED HERE. The status, the one-line summary and the remediation
- * all arrive settled; this composable chooses an icon and a tone and prints the
- * rest. The remediation in particular is shown VERBATIM in mono, because it is a
- * command to paste, and a friendlier paraphrase would delete the only text on
- * the screen that says what to do next.
+ * all arrive settled; this composable chooses a tone and prints the rest. The
+ * remediation in particular is shown VERBATIM in mono, because it is a command
+ * to paste, and a friendlier paraphrase would delete the only text on the
+ * screen that says what to do next.
  */
 @Composable
-private fun ServerIntegrationRow(
+private fun ServerIntegrationCard(
     row: ServerIntegration,
     declaredKnown: Boolean,
-    showDivider: Boolean,
     onOpenGoogleCalendar: () -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -2231,70 +2299,51 @@ private fun ServerIntegrationRow(
         // beside checks that passed.
         IntegrationStatus.UNKNOWN -> AuntieStatusTone.Warning
     }
-    val icon = when (row.key) {
-        "stripe" -> Lucide.Wallet
-        "twilio" -> Lucide.MessageSquare
-        "smtp2go" -> Lucide.Mail
-        "cloudinary" -> Lucide.Image
-        "mapbox" -> Lucide.Map
-        "googleCalendar" -> Lucide.CalendarClock
-        "sentry" -> Lucide.ShieldCheck
-        else -> Lucide.LayoutGrid
-    }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        AuntieSettingRow(
-            title = row.name,
-            description = row.purpose,
-            leadingIcon = icon,
-            iconTone = AuntieStatusTone.Neutral,
-            showDivider = false,
-            trailing = {
-                AuntieStatusPill(
-                    label = integrationStatusLabel(row.status),
-                    tone = tone,
-                    showDot = true,
-                    mono = true,
-                )
-            },
-        )
-        Text(row.summary, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-        row.secrets.forEach { secret ->
-            Text(
-                integrationSecretLine(secret, declaredKnown),
-                style = AuntieTheme.typography.labelSmall,
-                color = if (secret.resolves) c.textDim else c.error,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        if (row.remediation.isNotBlank()) {
-            Spacer(Modifier.height(dims.space2))
-            Text("WHAT TO DO", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Text(
-                row.remediation,
-                style = AuntieTheme.typography.labelSmall,
-                color = c.textPrimary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(c.surfaceGlass)
-                    .padding(dims.space2),
-            )
-        }
-        if (row.externalStep.isNotBlank()) {
-            Spacer(Modifier.height(dims.space2))
-            Text(row.externalStep, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
+    IntegrationCard(
+        name = row.name,
+        purpose = row.purpose,
+        stateLabel = integrationStatusLabel(row.status),
+        stateTone = tone,
         // The connect flow already exists, on the Scheduling options screen.
-        // This row reports and hands off; a second copy of the OAuth flow here
-        // would be two places for one connection to drift.
-        if (row.ownedBySection == "googleCalendar") {
-            Spacer(Modifier.height(dims.space2))
-            GhostButton(label = "Open Google Calendar setup", onClick = onOpenGoogleCalendar)
-        }
-        if (showDivider) {
-            Spacer(Modifier.height(dims.space3))
-        }
-    }
+        // This card reports and hands off; a second copy of the OAuth flow here
+        // would be two places for one connection to drift. ANY non-empty
+        // `ownedBySection` opens it, never a specific string: the server sends
+        // `calendar` today and sent `googleCalendar` before #715, and this card
+        // only asks "does something own this row," never "what."
+        control = if (row.ownedBySection.isNotBlank()) {
+            { GhostButton(label = "Open Google Calendar setup", onClick = onOpenGoogleCalendar) }
+        } else {
+            null
+        },
+        report = {
+            Text(row.summary, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+            row.secrets.forEach { secret ->
+                Text(
+                    integrationSecretLine(secret, declaredKnown),
+                    style = AuntieTheme.typography.labelSmall,
+                    color = if (secret.resolves) c.textDim else c.error,
+                )
+            }
+            if (row.remediation.isNotBlank()) {
+                Column {
+                    Text("WHAT TO DO", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                    Text(
+                        row.remediation,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.surfaceGlass)
+                            .padding(dims.space2),
+                    )
+                }
+            }
+            if (row.externalStep.isNotBlank()) {
+                Text(row.externalStep, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        },
+    )
 }
 
 /**
@@ -2302,7 +2351,7 @@ private fun ServerIntegrationRow(
  * can answer either question: they are about the handset, not the business.
  */
 @Composable
-private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
+private fun DeviceProbeCard(row: IntegrationHealth) {
     val tone = when (row.state) {
         IntegrationHealthState.HEALTHY -> AuntieStatusTone.Success
         IntegrationHealthState.CONFIGURED -> AuntieStatusTone.Orange
@@ -2310,31 +2359,12 @@ private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
         IntegrationHealthState.CHECKING -> AuntieStatusTone.Neutral
         IntegrationHealthState.UNKNOWN -> AuntieStatusTone.Muted
     }
-    val icon = when (row.name) {
-        "Firestore" -> Lucide.Database
-        "Push notifications" -> Lucide.Smartphone
-        else -> Lucide.LayoutGrid
-    }
-    val iconTone = when (row.name) {
-        "Firestore" -> AuntieStatusTone.Teal
-        "Push notifications" -> AuntieStatusTone.Purple
-        else -> AuntieStatusTone.Neutral
-    }
-    AuntieSettingRow(
-        title = row.name,
-        description = row.description,
-        leadingIcon = icon,
-        iconTone = iconTone,
-        showDivider = showDivider,
-        trailing = {
-            AuntieStatusPill(
-                label = integrationPillLabel(row.state),
-                tone = tone,
-                showDot = true,
-                glow = row.state == IntegrationHealthState.CHECKING,
-                mono = true,
-            )
-        },
+    IntegrationCard(
+        name = row.name,
+        purpose = row.description,
+        stateLabel = integrationPillLabel(row.state),
+        stateTone = tone,
+        stateGlow = row.state == IntegrationHealthState.CHECKING,
     )
 }
 
@@ -2364,9 +2394,6 @@ internal fun SecurityPanel(
     DenPanel(
         title = "Security",
         subtitle = "Keep your account safe.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.ShieldCheck, tone = AuntieStatusTone.Success, size = 40.dp)
-        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             message?.let {
@@ -2494,9 +2521,6 @@ private fun TimeOffPanel(
         subtitle = "Holidays the Den observes and your own closures.",
         collapsible = true,
         initiallyExpanded = false,
-        trailing = {
-            AuntieIconTile(icon = Lucide.Plane, tone = AuntieStatusTone.Purple, size = 40.dp)
-        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
             AuntieFieldLabel(text = "US Holidays Observed")
@@ -2992,7 +3016,6 @@ private fun TagVocabSection(
     DenPanel(
         title = title,
         subtitle = subtitle,
-        trailing = { AuntieIconTile(icon = Lucide.Tag, tone = AuntieStatusTone.Orange, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (tags.isEmpty()) {
@@ -3334,7 +3357,6 @@ private fun VetClinicsPanel(
     DenPanel(
         title = "Vet clinics",
         subtitle = "The shared vet bank every household can pick from. Approve clinics kinfolk submit, then add, edit, or tidy any entry here.",
-        trailing = { AuntieIconTile(icon = Lucide.Stethoscope, tone = AuntieStatusTone.Teal, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             // #6: shared admin surface; each card's badge counts households using it.

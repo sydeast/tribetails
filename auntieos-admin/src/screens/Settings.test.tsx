@@ -264,7 +264,74 @@ describe('Settings — section nav shell', () => {
     expect(within(panel).queryByLabelText('Business name')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Payments' })).toHaveAttribute('aria-selected', 'true');
   });
+});
 
+// ISSUE #755, checklist line Settings: the screen matched to
+// `ui-ideas/auntieos-settings-2026-05-27.html` on the navy ground.
+describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
+  it('heads the screen with the mock kicker and title, the last save as the detail line', async () => {
+    getBusinessSettings.mockResolvedValue(
+      withOverrides({ updatedAt: '2026-07-31T12:00:00.000Z', updatedBy: 'auntie@example.com' }),
+    );
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('How the Den runs.');
+    expect(heading.querySelector('.den-heading-accent')).toHaveTextContent('runs.');
+    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Settings');
+    // The stamp is a VALUE, so it sits on the heading's detail line, never as
+    // a stray paragraph between the band and the columns.
+    const detail = document.querySelector('.den-heading-detail');
+    expect(detail).toHaveTextContent(/^Last saved .* by auntie@example\.com$/);
+    expect(document.querySelector('.settings__updated')).toBeNull();
+  });
+
+  it('draws the nav as its own panel: one glyph per tab, the label the whole accessible name', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+
+    const tablist = screen.getByRole('tablist', { name: /settings sections/i });
+    expect(tablist).toHaveClass('settings__nav');
+    const tabs = within(tablist).getAllByRole('tab');
+    for (const tab of tabs) {
+      const icon = tab.querySelector('svg.settings__nav-icon');
+      expect(icon, `${tab.textContent ?? ''} has no glyph`).not.toBeNull();
+      expect(icon).toHaveAttribute('aria-hidden', 'true');
+    }
+    // The open row paints cream; the modifier is what the stylesheet keys on.
+    expect(screen.getByRole('tab', { name: 'Business profile' })).toHaveClass('settings__nav-item--active');
+    expect(screen.getByRole('tab', { name: 'Business hours' })).not.toHaveClass('settings__nav-item--active');
+  });
+
+  it('titles the toggle panel Scheduling and draws the mock rows, in the mock order, each with its note', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    render(<Settings />);
+    const panel = screen.getByRole('tabpanel');
+    await within(panel).findByLabelText('Business name');
+
+    const scheduling = panelOwning(within(panel).getByRole('switch', { name: /block bookings during busy events/i }));
+    expect(within(scheduling).getByRole('heading', { name: 'Scheduling' })).toBeInTheDocument();
+    expect(within(panel).queryByRole('heading', { name: 'Booking behavior' })).not.toBeInTheDocument();
+
+    const switches = within(scheduling).getAllByRole('switch');
+    expect(switches.map((s) => s.getAttribute('aria-label'))).toEqual([
+      'Toggle block bookings during busy events',
+      'Toggle snap drag-to-reschedule to 15 min',
+      'Toggle auto-confirm repeat kinfolk',
+    ]);
+    const notes = [...scheduling.querySelectorAll('.settingsEdit__toggleNote')].map((n) => n.textContent);
+    expect(notes).toEqual([
+      'Stop new visits from landing on top of a Google Calendar block.',
+      'Visits align to quarter-hour slots when dragged.',
+      'Trusted kinfolk bookings skip manual approval.',
+    ]);
+    expect(scheduling.querySelectorAll('.settingsEdit__toggleRow--ruled')).toHaveLength(3);
+  });
+});
+
+describe('Settings: the Payments panel', () => {
   /**
    * PR30: the fee schedule is a caption on this admin-only panel — it never
    * reaches the portal (see `payMethods` on `getMyHome`, and `PayOptions`,
@@ -954,6 +1021,70 @@ describe('Settings: Integrations is a report, and its Google row opens Calendar 
     expect(within(panel).getByLabelText('Calendar ID')).toBeInTheDocument();
     expect(
       await within(panel).findByRole('button', { name: /connect google calendar/i }),
+    ).toBeInTheDocument();
+  });
+
+  // ISSUE #755: the report is the mock's card grid. Each service is a card
+  // with a monogram tile, the state as an LED line in the server's words, and
+  // the report's timestamp and re-check control on the panel header.
+  it('draws each service as a mock card: monogram tile, LED state line, header detail and control', async () => {
+    getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
+    getIntegrationsHealth.mockResolvedValue({
+      ...HEALTH_WITH_GOOGLE,
+      integrations: [
+        ...HEALTH_WITH_GOOGLE.integrations,
+        {
+          key: 'stripe',
+          name: 'Stripe',
+          purpose: 'Card payments on invoices.',
+          status: 'working' as const,
+          summary: 'A test charge was authorised.',
+          secrets: [],
+          liveness: { outcome: 'pass' as const, detail: '' },
+          remediation: '',
+          externalStep: '',
+          ownedBySection: '',
+        },
+      ],
+    });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    const panel = await openSection('Integrations');
+    await within(panel).findByText('Stripe');
+
+    const cards = panel.querySelectorAll('.integrations__grid > .integrations__card');
+    expect(cards).toHaveLength(2);
+    const [google, stripe] = [...cards] as HTMLElement[];
+    expect(google).toBeDefined();
+    expect(stripe).toBeDefined();
+    if (!google || !stripe) throw new Error('two cards expected');
+
+    // The mock's `.logo`: the service's first letter on a brand gradient tile.
+    expect(google.querySelector('.icon-tile-gradient .integrations__monogram')).toHaveTextContent('G');
+    expect(stripe.querySelector('.icon-tile-gradient .integrations__monogram')).toHaveTextContent('S');
+
+    // The mock's `.conn`: the LED and the server's words, in the status tone.
+    const googleConn = google.querySelector('.integrations__conn');
+    expect(googleConn).toHaveTextContent('Set up, not verified');
+    expect(googleConn).toHaveAttribute('data-tone', 'warning');
+    expect(googleConn?.querySelector('.integrations__led')).not.toBeNull();
+    const stripeConn = stripe.querySelector('.integrations__conn');
+    expect(stripeConn).toHaveTextContent('Working');
+    expect(stripeConn).toHaveAttribute('data-tone', 'success');
+    // The local capsule is gone; the state line is the only status element.
+    expect(panel.querySelector('.integrations__pill')).toBeNull();
+
+    // Only the row with a flow of its own carries a control, in the foot.
+    expect(within(google).getByRole('button', { name: 'Open Google Calendar settings' })).toBeInTheDocument();
+    expect(within(stripe).queryByRole('button')).not.toBeInTheDocument();
+
+    // The panel header owns the report's stamp and the re-check.
+    const integrationsPanel = panelOwning(google);
+    expect(integrationsPanel.querySelector('.den-panel-detail')).toHaveTextContent(/^Checked .*\.$/);
+    expect(
+      within(integrationsPanel.querySelector('.den-panel-header') as HTMLElement).getByRole('button', {
+        name: 'Check again',
+      }),
     ).toBeInTheDocument();
   });
 });

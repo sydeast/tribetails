@@ -8,6 +8,35 @@
   AuntieOS redesign concept · Settings (Integrations + toggles). Standalone mockup.
   Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
   Sample content is illustrative placeholder.
+
+  AMENDED 2026-09-12 (issue #755 sweep, checklist line Settings) to the operator rulings
+  that postdate this concept:
+    * The section nav lists the eleven shipped sections in the shipped order, which the
+      operator arrived at by ruling: Phone line next to Business hours (#397); Weather area
+      and the booking toggles folded into Business profile (walk 2026-08-17, mark 16); Time
+      zone into the Business profile panel (#709); Branding under Business profile (#712);
+      Visits and tracking into KinCare Settings (#711); Calendar under Integrations (#715).
+      The concept's Profile, Business hours, Notifications and Integrations entries map onto
+      Business profile, Business hours, Notifications and Integrations. Its Security and
+      Billing entries had no shipped counterpart and no ruling created one: the account's
+      password lives on the operator's own profile screen, and there is no billing surface.
+      They are dropped from the list rather than kept as dead rows.
+    * The "n8n automations" card is gone: n8n webhooks were retired more than a year before
+      this concept (see the IntegrationsPanel note in AdminSettingsScreen.kt). The cards are
+      the seven services `getIntegrationsHealth` reports (mytribe/functions/src/lib/
+      integrationCatalog.ts): Google Calendar, Stripe, Twilio, Mapbox, Cloudinary, email
+      (smtp2go) and Sentry. The state under each is still placeholder.
+    * The "Manage" and "Connect" buttons are concept only. Nothing on the shipped screen
+      connects anything (a secret is set from the CLI; the command is printed on the card),
+      so the one control a card carries is Google Calendar's, which opens its panels in
+      place. The three add-on rows (Zapier, Make, Google Tasks) stay visible and unbuilt on
+      Android by the 2026-08-29 ruling; they carry "Coming soon", never a Connect button.
+    * The panel sub lines (`.ph-sub`) are the explanation the kit now carries as the title's
+      tooltip (#752, 2026-09-11 ruling); they are left in the concept as the tooltip text.
+    * The Scheduling panel ships under Business profile (mark 16 above) with three of these
+      four rows; "Sync Google Calendar busy events" is the free/busy import, which lives with
+      the Calendar panels under Integrations (#715). "Repeat clients" reads "repeat kinfolk"
+      on the shipped screen, the app's word.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -105,12 +134,18 @@
 
     <div class="cols">
       <nav class="secnav">
-        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>Profile</a>
+        <!-- The eleven shipped sections, in the shipped order (see the head comment). -->
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/></svg>Business profile</a>
         <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>Business hours</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>Phone line</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4M9.5 14l5 4M14.5 14l-5 4"/></svg>Time off</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21c-3 0-5-1.6-5-3.6 0-2 2.2-3.4 5-3.4s5 1.4 5 3.4c0 2-2 3.6-5 3.6z"/><circle cx="7" cy="10" r="1.6"/><circle cx="17" cy="10" r="1.6"/><circle cx="10" cy="6" r="1.6"/><circle cx="14" cy="6" r="1.6"/></svg>KinCare Settings</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12l3 3 5-6"/></svg>Booking rules</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20M6 15h4"/></svg>Payments</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>MyTribe portal</a>
         <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z"/></svg>Notifications</a>
+        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 12l-8 8-9-9V4h7l10 8z"/><circle cx="7.5" cy="7.5" r="1"/></svg>Tags</a>
         <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7h8M8 12h8M8 17h5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Integrations</a>
-        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6z"/></svg>Security</a>
-        <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l3 3v15H6z"/><path d="M9 11h6M9 15h4"/></svg>Billing</a>
       </nav>
 
       <div class="content">
@@ -159,10 +194,18 @@
               </div>
             </div>
             <div class="int">
-              <div class="logo" style="background:conic-gradient(from 300deg,var(--teal),var(--orange))">n</div>
+              <div class="logo" style="background:conic-gradient(from 300deg,var(--teal),var(--orange))">E</div>
               <div class="body">
-                <b>n8n automations</b>
-                <small>Draft broadcasts and workflow triggers.</small>
+                <b>Email (smtp2go)</b>
+                <small>Invoices, KinTales and the portal's mail.</small>
+                <div class="foot"><span class="conn on"><i class="led"></i>Connected</span><button class="linkbtn">Manage</button></div>
+              </div>
+            </div>
+            <div class="int">
+              <div class="logo" style="background:conic-gradient(from 40deg,var(--purple),var(--coral))">S</div>
+              <div class="body">
+                <b>Sentry</b>
+                <small>Error reports from the admin, the portal and the functions.</small>
                 <div class="foot"><span class="conn off"><i class="led"></i>Not connected</span><button class="linkbtn connect">Connect</button></div>
               </div>
             </div>
