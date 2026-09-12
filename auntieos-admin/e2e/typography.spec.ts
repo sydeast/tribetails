@@ -93,8 +93,12 @@ test('the sign-in heading resolves to Fraunces and is loaded', async ({ page }) 
   expect(loaded, 'Fraunces Variable is named but not loaded: the face 404d or never downloaded').toBe(true);
 });
 
-test('the sign-in heading draws Fraunces glyphs, not the Georgia fallback', async ({ page }) => {
-  const metrics = await page.locator('.signin__title').evaluate((el) => {
+test('the sign-in wordmark draws Fraunces glyphs, not the Georgia fallback', async ({ page }) => {
+  // `.signin__brand` is the "AuntieOS" wordmark above the card, set on the
+  // display-md ramp (Fraunces, 30px). Since the #755 sweep the card's own
+  // heading reads "Welcome home, Auntie"; the wordmark is where the text this
+  // test measures still lives.
+  const metrics = await page.locator('.signin__brand').evaluate((el) => {
     const cs = getComputedStyle(el);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');

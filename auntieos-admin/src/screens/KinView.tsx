@@ -232,6 +232,18 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
   const loaded = kin.status === 'ready' ? kin.data : null;
   const heroLine = loaded !== null ? kinHeroLine(loaded) : '';
 
+  // The mock's hero past the name: the photo, the "belongs to" line and the
+  // tag row. They are the kit band's own slots since #780 (`leading`,
+  // `children`, `badges`), which is why this screen no longer lays an
+  // identity strip out under the band. Every one of them is the loaded doc's,
+  // so each is `false` while the read is in flight and the band draws no
+  // wrapper for it; the name, the trail and the actions stand without them.
+  const loadedId = loaded !== null && loaded._id !== '' ? loaded._id : kinId;
+  const homeId =
+    loaded !== null && loaded.kinfolkId.trim() !== '' ? loaded.kinfolkId : (household?.id ?? '');
+  const ownerLabel = household ? household.name : 'the household';
+  const loadedStatus = loaded !== null ? loaded.status.trim().toLowerCase() : '';
+
   return (
     <div className="screen">
       <DenScreenHeading
@@ -244,13 +256,60 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
         ]}
         title={kinName || kinId}
         {...(heroLine !== '' ? { detail: heroLine } : {})}
+        leading={
+          loaded !== null && (
+            <Avatar
+              label={loaded.name}
+              imageUrl={loaded.profilePictureUrl}
+              initials={initialsOf(loaded.name)}
+              size={120}
+              gradientSeed={loadedId}
+            />
+          )
+        }
+        badges={
+          loaded !== null && (
+            <>
+              {/* The mock draws no status on a pet, because the pet it draws
+                  is active. One that is not must still say so. */}
+              {loadedStatus !== '' && loadedStatus !== 'active' && (
+                <StatusPill label={loadedStatus} tone="neutral" />
+              )}
+              {loaded.tags.map((tag) => (
+                <StatusPill key={tag} label={tag} tone="muted" />
+              ))}
+              <button
+                type="button"
+                className="kview__tags-edit"
+                onClick={() => setTagsOpen((open) => !open)}
+              >
+                {tagsOpen ? 'Done' : 'Edit tags'}
+              </button>
+            </>
+          )
+        }
         trailing={
           <>
             <GhostButton label="Edit kin" onClick={() => setEditing(true)} />
             <GhostButton label={backLabel} onClick={onBack} />
           </>
         }
-      />
+      >
+        {loaded !== null && homeId !== '' && (
+          <p className="kview__owner">
+            belongs to{' '}
+            {openedFromProfile ? (
+              <button type="button" className="kview__owner-step" onClick={onBack}>
+                {ownerLabel}
+              </button>
+            ) : (
+              <Link to="/directory/$kinfolkId" params={{ kinfolkId: homeId }} className="kview__owner-step">
+                {ownerLabel}
+              </Link>
+            )}
+          </p>
+        )}
+      </DenScreenHeading>
 
       <AsyncRegion
         state={kin}
@@ -261,73 +320,15 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
       >
         {(k) => {
           const petId = k._id !== '' ? k._id : kinId;
-          const homeId = k.kinfolkId.trim() !== '' ? k.kinfolkId : (household?.id ?? '');
-          const ownerLabel = household ? household.name : 'the household';
-          const status = k.status.trim().toLowerCase();
           const lines = checklistLines(k.checklist);
           const scope = { kinId: petId, kinName: k.name };
           const hasCare = any(k.staysAs, k.routine, k.trainingCommands, k.feedingBrand);
           return (
             <>
-              {/*
-                The rest of the mock's hero: the photo, the "belongs to" line and
-                the tag row. `DenScreenHeading` is the kit's hero band and has no
-                slot for a leading photo or for content under the detail line
-                (the change needed is named in the PR that made this screen), so
-                until it does these sit directly under the band, on the page and
-                not inside a panel: they are the pet's identity, and the mock
-                puts nothing between the name and them.
-              */}
-              <div className="kview__identity">
-                <Avatar
-                  label={k.name}
-                  imageUrl={k.profilePictureUrl}
-                  initials={initialsOf(k.name)}
-                  size={120}
-                  gradientSeed={petId}
-                />
-                <div className="kview__identity-text">
-                  {homeId !== '' && (
-                    <p className="kview__owner">
-                      belongs to{' '}
-                      {openedFromProfile ? (
-                        <button type="button" className="kview__owner-step" onClick={onBack}>
-                          {ownerLabel}
-                        </button>
-                      ) : (
-                        <Link
-                          to="/directory/$kinfolkId"
-                          params={{ kinfolkId: homeId }}
-                          className="kview__owner-step"
-                        >
-                          {ownerLabel}
-                        </Link>
-                      )}
-                    </p>
-                  )}
-                  <div className="kview__tags">
-                    {/* The mock draws no status on a pet, because the pet it
-                        draws is active. One that is not must still say so. */}
-                    {status !== '' && status !== 'active' && (
-                      <StatusPill label={status} tone="neutral" />
-                    )}
-                    {k.tags.map((tag) => (
-                      <StatusPill key={tag} label={tag} tone="muted" />
-                    ))}
-                    <button
-                      type="button"
-                      className="kview__tags-edit"
-                      onClick={() => setTagsOpen((open) => !open)}
-                    >
-                      {tagsOpen ? 'Done' : 'Edit tags'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* #690: a marker under the identity block, not a page banner. The
-                  operator asked for it under the box rather than in the tag row,
-                  which is why it does not join the pills above. */}
+              {/* #690: a marker under the hero band, not a page banner and not
+                  a pill in the band's tag row. The operator asked for it under
+                  the box rather than among the tags, and the ruling outranks
+                  the mock's `.tag.alert`, so it stays out of `badges`. */}
               {k.reactive && (
                 <div className="kview__flags">
                   <StatusPill label="Reactive: handle with care" tone="warning" />

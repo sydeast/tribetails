@@ -37,7 +37,14 @@ vi.mock('@tanstack/react-router', () => ({
   },
 }));
 
-import { Invites, INVITE_FILTERS, filterInvites, groupInvitesByStatus } from './Invites';
+import {
+  Invites,
+  INVITE_FILTERS,
+  filterInvites,
+  groupInvitesByStatus,
+  inviteDateParts,
+  invitePillTone,
+} from './Invites';
 import type { AdminInvite } from '../api/members';
 
 function invite(over: Partial<AdminInvite> = {}): AdminInvite {
@@ -137,7 +144,71 @@ describe('Invites', () => {
 
     expect(within(card).getByText(/Sent 2026-08-01/)).toBeInTheDocument();
     // Not a blank, and not today's date: a missing expiry reads as missing.
-    expect(within(card).getByText(/Expires unknown/)).toBeInTheDocument();
+    expect(within(card).getByText(/expires unknown/)).toBeInTheDocument();
+  });
+  /**
+   * The mock's shape (#755): no panel around the sections, a serif heading
+   * with the mono status note beside it (never inside it, so the section's
+   * accessible name stays the one word), and every invite one row with a tone
+   * stripe, a framed circle, the address, the provenance line and the pills.
+   */
+  it('draws the mock: hero, bare sections with a status note, and one row per invite', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({
+        inviteId: 'i1',
+        householdName: 'the Demos',
+        status: 'EMAIL_SENT',
+        proposedRole: 'SECONDARY',
+        secondaryLabel: 'Sister',
+      }),
+      invite({
+        inviteId: 'i2',
+        householdName: 'the Marlowes',
+        invitedEmail: 'marcus@example.com',
+        status: 'PENDING',
+      }),
+    ]);
+    const { container } = render(<Invites />);
+    await screen.findByText('the Demos');
+    // The hero is the kit's, with the mock's kicker and plain title.
+    expect(screen.getByRole('heading', { level: 1, name: 'Invites' })).toBeInTheDocument();
+    expect(container.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Invites');
+    // No wrapping panel: the sections sit on the ground, as the mock draws them.
+    expect(container.querySelector('.den-panel')).toBeNull();
+    const section = screen.getByRole('heading', { level: 2, name: 'Pending' }).closest('section')!;
+    expect(within(section).getByText('status: PENDING / EMAIL_SENT · 2')).toBeInTheDocument();
+    expect(within(section).getAllByRole('listitem')).toHaveLength(2);
+    const row = within(section).getByText('jane@example.com').closest('li')!;
+    expect(row).toHaveClass('invites__card');
+    expect(row.querySelector('.invites__accent')).toHaveAttribute('data-tone', 'orange');
+    expect(within(row).getByRole('img', { name: 'Invite for jane@example.com' })).toBeInTheDocument();
+    // The kit's pill, in the mock's tint, then the role and the label pills.
+    const pills = [...row.querySelectorAll('.den-statuspill')];
+    expect(pills.map((p) => [p.textContent, p.getAttribute('data-tone')])).toEqual([
+      ['Email sent', 'orange'],
+      ['Secondary', 'purple'],
+      ['Sister', 'neutral'],
+    ]);
+    // Nothing screen-local stands in for the kit pill any more.
+    expect(container.querySelector('.invites__pill')).toBeNull();
+  });
+  it('tints each status the way the mock does', () => {
+    expect(invitePillTone('PENDING')).toBe('orange');
+    expect(invitePillTone('EMAIL_SENT')).toBe('orange');
+    expect(invitePillTone('ACCEPTED')).toBe('teal');
+    expect(invitePillTone('REVOKED')).toBe('error');
+    expect(invitePillTone('EXPIRED')).toBe('muted');
+  });
+  it('shows no label pill when the invite carries no label', async () => {
+    api.listAllInvites.mockResolvedValue([
+      invite({ inviteId: 'i1', householdName: 'the Demos', secondaryLabel: null }),
+    ]);
+    const { container } = render(<Invites />);
+    await screen.findByText('the Demos');
+    expect([...container.querySelectorAll('.den-statuspill')].map((p) => p.textContent)).toEqual([
+      'Pending',
+      'Primary',
+    ]);
   });
 
   it('surfaces a failed read instead of an empty list', async () => {
@@ -208,6 +279,45 @@ describe('Invites', () => {
   });
 });
 
+describe('inviteDateParts', () => {
+  /**
+   * The mock's provenance line: sent (or created), then the one date that
+   * matters for the row's state. Only dates the server returned; a missing one
+   * reads "unknown", never today.
+   */
+  it('names the date that matters for the state, and no other', () => {
+    const base = {
+      sentToInviteeAt: '2026-05-26T00:00:00.000Z',
+      expiresAt: '2026-06-09T00:00:00.000Z',
+      revokedAt: '2026-05-19T00:00:00.000Z',
+    };
+    expect(inviteDateParts(invite({ ...base, status: 'EMAIL_SENT' }))).toEqual([
+      'Sent 2026-05-26',
+      'expires 2026-06-09',
+    ]);
+    expect(inviteDateParts(invite({ ...base, status: 'EXPIRED' }))).toEqual([
+      'Sent 2026-05-26',
+      'expired 2026-06-09',
+    ]);
+    expect(inviteDateParts(invite({ ...base, status: 'REVOKED' }))).toEqual([
+      'Sent 2026-05-26',
+      'revoked 2026-05-19',
+    ]);
+    // No acceptance timestamp comes back from the server, so nothing is shown
+    // for one: an expiry on an accepted invite is a date nobody acts on.
+    expect(inviteDateParts(invite({ ...base, status: 'ACCEPTED' }))).toEqual(['Sent 2026-05-26']);
+  });
+  it('falls back to the creation date when the mail never went, and says unknown when it has nothing', () => {
+    expect(
+      inviteDateParts(
+        invite({ sentToInviteeAt: null, createdAt: '2026-05-27T00:00:00.000Z', expiresAt: null }),
+      ),
+    ).toEqual(['Created 2026-05-27', 'expires unknown']);
+    expect(
+      inviteDateParts(invite({ status: 'REVOKED', revokedAt: null })),
+    ).toEqual(['Sent 2026-08-01', 'revoked unknown']);
+  });
+});
 describe('filterInvites', () => {
   const rows = [
     invite({ inviteId: 'p', status: 'PENDING' }),
@@ -241,12 +351,19 @@ describe('filterInvites', () => {
     expect(groupInvitesByStatus([lapsed]).find((s) => s.rows.length > 0)?.heading).toBe('Expired');
   });
 
-  it('returns every section in a fixed order, empty ones included', () => {
+  /** The mock's order, which is also the order HouseholdMembers stacks them. */
+  it('returns every section in the mock order, empty ones included', () => {
     expect(groupInvitesByStatus([]).map((s) => s.heading)).toEqual([
       'Pending',
-      'Expired',
       'Accepted',
+      'Expired',
       'Revoked',
+    ]);
+    expect(groupInvitesByStatus([]).map((s) => s.statusNote)).toEqual([
+      'status: PENDING / EMAIL_SENT',
+      'status: ACCEPTED',
+      'status: EXPIRED',
+      'status: REVOKED',
     ]);
   });
 

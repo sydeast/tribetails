@@ -38,9 +38,10 @@ import { describe, expect, it } from 'vitest';
  * commits keeping them current, and a test every new screen must edit is a
  * test that gets edited on autopilot. What stays written down is only what a
  * scan cannot know: which two surfaces are ALLOWED the brand gradient
- * (exclusivity is the rule), and what the bundler's emit order decides (the
- * `.signin .signin__card` pin). A new screen that follows the rules changes
- * nothing here; one that breaks them fails here.
+ * (exclusivity is the rule). A new screen that follows the rules changes
+ * nothing here; one that breaks them fails here. The `.signin .signin__card`
+ * pin that used to sit beside that list went with the #780 ruling below: the
+ * sign-in card is glass, and nothing about it is pinned here any more.
  */
 
 const stylesDir = dirname(fileURLToPath(import.meta.url));
@@ -419,30 +420,23 @@ describe('the brand gradient renders somewhere real', () => {
   /** `var(--gradient-tribe)` uses only, so a mention inside a comment never counts. */
   const uses = (css: string) => [...css.matchAll(/var\(--gradient-tribe\)/g)].length;
 
-  it('renders THE Tribe Gradient full bleed behind the sign-in screen', () => {
-    // Before 2026-07-25 the primary brand mark appeared in exactly ONE place in
-    // the app: the seed array in Avatar.tsx, which is 42px behind a set of
-    // initials. tokens.css has called it "the primary brand mark" the whole time.
-    expect(signin).toMatch(/\.signin::before\s*\{[^}]*position:\s*fixed;[^}]*/);
-    expect(signin).toMatch(/\.signin::before\s*\{[^}]*background:\s*var\(--gradient-tribe\)/);
-  });
-
-  it('keeps the sign-in form OFF the gradient by making the card opaque', () => {
-    // The gradient is chrome. GlassSurface fills with `--color-surface-glass`,
-    // 0.8 alpha in light and 0.6 in dark; left translucent over a brand gradient
-    // it tints both field labels and both inputs.
-    expect(signin).toMatch(/\.signin__card\s*\{[^}]*background:\s*var\(--color-surface\);/);
-    // And the override has to WIN. `.glass-surface` sets that fill at one class,
-    // and Vite emits GlassSurface.css after this file, so a one-class selector
-    // ties and loses on order. The card was translucent over the gradient until
-    // the built bundle was read.
-    //
-    // PINNED, not derived, deliberately: whether `.signin__card` beats
-    // `.glass-surface` is decided by which file the bundler emits second, and
-    // no scan of the SOURCES can see the bundle's emit order. The two-class
-    // selector is the fix; naming it here is the only way to hold it.
-    expect(signin).toMatch(/\.signin \.signin__card\s*\{/);
-  });
+  // THE SIGN-IN CARD IS GLASS, and the pins that said otherwise are gone.
+  //
+  // Until #780 this block held the sign-in screen to three things: a 16%
+  // full-bleed Tribe Gradient wash behind the page, a 4px gradient cap across
+  // the head of the card, and an opaque `--color-surface` fill on the card at
+  // two classes. All three came from the 2026-07-25 audit, which was looking
+  // for somewhere real to render the brand mark. None of them is an operator
+  // ruling, and the mock (`ui-ideas/auntieos-sign-in-2026-05-27.html`) draws
+  // none of them: its card is the panel gradient (`--color-panel-top` to
+  // `--color-panel-bottom`) on `--color-hairline` at the panel radius,
+  // translucent over the shared orbs, with no cap and no wash of its own.
+  //
+  // Ruling (#780, 2026-09-11): the mock wins. The sign-in card is a kit glass
+  // surface and the sign-in sweep (#773) takes the wash and the cap out with
+  // the rest of the restyle. This file no longer requires any of the three,
+  // and it must not be brought back to requiring them: the brand mark's one
+  // required surface is the hero stat below.
 
   // NO HOME HERO, and that is settled, not missing. The 2026-07-25 audit named
   // "the sign-in panel and the Home hero stat" as the pair. `Home.tsx` renders
@@ -465,11 +459,13 @@ describe('the brand gradient renders somewhere real', () => {
     expect(kit).toMatch(/\.den-stat--feature\s*\{[^}]*isolation:\s*isolate/);
   });
 
-  it('stays a MARK: two surfaces carry it, and everyone else comes up empty', () => {
+  it('stays a MARK: the hero stat carries it, and everyone else comes up empty', () => {
     // "Reserved for hero and CTA moments" (tokens.css). A brand gradient on
-    // every panel is wallpaper, not a mark. Sign-in carries it twice, the
-    // full-bleed wash and the card's cap; the hero stat carries it once.
-    expect(uses(signin)).toBe(2);
+    // every panel is wallpaper, not a mark. The hero stat carries it once.
+    // Sign-in is ALLOWED it, at most twice (the audit's wash and cap), until
+    // the sweep lands the glass card and both uses go; it is not required to
+    // carry it, which is the half of the old pin the #780 ruling lifted.
+    expect(uses(signin)).toBeLessThanOrEqual(2);
     expect(uses(kit)).toBe(1);
 
     // Offenders are DISCOVERED, not listed: every stylesheet in the app is

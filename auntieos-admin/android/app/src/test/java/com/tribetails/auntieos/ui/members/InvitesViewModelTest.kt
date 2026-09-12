@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.members
 
 import com.tribetails.auntieos.data.repository.MembersRepository
 import com.tribetails.auntieos.data.repository.decodeAllInvites
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -191,12 +192,81 @@ class InvitesViewModelTest {
         )
     }
 
+    /** The mock's order, which is also the order HouseholdMembers stacks them. */
     @Test
-    fun `sections come back in a fixed order, empty ones included`() {
+    fun `sections come back in the mock order, empty ones included`() {
         assertEquals(
-            listOf("Pending", "Expired", "Accepted", "Revoked"),
+            listOf("Pending", "Accepted", "Expired", "Revoked"),
             groupInvitesByStatus(emptyList()).map { it.heading },
         )
+        assertEquals(
+            listOf("status: PENDING / EMAIL_SENT", "status: ACCEPTED", "status: EXPIRED", "status: REVOKED"),
+            groupInvitesByStatus(emptyList()).map { it.statusNote },
+        )
+    }
+
+    // ── the row's words ─────────────────────────────────────────────────────
+
+    /**
+     * The mock's provenance line: sent (or created), then the one date that
+     * matters for the row's state. Only dates the server returned; a missing
+     * one reads "unknown", never today. Mirrors `inviteDateParts` on web.
+     */
+    @Test
+    fun `the date words name the date that matters for the state, and no other`() {
+        fun withStatus(status: MembersRepository.InviteStatus) = invite(status = status).invite.copy(
+            sentToInviteeAt = "2026-05-26T00:00:00.000Z",
+            expiresAt = "2026-06-09T00:00:00.000Z",
+            revokedAt = "2026-05-19T00:00:00.000Z",
+        )
+        assertEquals(
+            listOf("Sent 2026-05-26", "expires 2026-06-09"),
+            adminInviteDateParts(withStatus(MembersRepository.InviteStatus.EMAIL_SENT)),
+        )
+        assertEquals(
+            listOf("Sent 2026-05-26", "expired 2026-06-09"),
+            adminInviteDateParts(withStatus(MembersRepository.InviteStatus.EXPIRED)),
+        )
+        assertEquals(
+            listOf("Sent 2026-05-26", "revoked 2026-05-19"),
+            adminInviteDateParts(withStatus(MembersRepository.InviteStatus.REVOKED)),
+        )
+        // No acceptance timestamp comes back from the server, so nothing is
+        // shown for one: an expiry on an accepted invite is a date nobody acts on.
+        assertEquals(
+            listOf("Sent 2026-05-26"),
+            adminInviteDateParts(withStatus(MembersRepository.InviteStatus.ACCEPTED)),
+        )
+    }
+
+    @Test
+    fun `the date words fall back to created, and say unknown when the server had nothing`() {
+        val neverSent = invite().invite.copy(sentToInviteeAt = null, expiresAt = null)
+        assertEquals(listOf("Created 2026-08-01", "expires unknown"), adminInviteDateParts(neverSent))
+        val revokedUndated = invite(status = MembersRepository.InviteStatus.REVOKED).invite.copy(revokedAt = null)
+        assertEquals(listOf("Sent 2026-08-01", "revoked unknown"), adminInviteDateParts(revokedUndated))
+    }
+
+    /** The full id is the claim token: the line carries the handle and never a URL. */
+    @Test
+    fun `the meta line ends with the truncated handle and never the household`() {
+        val line = adminInviteMetaLine(invite(id = "rq_8fk29aLONGTAIL", household = "the Demos"))
+        assertEquals("Sent 2026-08-01 · expires 2026-08-15 · inviteId rq_8fk29…", line)
+        assertFalse(line.contains("rq_8fk29aLONGTAIL"))
+        assertFalse(line.contains("?invite="))
+        assertFalse(line.contains("the Demos"))
+    }
+
+    /** The mock's own tints, not the shared Members-screen ones. */
+    @Test
+    fun `each status takes the tint the mock draws`() {
+        assertEquals(AuntieStatusTone.Orange, invitePillTone(MembersRepository.InviteStatus.PENDING))
+        assertEquals(AuntieStatusTone.Orange, invitePillTone(MembersRepository.InviteStatus.EMAIL_SENT))
+        assertEquals(AuntieStatusTone.Teal, invitePillTone(MembersRepository.InviteStatus.ACCEPTED))
+        assertEquals(AuntieStatusTone.Error, invitePillTone(MembersRepository.InviteStatus.REVOKED))
+        assertEquals(AuntieStatusTone.Muted, invitePillTone(MembersRepository.InviteStatus.EXPIRED))
+        assertEquals("Primary", roleLabel(MembersRepository.MemberRole.PRIMARY))
+        assertEquals("Secondary", roleLabel(MembersRepository.MemberRole.SECONDARY))
     }
 
     // ── decoder ─────────────────────────────────────────────────────────────

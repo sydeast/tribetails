@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +73,13 @@ fun AuntiePasswordField(
     isError: Boolean = false,
     imeAction: ImeAction = ImeAction.Done,
     initiallyRevealed: Boolean = false,
+    // What the soft keyboard's action key does. Default is the platform's
+    // (Done hides the keyboard); the sign-in screen submits from it.
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    // Applied to the inner BasicTextField, after the field's own focus and
+    // reveal wiring, so a caller can attach autofill semantics to the actual
+    // focusable input. Default no-op, same as AuntieField's.
+    fieldModifier: Modifier = Modifier,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
@@ -162,10 +170,12 @@ fun AuntiePasswordField(
                         keyboardType = KeyboardType.Password,
                         imeAction    = imeAction,
                     ),
+                    keyboardActions = keyboardActions,
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(focusRequester)
-                        .onFocusChanged { focused = it.isFocused },
+                        .onFocusChanged { focused = it.isFocused }
+                        .then(fieldModifier),
                     decorationBox = { inner ->
                         Box(contentAlignment = Alignment.CenterStart) {
                             if (value.isEmpty()) {
