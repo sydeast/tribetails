@@ -15,7 +15,7 @@ import type { TemplateSummary, TemplateSection } from '../api/templates';
  *
  * EXTENDED for the Template Editor (create/edit): the second half of this
  * file, below the "editor form" marker, has no wasm counterpart to port from
- * (`TemplateEditorOverlay` keeps its own validation inline in Kotlin, same as
+ * (`TemplateEditorScreen` keeps its own validation inline in Kotlin, same as
  * the list logic above did before this file existed). These are new, but kept
  * in this module rather than a separate one so every template-shaped pure
  * function lives in one place, matching the existing convention here.

@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   saveTemplate,
   deleteTemplate,
@@ -10,6 +10,8 @@ import {
   blankFormFields,
   blankSection,
   buildSaveTemplatePayload,
+  formatTagsInput,
+  parseTagsInput,
   templateFormError,
   templateToFormFields,
   type TemplateFormFields,
@@ -19,6 +21,7 @@ import { MergePreview } from '../components/MergePreview';
 import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
+import { DenPanel, DenScreenHeading, StatusPill } from '../components/DenScreenKit';
 import './TemplateEditor.css';
 
 export interface TemplateEditorProps {
@@ -37,13 +40,18 @@ export interface TemplateEditorProps {
    * from opening; the category field still works as plain free text.
    */
   categories?: string[];
+  /**
+   * Leaves the editor without saving. The "Template bank" crumb and the
+   * Cancel button both call it; Templates.tsx answers by showing the bank
+   * again.
+   */
   onClose: () => void;
   /**
    * Called once `saveTemplate` resolves, with the saved templateId. The
    * caller (Templates.tsx) owns closing the editor and reloading the list:
    * this component does not close itself on success, matching
    * FormSchemas.tsx's confirmDelete()/load() split (save vs. re-render is the
-   * caller's call, not the modal's).
+   * caller's call, not the view's).
    */
   onSaved: (templateId: string) => void;
   /**
@@ -60,6 +68,16 @@ export interface TemplateEditorProps {
 
 type View = 'edit' | 'confirm-delete';
 
+/**
+ * The keys the merge-field chips offer, and the legend lists. These are the
+ * twelve `enrichTemplateData.ts` hydrates on every notification send, so a
+ * chip here is a token the pipeline will fill. The mock draws illustrative
+ * tokens (`{{kinfolk_name}}`, `{{invoice_no}}`); those are not names the
+ * enricher knows, and a chip that inserts one would be flagged by the preview
+ * the moment it lands. The real catalog is the honest chip set.
+ */
+const MERGE_FIELD_KEYS = Object.keys(ENRICHABLE_SAMPLE);
+
 function TrashGlyph() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -68,13 +86,37 @@ function TrashGlyph() {
   );
 }
 
+function SaveGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
+function MailGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
+}
+
 /**
- * The Template Bank editor (create + edit), the write surface
- * Templates.tsx's `onSelect` placeholder and "New template" action defer to.
- * Ports `TemplateEditorOverlay` from the wasm (see Templates.tsx's "NOT
- * ported here" doc comment): one component for both modes, distinguished by
- * whether `template` is `null`, matching how the wasm overlay itself is one
- * composable that branches on a nullable `existing` template.
+ * The Template Bank editor (create + edit), the write surface Templates.tsx's
+ * row activation and "New template" action open. One component for both
+ * modes, distinguished by whether `template` is `null`, matching how the
+ * Android `TemplateEditorScreen` is one composable that branches on
+ * `creating`.
+ *
+ * It is a PAGE, not a modal, since the #755 sweep: the email creation mock
+ * (`ui-ideas/auntieos-email-creation-2026-05-27.html`) draws it as a screen
+ * of its own with a "Template bank / Edit template" crumb trail, the form in
+ * a panel on the left and the preview and the resolved sample values in two
+ * panels on the right. Templates.tsx shows it in place of the bank, the same
+ * sibling-view treatment its assignments and import views get, and the first
+ * crumb is the way back. Only the delete confirmation is still a Dialog.
  *
  * Single write callable for both modes (`saveTemplate`, see
  * `api/templatesWrite.ts`'s doc comment on why there is no separate
@@ -90,14 +132,10 @@ function TrashGlyph() {
  * uses for the same field.
  *
  * Delete (edit mode only, gated on `onDeleted` being supplied): a "Delete"
- * action in the footer opens a SECOND, separate Dialog asking for
- * confirmation, then calls `deleteTemplate`. This swaps which single Dialog
- * is rendered based on a `view` state rather than stacking two `<Dialog>`s at
- * once, the same one-dialog-at-a-time convention `BookingActions.tsx` uses
- * for its own confirm/reschedule modes (two mounted focus-traps would fight
- * over Escape and Tab). Backdrop-click/Escape from the confirm dialog fully
- * closes the editor (same as the edit dialog), matching `BookingActions.tsx`;
- * only the confirm dialog's own "Back" button returns to the edit view.
+ * action in the heading opens a confirmation Dialog over the page, then calls
+ * `deleteTemplate`. Backdrop-click/Escape from the confirm dialog fully closes
+ * the editor, matching `BookingActions.tsx`; only the confirm dialog's own
+ * "Back" button returns to the page.
  *
  * The backend (`deleteTemplate.ts`) rejects with `failed-precondition` in two
  * cases, so a rejection here is often a real, expected outcome rather than a
@@ -131,10 +169,49 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
   // The server's live-notification-key sentence, once it has said it. Non-null
   // means the next press is the acknowledged retry.
   const [liveKeyWarning, setLiveKeyWarning] = useState<string | null>(null);
+  // The tag being typed in the row's add box, before Enter or a comma commits
+  // it. Kept apart from `fields.tagsInput`, which stays the saved list.
+  const [tagDraft, setTagDraft] = useState('');
   const categoryListId = useId();
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  // Where the caret should land once React has painted a body that had a
+  // merge field dropped into it. Null when no insertion is pending.
+  const pendingCaret = useRef<number | null>(null);
 
   function setField<K extends keyof TemplateFormFields>(key: K, value: TemplateFormFields[K]) {
     setFields((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // The mock's chips: "click to drop the token at the cursor". The caret is
+  // read off the textarea at click time, the token spliced in over the
+  // selection, and the caret parked after it once the new value has rendered.
+  // A chip clicked with the textarea never focused appends to the end.
+  function insertMergeField(key: string) {
+    const token = `{{${key}}}`;
+    const el = bodyRef.current;
+    const start = el?.selectionStart ?? fields.body.length;
+    const end = el?.selectionEnd ?? start;
+    pendingCaret.current = start + token.length;
+    setFields((prev) => ({ ...prev, body: prev.body.slice(0, start) + token + prev.body.slice(end) }));
+  }
+  useEffect(() => {
+    const caret = pendingCaret.current;
+    const el = bodyRef.current;
+    if (caret === null || el === null) return;
+    pendingCaret.current = null;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+  }, [fields.body]);
+
+  const tags = parseTagsInput(fields.tagsInput);
+  function commitTagDraft() {
+    const next = tagDraft.trim();
+    setTagDraft('');
+    if (next === '' || tags.includes(next)) return;
+    setField('tagsInput', formatTagsInput([...tags, next]));
+  }
+  function removeTag(tag: string) {
+    setField('tagsInput', formatTagsInput(tags.filter((t) => t !== tag)));
   }
 
   // Section-row editors (I9). A copy-on-write over the sections array so form
@@ -154,12 +231,9 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setFields((prev) => ({ ...prev, sections: prev.sections.filter((_, i) => i !== idx) }));
   }
 
-  // useCallback, not a plain function: Dialog's own focus-management effect
-  // re-runs (and re-focuses the panel) whenever the `onClose` reference it
-  // receives changes, so a fresh function identity on every keystroke-driven
-  // re-render would steal focus back to the dialog panel after each
-  // character typed, one letter at a time. Stable across renders except when
-  // `saving` or the outer `onClose` prop actually changes.
+  // useCallback so the confirm Dialog's focus-management effect, which reads
+  // `onClose` through a ref, sees one identity across re-renders. Stable
+  // except when `saving`, `deleting` or the outer `onClose` prop changes.
   const requestClose = useCallback(() => {
     // Never close out from under an in-flight save OR delete: the same guard
     // FormSchemas.tsx's pendingDelete dialog uses for its Escape/backdrop path.
@@ -168,7 +242,17 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
 
   async function handleSave() {
     if (saving) return;
-    const validationError = templateFormError(fields, { isCreate });
+    // A tag still sitting in the add box is a tag the operator meant to keep.
+    const draft = tagDraft.trim();
+    const effective: TemplateFormFields =
+      draft !== '' && !tags.includes(draft)
+        ? { ...fields, tagsInput: formatTagsInput([...tags, draft]) }
+        : fields;
+    if (effective !== fields) {
+      setFields(effective);
+      setTagDraft('');
+    }
+    const validationError = templateFormError(effective, { isCreate });
     if (validationError) {
       setError(validationError);
       return;
@@ -176,7 +260,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setSaving(true);
     setError(null);
     try {
-      const payload = buildSaveTemplatePayload(fields, { isCreate });
+      const payload = buildSaveTemplatePayload(effective, { isCreate });
       const result = await saveTemplate(payload);
       setSaving(false);
       onSaved(result.templateId);
@@ -188,7 +272,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
       // key it is about to claim may be on another.
       if (isTemplateKeyTakenError(err)) {
         setError(
-          `The key ${fields.templateId.trim()} is already in use. Pick a different key, ` +
+          `The key ${effective.templateId.trim()} is already in use. Pick a different key, ` +
             `or close this and edit the existing template.`,
         );
         return;
@@ -204,10 +288,10 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     setView('confirm-delete');
   }
 
-  // "Back", not requestClose: returning to the edit view is a narrower action
-  // than dismissing the whole editor, the same distinction BookingActions.tsx
-  // draws between its confirm mode's "Back" button and Escape/backdrop (which
-  // fully exits). Guarded on `deleting` the same way requestClose is.
+  // "Back", not requestClose: returning to the page is a narrower action than
+  // leaving the editor, the same distinction BookingActions.tsx draws between
+  // its confirm mode's "Back" button and Escape/backdrop (which fully exits).
+  // Guarded on `deleting` the same way requestClose is.
   function backToEdit() {
     if (deleting) return;
     setError(null);
@@ -238,299 +322,456 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     }
   }
 
-  if (view === 'confirm-delete' && !isCreate) {
-    return (
-      <Dialog
-        title="Delete this template?"
-        onClose={requestClose}
-        footer={
+  const confirming = view === 'confirm-delete' && !isCreate;
+  // The page's own error banner. While the confirm dialog is up the error
+  // belongs to the delete and shows inside the dialog instead.
+  const pageError = confirming ? null : error;
+
+  return (
+    <div className="screen template-editor">
+      <DenScreenHeading
+        crumbs={[
+          { label: 'Template bank', onSelect: requestClose },
+          { label: isCreate ? 'New template' : 'Edit template' },
+        ]}
+        title="Email"
+        accentTail="template"
+        subtitle="Subject and body render with Handlebars. Merge fields resolve to each recipient at send time."
+        trailing={
           <>
-            <GhostButton label="Back" onClick={backToEdit} disabled={deleting} />
+            <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
+            {!isCreate && onDeleted ? (
+              <GhostButton label="Delete" onClick={openConfirmDelete} disabled={saving} leading={<TrashGlyph />} />
+            ) : null}
             <PrimaryButton
-              label={
-                deleting
-                  ? 'Deleting…'
-                  : liveKeyWarning
-                    ? 'Delete anyway'
-                    : 'Delete template'
-              }
-              onClick={() => void handleDelete()}
-              disabled={deleting}
-              busy={deleting}
-              leading={<TrashGlyph />}
+              label={saving ? 'Saving…' : 'Save template'}
+              onClick={() => void handleSave()}
+              disabled={saving}
+              busy={saving}
+              leading={<SaveGlyph />}
             />
           </>
         }
-      >
-        {error ? (
-          <Banner tone="error" title="Couldn&rsquo;t delete" className="template-editor__error">
-            {error}
-          </Banner>
-        ) : null}
-        {liveKeyWarning ? (
-          <Banner
-            tone="warning"
-            title="A notification still sends this"
-            className="template-editor__error"
-          >
-            {liveKeyWarning}
-          </Banner>
-        ) : null}
-        <p className="template-editor__hint">
-          {fields.title || fields.templateId}. This cannot be undone.
-          {liveKeyWarning
-            ? ' Press Delete anyway to go ahead, or Back to leave it alone.'
-            : ' If a notification catalog key is still assigned to this template, the delete is refused until it is unassigned.'}
-        </p>
-        <code className="template-editor__id-static">{fields.templateId}</code>
-      </Dialog>
-    );
-  }
+      />
 
-  return (
-    <Dialog
-      title={isCreate ? 'New template' : 'Edit template'}
-      onClose={requestClose}
-      size="wide"
-      footer={
-        <>
-          <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
-          {!isCreate && onDeleted ? (
-            <GhostButton label="Delete" onClick={openConfirmDelete} disabled={saving} leading={<TrashGlyph />} />
-          ) : null}
-          <PrimaryButton
-            label={saving ? 'Saving…' : 'Save template'}
-            onClick={() => void handleSave()}
-            disabled={saving}
-            busy={saving}
-          />
-        </>
-      }
-    >
-      {error ? (
+      {pageError ? (
         <Banner tone="error" title="Couldn&rsquo;t save" className="template-editor__error">
-          {error}
+          {pageError}
         </Banner>
       ) : null}
 
-      <div className="template-editor__grid">
-      <fieldset className="template-editor__fields" disabled={saving}>
-        <legend className="template-editor__sr-legend">Template details</legend>
+      <div className="template-editor__cols">
+        {/* The mock's left panel carries no title of its own: the page heading
+            names the screen and the mono caps name each field. */}
+        <DenPanel title="" className="template-editor__panel d1">
+          <fieldset className="template-editor__fields" disabled={saving}>
+            <legend className="template-editor__sr-legend">Template details</legend>
 
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-id">
-            Template key
-          </label>
-          {isCreate ? (
-            <input
-              id="template-editor-id"
-              type="text"
-              className="template-editor__input"
-              value={fields.templateId}
-              onChange={(e) => setField('templateId', e.target.value)}
-              placeholder="booking.confirmed"
-              maxLength={120}
-              autoFocus
+            {/* The mock's `.idrow`: key and display name side by side. */}
+            <div className="template-editor__row2">
+              <div className="template-editor__field">
+                <span className="template-editor__labelrow">
+                  <label className="template-editor__label" htmlFor="template-editor-id">
+                    Template key
+                  </label>
+                  {isCreate ? <RequiredMark /> : null}
+                </span>
+                {isCreate ? (
+                  <input
+                    id="template-editor-id"
+                    type="text"
+                    className="template-editor__input template-editor__input--mono"
+                    value={fields.templateId}
+                    onChange={(e) => setField('templateId', e.target.value)}
+                    placeholder="invoice.sent"
+                    maxLength={120}
+                    autoFocus
+                  />
+                ) : (
+                  <code id="template-editor-id" className="template-editor__id-static">
+                    {fields.templateId}
+                  </code>
+                )}
+                {isCreate ? (
+                  <p className="template-editor__hint">
+                    Letters, numbers, underscore, period, and hyphen only. This becomes the document id and
+                    cannot be changed later.
+                  </p>
+                ) : (
+                  <p className="template-editor__hint">The template key cannot be changed after creation.</p>
+                )}
+              </div>
+
+              <div className="template-editor__field">
+                {/* No required mark, unlike the mock: a blank name saves as the
+                    key (templateFormat.ts), so it is not something the operator
+                    has to fill. */}
+                <label className="template-editor__label" htmlFor="template-editor-title">
+                  Display name
+                </label>
+                <input
+                  id="template-editor-title"
+                  type="text"
+                  className="template-editor__input"
+                  value={fields.title}
+                  onChange={(e) => setField('title', e.target.value)}
+                  placeholder="Defaults to the template key"
+                  maxLength={200}
+                />
+              </div>
+            </div>
+
+            {/* The mock's channel strip. Only the email bank exists, so the
+                strip states the channel and nothing else: the mock's Push and
+                SMS switch positions are disabled there and would be dead here,
+                and its "Active binding" toggle belongs to a TemplateBinding
+                this editor does not hold (see Manage assignments). */}
+            <div className="template-editor__strip">
+              <span className="template-editor__channel">
+                <MailGlyph />
+                <StatusPill tone="teal" label="Channel · Email" />
+              </span>
+            </div>
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <label className="template-editor__label" htmlFor="template-editor-subject">
+                  Subject
+                </label>
+                <RequiredMark />
+              </span>
+              <input
+                id="template-editor-subject"
+                type="text"
+                className="template-editor__input template-editor__input--mono"
+                value={fields.subject}
+                onChange={(e) => setField('subject', e.target.value)}
+                placeholder="Your booking is confirmed"
+                maxLength={500}
+              />
+            </div>
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <span className="template-editor__label" id="template-editor-mergefields">
+                  Insert merge field
+                </span>
+                <span className="template-editor__mfhint">click to drop the token at the cursor</span>
+              </span>
+              <div className="template-editor__chips" role="group" aria-labelledby="template-editor-mergefields">
+                {MERGE_FIELD_KEYS.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="template-editor__chip"
+                    // The mock swallows mousedown so the textarea keeps focus
+                    // and its caret through the click; the same here.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertMergeField(key)}
+                  >
+                    <span className="template-editor__chip-plus" aria-hidden="true">
+                      +
+                    </span>
+                    {`{{${key}}}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <label className="template-editor__label" htmlFor="template-editor-body">
+                  Body
+                </label>
+                <RequiredMark />
+                <span className="template-editor__hbs">Handlebars supported</span>
+              </span>
+              <textarea
+                id="template-editor-body"
+                ref={bodyRef}
+                className="template-editor__textarea template-editor__textarea--mono template-editor__textarea--body"
+                value={fields.body}
+                onChange={(e) => setField('body', e.target.value)}
+                placeholder="Hi {{kinfolkName}}, ..."
+                rows={8}
+                maxLength={20000}
+              />
+              <div className="template-editor__edmeta">
+                <span className="template-editor__hbsbadge">{'{{ }}'} handlebars</span>
+                <span>{fields.body.length} chars</span>
+                <span>· tokens left as-is, never sent literally</span>
+              </div>
+            </div>
+
+            <hr className="template-editor__rule" />
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <label className="template-editor__label" htmlFor="template-editor-description">
+                  Internal description
+                </label>
+                <span className="template-editor__opt">admin-only note</span>
+              </span>
+              <textarea
+                id="template-editor-description"
+                className="template-editor__textarea"
+                value={fields.description}
+                onChange={(e) => setField('description', e.target.value)}
+                placeholder="What is this template for? Who receives it?"
+                rows={2}
+                maxLength={1000}
+              />
+            </div>
+
+            {/* The mock's second `.idrow`: category and tags side by side. */}
+            <div className="template-editor__row2">
+              <div className="template-editor__field">
+                <label className="template-editor__label" htmlFor="template-editor-category">
+                  Category
+                </label>
+                <input
+                  id="template-editor-category"
+                  type="text"
+                  className="template-editor__input"
+                  value={fields.category}
+                  onChange={(e) => setField('category', e.target.value)}
+                  placeholder="Booking"
+                  maxLength={60}
+                  {...(categories && categories.length > 0 ? { list: categoryListId } : {})}
+                />
+                {categories && categories.length > 0 ? (
+                  <datalist id={categoryListId}>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                ) : null}
+              </div>
+
+              <div className="template-editor__field">
+                <span className="template-editor__label" id="template-editor-tags-label">
+                  Tags
+                </span>
+                {/* The mock's `.tagrow`: one orange capsule per tag with its
+                    own remove, then the dashed add box. Enter or a comma
+                    commits what is typed; so does Save, so a tag left in the
+                    box is never silently dropped. */}
+                <div className="template-editor__tagrow" role="group" aria-labelledby="template-editor-tags-label">
+                  {tags.map((tag) => (
+                    <span key={tag} className="template-editor__tag">
+                      {tag}
+                      <button
+                        type="button"
+                        className="template-editor__tag-x"
+                        aria-label={`Remove tag ${tag}`}
+                        onClick={() => removeTag(tag)}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    className="template-editor__tagadd"
+                    aria-label="Add a tag"
+                    placeholder="+ tag"
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault();
+                        commitTagDraft();
+                      }
+                    }}
+                    onBlur={commitTagDraft}
+                    maxLength={60}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <hr className="template-editor__rule" />
+
+            {/* Below the mock's fields: the three persisted fields it does not
+                draw. They stay editable here because a field the bank stores
+                and the editor cannot change is a defect, not a simplification. */}
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <label className="template-editor__label" htmlFor="template-editor-html">
+                  HTML
+                </label>
+                <span className="template-editor__opt">optional</span>
+              </span>
+              <textarea
+                id="template-editor-html"
+                className="template-editor__textarea template-editor__textarea--mono"
+                value={fields.html}
+                onChange={(e) => setField('html', e.target.value)}
+                placeholder="<p>Hi {{kinfolkName}}, ...</p>"
+                rows={6}
+                maxLength={50000}
+              />
+            </div>
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <label className="template-editor__label" htmlFor="template-editor-usage">
+                  Usage instructions
+                </label>
+                <span className="template-editor__opt">optional</span>
+              </span>
+              <textarea
+                id="template-editor-usage"
+                className="template-editor__textarea"
+                value={fields.usageInstructions}
+                onChange={(e) => setField('usageInstructions', e.target.value)}
+                placeholder="When and how to use this template"
+                rows={3}
+                maxLength={2000}
+              />
+            </div>
+
+            <div className="template-editor__field">
+              <span className="template-editor__labelrow">
+                <span className="template-editor__label">Sections</span>
+                <span className="template-editor__opt">optional</span>
+              </span>
+              <p className="template-editor__hint">
+                Describe the parts of this template for other admins. A section needs a title to be
+                saved; blank ones are dropped.
+              </p>
+              {fields.sections.length > 0 ? (
+                <ul className="template-editor__sections">
+                  {fields.sections.map((section, idx) => (
+                    <li key={idx} className="template-editor__section">
+                      <div className="template-editor__section-fields">
+                        <input
+                          type="text"
+                          className="template-editor__input"
+                          aria-label={`Section ${idx + 1} title`}
+                          value={section.title}
+                          onChange={(e) => updateSection(idx, { title: e.target.value })}
+                          placeholder="Section title"
+                          maxLength={200}
+                        />
+                        <textarea
+                          className="template-editor__textarea"
+                          aria-label={`Section ${idx + 1} description`}
+                          value={section.description}
+                          onChange={(e) => updateSection(idx, { description: e.target.value })}
+                          placeholder="What this section covers"
+                          rows={2}
+                          maxLength={1000}
+                        />
+                      </div>
+                      <GhostButton label="Remove" onClick={() => removeSection(idx)} />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <GhostButton label="Add section" onClick={addSection} />
+            </div>
+          </fieldset>
+        </DenPanel>
+
+        <div className="template-editor__aside">
+          {/*
+            The live preview. `ENRICHABLE_SAMPLE` is the right sample here and
+            only here: this editor authors NOTIFICATION templates, which are
+            dispatched through `enrichTemplateData.ts`, so the twelve tokens that
+            module hydrates really will be filled in and everything else is a
+            promise the emitting function has to keep. The preview names the
+            second group; the footnote does not pretend they are the first.
+          */}
+          <DenPanel title="" className="template-editor__panel d2">
+            <MergePreview
+              subject={fields.subject}
+              body={fields.body}
+              html={fields.html}
+              sample={ENRICHABLE_SAMPLE}
+              footnote="Sample values. Dispatch fills these in at send"
             />
-          ) : (
-            <code id="template-editor-id" className="template-editor__id-static">
-              {fields.templateId}
-            </code>
-          )}
-          {isCreate ? (
-            <p className="template-editor__hint">
-              Letters, numbers, underscore, period, and hyphen only. This becomes the document id and
-              cannot be changed later.
-            </p>
-          ) : (
-            <p className="template-editor__hint">The template key cannot be changed after creation.</p>
-          )}
-        </div>
+          </DenPanel>
 
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-title">
-            Title
-          </label>
-          <input
-            id="template-editor-title"
-            type="text"
-            className="template-editor__input"
-            value={fields.title}
-            onChange={(e) => setField('title', e.target.value)}
-            placeholder="Defaults to the template key"
-            maxLength={200}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-subject">
-            Subject
-          </label>
-          <input
-            id="template-editor-subject"
-            type="text"
-            className="template-editor__input"
-            value={fields.subject}
-            onChange={(e) => setField('subject', e.target.value)}
-            placeholder="Your booking is confirmed"
-            maxLength={500}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-body">
-            Body
-          </label>
-          <textarea
-            id="template-editor-body"
-            className="template-editor__textarea"
-            value={fields.body}
-            onChange={(e) => setField('body', e.target.value)}
-            placeholder="Hi {{kinfolk_name}}, ..."
-            rows={8}
-            maxLength={20000}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-html">
-            HTML (optional)
-          </label>
-          <textarea
-            id="template-editor-html"
-            className="template-editor__textarea template-editor__textarea--mono"
-            value={fields.html}
-            onChange={(e) => setField('html', e.target.value)}
-            placeholder="<p>Hi {{kinfolk_name}}, ...</p>"
-            rows={6}
-            maxLength={50000}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-description">
-            Description (optional)
-          </label>
-          <textarea
-            id="template-editor-description"
-            className="template-editor__textarea"
-            value={fields.description}
-            onChange={(e) => setField('description', e.target.value)}
-            placeholder="What this template is for, for other admins"
-            rows={2}
-            maxLength={1000}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-category">
-            Category (optional)
-          </label>
-          <input
-            id="template-editor-category"
-            type="text"
-            className="template-editor__input"
-            value={fields.category}
-            onChange={(e) => setField('category', e.target.value)}
-            placeholder="Booking"
-            maxLength={60}
-            {...(categories && categories.length > 0 ? { list: categoryListId } : {})}
-          />
-          {categories && categories.length > 0 ? (
-            <datalist id={categoryListId}>
-              {categories.map((cat) => (
-                <option key={cat} value={cat} />
+          {/* The mock's second right-hand panel: the sample every token above
+              resolved to, so the author can read the preview back to the
+              token that produced each value. */}
+          <DenPanel title="" className="template-editor__panel d3">
+            <span className="template-editor__label" id="template-editor-legend-label">
+              Resolved with sample values
+            </span>
+            <dl className="template-editor__legend" aria-labelledby="template-editor-legend-label">
+              {MERGE_FIELD_KEYS.map((key) => (
+                <div key={key} className="template-editor__legend-row">
+                  <dt>
+                    <code>{`{{${key}}}`}</code>
+                  </dt>
+                  <span className="template-editor__legend-arrow" aria-hidden="true">
+                    →
+                  </span>
+                  <dd>{ENRICHABLE_SAMPLE[key]}</dd>
+                </div>
               ))}
-            </datalist>
-          ) : null}
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-tags">
-            Tags (optional, comma separated)
-          </label>
-          <input
-            id="template-editor-tags"
-            type="text"
-            className="template-editor__input"
-            value={fields.tagsInput}
-            onChange={(e) => setField('tagsInput', e.target.value)}
-            placeholder="booking, confirmation"
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <label className="template-editor__label" htmlFor="template-editor-usage">
-            Usage instructions (optional)
-          </label>
-          <textarea
-            id="template-editor-usage"
-            className="template-editor__textarea"
-            value={fields.usageInstructions}
-            onChange={(e) => setField('usageInstructions', e.target.value)}
-            placeholder="When and how to use this template"
-            rows={3}
-            maxLength={2000}
-          />
-        </div>
-
-        <div className="template-editor__field">
-          <span className="template-editor__label">Sections (optional)</span>
-          <p className="template-editor__hint">
-            Describe the parts of this template for other admins. A section needs a title to be
-            saved; blank ones are dropped.
-          </p>
-          {fields.sections.length > 0 ? (
-            <ul className="template-editor__sections">
-              {fields.sections.map((section, idx) => (
-                <li key={idx} className="template-editor__section">
-                  <div className="template-editor__section-fields">
-                    <input
-                      type="text"
-                      className="template-editor__input"
-                      aria-label={`Section ${idx + 1} title`}
-                      value={section.title}
-                      onChange={(e) => updateSection(idx, { title: e.target.value })}
-                      placeholder="Section title"
-                      maxLength={200}
-                    />
-                    <textarea
-                      className="template-editor__textarea"
-                      aria-label={`Section ${idx + 1} description`}
-                      value={section.description}
-                      onChange={(e) => updateSection(idx, { description: e.target.value })}
-                      placeholder="What this section covers"
-                      rows={2}
-                      maxLength={1000}
-                    />
-                  </div>
-                  <GhostButton label="Remove" onClick={() => removeSection(idx)} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <GhostButton label="Add section" onClick={addSection} />
-        </div>
-      </fieldset>
-
-        {/*
-          The live preview column. `ENRICHABLE_SAMPLE` is the right sample here
-          and only here: this editor authors NOTIFICATION templates, which are
-          dispatched through `enrichTemplateData.ts`, so the twelve tokens that
-          module hydrates really will be filled in and everything else is a
-          promise the emitting function has to keep. The preview names the
-          second group; the footnote does not pretend they are the first.
-        */}
-        <div className="template-editor__preview">
-          <MergePreview
-            subject={fields.subject}
-            body={fields.body}
-            html={fields.html}
-            sample={ENRICHABLE_SAMPLE}
-            footnote="Sample values. Dispatch fills these in at send"
-          />
+            </dl>
+          </DenPanel>
         </div>
       </div>
-    </Dialog>
+
+      {confirming ? (
+        <Dialog
+          title="Delete this template?"
+          onClose={requestClose}
+          footer={
+            <>
+              <GhostButton label="Back" onClick={backToEdit} disabled={deleting} />
+              <PrimaryButton
+                label={
+                  deleting
+                    ? 'Deleting…'
+                    : liveKeyWarning
+                      ? 'Delete anyway'
+                      : 'Delete template'
+                }
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                busy={deleting}
+                leading={<TrashGlyph />}
+              />
+            </>
+          }
+        >
+          {error ? (
+            <Banner tone="error" title="Couldn&rsquo;t delete" className="template-editor__error">
+              {error}
+            </Banner>
+          ) : null}
+          {liveKeyWarning ? (
+            <Banner
+              tone="warning"
+              title="A notification still sends this"
+              className="template-editor__error"
+            >
+              {liveKeyWarning}
+            </Banner>
+          ) : null}
+          <p className="template-editor__hint">
+            {fields.title || fields.templateId}. This cannot be undone.
+            {liveKeyWarning
+              ? ' Press Delete anyway to go ahead, or Back to leave it alone.'
+              : ' If a notification catalog key is still assigned to this template, the delete is refused until it is unassigned.'}
+          </p>
+          <code className="template-editor__id-static">{fields.templateId}</code>
+        </Dialog>
+      ) : null}
+    </div>
+  );
+}
+
+/** The mock's coral asterisk after a required field's caps label. */
+function RequiredMark() {
+  return (
+    <span className="template-editor__req" aria-hidden="true">
+      *
+    </span>
   );
 }
