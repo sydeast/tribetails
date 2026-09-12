@@ -19,6 +19,9 @@ import { usingFixtureAdmin } from '../support/commands';
  * seeded. Both writes are waited on: see the comment inside that test.
  *
  * Fixed by Cypress Author, 2026-09-11.
+ *
+ * Selectors moved onto the kit classes on 2026-09-11, after PR #776 rebuilt the
+ * hero on `DenScreenHeading` and `StatusPill`.
  */
 
 /**
@@ -31,6 +34,23 @@ const FIRESTORE_WRITE = '**/google.firestore.v1.Firestore/Write/**';
 
 /** Biscuit's document, as `e2e/seed.ts` writes it. Named in the header above. */
 const BISCUIT_DOC = 'kin/vis-kin-1';
+
+/**
+ * The kin's name is the kit hero band's title since PR #776 restyled the screen
+ * (the local `.kview__name` is gone). KinView takes over the whole Directory
+ * screen while a kin is open, so this h1 is the only one on the page. The tag
+ * pills and the reactive marker are the kit's `StatusPill` for the same reason,
+ * matched below by `.den-statuspill` inside the row that owns them.
+ */
+const KIN_NAME = 'h1.den-heading-title';
+
+/**
+ * The h1 shows the name Directory passed in, before `getKin` has answered, so
+ * it no longer proves the kin is loaded the way the old `.kview__name` (drawn
+ * from the loaded record) did. Anything read off the record itself waits this
+ * long for the read.
+ */
+const KIN_LOAD = { timeout: 8_000 } as const;
 
 /**
  * The request body as searchable text, whatever shape Cypress hands over.
@@ -69,16 +89,16 @@ describe('kin view and edit', () => {
   it('#688 carries no "Kin profile." subtitle', () => {
     cy.signIn();
     openKinFromDirectory('Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     cy.contains('Kin profile.').should('not.exist');
   });
 
   it('#690 a reactive kin gets a marker under the Kin box, not a page banner', () => {
     cy.signIn();
     openKinFromDirectory('Marbles');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Marbles');
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Marbles');
     // Under the Kin box: a sibling of it, not inside it.
-    cy.get('.kview__flags .kview__flag-pill').should('contain.text', 'Reactive: handle with care');
+    cy.get('.kview__flags .den-statuspill', KIN_LOAD).should('contain.text', 'Reactive: handle with care');
     // Not a page banner: nothing on the page is announced as an alert.
     cy.get('[role="alert"]').should('not.exist');
   });
@@ -86,8 +106,8 @@ describe('kin view and edit', () => {
   it('#687 the kin editor has no Owner contact section', () => {
     cy.signIn();
     openKinFromDirectory('Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
-    cy.contains('button', 'Edit').click();
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.contains('button', 'Edit kin').click();
     cy.contains('h1', 'Edit Biscuit', { timeout: 8_000 }).should('exist');
     cy.contains('Owner contact').should('not.exist');
     cy.contains('button', 'Cancel').click();
@@ -119,10 +139,10 @@ describe('kin view and edit', () => {
 
     cy.signIn();
     openKinFromDirectory('Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
-    cy.contains('button', 'Edit tags').click();
+    cy.contains('button', 'Edit tags', KIN_LOAD).click();
     cy.get('[aria-label="Add a pet tag"]').type(`${TAG}{enter}`);
     cy.contains('.tag-chip__name', TAG).should('exist');
     cy.contains('button', 'Done').click();
@@ -139,8 +159,8 @@ describe('kin view and edit', () => {
     // a fresh `getKin` read, so the pill list reflects `kin.tags` off
     // Firestore rather than the assign field's own optimistic state.
     openKinFromDirectory('Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
-    cy.get('.kview__tags .kview__tag-pill').should('contain.text', TAG);
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.contains('.kview__tags .den-statuspill', TAG, KIN_LOAD).should('exist');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
     // Teardown: remove the tag through the same control, leaving the fixture
@@ -158,7 +178,7 @@ describe('kin view and edit', () => {
   it('#689 the crumb step that is not the current screen is a real link, opened from the Directory Kin tab', () => {
     cy.signIn();
     openKinFromDirectory('Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     // Opened from the Kin tab: the URL is `/directory`, so the household step
     // is elsewhere and is the one rendered as a real anchor.
     cy.contains('.den-crumbs a', 'Wanda Thorne')
@@ -169,7 +189,7 @@ describe('kin view and edit', () => {
   it('#689 the crumb step that is not the current screen is a real link, opened from a household profile', () => {
     cy.signIn();
     openKinFromProfile('e2e-kf-1', 'Biscuit');
-    cy.get('.kview__name', { timeout: 8_000 }).should('have.text', 'Biscuit');
+    cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     // Opened from the profile: the URL is already `/directory/e2e-kf-1`, so
     // Directory is elsewhere and is the one rendered as a real anchor.
     cy.contains('.den-crumbs a', 'Directory').should('have.attr', 'href', '/directory');
