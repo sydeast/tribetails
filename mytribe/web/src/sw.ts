@@ -31,10 +31,23 @@ precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
 // Navigations: network-first, falling back to the cached shell once the
-// network has had its short turn. Both the strategy (still network-first, not
-// stale-while-revalidate) and the length of that turn (two seconds, down from
-// five) are decisions with measurements behind them, and lib/swPolicy.ts is
-// where that reasoning is written down.
+// network has had its short turn.
+//
+// TWO SECONDS, DOWN FROM FIVE (operator ruling 2026-09-12). Mobile web is the
+// FIELD FALLBACK, and for iOS households the only client there is, so the case
+// that matters is a weak-but-alive signal. Five seconds of that was five
+// seconds of blank screen before the shell this worker already had.
+//
+// STILL NetworkFirst, NOT StaleWhileRevalidate, which would paint instantly.
+// SWR is the repo gotcha recorded in vite.config.ts: it kept serving old
+// bundles one load behind every release. `registerType: 'autoUpdate'` does not
+// rescue that. The new worker does take control as soon as it installs, but an
+// SWR navigation is answered FROM THE CACHE before its revalidation lands, so
+// the first visit after a deploy still paints the previous shell and only the
+// second one is current. The trade accepted here is the other way round: an
+// ordinary load waits up to two seconds and gets fresh HTML, and only a
+// genuinely stalled network sees the cache. lib/swPolicy.ts has the long form,
+// including why the deadline is not one second or zero.
 registerRoute(
   ({ request }) => isNavigationRequest(request),
   new NetworkFirst({
