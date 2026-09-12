@@ -20,6 +20,8 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav, type PortalNavTab } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import '../styles/messages.css';
 
 /**
@@ -301,6 +303,11 @@ export function Messages() {
   }
 
   const noThreadYet = messages.length === 0;
+  // The Firestore listener is the other source here, and it has an offline
+  // cache of its own, so a paused callable only matters when the listener has
+  // produced nothing either. That is the same condition the isLoading and
+  // isError arms already carry.
+  const threadView = viewOfQuery(threadQuery);
   const assistBusy = assistMutation.isPending;
   const assistPendingMode = assistBusy ? assistMutation.variables?.mode : undefined;
 
@@ -320,7 +327,9 @@ export function Messages() {
 
         <section className="glass msgs-card" aria-label="Conversation with your Auntie">
           <div className="msgs-thread" data-testid="msgs-thread">
-            {threadQuery.isLoading && liveMessages === null ? (
+            {threadView.kind === 'offline' && liveMessages === null ? (
+              <OfflineNotice what="your messages" />
+            ) : threadView.kind === 'loading' && liveMessages === null ? (
               <p className="sub">Loading your messages…</p>
             ) : threadQuery.isError && liveMessages === null && noThreadYet ? (
               <LaunchError

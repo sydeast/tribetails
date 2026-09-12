@@ -12,6 +12,8 @@ import {
   useSignOut,
 } from '../lib/auth';
 import { isEmailAlreadyInUse, isEmailUnverified, mapAuthError } from '../lib/authErrors';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 
 /**
  * Invite-claim funnel, reached from the welcome email
@@ -50,6 +52,10 @@ export function ClaimInvite() {
     staleTime: Infinity,
   });
 
+  // Paused, `preview.data` is undefined and `preview.isError` is false, so the
+  // step below stayed 'loading' and the card said "Opening your invite…"
+  // forever, with nothing opening.
+  const previewView = viewOfQuery(preview);
   const step: ClaimStep | null =
     done || preview.isError
       ? null
@@ -164,6 +170,10 @@ export function ClaimInvite() {
         <InvalidCard message="This link is missing its invite code. Open the link from your email again, or ask Auntie to resend it." />
       ) : done ? (
         <WelcomeCard onEnter={() => void navigate({ to: '/home' })} />
+      ) : previewView.kind === 'offline' ? (
+        <section className="glass card d1">
+          <OfflineNotice what="this invite" />
+        </section>
       ) : preview.isError ? (
         <ErrorCard
           title="Could not open this invite"

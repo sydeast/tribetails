@@ -21,6 +21,8 @@ import { PortalNav } from '../components/PortalNav';
 import { SignedImageUpload } from '../components/SignedImageUpload';
 import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
 
@@ -234,7 +236,25 @@ export function Account() {
     return <LaunchError onRetry={() => void account.refetch()} retrying={account.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
-  if (account.isLoading || !account.data) {
+  // Paused, `isLoading` is false and `account.data` is undefined, so this gate
+  // used to be true for a reason that never resolves: the account page spun
+  // with nothing to say. The offline arm goes above it.
+  const accountView = viewOfQuery(account);
+  const paymentView = viewOfQuery(paymentMethod, { gate: account });
+  const kinView = viewOfQuery(kin, { gate: account });
+  if (accountView.kind === 'offline') {
+    return (
+      <>
+        <PortalNav active="account" />
+        <div className="wrap acct">
+          <section className="glass card">
+            <OfflineNotice what="your account" />
+          </section>
+        </div>
+      </>
+    );
+  }
+  if (accountView.kind !== 'data' || !account.data) {
     return (
       <>
         <PortalNav active="account" />
@@ -415,9 +435,11 @@ export function Account() {
 
               {managingBilling && !readOnly && (
                 <div className="billing-manage" id="billing-manage" data-testid="billing-manage">
-                  {paymentMethod.isLoading ? (
+                  {paymentView.kind === 'offline' ? (
+                    <OfflineNotice what="what card is on file" />
+                  ) : paymentView.kind !== 'data' && paymentView.kind !== 'error' ? (
                     <p className="sub">Checking what is on file…</p>
-                  ) : paymentMethod.isError ? (
+                  ) : paymentView.kind === 'error' ? (
                     <div className="note err" role="alert">
                       <span className="dot" />
                       {billingReadError}
@@ -510,7 +532,9 @@ export function Account() {
               <div className="sectlabel">
                 Your tribe <Link to="/kin">The Kin</Link>
               </div>
-              {kin.isLoading ? (
+              {kinView.kind === 'offline' ? (
+                <OfflineNotice what="your kin" />
+              ) : kinView.kind !== 'data' ? (
                 <p className="sub">Loading your kin…</p>
               ) : (
                 roster.map((k, i) => (

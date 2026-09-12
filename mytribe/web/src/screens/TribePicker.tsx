@@ -3,6 +3,8 @@ import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { getTribeSummaries } from '../api/portal';
 import { useSignOut } from '../lib/auth';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { setActiveKinfolkId, useAccessState } from '../lib/activeTribe';
 
 const AVATAR_VARIANTS = ['', 't2', 't3'] as const;
@@ -37,6 +39,7 @@ export function TribePicker() {
   }, [summaries.data, selected]);
 
   const { signOut, signingOut } = useSignOut();
+  const summariesView = viewOfQuery(summaries);
 
   function handleEnter() {
     if (!selected) return;
@@ -66,10 +69,20 @@ export function TribePicker() {
           Your tribes
         </div>
 
-        {summaries.isLoading ? (
-          <p className="sub">Loading your tribes…</p>
-        ) : summaries.isError ? (
+        {/*
+          'idle' is reachable here and nowhere else: the query is
+          `enabled: kinfolkIds.length > 0`, so with no ids it never runs. A
+          spinner for that would spin forever, and the bare list would claim a
+          household belongs to no tribe when nobody ever asked.
+        */}
+        {summariesView.kind === 'offline' ? (
+          <OfflineNotice what="your tribes" />
+        ) : summariesView.kind === 'error' ? (
           <p className="sub">Couldn&rsquo;t load your tribes. Try again.</p>
+        ) : summariesView.kind === 'idle' ? (
+          <p className="sub">No tribes are attached to this sign-in yet.</p>
+        ) : summariesView.kind !== 'data' ? (
+          <p className="sub">Loading your tribes…</p>
         ) : (
           <div className="tribelist">
             {(summaries.data ?? []).map((tribe, i) => (

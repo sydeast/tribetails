@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { useSignOut } from '../lib/auth';
+import { viewOfQuery } from '../lib/queryState';
 
 /**
  * Shown when getMyAccess returns zero kinfolkIds — signed in but not yet
@@ -14,6 +15,11 @@ export function NoTribes() {
   const contact = useQuery({ queryKey: ['businessContact'], queryFn: getBusinessContact });
   const { signOut, signingOut } = useSignOut();
 
+  // Paused, the inert button kept saying "Loading contact info…" with nothing
+  // loading. It is a tooltip on a decoration rather than a claim about the
+  // household's data, so it gets the honest sentence and not the panel.
+  const contactView = viewOfQuery(contact);
+  const inertReason = contactView.kind === 'offline' ? 'You are offline, so we cannot look up the contact details.' : 'Loading contact info…';
   const mailHref = contact.data?.email ? `mailto:${contact.data.email}?subject=${encodeURIComponent('Getting started with MyTribe')}` : undefined;
 
   return (
@@ -38,7 +44,7 @@ export function NoTribes() {
               Message Auntie
             </a>
           ) : (
-            <span className="btn grad block navlink-inert" title="Loading contact info…">
+            <span className="btn grad block navlink-inert" title={inertReason}>
               Message Auntie
             </span>
           )}
