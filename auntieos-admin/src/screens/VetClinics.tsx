@@ -1,9 +1,9 @@
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { Banner } from '../components/Banner';
-import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { Avatar } from '../components/Avatar';
+import { DenPanel, DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { EntityCardGrid } from '../components/EntityCardGrid';
-import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { GhostButton, IconButton, PrimaryButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
 import { useCollection } from '../lib/firestore';
 import { VET_CLINICS_QUERY, type VetClinic } from '../api/vetClinics';
@@ -23,7 +23,6 @@ import {
   draftFromClinic,
   canSaveDraft,
   draftNameCollides,
-  clinicMonogram,
   type ClinicDraft,
   type ClinicUsage,
   type VetLinkedHousehold,
@@ -32,6 +31,14 @@ import './VetClinics.css';
 
 /**
  * Vet clinics: the manager for the shared `vet_clinics` bank (punchlist B4).
+ *
+ * THE SHAPE IS THE MOCK'S (`ui-ideas/auntieos-vet-clinics-2026-05-27.html`,
+ * issue #755): the kit hero, a controls row of search box and count pill, then
+ * the catalog as cards straight on the ground. The mock draws one section; this
+ * screen has two more that are not in it, the approval queue and the retired
+ * rows, and those sit in kit panels above and below the bank so the queue reads
+ * as work and the archive reads as an archive, while the bank itself stays the
+ * mock's bare grid.
  *
  * WHAT WAS MISSING. The catalog had a picker inside a household's edit screen
  * and nothing else. A clinic could be created from there and never corrected:
@@ -47,10 +54,12 @@ import './VetClinics.css';
  * household with the clinic's name typed in and no id cannot be reached by the
  * fan-out, so folding it into one number would overstate the repair.
  *
- * RETIRE, NOT DELETE. The mock's row action is a red "Remove" trash icon. It is
- * wired to `archiveVetClinic`, because a hard delete strands every linked
- * household's id and drops them out of the fan-out permanently. The label says
- * "Retire" rather than "Remove" so the control describes what it does.
+ * RETIRE, NOT DELETE. The concept mock drew a red "Remove" trash icon. There is
+ * no delete callable (`api/vetClinicsWrite.ts`, "There is no delete") and the
+ * ruling on this screen is to use the callables that exist, so the control
+ * archives through `archiveVetClinic`: a hard delete would strand every linked
+ * household's id and drop them out of the fan-out permanently. The control is
+ * named "Retire" and wears an archive glyph, and the mock is amended to match.
  */
 export function VetClinics() {
   const clinics = useCollection<VetClinic>(VET_CLINICS_QUERY);
@@ -64,10 +73,11 @@ export function VetClinics() {
         kicker="The Den · Directory"
         title="Vet"
         accentTail="clinics"
-        subtitle="The shared bank every household picks from. Correcting a clinic here corrects it on every household linked to it."
+        subtitle="The shared bank every household and the kinfolk portal pick from. Correcting a clinic here rewrites the copy stored on every household linked to it, so the number on file at a doorstep changes with it."
         trailing={
           <PrimaryButton
             label="Add clinic"
+            leading={<PlusGlyph />}
             onClick={() => setAdding(true)}
             disabled={adding}
           />
@@ -101,6 +111,9 @@ export function VetClinics() {
   );
 }
 
+/** The mock's card width (`.grid`, minmax(300px, 1fr)). */
+const CARD_MIN_WIDTH = '300px';
+
 interface BankProps {
   rows: readonly VetClinic[];
   households: readonly VetLinkedHousehold[];
@@ -127,94 +140,77 @@ function ClinicBank({
   onAddDone,
 }: BankProps) {
   const pending = useMemo(() => pendingClinics(rows), [rows]);
-  const active = useMemo(() => filterClinics(activeClinics(rows), query), [rows, query]);
+  const bank = useMemo(() => activeClinics(rows), [rows]);
+  const active = useMemo(() => filterClinics(bank, query), [bank, query]);
   const retired = useMemo(() => filterClinics(archivedClinics(rows), query), [rows, query]);
+
+  const card = (c: VetClinic, flags: { pending?: boolean; retired?: boolean } = {}) => (
+    <ClinicCard
+      key={c._id}
+      clinic={c}
+      all={rows}
+      usage={clinicUsage(c, households)}
+      usageKnown={householdsKnown}
+      {...flags}
+    />
+  );
 
   return (
     <div className="vetbank">
-      <Banner tone="info" title="One bank, shared with every household">
-        <p>
-          Households and the kinfolk portal both read these clinics. A correction here rewrites
-          the copy stored on every household linked to the clinic, so the number on file at a
-          doorstep changes with it.
-        </p>
-      </Banner>
-
+      {/* The queue sits above the bank: it is work, and the mock's banner slot
+          is where anything that wants attention before the controls row goes. */}
       {pending.length > 0 && (
         <DenPanel
           title="Pending approval"
-          detail={`${pending.length} submitted by a household`}
+          subtitle="A household added these from its own record. Approving publishes a clinic to the shared bank. Rejecting retires it, which keeps who submitted it on file rather than discarding the evidence."
+          meta={`${pending.length} submitted`}
         >
-          <p className="vetbank-blurb">
-            A household added these from its own record. Approving publishes a clinic to the
-            shared bank. Rejecting retires it, which keeps who submitted it on file rather than
-            discarding the evidence.
-          </p>
-          <EntityCardGrid label="Clinics pending approval" minCardWidth="19rem">
-            {pending.map((c) => (
-              <ClinicCard
-                key={c._id}
-                clinic={c}
-                all={rows}
-                usage={clinicUsage(c, households)}
-                usageKnown={householdsKnown}
-                pending
-              />
-            ))}
+          <EntityCardGrid label="Clinics pending approval" minCardWidth={CARD_MIN_WIDTH}>
+            {pending.map((c) => card(c, { pending: true }))}
           </EntityCardGrid>
         </DenPanel>
       )}
 
-      <DenPanel
-        title="Catalog"
-        detail={`${active.length} of ${activeClinics(rows).length} clinics`}
-        trailing={
+      {/* The mock's `.controls`: the search box and the count pill in one row. */}
+      <div className="vetbank-controls">
+        <label className="vetbank-search">
+          <span className="vetbank-search-glyph">
+            <SearchGlyph />
+          </span>
           <input
-            className="vetbank-search"
+            className="vetbank-search-input"
             type="search"
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             aria-label="Search clinics by name, phone, or address"
             placeholder="Search clinics by name, phone, or address"
           />
-        }
-      >
-        {adding && <AddClinicCard onDone={onAddDone} all={rows} />}
-        {active.length === 0 && !adding ? (
-          <EmptyHint>No clinic matches that search.</EmptyHint>
-        ) : (
-          <EntityCardGrid label="Clinic catalog" minCardWidth="19rem">
-            {active.map((c) => (
-              <ClinicCard
-                key={c._id}
-                clinic={c}
-                all={rows}
-                usage={clinicUsage(c, households)}
-                usageKnown={householdsKnown}
-              />
-            ))}
-          </EntityCardGrid>
-        )}
-      </DenPanel>
+        </label>
+        <span className="vetbank-count">
+          <span className="vetbank-count-kicker">Catalog</span>
+          {query.trim() === ''
+            ? `${bank.length} ${bank.length === 1 ? 'clinic' : 'clinics'}`
+            : `${active.length} of ${bank.length} ${bank.length === 1 ? 'clinic' : 'clinics'}`}
+        </span>
+      </div>
+
+      {adding && <AddClinicCard onDone={onAddDone} all={rows} />}
+      {active.length === 0 && !adding ? (
+        <EmptyHint>No clinic matches that search.</EmptyHint>
+      ) : (
+        <EntityCardGrid label="Clinic catalog" minCardWidth={CARD_MIN_WIDTH}>
+          {active.map((c) => card(c))}
+        </EntityCardGrid>
+      )}
 
       {retired.length > 0 && (
-        <DenPanel title="Retired" detail={`${retired.length} out of the bank`}>
-          <p className="vetbank-blurb">
-            Retired clinics are hidden from every picker and from the kinfolk portal. They are
-            kept, not deleted: a household already on one still reads the name, phone and
-            address it always did, and restoring one puts it back in the bank.
-          </p>
-          <EntityCardGrid label="Retired clinics" minCardWidth="19rem">
-            {retired.map((c) => (
-              <ClinicCard
-                key={c._id}
-                clinic={c}
-                all={rows}
-                usage={clinicUsage(c, households)}
-                usageKnown={householdsKnown}
-                retired
-              />
-            ))}
+        <DenPanel
+          title="Retired"
+          subtitle="Retired clinics are hidden from every picker and from the kinfolk portal. They are kept, not deleted: a household already on one still reads the name, phone and address it always did, and restoring one puts it back in the bank."
+          meta={`${retired.length} out of the bank`}
+        >
+          <EntityCardGrid label="Retired clinics" minCardWidth={CARD_MIN_WIDTH}>
+            {retired.map((c) => card(c, { retired: true }))}
           </EntityCardGrid>
         </DenPanel>
       )}
@@ -240,6 +236,7 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
 
   const collides = draftNameCollides(clinic._id, draft, all);
   const canSave = canSaveDraft(clinic, draft) && !collides && !busy;
+  const name = clinic.name ?? 'Unnamed clinic';
 
   function open() {
     setDraft(draftFromClinic(clinic));
@@ -285,22 +282,37 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
         : `${clinic.name ?? 'Clinic'} retired.`;
     });
 
-  // An `<li>`, not an `<article>`: this card is now an item of an
-  // `EntityCardGrid`, and the grid's list semantics are only true if its
-  // children are list items. `.vetcard` sets `display: flex`, so the tag change
-  // is semantic only, with no layout consequence. AddClinicCard below stays an
-  // `<article>` because it is rendered ABOVE the grid, not inside it.
+  const website = (clinic.website ?? '').trim();
+  const notes = (clinic.notes ?? '').trim();
+
+  // An `<li>`, not an `<article>`: this card is an item of an `EntityCardGrid`,
+  // and the grid's list semantics are only true if its children are list items.
+  // AddClinicCard below stays an `<article>` because it is rendered ABOVE the
+  // grid, not inside it.
   return (
     <li className={`vetcard${retired ? ' vetcard--retired' : ''}`}>
       <header className="vetcard-top">
-        <span className="vetcard-logo" aria-hidden="true">
-          {clinicMonogram(clinic.name ?? '')}
-        </span>
+        {/* The mock's `.logo`: a 50px tile on a gradient that differs card to
+            card, with the same glyph on each. The kit avatar's seeded gradient
+            is that variation; the seed is the id so a rename keeps its colour. */}
+        <Avatar
+          label={name}
+          glyph={<ClinicGlyph />}
+          size={50}
+          shape="rounded"
+          ring={false}
+          gradientSeed={clinic._id}
+          className="vetcard-logo"
+        />
         <span className="vetcard-name">
-          <b>{clinic.name ?? 'Unnamed clinic'}</b>
+          <b>{name}</b>
           <span className="vetcard-id">vet_clinics/{clinic._id}</span>
         </span>
-        {clinic.isEmergency === true && <span className="vetcard-tag">24 hour</span>}
+        {clinic.isEmergency === true && (
+          <span className="vetcard-tag">
+            <StatusPill label="24 hour" tone="orange" size="compact" />
+          </span>
+        )}
       </header>
 
       {editing ? (
@@ -367,10 +379,14 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
         </div>
       ) : (
         <>
+          {/* The mock's `.vmeta`: a teal glyph then the value. The label is
+              kept for assistive tech, since a phone glyph is not a word. */}
           <dl className="vetcard-meta">
-            <Row label="Phone" value={clinic.phone} />
-            <Row label="Address" value={clinic.address} />
-            <Row label="Hours" value={clinic.hours} />
+            <Row label="Phone" glyph={<PhoneGlyph />} value={clinic.phone} />
+            <Row label="Address" glyph={<PinGlyph />} value={clinic.address} />
+            <Row label="Hours" glyph={<ClockGlyph />} value={clinic.hours} />
+            {website !== '' && <Row label="Website" glyph={<GlobeGlyph />} value={website} />}
+            {notes !== '' && <Row label="Notes" glyph={<NoteGlyph />} value={notes} />}
           </dl>
 
           <footer className="vetcard-base">
@@ -383,20 +399,36 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
                   disabled={busy}
                 />
               )}
-              <GhostButton label="Edit" onClick={open} disabled={busy} />
+              <IconButton
+                icon={<PencilGlyph />}
+                label="Edit"
+                size={32}
+                onClick={open}
+                disabled={busy}
+              />
               {retired === true ? (
                 <GhostButton
                   label="Restore"
                   onClick={() => void setArchived(false)}
                   disabled={busy}
                 />
-              ) : (
+              ) : pending === true ? (
                 <GhostButton
-                  // "Retire", not the mock's "Remove": the control archives, and
-                  // a label promising removal would misdescribe what happens to
-                  // the households still pointing at the clinic.
-                  label={pending === true ? 'Reject' : 'Retire'}
+                  label="Reject"
                   className="vetcard-danger"
+                  onClick={() => void setArchived(true)}
+                  disabled={busy}
+                />
+              ) : (
+                // "Retire" on an archive glyph, not the concept's "Remove" on a
+                // trash can: the control archives, and a label or a glyph
+                // promising removal would misdescribe what happens to the
+                // households still pointing at the clinic.
+                <IconButton
+                  icon={<ArchiveGlyph />}
+                  label="Retire"
+                  size={32}
+                  destructive
                   onClick={() => void setArchived(true)}
                   disabled={busy}
                 />
@@ -416,7 +448,8 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
 }
 
 /**
- * The reference count.
+ * The reference count, the mock's `.linked`: a lock glyph, the number in teal,
+ * the noun in mono.
  *
  * Suppressed entirely when the household listener has not landed, rather than
  * rendered as zero. The next control on this card retires the clinic, and "no
@@ -424,36 +457,63 @@ function ClinicCard({ clinic, all, usage, usageKnown, pending, retired }: CardPr
  * have not been able to check".
  */
 function UsageBadge({ usage, known }: { usage: ClinicUsage; known: boolean }) {
-  if (!known) return <span className="vetcard-usage vetcard-usage--unknown">Households: checking…</span>;
+  if (!known) {
+    return (
+      <span className="vetcard-usage vetcard-usage--unknown">
+        <LockGlyph /> Households: checking…
+      </span>
+    );
+  }
 
-  const parts: string[] = [];
-  if (usage.linked > 0) parts.push(`${usage.linked} linked`);
-  // Named rather than summed: a correction here cannot reach these, because
-  // they carry the clinic's name with no id to match on.
-  if (usage.unlinked > 0) parts.push(`${usage.unlinked} by name only`);
-  if (parts.length === 0) return <span className="vetcard-usage">No households</span>;
+  if (usage.linked === 0 && usage.unlinked === 0) {
+    return (
+      <span className="vetcard-usage">
+        <LockGlyph /> No households
+      </span>
+    );
+  }
 
   return (
     <span className="vetcard-usage">
-      {parts.join(' · ')}
-      {usage.unlinked > 0 && (
-        <span className="vetcard-usage-note">
-          {' '}
-          (name-only households are not updated by a save)
+      <LockGlyph />
+      {usage.linked > 0 && (
+        <span className="vetcard-usage-part">
+          <b>{usage.linked}</b> linked
         </span>
+      )}
+      {/* Named rather than summed: a correction here cannot reach these,
+          because they carry the clinic's name with no id to match on. */}
+      {usage.unlinked > 0 && (
+        <span className="vetcard-usage-part">
+          <b>{usage.unlinked}</b> by name only
+        </span>
+      )}
+      {usage.unlinked > 0 && (
+        <span className="vetcard-usage-note">(name-only households are not updated by a save)</span>
       )}
     </span>
   );
 }
 
-function Row({ label, value }: { label: string; value?: string | undefined }) {
+function Row({
+  label,
+  glyph,
+  value,
+}: {
+  label: string;
+  glyph: ReactNode;
+  value?: string | undefined;
+}) {
   const shown = (value ?? '').trim();
   return (
     <div className="vetcard-row">
-      <dt>{label}</dt>
+      <dt className="vetcard-row-label">{label}</dt>
       {/* Blank is shown, not hidden: this is a record whose gaps are content. */}
       <dd className={shown === '' ? 'vetcard-blank' : undefined}>
-        {shown === '' ? 'Not set' : shown}
+        <span className="vetcard-row-glyph" aria-hidden="true">
+          {glyph}
+        </span>
+        <span>{shown === '' ? 'Not set' : shown}</span>
       </dd>
     </div>
   );
@@ -593,5 +653,124 @@ function AddClinicCard({ onDone, all }: { onDone: () => void; all: readonly VetC
         )}
       </div>
     </article>
+  );
+}
+
+// ── glyphs ──────────────────────────────────────────────────────────────────
+// The mock's inline SVGs, kept inline for the same reason as Directory's: no
+// icon package is installed here and eight strokes are not worth a dependency.
+
+function glyph(paths: ReactNode, strokeWidth = 1.8) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths}
+    </svg>
+  );
+}
+
+/** The mock's `.add` plus. */
+function PlusGlyph() {
+  return glyph(<path d="M12 5v14M5 12h14" />, 2);
+}
+
+/** The mock's `.search svg`. */
+function SearchGlyph() {
+  return glyph(
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3-3" />
+    </>,
+    2,
+  );
+}
+
+/** The mock's `.logo svg`: a plus in a circle, the same mark on every tile. */
+function ClinicGlyph() {
+  return glyph(
+    <>
+      <path d="M12 5v14M5 12h14" />
+      <circle cx="12" cy="12" r="9" />
+    </>,
+  );
+}
+
+function PhoneGlyph() {
+  return glyph(<path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z" />);
+}
+
+function PinGlyph() {
+  return glyph(
+    <>
+      <path d="M12 21s7-6 7-12a7 7 0 0 0-14 0c0 6 7 12 7 12z" />
+      <circle cx="12" cy="9" r="2.5" />
+    </>,
+  );
+}
+
+function ClockGlyph() {
+  return glyph(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>,
+  );
+}
+
+function GlobeGlyph() {
+  return glyph(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </>,
+  );
+}
+
+function NoteGlyph() {
+  return glyph(
+    <>
+      <path d="M5 4h14v11l-5 5H5z" />
+      <path d="M14 20v-5h5" />
+    </>,
+  );
+}
+
+/** The mock's `.linked svg`, a padlock. */
+function LockGlyph() {
+  return glyph(
+    <>
+      <path d="M9 11V7a3 3 0 0 1 6 0v4" />
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+    </>,
+  );
+}
+
+/** The mock's Edit pencil. */
+function PencilGlyph() {
+  return glyph(
+    <>
+      <path d="M4 20h4L19 9l-4-4L4 16z" />
+      <path d="M14 5l4 4" />
+    </>,
+  );
+}
+
+/** An archive box, in place of the concept's trash can. See the file header. */
+function ArchiveGlyph() {
+  return glyph(
+    <>
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <path d="M10 12h4" />
+    </>,
   );
 }

@@ -32,17 +32,26 @@
 }
 
 .new-booking__label {
+  font-family: var(--type-label-sm-family);
   font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
   color: var(--color-text-dim);
 }
 
 .new-booking__input {
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-chip);
-  background: var(--color-surface-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  background: var(--color-hero-bottom);
   color: var(--color-text-primary);
   font: inherit;
+  outline: none;
+}
+
+.new-booking__input:focus-visible {
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 50%, transparent);
 }
 
 .new-booking__input:disabled {
@@ -70,9 +79,9 @@
 }
 
 .new-booking__service--active {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-soft);
+  background: var(--color-primary);
+  color: var(--color-background);
+  border-color: transparent;
 }
 
 .new-booking__hint {
@@ -107,9 +116,9 @@
 }
 
 .new-booking__mode-tab--active {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-soft);
+  background: var(--color-text-primary);
+  color: var(--color-background);
+  border-color: transparent;
 }
 
 .new-booking__dates {
@@ -136,11 +145,12 @@
 
 .new-booking__chip {
   padding: var(--space-1) var(--space-3);
-  border: var(--border-hairline) solid var(--color-border-soft);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--tt-kin-teal) 40%, transparent);
   border-radius: var(--radius-pill);
-  background: var(--color-surface-2);
+  background: color-mix(in srgb, var(--tt-kin-teal) 16%, transparent);
   color: var(--color-text-primary);
   font-size: var(--type-body-sm-size);
+  font-weight: var(--type-label-md-weight);
   cursor: pointer;
 }
 
@@ -157,19 +167,20 @@
 
 .new-booking__week {
   min-width: 2.25rem;
-  padding: var(--space-1) var(--space-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-chip);
-  background: transparent;
+  padding: var(--space-2) var(--space-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
   color: var(--color-text-dim);
   font: inherit;
+  font-weight: var(--type-label-md-weight);
   cursor: pointer;
 }
 
 .new-booking__week--active {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-soft);
+  background: var(--color-primary);
+  color: var(--color-background);
+  border-color: transparent;
 }
 
 .new-booking__warnings {
@@ -219,8 +230,12 @@
 }
 /* ── the 5-step wizard ───────────────────────────────────────────────────────
    Layout for the wizard shell and its step bodies. The step order and the
-   pieces on each step come from ui-ideas/BookingWorkFlow/*.png; every value
-   here is a token from styles/tokens.css. */
+   pieces on each step come from the operator's own BookingWorkFlow PNGs
+   (commit 1e97815; the files were scrubbed from ui-ideas/ in a47632d, so the
+   commit is the record). The SKIN is the create-booking HTML mock's (#755):
+   fields on navy-3 inside a hairline, mono uppercase captions, solid orange
+   for a chosen chip, teal for a picked date, and the panel gradient for any
+   box inside the sheet. Every value here is a token from styles/tokens.css. */
 .nbw__steps {
   display: flex;
   flex-wrap: wrap;
@@ -269,7 +284,8 @@
   width: 1.7rem;
   height: 1.7rem;
   border-radius: var(--radius-pill);
-  background: var(--color-surface-2);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
 }
@@ -308,9 +324,9 @@
   flex-direction: column;
   gap: 0.15rem;
   padding: var(--space-3);
-  border: var(--border-hairline) solid var(--color-primary);
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--tt-kin-teal) 40%, transparent);
+  border-radius: var(--radius-card-lg);
+  background: color-mix(in srgb, var(--tt-kin-teal) 10%, transparent);
 }
 .nbw__allkin-title {
   font-weight: 600;
@@ -338,13 +354,14 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border: var(--border-hairline) solid var(--color-border);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-pill);
   cursor: pointer;
 }
 .nbw__kin-chip--on {
   border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
 }
 .nbw__service {
   display: flex;
@@ -352,21 +369,23 @@
   align-items: flex-start;
   gap: 0.15rem;
   flex: 1 1 12rem;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   font: inherit;
   text-align: left;
   color: var(--color-text-primary);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
   cursor: pointer;
 }
-.nbw__service:hover {
-  border-color: var(--color-primary);
-}
 .nbw__service--on {
-  border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  border-color: transparent;
+  background: var(--color-primary);
+  color: var(--color-background);
+}
+.nbw__service--on .nbw__service-price {
+  color: var(--color-background);
+  opacity: 0.8;
 }
 .nbw__service-name {
   font-weight: var(--type-title-md-weight);
@@ -382,18 +401,18 @@
   align-items: flex-start;
   gap: 0.15rem;
   flex: 1 1 14rem;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   font: inherit;
   text-align: left;
   color: var(--color-text-primary);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
   cursor: pointer;
 }
 .nbw__mode--on {
   border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
 }
 .nbw__mode-title {
   font-weight: var(--type-title-md-weight);
@@ -407,9 +426,9 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-panel);
 }
 .nbw__panel-head {
   display: flex;
@@ -435,8 +454,9 @@
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-3);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
 }
 .nbw__visit-num {
   font-family: var(--font-mono);
@@ -464,8 +484,9 @@
   gap: var(--space-2);
 }
 .nbw__day {
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
 }
 .nbw__day-head {
   display: flex;
@@ -530,12 +551,13 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-4);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
 }
 .nbw__choice--on {
   border-color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
 }
 .nbw__choice-title {
   font-weight: var(--type-title-md-weight);

@@ -85,9 +85,61 @@ describe('Templates screen', () => {
     const card = screen.getByText('Booking Confirmed').closest('.templates__card') as HTMLElement;
     expect(within(card).getByText('booking.confirmed')).toBeInTheDocument();
     expect(within(card).getByText('Your booking is confirmed')).toBeInTheDocument();
-    expect(within(card).getByText('Booking', { selector: '.templates__chip--category' })).toBeInTheDocument();
-    expect(within(card).getByText('booking', { selector: '.templates__chip--tag' })).toBeInTheDocument();
-    expect(within(card).getByText('confirmation', { selector: '.templates__chip--tag' })).toBeInTheDocument();
+    // The category and the tags are the kit's compact capsule, purple and
+    // orange, not two chips of this screen's own (#755).
+    const category = within(card).getByText('Booking', { selector: '.den-statuspill' });
+    expect(category).toHaveClass('den-statuspill--compact');
+    expect(category).toHaveAttribute('data-tone', 'purple');
+    for (const tag of ['booking', 'confirmation']) {
+      const pill = within(card).getByText(tag, { selector: '.den-statuspill' });
+      expect(pill).toHaveClass('den-statuspill--compact');
+      expect(pill).toHaveAttribute('data-tone', 'orange');
+    }
+    expect(card.querySelector('.templates__chip')).toBeNull();
+  });
+  /**
+   * #755, the skin. The mock's `.tcard` rises on hover, so the card wears the
+   * shared `lift`; the band carries the mock's mail tile in its `leading`
+   * slot; the explanation is the mock's own sentence, behind the info button
+   * rather than under the title.
+   */
+  it('draws the mock hero: the mail tile before the title, and the mock sentence as the tooltip', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' })]);
+    const { container } = render(<Templates />);
+    await screen.findByText('Booking Confirmed');
+    const heading = container.querySelector('.den-heading') as HTMLElement;
+    expect(within(heading).getByText('The Den · Admin')).toHaveClass('den-heading-kicker');
+    const leading = heading.querySelector('.den-heading-leading');
+    expect(leading?.querySelector('.templates__hero-tile')).not.toBeNull();
+    // The tile comes before the title block, the way the mock's `.micon` does.
+    const title = screen.getByRole('heading', { level: 1 });
+    expect((leading as Node).compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(
+      'Browse, preview, and edit email templates.',
+    );
+    expect(screen.queryByText('Browse the email templates SendGrid delivers.')).toBeNull();
+  });
+  it('every card wears the shared lift, because the whole card opens the editor', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'a', title: 'A' }),
+      tpl({ templateId: 'b', title: 'B' }),
+    ]);
+    render(<Templates />);
+    await screen.findByText('A');
+    const grid = screen.getByRole('list', { name: 'Templates' });
+    for (const card of within(grid).getAllByRole('listitem')) {
+      expect(card).toHaveClass('templates__card', 'lift');
+    }
+  });
+  it('draws the magnifier inside the search box, before the input', async () => {
+    listTemplates.mockResolvedValue([tpl({ templateId: 'a', title: 'A' })]);
+    render(<Templates />);
+    await screen.findByText('A');
+    const input = screen.getByLabelText(/search templates by title or key/i);
+    const box = input.closest('.templates__search') as HTMLElement;
+    const glyph = box.querySelector('.templates__search-glyph');
+    expect(glyph).not.toBeNull();
+    expect((glyph as Node).compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('surfaces a load failure naming the callable, never a false empty list', async () => {
