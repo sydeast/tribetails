@@ -51,8 +51,11 @@ export interface BookingActionsProps {
   onClose: () => void;
 }
 
+/** The four transitions, by name, so a card can ask the sheet to pose one. */
+export type BookingActionKind = 'approve' | 'reject' | 'cancel' | 'complete';
+
 interface ActionDef {
-  kind: 'approve' | 'reject' | 'cancel' | 'complete';
+  kind: BookingActionKind;
   label: string;
   tone: 'primary' | 'ghost';
   confirmTitle: string;
@@ -385,6 +388,16 @@ export interface BookingStatusActionsProps {
    * listener carries the new status back on its own.
    */
   onDone: () => void;
+  /**
+   * A transition to pose the confirm question for ON MOUNT, from a Bookings
+   * card's own Approve / Reject / Cancel button (#755: the mock draws those on
+   * the card, and the filename directive says a card opens the fuller record,
+   * so the button opens the sheet here with the question already up). Only
+   * honoured when `actionsFor` offers that kind for the row's CURRENT state: a
+   * card pressed a moment before the listener moved the row on opens the sheet
+   * with no question rather than posing one the state no longer allows.
+   */
+  initialAction?: BookingActionKind | null | undefined;
 }
 
 /**
@@ -401,13 +414,14 @@ export interface BookingStatusActionsProps {
  * reschedule controls in one sheet would be the only way to "lose" nothing by
  * duplicating something.
  */
-export function BookingStatusActions({ entry, onDone }: BookingStatusActionsProps) {
-  const [confirming, setConfirming] = useState<ActionDef | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+export function BookingStatusActions({ entry, onDone, initialAction }: BookingStatusActionsProps) {
   const state = bookingState({ status: entry.status ?? '' });
   const actions = actionsFor(state);
+  const [confirming, setConfirming] = useState<ActionDef | null>(
+    () => actions.find((a) => a.kind === initialAction) ?? null,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
 

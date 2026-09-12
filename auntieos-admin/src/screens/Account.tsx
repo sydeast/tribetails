@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useRouteContext } from '@tanstack/react-router';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { linkOptions, useNavigate, useRouteContext } from '@tanstack/react-router';
 import { useAuth } from '../lib/auth';
 import { getUserProfile, type UserProfile } from '../api/account';
 import { saveUserProfile } from '../api/accountWrite';
@@ -26,11 +26,12 @@ import {
 } from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, StatusPill } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
 import { Toggle } from '../components/Toggle';
-import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
+import { IconTile } from '../components/IconTile';
 import { uploadUserPhoto } from '../api/accountPhoto';
 import { type UploadStage } from '../api/mediaUpload';
 import { SecurityPanel } from '../components/SecurityPanel';
@@ -128,6 +129,13 @@ function draftChanged(draft: ProfileDraft, stored: ProfileDraft): boolean {
  * The mock's third right-column card, "Sign out all devices", is drawn there as
  * an explicit "Suggestion, not in current model". Nothing in this app revokes
  * refresh tokens, so it is not built here.
+ *
+ * #755 sweep (User profile): the hero IS the kit heading band now. The mock
+ * draws one band with the crumb trail "Settings / User profile" over it, the
+ * avatar before the title, the operator's name AS the title, the role line and
+ * the email under it, the tag row last and the two actions at the right. Until
+ * #788 the band had no slot for any of that, so the screen drew a page title
+ * ("Your account.") and then its own flat hero box under it; both are gone.
  */
 export function Account({ onOpenNotifications }: AccountProps) {
   const authState = useAuth();
@@ -240,170 +248,186 @@ export function Account({ onOpenNotifications }: AccountProps) {
     }
   }
 
-  return (
-    <div className="screen">
-      <DenScreenHeading
-        kicker="The Den · Account"
-        title="Your"
-        accentTail="account."
-        subtitle="Your personal profile, your business details, and which notifications reach you."
-      />
-
-      {user === null ? (
+  if (user === null) {
+    return (
+      <div className="screen">
         <Banner tone="warning" title="Not signed in">
           This account view needs a signed-in operator.
         </Banner>
-      ) : (
-        <AsyncRegion
-          state={profile}
-          what="profile"
-          isEmpty={() => false}
-          loading={<p className="account__hint">Loading your profile…</p>}
-          empty={null}
-        >
-          {(p) => {
-            const stored = draftFrom(p);
-            const d = draft ?? stored;
-            const dirty = draftChanged(d, stored);
-            const name = profileDisplayName(p, user.displayName, user.email);
-            const nameError =
-              saveAttempted && d.displayName.trim() === '' ? "Display name can't be blank." : null;
-            // Non-assuming default: an empty providerData reads as "Unknown"
-            // (via providerLabel('')), never a fabricated specific method.
-            const provider = user.providerData[0]?.providerId ?? '';
-            const set = (key: keyof ProfileDraft, value: string) => {
-              setJustSaved(false);
-              setDraft({ ...d, [key]: value });
-            };
-            return (
-              <>
-                <AccountHero
-                  name={name}
-                  photoUrl={p.photoUrl}
-                  uid={uid}
-                  email={user.email ?? ''}
-                  role={[d.title.trim(), roleLabel(access)].filter((s) => s !== '').join(' · ')}
-                  photoStage={photoStage}
-                  photoInputRef={photoInputRef}
-                  onPhotoFile={(file) => void handlePhotoFile(file)}
-                  saving={saving}
-                  saveDisabled={saving || !dirty}
-                  onSave={() => void handleSaveProfile(d)}
-                />
+      </div>
+    );
+  }
 
-                {photoError !== null && (
-                  <Banner tone="error" title="Couldn't change your photo">
-                    {photoError}
-                  </Banner>
-                )}
-                {saveError !== null && (
-                  <Banner tone="error" title="Couldn't save your profile">
-                    {saveError}
-                  </Banner>
-                )}
-                {justSaved && !dirty && <Banner tone="success">Profile saved.</Banner>}
+  // The hero is drawn from whatever is known so far, so the band is on the page
+  // from the first paint: the name falls back through the Auth user while the
+  // `users/{uid}` read is in flight, and the actions wait for it.
+  const loaded = profile.status === 'ready' ? profile.data : null;
+  const stored = loaded !== null ? draftFrom(loaded) : null;
+  const d = draft ?? stored;
+  const dirty = d !== null && stored !== null && draftChanged(d, stored);
+  const name = profileDisplayName(
+    loaded ?? { displayName: '', firstName: '', lastName: '' },
+    user.displayName,
+    user.email,
+  );
+  const role = [d?.title.trim() ?? '', roleLabel(access)].filter((s) => s !== '').join(' · ');
 
-                <div className="account__cols">
-                  <div className="account__col">
-                    <DenPanel title="Profile" subtitle="What kinfolk see on your KinTales and replies.">
-                      <div className="account__fields">
-                        <div className="account__frow">
-                          <TextField
-                            id="account-first-name"
-                            label="First name"
-                            value={d.firstName}
-                            disabled={saving}
-                            onChange={(v) => set('firstName', v)}
-                          />
-                          <TextField
-                            id="account-last-name"
-                            label="Last name"
-                            value={d.lastName}
-                            disabled={saving}
-                            onChange={(v) => set('lastName', v)}
-                          />
-                        </div>
+  return (
+    <div className="screen">
+      <AccountHero
+        name={name}
+        photoUrl={loaded?.photoUrl ?? ''}
+        uid={uid}
+        email={user.email ?? ''}
+        role={role}
+        photoStage={photoStage}
+        photoInputRef={photoInputRef}
+        onPhotoFile={(file) => void handlePhotoFile(file)}
+        photoDisabled={loaded === null || photoStage !== null}
+        saving={saving}
+        saveDisabled={saving || !dirty}
+        onSave={() => {
+          if (d !== null) void handleSaveProfile(d);
+        }}
+      />
+
+      <AsyncRegion
+        state={profile}
+        what="profile"
+        isEmpty={() => false}
+        loading={<p className="account__hint">Loading your profile…</p>}
+        empty={null}
+      >
+        {(p) => {
+          // The draft the hero Save writes is the same object the fields edit:
+          // `d` above is null only while `p` is not on screen.
+          const fields = d ?? draftFrom(p);
+          const nameError =
+            saveAttempted && fields.displayName.trim() === ''
+              ? "Display name can't be blank."
+              : null;
+          // Non-assuming default: an empty providerData reads as "Unknown"
+          // (via providerLabel('')), never a fabricated specific method.
+          const provider = user.providerData[0]?.providerId ?? '';
+          const set = (key: keyof ProfileDraft, value: string) => {
+            setJustSaved(false);
+            setDraft({ ...fields, [key]: value });
+          };
+          return (
+            <>
+              {photoError !== null && (
+                <Banner tone="error" title="Couldn't change your photo">
+                  {photoError}
+                </Banner>
+              )}
+              {saveError !== null && (
+                <Banner tone="error" title="Couldn't save your profile">
+                  {saveError}
+                </Banner>
+              )}
+              {justSaved && !dirty && <Banner tone="success">Profile saved.</Banner>}
+
+              <div className="account__cols">
+                <div className="account__col">
+                  <DenPanel title="Profile" subtitle="What kinfolk see on your KinTales and replies.">
+                    <div className="account__fields">
+                      <div className="account__frow">
                         <TextField
-                          id="account-display-name"
-                          label="Display name"
-                          value={d.displayName}
+                          id="account-first-name"
+                          label="First name"
+                          value={fields.firstName}
                           disabled={saving}
-                          error={nameError}
-                          onChange={(v) => set('displayName', v)}
+                          onChange={(v) => set('firstName', v)}
                         />
-                        <div className="account__frow">
-                          <TextField
-                            id="account-phone"
-                            label="Phone"
-                            type="tel"
-                            value={d.phone}
-                            disabled={saving}
-                            onChange={(v) => set('phone', v)}
-                          />
-                          <TextField
-                            id="account-title"
-                            label="Title"
-                            value={d.title}
-                            disabled={saving}
-                            onChange={(v) => set('title', v)}
-                          />
-                        </div>
-                        <div className="account__field">
-                          <label className="account__label" htmlFor="account-bio">
-                            Bio
-                          </label>
-                          <textarea
-                            id="account-bio"
-                            rows={3}
-                            className="account__input account__textarea"
-                            value={d.bio}
-                            disabled={saving}
-                            onChange={(e) => set('bio', e.target.value)}
-                          />
-                        </div>
+                        <TextField
+                          id="account-last-name"
+                          label="Last name"
+                          value={fields.lastName}
+                          disabled={saving}
+                          onChange={(v) => set('lastName', v)}
+                        />
                       </div>
-                    </DenPanel>
+                      <TextField
+                        id="account-display-name"
+                        label="Display name"
+                        value={fields.displayName}
+                        disabled={saving}
+                        error={nameError}
+                        onChange={(v) => set('displayName', v)}
+                      />
+                      <div className="account__frow">
+                        <TextField
+                          id="account-phone"
+                          label="Phone"
+                          type="tel"
+                          value={fields.phone}
+                          disabled={saving}
+                          onChange={(v) => set('phone', v)}
+                        />
+                        <TextField
+                          id="account-title"
+                          label="Title / Role"
+                          value={fields.title}
+                          disabled={saving}
+                          onChange={(v) => set('title', v)}
+                        />
+                      </div>
+                      <div className="account__field">
+                        <label className="account__label" htmlFor="account-bio">
+                          Bio
+                        </label>
+                        <textarea
+                          id="account-bio"
+                          rows={3}
+                          className="account__input account__textarea"
+                          placeholder="A short note for your team."
+                          value={fields.bio}
+                          disabled={saving}
+                          onChange={(e) => set('bio', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </DenPanel>
 
-                    <BusinessProfilePanel />
-                  </div>
-
-                  <div className="account__col">
-                    <NotificationChannelsPanel
-                      {...(onOpenNotifications ? { onOpenNotifications } : {})}
-                    />
-
-                    <SecurityPanel
-                      email={user.email ?? ''}
-                      meta={
-                        <dl className="account__meta">
-                          <MetaFact label="Role" value={roleLabel(access)} />
-                          {access.status === 'testAdmin' && (
-                            <MetaFact label="Sandbox tribe" value={access.testTribeId} mono />
-                          )}
-                          <MetaFact label="Sign-in method" value={providerLabel(provider)} />
-                          <MetaFact
-                            label="Email status"
-                            value={emailVerifiedLabel(user.emailVerified)}
-                          />
-                          <MetaFact label="User ID" value={uid} mono />
-                          <MetaFact
-                            label="Account created"
-                            value={authDateLabel(user.metadata.creationTime ?? '')}
-                          />
-                          <MetaFact
-                            label="Last sign-in"
-                            value={authDateLabel(user.metadata.lastSignInTime ?? '')}
-                          />
-                        </dl>
-                      }
-                    />
-                  </div>
+                  <BusinessProfilePanel />
                 </div>
-              </>
-            );
-          }}
-        </AsyncRegion>
-      )}
+
+                <div className="account__col">
+                  <NotificationChannelsPanel
+                    {...(onOpenNotifications ? { onOpenNotifications } : {})}
+                  />
+
+                  <SecurityPanel
+                    email={user.email ?? ''}
+                    meta={
+                      <dl className="account__meta">
+                        <MetaFact label="Role" value={roleLabel(access)} />
+                        {access.status === 'testAdmin' && (
+                          <MetaFact label="Sandbox tribe" value={access.testTribeId} mono />
+                        )}
+                        <MetaFact label="Sign-in method" value={providerLabel(provider)} />
+                        <MetaFact
+                          label="Email status"
+                          value={emailVerifiedLabel(user.emailVerified)}
+                        />
+                        <MetaFact label="User ID" value={uid} mono />
+                        <MetaFact
+                          label="Account created"
+                          value={authDateLabel(user.metadata.creationTime ?? '')}
+                        />
+                        <MetaFact
+                          label="Last sign-in"
+                          value={authDateLabel(user.metadata.lastSignInTime ?? '')}
+                        />
+                      </dl>
+                    }
+                  />
+                </div>
+              </div>
+            </>
+          );
+        }}
+      </AsyncRegion>
     </div>
   );
 }
@@ -419,17 +443,26 @@ interface AccountHeroProps {
   photoStage: UploadStage | null;
   photoInputRef: React.RefObject<HTMLInputElement | null>;
   onPhotoFile: (file: File | null) => void;
+  /** Until the profile has been read there is no document to put a photo on. */
+  photoDisabled: boolean;
   saving: boolean;
   saveDisabled: boolean;
   onSave: () => void;
 }
 
 /**
- * The mock's hero: avatar, name, role line, email, badges, and the two actions.
+ * The mock's hero, on the kit band (#788): the crumb trail where a list screen
+ * puts its kicker, the avatar in `leading`, the operator's name as the title,
+ * the role line as `detail`, the email as the line under it, the three tags as
+ * kit pills in `badges`, and the two actions in `trailing`.
+ *
  * The "Sole admin" badge is the only one needing a round-trip, so it loads here
  * rather than in the screen: when `listBusinessAdmins` fails there is simply no
  * badge, because "you are the only admin" is a claim this screen must not make
  * without the roster that proves it.
+ *
+ * The pills take the mock's own tones: `.tag` is orange (Active), `.tag.sole`
+ * purple, `.tag.uid` teal. The uid pill is mono because it is an identifier.
  */
 function AccountHero({
   name,
@@ -440,6 +473,7 @@ function AccountHero({
   photoStage,
   photoInputRef,
   onPhotoFile,
+  photoDisabled,
   saving,
   saveDisabled,
   onSave,
@@ -461,57 +495,70 @@ function AccountHero({
   }, []);
 
   return (
-    <div className="account__hero">
-      <Avatar
-        label={name}
-        imageUrl={photoUrl}
-        initials={profileInitials(name)}
-        size={72}
-        shape="rounded"
-        gradientSeed={uid !== '' ? uid : name}
-      />
-      <div className="account__heroMeta">
-        <span className="account__heroName">{name}</span>
-        {role !== '' && <span className="account__heroRole">{role}</span>}
-        <span className="account__heroEmail">{email === '' ? 'No login email on file' : email}</span>
-        <div className="account__badges">
+    <DenScreenHeading
+      className="account__hero"
+      crumbs={[{ label: 'Settings', link: linkOptions({ to: '/settings' }) }, { label: 'User profile' }]}
+      title={name}
+      {...(role !== '' ? { detail: role } : {})}
+      leading={
+        <Avatar
+          label={name}
+          imageUrl={photoUrl}
+          initials={profileInitials(name)}
+          size={88}
+          shape="rounded"
+          gradientSeed={uid !== '' ? uid : name}
+        />
+      }
+      badges={
+        <>
           {/* The /admin route context only ever resolves to `admin` or
               `testAdmin` here: a denied operator never reaches this screen, so
               the account IS active by the time this renders. */}
-          <span className="account__badge">Active</span>
-          {soleAdmin && <span className="account__badge account__badge--sole">Sole admin</span>}
-          {uid !== '' && (
-            <span className="account__badge account__badge--uid">uid: {uidBadge(uid)}</span>
+          <StatusPill label="Active" tone="orange" />
+          {soleAdmin && <StatusPill label="Sole admin" tone="purple" />}
+          {uid !== '' && <StatusPill label={`uid: ${uidBadge(uid)}`} tone="teal" />}
+        </>
+      }
+      trailing={
+        <div className="account__heroActions">
+          {/* The same control Android's AccountSettingsScreen puts on the avatar:
+              pick an image, it becomes users/{uid}.photoUrl. The input carries
+              the accessible name and the file; the camera tile is its visible
+              face and opens the same picker. Both are named "Change photo". */}
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            aria-label="Change photo"
+            className="account__photo-input"
+            disabled={photoDisabled}
+            onChange={(e) => onPhotoFile(e.target.files?.[0] ?? null)}
+          />
+          {photoStage !== null && (
+            <span className="account__photoStage" role="status">
+              {photoStageLabel(photoStage)}
+            </span>
           )}
+          <IconButton
+            icon={<CameraGlyph />}
+            label="Change photo"
+            size={46}
+            onClick={() => photoInputRef.current?.click()}
+            disabled={photoDisabled}
+          />
+          <PrimaryButton
+            label={saving ? 'Saving…' : 'Save profile'}
+            leading={<CheckGlyph />}
+            onClick={onSave}
+            disabled={saveDisabled}
+            busy={saving}
+          />
         </div>
-      </div>
-      <div className="account__heroActions">
-        {/* The same control Android's AccountSettingsScreen puts on the avatar:
-            pick an image, it becomes users/{uid}.photoUrl. The input carries the
-            accessible name; the button is its visible face and opens the same
-            picker. */}
-        <input
-          ref={photoInputRef}
-          type="file"
-          accept="image/*"
-          aria-label="Change photo"
-          className="account__photo-input"
-          disabled={photoStage !== null}
-          onChange={(e) => onPhotoFile(e.target.files?.[0] ?? null)}
-        />
-        <GhostButton
-          label={photoStage === null ? 'Change photo' : photoStageLabel(photoStage)}
-          onClick={() => photoInputRef.current?.click()}
-          disabled={photoStage !== null}
-        />
-        <PrimaryButton
-          label={saving ? 'Saving…' : 'Save profile'}
-          onClick={onSave}
-          disabled={saveDisabled}
-          busy={saving}
-        />
-      </div>
-    </div>
+      }
+    >
+      <span className="account__heroEmail">{email === '' ? 'No login email on file' : email}</span>
+    </DenScreenHeading>
   );
 }
 
@@ -519,6 +566,70 @@ function AccountHero({
 function uidBadge(uid: string): string {
   return uid.length > 10 ? `${uid.slice(0, 10)}…` : uid;
 }
+
+// ── glyphs ──────────────────────────────────────────────────────────────────
+// The mock's own paths, inline: no icon package is installed here and seven
+// strokes are not worth a dependency. All decorative; the control or the row
+// text beside each one carries the name.
+
+function Glyph({ children }: { children: ReactNode }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+function CameraGlyph() {
+  return (
+    <Glyph>
+      <path d="M4 7h3l2-2h6l2 2h3v12H4z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </Glyph>
+  );
+}
+
+function CheckGlyph() {
+  return (
+    <Glyph>
+      <path d="M5 13l4 4 10-10" />
+    </Glyph>
+  );
+}
+
+function MailGlyph() {
+  return (
+    <Glyph>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 7l9 6 9-6" />
+    </Glyph>
+  );
+}
+
+function PhoneGlyph() {
+  return (
+    <Glyph>
+      <rect x="6" y="3" width="12" height="18" rx="2.5" />
+      <path d="M10 18h4" />
+    </Glyph>
+  );
+}
+
+function BellGlyph() {
+  return (
+    <Glyph>
+      <path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6Z" />
+      <path d="M10 20a2 2 0 004 0" />
+    </Glyph>
+  );
+}
+
+/** The mock's `.trow .ico` per channel. */
+const CHANNEL_GLYPH: Readonly<Record<NotificationChannel, () => ReactNode>> = {
+  email: MailGlyph,
+  sms: PhoneGlyph,
+  push: BellGlyph,
+};
 
 // ── business profile ────────────────────────────────────────────────────────
 
@@ -703,6 +814,7 @@ function NotificationChannelsPanel({ onOpenNotifications }: AccountProps) {
               const on = channelMasterOn(data.prefs, data.matrix, scopes, channel);
               return (
                 <div key={channel} className="account__toggleRow">
+                  <IconTile icon={CHANNEL_GLYPH[channel]()} size={34} />
                   <div className="account__toggleText">
                     <b className="account__toggleTitle">{row.title}</b>
                     <small className="account__toggleDetail">

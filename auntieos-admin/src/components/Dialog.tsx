@@ -25,8 +25,9 @@ interface DialogProps {
   /**
    * `'standard'` (default) is the 30rem column every confirm/edit modal has
    * always been. `'wide'` is for a modal that carries a second COLUMN rather
-   * than more rows, which so far means an editor with a live preview beside it
-   * (TemplateEditor). A size modifier on the shared shell, not a per-screen
+   * than more rows (BulkRescheduleDialog today; the template editor used it
+   * until the #755 sweep made that editor a page of its own). A size modifier
+   * on the shared shell, not a per-screen
    * override of `.dialog`, because a screen stylesheet reaching into another
    * component's class is how two rules end up fighting over the same width.
    *

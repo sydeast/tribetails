@@ -135,7 +135,15 @@ const SCREENS: readonly Screen[] = [
   // through the `listConversations` callable and renders its error state under
   // this harness, so it shares the fix and not the proof.
   { slug: 'inbox', kicker: 'The Den · Inbox', row: '.inbox__row-main', identity: '.inbox__row-who' },
-  { slug: 'activity', kicker: 'The Den · Admin', row: '.log__row', identity: '.log__body' },
+  // The Activity log row is the disclosure button since #755 (time, glyph
+  // tile, meta, and a seq column the phone rule hides); the meta column is the
+  // one carrying the action and its context.
+  {
+    slug: 'activity',
+    kicker: 'The Den · Activity log',
+    row: '.activity__summary',
+    identity: '.activity__meta',
+  },
   {
     slug: 'notifications',
     kicker: 'The Den · Notifications',

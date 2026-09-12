@@ -926,6 +926,7 @@ private fun AuthenticatedNavHost(
                 AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
                     com.tribetails.auntieos.ui.admin.AccountSettingsScreen(
                         onBack = { navController.popBackStack() },
+                        onOpenNotifications = { navController.navigate(Screen.AdminNotificationPrefs.route) },
                     )
                 }
             }

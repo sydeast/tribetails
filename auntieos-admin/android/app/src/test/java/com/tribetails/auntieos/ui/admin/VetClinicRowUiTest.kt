@@ -109,8 +109,49 @@ class VetClinicRowUiTest {
                 )
             }
         }
-        composeRule.onNodeWithText("2 linked", ignoreCase = true).assertIsDisplayed()
-        composeRule.onNodeWithText("3 by name only", ignoreCase = true).assertIsDisplayed()
+        // One line since the #755 sweep (the mock's `.linked`): both counts sit
+        // in the same text, so each is matched as a substring of it.
+        composeRule.onNodeWithText("2 linked", substring = true, ignoreCase = true).assertIsDisplayed()
+        composeRule.onNodeWithText("3 by name only", substring = true, ignoreCase = true).assertIsDisplayed()
+    }
+
+    /**
+     * The mock's card head (#755): the name, the document path in mono under
+     * it, and a blank detail drawn as "Not set" rather than dropped, the same
+     * as web. The gaps in a record are content.
+     */
+    @Test
+    fun `draws the mock header and never hides a blank detail`() {
+        composeRule.setContent {
+            AuntieOSTheme {
+                VetClinicRow(clinic = clinic, usage = VetClinicUsage(), onSave = {}, onRetire = {})
+            }
+        }
+        composeRule.onNodeWithText("Creekside").assertIsDisplayed()
+        composeRule.onNodeWithText("vet_clinics/c1").assertIsDisplayed()
+        // Hours is blank on the fixture: the row is still there, reading Not set.
+        composeRule.onNodeWithContentDescription("Hours").assertIsDisplayed()
+        composeRule.onNodeWithText("Not set").assertIsDisplayed()
+        // Edit and Retire are icon buttons named by description, not by a word.
+        composeRule.onNodeWithContentDescription("Edit clinic").assertIsDisplayed()
+        composeRule.onNodeWithText("Edit").assertDoesNotExist()
+    }
+
+    /** The mock's `.countpill`: the bank size, or how much of it a search shows. */
+    @Test
+    fun `the catalog count says how much of the bank is showing`() {
+        composeRule.setContent {
+            AuntieOSTheme {
+                androidx.compose.foundation.layout.Column {
+                    VetCatalogCount(shown = 6, total = 6, filtering = false)
+                    VetCatalogCount(shown = 2, total = 6, filtering = true)
+                    VetCatalogCount(shown = 1, total = 1, filtering = false)
+                }
+            }
+        }
+        composeRule.onNodeWithText("6 clinics").assertIsDisplayed()
+        composeRule.onNodeWithText("2 of 6 clinics").assertIsDisplayed()
+        composeRule.onNodeWithText("1 clinic").assertIsDisplayed()
     }
 
     /** A retired row offers Restore, with no confirm step: it is reversible. */

@@ -9,12 +9,13 @@
  * itself no longer has a fixed edge: it is a square cell sized by the column it
  * lands in, which is what fills the content width instead of clustering three
  * tiles in the first third of it.
+ *
+ * Every translucent navy the mock paints over a thumbnail (`rgba(17,19,31,x)`
+ * on the play badge, the duration badge, the delete X and the caption strip) is
+ * brand navy at an alpha, so it is written here as `color-mix` over
+ * `--tt-brand-navy` (#755). It used to be black, which is not a colour the mock
+ * uses anywhere.
  */
-
-.gallery__hint {
-  color: var(--color-text-dim);
-  margin: 0;
-}
 
 .gallery__count {
   font-family: var(--font-mono);
@@ -164,7 +165,12 @@
 
 /* A real `<button>` (#388), so this resets every default the browser would
    otherwise impose (border, background, padding, centered text, a system font)
-   back to the plain square the tile visually is. */
+   back to the plain square the tile visually is.
+
+   It wears the shared `lift` class (#755): the mock's `.cell:hover` rises 3px
+   under the mock's shadow, and base.css owns both values, so nothing here
+   restates the distance or guards reduced motion. The button carries the
+   tile's radius so the lifted shadow follows the rounded edge. */
 .gallery__tile {
   display: block;
   width: 100%;
@@ -174,13 +180,13 @@
   color: inherit;
   background: none;
   border: none;
+  border-radius: var(--radius-card-lg);
   padding: 0;
   cursor: pointer;
 }
 .gallery__tile:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
-  border-radius: var(--radius-card-lg);
 }
 
 .gallery__tile-media {
@@ -201,51 +207,98 @@
   width: 100%;
   height: 100%;
   border: var(--border-hairline) solid var(--color-border);
-  transition: var(--lift-transition);
+  transition: border-color var(--dur-base) var(--ease-standard);
 }
+/* The mock's `.cell:hover` border: primary at 40%, not the full brand orange. */
 .gallery__tile:hover .gallery__tile-avatar,
-.gallery__tile:focus-visible .gallery__tile-avatar {
-  border-color: var(--color-primary);
+.gallery__tile:focus-visible .gallery__tile-avatar,
+.gallery__tile:hover .gallery__tile-file,
+.gallery__tile:focus-visible .gallery__tile-file {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
 
+/* The mock's `.filecell` (#755): a DOCUMENT or AUDIO tile has no frame to
+   preview, so it draws the type glyph in primary over the panel gradient with
+   the file name under it, two lines at most, centred. This is the one text the
+   mock prints on a tile at rest. */
+.gallery__tile-file {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card-lg);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.gallery__tile-file-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--color-primary);
+}
+.gallery__tile-file-glyph svg {
+  width: 34px;
+  height: 34px;
+}
+.gallery__tile-file-name {
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  line-height: 1.3;
+  text-align: center;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* The mock's `.play`: a 46px navy-glass disc with the play glyph in primary. */
 .gallery__tile-play {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  color: var(--tt-brand-cream);
+  color: var(--color-primary);
   pointer-events: none;
 }
 .gallery__tile-play svg {
-  background: rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+  width: 46px;
+  height: 46px;
+  padding: var(--space-3);
+  background: color-mix(in srgb, var(--tt-brand-navy) 70%, transparent);
   border-radius: var(--radius-pill);
-  padding: var(--space-2);
+  backdrop-filter: blur(2px);
 }
 
+/* The mock's `.dur`: bottom START, mono, navy glass. It sat bottom-end before,
+   which is where the mock puts nothing. */
 .gallery__tile-duration {
   position: absolute;
-  right: var(--space-1);
-  bottom: var(--space-1);
+  left: var(--space-2);
+  bottom: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
   color: var(--tt-brand-cream);
-  background: rgba(0, 0, 0, 0.6);
+  background: color-mix(in srgb, var(--tt-brand-navy) 74%, transparent);
   border-radius: var(--radius-chip);
-  padding: 0.1rem 0.4rem;
+  padding: 0.15rem 0.45rem;
   z-index: 1;
 }
 
+/* The mock's `.pf`: top start. The capsule itself is the kit's compact teal
+   StatusPill; this only places it. */
 .gallery__tile-profile-badge {
   position: absolute;
-  left: var(--space-1);
-  top: var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  font-weight: var(--type-label-sm-weight);
-  color: var(--color-background);
-  background: var(--color-accent);
-  border-radius: var(--radius-pill);
-  padding: 0.1rem 0.5rem;
+  left: var(--space-2);
+  top: var(--space-2);
+  display: inline-flex;
   z-index: 1;
 }
 
@@ -276,12 +329,14 @@
    not there. */
 .gallery__tile-actions {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: var(--space-2);
+  right: var(--space-2);
   z-index: 3;
   display: flex;
   border-radius: var(--radius-pill);
-  background: var(--color-surface-glass);
+  /* The mock's `.del` disc: navy at 80% on a hairline, not the surface glass. */
+  background: color-mix(in srgb, var(--tt-brand-navy) 80%, transparent);
+  border: var(--border-hairline) solid var(--color-hairline);
   backdrop-filter: blur(6px);
 }
 
@@ -306,7 +361,11 @@
   flex-direction: column;
   gap: 0.1rem;
   padding: var(--space-5) var(--space-2) var(--space-2);
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.92), transparent);
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--tt-brand-navy) 92%, transparent),
+    transparent
+  );
   border-radius: 0 0 var(--radius-card-lg) var(--radius-card-lg);
   pointer-events: none;
   opacity: 0;
@@ -317,18 +376,11 @@
   opacity: 1;
 }
 
-/* The strip's fade is decoration; a reduced-motion preference drops the fade,
-   never the information. */
-@media (prefers-reduced-motion: reduce) {
-  .gallery__tile-caption-strip {
-    transition: none;
-  }
-}
 
+/* The mock's `.cap .desc`: Hanken 12/600, not the serif. */
 .gallery__tile-caption {
-  font-family: var(--font-fraunces);
-  font-size: var(--type-title-sm-size);
-  font-weight: var(--type-title-sm-weight);
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
   line-height: 1.3;
   color: var(--tt-brand-cream);
   overflow: hidden;
@@ -346,11 +398,11 @@
   white-space: nowrap;
 }
 
+/* The mock's `.cap .meta`: mono, cream-dim. */
 .gallery__tile-meta {
   font-family: var(--font-mono);
   font-size: var(--type-label-sm-size);
-  color: var(--tt-brand-cream);
-  opacity: 0.75;
+  color: var(--color-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -365,7 +417,7 @@
   margin-top: 0.15rem;
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--tt-brand-navy) 50%, transparent);
   font-size: var(--type-label-sm-size);
   color: var(--tt-brand-cream);
   overflow: hidden;
@@ -373,6 +425,39 @@
   white-space: nowrap;
 }
 
+/* ── empty (#755) ─────────────────────────────────────────────────────────
+   The mock's `.empty`: a dashed hairline frame on a faint wash of the hero
+   bottom colour, the image glyph at half strength, a serif title and one dim
+   line. Drawn only for a resolved, genuinely empty read. */
+.gallery__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-12) var(--space-5);
+  color: var(--color-text-dim);
+  border: var(--border-hairline) dashed var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-hero-bottom) 30%, transparent);
+}
+.gallery__empty-glyph {
+  width: 64px;
+  height: 64px;
+  opacity: 0.5;
+  margin-bottom: var(--space-4);
+}
+.gallery__empty-title {
+  margin: 0;
+  font-family: var(--font-fraunces);
+  font-size: var(--type-headline-md-size);
+  font-weight: var(--type-headline-md-weight);
+  color: var(--color-text-primary);
+}
+.gallery__empty-sub {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-body-md-size);
+}
 /* ── delete confirm (#692) ────────────────────────────────────────────────── */
 
 .gallery__dialog-body {

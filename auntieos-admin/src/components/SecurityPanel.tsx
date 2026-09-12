@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { AccountSecurityError, changeEmail, sendReset, signOut } from '../lib/auth';
 import { DenPanel } from './DenScreenKit';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
+import { IconTile } from './IconTile';
 import './SecurityPanel.css';
 
 interface SecurityPanelProps {
@@ -184,15 +185,18 @@ function EmailSection({ email }: SecurityPanelProps) {
 
 // ── action rows (the mock's two Security rows) ──────────────────────
 interface SecurityRowProps {
+  /** The mock's `.secrow .ico`: a 38px tile leading the row. Decorative. */
+  icon: ReactNode;
   title: string;
   detail: React.ReactNode;
   outcome: React.ReactNode;
   action: React.ReactNode;
 }
 /** One "what it does / here is the button" row. The mock's `.secrow`. */
-function SecurityRow({ title, detail, outcome, action }: SecurityRowProps) {
+function SecurityRow({ icon, title, detail, outcome, action }: SecurityRowProps) {
   return (
     <div className="security__row">
+      <IconTile icon={icon} size={38} />
       <div className="security__rowText">
         <b className="security__rowTitle">{title}</b>
         <small className="security__rowDetail">{detail}</small>
@@ -228,6 +232,7 @@ function ResetRow({ email }: { email: string }) {
   }
   return (
     <SecurityRow
+      icon={<LockGlyph />}
       title="Change password"
       detail={
         isPlausibleEmail(email)
@@ -274,6 +279,7 @@ function SignOutRow() {
   }
   return (
     <SecurityRow
+      icon={<SignOutGlyph />}
       title="Sign out"
       detail="End this session on this device."
       outcome={<Outcome errorTitle="Couldn't sign you out" error={error} success={null} />}
@@ -285,5 +291,25 @@ function SignOutRow() {
         />
       }
     />
+  );
+}
+// ── glyphs ──────────────────────────────────────────────────────────────────
+// The mock's own paths, inline: no icon package is installed here. Decorative;
+// the row title beside each carries the meaning.
+function LockGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 018 0v3" />
+    </svg>
+  );
+}
+function SignOutGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M14 3h5v18h-5" />
+      <path d="M3 12h11" />
+      <path d="M9 8l-4 4 4 4" />
+    </svg>
   );
 }

@@ -656,11 +656,11 @@ describe('Settings — real editors wire through the shared persist', () => {
     render(<Settings />);
     await screen.findByLabelText('Business name');
     const panel = await openSection('KinCare Settings');
-    const nameField = within(panel).getByPlaceholderText('e.g. Drop-in visit');
-    const ratesPanel = panelOwning(nameField);
-    await userEvent.type(nameField, 'Walk');
-    await userEvent.click(within(ratesPanel).getByRole('button', { name: /^add$/i }));
-    await userEvent.click(within(ratesPanel).getByRole('button', { name: /^save$/i }));
+    // ISSUE #755: the mock's add appends a blank row to the table; the save
+    // bar sits under the editor's two panels and carries its own label.
+    await userEvent.click(within(panel).getByRole('button', { name: /^add kincare type$/i }));
+    await userEvent.type(within(panel).getByLabelText('Name'), 'Walk');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save kincare types$/i }));
     expect(saveBusinessSettings).toHaveBeenCalledWith({ serviceRates: { Walk: '' }, serviceDurations: {} });
   });
 
@@ -669,7 +669,7 @@ describe('Settings — real editors wire through the shared persist', () => {
     render(<Settings />);
     await screen.findByLabelText('Business name');
     const panel = await openSection('KinCare Settings');
-    expect(within(panel).getByText('KinCare types')).toBeInTheDocument();
+    expect(within(panel).getByRole('heading', { name: 'Your KinCare types' })).toBeInTheDocument();
     expect(within(panel).getByText('Visits and tracking')).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: /toggle gps tracking for all visits/i })).toBeInTheDocument();
   });
