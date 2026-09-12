@@ -362,19 +362,36 @@ export function memberLabel(member: HouseholdMember): string {
   return member.invitedEmail ?? member.secondaryLabel ?? member.uid;
 }
 
-export type PillTone = 'success' | 'warning' | 'error' | 'muted' | 'neutral';
+/**
+ * A subset of the kit's `DenTone`, spelled out here so this module does not
+ * import a component file. Every value resolves through the kit's `data-tone`
+ * map.
+ */
+export type PillTone = 'success' | 'warning' | 'error' | 'muted' | 'neutral' | 'teal' | 'orange';
 
+/**
+ * The invites mock's own tints (`ui-ideas/auntieos-invites-2026-05-27.html`,
+ * #755): pending and email sent in orange, accepted in teal, revoked in coral,
+ * expired in the muted grey. The admin-wide Invites screen carries the same
+ * map as its local `invitePillTone`; this one paints the household's Members
+ * screen.
+ */
 export function inviteStatusTone(status: InviteStatus): PillTone {
-  if (status === 'ACCEPTED') return 'success';
-  if (status === 'EMAIL_SENT' || status === 'PENDING') return 'warning';
+  if (status === 'ACCEPTED') return 'teal';
+  if (status === 'EMAIL_SENT' || status === 'PENDING') return 'orange';
   if (status === 'REVOKED') return 'error';
   if (status === 'EXPIRED') return 'muted';
   return 'neutral';
 }
 
+/**
+ * The members mock's `.status` LED (`ui-ideas/auntieos-members-2026-05-27.html`):
+ * active in teal, invited in orange. Suspended is not drawn there; coral is the
+ * app's colour for a member who has been removed.
+ */
 export function memberStatusTone(status: MemberStatus): PillTone {
-  if (status === 'ACTIVE') return 'success';
-  if (status === 'INVITED') return 'warning';
+  if (status === 'ACTIVE') return 'teal';
+  if (status === 'INVITED') return 'orange';
   if (status === 'SUSPENDED') return 'error';
   return 'neutral';
 }

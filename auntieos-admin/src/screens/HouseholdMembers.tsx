@@ -15,6 +15,7 @@ import {
   type HouseholdMember,
   type InviteStatus,
   type MemberRole,
+  type MemberStatus,
   type PermissionKey,
   type RecoveryCandidate,
 } from '../api/members';
@@ -29,8 +30,15 @@ import {
 } from '../api/membersWrite';
 import { linkOptions } from '@tanstack/react-router';
 import { type Async } from '../lib/async';
-import { DenPanel, DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
-import { AsyncRegion } from '../components/AsyncRegion';
+import {
+  DenPanel,
+  DenScreenHeading,
+  EmptyHint,
+  ErrorHint,
+  StatusPill,
+} from '../components/DenScreenKit';
+import { AsyncLoading, AsyncRegion } from '../components/AsyncRegion';
+import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
@@ -49,12 +57,12 @@ import './HouseholdMembers.css';
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it for them. The one admin invite, "Portal access", mails the primary
- * claim link to the address on the kinfolk record.
+ * do it for them. The one admin invite, "Invite to portal" in the hero, mails
+ * the primary claim link to the address on the kinfolk record.
  *
  * "Invite a primary by email" sent the same claim link to an address the
  * operator typed, for a household with the wrong email on file or none
- * (issue #684). The operator rejected that case: the Portal access button
+ * (issue #684). The operator rejected that case: the portal invite button
  * already covers it. The form and its `submitInvite` handler are gone;
  * `mintInvite` stays a registered callable with no caller in `src/`, because
  * it is PRIMARY-only per this same ruling and the server side of it is not
@@ -62,8 +70,8 @@ import './HouseholdMembers.css';
  *
  * WHAT A PRIMARY MAY LOSE: nothing. A primary's entitlements are inherent to
  * the role, because `requirePerm` in memberGate.ts answers for PRIMARY before
- * it reads the flags. Their rows therefore render as granted-by-role rather
- * than as switches.
+ * it reads the flags. Their card therefore carries one "all permissions
+ * granted by role" capsule, the mock's own footnote, rather than switches.
  * This screen once drew five live toggles on a primary, which made billing,
  * home access and kin edit look revocable when the writes behind them changed
  * nothing any enforcement path reads. `setMemberPermissions` now refuses a
@@ -79,11 +87,24 @@ import './HouseholdMembers.css';
  * here, and a free-text tenant id is a way to invite a stranger into the wrong
  * family.
  *
- * The two mocks it follows are `ui-ideas/auntieos-members-2026-05-27.html` and
- * `auntieos-invites-2026-05-27.html`. Their "new admin surface / no UI today"
- * banners are dropped, because after this change that is no longer true, and
- * their sample emails, family ids and dates are placeholder by their own
- * admission: every value here is bound to a callable response.
+ * THE SHAPE IS THE MOCK'S (#755). `ui-ideas/auntieos-members-2026-05-27.html`
+ * draws a hero band with the household's crest, its name, a mono line with the
+ * family id and the member counts, and the actions on the right; then a
+ * Primary contact panel and a Secondary contacts panel, each member a block
+ * with a 58px circle, the name, a role capsule and a status capsule. The
+ * invites half follows `auntieos-invites-2026-05-27.html` the way the
+ * admin-wide Invites screen draws it: a tone stripe, a 42px circle, the
+ * address, the provenance line, the pills. The mocks' "new admin surface / no
+ * UI today" banners are not rendered, because after this change that is no
+ * longer true, and their sample emails, family ids and dates are placeholder
+ * by their own admission: every value here is bound to a callable response.
+ *
+ * Two of the members mock's controls are PRIMARY-only on the server and so
+ * cannot be offered to an admin: the editable `secondaryLabel` input
+ * (`updateMemberLabel` calls `requirePrimary`) and "Swap contact info"
+ * (`swapPrimaryContact` edits the CALLER's own client record). The label is
+ * shown read-only in the mock's shape; the admin's way to move a household is
+ * "Swap primary", which is `executePrimaryRecovery`.
  *
  * FAIL LOUD. Each of the five writes has its own error channel and its own
  * in-flight flag, so one failure cannot be mistaken for another and no control
@@ -105,24 +126,6 @@ export interface HouseholdMembersProps {
   onBack: () => void;
 }
 
-type PillTone = 'success' | 'warning' | 'error' | 'muted' | 'neutral';
-
-function StatusPill({ label, tone }: { label: string; tone: PillTone }) {
-  return (
-    <span className="hmembers__pill" data-tone={tone}>
-      {label}
-    </span>
-  );
-}
-
-function RolePill({ role }: { role: MemberRole }) {
-  return (
-    <span className="hmembers__pill" data-role={role.toLowerCase()}>
-      {role === 'PRIMARY' ? 'Primary' : 'Secondary'}
-    </span>
-  );
-}
-
 /** Invite groups, in the order the invites mock stacks them. */
 const INVITE_GROUPS: ReadonlyArray<{ heading: string; statuses: readonly InviteStatus[] }> = [
   { heading: 'Pending', statuses: ['PENDING', 'EMAIL_SENT'] },
@@ -133,6 +136,41 @@ const INVITE_GROUPS: ReadonlyArray<{ heading: string; statuses: readonly InviteS
 
 function errText(err: unknown, fallback: string): string {
   return err instanceof Error && err.message !== '' ? err.message : fallback;
+}
+
+/**
+ * The mock's crest letter: "W" for "the Wrens". A leading article is skipped
+ * so a household named "the Walls" reads W rather than T; an id-only fallback
+ * name ("fam1") keeps its first letter, which is honest if not pretty.
+ */
+export function householdInitial(name: string): string {
+  const trimmed = name.trim().replace(/^the\s+/i, '');
+  return (trimmed === '' ? name.trim() : trimmed).charAt(0).toUpperCase();
+}
+
+/**
+ * The mock's `.where` line under the household name: `familyId: fam_7Qk2 · 3
+ * members · 1 PRIMARY, 2 SECONDARY`. Counts are by ROLE, which is what the
+ * two panels below are split by, and they are only written once the roster
+ * has been read: before that the line is the id alone, never "0 members".
+ */
+export function whereLine(kinfolkId: string, members: Async<HouseholdMember[]>): string {
+  const head = `familyId: ${kinfolkId}`;
+  if (members.status !== 'ready') return head;
+  const rows = members.data;
+  const primary = rows.filter((m) => m.role === 'PRIMARY').length;
+  const secondary = rows.length - primary;
+  const noun = rows.length === 1 ? 'member' : 'members';
+  return `${head} · ${rows.length} ${noun} · ${primary} PRIMARY, ${secondary} SECONDARY`;
+}
+
+/** "Active" from ACTIVE. The mock's LED text is title case. */
+function statusWord(status: MemberStatus): string {
+  return status.charAt(0) + status.slice(1).toLowerCase();
+}
+
+function roleWord(role: MemberRole): string {
+  return role === 'PRIMARY' ? 'Primary' : 'Secondary';
 }
 
 export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMembersProps) {
@@ -362,8 +400,19 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     }
   }
 
+  function startRemove(member: HouseholdMember) {
+    setRemoveError(null);
+    setRemoveTarget(member);
+  }
+
+  // The mock's `.ct` on the Secondary contacts panel: "2 of role: SECONDARY".
+  // Written only from a read roster; a count is a claim.
+  const secondaryCount =
+    members.status === 'ready' ? members.data.filter((m) => m.role === 'SECONDARY').length : null;
+  const inviteCount = invites.status === 'ready' ? invites.data.length : null;
+
   return (
-    <div className="screen">
+    <div className="screen hmembers">
       <div className="d1">
         <DenScreenHeading
           // Both walkable steps are real ROUTE LINKS: this screen has exactly
@@ -380,11 +429,42 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
             },
             { label: 'Members and invites' },
           ]}
-          title="Members and"
-          accentTail="invites."
-          subtitle={`Who can reach ${householdName} in MyTribe, and what each of them may do.`}
-          trailing={<GhostButton label={back.label} onClick={back.goBack} />}
-        />
+          // The mock's hero names the HOUSEHOLD, not the screen: the trail
+          // above already says Members. The crest is the mock's 72px tile.
+          title={householdName}
+          subtitle={`Who can reach ${householdName} in MyTribe, and what each of them may do. Invite to portal sends the household a primary claim link that expires in ${INVITE_TTL_DAYS} days; a household that already has an active primary is left alone rather than emailed again.`}
+          leading={
+            <Avatar
+              label={householdName}
+              initials={householdInitial(householdName)}
+              gradientSeed={kinfolkId}
+              size={72}
+              shape="rounded"
+              ring={false}
+              className="hmembers__crest"
+            />
+          }
+          trailing={
+            <div className="hmembers__actions">
+              <GhostButton label={back.label} onClick={back.goBack} />
+              {/* The mock's "Swap primary". Present only while there is a
+                  primary to swap out: `executePrimaryRecovery` suspends
+                  `oldUid`, and with nobody sitting there is nothing to do. */}
+              {sittingPrimary !== null && <GhostButton label="Swap primary" onClick={openRecovery} />}
+              {/* The mock's primary action is "Add secondary contact". The
+                  admin does not invite the secondary (WHO INVITES WHOM,
+                  2026-08-04); the admin's one invite takes that slot. */}
+              <PrimaryButton
+                label={portalBusy ? 'Sending…' : 'Invite to portal'}
+                onClick={() => void invitePortal()}
+                disabled={portalBusy}
+                busy={portalBusy}
+              />
+            </div>
+          }
+        >
+          <p className="hmembers__where">{whereLine(kinfolkId, members)}</p>
+        </DenScreenHeading>
       </div>
 
       {permError !== null && (
@@ -412,204 +492,125 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         </Banner>
       )}
 
-      <div className="d2">
-        <DenPanel
-          title="Portal access"
-          subtitle={`Sends this household a primary claim link for MyTribe. It expires in ${INVITE_TTL_DAYS} days. A household that already has an active primary is left alone rather than emailed again.`}
-        >
-          <PrimaryButton
-            label={portalBusy ? 'Sending…' : 'Invite this household to the portal'}
-            onClick={() => void invitePortal()}
-            disabled={portalBusy}
-            busy={portalBusy}
-          />
-        </DenPanel>
-      </div>
-
-      <div className="d2">
-        <DenPanel
-          title="Members"
-          subtitle="Everyone with a MyTribe account on this household. A secondary's permissions are yours to set; a primary's come with the role and are shown here rather than offered as switches. KinTales access is locked on by the server for everyone."
-        >
-          <AsyncRegion
-            state={members}
-            what="members"
-            isEmpty={(rows) => rows.length === 0}
-            empty={
+      <DenPanel
+        className="d1"
+        title="Primary contact"
+        meta="role: PRIMARY"
+        subtitle="The household account owner. Held by role, not by setting: full billing, home access, kin edits and messaging come with being the primary, and the server reads the role rather than these flags, so there is nothing here to switch off. Swap primary suspends them and mails a claim link to a verified member you pick."
+      >
+        <AsyncRegion
+          state={members}
+          what="members"
+          isEmpty={(rows) => !rows.some((m) => m.role === 'PRIMARY')}
+          empty={
+            members.status === 'ready' && members.data.length === 0 ? (
               <EmptyHint>
-                Nobody has claimed this household yet. Send a portal invite above, and this list
-                fills in once it is accepted.
+                Nobody has claimed this household yet. Invite to portal sends the claim link, and
+                this fills in once it is accepted.
               </EmptyHint>
-            }
-          >
-            {(rows) => (
-              <ul className="hmembers__list">
-                {rows.map((member) => (
-                  <li key={member.uid} className="hmembers__member">
-                    <div className="hmembers__member-head">
-                      <div className="hmembers__member-who">
-                        <span className="hmembers__member-name">{memberLabel(member)}</span>
-                        <span className="hmembers__member-meta">
-                          {member.secondaryLabel !== null && member.role === 'SECONDARY'
-                            ? `${member.secondaryLabel} · `
-                            : ''}
-                          {member.uid}
-                        </span>
-                      </div>
-                      <RolePill role={member.role} />
-                      <StatusPill
-                        label={member.status.charAt(0) + member.status.slice(1).toLowerCase()}
-                        tone={memberStatusTone(member.status)}
-                      />
-                      <GhostButton
-                        label="Remove"
-                        onClick={() => {
-                          setRemoveError(null);
-                          setRemoveTarget(member);
-                        }}
-                      />
-                    </div>
-
-                    {permissionsFollowRole(member.role) ? (
-                      <>
-                        <p className="hmembers__inherent">
-                          Held by role, not by setting. The primary of a household has full
-                          billing, home access, kin edits and messaging because they are the
-                          primary, and the server reads the role rather than these flags. There
-                          is nothing here to switch off.
-                        </p>
-                        <ul className="hmembers__perms">
-                          {PERMISSION_META.map((perm) => (
-                            <li key={perm.key} className="hmembers__perm">
-                              <div className="hmembers__perm-text">
-                                <span className="hmembers__perm-name">{perm.label}</span>
-                                <span className="hmembers__perm-desc">{perm.description}</span>
-                              </div>
-                              <span className="hmembers__perm-state">Granted</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : (
-                      <ul className="hmembers__perms">
-                        {PERMISSION_META.map((perm) => {
-                          const busy = savingPerm === `${member.uid}:${perm.key}`;
-                          const locked = perm.serverLocked === true;
-                          return (
-                            <li key={perm.key} className="hmembers__perm">
-                              <div className="hmembers__perm-text">
-                                <span className="hmembers__perm-name">
-                                  {perm.label}
-                                  {locked && <span className="hmembers__perm-flag">locked on</span>}
-                                </span>
-                                <span className="hmembers__perm-desc">{perm.description}</span>
-                              </div>
-                              {busy && (
-                                <span role="status" className="hmembers__saving">
-                                  Saving…
-                                </span>
-                              )}
-                              <Toggle
-                                checked={member.permissions[perm.key]}
-                                label={`${perm.label} for ${memberLabel(member)}`}
-                                disabled={locked || savingPerm !== null}
-                                onChange={(next) => void togglePermission(member, perm.key, next)}
-                              />
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </li>
+            ) : (
+              <EmptyHint>
+                There is no active primary to recover. Invite to portal sends the claim link, and
+                whoever accepts becomes the primary.
+              </EmptyHint>
+            )
+          }
+        >
+          {(rows) => (
+            <ul className="hmembers__list">
+              {rows
+                .filter((m) => m.role === 'PRIMARY')
+                .map((member) => (
+                  <MemberBlock
+                    key={member.uid}
+                    member={member}
+                    savingPerm={savingPerm}
+                    onToggle={(key, next) => void togglePermission(member, key, next)}
+                    onRemove={() => startRemove(member)}
+                  />
                 ))}
-              </ul>
-            )}
-          </AsyncRegion>
-        </DenPanel>
-      </div>
-
-      <div className="d2">
-        <DenPanel
-          title="Hand the primary role to another member"
-          subtitle="For a household whose primary has lost their account. The member you pick is mailed a claim link that makes them the primary, and the current primary is suspended in the same step. The link can only go to a member of this household whose email address is verified."
-        >
-          {sittingPrimary === null ? (
-            <EmptyHint>
-              There is no active primary to recover. Send this household a portal invite instead,
-              and whoever accepts becomes the primary.
-            </EmptyHint>
-          ) : (
-            <>
-              <p className="hmembers__inherent">
-                {memberLabel(sittingPrimary)} holds this household today. Recovery suspends them
-                and mails the claim link to the member you choose; the recovering member has to
-                open it before anything changes on their side.
-              </p>
-              <GhostButton label="Start primary recovery" onClick={openRecovery} />
-            </>
+            </ul>
           )}
-        </DenPanel>
-      </div>
+        </AsyncRegion>
+      </DenPanel>
 
-      <div className="d2">
-        <DenPanel
-          title="Invites"
-          subtitle="Every invite this household has been sent. An invite past its expiry reads Expired here from the moment it lapses, even though the nightly sweep has not stamped it yet."
+      <DenPanel
+        className="d2"
+        title="Secondary contacts"
+        meta={secondaryCount === null ? '' : `${secondaryCount} of role: SECONDARY`}
+        subtitle="Household members the primary invited from MyTribe. Each carries a label and a permission set you can edit here. KinTales access is locked on by the server for everyone."
+      >
+        {members.status === 'loading' && <AsyncLoading what="secondary contacts" />}
+        {/* One named failure on the page, in the panel above. This one only
+            says it is unknown, so the same message is not read out twice. */}
+        {members.status === 'error' && (
+          <ErrorHint>Secondary contacts unavailable while the member list is failing.</ErrorHint>
+        )}
+        {members.status === 'ready' &&
+          (members.data.some((m) => m.role === 'SECONDARY') ? (
+            <ul className="hmembers__list">
+              {members.data
+                .filter((m) => m.role === 'SECONDARY')
+                .map((member) => (
+                  <MemberBlock
+                    key={member.uid}
+                    member={member}
+                    savingPerm={savingPerm}
+                    onToggle={(key, next) => void togglePermission(member, key, next)}
+                    onRemove={() => startRemove(member)}
+                  />
+                ))}
+            </ul>
+          ) : (
+            <EmptyHint>No secondary contacts yet. The primary invites them from MyTribe.</EmptyHint>
+          ))}
+      </DenPanel>
+
+      <DenPanel
+        className="d3"
+        title="Invites"
+        meta={inviteCount === null ? '' : `${inviteCount} total`}
+        subtitle="Every invite this household has been sent. An invite past its expiry reads Expired here from the moment it lapses, even though the nightly sweep has not stamped it yet."
+      >
+        <AsyncRegion
+          state={invites}
+          what="invites"
+          isEmpty={(rows) => rows.length === 0}
+          empty={<EmptyHint>No invite has ever been sent to this household.</EmptyHint>}
         >
-          <AsyncRegion
-            state={invites}
-            what="invites"
-            isEmpty={(rows) => rows.length === 0}
-            empty={<EmptyHint>No invite has ever been sent to this household.</EmptyHint>}
-          >
-            {(rows) => (
-              <div className="hmembers__groups">
-                {INVITE_GROUPS.map((group) => {
-                  const inGroup = rows.filter((i) => group.statuses.includes(i.effectiveStatus));
-                  if (inGroup.length === 0) return null;
-                  return (
-                    <section key={group.heading} className="hmembers__group">
-                      <h3 className="hmembers__group-title">
-                        {group.heading}
-                        <span className="hmembers__group-count">{inGroup.length}</span>
-                      </h3>
-                      <ul className="hmembers__list">
-                        {inGroup.map((invite) => (
-                          <li key={invite.inviteId} className="hmembers__invite">
-                            <div className="hmembers__invite-main">
-                              <span className="hmembers__invite-email">{invite.invitedEmail}</span>
-                              <span className="hmembers__invite-meta">
-                                {inviteMetaLine(invite)}
-                              </span>
-                              <div className="hmembers__invite-pills">
-                                <StatusPill
-                                  label={inviteStatusLabel(invite.effectiveStatus)}
-                                  tone={inviteStatusTone(invite.effectiveStatus)}
-                                />
-                                <RolePill role={invite.proposedRole} />
-                                {invite.secondaryLabel !== null && (
-                                  <StatusPill label={invite.secondaryLabel} tone="neutral" />
-                                )}
-                              </div>
-                            </div>
-                            {invite.redeemable && (
-                              <GhostButton
-                                label={revokingId === invite.inviteId ? 'Revoking…' : 'Revoke'}
-                                onClick={() => void revoke(invite)}
-                                disabled={revokingId !== null}
-                              />
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  );
-                })}
-              </div>
-            )}
-          </AsyncRegion>
-        </DenPanel>
-      </div>
+          {(rows) => (
+            <div className="hmembers__groups">
+              {INVITE_GROUPS.map((group) => {
+                const inGroup = rows.filter((i) => group.statuses.includes(i.effectiveStatus));
+                if (inGroup.length === 0) return null;
+                return (
+                  <section key={group.heading} className="hmembers__group">
+                    {/* The note is a sibling of the heading, never inside it,
+                        so the section's accessible name stays the one word. */}
+                    <div className="hmembers__group-head">
+                      <h3 className="hmembers__group-title">{group.heading}</h3>
+                      <span className="hmembers__group-note">
+                        {group.statuses.join(' / ')} · {inGroup.length}
+                      </span>
+                    </div>
+                    <ul className="hmembers__list">
+                      {inGroup.map((invite) => (
+                        <InviteRow
+                          key={invite.inviteId}
+                          invite={invite}
+                          revoking={revokingId === invite.inviteId}
+                          revokeBusy={revokingId !== null}
+                          onRevoke={() => void revoke(invite)}
+                        />
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </AsyncRegion>
+      </DenPanel>
 
       {recoveryOpen && sittingPrimary !== null && (
         <Dialog
@@ -673,7 +674,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                         <span className="hmembers__choice-email">{candidate.email}</span>
                         <span className="hmembers__choice-meta">
                           {candidate.secondaryLabel !== null ? `${candidate.secondaryLabel} · ` : ''}
-                          {candidate.role === 'PRIMARY' ? 'Primary' : 'Secondary'} · verified
+                          {roleWord(candidate.role)} · verified
                         </span>
                       </span>
                     </label>
@@ -725,6 +726,157 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
         </Dialog>
       )}
     </div>
+  );
+}
+
+/**
+ * The mock's `.member` block (and its `.primecard`, which is the same identity
+ * row without the permission list): a 58px circle, the name in Fraunces, the
+ * role capsule and the status capsule beside it, the uid in mono under it, the
+ * secondary's label in the mock's `.labelwrap` shape, and the actions on the
+ * right. A secondary then gets the permission list under a hairline; a primary
+ * gets the mock's footnote capsule, "all permissions granted by role".
+ */
+function MemberBlock({
+  member,
+  savingPerm,
+  onToggle,
+  onRemove,
+}: {
+  member: HouseholdMember;
+  savingPerm: string | null;
+  onToggle: (key: PermissionKey, next: boolean) => void;
+  onRemove: () => void;
+}) {
+  const label = memberLabel(member);
+  const byRole = permissionsFollowRole(member.role);
+  return (
+    <li className="hmembers__member" data-role={member.role.toLowerCase()}>
+      <div className="hmembers__member-top">
+        <Avatar
+          label={label}
+          initials={label.charAt(0)}
+          gradientSeed={member.uid}
+          size={58}
+          className="hmembers__photo"
+        />
+        <div className="hmembers__member-who">
+          <div className="hmembers__member-nameline">
+            <span className="hmembers__member-name">{label}</span>
+            <StatusPill
+              label={roleWord(member.role)}
+              tone={member.role === 'PRIMARY' ? 'purple' : 'teal'}
+              size="compact"
+            />
+            <StatusPill
+              label={statusWord(member.status)}
+              tone={memberStatusTone(member.status)}
+              size="compact"
+            />
+          </div>
+          <span className="hmembers__member-contact">{member.uid}</span>
+          {member.role === 'SECONDARY' && member.secondaryLabel !== null && (
+            // Read-only. `updateMemberLabel` is PRIMARY-only on the server, so
+            // the mock's input would be a control the admin cannot use.
+            <span className="hmembers__labelwrap">
+              <span className="hmembers__labeled">secondaryLabel</span>
+              <span className="hmembers__labelval">{member.secondaryLabel}</span>
+            </span>
+          )}
+        </div>
+        <div className="hmembers__member-actions">
+          <GhostButton label="Remove" onClick={onRemove} className="hmembers__danger" />
+        </div>
+      </div>
+
+      {byRole ? (
+        <div className="hmembers__cbar">
+          <StatusPill label="All permissions granted by role" tone="success" size="compact" />
+        </div>
+      ) : (
+        <div className="hmembers__perms">
+          <p className="hmembers__permhdr">permissions</p>
+          <ul className="hmembers__permlist">
+            {PERMISSION_META.map((perm) => {
+              const busy = savingPerm === `${member.uid}:${perm.key}`;
+              const locked = perm.serverLocked === true;
+              return (
+                <li key={perm.key} className="hmembers__perm">
+                  <div className="hmembers__perm-text">
+                    <span className="hmembers__perm-name">{perm.label}</span>
+                    <span className="hmembers__perm-desc">{perm.description}</span>
+                  </div>
+                  {busy && (
+                    <span role="status" className="hmembers__saving">
+                      Saving…
+                    </span>
+                  )}
+                  {locked && <StatusPill label="Locked on" tone="teal" size="compact" />}
+                  <Toggle
+                    checked={member.permissions[perm.key]}
+                    label={`${perm.label} for ${label}`}
+                    disabled={locked || savingPerm !== null}
+                    onChange={(next) => onToggle(perm.key, next)}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The invites mock's `.iv`, as the admin-wide Invites screen draws it: a 4px
+ * stripe in the status tone, a 42px circle, the address, the provenance line,
+ * then the pills. Revoke sits at the right, and only while the server says
+ * the invite is still redeemable: a Revoke on a dead invite is a button that
+ * fails when clicked.
+ */
+function InviteRow({
+  invite,
+  revoking,
+  revokeBusy,
+  onRevoke,
+}: {
+  invite: HouseholdInvite;
+  revoking: boolean;
+  revokeBusy: boolean;
+  onRevoke: () => void;
+}) {
+  const tone = inviteStatusTone(invite.effectiveStatus);
+  return (
+    <li className="hmembers__invite">
+      <span className="hmembers__invite-accent" data-tone={tone} aria-hidden="true" />
+      <Avatar
+        label={invite.invitedEmail}
+        initials={invite.invitedEmail.charAt(0)}
+        gradientSeed={invite.invitedEmail}
+        size={42}
+        className="hmembers__invite-pic"
+      />
+      <div className="hmembers__invite-main">
+        <span className="hmembers__invite-email">{invite.invitedEmail}</span>
+        <span className="hmembers__invite-meta">{inviteMetaLine(invite)}</span>
+        <div className="hmembers__invite-pills">
+          <StatusPill label={inviteStatusLabel(invite.effectiveStatus)} tone={tone} size="compact" />
+          <StatusPill label={roleWord(invite.proposedRole)} tone="purple" size="compact" />
+          {invite.secondaryLabel !== null && (
+            <StatusPill label={invite.secondaryLabel} tone="neutral" size="compact" />
+          )}
+        </div>
+      </div>
+      {invite.redeemable && (
+        <GhostButton
+          label={revoking ? 'Revoking…' : 'Revoke'}
+          onClick={onRevoke}
+          disabled={revokeBusy}
+          className="hmembers__danger"
+        />
+      )}
+    </li>
   );
 }
 
