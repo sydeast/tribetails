@@ -122,6 +122,15 @@ describe('no emitter can land undocumented', () => {
       ) {
         return false;
       }
+      // The one file that resolves the gate to COUNT rather than to send.
+      // `countMarketingReach` runs `resolveChannels` over a prospective
+      // marketing audience so the Marketing blasts screen can show a real "who
+      // this reaches" figure before anything is scheduled. It writes nothing,
+      // enqueues nothing, and delivers nothing, so naming it in provenance
+      // would claim a trigger that does not exist. The emitter for all three
+      // marketing keys is `scheduleMarketingBlast.ts`, which is documented and
+      // which is where the key literals live.
+      if (f === 'src/admin/marketingAudience.ts') return false;
       const src = read(f);
       return DISPATCH_CALLS.some((fn) => src.includes(`${fn}(`));
     }).sort();

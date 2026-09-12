@@ -386,6 +386,15 @@ export { revokeKinfolkClaim } from './admin/revokeKinfolkClaim';
 export { confirmBrandAssetUpload } from './admin/confirmBrandAssetUpload';
 export { dispatchVisitNotification } from './admin/dispatchVisitNotification';
 export { scheduleMarketingBlast } from './admin/scheduleMarketingBlast';
+// The read + cancel half of Marketing blasts. `scheduleMarketingBlast` was
+// deployed with nothing calling it; these three are what a screen needs to be
+// able to exist beside it (preview the audience, list the campaigns, call one
+// back before it fires).
+export {
+  previewMarketingBlastAudience,
+  listMarketingBlasts,
+  cancelMarketingBlast,
+} from './admin/marketingBlasts';
 export { addInternalBookingNote } from './admin/addInternalBookingNote';
 export { saveTemplate } from './admin/saveTemplate';
 export { importSeedTemplates } from './admin/importSeedTemplates';

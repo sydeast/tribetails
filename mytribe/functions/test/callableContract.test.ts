@@ -54,6 +54,13 @@ import { Args as SaveFormSchemaArgs } from '../src/admin/saveFormSchema';
 import { Args as SaveTemplateArgs } from '../src/admin/saveTemplate';
 import { Args as ImportSeedTemplatesArgs } from '../src/admin/importSeedTemplates';
 import { Args as BroadcastMessageArgs } from '../src/admin/broadcastMessage';
+// Marketing blasts (2026-09-12). Frozen from birth: the callable now takes the
+// shared audience shape (segmentId | criteria | audienceUids) instead of a bare
+// uid array, and TWO hand-built clients mirror it, the React admin
+// (`src/api/marketingBlasts.ts`) and AuntieOS Android
+// (`ui/marketing/MarketingBlast.kt`). Nested `criteria`, so it needs the
+// recursive signature rather than a top-level key freeze.
+import { Args as ScheduleMarketingBlastArgs } from '../src/admin/scheduleMarketingBlast';
 // Tribal Intel writes (added 2026-07-25). The React admin now hand-mirrors these
 // three client-side (auntieos-admin/src/lib/tribalIntelDraftSchema.ts +
 // src/api/tribalIntelWrite.ts) alongside android's AuntieRepository, so a
@@ -387,6 +394,14 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
       'body', 'channels[]',
       'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
       'segmentId', 'subject',
+    ],
+  },
+  scheduleMarketingBlast: {
+    schema: ScheduleMarketingBlastArgs,
+    signature: [
+      'audienceUids[]',
+      'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
+      'data', 'fireAtMs', 'key', 'segmentId', 'title',
     ],
   },
   createTrainingDocument: {
