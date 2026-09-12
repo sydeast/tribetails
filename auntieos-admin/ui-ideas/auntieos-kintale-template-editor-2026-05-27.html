@@ -27,16 +27,25 @@
       House / yard secure, All doors locked, Alarm system set, Mail / packages collected,
       Plants watered, Trash taken out.
 
-  SUGGESTION (additions NOT in the live web KinTaleTemplateEditorScreen.kt; flagged inline
-  with the "SUGGESTION" pill). All exist on the shared model, just not yet exposed in the
-  web editor:
-    1. "Pet Mood" display toggle + Mood Options editor (petMoodEnabled / moodOptions exist on
-       the model; web editor defers per the screen header comment; Android exposes it).
-       Default moods reproduced verbatim from KinTaleTemplateEngine.kt: Happy, Playful, Calm,
-       Cuddly, Anxious, Shy, Energetic, Sleepy.
-    2. "Review Booster" display toggle (reviewBoosterEnabled exists on the model; Android-only).
-    3. "Conditions / dynamic fields" affordance on a checklist item (FieldCondition exists on
-       the model; the editor is explicitly TBD / a follow-up in both code comments).
+  OPERATOR OVERRIDE, 2026-08-08 (recorded in `src/screens/KinTaleTemplates.tsx`'s
+  header): on web the editor sections below (Basic settings, Display sections, the two
+  checklist editors, Mood options) live in a WORKFLOW MODAL, one section per step, opened
+  from the Templates picker. The 2026-08-06 layout review named this the tallest screen in
+  the mock set, and named steps were the chosen answer; nothing inside a step is folded
+  ("Advanced" disclosures were rejected the same day). The Templates section and the head
+  are drawn as here. On Android the checklist, mood and review-booster editors are their
+  own screens reached from the row of the section they belong to; Basic settings and
+  Display sections are drawn as here. Do not restore the inline stack on web.
+
+  The three SUGGESTIONs this was drawn with have since shipped in the web editor
+  (`src/screens/KinTaleTemplates.tsx`: the Pet mood and Review booster toggles on the
+  Display sections step, the Mood options step, and the per-item conditions editor), so
+  the inline pills are gone (2026-09-12, the #755 fidelity pass):
+    1. "Pet Mood" display toggle + Mood Options editor. Default moods reproduced verbatim
+       from KinTaleTemplateEngine.kt: Happy, Playful, Calm, Cuddly, Anxious, Shy,
+       Energetic, Sleepy.
+    2. "Review Booster" display toggle.
+    3. "Conditions / dynamic fields" on a checklist item.
 
   User authors ALL customer-facing copy. Strings here are only those already in source.
   Any gap is marked TODO. Sample template/checklist content is illustrative placeholder.
@@ -174,7 +183,7 @@
   .mini .sw::after{width:16px;height:16px}
   .mini .sw.on::after{transform:translateX(16px)}
 
-  /* mood chips (Mood Options editor, SUGGESTION) */
+  /* mood chips (Mood Options editor, live on web and Android) */
   .mood{display:flex;align-items:center;gap:10px;background:var(--navy-3);border:1px solid var(--line);
     border-radius:11px;padding:9px 11px;margin-bottom:8px;}
   .mood .emoji{width:46px;text-align:center;background:none;border:1px solid var(--line);border-radius:9px;
@@ -183,7 +192,7 @@
     font-family:"Hanken Grotesk";font-size:14.5px;padding:6px 2px;outline:none;}
   .mood .lbl:focus{border-bottom-color:var(--orange)}
 
-  /* condition chip on a checklist item (SUGGESTION) */
+  /* condition chip on a checklist item (live in the web editor) */
   .cond{display:inline-flex;align-items:center;gap:7px;margin-top:10px;font-family:"Spline Sans Mono",monospace;
     font-size:11px;color:var(--cream-dim);background:rgba(10,133,149,.10);border:1px solid rgba(10,133,149,.35);
     border-radius:9px;padding:6px 11px;cursor:pointer;transition:.16s var(--ease);}
@@ -280,7 +289,7 @@
       </div>
     </div>
 
-    <!-- EditorSection "Display sections": four real web toggles + 2 SUGGESTION toggles from the shared model -->
+    <!-- EditorSection "Display sections": the six display toggles, all live on web and Android -->
     <div class="sec">
       <div class="sechd"><div class="tt"><h3>Display sections</h3></div></div>
 
@@ -313,19 +322,19 @@
         <div class="sw on" role="switch" aria-checked="true"></div>
       </div>
 
-      <!-- SUGGESTION: Pet Mood toggle. petMoodEnabled exists on the model; web editor defers it. -->
+      <!-- Pet Mood toggle: live on web and Android, see the head comment. -->
       <div class="trow">
         <div class="tx">
-          <b>Pet mood <span class="sug">Suggestion</span></b>
-          <small>Configure mood options that can be selected for each pet during visits. (Deferred in the live web editor; on the shared model + Android.)</small>
+          <b>Pet mood</b>
+          <small>Configure mood options that can be selected for each pet during visits.</small>
         </div>
         <div class="sw on" role="switch" aria-checked="true"></div>
       </div>
-      <!-- SUGGESTION: Review Booster toggle. reviewBoosterEnabled exists on the model; Android-only. -->
+      <!-- Review Booster toggle: live on web and Android, see the head comment. -->
       <div class="trow">
         <div class="tx">
-          <b>Review booster <span class="sug">Suggestion</span></b>
-          <small>Embeds a review request section to encourage kinfolk to leave reviews. (On the shared model + Android; not in the live web editor.)</small>
+          <b>Review booster</b>
+          <small>Embeds a review request section to encourage kinfolk to leave reviews.</small>
         </div>
         <div class="sw" role="switch" aria-checked="false"></div>
       </div>
@@ -382,8 +391,8 @@
           <div class="trow"><div class="tx"><b>Required</b><small>Show a red * next to this item in the composer.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
           <div class="trow"><div class="tx"><b>Show even when unchecked</b><small>Off (default): unchecked items are hidden in the kinfolk's KinTale. On: shown with a 'no' marker.</small></div><div class="sw" role="switch" aria-checked="false"></div></div>
         </div>
-        <!-- SUGGESTION: conditions / dynamic fields. FieldCondition exists on the model; editor is TBD per code comments. -->
-        <div class="cond"><span class="pin">Suggestion</span> ＋ Add condition (e.g. only show for kin with meds) · editor TBD</div>
+        <!-- Conditions on a checklist item: live in the web editor, see the head comment. -->
+        <div class="cond">＋ Add condition (e.g. only show for kin with meds)</div>
       </div>
 
       <!-- "Fresh water provided" -->
@@ -535,14 +544,14 @@
       </button>
     </div>
 
-    <!-- SUGGESTION SECTION: Mood Options editor. moodOptions exists on the model; web editor defers it. -->
+    <!-- Mood Options editor: live on web (the Mood options step) and Android, see the head comment. -->
     <!-- Default mood labels + emoji reproduced VERBATIM from KinTaleTemplateEngine.kt DefaultKinTaleTemplate. -->
     <div class="sec">
       <div class="sechd">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4 4 0 0 0 7 0"/><path d="M9 9h.01M15 9h.01"/></svg>
         <div class="tt">
-          <h3>Mood options <span class="cnt">8</span> <span class="sug">Suggestion</span></h3>
-          <p>Mirrors "Configure Mood Options" from Android. Not yet in the live web editor.</p>
+          <h3>Mood options <span class="cnt">8</span></h3>
+          <p>Mirrors "Configure Mood Options" from Android.</p>
         </div>
       </div>
 
@@ -562,7 +571,7 @@
     </div>
 
     <p class="note">// concept mockup · KinTale template editor (admin) · mirrors KinTaleTemplateEditorScreen.kt + KinTaleModels.kt · palette from AuntieColors.kt<br>
-    // SUGGESTION pills mark fields on the shared model not yet exposed in the live web editor (Pet mood, Review booster, conditions / dynamic fields)<br>
+    // the former SUGGESTION pills (Pet mood, Review booster, conditions) shipped in the web editor; see the head comment<br>
     // sample template + checklist content is placeholder, not real workspace data · user authors all kinfolk-facing copy</p>
   </div>
 

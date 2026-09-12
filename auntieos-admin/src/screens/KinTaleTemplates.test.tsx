@@ -578,7 +578,7 @@ describe('KinTaleTemplates: editing the sections + items round-trips into the sa
 describe('KinTaleTemplates: checklist bank quick-add', () => {
   /**
    * The quick-add row of the checklist step currently on screen. One step is
-   * rendered at a time now, so this needs no panel scoping — but it still has to
+   * rendered at a time now, so this needs no panel scoping, but it still has to
    * be a container query rather than a name query: once an item is added, its own
    * row actions ("Move X up", "Remove X") also match a name query for that text,
    * so an unscoped query would find the row it was meant to prove had gone.

@@ -32,16 +32,23 @@
     locked / Alarm system set / Mail / packages collected / Plants watered /
     Trash taken out).
 
-  Things marked SUGGESTION are NOT in the shipped contract yet:
-    1. Read-only "published artifact" framing of the SENT report (the shipped
-       KinTaleReportScreen is the auntie's editor; this lays out the same data
-       as a finished read view).
-    2. Kinfolk comment thread (KinTale comment = kinfolk response). No Comment
-       model exists in code yet; see MEMORY "KinTale comments threading".
-    3. Delivery receipt line (sentVia + deliveryReceiptId rendered as a status row).
-    4. Per-pet mood pills rendered from petMoodSelections (the shipped composer
-       has petMoodEnabled=false on the default template).
-    5. "View as kinfolk" / copy-share-link affordances.
+  Things that were marked SUGGESTION when this was drawn and have since
+  shipped (2026-09-12, the #755 fidelity pass; each is cited in source):
+    1. Read-only framing of the SENT report: `KinTaleDetail.tsx` is that read
+       view, distinct from the composer.
+    2. Kinfolk comment thread: live on every admin (`getKinTaleComments` /
+       `addKinTaleComment`; Android `CommentThreadSection`). The tag is gone.
+    3. Delivery receipt: the send pipeline writes a real deliveryReceiptId, so
+       Android's `DeliveryPanel` renders it untagged. The tag is gone.
+    4. Per-pet mood pills: `petMoodEnabled` defaults TRUE on all three clients
+       (`lib/kinTale/model.ts`, desktop `KinTaleModels.kt`, android
+       `KinTaleTemplate.kt`), and `KinTaleDetail.tsx` renders the pills. The
+       tag and the "petMoodEnabled=false" note are gone.
+    5. "View as kinfolk" and the share link: live in the detail screen's
+       "Share with kinfolk" panel (issue #397 items S4 to S6). The tag is gone.
+  The ticked-only checklist blocks are drawn as the operator ruled (#397 batch,
+  2026-08-26: "Client KinTales show ticked checklist items only. intentional");
+  the web detail screen does not draw them yet.
 
   Sample report body, pet names, kinfolk name and times below are illustrative
   PLACEHOLDER, not real kinfolk data. User authors all kinfolk-facing copy;
@@ -186,20 +193,20 @@
   .meta-line b{color:var(--cream);font-weight:600;text-align:right}
   .meta-line .mono{font-family:"Spline Sans Mono",monospace;font-size:12.5px}
 
-  /* delivery receipt (sentVia + deliveryReceiptId): SUGGESTION */
+  /* delivery receipt (sentVia + deliveryReceiptId), live since the #755 pass */
   .receipt .lab{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
     color:var(--cream-dim);opacity:.7;margin-bottom:10px;display:block}
   .sug{font-family:"Spline Sans Mono",monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
     color:#f0b277;background:rgba(223,132,49,.16);border:1px solid rgba(223,132,49,.4);
     padding:2px 7px;border-radius:14px;font-weight:600;margin-left:8px;vertical-align:middle}
 
-  /* mood pills (petMoodSelections): SUGGESTION (default template petMoodEnabled=false) */
+  /* mood pills (petMoodSelections), live: petMoodEnabled defaults true */
   .moods{display:flex;flex-wrap:wrap;gap:9px}
   .mood{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:600;padding:8px 14px;
     border-radius:26px;border:1px solid var(--line);background:var(--navy-3);}
   .mood .nm{color:var(--cream-dim);font-family:"Spline Sans Mono",monospace;font-size:11px;letter-spacing:.04em}
 
-  /* kinfolk comment thread: SUGGESTION (no Comment model in code yet) */
+  /* kinfolk comment thread, live on every admin */
   .thread{display:flex;flex-direction:column;gap:14px}
   .cmt{display:flex;gap:11px}
   .cmt .ca{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;
@@ -236,8 +243,8 @@
       </button>
       <span class="title">KinTale Update</span>
       <div class="spacer"></div>
-      <!-- SUGGESTION: View as kinfolk + copy share link -->
-      <button class="btn ghost">View as kinfolk <span class="sug">SUGGESTION</span></button>
+      <!-- View as kinfolk + share link: live, see the head comment. -->
+      <button class="btn ghost">View as kinfolk</button>
       <!-- status reflects KinCareReport.status == "SENT" -->
       <span class="statuspill"><span class="dot"></span>Sent</span>
     </div>
@@ -321,11 +328,11 @@
           </div>
         </div>
 
-        <!-- Per-pet mood pills: petMoodSelections. SUGGESTION: the default
-             template ships petMoodEnabled=false, so this renders only when a
-             template turns it on. MoodOption.emoji + label, kept per kin. -->
+        <!-- Per-pet mood pills: petMoodSelections. Live: petMoodEnabled
+             defaults true on every client, see the head comment.
+             MoodOption.emoji + label, kept per kin. -->
         <div class="block">
-          <div class="lab">Pet mood <span class="sug">SUGGESTION</span></div>
+          <div class="lab">Pet mood</div>
           <div class="moods">
             <!-- emoji + label are MoodOption fields; values here are placeholder -->
             <span class="mood">😋 Happy <span class="nm">Biscuit</span></span>
@@ -361,12 +368,11 @@
           </div>
         </div>
 
-        <!-- Kinfolk comment thread. SUGGESTION: no Comment model exists in code
-             yet (MEMORY: "KinTale comments threading" is a planned forum-style
-             feature; KinTale note = report body by auntie, comment = kinfolk
-             response). All names + comment text below are PLACEHOLDER. -->
+        <!-- Kinfolk comment thread. Live on every admin (one level of
+             nesting, an admin reply per row), see the head comment. All names
+             + comment text below are PLACEHOLDER. -->
         <div class="block">
-          <div class="lab">Replies <span class="sug">SUGGESTION</span></div>
+          <div class="lab">Replies</div>
           <div class="thread">
             <div class="cmt">
               <div class="ca">LW</div>
@@ -426,10 +432,10 @@
           </div>
 
           <!-- Delivery receipt: sentAt + sentVia + deliveryReceiptId.
-               sentVia values in code: sms / email / fcm. SUGGESTION to surface
-               deliveryReceiptId as a read row. Placeholder values. -->
+               sentVia values in code: sms / email / fcm. Live, see the head
+               comment. Placeholder values. -->
           <div class="card receipt">
-            <span class="lab">Delivery <span class="sug">SUGGESTION</span></span>
+            <span class="lab">Delivery</span>
             <div class="meta-line"><span>Sent at</span><b class="mono">May 27, 9:41 AM</b></div>
             <div class="meta-line"><span>Sent via</span><b class="mono">email</b></div>
             <div class="meta-line"><span>Receipt</span><b class="mono">TODO: deliveryReceiptId</b></div>

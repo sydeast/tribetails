@@ -203,7 +203,7 @@ export function KinTaleTemplates() {
   // Highlight a sensible row once data lands, and never again: this only fires
   // while nothing is selected yet, so a later stream tick (e.g. our own save
   // landing) never moves the selection under the operator. Mirrors the Compose
-  // editor's one-shot `LaunchedEffect(templatesRes)` default-selection — but it
+  // editor's one-shot `LaunchedEffect(templatesRes)` default-selection, but it
   // only selects now, it does not open an editor.
   useEffect(() => {
     if (stream.status !== 'ready' || selectedId !== null) return;

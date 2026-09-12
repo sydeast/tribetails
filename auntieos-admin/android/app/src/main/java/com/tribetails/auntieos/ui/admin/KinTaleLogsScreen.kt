@@ -832,7 +832,7 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
     else     -> Bucket.Drafts
 }
 
-/** KT1: the sort selector — one chip per ReportSort, wraps on a narrow screen. */
+/** KT1: the sort selector: one chip per ReportSort, wraps on a narrow screen. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {
