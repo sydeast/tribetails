@@ -54,4 +54,30 @@ class IntegrationHealthTest {
     fun `fcmHealthFromTokenPresence false yields CONFIGURED`() {
         assertEquals(IntegrationHealthState.CONFIGURED, fcmHealthFromTokenPresence(false))
     }
+
+    // Issue #755: the settings mock's `.logo` letter and its gradient pick.
+
+    @Test
+    fun `integrationMonogram is the upper-cased first letter, trimmed`() {
+        assertEquals("G", integrationMonogram("Google Calendar"))
+        assertEquals("N", integrationMonogram("  n8n automations"))
+        assertEquals("S", integrationMonogram("smtp2go"))
+    }
+
+    @Test
+    fun `integrationMonogram never renders an empty tile`() {
+        assertEquals("?", integrationMonogram(""))
+        assertEquals("?", integrationMonogram("   "))
+    }
+
+    @Test
+    fun `integrationGradientIndex is stable and always in range`() {
+        val names = listOf("Stripe", "Twilio", "Mapbox", "Cloudinary", "Google Calendar", "Sentry", "smtp2go")
+        for (name in names) {
+            val first = integrationGradientIndex(name, 3)
+            assertEquals(first, integrationGradientIndex(name, 3))
+            assert(first in 0 until 3) { "$name picked $first" }
+        }
+        assertEquals(0, integrationGradientIndex("", 3))
+    }
 }
