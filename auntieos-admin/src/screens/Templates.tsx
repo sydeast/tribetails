@@ -13,7 +13,7 @@ import {
 } from '../lib/templateFormat';
 import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { Banner } from '../components/Banner';
@@ -120,6 +120,41 @@ function DotsGlyph() {
       <circle cx="5" cy="12" r="1.7" />
       <circle cx="12" cy="12" r="1.7" />
       <circle cx="19" cy="12" r="1.7" />
+    </svg>
+  );
+}
+
+/**
+ * The mock's `.micon` (l.198): a 38px tile in the teal wash holding a mail
+ * glyph, before the title. It is the one list mock that puts a glyph tile in
+ * the hero, which is why it is drawn here and not in the kit; the band's
+ * `leading` slot lays it out.
+ */
+function MailTile() {
+  return (
+    <span className="templates__hero-tile" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="m3 7 9 6 9-6" />
+      </svg>
+    </span>
+  );
+}
+/** The mock's magnifier inside the search box (l.226). */
+function SearchGlyph() {
+  return (
+    <svg
+      className="templates__search-glyph"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3-3" />
     </svg>
   );
 }
@@ -445,7 +480,8 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         kicker="The Den · Admin"
         title="Template"
         accentTail="Bank."
-        subtitle="Browse the email templates SendGrid delivers."
+        subtitle="Browse, preview, and edit email templates."
+        leading={<MailTile />}
         trailing={
           <>
             <HeaderOverflowMenu
@@ -520,6 +556,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
                 </div>
 
                 <div className="templates__search">
+                  <SearchGlyph />
                   <input
                     ref={searchRef}
                     type="search"
@@ -609,7 +646,16 @@ interface TemplateCardProps {
 }
 
 /**
- * One template, as a card in the shared `EntityCardGrid`.
+ * One template, as a card in the shared `EntityCardGrid`, drawn the way the
+ * mock's `.tcard` is (issue #755): the panel gradient on a hairline, a serif
+ * title, the category and the key on one line, the subject, the description,
+ * the tags, then a rule and the Edit button. The category and the tags are
+ * the kit's compact `StatusPill` (purple and orange), the same capsule every
+ * other card in the admin wears, rather than two local chips: the mock draws
+ * its tag in a sans face, and the kit capsule is the one object that stands
+ * in for every small tinted label on the navy ground.
+ *
+ * The card wears `lift` because the whole card opens the editor.
  *
  * This was a full-width stacked row until the list-shape rule landed. The
  * mock has drawn a card grid since 2026-05-27
@@ -651,7 +697,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
       <span className="templates__card-name">{templateRowTitle(tpl)}</span>
 
       <span className="templates__card-meta">
-        {category ? <span className="templates__chip templates__chip--category">{category}</span> : null}
+        {category ? <StatusPill label={category} tone="purple" size="compact" /> : null}
         <code className="templates__card-id">{tpl.templateId}</code>
       </span>
 
@@ -669,9 +715,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
       {tags.length > 0 ? (
         <span className="templates__card-tags">
           {tags.map((tag) => (
-            <span key={tag} className="templates__chip templates__chip--tag">
-              {tag}
-            </span>
+            <StatusPill key={tag} label={tag} tone="orange" size="compact" />
           ))}
         </span>
       ) : null}
@@ -679,7 +723,7 @@ function TemplateCard({ tpl, onSelect }: TemplateCardProps) {
   );
 
   return (
-    <li className="templates__card">
+    <li className="templates__card lift">
       {/* Two sibling controls, never a button inside a button: the card body
           fills the card and stays the click target, and the footer button is
           its own control with its own accessible name. */}

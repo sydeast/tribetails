@@ -426,4 +426,37 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     expect(screen.getByRole('button', { name: 'Yes, cancel the visit' })).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  // #755: a Bookings card's own button opens the sheet with the question up.
+  it('initialAction poses that transition\'s confirm on mount, writing nothing until the confirm', async () => {
+    rejectBooking.mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    render(
+      <BookingStatusActions
+        entry={entry({ _id: 'ses-9', status: 'PENDING' })}
+        initialAction="reject"
+        onDone={onDone}
+      />,
+    );
+    expect(screen.getByText('Reject this booking?')).toBeInTheDocument();
+    expect(rejectBooking).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, reject it' }));
+    expect(rejectBooking).toHaveBeenCalledWith('ses-9');
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+  it('an initialAction the current state does not offer poses nothing: the row moved on', () => {
+    // A card pressed Approve, and the listener had already moved the row to
+    // Scheduled. The sheet opens on the plain button row, never on a question
+    // the state no longer allows.
+    render(
+      <BookingStatusActions
+        entry={entry({ status: 'SCHEDULED' })}
+        initialAction="approve"
+        onDone={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('Approve this booking?')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeInTheDocument();
+  });
 });

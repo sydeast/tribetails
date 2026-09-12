@@ -3,9 +3,10 @@ package com.tribetails.auntieos.ui.admin
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,8 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.Inbox
 import com.composables.icons.lucide.Mail
+import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
@@ -62,15 +64,13 @@ import androidx.compose.ui.text.input.TextFieldValue
 import com.tribetails.auntieos.ui.components.ENRICHABLE_SAMPLE
 import com.tribetails.auntieos.ui.components.MergeFieldWarning
 import com.tribetails.auntieos.ui.components.MergePreview
-import com.tribetails.auntieos.ui.components.AuntieEmptyState
-import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
+import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.DenCrumb
-import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.GlassSurface
 import com.tribetails.auntieos.ui.components.TagAssignField
@@ -200,18 +200,19 @@ internal fun templateBankEmptyMessage(
 
 /**
  * Den-redesign Template Bank (admin email-template library), ported from the web
- * counterpart at web/.../admin/TemplateBankScreen.kt.
+ * counterpart at web/.../admin/TemplateBankScreen.kt and, since #755, drawn the
+ * way `ui-ideas/auntieos-template-bank-2026-05-27.html` draws it.
  *
- * Mono kicker + serif [DenScreenHeading] with one primary action, brand-tone
- * filter chips, and a [DenPanel] list of templates rendered as [AuntieEntityRow]
- * lines with the category / key shown as an [AuntieStatusPill]. A row tap opens
- * a read-only viewer; Edit opens the editor; New template opens the editor in
- * create mode.
+ * The kit hero band with the mock's mail tile and one primary action, then the
+ * mock's controls row (category chips, search) straight on the page, then one
+ * [TemplateCard] per template. A card tap opens a read-only viewer; Edit opens
+ * the editor; New template opens the editor in create mode.
  *
  * No stat strip, per #716: the mock draws none, and the chips already carry the
- * counts it claimed. The [DenPanel] stays on this console, unlike the React
- * screen's: its subtitle is the only place the long-press drag-to-categorize
- * gesture is announced, and the chips inside it are that gesture's drop targets.
+ * counts it claimed. No panel around the list either, per #755: the panel this
+ * console kept existed to announce the long-press drag-to-categorize gesture
+ * in its subtitle, and that sentence lives on the heading's info button now.
+ * The chips are that gesture's drop targets wherever they sit.
  *
  * Built on the real [TemplateRepository] callables (listTemplates / saveTemplate).
  * Load and save errors surface loudly in an inline [AuntieBanner] (fail-loud).
@@ -328,168 +329,179 @@ fun TemplateBankBody(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            contentPadding = PaddingValues(vertical = 16.dp),
-        ) {
+        // The mock's `.grid` gap: 16px between cards, and the same between the
+        // band, the controls row and the first card.
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
+    ) {
+        item {
+            DenScreenHeading(
+                kicker = "The Den · Admin",
+                title = "Template",
+                accentTail = "Bank.",
+                // The mock's own sentence, then the one gesture this console
+                // has that the mock cannot show. Both live behind the info
+                // button: since #758 no heading carries a line of copy.
+                subtitle = "Browse, preview, and edit email templates. Long-press a card to drag it onto a category chip.",
+                // The mock's `.micon`: a 38px mail glyph in the teal wash before
+                // the title. With a leading tile the kit puts the action under
+                // the title block, full width, which is the band's own rule at
+                // phone width (#788).
+                leading = {
+                    AuntieIconTile(
+                        icon = Lucide.Mail,
+                        size = 38.dp,
+                        tone = AuntieStatusTone.Teal,
+                    )
+                },
+                trailing = {
+                    // New template opens the editor in create mode with a fresh
+                    // blank template; Save persists via saveTemplate (upsert by a
+                    // new templateId). Backed by a real callable, so it ships live.
+                    PrimaryButton(
+                        label = "New template",
+                        onClick = {
+                            creating = true
+                            editing = TemplateRepository.EmailTemplate(
+                                templateId = "",
+                                subject = "",
+                                body = "",
+                                html = null,
+                                title = "",
+                                description = null,
+                                tags = emptyList(),
+                                category = null,
+                            )
+                        },
+                        leading = {
+                            Icon(
+                                imageVector = Lucide.Plus,
+                                contentDescription = null,
+                                tint = c.background,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        },
+                    )
+                },
+            )
+        }
+        // No stat strip. This screen drew three StatCards (Templates /
+        // Categories / Untagged); the mock draws none, and #716 settled that
+        // the mock owns the page frame on both consoles. The counts they
+        // carried are still here, on the category chips below.
+        // Fail-loud: surface load / save errors inline, never silently swallow.
+        error?.let { msg ->
             item {
-                DenScreenHeading(
-                    kicker = "The Den · Admin",
-                    title = "Template",
-                    accentTail = "Bank.",
-                    subtitle = "Browse, preview, and edit the email templates SendGrid delivers.",
-                    trailing = {
-                        // New template opens the editor in create mode with a fresh
-                        // blank template; Save persists via saveTemplate (upsert by a
-                        // new templateId). Backed by a real callable, so it ships live.
-                        PrimaryButton(
-                            label = "New template",
-                            onClick = {
-                                creating = true
-                                editing = TemplateRepository.EmailTemplate(
-                                    templateId = "",
-                                    subject = "",
-                                    body = "",
-                                    html = null,
-                                    title = "",
-                                    description = null,
-                                    tags = emptyList(),
-                                    category = null,
-                                )
-                            },
-                            leading = {
-                                Icon(
-                                    imageVector = Lucide.Plus,
-                                    contentDescription = null,
-                                    tint = c.background,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            },
-                        )
+                AuntieBanner(
+                    tone = AuntieBannerTone.Error,
+                    title = "Template Bank hit an error",
+                    icon = Lucide.X,
+                    onDismiss = { error = null },
+                    body = {
+                        Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     },
                 )
             }
-
-            // No stat strip. This screen drew three StatCards (Templates /
-            // Categories / Untagged); the mock draws none, and #716 settled that
-            // the mock owns the page frame on both consoles. The counts they
-            // carried are still here, on the category chips below.
-
-            // Fail-loud: surface load / save errors inline, never silently swallow.
-            error?.let { msg ->
+        }
+        // The mock's `.controls`: the category chips and the search box straight
+        // on the page under the band, no panel around them (#755). The panel
+        // this console kept until now existed to carry the drag gesture's
+        // sentence in its subtitle; that sentence is on the heading's info
+        // button, and the chips are drop targets wherever they sit.
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    filterOptions.forEach { opt ->
+                        val count = if (opt == "All") {
+                            templates.size
+                        } else {
+                            templates.count { it.category.equals(opt, ignoreCase = true) }
+                        }
+                        // Non-"All" chips double as drop targets while a card is
+                        // dragged: record window bounds and light up when hovered.
+                        val dropHovered = draggingId != null && opt != "All" && hoveredCategory == opt
+                        AuntieChip(
+                            label = templateBankChipLabel(
+                                option = opt,
+                                count = count,
+                                loaded = templates.size,
+                                loading = loading,
+                                hasError = error != null,
+                            ),
+                            selected = selectedFilter == opt || dropHovered,
+                            onClick = { selectedFilter = opt },
+                            modifier = if (opt == "All") {
+                                Modifier
+                            } else {
+                                Modifier.onGloballyPositioned { categoryTargets[opt] = it.boundsInWindow() }
+                            },
+                        )
+                    }
+                }
+                // Client-side search over the loaded templates (always on).
+                AuntieSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Search templates by title or key...",
+                    leadingIcon = Lucide.Search,
+                    onClear = { query = "" },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        if (loading) {
+            item { EmptyHint("Loading templates…") }
+        } else {
+            val byCategory = if (selectedFilter == "All") {
+                templates
+            } else {
+                templates.filter { it.category.equals(selectedFilter, ignoreCase = true) }
+            }
+            val filtered = templateBankSearchFilter(byCategory, query)
+            if (filtered.isEmpty()) {
+                // The mock's `.state`: one dim line, which fact it is decided by
+                // templateBankEmptyMessage (empty bank, failed read, empty
+                // category, or no search match).
                 item {
-                    AuntieBanner(
-                        tone = AuntieBannerTone.Error,
-                        title = "Template Bank hit an error",
-                        icon = Lucide.X,
-                        onDismiss = { error = null },
-                        body = {
-                            Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                        },
+                    EmptyHint(
+                        templateBankEmptyMessage(
+                            loaded = templates.size,
+                            category = selectedFilter,
+                            query = query,
+                            hasError = error != null,
+                        ),
                     )
                 }
-            }
-
-            item {
-                DenPanel(
-                    title = "Templates",
-                    subtitle = "Tap a row to read it, or Edit to change the subject, body, and HTML. Long-press a row to drag it onto a category.",
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    // Real category filter chips (left). Counts mirror the web spec.
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        filterOptions.forEach { opt ->
-                            val count = if (opt == "All") {
-                                templates.size
-                            } else {
-                                templates.count { it.category.equals(opt, ignoreCase = true) }
-                            }
-                            // Non-"All" chips double as drop targets while a row is
-                            // dragged: record window bounds and light up when hovered.
-                            val dropHovered = draggingId != null && opt != "All" && hoveredCategory == opt
-                            AuntieChip(
-                                label = templateBankChipLabel(
-                                    option = opt,
-                                    count = count,
-                                    loaded = templates.size,
-                                    loading = loading,
-                                    hasError = error != null,
-                                ),
-                                selected = selectedFilter == opt || dropHovered,
-                                onClick = { selectedFilter = opt },
-                                modifier = if (opt == "All") {
-                                    Modifier
-                                } else {
-                                    Modifier.onGloballyPositioned { categoryTargets[opt] = it.boundsInWindow() }
-                                },
-                            )
-                        }
-                    }
-
-                    // Client-side search over the loaded templates (always on).
-                    Spacer(Modifier.height(12.dp))
-                    AuntieSearchField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = "Search templates by title or key...",
-                        leadingIcon = Lucide.Search,
-                        onClear = { query = "" },
-                        modifier = Modifier.fillMaxWidth(),
+            } else {
+                // Keyed on the template id so a card's drag state survives a
+                // reload that reorders the list.
+                items(filtered, key = { it.templateId }) { tpl ->
+                    TemplateCard(
+                        tpl = tpl,
+                        onOpen = { viewing = tpl },
+                        onEdit = { creating = false; editing = tpl },
+                        isDragging = draggingId == tpl.templateId,
+                        onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
+                        onDragMove = { windowPos -> hoveredCategory = categoryDropTarget(windowPos, categoryTargets) },
+                        onDragEnd = { windowPos ->
+                            val target = categoryAssignmentForDrop(windowPos, categoryTargets, tpl.category)
+                            draggingId = null
+                            hoveredCategory = null
+                            if (target != null) assignCategory(tpl, target)
+                        },
+                        onDragCancel = { draggingId = null; hoveredCategory = null },
                     )
-
-                    Spacer(Modifier.height(8.dp))
-
-                    when {
-                        loading -> EmptyHint("Loading templates…")
-                        else -> {
-                            val byCategory = if (selectedFilter == "All") {
-                                templates
-                            } else {
-                                templates.filter { it.category.equals(selectedFilter, ignoreCase = true) }
-                            }
-                            val filtered = templateBankSearchFilter(byCategory, query)
-
-                            if (filtered.isEmpty()) {
-                                AuntieEmptyState(
-                                    // Which fact this is: empty bank, failed
-                                    // read, empty category, or no search match.
-                                    title = templateBankEmptyMessage(
-                                        loaded = templates.size,
-                                        category = selectedFilter,
-                                        query = query,
-                                        hasError = error != null,
-                                    ),
-                                    icon = Lucide.Inbox,
-                                    compact = true,
-                                )
-                            } else {
-                                filtered.forEachIndexed { index, tpl ->
-                                    TemplateRow(
-                                        tpl = tpl,
-                                        showDivider = index < filtered.lastIndex,
-                                        onOpen = { viewing = tpl },
-                                        onEdit = { creating = false; editing = tpl },
-                                        isDragging = draggingId == tpl.templateId,
-                                        onDragStart = { draggingId = tpl.templateId; hoveredCategory = null },
-                                        onDragMove = { windowPos -> hoveredCategory = categoryDropTarget(windowPos, categoryTargets) },
-                                        onDragEnd = { windowPos ->
-                                            val target = categoryAssignmentForDrop(windowPos, categoryTargets, tpl.category)
-                                            draggingId = null
-                                            hoveredCategory = null
-                                            if (target != null) assignCategory(tpl, target)
-                                        },
-                                        onDragCancel = { draggingId = null; hoveredCategory = null },
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
+    }
     // Read-only viewer (row tap). Edit from here hands off to the editor.
     viewing?.let { current ->
         TemplateViewOverlay(
@@ -504,11 +516,26 @@ fun TemplateBankBody(
     }
 }
 
+/**
+ * One template, drawn the way the mock's `.tcard` is
+ * (`ui-ideas/auntieos-template-bank-2026-05-27.html` l.111, issue #755): the
+ * panel gradient on a hairline at 18dp, 18dp inside, then the serif title,
+ * the category capsule and the mono key on one line, the subject on one
+ * line, the description on two, the tags, a soft rule and the Edit button
+ * on the right. One column on a phone; the same card the React grid draws.
+ *
+ * Until #755 this was an `AuntieEntityRow` line with a divider and the
+ * category and key as trailing pills, which is a list the mock never drew.
+ * The category and the tags are the kit's compact [AuntieStatusPill] (purple
+ * and orange), the one capsule every card in the admin wears.
+ *
+ * A tap opens the read-only viewer; Edit opens the editor; a long-press lifts
+ * the card so it can be dropped on a category chip.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TemplateRow(
+private fun TemplateCard(
     tpl: TemplateRepository.EmailTemplate,
-    showDivider: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     isDragging: Boolean = false,
@@ -517,7 +544,9 @@ private fun TemplateRow(
     onDragEnd: (windowPos: Offset) -> Unit = {},
     onDragCancel: () -> Unit = {},
 ) {
-    // Drag-drop: long-press lifts the row, which then follows the pointer via a
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    // Drag-drop: long-press lifts the card, which then follows the pointer via a
     // graphicsLayer translation (draw-only, so [basePos] stays the true layout
     // position for the window-coordinate hit-test). The parent owns the assign.
     var basePos by remember { mutableStateOf(Offset.Zero) }
@@ -525,41 +554,13 @@ private fun TemplateRow(
     var lastWindow by remember { mutableStateOf(Offset.Zero) }
     val description = templateCardDescription(tpl)
     val tags = templateCardTags(tpl)
-    // The card's remaining two mock fields, below the title row rather than in
-    // it: tag chips reflowing under the Edit button would read as belonging to
-    // it. Null when the template has neither, so an untagged, undescribed
-    // template draws no empty strip.
-    val supportingFields: (@Composable ColumnScope.() -> Unit)? =
-        if (description == null && tags.isEmpty()) {
-            null
-        } else {
-            {
-                if (description != null) {
-                    Text(
-                        text = description,
-                        style = AuntieTheme.typography.bodySmall,
-                        color = AuntieTheme.colors.textFaint,
-                        // Mock l.127: up to two lines, ellipsis. Tapping the
-                        // card opens the full text, so nothing is unreachable.
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (tags.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        tags.forEach { tag ->
-                            AuntieStatusPill(label = tag, tone = AuntieStatusTone.Orange)
-                        }
-                    }
-                }
-            }
-        }
-    AuntieEntityRow(
-        title = tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } },
-        subtitle = templateCardSubjectLine(tpl),
-        showDivider = showDivider,
-        onClick = onOpen,
+    val category = tpl.category?.trim()?.takeIf { it.isNotEmpty() }
+    val key = tpl.templateId.takeIf { it.isNotBlank() }
+    val shape = RoundedCornerShape(18.dp)
+    GlassSurface(
+        cornerRadius = 18.dp,
         modifier = Modifier
+            .fillMaxWidth()
             .onGloballyPositioned { basePos = it.positionInWindow() }
             .graphicsLayer {
                 if (isDragging) {
@@ -587,18 +588,81 @@ private fun TemplateRow(
                     onDragEnd = { onDragEnd(lastWindow); translation = Offset.Zero },
                     onDragCancel = { translation = Offset.Zero; onDragCancel() },
                 )
-            },
-        trailing = {
+            }
+            .clip(shape)
+            .clickable(onClick = onOpen),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = tpl.title.ifBlank { tpl.templateId.ifBlank { "Untitled template" } },
+                style = AuntieTheme.typography.headlineSmall,
+                color = c.textPrimary,
+            )
+            if (category != null || key != null) {
+                // The mock's `.tmeta`: the capsule and the key, 8px apart. A
+                // long key wraps in the space the capsule leaves it.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (category != null) {
+                        AuntieStatusPill(label = category, tone = AuntieStatusTone.Purple, compact = true)
+                    }
+                    if (key != null) {
+                        Text(
+                            text = key,
+                            style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
+                            color = c.textDim,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                }
+            }
+            // Mock l.125: one line, ellipsis. Tapping the card opens the full
+            // text, so nothing is unreachable.
+            Text(
+                text = templateCardSubjectLine(tpl),
+                style = AuntieTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                color = c.textDim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (description != null) {
+                // Mock l.127: up to two lines, ellipsis.
+                Text(
+                    text = description,
+                    style = AuntieTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                    color = c.textDim,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (tags.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    tags.forEach { tag ->
+                        AuntieStatusPill(label = tag, tone = AuntieStatusTone.Orange, compact = true)
+                    }
+                }
+            }
+            // The mock's `.cardfoot`: a soft rule, then Edit on the right edge.
+            Spacer(Modifier.height(2.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(dims.borderHairline)
+                    .background(c.borderSoft),
+            )
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
             ) {
-                tpl.category?.takeIf { it.isNotBlank() }?.let { cat ->
-                    AuntieStatusPill(label = cat, tone = AuntieStatusTone.Purple)
-                }
-                tpl.templateId.takeIf { it.isNotBlank() }?.let { key ->
-                    AuntieStatusPill(label = key, tone = AuntieStatusTone.Teal, mono = true)
-                }
                 GhostButton(
                     label = "Edit",
                     onClick = onEdit,
@@ -607,9 +671,8 @@ private fun TemplateRow(
                     },
                 )
             }
-        },
-        supporting = supportingFields,
-    )
+        }
+    }
 }
 
 /**

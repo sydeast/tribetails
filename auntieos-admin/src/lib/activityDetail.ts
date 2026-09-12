@@ -196,3 +196,94 @@ export function activityMatchesStatus(
   if (filter === 'success') return s === 'SUCCESS';
   return s === 'PENDING';
 }
+
+// ── the collapsed row, per the mock ──────────────────────────────────────────
+//
+// Issue #755 (mock `auntieos-activity-log-2026-05-27.html`): a row reads as
+// time, a category glyph, a humanised title with the raw code beside it, and
+// the day separators say "Today · May 27". Android's ActivityLogScreen has drawn
+// all of this since its Den port; these are the same decisions, made once and
+// tested here so the two clients cannot label the same entry differently.
+
+/**
+ * The mock's six filter chips. Same taxonomy as Android's `ActivityFilter`, and
+ * the same overlapping prefix rules: a category is a QUESTION asked of the
+ * action type ("is this about a booking?"), not a partition, so one entry can
+ * answer yes to two chips (ADMIN_TRIAGE_ORPHAN_REPORT is both KinTales and
+ * Admin). The tile tone picks the first match in this order.
+ */
+export type ActivityCategory = 'all' | 'auth' | 'bookings' | 'kintales' | 'notifications' | 'admin';
+
+export function activityMatchesCategory(entry: ActivityLogEntry, category: ActivityCategory): boolean {
+  if (category === 'all') return true;
+  const a = str(entry.actionType).toUpperCase();
+  switch (category) {
+    case 'auth':
+      return a.startsWith('AUTH') || a.includes('LOGIN') || a.includes('LOGOUT');
+    case 'bookings':
+      return a.startsWith('BOOKING') || a.startsWith('KINCARE') || a.includes('SESSION') || a.includes('VISIT');
+    case 'kintales':
+      return a.includes('KINTALE') || a.includes('CONTENT') || a.includes('DRAFT') || a.includes('REPORT');
+    case 'notifications':
+      return a.includes('NOTIFICATION') || a.includes('NOTIF');
+    case 'admin':
+      return a.startsWith('ADMIN') || a.includes('TRIAGE') || a.startsWith('UPDATE_SETTINGS') || a.startsWith('SETTINGS');
+  }
+}
+
+const CATEGORY_ORDER: readonly Exclude<ActivityCategory, 'all'>[] = [
+  'auth',
+  'bookings',
+  'kintales',
+  'notifications',
+  'admin',
+];
+
+/** The category that paints the row's glyph tile, or null for an action nothing claims. */
+export function activityCategoryOf(entry: ActivityLogEntry): Exclude<ActivityCategory, 'all'> | null {
+  return CATEGORY_ORDER.find((c) => activityMatchesCategory(entry, c)) ?? null;
+}
+
+/** `KINCARE_ARRIVED` reads as "Kincare arrived": the mock's bold line. Mirrors Android's `humanizeAction`. */
+export function humanizeAction(actionType: string): string {
+  const lower = actionType.toLowerCase().replace(/_/g, ' ').trim();
+  return lower === '' ? 'Event' : lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** True when the wire status is a failure, in either spelling the writers have used. */
+export function activityIsFailure(entry: ActivityLogEntry): boolean {
+  const s = str(entry.status).trim().toUpperCase();
+  return s === 'FAILURE' || s === 'ERROR';
+}
+
+/**
+ * The mock's `.daysep`: "Today · May 27", "Yesterday · May 26", then "May 24".
+ *
+ * `today` is INJECTED as a `YYYY-MM-DD` key rather than read from the clock so
+ * the label is a pure function; the screen passes its own local day. A key that
+ * is not a date ("Undated") is returned as it came.
+ */
+export function activityDayLabel(day: string, today: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  const month = MONTHS[Number(day.slice(5, 7)) - 1] ?? day.slice(5, 7);
+  const pretty = `${month} ${String(Number(day.slice(8, 10)))}`;
+  if (day === today) return `Today · ${pretty}`;
+  if (day === dayBefore(today)) return `Yesterday · ${pretty}`;
+  return pretty;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Local `YYYY-MM-DD` for a Date, the shape `activityDayLabel` compares against. */
+export function localDayKey(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function dayBefore(day: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+  const d = new Date(
+    Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) - 1),
+  );
+  return d.toISOString().slice(0, 10);
+}

@@ -77,4 +77,26 @@ describe('saveBusinessSettings', () => {
     setDoc.mockRejectedValue(new Error('permission-denied'));
     await expect(saveBusinessSettings({ businessName: 'x' })).rejects.toThrow('permission-denied');
   });
+
+  /**
+   * The KinCare types rate card. `merge: true` merges a nested map key by key,
+   * so a patch that dropped "Walk" from `serviceRates` left the stored "Walk"
+   * in place and Remove never persisted (except for the last type, since an
+   * empty map does overwrite). The two rate-card maps are written with
+   * `mergeFields`, which replaces each named field wholesale.
+   */
+  it('replaces the rate-card maps wholesale so a removed KinCare type stays removed', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveBusinessSettings({ serviceRates: { Overnight: '80.00' }, serviceDurations: {} });
+    const [, body, opts] = setDoc.mock.calls[0]!;
+    expect(body).toMatchObject({ serviceRates: { Overnight: '80.00' }, serviceDurations: {} });
+    expect(opts).toEqual({ mergeFields: ['serviceRates', 'serviceDurations', 'updatedAt', 'updatedBy'] });
+  });
+
+  it('keeps the key-by-key merge for every other patch, which is what protects mytribePortal', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveBusinessSettings({ mytribePortal: { themeId: 'den' } as never });
+    const [, , opts] = setDoc.mock.calls[0]!;
+    expect(opts).toEqual({ merge: true });
+  });
 });
