@@ -173,6 +173,30 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
 internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedBy")
 
 /**
+ * Map fields this client always writes WHOLE, where a key it left out is a
+ * key the operator removed.
+ *
+ * `SetOptions.merge()` merges a nested map key by key, so a `serviceRates`
+ * write that no longer carries "Walk" leaves the stored "Walk" exactly where
+ * it was, and the KinCare types editor's Remove would come back on the next
+ * load (the one case it worked was removing the LAST type, since an empty map
+ * does overwrite). The rate card is a flat name-to-value map one editor owns
+ * outright, so a write naming it goes out under `SetOptions.mergeFields`,
+ * which replaces each named top-level field wholesale and still leaves every
+ * field the write does not name untouched. Mirrors `WHOLE_MAP_FIELDS` in the
+ * React admin's `settingsWrite.ts`.
+ *
+ * Not the rule for every write: `mytribePortal` is a nested map more than one
+ * client writes a slice of, and the key-by-key merge is what keeps one save
+ * from clobbering another's.
+ */
+internal val BUSINESS_SETTINGS_WHOLE_MAP_FIELDS = setOf("serviceRates", "serviceDurations")
+
+/** True when [changes] names a field that must replace, not merge, the stored value. */
+internal fun businessSettingsReplacesWholeFields(changes: Map<String, Any?>): Boolean =
+    changes.keys.any { it in BUSINESS_SETTINGS_WHOLE_MAP_FIELDS }
+
+/**
  * The fields [edited] changes relative to [loaded], keyed by Firestore field
  * name. Empty when nothing changed, which the caller must treat as "do not
  * write" rather than "write the stamp".
