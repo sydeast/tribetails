@@ -123,6 +123,8 @@
   gap: var(--space-2);
 }
 
+/* The mock's `.tpl`: a row on the panel gradient's darker stop, on a
+   hairline, the picked one rimmed and washed in orange. */
 .ktt__picker-row {
   width: 100%;
   display: flex;
@@ -131,40 +133,25 @@
   text-align: left;
   font: inherit;
   color: var(--color-text-primary);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border-soft);
+  background: var(--color-panel-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-11);
   padding: var(--space-3);
   cursor: pointer;
   transition: border-color var(--dur-base) var(--ease-standard);
 }
 .ktt__picker-row:hover {
-  border-color: var(--color-border);
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
 }
 .ktt__picker-row--active {
-  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-2));
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
 .ktt__picker-name {
   flex: 1 1 auto;
   font-family: var(--type-title-md-family);
   font-size: var(--type-title-md-size);
-}
-
-.ktt__tag {
-  font-family: var(--type-mono-family);
-  font-size: var(--type-mono-size);
-  padding: 0.1rem var(--space-2);
-  border-radius: var(--radius-chip);
-}
-.ktt__tag--default {
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-}
-.ktt__tag--muted {
-  color: var(--color-text-faint);
-  background: color-mix(in srgb, var(--color-text-faint) 14%, transparent);
 }
 
 /* ── toggle rows ─────────────────────────────────────────────────────────── */
