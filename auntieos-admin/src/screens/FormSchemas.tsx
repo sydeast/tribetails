@@ -11,6 +11,8 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
+import { IconTile } from '../components/IconTile';
+import { BRAND_GRADIENTS } from '../components/Avatar';
 import './FormSchemas.css';
 
 export type SortColumn = 'name' | 'version' | 'updatedAt' | 'updatedBy';
@@ -141,6 +143,28 @@ function PlusGlyph() {
   );
 }
 
+/**
+ * The mock's `.hicon` glyph (Lucide ClipboardList), drawn here rather than
+ * borrowed from `NavGlyphs`: the rail glyph carries `.nav-glyph`, whose own
+ * colour rule would paint it dim inside the tile where the mock wants cream.
+ */
+function ClipboardGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <path d="M12 11h4M12 16h4M8 11h.01M8 16h.01" />
+    </svg>
+  );
+}
+function SearchGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3-3" />
+    </svg>
+  );
+}
 function TrashGlyph() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -355,6 +379,10 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
         title="Form"
         accentTail="Schemas"
         subtitle="Author the dynamic forms kinfolk fill out."
+        // The mock's `.hicon`: a 46px tile on the teal-to-purple brand
+        // gradient with the clipboard glyph in cream. Decorative, so the
+        // tile carries no label of its own.
+        leading={<IconTile icon={<ClipboardGlyph />} size={46} background={BRAND_GRADIENTS[1]} />}
         trailing={
           <PrimaryButton label="New schema" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
         }
@@ -364,8 +392,8 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
         state={schemas}
         what="schemas"
         isEmpty={(rows) => rows.length === 0}
-        loading={<p className="schemas__hint">Loading schemas…</p>}
-        empty={<p className="schemas__hint">No schemas yet. Click New schema to create one.</p>}
+        loading={<p className="schemas__state">Loading schemas…</p>}
+        empty={<p className="schemas__state">No schemas yet. Click New schema to create one.</p>}
       >
         {(rows) => {
           const visible = filterSchemas(rows, query);
@@ -373,19 +401,22 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
           return (
             <>
               <div className="schemas__controls">
-                <input
-                  type="search"
-                  className="schemas__search-input"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Filter schemas by name or id…"
-                  aria-label="Filter schemas by name or id"
-                />
+                <label className="schemas__search">
+                  <SearchGlyph />
+                  <input
+                    type="search"
+                    className="schemas__search-input"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Filter schemas by name or id…"
+                    aria-label="Filter schemas by name or id"
+                  />
+                </label>
                 {countLabel && <span className="schemas__count">{countLabel}</span>}
               </div>
 
               {sorted.length === 0 ? (
-                <p className="schemas__hint">No schemas match &ldquo;{query}&rdquo;.</p>
+                <p className="schemas__state">No schemas match &ldquo;{query}&rdquo;.</p>
               ) : (
                 <div className="schemas__table-wrap">
                   <table className="schemas__table">
@@ -431,7 +462,9 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
                               )}
                             </td>
                             <td className="schemas__td schemas__td--version">
-                              <span className="den-pill" data-tone="teal">v{row.version}</span>
+                              {/* The mock's `.ver` is plain mono text, not a pill; the
+                                  2026-09-10 table read a pill into it. */}
+                              <span className="schemas__version">v{row.version}</span>
                             </td>
                             <td className="schemas__td schemas__td--updated">
                               {updatedFull ?? <span className="schemas__blank">-</span>}

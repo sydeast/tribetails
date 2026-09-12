@@ -219,7 +219,7 @@ describe('filterSchemas (pure)', () => {
 });
 
 describe('FormSchemas screen', () => {
-  it('loads and renders the table with a name, id, version pill, updated, and updated-by cell', async () => {
+  it('loads and renders the table with a name, id, version, updated, and updated-by cell', async () => {
     listFormSchemas.mockResolvedValue([schema({})]);
     listBusinessAdmins.mockResolvedValue(
       roster([{ uid: 'admin1', email: 'auntie@tribetails.example', displayName: null, hasStaffRecord: true, defaultAssignee: false }]),
@@ -227,7 +227,10 @@ describe('FormSchemas screen', () => {
     render(<FormSchemas />);
     expect(await screen.findByText('Tribe Profile')).toBeInTheDocument();
     expect(screen.getByText('tribeProfile')).toBeInTheDocument();
-    expect(screen.getByText('v3')).toBeInTheDocument();
+    // The mock's `.ver` is mono text in the Version column, not a capsule.
+    const version = screen.getByText('v3');
+    expect(version).toHaveClass('schemas__version');
+    expect(version).not.toHaveClass('den-pill');
     // 2026-07-01T00:00:00Z is 2026-06-30 19:00 in America/Chicago (CDT, UTC-5).
     expect(screen.getByText('2026-06-30 19:00')).toBeInTheDocument();
     expect(await screen.findByText('auntie@tribetails.example')).toBeInTheDocument();
@@ -352,7 +355,42 @@ describe('FormSchemas screen', () => {
   it('renders the proven-empty state, not while the load is failing', async () => {
     listFormSchemas.mockResolvedValue([]);
     render(<FormSchemas />);
-    expect(await screen.findByText(/no schemas yet/i)).toBeInTheDocument();
+    // The mock's `.panel`: the empty copy sits in the centred state box.
+    expect(await screen.findByText(/no schemas yet/i)).toHaveClass('schemas__state');
+  });
+  it('draws the mock hero: the clipboard tile on the brand gradient before the kicker and title', async () => {
+    listFormSchemas.mockResolvedValue([schema({})]);
+    const { container } = render(<FormSchemas />);
+    await screen.findByText('Tribe Profile');
+    const heading = container.querySelector('.den-heading');
+    expect(heading).not.toBeNull();
+    expect(heading!.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Admin');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Form Schemas');
+    const tile = heading!.querySelector('.den-heading-leading .icon-tile');
+    expect(tile).not.toBeNull();
+    expect(tile).toHaveClass('icon-tile-gradient');
+    // Decorative: the tile restates the title and must not announce a second name.
+    expect(tile).toHaveAttribute('aria-hidden', 'true');
+    // The explanation is the heading's tooltip, never a line of copy.
+    expect(screen.queryByText('Author the dynamic forms kinfolk fill out.')).toHaveAttribute('role', 'tooltip');
+  });
+  it('lays the mock controls row out: the filter box with its magnifier, then the count chip, then the table, then Reload', async () => {
+    listFormSchemas.mockResolvedValue([schema({}), schema({ id: 'other', name: 'Other' })]);
+    const { container } = render(<FormSchemas />);
+    await screen.findByText('Tribe Profile');
+    const controls = container.querySelector('.schemas__controls');
+    expect(controls).not.toBeNull();
+    const search = controls!.querySelector('.schemas__search');
+    expect(search!.querySelector('svg')).not.toBeNull();
+    expect(search!.querySelector('input')).toBe(screen.getByRole('searchbox', { name: /filter schemas/i }));
+    expect(controls!.querySelector('.schemas__count')).toHaveTextContent('2 schemas');
+    // Order on the ground: controls, table, footer. No DenPanel wraps any of it.
+    const screenEl = container.querySelector('.screen')!;
+    const order = Array.from(screenEl.querySelectorAll('.schemas__controls, .schemas__table-wrap, .schemas__footer')).map(
+      (el) => el.className,
+    );
+    expect(order).toEqual(['schemas__controls', 'schemas__table-wrap', 'schemas__footer']);
+    expect(container.querySelector('.den-panel')).toBeNull();
   });
 
   it('filters the visible rows by the search box', async () => {
