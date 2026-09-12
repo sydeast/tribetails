@@ -12,7 +12,7 @@ import {
 import { Dialog } from '../components/Dialog';
 import { WizardModal, type WizardStep } from '../components/WizardModal';
 import { SchemaPreview } from '../components/SchemaPreview';
-import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
+import { GhostButton, IconButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import './FormSchemaEditor.css';
 
@@ -66,6 +66,18 @@ import './FormSchemaEditor.css';
  * blank-titled section to start, and per-section key uniqueness. A schema
  * whose two sections happen to reuse the same field key is not an error here,
  * because the reference implementations do not treat it as one.
+ *
+ * THE SKIN IS THE MOCK'S (#755, 2026-09-12), inside that wizard: the mock
+ * (`ui-ideas/auntieos-formschema-editor-2026-05-27.html`) draws a full page
+ * with a hero, and the operator's wizard ruling above outranks that shape, so
+ * the mock's head comment records the ruling and everything inside the page
+ * is matched here: bottom-border inputs, the section card on the panel
+ * gradient, the field card with its "Field n" tag, key and label side by
+ * side, the nine-type chip row, the options line, the stacked optional
+ * fields and the Yes / No segmented picker for Required. The three step
+ * blurbs are gone under the 2026-09-11 subtitle ruling ("at most they can be
+ * tool tips"): the rail and the step heading already say Schema, Sections and
+ * Review, and the wizard has no tooltip slot to move a sentence into.
  */
 
 /** Field-key regex, ported verbatim from saveFormSchema.ts's Zod contract. */
@@ -402,7 +414,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
     }
   }
 
-  const modalTitle = creating ? 'New Form Schema' : 'Edit Form Schema';
+  // The mock's SectionHeader copy, sentence case.
+  const modalTitle = creating ? 'New form schema' : 'Edit form schema';
 
   // There is no form to walk through until the record has arrived, so the load
   // and the load failure are the plain shared modal rather than a one-step
@@ -434,34 +447,39 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       key: 'schema',
       label: 'Schema',
       heading: 'Schema',
-      blurb: 'What this schema is called, and where it applies.',
       errors: metaErrors,
       pristine: untouched('schema'),
       body: (
         <div className="fse__grid">
-          <div className="fse__field">
-            <label className="fse__field-label">
-              <span className="fse__label">Schema id</span>
-              <input
-                type="text"
-                className="fse__input"
-                value={id}
-                disabled={!creating}
-                onChange={(e) => {
-                  touch();
-                  setId(e.target.value);
-                }}
-                placeholder="e.g. tribeProfile"
-              />
-            </label>
-            {/* Outside the <label> on purpose: any text inside a <label> joins the
-                control's accessible name, so this note would otherwise get read
-                (and matched by getByLabelText) as part of "Schema id". */}
-            {!creating && <span className="fse__note">Id is fixed once a schema is created.</span>}
-          </div>
+          <label className="fse__field">
+            {/* The mock's label: "Schema ID *" with the mono "(immutable once
+                persisted)" note beside it once the schema exists. The note is
+                inside the label on purpose, so the control's accessible name
+                says the id is locked, the same thing `disabled` says. */}
+            <span className="fse__label fse__label--required">
+              Schema id
+              {!creating && (
+                <>
+                  {' '}
+                  <span className="fse__note">(immutable once persisted)</span>
+                </>
+              )}
+            </span>
+            <input
+              type="text"
+              className="fse__input"
+              value={id}
+              disabled={!creating}
+              onChange={(e) => {
+                touch();
+                setId(e.target.value);
+              }}
+              placeholder="tribeProfile"
+            />
+          </label>
 
           <label className="fse__field">
-            <span className="fse__label">Name</span>
+            <span className="fse__label fse__label--required">Name</span>
             <input
               type="text"
               className="fse__input"
@@ -470,21 +488,21 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
                 touch();
                 setName(e.target.value);
               }}
-              placeholder="e.g. Tribe Profile"
+              placeholder="Tribe Profile"
             />
           </label>
 
           <label className="fse__field fse__field--wide">
             <span className="fse__label">Description</span>
-            <input
-              type="text"
-              className="fse__input"
+            <textarea
+              className="fse__input fse__input--multiline"
+              rows={2}
               value={description}
               onChange={(e) => {
                 touch();
                 setDescription(e.target.value);
               }}
-              placeholder="Optional"
+              placeholder="Optional admin-facing description"
             />
           </label>
 
@@ -519,11 +537,16 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       key: 'sections',
       label: 'Sections',
       heading: 'Sections',
-      blurb: 'Each section groups the fields a kinfolk fills in. Need at least one section, each with at least one field.',
       errors: sectionErrorsAll,
       pristine: untouched('sections'),
       body: (
         <>
+          {/* The mock's `.secbar`: "Add section" sits at the head of the list,
+              right-aligned, a ghost with a plus, not under it. */}
+          <div className="fse__step-actions">
+            <GhostButton label="Add section" onClick={addSection} leading={<PlusGlyph />} />
+          </div>
+
           {sections.length === 0 ? (
             <p className="fse__hint">No sections yet. Use Add section to create one.</p>
           ) : (
@@ -556,10 +579,6 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               ))}
             </ul>
           )}
-
-          <div className="fse__step-actions">
-            <GhostButton label="Add section" onClick={addSection} />
-          </div>
         </>
       ),
     },
@@ -567,7 +586,6 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       key: 'review',
       label: 'Review',
       heading: 'Review',
-      blurb: 'What will be written when you save.',
       errors: [],
       body: (
         <div className="fse__review">
@@ -591,6 +609,15 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
               <dt>Applies to</dt>
               <dd>{appliesTo}</dd>
             </div>
+            {/* The mock's "{id} • v{version}" subtitle line: the wizard has no
+                heading of its own to carry it, so the version is a review row.
+                Only for a schema that exists; a new one has no version yet. */}
+            {!creating && (
+              <div>
+                <dt>Version</dt>
+                <dd>v{version}</dd>
+              </div>
+            )}
           </dl>
 
           <h4 className="fse__review-heading">
@@ -719,28 +746,28 @@ function SectionCard({
             label={`Move ${section.title || `section ${index + 1}`} up`}
             onClick={onMoveUp}
             disabled={isFirst}
-            size={32}
+            size={26}
           />
           <IconButton
             icon={<DownGlyph />}
             label={`Move ${section.title || `section ${index + 1}`} down`}
             onClick={onMoveDown}
             disabled={isLast}
-            size={32}
+            size={26}
           />
           <IconButton
             icon={<TrashGlyph />}
             label={`Remove ${section.title || `section ${index + 1}`}`}
             onClick={onRemove}
             destructive
-            size={32}
+            size={26}
           />
         </div>
       </div>
 
       <div className="fse__field">
         <label className="fse__field-label">
-          <span className="fse__label">Section title</span>
+          <span className="fse__label fse__label--required">Section title</span>
           <input
             type="text"
             className="fse__input"
@@ -759,14 +786,16 @@ function SectionCard({
           className="fse__input"
           value={section.description ?? ''}
           onChange={(e) => onDescriptionChange(e.target.value)}
-          placeholder="Optional"
         />
       </label>
 
+      {/* The mock's `.fldsbar`: the count on the left, "Add field" as a ghost
+          with a plus on the right, over the field cards. */}
       <div className="fse__section-fields-row">
         <h5 className="fse__section-fields-heading">
           Fields ({section.fields.length})
         </h5>
+        <GhostButton label="Add field" onClick={onAddField} leading={<PlusGlyph />} />
       </div>
 
       {section.fields.length === 0 ? (
@@ -778,21 +807,58 @@ function SectionCard({
             if (field.key.trim()) seenKeys.add(field.key.trim());
             const needsOptions = field.type === 'select' || field.type === 'multiselect';
             return (
-              <li key={idx} className="fse__field-card">
-                <div className="fse__field-row">
-                  {/* Error text sits OUTSIDE each <label> on purpose: a <label>'s
-                      accessible name is computed from all of its text content, so an
-                      error message nested inside it would silently fold into the
-                      control's name (e.g. "KeyKey is required."). */}
+              <li
+                key={idx}
+                className={
+                  v.keyError || v.labelError || v.optionsError
+                    ? 'fse__field-card fse__field-card--invalid'
+                    : 'fse__field-card'
+                }
+              >
+                {/* The mock's `.fchead`: the mono "Field n" tag with the reorder
+                    and remove controls on the right. */}
+                <div className="fse__field-head">
+                  <span className="fse__field-tag">Field {idx + 1}</span>
+                  <div className="fse__field-actions">
+                    <IconButton
+                      icon={<UpGlyph />}
+                      label={`Move ${field.label || field.key || 'field'} up`}
+                      onClick={() => onMoveFieldUp(idx)}
+                      disabled={idx === 0}
+                      size={26}
+                    />
+                    <IconButton
+                      icon={<DownGlyph />}
+                      label={`Move ${field.label || field.key || 'field'} down`}
+                      onClick={() => onMoveFieldDown(idx)}
+                      disabled={idx === section.fields.length - 1}
+                      size={26}
+                    />
+                    <IconButton
+                      icon={<TrashGlyph />}
+                      label={`Remove ${field.label || field.key || 'field'}`}
+                      onClick={() => onRemoveField(idx)}
+                      destructive
+                      size={26}
+                    />
+                  </div>
+                </div>
+
+                {/* The mock's `.grid2`: key and label side by side. Error text
+                    sits OUTSIDE each <label> on purpose: a <label>'s accessible
+                    name is computed from all of its text content, so an error
+                    message nested inside it would silently fold into the
+                    control's name (e.g. "KeyKey is required."). */}
+                <div className="fse__grid2">
                   <div className="fse__field">
                     <label className="fse__field-label">
-                      <span className="fse__label">Key</span>
+                      <span className="fse__label fse__label--required">Key</span>
                       <input
                         type="text"
                         className="fse__input"
                         value={field.key}
                         onChange={(e) => onUpdateField(idx, (f) => ({ ...f, key: e.target.value }))}
-                        placeholder="e.g. firstName"
+                        placeholder="householdName"
                         aria-invalid={v.keyError ? true : undefined}
                       />
                     </label>
@@ -801,7 +867,7 @@ function SectionCard({
 
                   <div className="fse__field">
                     <label className="fse__field-label">
-                      <span className="fse__label">Label</span>
+                      <span className="fse__label fse__label--required">Label</span>
                       <input
                         type="text"
                         className="fse__input"
@@ -816,72 +882,47 @@ function SectionCard({
                               : f,
                           )
                         }
-                        placeholder="e.g. First name"
+                        placeholder="Household name"
                         aria-invalid={v.labelError ? true : undefined}
                       />
                     </label>
                     {v.labelError && <span className="fse__error">{v.labelError}</span>}
                   </div>
+                </div>
 
-                  <label className="fse__field">
-                    <span className="fse__label">Type</span>
-                    <select
-                      className="fse__input"
-                      value={field.type}
-                      onChange={(e) =>
-                        onUpdateField(idx, (f) => {
-                          const type = e.target.value as FieldType;
-                          const needsOpts = type === 'select' || type === 'multiselect';
-                          return { ...f, type, options: needsOpts ? (f.options ?? []) : null };
-                        })
-                      }
-                    >
-                      {FIELD_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="fse__field fse__field--checkbox">
-                    <input
-                      type="checkbox"
-                      checked={field.required}
-                      onChange={(e) => onUpdateField(idx, (f) => ({ ...f, required: e.target.checked }))}
-                    />
-                    <span className="fse__label">Required</span>
-                  </label>
-
-                  <div className="fse__field-actions">
-                    <IconButton
-                      icon={<UpGlyph />}
-                      label={`Move ${field.label || field.key || 'field'} up`}
-                      onClick={() => onMoveFieldUp(idx)}
-                      disabled={idx === 0}
-                      size={32}
-                    />
-                    <IconButton
-                      icon={<DownGlyph />}
-                      label={`Move ${field.label || field.key || 'field'} down`}
-                      onClick={() => onMoveFieldDown(idx)}
-                      disabled={idx === section.fields.length - 1}
-                      size={32}
-                    />
-                    <IconButton
-                      icon={<TrashGlyph />}
-                      label={`Remove ${field.label || field.key || 'field'}`}
-                      onClick={() => onRemoveField(idx)}
-                      destructive
-                      size={32}
-                    />
+                {/* The mock's type chip row: the nine supported types as chips,
+                    the chosen one orange. A radio group, so the group carries
+                    the "Type" name the select had and each chip is one choice. */}
+                <div className="fse__field">
+                  <span className="fse__label" id={`fse-type-${index}-${idx}`}>
+                    Type
+                  </span>
+                  <div className="fse__chips" role="radiogroup" aria-labelledby={`fse-type-${index}-${idx}`}>
+                    {FIELD_TYPES.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        role="radio"
+                        aria-checked={field.type === t}
+                        className={field.type === t ? 'fse__chip fse__chip--on' : 'fse__chip'}
+                        onClick={() =>
+                          onUpdateField(idx, (f) => {
+                            const type = t as FieldType;
+                            const needsOpts = type === 'select' || type === 'multiselect';
+                            return { ...f, type, options: needsOpts ? (f.options ?? []) : null };
+                          })
+                        }
+                      >
+                        {t}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
                 {needsOptions && (
-                  <div className="fse__field fse__field--wide">
+                  <div className="fse__field">
                     <label className="fse__field-label">
-                      <span className="fse__label">Options (comma separated)</span>
+                      <span className="fse__label fse__label--required">Options (comma-separated)</span>
                       <input
                         type="text"
                         className="fse__input"
@@ -889,7 +930,7 @@ function SectionCard({
                         onChange={(e) =>
                           onUpdateField(idx, (f) => ({ ...f, options: csvToOptions(e.target.value) }))
                         }
-                        placeholder="e.g. Dog, Cat, Other"
+                        placeholder="Small, Medium, Large"
                         aria-invalid={v.optionsError ? true : undefined}
                       />
                     </label>
@@ -897,10 +938,11 @@ function SectionCard({
                   </div>
                 )}
 
-                {/* Drawn, not folded. These four used to sit behind a
-                    `<details>Advanced</details>`; see the file header for
-                    the ruling that took it out. */}
-                <div className="fse__grid">
+                {/* Drawn, not folded, and stacked one under the other as the
+                    mock's `.stack` draws them. These four used to sit behind a
+                    `<details>Advanced</details>`; see the file header for the
+                    ruling that took it out. */}
+                <div className="fse__stack">
                   <label className="fse__field">
                     <span className="fse__label">Helper text</span>
                     <input
@@ -943,6 +985,31 @@ function SectionCard({
                       onChange={(e) => onUpdateField(idx, (f) => ({ ...f, group: e.target.value || null }))}
                     />
                   </label>
+
+                  {/* The mock's `.reqrow`: "Required" with a Yes / No segmented
+                      picker, the chosen half cream on navy, never a checkbox. */}
+                  <div className="fse__required">
+                    <span className="fse__required-label" id={`fse-required-${index}-${idx}`}>
+                      Required
+                    </span>
+                    <div className="fse__seg" role="radiogroup" aria-labelledby={`fse-required-${index}-${idx}`}>
+                      {([
+                        ['Yes', true],
+                        ['No', false],
+                      ] as const).map(([label, value]) => (
+                        <button
+                          key={label}
+                          type="button"
+                          role="radio"
+                          aria-checked={field.required === value}
+                          className={field.required === value ? 'fse__seg-btn fse__seg-btn--on' : 'fse__seg-btn'}
+                          onClick={() => onUpdateField(idx, (f) => ({ ...f, required: value }))}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </li>
             );
@@ -950,10 +1017,15 @@ function SectionCard({
         </ul>
       )}
 
-      <div className="fse__step-actions">
-        <PrimaryButton label="Add field" onClick={onAddField} />
-      </div>
     </li>
+  );
+}
+
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14M12 5v14" />
+    </svg>
   );
 }
 

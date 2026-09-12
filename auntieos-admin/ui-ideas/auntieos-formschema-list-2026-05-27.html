@@ -30,6 +30,12 @@
     4. Field-count column derived from the full schema (summary payload does not carry it).
   None of these are wired into the shipped contract; they are exploration only.
 
+  WHAT SHIPPED (recorded 2026-09-12, #755): suggestions 1, 2 and 3 are built on both platforms. The row
+  delete confirms in the kit dialog and calls deleteFormSchema. Suggestion 4 stays unbuilt: the summary
+  payload still carries no field count. The Android list keeps one stacked row per schema under the same
+  sort strip rather than four literal columns (the design doc's phone rule), and its empty state says
+  "Tap New schema" because it is a touch screen.
+
   Sample schema names are illustrative placeholder, NOT real data.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />

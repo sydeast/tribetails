@@ -1,9 +1,11 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -17,6 +19,7 @@ import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -164,5 +167,43 @@ class FormSchemaEditorRobolectricTest {
         rule.waitForIdle()
         val after = vm.state.value.sections.map { it.title }
         assert(before == after) { "expected no-op for first section up arrow, before=$before after=$after" }
+    }
+
+    /**
+     * The mock's shape (#755): the hero band with the mock's kicker and the
+     * "{id} · v{version}" detail line, the schema inputs on the ground with no
+     * "Schema details" panel over them, the serif "Sections" bar with its
+     * "Add section" ghost, the "Fields (n)" bar with "Add field", and Yes / No
+     * for Required rather than a toggle.
+     */
+    @Test
+    @Config(sdk = [35], qualifiers = "w1080dp-h6000dp-xhdpi")
+    fun drawsTheMock_heroDetail_bareMeta_sectionsBar_andYesNoRequired() {
+        val repo = mockk<AuntieRepository>(relaxed = true)
+        coEvery { repo.getFormSchema("tribeProfile") } returns Result.success(buildSchemaWithTwoFields())
+        val vm = FormSchemaEditorViewModel(repository = repo)
+        rule.setContent {
+            AuntieOSTheme {
+                FormSchemaEditorScreen(
+                    schemaId = "tribeProfile",
+                    onBack = {},
+                    viewModel = vm,
+                )
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText("THE DEN · FORM SCHEMAS").assertIsDisplayed()
+        rule.onNodeWithText("tribeProfile · v1").assertIsDisplayed()
+        rule.onNodeWithText("Sections").assertIsDisplayed()
+        rule.onNodeWithText("Add section").assertIsDisplayed()
+        rule.onNodeWithText("Fields (2)").assertIsDisplayed()
+        rule.onNodeWithText("Add field").assertIsDisplayed()
+        // One Yes / No pair per field, two fields.
+        assertEquals(2, rule.onAllNodesWithText("Yes").fetchSemanticsNodes().size)
+        assertEquals(2, rule.onAllNodesWithText("No").fetchSemanticsNodes().size)
+        // The two wrapper panels and their titles are gone.
+        assertEquals(0, rule.onAllNodesWithText("Schema details").fetchSemanticsNodes().size)
+        // Nothing is dirty on open, so the mock's pill is not drawn.
+        assertEquals(0, rule.onAllNodesWithText("UNSAVED").fetchSemanticsNodes().size)
     }
 }
