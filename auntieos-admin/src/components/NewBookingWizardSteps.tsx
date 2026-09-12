@@ -349,11 +349,10 @@ export function ServiceStep({ state, onChange, options, optionsError }: ServiceS
                 <button
                   key={option.name}
                   type="button"
-                  className={
-                    state.serviceName === option.name
-                      ? 'nbw__service nbw__service--on'
-                      : 'nbw__service'
-                  }
+                  // The mock's `.type` rises on hover; `lift` is the app's one
+                  // rise, and it has to sit on this line for the scanner in
+                  // tokenUsage.test.ts to count the card as a wearer.
+                  className={state.serviceName === option.name ? 'nbw__service nbw__service--on lift' : 'nbw__service lift'}
                   aria-pressed={state.serviceName === option.name}
                   onClick={() => onChange(applyServiceToTemplate(state, option))}
                 >
