@@ -109,8 +109,37 @@ function unrenewable(): Error & { code: string } {
   return Object.assign(new Error('nope'), { code: 'auth/internal-error' });
 }
 
+/**
+ * Each `boot()` imports a fresh `./router`, which registers a module-level
+ * `online` listener that outlives the render. Those stale routers share this
+ * document's history, so a later `dispatchEvent(new Event('online'))` would
+ * wake all of them and let a dead router's guard redirect the URL out from
+ * under the live one. Real in production only in the sense that a page has one
+ * router; here it is pure test bleed, so each boot's listener is tracked and
+ * dropped with its test.
+ */
+const bootedOnlineListeners: EventListener[] = [];
+async function importRouterTrackingListeners() {
+  const realAdd = window.addEventListener.bind(window);
+  const spy = vi.spyOn(window, 'addEventListener').mockImplementation(((
+    type: string,
+    fn: EventListener,
+    opts?: boolean | AddEventListenerOptions,
+  ) => {
+    if (type === 'online') bootedOnlineListeners.push(fn);
+    realAdd(type, fn, opts);
+  }) as typeof window.addEventListener);
+  try {
+    return await import('./router');
+  } finally {
+    spy.mockRestore();
+  }
+}
+function dropBootedOnlineListeners(): void {
+  for (const fn of bootedOnlineListeners.splice(0)) window.removeEventListener('online', fn);
+}
 async function boot() {
-  const { router } = await import('./router');
+  const { router } = await importRouterTrackingListeners();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -137,6 +166,7 @@ describe('#812 the admin gate on a device with no signal', () => {
   });
 
   afterEach(() => {
+    dropBootedOnlineListeners();
     window.history.replaceState(null, '', '/');
   });
 
@@ -210,6 +240,24 @@ describe('#812 the admin gate on a device with no signal', () => {
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
   });
 
+  it('becomes the real app again when the connection comes back', async () => {
+    // The read-only entry has to be a waiting room, not a dead end. Nothing is
+    // tapped here: the browser's own `online` event is the whole input.
+    getIdTokenResult.mockRejectedValueOnce(networkRefusal());
+    await boot();
+    await screen.findByText(/Signed in, but out of touch/i);
+    expect(sessionEndingControls()).toHaveLength(0);
+    getIdTokenResult.mockResolvedValue(adminToken());
+    window.dispatchEvent(new Event('online'));
+    // The banner goes, the sign out comes back, and callables are dialled again
+    // rather than refused on the way out.
+    await waitFor(() =>
+      expect(screen.queryByText(/Signed in, but out of touch/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
+    const { isReadOnlySession } = await import('./lib/readOnlySession');
+    expect(isReadOnlySession()).toBe(false);
+  });
   it('registers an errorComponent, so no route rejection can reach the crash fallback', async () => {
     getIdTokenResult.mockResolvedValue(adminToken());
     const { router } = await boot();

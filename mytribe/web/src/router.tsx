@@ -9,7 +9,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router';
 import { getAuthState, subscribeAuthState, waitForAuthReady, useSignOut } from './lib/auth';
-import { OfflineAccessError, clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
+import { OfflineAccessError, clearAccess, clearFailedAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 // O-26: every screen below is code-split via lazyRouteComponent (each
 // resolves to its own chunk at build time) instead of a static import here —
 // the single main bundle had grown to 348KB gz (from 204KB at S3) once
@@ -411,9 +411,12 @@ export const router = createRouter({
  *
  * `ensureAccess` caches its resolved state, including the FAILED one, under
  * `resolvedForUid`, so re-running the guard alone would hand back the same
- * error and the same offline screen forever. `clearAccess()` is what makes the
- * next pass actually call `getMyAccess` again. `invalidate()` then re-runs every
- * committed guard, which is what turns the offline screen back into the
+ * error and the same offline screen forever. `clearFailedAccess()` is what
+ * makes the next pass actually call `getMyAccess` again, and it is deliberately
+ * the narrow one: this event fires on every reconnect, and dropping a HEALTHY
+ * access here would blank `getActiveKinfolkId()` under the refetches React
+ * Query starts on the same event. See its header. `invalidate()` then re-runs
+ * every committed guard, which is what turns the offline screen back into the
  * household's booking with nothing tapped.
  *
  * Same mechanism as the #539 auth subscription below, for the same reason: a
@@ -421,7 +424,7 @@ export const router = createRouter({
  */
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    clearAccess();
+    clearFailedAccess();
     void router.invalidate();
   });
 }

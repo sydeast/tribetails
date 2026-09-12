@@ -10,7 +10,7 @@ import {
   type NavEntry,
   type NavGroup,
 } from '../lib/nav';
-import { profileDisplayName, profileInitials } from '../lib/accountFormat';
+import { OFFLINE_ROLE_LABEL, profileDisplayName, profileInitials } from '../lib/accountFormat';
 import { NavGlyph } from './NavGlyphs';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
@@ -210,7 +210,11 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
   // it would misdescribe: a test admin, who would lose the sandbox warning and
   // be told they are the operator.
   const roleText =
-    access === null ? 'Offline' : access.status === 'testAdmin' ? 'Test admin, sandbox' : 'Operator';
+    access === null
+      ? OFFLINE_ROLE_LABEL
+      : access.status === 'testAdmin'
+        ? 'Test admin, sandbox'
+        : 'Operator';
 
   // The rail's one real number: unread client threads, live. See
   // lib/useUnreadInbox.ts for why the shell owns this listener and what a

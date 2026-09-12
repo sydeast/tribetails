@@ -287,6 +287,27 @@ export function clearActiveTribeSession(uid: string): void {
   }
 }
 
+/**
+ * Clear the resolved access ONLY if it is the failed one (#812).
+ *
+ * The `online` listener in router.tsx fires on every reconnect, not only on the
+ * ones that follow a failure, and a blanket `clearAccess()` there would set
+ * `state` to null under a perfectly healthy session. That matters here more
+ * than it would elsewhere: React Query refetches on the same event by default,
+ * and `getActiveKinfolkId()` would answer `undefined` for the window until
+ * `ensureAccess` resolves again. Every kinfolkId-scoped callable falls back
+ * server-side to the caller's first linked id when the id is omitted
+ * (`resolveKinfolkAccess.ts`), so for an operator viewing a household that is
+ * not their first, those refetches would read the wrong household. That is the
+ * exact failure the rest of this file exists to prevent.
+ *
+ * So the reconnect path clears only what is actually stale: an access whose
+ * fetch failed, or none at all.
+ */
+export function clearFailedAccess(): void {
+  if (state !== null && state.error === null) return;
+  clearAccess();
+}
 /** Clears the resolved access (call on sign-out) so the next sign-in re-resolves. */
 export function clearAccess(): void {
   state = null;

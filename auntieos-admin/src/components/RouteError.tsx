@@ -1,4 +1,4 @@
-import type { ErrorComponentProps } from '@tanstack/react-router';
+import { useRouter, type ErrorComponentProps } from '@tanstack/react-router';
 import { OfflineSessionError } from '../lib/readOnlySession';
 import { Banner } from './Banner';
 import { GlassSurface } from './GlassSurface';
@@ -27,9 +27,8 @@ import './RouteError.css';
  * Signing out clears the ID token, the IndexedDB session and every cache behind
  * it, the only copy of anything still readable on a device with no signal. #805
  * settled this for the portal for the same reason. What is offered instead is
- * Try again, which re-runs the guard that threw: worth a tap the moment a bar of
- * signal comes back, and `router.tsx` fires it unprompted when the browser says
- * the connection has returned.
+ * Try again, which re-runs the guard that threw. `router.tsx` fires the same
+ * recovery unprompted when the browser says the connection has returned.
  *
  * Existing kit only: `GlassSurface` for the card, `Banner` for the notice, the
  * shell's own button. Nothing here is a new visual idea.
@@ -65,11 +64,14 @@ export function routeErrorNotice(error: unknown, online: boolean): {
   };
 }
 
-export function RouteError({ error, reset }: ErrorComponentProps) {
-  // Read at render, not held in state: a re-render after the `online` event has
-  // fired must be able to change the answer.
-  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-  const notice = routeErrorNotice(error, online);
+/** The screen itself, with no router in it, so the spec can render it directly. */
+export function RouteErrorView({
+  notice,
+  onRetry,
+}: {
+  notice: ReturnType<typeof routeErrorNotice>;
+  onRetry: () => void;
+}) {
   return (
     <main className="routeerr">
       <div className="routeerr__stage">
@@ -77,7 +79,7 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
           <Banner
             tone={notice.tone}
             title={notice.title}
-            trailing={<PrimaryButton label="Try again" onClick={reset} />}
+            trailing={<PrimaryButton label="Try again" onClick={onRetry} />}
           >
             {notice.body}
           </Banner>
@@ -85,4 +87,30 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
       </div>
     </main>
   );
+}
+
+export function RouteError({ error, reset }: ErrorComponentProps) {
+  const router = useRouter();
+  // Read at render, not held in state: a re-render after the `online` event has
+  // fired must be able to change the answer.
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+
+  /**
+   * `reset` ALONE WOULD DO NOTHING, and that is read off the library rather
+   * than assumed. It is `CatchBoundary`'s `setState({ error: null })` and
+   * nothing more (CatchBoundary.js), while a `beforeLoad` rejection lives on
+   * the match: `MatchInner` re-throws `match.error` on the very next render
+   * (Match.js), so the boundary catches the same error again and the button
+   * reads as broken. `invalidate()` is what re-runs the guard, and it also
+   * hands the boundary a new match, which is its own reset key
+   * (`getResetKey: () => match`). #805's finding, honoured here: a control
+   * that cannot work is worse than no control, so this one is wired to the
+   * thing that actually retries.
+   */
+  function retry(): void {
+    reset();
+    void router.invalidate();
+  }
+
+  return <RouteErrorView notice={routeErrorNotice(error, online)} onRetry={retry} />;
 }

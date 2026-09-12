@@ -8,7 +8,12 @@ import {
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
 import { resolveAccess, type AdminAccess } from './lib/access';
-import { noteRefreshFailure, subscribeSessionHealth, getSessionHealth } from './lib/sessionHealth';
+import {
+  getSessionHealth,
+  noteRefreshFailure,
+  noteRefreshSucceeded,
+  subscribeSessionHealth,
+} from './lib/sessionHealth';
 import { enterReadOnlySession, leaveReadOnlySession } from './lib/readOnlySession';
 import { NOTIFICATION_GATE_REDIRECT } from './lib/nav';
 import { AppShell } from './components/AppShell';
@@ -151,7 +156,10 @@ async function requireAdmin() {
     return { access: null };
   }
   if (access.status === 'denied') throw redirect({ to: '/signin' });
+  // A resolved token is proof the session can mint one, so the degraded state
+  // and the banner that explains it both go at the same moment.
   leaveReadOnlySession();
+  noteRefreshSucceeded();
   return { access };
 }
 

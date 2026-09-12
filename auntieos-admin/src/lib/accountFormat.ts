@@ -74,6 +74,12 @@ export function providerLabel(providerId: string): string {
 }
 
 /**
+ * The one wording for "the gate admitted this session without reading its
+ * claims". Shared with the shell's account chip so the same state cannot be
+ * described two ways in two places on the same screen.
+ */
+export const OFFLINE_ROLE_LABEL = 'Not checked while offline';
+/**
  * Human label for the resolved admin access (the AppShell already resolved this).
  *
  * Null is the #812 degraded entry: the gate admitted this session without
@@ -82,7 +88,7 @@ export function providerLabel(providerId: string): string {
  * a permission level nobody checked is the one thing this label must not do.
  */
 export function roleLabel(access: AdminAccess | null): string {
-  if (access === null) return 'Not checked while offline';
+  if (access === null) return OFFLINE_ROLE_LABEL;
   switch (access.status) {
     case 'admin':
       return 'Operator (full admin)';

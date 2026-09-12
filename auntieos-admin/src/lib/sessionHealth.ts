@@ -146,6 +146,21 @@ export function noteRefreshFailure(err: unknown): 'unreachable' | 'expired' {
   return 'unreachable';
 }
 
+/**
+ * Record a token refresh that has already SUCCEEDED somewhere else (#812).
+ *
+ * The counterpart to the above, and it exists for one visible defect: the gate
+ * recovers the moment a navigation resolves access again, but this module would
+ * go on saying `unreachable` until its own backoff next fired, up to a minute
+ * later. So the operator would get the full app back with a banner still
+ * telling them their saves may be refused. Mints nothing of its own: the gate
+ * has just proven the session can mint a token.
+ */
+export function noteRefreshSucceeded(): void {
+  if (current.status === 'ok') return;
+  publish({ status: 'ok' });
+  schedule(PROBE_INTERVAL_MS);
+}
 async function probe(): Promise<void> {
   const user = auth.currentUser;
   if (!user) {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { routeErrorNotice, RouteError } from './RouteError';
+import { routeErrorNotice, RouteErrorView } from './RouteError';
 import { OfflineSessionError } from '../lib/readOnlySession';
 
 /**
@@ -30,7 +30,12 @@ describe('the router error screen', () => {
   });
 
   it('offers Try again and never a way to sign out', () => {
-    render(<RouteError error={new OfflineSessionError('listBookings')} reset={vi.fn()} />);
+    render(
+      <RouteErrorView
+        notice={routeErrorNotice(new OfflineSessionError('listBookings'), false)}
+        onRetry={vi.fn()}
+      />,
+    );
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     // Signing out offline clears the only copy of anything still readable, and
     // signing back in needs the connection that is missing. See #805.

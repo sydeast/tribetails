@@ -74,8 +74,37 @@ function setOnline(online: boolean): void {
   Object.defineProperty(window.navigator, 'onLine', { value: online, configurable: true });
 }
 
+/**
+ * Each `boot()` imports a fresh `./router`, which registers a module-level
+ * `online` listener that outlives the render. Those stale routers share this
+ * document's history, so a later `dispatchEvent(new Event('online'))` would
+ * wake all of them and let a dead router's guard redirect the URL out from
+ * under the live one. Real in production only in the sense that a page has one
+ * router; here it is pure test bleed, so each boot's listener is tracked and
+ * dropped with its test.
+ */
+const bootedOnlineListeners: EventListener[] = [];
+async function importRouterTrackingListeners() {
+  const realAdd = window.addEventListener.bind(window);
+  const spy = vi.spyOn(window, 'addEventListener').mockImplementation(((
+    type: string,
+    fn: EventListener,
+    opts?: boolean | AddEventListenerOptions,
+  ) => {
+    if (type === 'online') bootedOnlineListeners.push(fn);
+    realAdd(type, fn, opts);
+  }) as typeof window.addEventListener);
+  try {
+    return await import('./router');
+  } finally {
+    spy.mockRestore();
+  }
+}
+function dropBootedOnlineListeners(): void {
+  for (const fn of bootedOnlineListeners.splice(0)) window.removeEventListener('online', fn);
+}
 async function boot() {
-  const { router } = await import('./router');
+  const { router } = await importRouterTrackingListeners();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -98,6 +127,7 @@ describe('#812 a portal deep link opened with no signal', () => {
   });
 
   afterEach(() => {
+    dropBootedOnlineListeners();
     setOnline(true);
     sessionStorage.clear();
     window.history.replaceState(null, '', '/');
@@ -192,5 +222,25 @@ describe('#812 a portal deep link opened with no signal', () => {
     window.dispatchEvent(new Event('online'));
 
     await waitFor(() => expect(screen.getByText('THE BOOKING')).toBeInTheDocument());
+  });
+
+  it('does not re-fetch a healthy access every time the connection flaps', async () => {
+    // The reconnect path clears only a FAILED access. Dropping a healthy one
+    // would blank `getActiveKinfolkId()` under the refetches React Query starts
+    // on the same event, and a kinfolkId-less callable reads the caller's first
+    // household server-side, which for an operator is the wrong one.
+    //
+    // Counted as a DELTA rather than an absolute. Every `boot()` in this file
+    // leaves its own `online` listener on the window, so the shared mock's
+    // total is not this test's alone. What the reconnect must not do is add to
+    // it, and that is exactly what the delta measures.
+    getMyAccess.mockResolvedValue({ kinfolkIds: ['kin-1'], isOperator: false });
+    setActiveTribe.mockResolvedValue({ ok: true, kinfolkId: 'kin-1' });
+    await boot();
+    await screen.findByText('THE BOOKING');
+    const before = getMyAccess.mock.calls.length;
+    window.dispatchEvent(new Event('online'));
+    await waitFor(() => expect(screen.getByText('THE BOOKING')).toBeInTheDocument());
+    expect(getMyAccess.mock.calls.length).toBe(before);
   });
 });

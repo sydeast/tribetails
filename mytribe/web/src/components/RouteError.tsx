@@ -1,6 +1,6 @@
-import type { ErrorComponentProps } from '@tanstack/react-router';
+import { useRouter, type ErrorComponentProps } from '@tanstack/react-router';
 import { useSignOut } from '../lib/auth';
-import { OfflineAccessError } from '../lib/activeTribe';
+import { OfflineAccessError, clearFailedAccess } from '../lib/activeTribe';
 import { LaunchError } from '../screens/LaunchError';
 import { LaunchOffline } from '../screens/LaunchOffline';
 
@@ -32,7 +32,22 @@ import { LaunchOffline } from '../screens/LaunchOffline';
  */
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+  const router = useRouter();
   const { signOut, signingOut } = useSignOut();
+  /**
+   * `reset` on its own cannot retry a guard, and that is read off the library
+   * rather than assumed: it is `CatchBoundary`'s `setState({ error: null })`,
+   * while a `beforeLoad` rejection lives on the match and `MatchInner`
+   * re-throws it on the next render. `clearFailedAccess` then drops the FAILED
+   * access `ensureAccess` cached (without touching a healthy one), and
+   * `invalidate` re-runs every guard. Without all three, Try again does
+   * nothing, which is the button #805 refused to ship.
+   */
+  function retry(): void {
+    reset();
+    clearFailedAccess();
+    void router.invalidate();
+  }
   if (error instanceof OfflineAccessError || !online) return <LaunchOffline />;
-  return <LaunchError onRetry={reset} onSignOut={signOut} signingOut={signingOut} />;
+  return <LaunchError onRetry={retry} onSignOut={signOut} signingOut={signingOut} />;
 }
