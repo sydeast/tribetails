@@ -51,7 +51,7 @@ data class HouseholdMembersUiState(
 )
 
 class HouseholdMembersViewModel(
-    private val kinfolkId: String,
+    val kinfolkId: String,
     private val householdName: String,
     private val repository: MembersRepository = MembersRepository(),
 ) : ViewModel() {

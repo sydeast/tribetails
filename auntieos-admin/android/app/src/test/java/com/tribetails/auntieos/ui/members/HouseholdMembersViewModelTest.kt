@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.members
 
 import com.tribetails.auntieos.data.repository.MembersRepository
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -385,5 +386,46 @@ class HouseholdMembersViewModelTest {
         assertEquals("Email sent", inviteStatusLabel(MembersRepository.InviteStatus.EMAIL_SENT))
         assertEquals("Revoked", inviteStatusLabel(MembersRepository.InviteStatus.REVOKED))
         assertEquals("Accepted", inviteStatusLabel(MembersRepository.InviteStatus.ACCEPTED))
+    }
+    // ── the mock's hero and capsules (#755) ─────────────────────────────────
+    @Test fun `the crest letter skips a leading article`() {
+        assertEquals("W", householdInitial("the Wrens"))
+        assertEquals("P", householdInitial("Pruitt"))
+        assertEquals("F", householdInitial("fam1"))
+    }
+    @Test fun `the where line is the id alone until the roster is read, never a zero count`() {
+        assertEquals("familyId: fam1", whereLine("fam1", HouseholdMembersUiState()))
+        assertEquals(
+            "familyId: fam1",
+            whereLine("fam1", HouseholdMembersUiState(membersError = "boom")),
+        )
+        val primary = member(uid = "p1").copy(role = MembersRepository.MemberRole.PRIMARY)
+        assertEquals(
+            "familyId: fam1 · 1 member · 1 PRIMARY, 0 SECONDARY",
+            whereLine("fam1", HouseholdMembersUiState(members = listOf(primary), membersLoaded = true)),
+        )
+        assertEquals(
+            "familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY",
+            whereLine(
+                "fam1",
+                HouseholdMembersUiState(members = listOf(primary, member()), membersLoaded = true),
+            ),
+        )
+    }
+    @Test fun `member capsules take the mock tints, title case, purple primary and teal secondary`() {
+        assertEquals("Active", memberStatusLabel(MembersRepository.MemberStatus.ACTIVE))
+        assertEquals("Suspended", memberStatusLabel(MembersRepository.MemberStatus.SUSPENDED))
+        assertEquals(AuntieStatusTone.Teal, memberStatusTone(MembersRepository.MemberStatus.ACTIVE))
+        assertEquals(AuntieStatusTone.Orange, memberStatusTone(MembersRepository.MemberStatus.INVITED))
+        assertEquals(AuntieStatusTone.Error, memberStatusTone(MembersRepository.MemberStatus.SUSPENDED))
+        assertEquals(AuntieStatusTone.Purple, roleTone(MembersRepository.MemberRole.PRIMARY))
+        assertEquals(AuntieStatusTone.Teal, roleTone(MembersRepository.MemberRole.SECONDARY))
+    }
+    @Test fun `invite capsules agree with the admin-wide Invites screen`() {
+        MembersRepository.InviteStatus.entries.forEach { status ->
+            assertEquals(status.name, invitePillTone(status), inviteStatusTone(status))
+        }
+        assertEquals("PENDING / EMAIL_SENT · 2", inviteGroupNote(INVITE_GROUPS[0], 2))
+        assertEquals("ACCEPTED · 1", inviteGroupNote(INVITE_GROUPS[1], 1))
     }
 }

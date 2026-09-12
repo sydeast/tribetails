@@ -5,8 +5,10 @@ import { usingFixtureAdmin } from '../support/commands';
  *
  * Household members (`/household-members/{kinfolkId}`), covering PR #732's
  * fix for issue #684: the operator's ruling that the typed-email "Invite a
- * primary by email" form is gone because the Portal access button already
- * covers it.
+ * primary by email" form is gone because the portal invite button already
+ * covers it. Since the #755 Members sweep that button is "Invite to portal"
+ * in the hero band, where the mock puts the household's actions; the Portal
+ * access panel it used to sit in is gone.
  *
  * `listMembers` and `listInvites` (`api/members.ts`) are both callables, and
  * this harness pins callables at a dead port by design (docs/runbooks/e2e.md),
@@ -30,13 +32,13 @@ describe('household members', () => {
     if (!usingFixtureAdmin()) this.skip();
   });
 
-  it('#684 has no "Invite a primary by email" form, and the Portal access button is still there', () => {
+  it('#684 has no "Invite a primary by email" form, and the portal invite button is still there', () => {
     stubMembersCallables();
     cy.signIn();
     cy.visit('/household-members/e2e-kf-1');
 
-    cy.contains('.den-panel-title', 'Portal access', { timeout: 8_000 }).should('exist');
-    cy.contains('button', 'Invite this household to the portal').should('be.enabled');
+    cy.contains('.den-panel-title', 'Primary contact', { timeout: 8_000 }).should('exist');
+    cy.contains('.den-heading button', 'Invite to portal').should('be.enabled');
 
     cy.contains('Invite a primary by email').should('not.exist');
     cy.get('input[type="email"]').should('not.exist');

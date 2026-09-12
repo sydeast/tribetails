@@ -2,6 +2,8 @@ package com.tribetails.auntieos.ui.members
 
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -76,7 +78,9 @@ class HouseholdMembersBreadcrumbTest {
         setContent()
         rule.onNodeWithText("THE DEN · DIRECTORY").assertDoesNotExist()
         rule.onNodeWithText("Directory").assertHasClickAction()
-        rule.onNodeWithText("the Walls").assertHasClickAction()
+        // Since #755 the hero title is the household name too; the crumb is
+        // the one that takes a tap.
+        rule.onNode(hasText("the Walls") and hasClickAction()).assertHasClickAction()
         // The page you are on: named, and not tappable.
         rule.onNodeWithText("Members and invites").assertHasNoClickAction()
     }
@@ -91,7 +95,7 @@ class HouseholdMembersBreadcrumbTest {
         assertEquals(1, wentToDirectory)
         assertEquals(0, wentBack)
 
-        rule.onNodeWithText("the Walls").performClick()
+        rule.onNode(hasText("the Walls") and hasClickAction()).performClick()
         assertEquals(1, wentBack)
         assertEquals(1, wentToDirectory)
     }
