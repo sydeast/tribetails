@@ -150,7 +150,10 @@ fun AuntieMediaCell(
                             .background(Color.Black.copy(alpha = 0.22f)),
                     )
                     PlayBadge(glyph = glyphs.play)
-                    DurationBadge(media.metadata.duration ?: 0)
+                    // #802. `durationSeconds`, not `metadata.duration`: the top-level
+                    // field is the one web actually writes (see MediaFile's field
+                    // comment). `metadata.duration` is a separate, never-written field.
+                    DurationBadge(media.durationSeconds)
                 }
             } else {
                 GlyphBody(
@@ -425,10 +428,20 @@ private fun Modifier.dashedBorder(color: Color, cornerRadius: androidx.compose.u
     }
 
 /** mm:ss / h:mm:ss duration label for the video badge. */
-private fun formatDuration(totalSeconds: Int): String {
+internal fun formatDuration(totalSeconds: Int): String {
     val s = totalSeconds % 60
     val m = (totalSeconds / 60) % 60
     val h = totalSeconds / 3600
     fun pad(n: Int): String = if (n < 10) "0$n" else "$n"
     return if (h > 0) "$h:${pad(m)}:${pad(s)}" else "$m:${pad(s)}"
 }
+
+/**
+ * #802. "m:ss"/"h:mm:ss" for a video duration, or `null` for anything <= 0:
+ * never fabricates "0:00" for an unset duration. Ports web's
+ * `lib/mediaFormat.ts#mediaDurationLabel`; shared by every media surface
+ * outside [AuntieMediaCell] itself (its own [DurationBadge] guards <= 0 the
+ * same way, inline).
+ */
+internal fun mediaDurationLabel(totalSeconds: Int): String? =
+    if (totalSeconds <= 0) null else formatDuration(totalSeconds)

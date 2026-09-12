@@ -169,6 +169,14 @@ data class MediaFile(
     var taggedKinIds: List<String> = emptyList(),
     var description: String = "",
     var isProfilePhoto: Boolean = false,
+    // #802. Video-only; 0/absent on every other type. TOP-LEVEL field, matching
+    // web's `MediaFile.durationSeconds` (auntieos-admin/src/api/gallery.ts and
+    // the wasm/jvm web/composeApp `MediaModels.kt`) field-for-field -- NOT the
+    // nested `metadata.duration` below, which nothing on web ever writes or
+    // reads. Before #802 this app decoded (and the kit's AuntieMediaCell read)
+    // only `metadata.duration`, so a video uploaded from web decoded to no
+    // duration at all despite web having written one under this name.
+    var durationSeconds: Int = 0,
     var cloudinaryPublicId: String = "",   // parity with web MediaFile; needed for delete + Tribal Intel attachment refs
     // #593. State of the asynchronous video location-metadata strip:
     // "PENDING" | "STRIPPED" | "FAILED". A video cannot be stripped inside the

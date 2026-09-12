@@ -252,6 +252,25 @@ internal fun MediaThumbnail(
                             modifier = Modifier.size(20.dp)
                         )
                     }
+                    // #802. Parity with web's Media.tsx `media__tile-duration` badge
+                    // and the kit's own AuntieMediaCell duration badge. Omitted
+                    // entirely (never "0:00") when no duration is known.
+                    mediaDurationLabel(mediaFile.durationSeconds)?.let { label ->
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(AuntieTheme.colors.background.copy(alpha = 0.72f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = label,
+                                style = AuntieTheme.typography.labelSmall,
+                                color = AuntieTheme.colors.textPrimary,
+                            )
+                        }
+                    }
                 }
             }
             MediaType.DOCUMENT -> {
@@ -546,6 +565,24 @@ private fun FullscreenMediaViewer(
                                 tint     = AuntieTheme.colors.kinfolkOrange,
                                 modifier = Modifier.size(36.dp),
                             )
+                        }
+                        // #802. Parity with web's MediaViewerDialog "Duration m:ss"
+                        // meta line. Omitted entirely when no duration is known.
+                        mediaDurationLabel(mediaFile.durationSeconds)?.let { label ->
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(16.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(AuntieTheme.colors.background.copy(alpha = 0.72f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = "Duration $label",
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = AuntieTheme.colors.textPrimary,
+                                )
+                            }
                         }
                     }
                 }
