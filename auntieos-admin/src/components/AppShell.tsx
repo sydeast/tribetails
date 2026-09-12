@@ -15,6 +15,7 @@ import { NavGlyph } from './NavGlyphs';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
 import { SessionBanner } from './SessionBanner';
+import { InstallPrompt } from './InstallPrompt';
 
 const GROUP_ORDER: NavGroup[] = ['den', 'careOps', 'more'];
 
@@ -436,6 +437,13 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
             design; nothing here can broadcast, text, or invoice a real client.
           </Banner>
         ) : null}
+
+        {/* Last of the three standing notices, and last on purpose: a
+            degraded session and a sandbox account both describe what is
+            happening right now, while this is an offer about next time.
+            Renders nothing on a desktop browser that has not offered an
+            install. See InstallPrompt.tsx. */}
+        <InstallPrompt />
 
         <Outlet />
       </main>

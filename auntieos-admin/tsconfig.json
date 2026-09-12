@@ -19,5 +19,11 @@
     "noEmit": true,
     "types": ["vite/client", "@testing-library/jest-dom"]
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "vite.config.ts", "vitest.config.ts"],
+  // The service worker is compiled as a WORKER, not as part of the app:
+  // it needs the `WebWorker` lib, which collides with `DOM` in one
+  // program. `tsconfig.sw.json` typechecks it, and `npm run typecheck`
+  // runs both. Anything the worker shares with the app goes in
+  // `src/lib/swPolicy.ts`, which is plain DOM-compatible types.
+  "exclude": ["src/sw.ts"]
 }

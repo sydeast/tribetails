@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react';
+import { isIos, isStandalone } from '../lib/installState';
 
 /**
  * "Add to Home Screen" helper. Grandma-friendly: big text, two numbered
  * steps for iOS Safari (no install prompt exists there), a single Install
  * button on Android/desktop Chrome via beforeinstallprompt. Hidden when the
  * app is already installed (standalone display mode) or after dismissal.
+ *
+ * On iOS the steps carry two extra sentences, because on that platform adding
+ * the app is not a convenience. Safari will not deliver a notification to a
+ * tab at all, and WebKit wipes a tab-only site's storage (cache, service
+ * worker and all) after seven days without a visit, which for a household that
+ * books monthly is every time. lib/installState.ts has the whole note.
+ *
+ * The ordering against the notifications banner is owned by
+ * InstallAndAlerts.tsx, not by this component.
  */
 
 interface BeforeInstallPromptEvent extends Event {
@@ -13,21 +23,6 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISS_KEY = 'mytribe.a2hs.dismissed';
-
-function isStandalone(): boolean {
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
-
-function isIos(): boolean {
-  const ua = navigator.userAgent;
-  const classicIos = /iPhone|iPad|iPod/.test(ua);
-  // iPadOS 13+ reports as Mac; the touch check tells them apart.
-  const iPadOs = ua.includes('Macintosh') && navigator.maxTouchPoints > 1;
-  return classicIos || iPadOs;
-}
 
 export function AddToHomeScreen() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
@@ -57,6 +52,10 @@ export function AddToHomeScreen() {
   if (!ios && !installEvent) return null;
 
   function dismiss() {
+    // Worth knowing rather than engineering around: on iOS this flag is itself
+    // script-writable storage, so the seven-day wipe takes it too and the coach
+    // comes back on its own for a household that never installs. That is the
+    // right outcome here, so nothing tries to make the dismissal outlive it.
     localStorage.setItem(DISMISS_KEY, '1');
     setDismissed(true);
   }
@@ -80,22 +79,32 @@ export function AddToHomeScreen() {
       </div>
 
       {ios ? (
-        <div className="steps">
-          <div className="step">
-            <div className="num">1</div>
-            <p>
-              Tap the <b>Share</b> button <span className="glyph">{'\u{2B06}\u{FE0F}'}</span> at the
-              bottom of Safari.
-            </p>
+        <>
+          <div className="steps">
+            <div className="step">
+              <div className="num">1</div>
+              <p>
+                Tap the <b>Share</b> button <span className="glyph">{'\u{2B06}\u{FE0F}'}</span> at the
+                bottom of Safari.
+              </p>
+            </div>
+            <div className="step">
+              <div className="num">2</div>
+              <p>
+                Scroll down and tap <b>Add to Home Screen</b> <span className="glyph">{'\u{2795}'}</span>,
+                then tap <b>Add</b>.
+              </p>
+            </div>
           </div>
-          <div className="step">
-            <div className="num">2</div>
-            <p>
-              Scroll down and tap <b>Add to Home Screen</b> <span className="glyph">{'\u{2795}'}</span>,
-              then tap <b>Add</b>.
-            </p>
-          </div>
-        </div>
+          <p className="note">
+            Adding it is what turns notifications on. An iPhone will not send you a visit update
+            from a Safari tab, only from the app on your home screen.
+          </p>
+          <p className="note">
+            It will ask you to sign in once more the first time you open it. That is normal. The
+            home screen app keeps its own sign in, separate from Safari.
+          </p>
+        </>
       ) : (
         <button className="btn grad block" onClick={() => void install()}>
           Install MyTribe

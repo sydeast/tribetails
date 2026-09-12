@@ -14,6 +14,12 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
 import { NetworkFirst, NetworkOnly } from 'workbox-strategies';
+import {
+  NAVIGATION_CACHE_NAME,
+  NAVIGATION_NETWORK_TIMEOUT_SECONDS,
+  isNavigationRequest,
+  isNeverCachedHost,
+} from './lib/swPolicy';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
@@ -24,22 +30,22 @@ declare const self: ServiceWorkerGlobalScope & {
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Navigations: network-first (repo gotcha — stale-while-revalidate served
-// old bundles one load behind every release).
+// Navigations: network-first, falling back to the cached shell once the
+// network has had its short turn. Both the strategy (still network-first, not
+// stale-while-revalidate) and the length of that turn (two seconds, down from
+// five) are decisions with measurements behind them, and lib/swPolicy.ts is
+// where that reasoning is written down.
 registerRoute(
-  ({ request }) => request.mode === 'navigate',
-  new NetworkFirst({ cacheName: 'mytribe-pages', networkTimeoutSeconds: 5 }),
+  ({ request }) => isNavigationRequest(request),
+  new NetworkFirst({
+    cacheName: NAVIGATION_CACHE_NAME,
+    networkTimeoutSeconds: NAVIGATION_NETWORK_TIMEOUT_SECONDS,
+  }),
 );
 
 // Functions / Firestore / Auth traffic: never cached, must be live — breaking
 // this rule blocks the auth SDK (same rule the Kotlin app's worker had).
-registerRoute(
-  ({ url }) =>
-    url.hostname.endsWith('cloudfunctions.net') ||
-    url.hostname.endsWith('googleapis.com') ||
-    url.hostname.endsWith('firebaseio.com'),
-  new NetworkOnly(),
-);
+registerRoute(({ url }) => isNeverCachedHost(url), new NetworkOnly());
 
 // registerType: 'autoUpdate' expects the worker to activate itself immediately
 // rather than wait for all tabs to close (injectManifest doesn't do this for
