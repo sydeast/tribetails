@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil3.compose.AsyncImage
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.BellOff
@@ -104,7 +103,6 @@ import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
-import com.tribetails.auntieos.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieRadio
 import com.tribetails.auntieos.ui.components.AuntieSaveBar
@@ -602,142 +600,6 @@ fun AdminSettingsScreen(
             kind = toastKind,
             onDismiss = { toastVisible = false },
             modifier = Modifier.align(Alignment.BottomCenter).padding(dims.space4),
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Profile
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-internal fun ProfilePanel(
-    profile: com.tribetails.auntieos.data.model.UserProfile,
-    isUploadingAvatar: Boolean,
-    isLoading: Boolean,
-    onPickAvatar: () -> Unit,
-    onProfileField: ((com.tribetails.auntieos.data.model.UserProfile) -> com.tribetails.auntieos.data.model.UserProfile) -> Unit,
-    onSaveProfile: () -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    DenPanel(title = "Profile", subtitle = "Who the kinfolk see on your KinTales and replies.") {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dims.space4),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(88.dp)
-                    .clip(CircleShape)
-                    .background(c.surface2)
-                    .clickable(enabled = !isUploadingAvatar) { onPickAvatar() },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (profile.photoUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = profile.photoUrl,
-                        contentDescription = "Profile photo",
-                        modifier = Modifier.fillMaxSize().clip(CircleShape),
-                    )
-                } else {
-                    Text(
-                        text = profile.displayLabel.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                        style = AuntieTheme.typography.displayLarge,
-                        color = c.textDim,
-                    )
-                }
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = profile.displayLabel,
-                    style = AuntieTheme.typography.titleLarge,
-                    color = c.textPrimary,
-                )
-                Text(
-                    text = profile.title.ifBlank { "Admin" },
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.primary,
-                )
-                Text(
-                    text = profile.email.ifBlank { "No email on file" },
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textDim,
-                )
-                AuntieTextBtn(
-                    onClick = onPickAvatar,
-                    enabled = !isUploadingAvatar,
-                ) {
-                    AuntieIconTile(icon = Lucide.Camera, tone = AuntieStatusTone.Orange, size = 22.dp)
-                    Spacer(Modifier.width(dims.space2))
-                    Text(if (isUploadingAvatar) "Uploading…" else "Change Picture")
-                }
-            }
-        }
-
-        Spacer(Modifier.height(dims.space4))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(dims.space3), modifier = Modifier.fillMaxWidth()) {
-            AuntieField(
-                value = profile.firstName,
-                onValueChange = { v -> onProfileField { it.copy(firstName = v) } },
-                label = "First Name",
-                modifier = Modifier.weight(1f),
-            )
-            AuntieField(
-                value = profile.lastName,
-                onValueChange = { v -> onProfileField { it.copy(lastName = v) } },
-                label = "Last Name",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.displayName,
-            onValueChange = { v -> onProfileField { it.copy(displayName = v) } },
-            label = "Display Name",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(dims.space3))
-        Row(horizontalArrangement = Arrangement.spacedBy(dims.space3), modifier = Modifier.fillMaxWidth()) {
-            AuntieField(
-                value = profile.email,
-                onValueChange = { v -> onProfileField { it.copy(email = v) } },
-                label = "Email Address",
-                modifier = Modifier.weight(1f),
-            )
-            AuntieField(
-                value = profile.phone,
-                onValueChange = { v -> onProfileField { it.copy(phone = v) } },
-                label = "Phone",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.title,
-            onValueChange = { v -> onProfileField { it.copy(title = v) } },
-            label = "Title / Role",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.bio,
-            onValueChange = { v -> onProfileField { it.copy(bio = v) } },
-            label = "Bio",
-            singleLine = false,
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        Spacer(Modifier.height(dims.space4))
-
-        PrimaryButton(
-            label = "Save Profile",
-            onClick = onSaveProfile,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isLoading && !isUploadingAvatar,
         )
     }
 }
@@ -2336,81 +2198,6 @@ private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
             )
         },
     )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Security
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-internal fun SecurityPanel(
-    email: String,
-    isSending: Boolean,
-    busy: Boolean,
-    message: String?,
-    onSendReset: () -> Unit,
-    onChangeEmail: (currentPassword: String, newEmail: String) -> Unit,
-    onChangePassword: (currentPassword: String, newPassword: String, confirm: String) -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    var newEmail by remember { mutableStateOf("") }
-    var emailPw by remember { mutableStateOf("") }
-    var curPw by remember { mutableStateOf("") }
-    var newPw by remember { mutableStateOf("") }
-    var confirmPw by remember { mutableStateOf("") }
-    val pwMismatch = newPw.isNotEmpty() && confirmPw.isNotEmpty() && newPw != confirmPw
-
-    DenPanel(
-        title = "Security",
-        subtitle = "Keep your account safe.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.ShieldCheck, tone = AuntieStatusTone.Success, size = 40.dp)
-        },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            message?.let {
-                Text(it, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.success)
-            }
-
-            // Login email (15.4): editable via verify-before-update.
-            Text("Login email", style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
-            Text(
-                "Signed in as ${email.ifBlank { "(not signed in)" }}. This is your account login, not your business contact email.",
-                style = AuntieTheme.typography.bodySmall, color = c.textDim,
-            )
-            AuntieField(value = newEmail, onValueChange = { newEmail = it }, label = "New login email", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = emailPw, onValueChange = { emailPw = it }, label = "Current password", modifier = Modifier.fillMaxWidth())
-            PrimaryButton(
-                label = if (busy) "Sending..." else "Send verification link",
-                enabled = !busy && isPlausibleEmail(newEmail) && emailPw.isNotBlank(),
-                onClick = { onChangeEmail(emailPw, newEmail.trim()); emailPw = "" },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(dims.space3))
-            Text("Change password", style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
-            AuntiePasswordField(value = curPw, onValueChange = { curPw = it }, label = "Current password", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = newPw, onValueChange = { newPw = it }, label = "New password", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = confirmPw, onValueChange = { confirmPw = it }, label = "Confirm new password", modifier = Modifier.fillMaxWidth())
-            if (pwMismatch) Text("Passwords don't match.", style = AuntieTheme.typography.bodySmall, color = c.error)
-            PrimaryButton(
-                label = if (busy) "Updating..." else "Update password",
-                enabled = !busy && curPw.isNotBlank() && newPw.length >= 6 && newPw == confirmPw,
-                onClick = { onChangePassword(curPw, newPw, confirmPw); curPw = ""; newPw = ""; confirmPw = "" },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(dims.space2))
-            Text("Forgot your password?", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            GhostButton(
-                label = if (isSending) "Sending..." else "Send reset email",
-                onClick = onSendReset,
-                enabled = !isSending && isPlausibleEmail(email),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

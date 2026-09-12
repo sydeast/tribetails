@@ -10,6 +10,12 @@
   Mirrors BusinessSettings + SettingsScreen.kt (Profile / Business Profile /
   Notifications / Security). Operator avatar is gradient initials, not a pet.
   Palette from AuntieColors.kt. Sample content is illustrative placeholder.
+  Amended in the #755 sweep (2026-09-12): the Business Profile card carries a
+  fifth field, Weather area. Mark 16 of the 2026-08-17 admin walk: "move this
+  and weather area to related setting pages. it does not need to be its own
+  page with so little fields", and asked where, the operator said Business
+  profile (#374). The web app has drawn it there since; without it here a
+  later pass would take it off the screen.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -189,6 +195,8 @@
           <div class="fblock"><div class="lab">Business Email</div><div class="fld">hello@example.com</div></div>
           <div class="fblock"><div class="lab">Business Phone</div><div class="fld">(555) 014-2200</div></div>
           <div class="fblock"><div class="lab">Business Address</div><div class="fld">100 Creekside Ln, Riverside</div></div>
+          <!-- Walk 2026-08-17, mark 16: Weather area belongs with the business profile. -->
+          <div class="fblock"><div class="lab">Weather Area</div><div class="fld">Riverside, CA</div></div>
           <div class="savebar">
             <button class="btn-primary">Save</button>
           </div>

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { mergeBusinessSettings } from '../api/settings';
 import { STREAM_BUSINESS, type NotificationCatalogEntry } from '../api/myNotifications';
@@ -33,7 +34,18 @@ const { getNotificationMatrix, getMyNotificationPrefs, saveMyAdminNotificationPr
 );
 
 vi.mock('../lib/auth', () => ({ useAuth, changeEmail, sendReset, signOut, AccountSecurityError }));
-vi.mock('@tanstack/react-router', () => ({ useRouteContext, useNavigate }));
+// `Link` and `linkOptions` back the hero's crumb trail (the KinfolkProfile
+// test's stub, trimmed to what a static path needs).
+vi.mock('@tanstack/react-router', () => ({
+  useRouteContext,
+  useNavigate,
+  linkOptions: (o: unknown) => o,
+  Link: ({ to, className, children }: { to: string; className?: string; children: ReactNode }) => (
+    <a href={to} className={className}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock('../api/account', () => ({ getUserProfile }));
 vi.mock('../api/accountWrite', () => ({ saveUserProfile }));
 vi.mock('../api/businessAdmins', () => ({ listBusinessAdmins }));
@@ -132,9 +144,13 @@ function matrix() {
   };
 }
 
-/** The hero name element. The Avatar's accessible label carries the name too. */
+/** The hero name: the kit band's h1. The Avatar's accessible label carries the name too. */
 function heroName() {
-  return screen.findByText('Auntie Nora', { selector: '.account__heroName' });
+  return screen.findByText('Auntie Nora', { selector: '.den-heading-title' });
+}
+/** The hidden file input, by name. The camera tile beside it shares the name. */
+function photoInput() {
+  return screen.getByLabelText('Change photo', { selector: 'input' });
 }
 /** Scoped to the personal Profile panel: "Phone" is a label in two panels. */
 function profilePanel() {
@@ -180,6 +196,49 @@ describe('Account hero', () => {
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('uid: op-1-abcde…')).toBeInTheDocument();
   });
+  it('is the kit band (#755): crumbs, avatar leading, name as the h1, role as detail, kit pills', async () => {
+    const { container } = render(<Account />);
+    const h1 = await heroName();
+    const band = h1.closest('header') as HTMLElement;
+    expect(band).toHaveClass('den-heading', 'account__hero');
+    // One band, no page title above it, no second hero box under it.
+    expect(container.querySelectorAll('.den-heading')).toHaveLength(1);
+    expect(screen.queryByText('account.')).toBeNull();
+    // The mock's crumb trail where a list screen puts its kicker.
+    const crumbs = within(band).getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(crumbs).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
+    expect(within(crumbs).getByText('User profile')).toHaveAttribute('aria-current', 'page');
+    expect(band.querySelector('.den-heading-kicker')).toBeNull();
+    // The avatar sits in the leading slot, before the title block.
+    expect(band.querySelector('.den-heading-leading [role="img"]')).toHaveAccessibleName('Auntie Nora');
+    expect(band.querySelector('.den-heading-detail')).toHaveTextContent('Head of Care · Operator (full admin)');
+    expect(band.querySelector('.den-heading-extra .account__heroEmail')).toHaveTextContent('auntie@tribetails.com');
+    // Kit pills in the mock's tones: .tag orange, .tag.sole purple, .tag.uid teal.
+    const pills = within(band.querySelector('.den-heading-badges') as HTMLElement).getAllByText(/./, {
+      selector: '.den-statuspill',
+    });
+    expect(pills.map((el) => [el.textContent, el.getAttribute('data-tone')])).toEqual([
+      ['Active', 'orange'],
+      ['Sole admin', 'purple'],
+      ['uid: op-1-abcde…', 'teal'],
+    ]);
+    expect(container.querySelector('.account__badge')).toBeNull();
+    // The two actions: the camera tile and the primary Save, in the trailing slot.
+    const actions = band.querySelector('.den-heading-trailing') as HTMLElement;
+    expect(within(actions).getByRole('button', { name: 'Change photo' })).toHaveClass('auntie-icon-btn');
+    expect(within(actions).getByRole('button', { name: 'Save profile' })).toBeDisabled();
+  });
+  it('draws the band from the Auth user while the profile read is in flight', () => {
+    getUserProfile.mockReturnValue(new Promise(() => {}));
+    render(<Account />);
+    // No document yet, so no display name: the email's local part stands in,
+    // the photo picker waits for a document to write to, and Save has nothing.
+    expect(screen.getByText('auntie', { selector: '.den-heading-title' })).toBeInTheDocument();
+    expect(photoInput()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Change photo' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(screen.getByText('Loading your profile…')).toBeInTheDocument();
+  });
 
   it('badges the operator Sole admin when the admin list holds exactly one', async () => {
     render(<Account />);
@@ -213,6 +272,17 @@ describe('Account profile: inline editing', () => {
     // The old combined read-only "Full name" row is gone.
     expect(screen.queryByText('Full name')).toBeNull();
   });
+  it('lays the fields out as the mock does: two pairs, the display name and the bio between', async () => {
+    render(<Account />);
+    await heroName();
+    const fields = profilePanel().getByLabelText('First name').closest('.account__fields') as HTMLElement;
+    const labels = [...fields.querySelectorAll('.account__label')].map((el) => el.textContent);
+    expect(labels).toEqual(['First name', 'Last name', 'Display name', 'Phone', 'Title / Role', 'Bio']);
+    expect(screen.getByLabelText('First name').closest('.account__frow')).toBe(
+      screen.getByLabelText('Last name').closest('.account__frow'),
+    );
+    expect(screen.getByLabelText('Bio')).toHaveAttribute('placeholder', 'A short note for your team.');
+  });
 
   it('keeps Save profile disabled until something actually changes', async () => {
     const user = userEvent.setup();
@@ -232,8 +302,8 @@ describe('Account profile: inline editing', () => {
     await heroName();
     await user.clear(screen.getByLabelText('First name'));
     await user.type(screen.getByLabelText('First name'), 'Nora Jean');
-    await user.clear(screen.getByLabelText('Title'));
-    await user.type(screen.getByLabelText('Title'), 'Owner');
+    await user.clear(screen.getByLabelText('Title / Role'));
+    await user.type(screen.getByLabelText('Title / Role'), 'Owner');
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
 
     expect(saveUserProfile).toHaveBeenCalledWith('op-1-abcdefghij', {
@@ -287,6 +357,34 @@ describe('Account profile: inline editing', () => {
   });
 });
 
+describe('Account columns', () => {
+  it('stacks the panels in the mock order: Profile and Business profile left, Notifications and Security right', async () => {
+    const { container } = render(<Account />);
+    await heroName();
+    await screen.findByText('Business profile');
+    const cols = container.querySelectorAll('.account__col');
+    expect(cols).toHaveLength(2);
+    const titles = (col: Element) =>
+      [...col.querySelectorAll('.den-panel-title')].map((el) => el.textContent);
+    expect(titles(cols[0] as Element)).toEqual(['Profile', 'Business profile']);
+    expect(titles(cols[1] as Element)).toEqual(['Notifications', 'Security']);
+  });
+  it('leads every notification row and every security row with an icon tile', async () => {
+    render(<Account />);
+    await heroName();
+    await screen.findByRole('switch', { name: 'Email notifications' });
+    for (const name of ['Email notifications', 'SMS notifications', 'Push notifications']) {
+      const row = screen.getByRole('switch', { name }).closest('.account__toggleRow') as HTMLElement;
+      expect(row.firstElementChild).toHaveClass('icon-tile');
+    }
+    for (const title of ['Change password', 'Sign out']) {
+      const row = screen
+        .getByText(title, { selector: '.security__rowTitle' })
+        .closest('.security__row') as HTMLElement;
+      expect(row.firstElementChild).toHaveClass('icon-tile');
+    }
+  });
+});
 describe('Account business profile', () => {
   it('renders the same field list the Settings business profile uses, and saves it', async () => {
     const user = userEvent.setup();
@@ -441,7 +539,7 @@ describe('Account screen: profile photo', () => {
   it('offers a Change photo control that opens an image-only file picker', async () => {
     render(<Account />);
     await heroName();
-    const input = screen.getByLabelText('Change photo') as HTMLInputElement;
+    const input = photoInput() as HTMLInputElement;
     expect(input.type).toBe('file');
     expect(input.accept).toBe('image/*');
   });
@@ -452,7 +550,7 @@ describe('Account screen: profile photo', () => {
       .mockResolvedValueOnce(profile({ photoUrl: 'https://res.cloudinary.com/demo/new.jpg' }));
     render(<Account />);
     await heroName();
-    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    await userEvent.upload(photoInput(), pngFile());
     expect(uploadUserPhoto).toHaveBeenCalledWith(
       'op-1-abcdefghij',
       expect.any(File),
@@ -472,7 +570,7 @@ describe('Account screen: profile photo', () => {
     await heroName();
     await user.clear(screen.getByLabelText('Bio'));
     await user.type(screen.getByLabelText('Bio'), 'Half a sentence');
-    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    await userEvent.upload(photoInput(), pngFile());
     expect(await screen.findByLabelText('Bio')).toHaveValue('Half a sentence');
   });
   it('keeps the old photo and says why when the upload fails', async () => {
@@ -482,7 +580,7 @@ describe('Account screen: profile photo', () => {
     );
     render(<Account />);
     await screen.findByRole('img', { name: 'Auntie Nora' });
-    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
+    await userEvent.upload(photoInput(), pngFile());
     expect(await screen.findByText('Cloudinary upload failed (HTTP 500)')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Auntie Nora' })).toHaveAttribute(
       'src',
@@ -501,10 +599,13 @@ describe('Account screen: profile photo', () => {
     );
     render(<Account />);
     await heroName();
-    await userEvent.upload(screen.getByLabelText('Change photo'), pngFile());
-    expect(screen.getByLabelText('Change photo')).toBeDisabled();
-    expect(screen.getByText(/uploading/i)).toBeInTheDocument();
+    await userEvent.upload(photoInput(), pngFile());
+    expect(photoInput()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Change photo' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Uploading…');
     finish('https://res.cloudinary.com/demo/new.jpg');
-    expect(await screen.findByLabelText('Change photo')).toBeEnabled();
+    await screen.findByRole('button', { name: 'Change photo' });
+    expect(await screen.findByLabelText('Change photo', { selector: 'input' })).toBeEnabled();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
