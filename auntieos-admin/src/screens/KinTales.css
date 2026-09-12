@@ -2,15 +2,20 @@
  * KinTales screen styling. Scoped to this screen and imported directly by
  * KinTales.tsx (the Sessions.css / Invoices.css convention), so nothing here
  * needs to land in the shared styles/screens.css. Every value comes from
- * styles/tokens.css, no literal colours, radii, durations, or px spacing
- * outside the chip palette below (mirrors Sessions.css's/Invoices.css's own
- * chip block, since KinTale states need their own distinct hues).
+ * styles/tokens.css, no literal colours, radii, durations, or px spacing.
+ *
+ * The layout is the logs mock (`ui-ideas/auntieos-kintale-logs-2026-05-27.html`):
+ * the head, the search row on the ground, the triage queue, then one panel per
+ * bucket holding the mock's `.row`. The status pill and the status tile come
+ * from the kit and IconTile; the row is the only thing drawn here.
  */
 
-/* The result-count chip in the list panel's header (the mock's SUGGESTION #3).
-   Mono and dim, the same pill FormSchemas uses for its own count, because it
-   reads the list rather than acting on it. */
+/* The result-count chip (the mock's SUGGESTION #3, approved 2026-08-09), on
+   the toolbar's scope line. Mono and dim, the same pill FormSchemas uses for
+   its own count, because it reads the list rather than acting on it. */
 .kintales__count {
+  display: inline-block;
+  margin-right: var(--space-2);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
@@ -21,22 +26,10 @@
   white-space: nowrap;
 }
 
-.kintales__summary {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  /* The scope line below belongs to this strip, so the gap to the panel is
-     carried by that line rather than by the cards. */
-  margin-bottom: var(--space-2);
-}
-.kintales__summary > * {
-  flex: 1 1 12rem;
-}
-
-/* What the three numbers above actually count. Dim, never hidden: a count with
-   no stated scope is the failure this whole screen was rewritten to avoid. */
+/* What the bucket counts actually count. Dim, never hidden: a count with no
+   stated scope is the failure this whole screen was rewritten to avoid. */
 .kintales__stats-note {
-  margin: 0 0 var(--space-5);
+  margin: var(--space-2) 0 0;
   font-family: var(--type-body-sm-family);
   font-size: var(--type-body-sm-size);
   line-height: var(--type-body-sm-line);
@@ -55,6 +48,13 @@
   margin: 0;
 }
 
+/* The triage queue and the buckets, stacked at the mock's gap. */
+.kintales__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
 /* ── load more ───────────────────────────────────────────────────────────── */
 
 .kintales__more {
@@ -62,7 +62,6 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
-  margin-top: var(--space-4);
 }
 
 /* A failed PAGE, beside rows that are still perfectly good. Deliberately not
@@ -76,46 +75,7 @@
   color: var(--color-error);
 }
 
-/* ── filter tabs ─────────────────────────────────────────────────────────── */
-
-.kintales__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.kintales__tab {
-  font: inherit;
-  font-size: var(--type-label-md-size);
-  font-weight: var(--type-label-md-weight);
-  letter-spacing: var(--type-label-md-tracking);
-  color: var(--color-text-dim);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-4);
-  cursor: pointer;
-  transition:
-    background var(--dur-base) var(--ease-standard),
-    border-color var(--dur-base) var(--ease-standard),
-    color var(--dur-base) var(--ease-standard);
-}
-.kintales__tab:hover {
-  border-color: var(--color-primary);
-  color: var(--color-text-primary);
-}
-.kintales__tab:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-.kintales__tab--active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-background);
-}
-
-/* ── row list ────────────────────────────────────────────────────────────── */
+/* ── bucket rows ─────────────────────────────────────────────────────────── */
 
 .kintales__list {
   list-style: none;
@@ -123,134 +83,114 @@
   padding: 0;
   display: flex;
   flex-direction: column;
+  /* The mock's `.rows` gap: cards, not a ruled list. */
+  gap: 9px;
 }
 
-.kintales__row {
-  border-bottom: var(--border-hairline) solid var(--color-border-soft);
-}
-.kintales__row:last-child {
-  border-bottom: none;
-}
-
+/* The mock's `.row`: a card on the panel gradient's darker stop, on a
+   hairline, at the card radius, 12px by 15px inside; hover tints the border
+   orange. `lift` (styles/base.css) brings the rise and the shadow on the
+   clickable branch, so the only thing named here is the border it lifts to. */
 .kintales__row-main {
+  --lift-border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
   width: 100%;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: stretch;
+  align-items: center;
+  gap: 13px;
   text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
   font: inherit;
   color: inherit;
-  padding: var(--space-3) var(--space-2);
+  cursor: pointer;
+  padding: 12px 15px;
+  background: var(--color-panel-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-card);
-  /* No `transition` here: the clickable branch wears `lift` (styles/base.css),
-     which brings the transition, the rise, the shadow and the reduced-motion
-     guard. A row rather than a card, so the lift does the work the colour
-     change alone could not: it separates the row from its divider and names it
-     as the one thing under the pointer. The row draws no border, so it sets no
-     `--lift-border-color`. */
 }
-.kintales__row-main:hover,
-.kintales__row-main:focus-visible {
-  background: var(--color-surface-2);
-}
-/* Unwired (no detail route yet): a plain, non-interactive row, no hand
+/* Unwired (no detail route yet): a plain, non-interactive card, no hand
    cursor, no hover, so it never reads as a clickable control that no-ops. It
    does not carry `lift` either, which is why nothing here has to cancel one. */
 .kintales__row-main--static {
   cursor: default;
 }
-.kintales__row-main--static:hover {
-  background: none;
-}
 .kintales__row-main:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
 }
 
-.kintales__row-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
+.kintales__tile {
+  flex: none;
 }
+
+.kintales__row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* The mock's `.nm`: Fraunces 16 at 500. */
 .kintales__row-name {
-  font-family: var(--font-hanken);
-  font-size: var(--type-title-md-size);
-  font-weight: var(--type-title-md-weight);
+  font-family: var(--type-headline-sm-family);
+  font-size: 16px;
+  font-weight: 500;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.kintales__row-headline {
-  font-family: var(--font-hanken);
-  font-size: var(--type-body-md-size);
-  line-height: var(--type-body-md-line);
+/* The mock's `.nm.unnamed`: the fallback, italic and dim, never a name. */
+.kintales__row-name--unnamed {
+  font-style: italic;
+  font-weight: 400;
   color: var(--color-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
-.kintales__row-meta {
+/* The mock's `.submeta`: "service · when" in the small body face. */
+.kintales__row-submeta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--color-text-faint);
-}
-.kintales__row-when {
+  gap: 6px;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
-.kintales__row-author {
+.kintales__dot {
   color: var(--color-text-faint);
 }
-.kintales__row-pip {
-  color: var(--color-accent);
+
+/* The mock's `.pips`: mono, 10.5px, dim, a glyph before the count. */
+.kintales__row-pips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 11px;
+  margin-top: 1px;
 }
-/* A caveat about the date, not a feature of the tale. Dim rather than accent so
-   it reads as a footnote beside the kin/photo/channel pips it sits with. */
+.kintales__row-pips:empty {
+  display: none;
+}
+.kintales__row-pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+}
+/* A caveat about the date, not a feature of the tale. Fainter than the
+   kin/photo/channel pips it sits with, so it reads as a footnote. */
 .kintales__row-pip--provenance {
   color: var(--color-text-faint);
   font-style: italic;
 }
 
-/* ── status chip ─────────────────────────────────────────────────────────── */
-
-.kintales__chip {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  font-weight: var(--type-label-sm-weight);
-  letter-spacing: var(--type-label-sm-tracking);
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-  text-align: center;
-  margin-left: auto;
-}
-.kintales__chip--draft {
-  background: var(--color-surface-2);
-  color: var(--color-text-dim);
-}
-.kintales__chip--sent {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
-}
-.kintales__chip--failed {
-  background: color-mix(in srgb, var(--color-error) 18%, transparent);
-  color: var(--color-error);
-}
-.kintales__chip--unknown {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
+/* Below the mock's own breakpoint the pill drops under the text rather than
+   squeezing the household to a word. */
+@media (max-width: 560px) {
+  .kintales__row-main {
+    flex-wrap: wrap;
+  }
 }

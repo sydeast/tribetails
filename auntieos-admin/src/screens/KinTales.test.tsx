@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import type { ReactNode } from 'react';
 import { render as rtlRender, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type KinTaleEntry } from '../api/kinTales';
@@ -22,6 +23,16 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+
+// The head's "Edit templates" is a real route link, and a real `Link` wants a
+// RouterProvider no suite in this tree mounts (HouseholdData.test.tsx idiom).
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({ to, children, ...rest }: { to: string; children: ReactNode }) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 /**
  * B2's "Needs triage" section (`NeedsTriageSection`, mounted inside `KinTales`)
@@ -166,8 +177,14 @@ beforeEach(() => {
   listOrphanReports.mockReset().mockResolvedValue([]);
 });
 
+/** The bucket panel headed by `label`, or null when the screen drew none. */
+function bucket(label: string): HTMLElement | null {
+  const heading = screen.queryByRole('heading', { name: label });
+  return heading ? (heading.closest('.den-panel') as HTMLElement) : null;
+}
+
 describe('KinTales screen', () => {
-  it('renders a paged row with its household, headline, service, timestamp, and status chip', () => {
+  it('renders a paged row with its household, service, timestamp, and status pill', () => {
     usePagedCollection.mockReturnValue(paged([entry({})]));
     render(<KinTales />);
     // Scope by the row container, not the button, the row is only a
@@ -176,23 +193,25 @@ describe('KinTales screen', () => {
     const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
     expect(within(row).getByText('The Whitfields')).toBeInTheDocument();
     expect(within(row).getByText('Dog Walk')).toBeInTheDocument();
-    expect(within(row).getByText('Biscuit had a wonderful time at the park today.')).toBeInTheDocument();
-    expect(within(row).getByText('DRAFT')).toBeInTheDocument();
+    expect(within(row).getByText('DRAFT')).toHaveClass('den-statuspill', 'den-statuspill--compact');
   });
 
-  it('prefers a non-blank title over the body preview as the row headline', () => {
+  it('draws the row as the mock does: a status tile, no headline line', () => {
+    // The logs mock's `.row` carries the household, "service · when" and the
+    // pips, and nothing of the body. Neither does Android's. The tale is read
+    // on the detail screen.
     usePagedCollection.mockReturnValue(paged([entry({ title: 'A great day at the park' })]));
     render(<KinTales />);
     const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
-    expect(within(row).getByText('A great day at the park')).toBeInTheDocument();
+    expect(row.querySelector('.icon-tile')).not.toBeNull();
+    expect(within(row).queryByText('A great day at the park')).toBeNull();
     expect(within(row).queryByText('Biscuit had a wonderful time at the park today.')).toBeNull();
   });
 
-  it('shows an honest "(empty body)" headline for a blank title and blank body, never a blank row', () => {
-    usePagedCollection.mockReturnValue(paged([entry({ title: '', bodyCopy: '' })]));
+  it('reads a blank household as the italic fallback, never as a household called that', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ kinfolkName: '' })]));
     render(<KinTales />);
-    const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
-    expect(within(row).getByText('(empty body)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed Kinfolk')).toHaveClass('kintales__row-name--unnamed');
   });
 
   it('shows the LOCAL clock time in the row, not the UTC hour (AO-18)', () => {
@@ -215,17 +234,30 @@ describe('KinTales screen', () => {
     ['DRAFT', 'DRAFT'],
     ['SENT', 'SENT'],
     ['FAILED', 'FAILED'],
-  ])('renders the %s status positively as its own chip', (status, chip) => {
+  ])('renders the %s status positively as its own pill', (status, chip) => {
     usePagedCollection.mockReturnValue(paged([entry({ status })]));
     render(<KinTales />);
-    expect(screen.getByText(chip)).toBeInTheDocument();
+    expect(screen.getByText(chip)).toHaveClass('den-statuspill');
   });
 
-  it('AO-12-style regression guard: an unrecognized status renders UNKNOWN, never a fabricated DRAFT', () => {
+  it.each([
+    ['SENT', 'success'],
+    ['FAILED', 'error'],
+    ['DRAFT', 'neutral'],
+  ])('tints the %s pill from the bucket tone (%s)', (status, tone) => {
+    usePagedCollection.mockReturnValue(paged([entry({ status })]));
+    render(<KinTales />);
+    const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText(status)).toHaveAttribute('data-tone', tone);
+  });
+
+  it('AO-12-style regression guard: an unrecognized status renders UNKNOWN in its own bucket, never a fabricated DRAFT', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'some_new_code' })]));
     render(<KinTales />);
-    expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
+    expect(screen.getByText('UNKNOWN')).toHaveAttribute('data-tone', 'warning');
     expect(screen.queryByText('DRAFT')).toBeNull();
+    expect(bucket('Unknown status')).not.toBeNull();
+    expect(bucket('Drafts')).toBeNull();
   });
 
   it('shows a media pip only when the report has attached media', () => {
@@ -308,17 +340,73 @@ describe('KinTales screen', () => {
     expect(screen.queryByRole('button', { name: /The Whitfields/i })).toBeNull();
   });
 
-  it('calls onNew when New KinTale is clicked', async () => {
-    const onNew = vi.fn();
-    render(<KinTales onNew={onNew} />);
-    await user.click(screen.getByRole('button', { name: /new kintale/i }));
-    expect(onNew).toHaveBeenCalledOnce();
+  it('offers no New KinTale: a KinTale starts from a Kin Care (#676), as the mock draws it', () => {
+    render(<KinTales />);
+    expect(screen.queryByText(/new kintale/i)).toBeNull();
+  });
+});
+
+describe('KinTales screen: the head', () => {
+  it('is the kit hero with the mock kicker, the plain title and the ClipboardList tile', () => {
+    render(<KinTales />);
+    const hero = document.querySelector('.den-heading') as HTMLElement;
+    expect(within(hero).getByText('The Den · KinTales')).toHaveClass('den-heading-kicker');
+    expect(within(hero).getByRole('heading', { level: 1 })).toHaveTextContent(/^KinTales$/);
+    expect(hero.querySelector('.den-heading-leading .icon-tile')).not.toBeNull();
   });
 
-  it('renders New KinTale STATIC (not a live no-op button) when unwired', () => {
+  it("carries the mock's one control, Edit templates, as a link to the template editor", () => {
     render(<KinTales />);
-    expect(screen.getByText('New KinTale')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /new kintale/i })).toBeNull();
+    const link = screen.getByRole('link', { name: 'Edit templates' });
+    expect(link).toHaveAttribute('href', '/kintale-templates');
+    expect(link).toHaveClass('auntie-btn--ghost');
+  });
+
+  it('keeps the explanation as the heading tooltip, not a line of copy', () => {
+    render(<KinTales />);
+    expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(/Every recap that goes home/);
+  });
+});
+
+describe('KinTales screen: the buckets', () => {
+  it('draws one panel per bucket, in the mock order, with the count as the mono note', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', kinfolkName: 'Household A', status: 'SENT' }),
+        entry({ _id: 'b', kinfolkName: 'Household B', status: 'DRAFT' }),
+        entry({ _id: 'c', kinfolkName: 'Household C', status: 'FAILED' }),
+        entry({ _id: 'd', kinfolkName: 'Household D', status: 'SENT' }),
+      ]),
+    );
+    render(<KinTales />);
+    const titles = Array.from(document.querySelectorAll('.kintales__bucket .den-panel-title')).map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual(['Needs another look', 'Drafts', 'Sent']);
+    expect(within(bucket('Sent')!).getByText('2')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Drafts')!).getByText('1')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Needs another look')!).getByText('1')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Sent')!).getByText('Household A')).toBeInTheDocument();
+    expect(within(bucket('Sent')!).getByText('Household D')).toBeInTheDocument();
+    expect(within(bucket('Drafts')!).getByText('Household B')).toBeInTheDocument();
+    expect(within(bucket('Needs another look')!).getByText('Household C')).toBeInTheDocument();
+  });
+
+  it('draws no panel for an empty bucket, so an empty warning bucket is never a warning', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
+    render(<KinTales />);
+    expect(bucket('Sent')).not.toBeNull();
+    expect(bucket('Needs another look')).toBeNull();
+    expect(bucket('Drafts')).toBeNull();
+    expect(bucket('Unknown status')).toBeNull();
+  });
+
+  it('keeps every bucket a kit panel: nothing is a stat card or a status tab', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
+    render(<KinTales />);
+    expect(document.querySelector('.den-stat')).toBeNull();
+    // The only tabs left are the toolbar's date presets; no status tab.
+    expect(screen.queryByRole('tab', { name: /^(All|Drafts|Sent|Failed)$/ })).toBeNull();
   });
 });
 
@@ -468,7 +556,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     render(<KinTales />);
     await user.type(screen.getByRole('searchbox'), 'zzzz');
     expect(
-      screen.getByText('Nothing in the loaded KinTales matches this filter.'),
+      screen.getByText('Nothing in the loaded KinTales matches this search.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No KinTales in the last 7 days/)).toBeNull();
   });
@@ -479,12 +567,12 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     await user.type(screen.getByRole('searchbox'), 'zzzz');
     expect(
       screen.getByText(
-        'Nothing in the loaded KinTales matches this filter. Load more to reach further back.',
+        'Nothing in the loaded KinTales matches this search. Load more to reach further back.',
       ),
     ).toBeInTheDocument();
   });
 
-  it('composes with the status tabs rather than replacing them', async () => {
+  it('narrows every bucket at once, and drops a bucket the search emptied', async () => {
     usePagedCollection.mockReturnValue(
       paged([
         entry({ _id: 'a', kinfolkName: 'Household A', status: 'SENT' }),
@@ -493,18 +581,23 @@ describe('KinTales screen: search, and what it admits to searching', () => {
       ]),
     );
     render(<KinTales />);
-    await user.click(screen.getByRole('tab', { name: 'Sent' }));
     await user.type(screen.getByRole('searchbox'), 'household a');
+    expect(document.querySelectorAll('.kintales__row')).toHaveLength(2);
+    expect(within(bucket('Sent')!).getByText('1')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Drafts')!).getByText('1')).toHaveClass('den-panel-meta');
+    await user.clear(screen.getByRole('searchbox'));
+    await user.type(screen.getByRole('searchbox'), 'household b');
+    expect(bucket('Drafts')).toBeNull();
     expect(document.querySelectorAll('.kintales__row')).toHaveLength(1);
   });
 });
 
 /**
  * The mock's third SUGGESTION ("Result-count chip next to the heading"), which
- * the operator approved on 2026-08-09. It sits on the list panel rather than the
- * screen heading because it is a fact about THAT panel's rows: the joined
- * reports+drafts list after the tab and the search, never the orphan triage
- * queue above it, which carries its own count.
+ * the operator approved on 2026-08-09. It sits on the toolbar's scope line,
+ * beside the search box that narrows it, because it is a fact about the rows
+ * the buckets show: the joined reports+drafts list after the search, never the
+ * orphan triage queue, which carries its own count.
  */
 describe('KinTales screen: the result-count chip', () => {
   const two = [
@@ -539,18 +632,6 @@ describe('KinTales screen: the result-count chip', () => {
     expect(screen.getByText('2 loaded')).toBeInTheDocument();
   });
 
-  it('counts a tab filter too, not only the search box', async () => {
-    usePagedCollection.mockReturnValue(
-      paged([
-        entry({ _id: 'a', kinfolkName: 'Household A', status: 'SENT' }),
-        entry({ _id: 'b', kinfolkName: 'Household B', status: 'DRAFT' }),
-      ]),
-    );
-    render(<KinTales />);
-    await user.click(screen.getByRole('tab', { name: 'Sent' }));
-    expect(screen.getByText('1 of 2 loaded')).toBeInTheDocument();
-  });
-
   it('shows an honest zero against a known loaded total when nothing matched', async () => {
     usePagedCollection.mockReturnValue(paged(two));
     render(<KinTales />);
@@ -558,7 +639,7 @@ describe('KinTales screen: the result-count chip', () => {
     expect(screen.getByText('0 of 2 loaded')).toBeInTheDocument();
     // and the list still says WHY it is empty, rather than the chip alone.
     expect(
-      screen.getByText('Nothing in the loaded KinTales matches this filter.'),
+      screen.getByText('Nothing in the loaded KinTales matches this search.'),
     ).toBeInTheDocument();
   });
 
@@ -590,25 +671,7 @@ describe('KinTales screen: the result-count chip', () => {
   });
 });
 
-describe('KinTales screen: the filter tabs', () => {
-  it('narrow the visible rows without hiding the others behind a false empty', async () => {
-    usePagedCollection.mockReturnValue(
-      paged([
-        entry({ _id: 'a', kinfolkName: 'Household A', status: 'SENT' }),
-        entry({ _id: 'b', kinfolkName: 'Household B', status: 'DRAFT' }),
-      ]),
-    );
-    render(<KinTales />);
-    expect(screen.getByText('Household A')).toBeInTheDocument();
-    expect(screen.getByText('Household B')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: 'Sent' }));
-    expect(screen.getByText('Household A')).toBeInTheDocument();
-    expect(screen.queryByText('Household B')).toBeNull();
-  });
-});
-
-describe('KinTales screen: the stat strip says what it counts', () => {
+describe('KinTales screen: the bucket counts say what they count', () => {
   const four = [
     entry({ _id: 'a', status: 'SENT' }),
     entry({ _id: 'b', status: 'SENT' }),
@@ -619,15 +682,9 @@ describe('KinTales screen: the stat strip says what it counts', () => {
   it('counts Sent, Draft, and Failed positively (never by negation)', () => {
     usePagedCollection.mockReturnValue(paged(four));
     render(<KinTales />);
-    // Scoped to the stat-card label specifically: "Sent"/"Drafts" also name a
-    // filter tab, and an unscoped getByText would be an ambiguous match.
-    const cardFor = (label: string) =>
-      screen
-        .getByText(label, { selector: '.den-stat-label' })
-        .closest('.den-stat, button.den-stat--button') as HTMLElement;
-    expect(within(cardFor('Sent')).getByText('2')).toBeInTheDocument();
-    expect(within(cardFor('Drafts')).getByText('1')).toBeInTheDocument();
-    expect(within(cardFor('Needs another look')).getByText('1')).toBeInTheDocument();
+    expect(within(bucket('Sent')!).getByText('2')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Drafts')!).getByText('1')).toHaveClass('den-panel-meta');
+    expect(within(bucket('Needs another look')!).getByText('1')).toHaveClass('den-panel-meta');
   });
 
   it('claims the whole window only once the cursor is exhausted', () => {
@@ -754,23 +811,18 @@ describe('KinTales screen: a failed FIRST page is not a failed LATER page', () =
  * true while it is.
  */
 describe('KinTales screen: a draft is a KinTale', () => {
-  const cardFor = (label: string) =>
-    screen
-      .getByText(label, { selector: '.den-stat-label' })
-      .closest('.den-stat, button.den-stat--button') as HTMLElement;
   it('counts a generated draft in the Drafts bucket', () => {
     // Fails before the join: the screen read one collection and this bucket
     // could only ever be 0.
     setDrafts([draft()]);
     render(<KinTales />);
-    expect(within(cardFor('Drafts')).getByText('1')).toBeInTheDocument();
+    expect(within(bucket('Drafts')!).getByText('1')).toHaveClass('den-panel-meta');
   });
-  it('lists the draft as a row, with its household and its copy', () => {
+  it('lists the draft as a row in the Drafts bucket, with its household and the draft pill', () => {
     setDrafts([draft()]);
     render(<KinTales />);
-    const row = screen.getByText('The Okafors').closest('.kintales__row') as HTMLElement;
-    expect(within(row).getByText('Mabel napped in the sun for an hour.')).toBeInTheDocument();
-    expect(within(row).getByText('DRAFT')).toBeInTheDocument();
+    const row = within(bucket('Drafts')!).getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('DRAFT')).toHaveClass('den-statuspill');
   });
   it('stops claiming an empty window when the window holds drafts', () => {
     usePagedCollection.mockReturnValue(paged([]));
@@ -778,16 +830,14 @@ describe('KinTales screen: a draft is a KinTale', () => {
     render(<KinTales />);
     expect(screen.queryByText(/No KinTales in the last 7 days/)).toBeNull();
   });
-  it('shows the draft under the Drafts tab, and hides it under Sent', async () => {
+  it('files the draft under Drafts and the sent report under Sent, never the other way', () => {
     usePagedCollection.mockReturnValue(paged([entry({ status: 'SENT' })]));
     setDrafts([draft()]);
     render(<KinTales />);
-    await user.click(screen.getByRole('tab', { name: 'Drafts' }));
-    expect(screen.getByText('The Okafors')).toBeInTheDocument();
-    expect(screen.queryByText('The Whitfields')).toBeNull();
-    await user.click(screen.getByRole('tab', { name: 'Sent' }));
-    expect(screen.getByText('The Whitfields')).toBeInTheDocument();
-    expect(screen.queryByText('The Okafors')).toBeNull();
+    expect(within(bucket('Drafts')!).getByText('The Okafors')).toBeInTheDocument();
+    expect(within(bucket('Drafts')!).queryByText('The Whitfields')).toBeNull();
+    expect(within(bucket('Sent')!).getByText('The Whitfields')).toBeInTheDocument();
+    expect(within(bucket('Sent')!).queryByText('The Okafors')).toBeNull();
   });
   it('names the draft type on the row, so an sms draft never reads as a visit recap', () => {
     // `generated_drafts` holds drafts of every generator output, not only visit
@@ -853,17 +903,20 @@ describe('KinTales screen: a draft is a KinTale', () => {
       },
     ]);
     render(<KinTales />);
-    const row = screen.getByText('The Ruiz Family').closest('.kintales__row') as HTMLElement;
-    expect(within(row).getByText('Comet chased every leaf in the yard.')).toBeInTheDocument();
+    // The snake_case household lands in the Drafts bucket as a draft row; the
+    // copy itself is read on the detail screen, the row carries no headline.
+    const row = within(bucket('Drafts')!).getByText('The Ruiz Family').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('DRAFT')).toHaveClass('den-statuspill');
+    expect(within(row).getByText('visit report')).toBeInTheDocument();
   });
   it('never counts an approved draft as Sent, because nothing on the doc proves a delivery', () => {
     setDrafts([draft({ status: 'approved' })]);
     render(<KinTales />);
-    expect(within(cardFor('Sent')).getByText('0')).toBeInTheDocument();
-    expect(within(cardFor('Drafts')).getByText('0')).toBeInTheDocument();
-    // Still on screen under All, with its own honest bucket, exactly as an
-    // unrecognised kin_care_reports status is.
-    expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
+    expect(bucket('Sent')).toBeNull();
+    expect(bucket('Drafts')).toBeNull();
+    // Still on screen, in its own honest bucket, exactly as an unrecognised
+    // kin_care_reports status is.
+    expect(within(bucket('Unknown status')!).getByText('UNKNOWN')).toBeInTheDocument();
   });
 });
 describe('KinTales screen: the drafts read states what it is worth', () => {
