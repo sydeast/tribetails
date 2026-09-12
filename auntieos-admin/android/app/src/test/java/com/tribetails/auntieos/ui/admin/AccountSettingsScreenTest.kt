@@ -27,7 +27,7 @@ import org.robolectric.annotation.Config
  * `AccountChannelSwitchTest` and the helpers below.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [35], qualifiers = "w1080dp-h4000dp-xhdpi")
 class AccountSettingsScreenTest {
 
     @get:Rule
