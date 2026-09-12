@@ -19,7 +19,7 @@ export function NoTribes() {
   // loading. It is a tooltip on a decoration rather than a claim about the
   // household's data, so it gets the honest sentence and not the panel.
   const contactView = viewOfQuery(contact);
-  const inertReason = contactView.kind === 'offline' ? 'You are offline, so we cannot look up the contact details.' : 'Loading contact info…';
+  const inertReason = contactView.kind === 'offline' ? 'You are offline, so we can\u2019t look up the contact details.' : 'Loading contact info…';
   const mailHref = contact.data?.email ? `mailto:${contact.data.email}?subject=${encodeURIComponent('Getting started with MyTribe')}` : undefined;
 
   return (

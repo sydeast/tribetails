@@ -75,7 +75,7 @@ export function TribeHub() {
           <div className="kick">Your family base</div>
           <h1>
             {profileView.kind === 'offline'
-              ? 'We are offline right now'
+              ? 'We can\u2019t reach your tribe right now.'
               : profileView.kind !== 'data'
                 ? 'Loading your tribe…'
                 : displayName || 'Your Tribe'}
