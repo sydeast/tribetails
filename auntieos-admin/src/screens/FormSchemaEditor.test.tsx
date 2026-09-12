@@ -910,6 +910,45 @@ describe('FormSchemaEditor: edit mode', () => {
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
   });
 
+  it('does not eat a typed comma in the options field (#801)', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    saveFormSchema.mockResolvedValue({ id: 'tribeProfile', version: 4 });
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
+
+    const input = await screen.findByLabelText(/options/i);
+    await userEvent.type(input, 'a,b,c');
+    // Re-parsing on every keystroke used to consume the comma the instant it
+    // was typed. While the operator is still typing, the field must show
+    // exactly what they typed, comma included.
+    expect(input).toHaveValue('a,b,c');
+
+    // Commit happens on blur, not on keystroke.
+    await userEvent.tab();
+    expect(input).toHaveValue('a, b, c');
+
+    await goToStep('Review');
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+
+    await waitFor(() => expect(saveFormSchema).toHaveBeenCalledTimes(1));
+    const sent = saveFormSchema.mock.calls[0]?.[0] as FormSchemaDetail;
+    expect(sent.sections[0]?.fields[0]?.options).toEqual(['a', 'b', 'c']);
+  });
+
+  it('commits the options field on Enter as well as on blur', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
+
+    const input = await screen.findByLabelText(/options/i);
+    await userEvent.type(input, 'x,y{enter}');
+    expect(input).toHaveValue('x, y');
+  });
+
   it('disables all actions while a save is in flight', async () => {
     getFormSchema.mockResolvedValue(schema());
     let resolveSave!: (v: { id: string; version: number }) => void;

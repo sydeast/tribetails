@@ -247,6 +247,65 @@ function csvToOptions(csv: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+interface OptionsInputProps {
+  /** The committed options array (the persisted shape, unchanged). */
+  options: string[];
+  /** Called with the parsed array on blur / Enter — never on every keystroke. */
+  onCommit: (options: string[]) => void;
+  invalid?: boolean;
+}
+
+/**
+ * The comma-separated options field. Bug #801: re-parsing `options` into an
+ * array on every keystroke meant a typed comma was consumed by `csvToOptions`
+ * (which drops empty segments) before the next character arrived, so a
+ * second option could never be typed, only pasted.
+ *
+ * Fix: the raw text is this component's own state and is the only thing the
+ * `<input>` is bound to while the operator is editing. It is parsed into the
+ * committed `options` array on blur or Enter, matching
+ * `FormSchemaEditorScreen.kt`'s `OptionsField` on Android so both platforms
+ * commit at the same moments and produce the same array for the same
+ * keystrokes.
+ */
+function OptionsInput({ options, onCommit, invalid }: OptionsInputProps) {
+  const [text, setText] = useState(() => options.join(', '));
+  // Only re-sync from the committed value while the operator isn't mid-edit —
+  // otherwise a re-render between keystrokes would stomp the very comma this
+  // component exists to protect.
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (!dirty) setText(options.join(', '));
+  }, [options, dirty]);
+
+  const commit = () => {
+    onCommit(csvToOptions(text));
+    setDirty(false);
+  };
+
+  return (
+    <input
+      type="text"
+      className="fse__input"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        setDirty(true);
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        }
+      }}
+      placeholder="Small, Medium, Large"
+      aria-invalid={invalid ? true : undefined}
+    />
+  );
+}
+
 interface FormSchemaEditorProps {
   /** Blank / omitted => create mode. A real id => edit mode, fetched via getFormSchema. */
   schemaId?: string;
@@ -923,15 +982,10 @@ function SectionCard({
                   <div className="fse__field">
                     <label className="fse__field-label">
                       <span className="fse__label fse__label--required">Options (comma-separated)</span>
-                      <input
-                        type="text"
-                        className="fse__input"
-                        value={(field.options ?? []).join(', ')}
-                        onChange={(e) =>
-                          onUpdateField(idx, (f) => ({ ...f, options: csvToOptions(e.target.value) }))
-                        }
-                        placeholder="Small, Medium, Large"
-                        aria-invalid={v.optionsError ? true : undefined}
+                      <OptionsInput
+                        options={field.options ?? []}
+                        onCommit={(options) => onUpdateField(idx, (f) => ({ ...f, options }))}
+                        invalid={!!v.optionsError}
                       />
                     </label>
                     {v.optionsError && <span className="fse__error">{v.optionsError}</span>}

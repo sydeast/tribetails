@@ -1,8 +1,10 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -11,6 +13,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.requestFocus
 import com.tribetails.auntieos.data.model.FormSchema
 import com.tribetails.auntieos.data.model.FormSchemaField
 import com.tribetails.auntieos.data.model.FormSchemaSection
@@ -206,4 +210,72 @@ class FormSchemaEditorRobolectricTest {
         // Nothing is dirty on open, so the mock's pill is not drawn.
         assertEquals(0, rule.onAllNodesWithText("UNSAVED").fetchSemanticsNodes().size)
     }
+
+    /**
+     * #801: `OptionsField` used to bind its input straight to
+     * `field.options.joinToString(", ")` and re-parse it via
+     * `updateFieldOptions` on every keystroke, so a typed comma was consumed
+     * (splitting drops blank segments) before the next character arrived and
+     * a second option could never be typed. This reproduces that keystroke
+     * sequence -- one `performTextInput` call per character, so each one sees
+     * whatever the previous keystroke left displayed, exactly like a real
+     * keyboard -- and checks the comma survives while focused, then that
+     * blur is what commits the parsed array to the view model.
+     */
+    @Test
+    @Config(sdk = [35], qualifiers = "w1080dp-h6000dp-xhdpi")
+    fun optionsField_keepsTypedCommaAndCommitsOnlyOnBlur() {
+        val repo = mockk<AuntieRepository>(relaxed = true)
+        coEvery { repo.getFormSchema("tribeProfile") } returns Result.success(buildSchemaWithOneField())
+
+        val vm = FormSchemaEditorViewModel(repository = repo)
+        rule.setContent {
+            AuntieOSTheme {
+                FormSchemaEditorScreen(
+                    schemaId = "tribeProfile",
+                    onBack = {},
+                    viewModel = vm,
+                )
+            }
+        }
+        rule.waitForIdle()
+
+        // Switch to "Dropdown" (select) so the Options input is drawn.
+        rule.onNodeWithText("Dropdown").performClick()
+        rule.waitForIdle()
+
+        val optionsField = rule.onNodeWithTag("field-options-0-0")
+        optionsField.requestFocus()
+        rule.waitForIdle()
+
+        "a,b,c".forEach { ch -> optionsField.performTextInput(ch.toString()) }
+        rule.waitForIdle()
+
+        // Still focused, mid-edit: the raw typed text -- comma included -- is
+        // what's shown. Re-parsing on every keystroke used to eat it here.
+        optionsField.assert(hasText("a,b,c"))
+        // Not committed to the view model yet -- that happens on blur, not on
+        // every keystroke.
+        assertEquals(null, vm.state.value.sections[0].fields[0].options)
+
+        // Move focus to the Label field (shows "Pet types") to blur the
+        // options input -- that's what commits it.
+        rule.onNodeWithText("Pet types").requestFocus()
+        rule.waitForIdle()
+
+        assertEquals(listOf("a", "b", "c"), vm.state.value.sections[0].fields[0].options)
+    }
+
+    private fun buildSchemaWithOneField() = FormSchema(
+        id = "tribeProfile",
+        name = "Tribe Profile",
+        description = "",
+        version = 1,
+        sections = listOf(
+            FormSchemaSection(
+                title = "About",
+                fields = listOf(FormSchemaField(key = "petTypes", label = "Pet types", type = "text")),
+            ),
+        ),
+    )
 }
