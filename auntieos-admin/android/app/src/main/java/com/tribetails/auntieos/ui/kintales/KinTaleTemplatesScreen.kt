@@ -3,18 +3,18 @@ package com.tribetails.auntieos.ui.kintales
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -60,6 +60,15 @@ class KinTaleTemplatesViewModel(
     }
 }
 
+/**
+ * The KinTale template picker, laid out as the template-editor mock's
+ * "Templates" section (`ui-ideas/auntieos-kintale-template-editor-2026-05-27.html`):
+ * the kit band with the mock's kicker, one panel of rows, each the template's
+ * name with the Default / Inactive capsule beside it, and "New template" as the
+ * band's control. The built-in default is not a row: it is what a new template
+ * starts from when nothing is saved yet, and the empty state says so, matching
+ * the web picker word for word.
+ */
 @Composable
 fun KinTaleTemplatesScreen(
     onBack: () -> Unit,
@@ -71,137 +80,80 @@ fun KinTaleTemplatesScreen(
 
     LaunchedEffect(Unit) { viewModel.load() }
 
-    AuntieScreenScaffold(title = "KinTale Templates", onBack = onBack) {
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AuntieTheme.colors.kinfolkOrange.copy(alpha = 0.12f))
-                        .padding(14.dp)
-                ) {
-                    Text("Built-in default", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
-                    Spacer(Modifier.height(4.dp))
-                    Text(DefaultKinTaleTemplate.template.name, style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(DefaultKinTaleTemplate.template.description, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Used when no service-specific template is configured. Tap 'New Template' to create your own.",
-                        style = AuntieTheme.typography.bodySmall
+    AuntieScreenScaffold(title = "KinTale templates", onBack = onBack) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            DenScreenHeading(
+                kicker = "The Den · KinTale templates",
+                title = "KinTale templates",
+                subtitle = "Shape the recap that goes home: which sections show, and the checklist Auntie fills out each visit.",
+                trailing = {
+                    GhostButton(
+                        label = "New template",
+                        onClick = onCreateTemplate,
+                        leading = { Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(14.dp)) },
                     )
-                }
+                },
+            )
 
-                Spacer(Modifier.height(20.dp))
-
-                Text("Custom templates", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-
+            DenPanel(title = "Templates", subtitle = "Pick one to edit, or start a new one.") {
                 when {
-                    state.isLoading -> AuntieSpinner(modifier = Modifier.size(32.dp), color = AuntieTheme.colors.kinfolkOrange)
-                    state.error != null -> Text("Couldn't load templates: ${state.error}", color = AuntieTheme.colors.error, style = AuntieTheme.typography.bodySmall)
-                    state.templates.isEmpty() -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(AuntieTheme.colors.surface)
-                                .padding(20.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "No custom templates yet. The default above is active.",
-                                style = AuntieTheme.typography.bodySmall,
-                                color = AuntieTheme.colors.textDim
-                            )
-                        }
-                    }
-                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.templates, key = { it.id }) { tpl ->
+                    state.isLoading -> LoadingHint("Loading templates...")
+                    state.error != null -> EmptyHint("Couldn't load templates: ${state.error}", error = true)
+                    state.templates.isEmpty() -> EmptyHint(
+                        "No templates saved yet. New template starts from the built-in default, ready to save as your first.",
+                    )
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        state.templates.forEach { tpl ->
                             TemplateRow(template = tpl, onClick = { onEditTemplate(tpl.id) })
                         }
                     }
                 }
             }
-
-            // Extended FAB overlay
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(AuntieTheme.colors.kinfolkOrange)
-                    .clickable(onClick = onCreateTemplate)
-                    .padding(horizontal = 20.dp, vertical = 14.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Lucide.Plus, contentDescription = null, tint = AuntieTheme.colors.background)
-                    Spacer(Modifier.width(6.dp))
-                    Text("New Template", fontWeight = FontWeight.SemiBold, color = AuntieTheme.colors.background, style = AuntieTheme.typography.labelLarge)
-                }
-            }
         }
     }
 }
 
+/**
+ * The mock's `.tpl` row: the name, then the capsule. A row on the glass
+ * surface at a hairline, the same card the logs screen's rows sit on.
+ */
 @Composable
 private fun TemplateRow(template: KinTaleTemplate, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val shape = RoundedCornerShape(10.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(AuntieTheme.colors.surface)
+            .clip(shape)
+            .background(c.surfaceGlass)
+            .border(dims.borderHairline, c.border, shape)
             .clickable(onClick = onClick)
-            .padding(14.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(template.name, style = AuntieTheme.typography.titleMedium, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = template.name.ifBlank { "Untitled template" },
+                style = AuntieTheme.typography.titleMedium,
+                color = c.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
             if (template.isDefault) {
-                StatusBadge("Default", AuntieTheme.colors.kinfolkOrange)
-            } else if (!template.isActive) {
-                StatusBadge("Inactive", AuntieTheme.colors.textDim)
+                AuntieStatusPill(label = "Default", tone = AuntieStatusTone.Orange, compact = true)
+            }
+            if (!template.isActive) {
+                AuntieStatusPill(label = "Inactive", tone = AuntieStatusTone.Muted, compact = true)
             }
         }
         if (template.description.isNotBlank()) {
-            Text(template.description, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            Text(template.description, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
-        if (template.serviceTypeKeys.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Services: " + template.serviceTypeKeys.joinToString(", "),
-                style = AuntieTheme.typography.bodySmall,
-                color = AuntieTheme.colors.textDim
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        val enabledSections = listOf(
-            template.photoShowcaseEnabled,
-            template.checklistEnabled,
-            template.petMoodEnabled,
-            template.visitNotesEnabled,
-            template.nextAppointmentEnabled,
-            template.reviewBoosterEnabled
-        ).count { it }
-        Text(
-            "$enabledSections section(s) on • ${template.checklistItems.size} checklist item(s) • ${template.moodOptions.size} mood(s)",
-            style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textDim
-        )
-    }
-}
-
-@Composable
-private fun StatusBadge(label: String, color: androidx.compose.ui.graphics.Color) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
-    ) {
-        Text(label, style = AuntieTheme.typography.labelSmall, color = color)
     }
 }

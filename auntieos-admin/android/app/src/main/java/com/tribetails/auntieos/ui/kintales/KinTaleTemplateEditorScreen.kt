@@ -2,7 +2,6 @@ package com.tribetails.auntieos.ui.kintales
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +23,21 @@ import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
+/**
+ * The KinTale template editor, laid out as its mock
+ * (`ui-ideas/auntieos-kintale-template-editor-2026-05-27.html`): the kit band
+ * with the trail "KinTales / Templates / <name>" and "Editing <name>" as the
+ * title, then the "Basic settings" panel (the three fields and the two
+ * toggle rows) and the "Display sections" panel (one toggle row per section).
+ *
+ * The checklist, mood and review-booster editors stay their own screens,
+ * reached from the row of the section they belong to: folding 700 lines of
+ * checklist editing inline is not a skin change and is not attempted here.
+ *
+ * Wiring is preserved verbatim: every field persists on blur and every toggle
+ * persists on change through [KinTaleTemplateEditorViewModel], and the save
+ * status badge stays in the scaffold bar where it is visible while scrolling.
+ */
 @Composable
 fun KinTaleTemplateEditorScreen(
     templateId: String?,
@@ -37,8 +51,11 @@ fun KinTaleTemplateEditorScreen(
 
     LaunchedEffect(templateId) { viewModel.load(templateId) }
 
+    val name = state.template.name.ifBlank { "New template" }
+    val isNew = templateId == null
+
     AuntieScreenScaffold(
-        title = state.template.name.ifBlank { "New Template" },
+        title = name,
         onBack = {
             viewModel.persist()
             onBack()
@@ -59,71 +76,89 @@ fun KinTaleTemplateEditorScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
+                    // The mock's head: the trail in the kicker's place, "Editing"
+                    // with the name as the accent, and the autosave state as the
+                    // detail line (the mock's "unsaved changes" sub line).
+                    DenScreenHeading(
+                        kicker = "The Den · KinTale templates",
+                        crumbs = listOf(
+                            DenCrumb("KinTales"),
+                            DenCrumb("Templates") {
+                                viewModel.persist()
+                                onBack()
+                            },
+                            DenCrumb(name),
+                        ),
+                        title = if (isNew) "New" else "Editing",
+                        accentTail = if (isNew) "template." else name,
+                        subtitle = "Shape the recap that goes home: which sections show, and the checklist Auntie fills out each visit.",
+                        detail = autosaveLine(state.saveStatus, state.isSaving),
+                    )
+
                     BasicSettingsSection(state, viewModel)
-                    DisplaySectionsHeader()
-                    DisplaySectionToggleCard(
-                        title = "Photo Showcase",
-                        description = "When enabled, you can add photos to the report card with optional descriptions for each photo.",
-                        enabled = state.template.photoShowcaseEnabled,
-                        onToggle = { viewModel.togglePhotoShowcase(it); viewModel.persist() }
-                    )
-                    DisplaySectionToggleCard(
-                        title = "Checklist",
-                        description = "Configure checklist items that can be marked as completed during visits. Items can be per-pet or per-visit.",
-                        enabled = state.template.checklistEnabled,
-                        actionLabel = "Configure Checklist Items (${state.template.checklistItems.size})",
-                        onToggle = { viewModel.toggleChecklist(it); viewModel.persist() },
-                        onAction = onConfigureChecklist
-                    )
-                    DisplaySectionToggleCard(
-                        title = "Pet Mood",
-                        description = "Configure mood options that can be selected for each pet during visits.",
-                        enabled = state.template.petMoodEnabled,
-                        actionLabel = "Configure Mood Options (${state.template.moodOptions.size})",
-                        onToggle = { viewModel.togglePetMood(it); viewModel.persist() },
-                        onAction = onConfigureMoods
-                    )
-                    DisplaySectionToggleCard(
-                        title = "Visit Notes",
-                        description = "When enabled, you can add detailed notes about the visit using a rich text editor.",
-                        enabled = state.template.visitNotesEnabled,
-                        onToggle = { viewModel.toggleVisitNotes(it); viewModel.persist() }
-                    )
-                    DisplaySectionToggleCard(
-                        title = "Next Appointment",
-                        description = "Displays the client's next scheduled appointment and provides a 'Book Now' button to nudge them to book their next appointment.",
-                        enabled = state.template.nextAppointmentEnabled,
-                        onToggle = { viewModel.toggleNextAppointment(it); viewModel.persist() }
-                    )
-                    DisplaySectionToggleCard(
-                        title = "Review Booster",
-                        description = "Embeds a review request section in the report card to encourage clients to leave reviews.",
-                        enabled = state.template.reviewBoosterEnabled,
-                        actionLabel = "Configure Review Booster Settings",
-                        onToggle = { viewModel.toggleReviewBooster(it); viewModel.persist() },
-                        onAction = onConfigureReviewBooster
-                    )
+
+                    DenPanel(title = "Display sections", subtitle = "Which blocks appear in the recap.") {
+                        Column {
+                            DisplaySectionRow(
+                                title = "Photo & video showcase",
+                                description = "Allow attaching photos and videos to the KinTale.",
+                                enabled = state.template.photoShowcaseEnabled,
+                                onToggle = { viewModel.togglePhotoShowcase(it); viewModel.persist() }
+                            )
+                            DisplaySectionRow(
+                                title = "Checklist",
+                                description = "Per-pet and per-visit checklist items.",
+                                enabled = state.template.checklistEnabled,
+                                actionLabel = "Configure checklist items (${state.template.checklistItems.size})",
+                                onToggle = { viewModel.toggleChecklist(it); viewModel.persist() },
+                                onAction = onConfigureChecklist
+                            )
+                            DisplaySectionRow(
+                                title = "Pet mood",
+                                description = "Configure mood options that can be selected for each pet during visits.",
+                                enabled = state.template.petMoodEnabled,
+                                actionLabel = "Configure mood options (${state.template.moodOptions.size})",
+                                onToggle = { viewModel.togglePetMood(it); viewModel.persist() },
+                                onAction = onConfigureMoods
+                            )
+                            DisplaySectionRow(
+                                title = "Visit notes",
+                                description = "Free-text notes from Auntie to the kinfolk.",
+                                enabled = state.template.visitNotesEnabled,
+                                onToggle = { viewModel.toggleVisitNotes(it); viewModel.persist() }
+                            )
+                            DisplaySectionRow(
+                                title = "Next appointment",
+                                description = "Show the kinfolk's next booking with a Book Now nudge.",
+                                enabled = state.template.nextAppointmentEnabled,
+                                onToggle = { viewModel.toggleNextAppointment(it); viewModel.persist() }
+                            )
+                            DisplaySectionRow(
+                                title = "Review booster",
+                                description = "Embeds a review request section to encourage kinfolk to leave reviews.",
+                                enabled = state.template.reviewBoosterEnabled,
+                                actionLabel = "Configure review booster",
+                                onToggle = { viewModel.toggleReviewBooster(it); viewModel.persist() },
+                                onAction = onConfigureReviewBooster,
+                                showDivider = false,
+                            )
+                        }
+                    }
                 }
             }
         }
-
-        // Auto-save status bar
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(AuntieTheme.colors.background)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            val (label, color) = when {
-                state.isSaving -> "Saving..." to AuntieTheme.colors.kinfolkOrange
-                state.saveStatus == SaveStatus.SAVED -> "✓ All Changes Saved" to AuntieTheme.colors.success
-                state.saveStatus == SaveStatus.ERROR -> "Save failed" to AuntieTheme.colors.error
-                else -> "Auto-saves on field blur" to AuntieTheme.colors.textDim
-            }
-            Text(label, color = color, style = AuntieTheme.typography.bodyMedium)
-        }
     }
+}
+
+/**
+ * The autosave state as the band's detail line. The same four states the
+ * scaffold badge paints, in words: the badge is a glance, this is the sentence.
+ */
+internal fun autosaveLine(status: SaveStatus, isSaving: Boolean): String = when {
+    isSaving -> "Saving..."
+    status == SaveStatus.SAVED -> "All changes saved"
+    status == SaveStatus.ERROR -> "Save failed"
+    else -> "Auto-saves on field blur"
 }
 
 @Composable
@@ -131,131 +166,126 @@ private fun BasicSettingsSection(
     state: TemplateEditorUiState,
     viewModel: KinTaleTemplateEditorViewModel
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(AuntieTheme.colors.surface)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("Basic Settings", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-        LabeledField(label = "Template Name", helper = "Used for internal organization only.") {
-            AuntieField(
-                value = state.template.name,
-                onValueChange = viewModel::updateName,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { if (!it.isFocused) viewModel.persist() },
-            )
-        }
-
-        LabeledField(label = "Description", helper = "Used for internal organization only.") {
-            AuntieField(
-                value = state.template.description,
-                onValueChange = viewModel::updateDescription,
-                singleLine = false,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onFocusChanged { if (!it.isFocused) viewModel.persist() }
-            )
-        }
-
-        LabeledField(label = "Default Email Message", helper = "No default on purpose: the message is the story of the visit, and Auntie writes it fresh each time.") {
-            AuntieField(
-                value = state.template.defaultEmailMessage,
-                onValueChange = viewModel::updateDefaultEmailMessage,
-                placeholder = "The note that opens the recap.",
-                singleLine = false,
-                minLines = 2,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 80.dp)
-                    .onFocusChanged { if (!it.isFocused) viewModel.persist() },
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(AuntieTheme.colors.surface2.copy(alpha = 0.3f))
-                .padding(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Make Default Template", style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                    Text(
-                        "Default templates are automatically selected for services that are not assigned to another template.",
-                        style = AuntieTheme.typography.bodySmall,
-                        color = AuntieTheme.colors.textDim
-                    )
-                }
-                AuntieToggle(
-                    checked = state.template.isDefault,
-                    onCheckedChange = {
-                        viewModel.toggleIsDefault(it)
-                        viewModel.persist()
-                    },
-                    enabled = !state.isOnlyDefault || !state.template.isDefault,
+    DenPanel(title = "Basic settings", subtitle = "Name it, and say when it applies.") {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LabeledField(label = "Template name", helper = "Used for internal organization only.") {
+                AuntieField(
+                    value = state.template.name,
+                    onValueChange = viewModel::updateName,
+                    placeholder = "Default Pet Care Report",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (!it.isFocused) viewModel.persist() },
                 )
             }
-            if (state.isOnlyDefault && state.template.isDefault) {
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Lucide.TriangleAlert, contentDescription = null, tint = AuntieTheme.colors.kinfolkOrange, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "This is the only default template and cannot be disabled unless another template is set as default first.",
-                        style = AuntieTheme.typography.labelSmall,
-                        color = AuntieTheme.colors.kinfolkOrange
-                    )
+
+            LabeledField(label = "Description", helper = "Used for internal organization only.") {
+                AuntieField(
+                    value = state.template.description,
+                    onValueChange = viewModel::updateDescription,
+                    placeholder = "What kind of visits is this template for?",
+                    singleLine = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { if (!it.isFocused) viewModel.persist() }
+                )
+            }
+
+            LabeledField(
+                label = "Default message to kinfolk",
+                helper = "No default on purpose: the message is the story of the visit, and Auntie writes it fresh each time.",
+            ) {
+                AuntieField(
+                    value = state.template.defaultEmailMessage,
+                    onValueChange = viewModel::updateDefaultEmailMessage,
+                    placeholder = "The note that opens the recap.",
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 80.dp)
+                        .onFocusChanged { if (!it.isFocused) viewModel.persist() },
+                )
+            }
+
+            // The mock's two toggle rows under the fields.
+            Column {
+                AuntieSettingRow(
+                    title = "Make default template",
+                    description = "Default templates are auto-selected when no service-specific template matches.",
+                    trailing = {
+                        AuntieToggle(
+                            checked = state.template.isDefault,
+                            onCheckedChange = {
+                                viewModel.toggleIsDefault(it)
+                                viewModel.persist()
+                            },
+                            enabled = !state.isOnlyDefault || !state.template.isDefault,
+                        )
+                    },
+                )
+                if (state.isOnlyDefault && state.template.isDefault) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Icon(Lucide.TriangleAlert, contentDescription = null, tint = AuntieTheme.colors.kinfolkOrange, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "This is the only default template. Set another template as default before turning this off.",
+                            style = AuntieTheme.typography.labelSmall,
+                            color = AuntieTheme.colors.kinfolkOrange
+                        )
+                    }
                 }
+                AuntieSettingRow(
+                    title = "Active",
+                    description = "Inactive templates won't be selected by the composer.",
+                    showDivider = false,
+                    trailing = {
+                        AuntieToggle(
+                            checked = state.template.isActive,
+                            onCheckedChange = {
+                                viewModel.toggleIsActive(it)
+                                viewModel.persist()
+                            },
+                        )
+                    },
+                )
             }
         }
     }
 }
 
+/**
+ * The mock's `.trow`: the section's name and one line about it, the toggle at
+ * the right. A section with its own editor (checklist, moods, review booster)
+ * carries a link row under the toggle while it is on.
+ */
 @Composable
-private fun DisplaySectionsHeader() {
-    Text(
-        "Display Sections",
-        style = AuntieTheme.typography.titleMedium,
-        fontWeight = FontWeight.SemiBold
-    )
-}
-
-@Composable
-private fun DisplaySectionToggleCard(
+private fun DisplaySectionRow(
     title: String,
     description: String,
     enabled: Boolean,
     actionLabel: String? = null,
     onToggle: (Boolean) -> Unit,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    showDivider: Boolean = true,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(AuntieTheme.colors.surface)
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            AuntieToggle(checked = enabled, onCheckedChange = onToggle)
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(description, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+    Column {
+        AuntieSettingRow(
+            title = title,
+            description = description,
+            showDivider = showDivider && !(actionLabel != null && onAction != null && enabled),
+            trailing = { AuntieToggle(checked = enabled, onCheckedChange = onToggle) },
+        )
         if (actionLabel != null && onAction != null && enabled) {
-            Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(6.dp))
                     .clickable(onClick = onAction)
-                    .padding(vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(actionLabel, color = AuntieTheme.colors.kinfolkOrange, style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
@@ -268,7 +298,7 @@ private fun DisplaySectionToggleCard(
 @Composable
 private fun LabeledField(label: String, helper: String?, content: @Composable () -> Unit) {
     Column {
-        Text(label, style = AuntieTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        AuntieFieldLabel(label)
         Spacer(Modifier.height(4.dp))
         content()
         if (!helper.isNullOrBlank()) {
