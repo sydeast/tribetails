@@ -271,21 +271,21 @@ describe('Gallery screen, async states', () => {
     mediaAsync = { status: 'loading' };
     render(<Gallery />);
     expect(screen.getByText(/loading media/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no media uploaded yet/i)).toBeNull();
+    expect(screen.queryByText(/no media files found/i)).toBeNull();
   });
 
   it('a media load failure is surfaced, never rendered as an empty grid', () => {
     mediaAsync = { status: 'error', message: 'permission-denied' };
     render(<Gallery />);
     expect(screen.getByText(/permission-denied/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no media uploaded yet/i)).toBeNull();
+    expect(screen.queryByText(/no media files found/i)).toBeNull();
     expect(screen.queryByText(/no media matches/i)).toBeNull();
   });
 
   it('renders the proven-empty state only when the stream is ready and genuinely empty', () => {
     mediaAsync = { status: 'ready', data: [] };
     render(<Gallery />);
-    expect(screen.getByText(/no media uploaded yet/i)).toBeInTheDocument();
+    expect(screen.getByText('No media files found')).toBeInTheDocument();
   });
 
   it('a broken kinfolk stream is disclosed by a banner rather than silently hiding every household name', () => {
@@ -707,5 +707,106 @@ describe('Gallery screen, mock parity (#692)', () => {
     expect(within(tileFor('Profile shot')).getByText('Profile')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Delete Profile shot' }));
     expect(screen.getByText(/this is a profile photo/i)).toBeInTheDocument();
+  });
+});
+describe('Gallery screen, glass sweep (#755)', () => {
+  it('draws the kit hero with the nav kicker and the mock-shaped title, accent word "media"', () => {
+    const { container } = render(<Gallery />);
+    expect(container.querySelector('.den-heading')).not.toBeNull();
+    expect(screen.getByText('The Den · Gallery')).toBeInTheDocument();
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(h1).toHaveTextContent('All media');
+    expect(h1.querySelector('.den-heading-accent')?.textContent).toBe('media');
+    // The explanation is the tooltip, never a line of copy (#758).
+    expect(container.querySelector('.den-heading-subtitle')).not.toBeNull();
+    expect(screen.queryByText('All media from every KinTale, tagged to its household.')?.closest('.den-heading-subtitle')).not.toBeNull();
+  });
+  it('marks the profile photo with the kit compact teal StatusPill, not a local badge', () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'p1', description: 'Profile shot', isProfilePhoto: true })] };
+    render(<Gallery />);
+    const pill = within(tileFor('Profile shot')).getByText('Profile');
+    expect(pill.classList.contains('den-statuspill')).toBe(true);
+    expect(pill.classList.contains('den-statuspill--compact')).toBe(true);
+    expect(pill.getAttribute('data-tone')).toBe('teal');
+  });
+  it('draws a document as the mock file cell: glyph and file name in the tile at rest, and no repeat in the strip', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'd1', fileType: 'DOCUMENT', description: '', originalFileName: 'vet-summary.pdf' })],
+    };
+    const { container } = render(<Gallery />);
+    const cell = container.querySelector('.gallery__cell') as HTMLElement;
+    const file = cell.querySelector('.gallery__tile-file');
+    expect(file).not.toBeNull();
+    expect(within(file as HTMLElement).getByText('vet-summary.pdf')).toBeInTheDocument();
+    expect(file?.querySelector('svg')).not.toBeNull();
+    // No Avatar for a kind with nothing to preview.
+    expect(cell.querySelector('.gallery__tile-avatar')).toBeNull();
+    // The name is printed once: the strip drops its caption line when it would
+    // only repeat the file name the cell already shows.
+    expect(within(cell).getAllByText('vet-summary.pdf')).toHaveLength(1);
+    expect(cell.querySelector('.gallery__tile-caption')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open vet-summary.pdf' })).toBeInTheDocument();
+  });
+  it('an audio file with a caption keeps the file name in the cell and the caption in the strip', () => {
+    mediaAsync = {
+      status: 'ready',
+      data: [media({ _id: 'a1', fileType: 'AUDIO', description: 'Happy bark', originalFileName: 'happy-bark-clip.m4a' })],
+    };
+    const { container } = render(<Gallery />);
+    const cell = container.querySelector('.gallery__cell') as HTMLElement;
+    expect(within(cell).getByText('happy-bark-clip.m4a').closest('.gallery__tile-file')).not.toBeNull();
+    expect(within(cell).getByText('Happy bark').closest('.gallery__tile-caption-strip')).not.toBeNull();
+  });
+  it('an image keeps the Avatar preview and the caption in the strip, never a file cell', () => {
+    mediaAsync = { status: 'ready', data: [media({ _id: 'i1', fileType: 'IMAGE', description: 'Biscuit on the porch' })] };
+    const { container } = render(<Gallery />);
+    const cell = container.querySelector('.gallery__cell') as HTMLElement;
+    expect(cell.querySelector('.gallery__tile-file')).toBeNull();
+    expect(cell.querySelector('.gallery__tile-avatar')).not.toBeNull();
+    expect(within(cell).getByText('Biscuit on the porch').closest('.gallery__tile-caption-strip')).not.toBeNull();
+  });
+  it('the tile wears the shared lift class, and the delete control does not', () => {
+    mediaAsync = { status: 'ready', data: [media({ description: 'Rufus at the park' })] };
+    render(<Gallery />);
+    const tile = screen.getByRole('button', { name: 'Open Rufus at the park' });
+    expect(tile.classList.contains('lift')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Delete Rufus at the park' }).classList.contains('lift')).toBe(false);
+  });
+  it('draws the proven-empty read as the mock block with its two lines of copy', () => {
+    mediaAsync = { status: 'ready', data: [] };
+    const { container } = render(<Gallery />);
+    const empty = container.querySelector('.gallery__empty') as HTMLElement;
+    expect(empty).not.toBeNull();
+    expect(empty.querySelector('.gallery__empty-glyph')).not.toBeNull();
+    expect(within(empty).getByText('No media files found').classList.contains('gallery__empty-title')).toBe(true);
+    expect(within(empty).getByText('Upload photos and videos to see them here')).toBeInTheDocument();
+    // No count chip and no grid beside an empty block.
+    expect(container.querySelector('.gallery__count-chip')).toBeNull();
+    expect(container.querySelector('.gallery__grid')).toBeNull();
+  });
+  it('uses the kit hint for a filter that matches nothing', async () => {
+    // One row, uploaded in one month; picking a month the row is not in
+    // empties the grid without emptying the stream.
+    mediaAsync = {
+      status: 'ready',
+      data: [
+        media({ _id: 'a', description: 'July photo', uploadedAt: '2026-07-16T09:00:00.000Z' }),
+        media({ _id: 'b', description: 'June photo', uploadedAt: '2026-06-16T09:00:00.000Z', kinfolkId: 'kf1' }),
+      ],
+    };
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    render(<Gallery />);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Month' }), '2026-06');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Household' }), screen.getByRole('option', { name: 'No household' }));
+    const hint = screen.getByText('No media matches these filters.');
+    expect(hint.classList.contains('den-hint')).toBe(true);
+    expect(document.querySelector('.gallery__hint')).toBeNull();
+  });
+  it('uses the kit loading row while the stream is in flight', () => {
+    mediaAsync = { status: 'loading' };
+    const { container } = render(<Gallery />);
+    expect(container.querySelector('.loadingRow.den-hint')).not.toBeNull();
+    expect(container.querySelector('.gallery__hint')).toBeNull();
   });
 });
