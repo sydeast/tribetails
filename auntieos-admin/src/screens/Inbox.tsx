@@ -53,7 +53,75 @@ import {
   type InboxEntry,
 } from '../lib/inboxChannels';
 import { ThreadActionsCard } from '../components/ThreadActionsCard';
+import { IconTile, type IconTileTone } from '../components/IconTile';
 import './Inbox.css';
+
+// ── glyphs ──────────────────────────────────────────────────────────────────
+//
+// The inbox mock (`ui-ideas/auntieos-inbox-2026-05-27.html`) puts a Lucide
+// line icon on every channel chip, on every row's tile and on every meta pip.
+// No icon package is installed here (the NavGlyphs.tsx / Directory.tsx
+// precedent), so the paths are inline: 24-unit viewBox, `currentColor`
+// stroke, `aria-hidden`, the same idiom the nav rail uses. Keyed by the name
+// the mock's comments use for each one.
+
+type GlyphKey =
+  | 'inbox'
+  | 'voicemail'
+  | 'phone'
+  | 'phoneMissed'
+  | 'messageSquare'
+  | 'mail'
+  | 'check'
+  | 'arrowUpRight'
+  | 'image'
+  | 'circleSlash'
+  | 'reply';
+
+const GLYPH_PATHS: Record<GlyphKey, string> = {
+  inbox:
+    'M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
+  voicemail: 'M10 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zm12 0a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM6 16h12',
+  phone:
+    'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z',
+  phoneMissed:
+    'm22 2-7 7M15 2l7 7M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z',
+  messageSquare: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm18 3-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7',
+  check: 'm6 10 4 4 8-8',
+  arrowUpRight: 'M7 17 17 7M7 7h10v10',
+  image:
+    'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm6 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm10 6-3.09-3.09a2 2 0 0 0-2.82 0L6 21',
+  circleSlash: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0zM4.93 4.93l14.14 14.14',
+  reply: 'M9 17 4 12l5-5M20 18v-2a4 4 0 0 0-4-4H4',
+};
+
+function Glyph({ name, size = 14 }: { name: GlyphKey; size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={GLYPH_PATHS[name]} />
+    </svg>
+  );
+}
+
+/** The mock's chip icons: Inbox / Voicemail / Phone / MessageSquare / Mail, in filter order. */
+const FILTER_GLYPH: Record<ChannelFilterKey, GlyphKey> = {
+  all: 'inbox',
+  voicemail: 'voicemail',
+  call: 'phone',
+  sms: 'messageSquare',
+  email: 'mail',
+};
 
 /**
  * The Den filter tabs. Every predicate is a POSITIVE membership test against
@@ -295,7 +363,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
       <DenScreenHeading
         kicker="The Den · Inbox"
         title="Inbox"
-        subtitle="Two-way message threads with kinfolk, newest first."
+        subtitle="Voicemails, calls, SMS and emails, everywhere kinfolk reach out."
         trailing={
           unreadCount !== null && unreadCount > 0 ? (
             <span className="inbox__badge">{unreadCount} unread</span>
@@ -569,6 +637,7 @@ function ChannelsPanel() {
             onClick={() => setFilter(f.key)}
             {...getTabProps(index)}
           >
+            <Glyph name={FILTER_GLYPH[f.key]} />
             {f.label}
           </button>
         ))}
@@ -645,61 +714,103 @@ function entryKey(entry: InboxEntry): string {
 }
 
 function ChannelRow({ entry, onOpen }: { entry: InboxEntry; onOpen: (entry: InboxEntry) => void }) {
-  const pills = [
-    entry.statusHint === 'missed' ? { key: 'missed', label: 'missed', tone: 'error' } : null,
-    entry.statusHint === 'unread' ? { key: 'unread', label: 'waiting on a reply', tone: 'warning' } : null,
-    entry.statusHint === 'replied' ? { key: 'replied', label: 'replied', tone: 'success' } : null,
+  // The mock's `.meta` pips, in its order: direction first, then the state,
+  // then the media count. Each is a tiny glyph and a dim word; the two states
+  // that need answering (a missed call, a voicemail nobody has replied to) take
+  // the tone the mock paints the whole row in.
+  //
+  // The nouns are this screen's, not the mock's. "waiting on a reply" rather
+  // than "unread" is the `lib/inboxChannels.ts` ruling: the nav rail already
+  // owns the word "unread" for message threads, and a voicemail's `replyStatus`
+  // is a different fact from a thread's `unreadForAdmin`.
+  const pips = [
+    entry.direction === 'outbound' ? { key: 'direction', label: 'sent', tone: 'muted', glyph: 'arrowUpRight' } : null,
+    entry.direction === 'inbound' && entry.channel !== 'voicemail'
+      ? { key: 'direction', label: 'received', tone: 'muted', glyph: 'check' }
+      : null,
+    entry.statusHint === 'missed' ? { key: 'missed', label: 'missed', tone: 'error', glyph: 'phoneMissed' } : null,
+    entry.statusHint === 'unread'
+      ? { key: 'unread', label: 'waiting on a reply', tone: 'warning', glyph: 'voicemail' }
+      : null,
+    entry.statusHint === 'replied' ? { key: 'replied', label: 'replied', tone: 'success', glyph: 'reply' } : null,
     // Muted, not hidden. The merge in `lib/inboxChannels.ts` shows everything
     // that came in, so dismissing a voicemail marks it rather than deleting it
-    // from the operator's view; the pill is how the next person reading the
+    // from the operator's view; the pip is how the next person reading the
     // list can tell "somebody closed this" from "nobody has looked".
-    entry.statusHint === 'dismissed' ? { key: 'dismissed', label: 'dismissed', tone: 'muted' } : null,
-    entry.direction === 'outbound' ? { key: 'direction', label: 'sent', tone: 'muted' } : null,
-    entry.mediaCount > 0
-      ? { key: 'media', label: `${entry.mediaCount} attached`, tone: 'muted' }
+    entry.statusHint === 'dismissed'
+      ? { key: 'dismissed', label: 'dismissed', tone: 'muted', glyph: 'circleSlash' }
       : null,
-  ].filter((p): p is { key: string; label: string; tone: string } => p !== null);
+    entry.mediaCount > 0
+      ? { key: 'media', label: `${entry.mediaCount} attached`, tone: 'muted', glyph: 'image' }
+      : null,
+  ].filter((p): p is { key: string; label: string; tone: string; glyph: GlyphKey } => p !== null);
+
+  const title = entryTitle(entry);
+  // The mock's `.cp`: the number or address after the name. Skipped when it IS
+  // the name (a caller who matched no household), or the row would read
+  // "+1555… · +1555…".
+  const counterpart = entry.counterpart !== '' && entry.counterpart !== title ? entry.counterpart : null;
 
   return (
-    <li className="inbox__row">
+    <li className="inbox__row inbox__row--card" data-channel={entry.channel}>
       <button type="button" className="inbox__row-main inbox__row-main--channel" onClick={() => onOpen(entry)}>
-        <span className="inbox__channel-tag" data-channel={entry.channel} aria-hidden="true">
-          {CHANNEL_ABBR[entry.channel]}
-        </span>
+        <IconTile
+          icon={<Glyph name={rowGlyph(entry)} size={16} />}
+          size={36}
+          tone={rowTone(entry)}
+          className="inbox__tile"
+        />
         <span className="inbox__row-who">
-          <span className="inbox__row-name">{entryTitle(entry)}</span>
-          <span className="inbox__row-preview">{entry.preview || '(no content)'}</span>
-        </span>
-        <span className="inbox__row-side">
-          <time className="inbox__row-time" dateTime={entryMachineWhen(entry.timestamp)}>
-            {entryWhen(entry.timestamp)}
-          </time>
-          {pills.length > 0 && (
-            <span className="inbox__pills">
-              {pills.map((p) => (
-                <span key={p.key} className="inbox__pill" data-tone={p.tone}>
+          <span className="inbox__row-head">
+            <span className="inbox__row-name">{title}</span>
+            {counterpart !== null && <span className="inbox__row-counterpart">· {counterpart}</span>}
+          </span>
+          <span className="inbox__row-preview inbox__row-preview--clamp">{entry.preview || '(no content)'}</span>
+          {pips.length > 0 && (
+            <span className="inbox__pips">
+              {pips.map((p) => (
+                <span key={p.key} className="inbox__pip" data-tone={p.tone}>
+                  <Glyph name={p.glyph} size={11} />
                   {p.label}
                 </span>
               ))}
             </span>
           )}
         </span>
+        <time className="inbox__row-time" dateTime={entryMachineWhen(entry.timestamp)}>
+          {entryWhen(entry.timestamp)}
+        </time>
       </button>
     </li>
   );
 }
 
 /**
- * The tile glyph per channel. Text rather than an icon font, and `aria-hidden`,
- * because the row's own accessible name already carries the household and the
- * preview; announcing "VM" before it would be noise, not information.
+ * The tile glyph per channel: the mock's `channelIcon`, with a missed call
+ * taking the PhoneMissed variant. Mirrors `channelIcon` in the Android screen.
  */
-const CHANNEL_ABBR: Record<InboxEntry['channel'], string> = {
-  voicemail: 'VM',
-  call: 'CALL',
-  sms: 'SMS',
-  email: 'MAIL',
-};
+function rowGlyph(entry: InboxEntry): GlyphKey {
+  switch (entry.channel) {
+    case 'voicemail':
+      return 'voicemail';
+    case 'call':
+      return entry.statusHint === 'missed' ? 'phoneMissed' : 'phone';
+    case 'sms':
+      return 'messageSquare';
+    case 'email':
+      return 'mail';
+  }
+}
+
+/**
+ * The mock's `channelAccent`: an unread voicemail is warning, a missed call is
+ * error, everything else is primary orange. Mirrors `accentTone` on Android.
+ */
+function rowTone(entry: InboxEntry): IconTileTone {
+  if (entry.channel === 'voicemail' && entry.statusHint === 'unread') return 'warning';
+  if (entry.channel === 'call' && entry.statusHint === 'missed') return 'error';
+  return 'orange';
+}
 
 interface ThreadRowProps {
   row: ConversationSummary;
@@ -736,7 +847,11 @@ function ThreadRow({ row, onSelectThread }: ThreadRowProps) {
   // live no-op button is the dead-control anti-pattern (see ControlShell in
   // components/Buttons.tsx and the InboxProps doc above).
   return (
-    <li className={readState === 'unread' ? 'inbox__row inbox__row--unread' : 'inbox__row'}>
+    <li
+      className={
+        readState === 'unread' ? 'inbox__row inbox__row--card inbox__row--unread' : 'inbox__row inbox__row--card'
+      }
+    >
       {onSelectThread ? (
         <button type="button" className="inbox__row-main" onClick={() => onSelectThread(row.kinfolkId)}>
           {body}

@@ -215,11 +215,57 @@ describe('KinView: hero', () => {
     expect(await screen.findByText('archived')).toHaveClass('den-statuspill');
   });
 
-  it('marks a reactive pet with a warning pill under the identity block, not a page banner', async () => {
-    mount({ reactive: true, routine: 'Slow approach' });
+  it('puts the photo, the owner line and the tag row INSIDE the kit hero band (#780)', async () => {
+    getKin.mockResolvedValue(kin({ tags: ['Yellow lab'], profilePictureUrl: 'https://x/willow.jpg' }));
+    const { container } = render(
+      <KinView
+        kinId="p1"
+        kinName="Willow"
+        household={{ id: 'kf-1', name: 'the Wrens' }}
+        openedFrom="directory"
+        onBack={vi.fn()}
+      />,
+    );
+    await screen.findByText('Yellow lab');
+    const band = container.querySelector('header.den-heading') as HTMLElement;
+    expect(band).not.toBeNull();
+    // The mock's `.hero .photo`, before the text, at the mock's 120px.
+    const leading = band.querySelector('.den-heading-leading .avatar') as HTMLElement;
+    expect(leading).not.toBeNull();
+    expect(leading.style.getPropertyValue('--avatar-size')).toBe('120px');
+    // `.owner` under the breed line, `.tags` last, both in the band's own slots.
+    expect(band.querySelector('.den-heading-extra')).toHaveTextContent(/belongs to the Wrens/);
+    expect(within(band.querySelector('.den-heading-badges') as HTMLElement).getByText('Yellow lab')).toHaveClass(
+      'den-statuspill',
+    );
+    expect(within(band).getByRole('button', { name: 'Edit tags' })).toBeInTheDocument();
+    // Nothing of the identity is laid out on the page under the band any more.
+    expect(container.querySelector('.kview__identity')).toBeNull();
+  });
+
+  it('draws the band with the name and the actions alone while the read is in flight', () => {
+    getKin.mockReturnValue(new Promise(() => {}));
+    const { container } = render(
+      <KinView kinId="p1" kinName="Willow" openedFrom="directory" onBack={vi.fn()} />,
+    );
+    const band = container.querySelector('header.den-heading') as HTMLElement;
+    expect(within(band).getByRole('heading', { level: 1 })).toHaveTextContent('Willow');
+    expect(within(band).getByRole('button', { name: 'Edit kin' })).toBeInTheDocument();
+    // No empty slot wrapper, so the band draws no gap for a photo it has not got.
+    expect(band.querySelector('.den-heading-leading')).toBeNull();
+    expect(band.querySelector('.den-heading-badges')).toBeNull();
+    expect(band.querySelector('.den-heading-extra')).toBeNull();
+  });
+
+  it('marks a reactive pet with a warning pill under the hero band, not in its tag row and not a page banner', async () => {
+    const { container } = mount({ reactive: true, routine: 'Slow approach' });
     const marker = await screen.findByText(/handle with care/i);
     expect(marker).toHaveClass('den-statuspill');
     expect(marker).toHaveAttribute('data-tone', 'warning');
+    // #690: under the box, not among the tags. The band's tag row must not
+    // hold it, whatever the mock's `.tag.alert` draws.
+    expect(marker.closest('.den-heading')).toBeNull();
+    expect(container.querySelector('.kview__flags')).toContainElement(marker);
     // No page-level banner: a banner carries role="alert" (Banner.tsx), the
     // marker does not. The kit's error hint carries it too, so none may show.
     expect(screen.queryByRole('alert')).toBeNull();

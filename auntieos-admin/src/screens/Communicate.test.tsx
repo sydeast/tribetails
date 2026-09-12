@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type RecentSend } from '../api/communicate';
 
@@ -72,15 +72,14 @@ beforeEach(() => {
 });
 
 /**
- * Renders Communicate and switches to the Recent tab.
- *
- * Communicate opens on Personalize, the Auntie voice generator, which is what
- * the archive did and what the screen is for. Recent is the third tab, so every
- * assertion about the sent-history list has to get there first.
+ * Renders Communicate. Recent is the right-hand panel the mock draws
+ * (`ui-ideas/auntieos-communicate-2026-05-27.html`), mounted on every visit
+ * beside whichever compose surface is up, so the sent-history assertions below
+ * need no tab switch to reach it. The name stays: every test reads "render,
+ * then look at Recent".
  */
 function renderRecent() {
   render(<Communicate />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Recent' }));
 }
 async function withFixedToday(fixedNow: Date, run: () => Promise<void>): Promise<void> {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -257,6 +256,11 @@ describe('Communicate screen', () => {
     expect(within(deliveredRow as HTMLElement).getByText('Delivered')).toBeInTheDocument();
   });
 
+  /**
+   * The #755 sweep: the screen is the mock's shape. One heading, a two-segment
+   * switch, the compose surface in the left column, Recent in the right, on
+   * every visit. Recent was a third tab before this; these pin that it is not.
+   */
   describe('mode switching', () => {
     it('opens on Personalize, the Auntie voice generator, not on the sent-history list', () => {
       listRecentSends.mockResolvedValue([]);
@@ -264,39 +268,62 @@ describe('Communicate screen', () => {
       expect(screen.getByTestId('personalize-stub')).toBeInTheDocument();
       expect(screen.getByRole('tab', { name: 'Personalize' })).toHaveAttribute('aria-selected', 'true');
     });
-    it('offers Personalize, Broadcast and Recent, in that order', () => {
+    it('offers exactly Personalize and Broadcast on the switch, in that order, and no Recent tab', () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      const tabs = screen
-        .getAllByRole('tab')
-        .filter((t) => ['Personalize', 'Broadcast', 'Recent'].includes(t.textContent ?? ''));
-      expect(tabs.map((t) => t.textContent)).toEqual(['Personalize', 'Broadcast', 'Recent']);
+      const modeSwitch = screen.getByRole('tablist', { name: 'Communicate mode' });
+      expect(within(modeSwitch).getAllByRole('tab').map((t) => t.textContent)).toEqual([
+        'Personalize',
+        'Broadcast',
+      ]);
+      expect(screen.queryByRole('tab', { name: 'Recent' })).toBeNull();
     });
-    it('does not touch listRecentSends until Recent is actually shown', () => {
+    it('draws the mock switch: a track, and the selected segment marked by aria-selected', () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
-      expect(listRecentSends).not.toHaveBeenCalled();
+      const modeSwitch = screen.getByRole('tablist', { name: 'Communicate mode' });
+      expect(modeSwitch).toHaveClass('communicate__modes');
+      expect(within(modeSwitch).getByRole('tab', { name: 'Personalize' })).toHaveClass('communicate__mode--active');
+      expect(within(modeSwitch).getByRole('tab', { name: 'Broadcast' })).not.toHaveClass('communicate__mode--active');
     });
-    it('mounts Broadcast on its tab, and unmounts Personalize', async () => {
+    it('mounts Recent beside the compose surface on the first render, in the right column', async () => {
+      listRecentSends.mockResolvedValue([]);
+      render(<Communicate />);
+      const recent = (await screen.findByRole('heading', { name: 'Recent' })).closest('section');
+      expect(recent).toHaveClass('communicate__recent');
+      expect(recent?.parentElement).toHaveClass('communicate__cols');
+      expect(screen.getByTestId('personalize-stub').parentElement).toHaveClass('communicate__cols');
+      expect(listRecentSends).toHaveBeenCalledTimes(1);
+    });
+    it('mounts Broadcast on its tab, unmounts Personalize, and keeps Recent up', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
       await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
       expect(screen.getByTestId('compose-stub')).toBeInTheDocument();
       expect(screen.queryByTestId('personalize-stub')).toBeNull();
-    });
-    it('loads the sent history when Recent is opened', async () => {
-      listRecentSends.mockResolvedValue([]);
-      render(<Communicate />);
-      await userEvent.click(screen.getByRole('tab', { name: 'Recent' }));
-      expect(await screen.findByText(/no external sends yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Recent' })).toBeInTheDocument();
+      // Switching a compose mode does not re-read the history; the panel
+      // never left.
       expect(listRecentSends).toHaveBeenCalledTimes(1);
     });
-    it('keeps the heading kicker across every mode', async () => {
+    it('keeps the one heading, "Talk to your kinfolk", across both modes', async () => {
       listRecentSends.mockResolvedValue([]);
       render(<Communicate />);
       expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
-      await userEvent.click(screen.getByRole('tab', { name: 'Recent' }));
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
+      await userEvent.click(screen.getByRole('tab', { name: 'Broadcast' }));
       expect(screen.getByText('The Den · Communicate')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
+      expect(screen.queryByText(/many homes/)).toBeNull();
+    });
+    it('leads every Recent row with the channel dot the mock draws', async () => {
+      listRecentSends.mockResolvedValue([send({ channel: 'email' }), send({ id: 's2', channel: 'sms' })]);
+      render(<Communicate />);
+      await screen.findByText('Email · j***@example.com');
+      const dots = [...document.querySelectorAll('.communicate__row')].map((row) =>
+        row.querySelector('.communicate__row-dot')?.getAttribute('data-channel'),
+      );
+      expect(dots).toEqual(['email', 'sms']);
     });
   });
 });

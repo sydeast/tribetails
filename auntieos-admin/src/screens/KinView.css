@@ -1,37 +1,23 @@
 /* Kin detail, against ui-ideas/auntieos-kin-detail-2026-05-27.html. The hero
-   band, panels, pills and hints are the kit's; what is here is the identity
-   strip the band cannot yet hold, the two-column grid, and the mock's own row
-   shapes (.field, .ck, .d11 .row, .notebox) in tokens. Nothing in this file
-   names a scheme: navy is the default and every colour is a role token. */
+   band and everything in it (photo, "belongs to" line, tag row), the panels,
+   the pills and the hints are the kit's; what is here is the two-column grid
+   and the mock's own row shapes (.field, .ck, .d11 .row, .notebox) in tokens.
+   Nothing in this file names a scheme: navy is the default and every colour is
+   a role token. */
 
 .kview__hint {
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
 
-/* ── identity strip ─────────────────────────────────────────────────────────
-   The mock's hero photo, "belongs to" line and tag row. They sit directly under
-   the kit's hero band, not inside a panel, until DenScreenHeading grows a
-   leading slot; see the note in KinView.tsx. */
-.kview__identity {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  margin-top: var(--space-4);
-}
+/* ── inside the hero band ─────────────────────────────────────────────────
+   The band lays the photo, the owner line and the tag row out (#780,
+   `DenScreenHeading`'s `leading`, `children` and `badges`); what is left here
+   is the mock's `.owner a`, the household as an accent-toned link, and the
+   tag row's edit affordance. */
 
-.kview__identity-text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-/* The mock's `.hero .owner`: 14px body, the household as an accent-toned link. */
 .kview__owner {
   margin: 0;
-  font-size: var(--type-body-md-size);
-  color: var(--color-text-primary);
 }
 
 .kview__owner-step {
@@ -54,13 +40,6 @@
   outline-offset: 2px;
 }
 
-.kview__tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .kview__tags-edit {
   border: none;
   background: transparent;
@@ -75,8 +54,8 @@
   text-decoration: underline;
 }
 
-/* #690: the reactive marker, a kit StatusPill on its own line under the
-   identity strip. Under the box, per the ruling, not in the tag row. */
+/* #690: the reactive marker, a kit StatusPill on its own line under the hero
+   band. Under the box, per the ruling, not in the band's tag row. */
 .kview__flags {
   margin-top: var(--space-3);
 }
@@ -207,11 +186,4 @@
   line-height: 1.55;
   color: var(--color-text-dim);
   white-space: pre-wrap;
-}
-
-@media (max-width: 860px) {
-  .kview__identity {
-    flex-wrap: wrap;
-    gap: var(--space-3);
-  }
 }

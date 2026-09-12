@@ -275,6 +275,9 @@ describe('Directory screen, the mock on the glass ground (#755)', () => {
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toBe('archived');
     expect(badge?.getAttribute('data-tone')).toBe('warning');
+    // At the kit's compact size (#780): the mock's `.badge` is 9.5px, and the
+    // default capsule sat larger in the corner than the mock draws it.
+    expect(badge?.classList.contains('den-statuspill--compact')).toBe(true);
     // The screen-local pill is gone; the kit's is the only one on the card.
     expect(document.querySelector('.directory__status-pill')).toBeNull();
   });

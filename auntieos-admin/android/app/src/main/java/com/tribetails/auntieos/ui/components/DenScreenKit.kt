@@ -7,8 +7,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +58,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.ui.theme.KinfolkOrange
 import java.time.LocalTime
 
 /**
@@ -161,11 +165,45 @@ private fun DenInfoTip(text: String, modifier: Modifier = Modifier) {
 
 // ── page heading ────────────────────────────────────────────────────────────
 
+/** The mocks' `.hero` corner: one radius step rounder than a panel (24 over 20). */
+private val HeroBandShape = RoundedCornerShape(24.dp)
+
 /**
- * The standard Den page heading: a small uppercase mono [kicker] in brand
- * orange, then a large serif [title] with an optional italic [accentTail]
+ * The standard Den page heading, and since #780 the mocks' HERO BAND, which
+ * is what every Android sweep of 2026-09-11 reported it could not draw: a
+ * small uppercase mono [kicker] in brand orange (or the [crumbs] trail in its
+ * place), then a large serif [title] with an optional italic [accentTail]
  * (the word painted in primary), an info button carrying the [subtitle]
- * explanation, and an optional [detail] value line.
+ * explanation, and an optional [detail] value line, all on the band the mocks
+ * draw and the web `.den-heading` has painted since #759.
+ *
+ * THE BAND. The panel gradient (the same surface-to-surface-2 fall
+ * `GlassSurface` takes) lit from the top-left corner by a wide radial of
+ * Kinfolk Orange at 26%, on a hairline, at 24dp, 22dp inside. The orange is
+ * the `KinfolkOrange` constant rather than the role token: the mocks'
+ * `rgba(223,132,49,.26)` is the brand orange itself, and the wash is the
+ * band's continuation of the orange orb behind the same corner. Until #780
+ * this was a bare Row, the one kit piece that drew no surface at all.
+ *
+ * THE SLOTS, the same three as web's `leading`, `badges` and `children`:
+ *  - [leading] sits before the title block and never shrinks: the profile
+ *    mocks' hero photo or avatar tile. The caller sizes it (84dp on the
+ *    kinfolk profile, the kin detail mock draws 120).
+ *  - [content] is a second line under the detail: the kin detail's "belongs
+ *    to the Wrens". Prose, not pills.
+ *  - [badges] is the mocks' `.hero .tags`, a wrapping row of
+ *    `AuntieStatusPill` last in the title block. The band draws the gaps; the
+ *    caller passes the pills (and at most a small control that edits them)
+ *    with no row of its own.
+ *
+ * WHERE [trailing] GOES. Beside the title, as it always has, on a heading
+ * with no [leading]: the list screens' one or two buttons fit there and
+ * thirteen call sites lay out that way. On a heading WITH a [leading] it
+ * goes under the title block, full width, wrapping: that is a profile band,
+ * the mocks' own rule at phone width (`.hero{flex-wrap:wrap}` and `.actions`
+ * at `width:100%` under 860px) and the web band's rule under 720px, and a
+ * seven-button action row beside an 84dp avatar and a name does not fit a
+ * phone any other way.
  *
  * [subtitle] is the EXPLANATION and never reaches the screen as copy; [detail]
  * is a VALUE that does (a count, a date, a range, a name). See DenInfoTip.
@@ -175,7 +213,12 @@ private fun DenInfoTip(text: String, modifier: Modifier = Modifier) {
  * list screen puts its kicker, and none shows both. "THE DEN · DIRECTORY" is
  * word for word what the Directory two levels up says, so on a nested screen it
  * is the line with nothing to say and the trail is the line that has something.
+ *
+ * Every new parameter defaults to null and every existing call site names its
+ * arguments, so a heading that passes none of the slots compiles and lays out
+ * as before, only now on the band.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DenScreenHeading(
     kicker: String,
@@ -186,45 +229,98 @@ fun DenScreenHeading(
     detail: String? = null,
     crumbs: List<DenCrumb>? = null,
     trailing: (@Composable () -> Unit)? = null,
+    leading: (@Composable () -> Unit)? = null,
+    badges: (@Composable () -> Unit)? = null,
+    content: (@Composable () -> Unit)? = null,
 ) {
     val c = AuntieTheme.colors
-    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-        Column(Modifier.weight(1f)) {
-            if (crumbs == null) {
-                Text(
-                    text = kicker.uppercase(),
-                    style = AuntieTheme.typography.mono.copy(letterSpacing = 1.6.sp, fontSize = 11.sp),
-                    color = c.primary,
+    val dims = AuntieTheme.dims
+    val trailingUnder = trailing != null && leading != null
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(HeroBandShape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(c.surface, c.surface2),
+                    start = Offset.Zero,
+                    end = Offset.Infinite,
+                ),
+            )
+            .drawBehind {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(KinfolkOrange.copy(alpha = 0.26f), Color.Transparent),
+                        center = Offset.Zero,
+                        radius = size.width * 0.75f,
+                    ),
                 )
-            } else {
-                DenBreadcrumbs(crumbs)
             }
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = if (accentTail != null) "$title " else title,
-                    style = AuntieTheme.typography.displayMedium,
-                    color = c.textPrimary,
-                )
-                if (accentTail != null) {
+            .border(dims.borderHairline, c.border, HeroBandShape)
+            .padding(22.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (leading != null) {
+                leading()
+                Spacer(Modifier.width(18.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                if (crumbs == null) {
                     Text(
-                        text = accentTail,
-                        style = AuntieTheme.typography.displayMedium.copy(fontStyle = FontStyle.Italic),
+                        text = kicker.uppercase(),
+                        style = AuntieTheme.typography.mono.copy(letterSpacing = 1.6.sp, fontSize = 11.sp),
                         color = c.primary,
                     )
+                } else {
+                    DenBreadcrumbs(crumbs)
                 }
-                if (subtitle != null) {
-                    Spacer(Modifier.width(8.dp))
-                    DenInfoTip(subtitle)
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = if (accentTail != null) "$title " else title,
+                        style = AuntieTheme.typography.displayMedium,
+                        color = c.textPrimary,
+                    )
+                    if (accentTail != null) {
+                        Text(
+                            text = accentTail,
+                            style = AuntieTheme.typography.displayMedium.copy(fontStyle = FontStyle.Italic),
+                            color = c.primary,
+                        )
+                    }
+                    if (subtitle != null) {
+                        Spacer(Modifier.width(8.dp))
+                        DenInfoTip(subtitle)
+                    }
+                }
+                if (detail != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(detail, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                }
+                if (content != null) {
+                    // The mock's `.owner` / `.where`: 9px under the line above.
+                    Spacer(Modifier.height(9.dp))
+                    content()
+                }
+                if (badges != null) {
+                    // The mock's `.hero .tags`: 8px between capsules, 12px under
+                    // the line above (the profile mocks say 11 and 13).
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        badges()
+                    }
                 }
             }
-            if (detail != null) {
-                Spacer(Modifier.height(6.dp))
-                Text(detail, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+            if (trailing != null && !trailingUnder) {
+                Spacer(Modifier.width(18.dp))
+                trailing()
             }
         }
-        if (trailing != null) {
-            Spacer(Modifier.height(0.dp))
+        if (trailing != null && trailingUnder) {
+            Spacer(Modifier.height(16.dp))
             trailing()
         }
     }
@@ -329,26 +425,36 @@ fun StatCard(
 
 /**
  * A glass section panel with a serif [title], an info button carrying the
- * [subtitle] explanation, an optional [detail] value line and an optional
- * [trailing] slot in the header, then arbitrary [content]. The workhorse
- * container for the redesign's two-column dashboards and stacked detail pages.
+ * [subtitle] explanation, an optional [detail] value line, an optional [meta]
+ * note and an optional [trailing] slot in the header, then arbitrary
+ * [content]. The workhorse container for the redesign's two-column dashboards
+ * and stacked detail pages.
  *
  * [subtitle] is the EXPLANATION and never reaches the screen as copy; [detail]
  * is a VALUE that does (a count, a date, a name, a status word). See DenInfoTip.
+ *
+ * [meta] is the mocks' `.ct`, and the web panel's `meta` prop (#780): a short
+ * right-aligned mono note on the header rule, for a count or a window ("2
+ * kin", "next 7 days", "admin only"). Distinct from [trailing], which holds
+ * CONTROLS: this is a statement about the panel's contents, text and never
+ * interactive. It exists as its own parameter because the alternative the
+ * kinfolk profile reached for was a private `PanelMeta` passed through
+ * [trailing], which put a caption where a button goes and outside TalkBack's
+ * reading of the header. Blank renders nothing.
  *
  * #445: [title] carries `Modifier.semantics { heading() }`, so TalkBack can jump
  * panel to panel with its next-heading gesture instead of swiping through
  * everything in between. Mirrors `DenPanel` on web (#404 / PR #417), which
  * renders its title as a real `h2`/`h3` instead of a `<span>`. Compose has no DOM
- * and no heading LEVEL, only the boolean marker `heading()` — every panel title
+ * and no heading LEVEL, only the boolean marker `heading()`: every panel title
  * is a heading, full stop, so there is no web-style "which level nests under
  * which" to get wrong here. What web's `headingLevel` prop had to answer, this
  * still had to check: no `DenPanel` mounts inside another `DenPanel`'s `content`
  * anywhere in this app (surveyed every call site), so no panel title heading
  * sits nested under a sibling panel's; and no screen composes its own
  * `heading()` elsewhere that a panel title would collide with or duplicate.
- * `DenScreenHeading` (the page-level title) is untouched — out of scope here,
- * same as it was on web.
+ * `DenScreenHeading` (the page-level title) was out of #445's scope on both
+ * platforms and still carries no marker.
  */
 @Composable
 fun DenPanel(
@@ -363,6 +469,7 @@ fun DenPanel(
     collapsible: Boolean = false,
     initiallyExpanded: Boolean = true,
     trailing: (@Composable () -> Unit)? = null,
+    meta: String? = null,
     content: @Composable () -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -400,7 +507,21 @@ fun DenPanel(
                         Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                 }
-                if (trailing != null) trailing()
+                if (!meta.isNullOrBlank()) {
+                    // The mocks' `.ct`: mono, small, dim, at the right of the
+                    // rule, before any control. Web's `.den-panel-meta`.
+                    Text(
+                        text = meta,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textDim,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                if (trailing != null) {
+                    if (!meta.isNullOrBlank()) Spacer(Modifier.width(8.dp))
+                    trailing()
+                }
                 if (collapsible) {
                     Icon(
                         imageVector = if (expanded) Lucide.ChevronDown else Lucide.ChevronRight,

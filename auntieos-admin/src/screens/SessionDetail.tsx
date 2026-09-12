@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { type SessionEntry } from '../api/sessions';
-import { kinForHouseholdQuery, type Kin } from '../api/directory';
+import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { updateKinCareSession } from '../api/sessionsWrite';
 import {
   appendOfficeNote,
@@ -22,6 +22,7 @@ import {
   sessionState,
   type SessionState,
   sessionStateInfo,
+  SESSION_STATE_TONE,
   sessionHousehold,
   sessionWindow,
   sessionClock,
@@ -33,37 +34,14 @@ import { str, arr } from '../lib/coerce';
 import {
   DenScreenHeading,
   DenPanel,
-  ServicePill,
   StatusPill,
   EmptyHint,
   ErrorHint,
-  type DenTone,
 } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { RouteMap } from '../components/RouteMap';
 import './SessionDetail.css';
-
-/**
- * The brand tone each session state wears in the kit's status pill.
- *
- * A total record over `SessionState` rather than a switch with a default, so a
- * state added to the lifecycle fails the typecheck here instead of quietly
- * rendering in whatever colour the default happened to be. The seven are the
- * colours this screen already drew, moved off seven per-state CSS rules and
- * onto the one pill the mocks draw (issue #751).
- */
-const SESSION_STATE_TONE: Record<SessionState, DenTone> = {
-  scheduled: 'neutral',
-  onMyWay: 'orange',
-  arrived: 'teal',
-  departed: 'purple',
-  completed: 'success',
-  // Not a stage of the visit: the visit is not happening. Muted and struck
-  // through, which is how this screen has always drawn it.
-  cancelled: 'muted',
-  unknown: 'warning',
-};
 
 interface SessionDetailProps {
   /**
@@ -93,28 +71,93 @@ interface SessionDetailProps {
   onBack: () => void;
 }
 
-/** One label/value line; renders nothing when the value is blank (never "undefined"), the KinfolkProfile `Fact` convention. */
-function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+/**
+ * One read-only line of the Details panel: the mock's `.field`, a dim key on
+ * the left and a bold value on the right. Renders nothing when the value is
+ * blank (never "undefined"), the KinfolkProfile `Fact` convention.
+ */
+function FieldRow({ label, value }: { label: string; value: string }) {
   if (value.trim() === '') return null;
   return (
-    <div className="sdetail__fact">
-      <dt className="sdetail__fact-label">{label}</dt>
-      <dd className={mono ? 'sdetail__fact-value sdetail__fact-value--mono' : 'sdetail__fact-value'}>{value}</dd>
+    <div className="sdetail__row">
+      <span className="sdetail__row-key">{label}</span>
+      <span className="sdetail__row-value">{value}</span>
     </div>
   );
 }
 
-/** True when a section has at least one non-blank field (so an all-blank section hides). */
-function any(...vals: string[]): boolean {
-  return vals.some((v) => v.trim() !== '');
+/**
+ * The mock's five lifecycle nodes, in visit order. `SessionState` names the
+ * same five plus cancelled and unknown, which are not steps: cancelled is the
+ * absence of a visit and unknown is a status nobody wrote, so neither gets a
+ * node, and the hero pill is where they are named.
+ */
+type StampedStep = 'onMyWay' | 'arrived' | 'departed' | 'completed';
+type StepState = 'scheduled' | StampedStep;
+
+const LIFECYCLE_STEPS: readonly { state: StepState; name: string }[] = [
+  { state: 'scheduled', name: 'Scheduled' },
+  { state: 'onMyWay', name: 'On my way' },
+  { state: 'arrived', name: 'Arrived' },
+  { state: 'departed', name: 'Departed' },
+  { state: 'completed', name: 'Completed' },
+];
+
+type StepMood = 'done' | 'now' | 'todo';
+
+interface LifecycleStep {
+  state: StepState;
+  name: string;
+  mood: StepMood;
+  /** The local moment the step was stamped, or '' when it was not. */
+  stamp: string;
+}
+
+/**
+ * Which node is lit, and how, for the stepper the mock draws under
+ * "Visit lifecycle".
+ *
+ * A step is DONE when its own timestamp is on the record, NOW when it is the
+ * state the visit is in, TODO otherwise. Done is read from the stamp and never
+ * from "every step before the current one": a visit the office completed from
+ * Bookings without a clock-out has `completedAt` and no `departedAt`, and
+ * lighting Departed on that visit would make every office completion look as
+ * though someone had clocked out of it, the exact defect the old "Clocked out"
+ * line was fixed for. Scheduled is the one step with no stamp on the record
+ * (a session document is the scheduling), so it is NOW while the visit waits
+ * and DONE the moment anything else has happened to it.
+ */
+function lifecycleSteps(state: SessionState, stamps: Record<StampedStep, string>): LifecycleStep[] {
+  return LIFECYCLE_STEPS.map(({ state: step, name }) => {
+    const stamp = step === 'scheduled' ? '' : stamps[step];
+    const mood: StepMood =
+      step === state
+        ? 'now'
+        : step === 'scheduled' || stamp !== ''
+          ? 'done'
+          : 'todo';
+    return { state: step, name, mood, stamp };
+  });
+}
+
+/**
+ * How far along the progress bar runs, as a fraction of the distance between
+ * the first and last node: to the last node that is not still to come.
+ */
+function lifecycleProgress(steps: readonly LifecycleStep[]): number {
+  let last = 0;
+  steps.forEach((s, i) => {
+    if (s.mood !== 'todo') last = i;
+  });
+  return steps.length < 2 ? 0 : last / (steps.length - 1);
 }
 
 /**
  * A single session ISO field as a LOCAL "Today · 20:00" moment, composed ONLY
  * from the existing AO-18 helpers (`sessionDayKey`/`sessionDayLabel`/`sessionClock`
  * in lib/sessionFormat.ts), never new date logic or `toLocaleString`. Blank when
- * the field is empty or does not parse, so a `Fact` hides it rather than showing
- * a fabricated "(no time)" clock or an "Undated" day.
+ * the field is empty or does not parse, so a lifecycle node stamps nothing rather
+ * than a fabricated "(no time)" clock or an "Undated" day.
  */
 function localMoment(iso: string, todayIso: string): string {
   if ((iso ?? '').trim() === '') return '';
@@ -161,6 +204,18 @@ function messageOf(err: unknown): string {
  *                       the same map; the Canvas polyline is the fallback on
  *                       both platforms, not the target.
  *
+ * THE LAYOUT IS THE MOCK'S, `ui-ideas/auntieos-kincare-detail-2026-05-27.html`,
+ * since the #755 sweep: a hero band naming the visit by its Kin and service with
+ * the status pill on its right edge, then Visit lifecycle (the five-node
+ * stepper over the action row), the Route map, the two note boxes side by side
+ * and a Details panel of key/value rows. The old Status, Visit clock, Timing,
+ * Kin and Notes panels are those same facts re-homed, not dropped: the pill
+ * and the service went up into the hero, the clock times became the stepper's
+ * stamps, the Kin facts became a Details row above the picker, and the note
+ * composer sits in the admin-internal box. What the mock draws that this screen
+ * does not is the Kin photo stack at the front of the hero, which needs a
+ * leading slot on `DenScreenHeading`.
+ *
  * THE BUTTONS ARE A COURTESY, THE SERVER IS THE GUARD. `lifecycleActionsFor`
  * only OFFERS what applies to the state being rendered, so the operator is not
  * shown a control that will fail. It is not the enforcement:
@@ -178,12 +233,41 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // "Today" doesn't change mid-view; computed once (the Sessions.tsx todayIso
   // rationale). Called unconditionally, above the null branch, per Rules of Hooks.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
-  const sessionLabel = entry !== null ? sessionHousehold(str(entry.kinfolkName)) : 'Kin Care session';
 
   const sessionId = entry?._id ?? null;
   const status = str(entry?.status);
   const state = sessionState(status);
   const household = entry === null ? 'the household' : sessionHousehold(str(entry.kinfolkName));
+
+  // ── the hero band ──────────────────────────────────────────────────────────
+  // The mock names the visit by its Kin and its service ("Biscuit & Gravy ·
+  // 30-min walk"), puts the day, the window, the household and the door on the
+  // line under it, and hangs the status pill off the right edge. The household
+  // is the fallback name, never the first choice: on this screen the family is
+  // context and the visit is the subject.
+  const kinNames = arr<string>(entry?.kinNames).filter((n) => n.trim() !== '');
+  const kinLabel = kinNames.join(' & ');
+  const serviceTypeNow = str(entry?.serviceType);
+  const sessionLabel =
+    entry === null ? 'Kin Care session' : kinLabel !== '' ? kinLabel : household;
+  const heroTitle =
+    entry === null
+      ? 'Kin Care session'
+      : [kinLabel, serviceTypeNow].filter((p) => p.trim() !== '').join(' · ') || household;
+  // The door comes off the household record, the one field this screen reads
+  // from it. A live subscription for the reason `useHouseholdLocation` gives:
+  // the address is edited from the Kinfolk profile, and a frozen copy would
+  // keep sending the Auntie to the old street.
+  const kinfolkDoc = useDocById<Kinfolk>('kinfolk', entry === null ? null : str(entry.kinfolkId));
+  const address = kinfolkDoc.status === 'ready' ? str(kinfolkDoc.data?.serviceAddress).trim() : '';
+  const startKey = sessionDayKey(str(entry?.startTime));
+  const dayLabel = startKey === 'Undated' ? '' : sessionDayLabel(startKey, todayIso);
+  const heroDetail =
+    entry === null
+      ? ''
+      : [dayLabel, sessionWindow(str(entry.startTime), str(entry.endTime)), household, address]
+          .filter((p) => p.trim() !== '')
+          .join(' · ');
 
   // ── the visit clock ────────────────────────────────────────────────────────
   // The four in-visit writes, the confirm gate and the sentence they produce all
@@ -334,11 +418,23 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         // says Auntie Time; the slug and the code say sessions"), and a crumb
         // that called it anything else would name a screen the operator cannot
         // find. `onSelect` runs the same `onBack` the trailing button does, and
-        // since #753 that is a real route move back to `/sessions`.
+        // since #753 that is a real route move back to `/sessions`. The crumb IS
+        // the way back: the mock's hero carries the status pill on its right
+        // edge and no button, so the "Back to Auntie Time" button that used to
+        // sit there is gone rather than crowding the pill.
         crumbs={[{ label: 'Auntie Time', onSelect: onBack }, { label: sessionLabel }]}
-        title={sessionLabel}
+        title={heroTitle}
         subtitle="Kin Care session detail."
-        trailing={<GhostButton label="Back to Auntie Time" onClick={onBack} />}
+        detail={heroDetail === '' ? undefined : heroDetail}
+        trailing={
+          entry === null ? undefined : (
+            <StatusPill
+              label={sessionStateInfo(state).chipLabel}
+              tone={SESSION_STATE_TONE[state]}
+              struck={state === 'cancelled'}
+            />
+          )
+        }
       />
 
       {entry === null ? (
@@ -369,8 +465,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
         ) : (
           <DenPanel title="Session unavailable">
             <EmptyHint>
-              No Kin Care session is on file under this id. It may have been removed. Back to Auntie
-              Time returns to the board.
+              No Kin Care session is on file under this id. It may have been removed. The Auntie
+              Time crumb above returns to the board.
             </EmptyHint>
           </DenPanel>
         )
@@ -383,60 +479,76 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
           // helpers already classify honestly ('unknown', 'Undated'), rather than
           // throwing and blanking the view.
           const info = sessionStateInfo(state);
-          const serviceTypeNow = str(entry.serviceType);
           const notes = str(entry.notes).trim();
-          // R1: a KinCare session covers EVERY Kin in the home, so the Kin panel
+          const kinfolkNotes = str(entry.kinfolkNotes).trim();
+          // R1: a KinCare session covers EVERY Kin in the home, so the Kin row
           // is always shown. It used to be hidden whenever `kinIds` was empty,
           // and empty was exactly the whole-household case -- a booking for the
-          // dog AND the cat rendered with no Kin section at all.
+          // dog AND the cat rendered with no Kin line at all.
           const kinIds = savedKinIds;
-          const kinNames = arr<string>(entry.kinNames).filter((n) => n.trim() !== '');
+          const reportCount = arr<string>(entry.reportIds).filter((id) => id.trim() !== '').length;
+          const rate = catalog?.find((o) => o.name === serviceTypeNow)?.rate ?? '';
 
-          const startKey = sessionDayKey(str(entry.startTime));
-          const dayLabel = startKey === 'Undated' ? '' : sessionDayLabel(startKey, todayIso);
-          const scheduled = sessionWindow(str(entry.startTime), str(entry.endTime));
-          const scheduledValue = scheduled === 'Time TBD' ? '' : scheduled;
-          const onTheWay = localMoment(str(entry.onMyWayAt), todayIso);
-          const clockedIn = localMoment(str(entry.arrivedAt), todayIso);
-          // CLOCKED OUT IS `departedAt`, NOT `completedAt`, and this line used to
-          // read the wrong field. They are different events: departing is the
-          // Auntie leaving the house, completing is the office ruling the visit
-          // happened and is billable, and `transitionBookingStatus` can stamp
-          // the second without the first ever having been stamped. Labelling
-          // completion as a clock-out made every visit completed from the
-          // Bookings screen look as though someone had clocked out of it.
-          const clockedOut = localMoment(str(entry.departedAt), todayIso);
-          const completed = localMoment(str(entry.completedAt), todayIso);
+          // DEPARTED IS `departedAt`, NOT `completedAt`, and the old "Clocked
+          // out" line used to read the wrong field. They are different events:
+          // departing is the Auntie leaving the house, completing is the office
+          // ruling the visit happened and is billable, and
+          // `transitionBookingStatus` can stamp the second without the first
+          // ever having been stamped. Labelling completion as a clock-out made
+          // every visit completed from the Bookings screen look as though
+          // someone had clocked out of it. `lifecycleSteps` reads each node from
+          // its own stamp for the same reason.
+          const steps = lifecycleSteps(state, {
+            onMyWay: localMoment(str(entry.onMyWayAt), todayIso),
+            arrived: localMoment(str(entry.arrivedAt), todayIso),
+            departed: localMoment(str(entry.departedAt), todayIso),
+            completed: localMoment(str(entry.completedAt), todayIso),
+          });
+          const progress = lifecycleProgress(steps);
 
           const actions = lifecycleActionsFor(state);
 
           return (
             <>
-              {/* The household names the page in the heading above; this panel
-                  is the status/service line, so it isn't repeated here. */}
-              <DenPanel title="Status">
-                <div className="sdetail__head">
-                  <div className="sdetail__head-tags">
-                    <StatusPill
-                      label={info.chipLabel}
-                      tone={SESSION_STATE_TONE[state]}
-                      struck={state === 'cancelled'}
-                    />
-                    <ServicePill serviceType={serviceTypeNow} />
-                  </div>
-                  {state === 'unknown' && (
-                    <p className="sdetail__hint">
-                      This session&rsquo;s status (&ldquo;{status}&rdquo;) isn&rsquo;t recognized, so
-                      it is shown as UNKNOWN rather than guessed into a state.
-                    </p>
-                  )}
-                </div>
-              </DenPanel>
-
+              {/* The mock's first panel: the five nodes with their stamps, the
+                  progress bar to the lit one, then the action row. The status
+                  pill and the service moved up into the hero band with #755, so
+                  the "Status" panel that used to sit here is gone. */}
               <DenPanel
-                title="Visit clock"
+                title="Visit lifecycle"
+                className="d1"
                 subtitle="On the way, clocked in, clocked out. The office marks a visit Completed from Bookings."
               >
+                {state === 'unknown' && (
+                  <p className="sdetail__hint">
+                    This session&rsquo;s status (&ldquo;{status}&rdquo;) isn&rsquo;t recognized, so
+                    it is shown as UNKNOWN rather than guessed into a state.
+                  </p>
+                )}
+                <div className="sdetail__life">
+                  <span
+                    className="sdetail__lifebar"
+                    aria-hidden="true"
+                    style={{ width: `${String(progress * 80)}%` }}
+                  />
+                  <ol className="sdetail__steps" aria-label="Visit lifecycle">
+                    {steps.map((s) => (
+                      <li key={s.state} className="sdetail__step" data-mood={s.mood}>
+                        <span className="sdetail__node" aria-hidden="true">
+                          {s.mood === 'done' ? '✓' : s.mood === 'now' ? '●' : ''}
+                        </span>
+                        <span className="sdetail__step-name">{s.name}</span>
+                        {/* A stamp when there is one. A node still to come reads
+                            "--"; a lit node with nothing on the record (Scheduled
+                            has no booking timestamp on the session) reads
+                            nothing, rather than a dash that says "not yet". */}
+                        {(s.stamp !== '' || s.mood === 'todo') && (
+                          <span className="sdetail__step-ts">{s.stamp === '' ? '--' : s.stamp}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
                 {actions.length === 0 ? (
                   <EmptyHint>
                     {state === 'completed' || state === 'cancelled'
@@ -479,22 +591,10 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                 )}
               </DenPanel>
 
-              {any(dayLabel, scheduledValue, onTheWay, clockedIn, clockedOut, completed) && (
-                <DenPanel title="Timing">
-                  <dl className="sdetail__facts">
-                    <Fact label="Day" value={dayLabel} />
-                    <Fact label="Scheduled" value={scheduledValue} mono />
-                    <Fact label="On the way" value={onTheWay} mono />
-                    <Fact label="Clocked in" value={clockedIn} mono />
-                    <Fact label="Clocked out" value={clockedOut} mono />
-                    <Fact label="Completed" value={completed} mono />
-                  </dl>
-                </DenPanel>
-              )}
-
               <DenPanel
                 title="Route"
                 subtitle="GPS breadcrumbs recorded during the visit. Operator view; the kinfolk sharing switch does not apply here."
+                className="d2"
               >
                 {crumbs.error !== null ? (
                   <ErrorHint>
@@ -533,13 +633,78 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                 )}
               </DenPanel>
 
-              <DenPanel
-                title="Visit details"
-                subtitle="Service, length and which Kin this visit covers. Times move from the Schedule; the status moves from the visit clock above."
-              >
-                <div className="sdetail__form">
+              {/* The mock's two note boxes side by side: what the household
+                  said about their own house, and what the office keeps to
+                  itself. */}
+              <div className="sdetail__cols">
+                <DenPanel
+                  title="Kinfolk-facing note"
+                  className="d3"
+                  meta={`visible to ${household}`}
+                  subtitle="The household's own note for this visit, written when they booked. Notes to the household are added from the booking on Bookings."
+                >
+                  {kinfolkNotes === '' ? (
+                    <p className="sdetail__nbox sdetail__nbox--empty">
+                      No note from the household on this visit.
+                    </p>
+                  ) : (
+                    <p className="sdetail__nbox">{kinfolkNotes}</p>
+                  )}
+                </DenPanel>
+
+                <DenPanel
+                  title="Admin-internal note"
+                  className="d3"
+                  meta="private"
+                  subtitle="Only staff see this. A note is stamped and kept; nothing here is overwritten."
+                >
+                  {notes === '' ? (
+                    <p className="sdetail__nbox sdetail__nbox--empty">No notes on this visit yet.</p>
+                  ) : (
+                    <p className="sdetail__nbox">{notes}</p>
+                  )}
                   <label className="sdetail__field">
-                    <span className="sdetail__field-label">Service type</span>
+                    <span className="sdetail__field-label">Note to office</span>
+                    <textarea
+                      className="sdetail__input sdetail__textarea"
+                      rows={3}
+                      placeholder="What does the office need to know?"
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                    />
+                  </label>
+                  <div className="sdetail__actions">
+                    <GhostButton
+                      label={noteWrite.status === 'saving' ? 'Sending…' : 'Add note'}
+                      onClick={() => void sendOfficeNote()}
+                      disabled={noteText.trim() === '' || noteWrite.status === 'saving'}
+                    />
+                  </div>
+                  {noteWrite.status === 'error' && (
+                    <ErrorHint>
+                      Couldn&rsquo;t add the note. {noteWrite.message}
+                    </ErrorHint>
+                  )}
+                  {noteWrite.status === 'done' && (
+                    <p className="sdetail__ok" role="status">
+                      {noteWrite.message}
+                    </p>
+                  )}
+                </DenPanel>
+              </div>
+
+              {/* The mock's Details: key on the left, value on the right, one
+                  hairline per row. The rows that are editable here (#397 L19)
+                  keep their controls in the value slot rather than losing the
+                  edit to match a read-only picture. */}
+              <DenPanel
+                title="Details"
+                className="d4"
+                subtitle="Service, length and which Kin this visit covers. Times move from the Schedule; the status moves from the visit lifecycle above."
+              >
+                <div className="sdetail__rows">
+                  <label className="sdetail__row">
+                    <span className="sdetail__row-key">Service type</span>
                     {catalog !== null && catalog.length > 0 ? (
                       <select
                         className="sdetail__input"
@@ -578,8 +743,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     </p>
                   )}
 
-                  <label className="sdetail__field">
-                    <span className="sdetail__field-label">Visit length (minutes)</span>
+                  <label className="sdetail__row">
+                    <span className="sdetail__row-key">Visit length (minutes)</span>
                     <input
                       className="sdetail__input"
                       type="number"
@@ -596,8 +761,32 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     </p>
                   )}
 
-                  <fieldset className="sdetail__field sdetail__kin-picker">
-                    <legend className="sdetail__field-label">Kin on this visit</legend>
+                  {/* The rate card's price for THIS service, read-only: pricing
+                      is by exact name (the hint above says so), so the row
+                      appears only when the name matches a rate and the operator
+                      typed one. Never a computed total. */}
+                  <FieldRow label="Rate" value={rate === '' ? '' : `$${rate}`} />
+
+                  {/* What the RECORD says the visit covers, before the picker
+                      below that changes it. Named Kin can be fewer than covered
+                      Kin (a Kin doc with no name contributes an id and no
+                      name), and a pre-R1 document carries ids and no names at
+                      all; each is said out loud rather than under-reported. */}
+                  <FieldRow
+                    label="Kin covered"
+                    value={
+                      kinNames.length > 0
+                        ? kinIds.length > kinNames.length
+                          ? `${kinNames.join(', ')} · ${String(kinIds.length - kinNames.length)} without a name on file`
+                          : kinNames.join(', ')
+                        : kinIds.length > 0
+                          ? `${String(kinIds.length)} (names not on file)`
+                          : 'Every Kin in the home (the booking named none)'
+                    }
+                  />
+
+                  <fieldset className="sdetail__row sdetail__row--stack sdetail__kin-picker">
+                    <legend className="sdetail__row-key">Kin on this visit</legend>
                     {roster.status === 'error' ? (
                       <ErrorHint>
                         Couldn&rsquo;t read this household&rsquo;s Kin. {roster.message} The Kin already
@@ -641,88 +830,33 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     )}
                   </fieldset>
 
-                  <div className="sdetail__actions">
-                    <PrimaryButton
-                      label={editWrite.status === 'saving' ? 'Saving…' : 'Save details'}
-                      onClick={() => void saveDetails()}
-                      disabled={!editDirty || editWrite.status === 'saving'}
-                    />
-                  </div>
-                  {editWrite.status === 'error' && (
-                    <ErrorHint>
-                      Couldn&rsquo;t save this visit. {editWrite.message}
-                    </ErrorHint>
-                  )}
-                  {editWrite.status === 'done' && (
-                    <p className="sdetail__ok" role="status">
-                      {editWrite.message}
-                    </p>
-                  )}
-                </div>
-              </DenPanel>
-
-              <DenPanel title="Kin" subtitle="Every Kin in this home, unless the booking was narrowed.">
-                {kinNames.length > 0 ? (
-                  <dl className="sdetail__facts">
-                    <Fact label="Kin covered" value={kinNames.join(', ')} />
-                    {/* Named Kin can be fewer than covered Kin: a Kin doc with
-                        no name contributes an id and no name. Said out loud
-                        rather than letting the list quietly under-report. */}
-                    {kinIds.length > kinNames.length && (
-                      <Fact
-                        label="Unnamed Kin"
-                        value={String(kinIds.length - kinNames.length)}
-                      />
-                    )}
-                  </dl>
-                ) : kinIds.length > 0 ? (
-                  // Ids but no names: a pre-R1 document, or a household whose
-                  // Kin docs carry no `name`. The count is the honest answer.
-                  <dl className="sdetail__facts">
-                    <Fact label="Kin covered" value={`${kinIds.length} (names not on file)`} />
-                  </dl>
-                ) : (
-                  <EmptyHint>
-                    No Kin are recorded on this session. It was booked before the roster was written
-                    onto the record, so the household&rsquo;s Kin list is what this visit covers.
-                  </EmptyHint>
-                )}
-              </DenPanel>
-
-              <DenPanel
-                title="Notes"
-                subtitle="Admin-internal. A note is stamped and kept; nothing here is overwritten."
-              >
-                {notes === '' ? (
-                  <EmptyHint>No notes on this visit yet.</EmptyHint>
-                ) : (
-                  <p className="sdetail__notes">{notes}</p>
-                )}
-                <label className="sdetail__field">
-                  <span className="sdetail__field-label">Note to office</span>
-                  <textarea
-                    className="sdetail__input sdetail__textarea"
-                    rows={3}
-                    placeholder="What does the office need to know?"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
+                  {/* Present only once the visit has been billed, the same
+                      rule as the board's "Invoice linked" chip: an unbilled
+                      visit is the normal state of a visit, not a gap. */}
+                  <FieldRow label="Invoice" value={str(entry.invoiceId).trim() === '' ? '' : 'Linked'} />
+                  {/* SENT KinTales only, which is what `reportIds` holds; a
+                      draft has nothing to show a household yet. */}
+                  <FieldRow
+                    label="KinTales sent"
+                    value={reportCount === 0 ? '' : String(reportCount)}
                   />
-                </label>
+                </div>
+
                 <div className="sdetail__actions">
-                  <GhostButton
-                    label={noteWrite.status === 'saving' ? 'Sending…' : 'Add note'}
-                    onClick={() => void sendOfficeNote()}
-                    disabled={noteText.trim() === '' || noteWrite.status === 'saving'}
+                  <PrimaryButton
+                    label={editWrite.status === 'saving' ? 'Saving…' : 'Save details'}
+                    onClick={() => void saveDetails()}
+                    disabled={!editDirty || editWrite.status === 'saving'}
                   />
                 </div>
-                {noteWrite.status === 'error' && (
+                {editWrite.status === 'error' && (
                   <ErrorHint>
-                    Couldn&rsquo;t add the note. {noteWrite.message}
+                    Couldn&rsquo;t save this visit. {editWrite.message}
                   </ErrorHint>
                 )}
-                {noteWrite.status === 'done' && (
+                {editWrite.status === 'done' && (
                   <p className="sdetail__ok" role="status">
-                    {noteWrite.message}
+                    {editWrite.message}
                   </p>
                 )}
               </DenPanel>

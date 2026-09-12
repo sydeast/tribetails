@@ -363,7 +363,7 @@ describe('entryTitle', () => {
 describe('entryWhen / entryMachineWhen', () => {
   it('renders the LOCAL clock, not the UTC one', () => {
     // 2026-07-20T14:00Z is 09:00 in America/Chicago (CDT).
-    expect(entryWhen('2026-07-20T14:00:00.000Z')).toBe('07-20 09:00');
+    expect(entryWhen('2026-07-20T14:00:00.000Z')).toBe('Jul 20 · 09:00');
     expect(entryMachineWhen('2026-07-20T14:00:00.000Z')).toBe('2026-07-20T09:00');
   });
 

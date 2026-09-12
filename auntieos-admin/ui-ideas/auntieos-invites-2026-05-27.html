@@ -17,6 +17,18 @@
     proposedRole, requiresAuntieAck, status, createdAt, expiresAt, sentToInviteeAt,
     auntieNotifiedAt, acceptedUid. InviteStatus: PENDING, EMAIL_SENT, ACCEPTED, REVOKED, EXPIRED.
   INVITE_TTL_DAYS=14. SECONDARY_LABEL_MAX=24. Palette from AuntieColors.kt. Placeholder content.
+
+  AMENDED 2026-09-11 (issue #755 sweep) to the operator rulings that postdate this concept:
+    * "WHO INVITES WHOM" (auntieos-admin/CLAUDE.md, 2026-08-04): the admin's only invite is
+      inviting a PRIMARY to the portal, household-scoped; the PRIMARY invites the secondary
+      from MyTribe. This admin-wide screen therefore mints nothing and revokes nothing. The
+      Send invite form column, the Revoke buttons and the permission toggles are removed;
+      every action lives on the household's own Members and invites screen.
+    * requiresAuntieAck was dropped from the invite document (nothing ever acknowledged it),
+      so the "Auntie ack required" pill is removed.
+    * The shipped screen is admin-WIDE, so each row also names the household it belongs to;
+      the name links to that household's Members and invites screen.
+  The list column, the section headings and the row shape are the authority for the screen.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -58,13 +70,13 @@
   .nb .bx p{font-size:13px;color:var(--cream);line-height:1.5}
   .nb .bx code{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:#7fdce8;background:rgba(10,133,149,.18);padding:1px 6px;border-radius:5px}
 
-  .cols{display:grid;grid-template-columns:340px 1fr;gap:22px;align-items:start}
+  /* One column since the 2026-08-04 ruling removed the form panel. */
+  .cols{display:grid;grid-template-columns:1fr;gap:22px;align-items:start}
 
   /* form panel */
   .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
     border-radius:20px;padding:22px;opacity:0;transform:translateY(16px);animation:rise .7s var(--ease) forwards}
   .panel.d1{animation-delay:.12s}.panel.d2{animation-delay:.22s}
-  .panel.form{position:sticky;top:22px}
   .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:20px;font-variation-settings:"SOFT" 50}
   .panel .ph-sub{color:var(--cream-dim);font-size:12.5px;margin-top:3px;margin-bottom:18px}
 
@@ -123,6 +135,9 @@
   .iv .info .em{font-family:"Hanken Grotesk";font-weight:600;font-size:15px;word-break:break-all}
   .iv .info .meta{color:var(--cream-dim);font-size:12.5px;margin-top:3px}
   .iv .info .meta code{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim)}
+  /* The household the invite belongs to, linking to its Members and invites screen. */
+  .iv .info .meta a{color:var(--cream);text-decoration:none}
+  .iv .info .meta a:hover{text-decoration:underline}
   .iv .info .row2{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
   .pill{display:inline-block;font-family:"Spline Sans Mono",monospace;font-size:9.5px;letter-spacing:.07em;
     text-transform:uppercase;font-weight:600;padding:4px 9px;border-radius:20px}
@@ -143,7 +158,7 @@
 
   @keyframes rise{to{opacity:1;transform:translateY(0)}}
   .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
-  @media(max-width:860px){.cols{grid-template-columns:1fr}.panel.form{position:static}}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -154,9 +169,10 @@
     <div class="head">
       <div class="kick">The Den · Invites</div>
       <h2>Invites</h2>
-      <div class="sub">Send and track kinfolk invitations into a tribe</div>
+      <div class="sub">Every invite across every household, and who never came in</div>
     </div>
 
+    <!-- Concept-time note about the mock's origin. Not screen content: the screen exists now. -->
     <div class="nb">
       <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#c7a8d8" stroke-width="1.8"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
       <div class="bx">
@@ -167,65 +183,8 @@
 
     <div class="cols">
 
-      <!-- SEND INVITE FORM -->
-      <div class="panel form d1">
-        <h3>Send invite</h3>
-        <div class="ph-sub">Calls <span style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;color:#7fdce8">mintInvite</span> and writes one <span style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;color:#7fdce8">inviteRequests</span> doc.</div>
-
-        <div class="field">
-          <label for="familyId">familyId <span class="req">*</span></label>
-          <input id="familyId" type="text" placeholder="tribe_a1b2c3" value="" />
-          <div class="hint">The tribe (family) this invite joins. Stored on the doc as <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">tribeId</code>.</div>
-        </div>
-
-        <div class="field">
-          <label for="invitedEmail">invitedEmail <span class="req">*</span></label>
-          <input id="invitedEmail" type="email" placeholder="jane@example.com" value="" />
-          <div class="hint">Lowercased and matched against the accepting user at <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">acceptInvite</code>.</div>
-        </div>
-
-        <div class="field">
-          <label for="secondaryLabel">secondaryLabel</label>
-          <input id="secondaryLabel" type="text" maxlength="24" placeholder="Folk" value="" />
-          <div class="hint">Optional, defaults to "Folk". Max 24 chars (SECONDARY_LABEL_MAX).</div>
-        </div>
-
-        <div class="field">
-          <label>proposedRole</label>
-          <div class="seg" id="roleSeg">
-            <button type="button" data-role="SECONDARY" class="on">SECONDARY</button>
-            <button type="button" data-role="PRIMARY">PRIMARY</button>
-          </div>
-          <div class="hint">Defaults to SECONDARY. PRIMARY uses the <code style="font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--cream-dim)">invite.primary</code> email template.</div>
-        </div>
-
-        <div class="field" style="margin-bottom:6px">
-          <label>proposedPermissions</label>
-        </div>
-        <div class="perm">
-          <div class="px"><b>Full billing</b><code>billing_full</code></div>
-          <div class="tog"></div>
-        </div>
-        <div class="perm">
-          <div class="px"><b>Direct messaging</b><code>messaging_direct</code></div>
-          <div class="tog on"></div>
-        </div>
-        <div class="perm">
-          <div class="px"><b>Group messaging</b><code>messaging_group</code></div>
-          <div class="tog on"></div>
-        </div>
-        <div class="perm">
-          <div class="px"><b>Edit kin profile</b><code>kin_edit</code></div>
-          <div class="tog"></div>
-        </div>
-        <div class="perm">
-          <div class="px"><b>KinTales only</b><code>kintales_only</code></div>
-          <div class="tog on locked" title="Server forces kintales_only=true on every invite"></div>
-        </div>
-
-        <button class="send">Send invite</button>
-        <div class="ttlnote">// invite expires in 14 days (INVITE_TTL_DAYS)</div>
-      </div>
+      <!-- The SEND INVITE FORM that stood here is removed per the 2026-08-04 ruling
+           (see the head comment). The admin mints no invite from an admin-wide list. -->
 
       <!-- INVITE LIST BY STATUS -->
       <div class="listcol">
@@ -238,14 +197,13 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=47')"></span>
             <div class="info">
               <div class="em">jane@example.com</div>
-              <div class="meta">Sent 2026-05-26 · expires 2026-06-09 · <code>inviteId rq_8fk29a</code></div>
+              <div class="meta"><a href="#">the Demos</a> · Sent 2026-05-26 · expires 2026-06-09 · <code>inviteId rq_8fk29a</code></div>
               <div class="row2">
                 <span class="pill emailsent">Email sent</span>
                 <span class="pill role">Secondary</span>
                 <span class="pill label">Sister</span>
               </div>
             </div>
-            <div class="acts"><button class="btn danger" data-revoke>Revoke</button></div>
           </div>
 
           <div class="iv">
@@ -253,14 +211,12 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=12')"></span>
             <div class="info">
               <div class="em">marcus@example.com</div>
-              <div class="meta">Created 2026-05-27 · expires 2026-06-10 · <code>inviteId rq_3qd71b</code></div>
+              <div class="meta"><a href="#">the Marlowes</a> · Created 2026-05-27 · expires 2026-06-10 · <code>inviteId rq_3qd71b</code></div>
               <div class="row2">
                 <span class="pill pending">Pending</span>
                 <span class="pill role">Primary</span>
-                <span class="pill ack">Auntie ack required</span>
               </div>
             </div>
-            <div class="acts"><button class="btn danger" data-revoke>Revoke</button></div>
           </div>
         </div>
 
@@ -272,7 +228,7 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=32')"></span>
             <div class="info">
               <div class="em">priya@example.com</div>
-              <div class="meta">Sent 2026-05-20 · accepted 2026-05-21 · <code>acceptedUid uXh2..9a</code></div>
+              <div class="meta"><a href="#">the Sparrows</a> · Sent 2026-05-20 · <code>inviteId rq_7pm02c</code></div>
               <div class="row2">
                 <span class="pill accepted">Accepted</span>
                 <span class="pill role">Secondary</span>
@@ -286,7 +242,7 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=15')"></span>
             <div class="info">
               <div class="em">dev@example.com</div>
-              <div class="meta">Sent 2026-05-12 · accepted 2026-05-12 · <code>acceptedUid kP7m..4c</code></div>
+              <div class="meta"><a href="#">the Wrens</a> · Sent 2026-05-12 · <code>inviteId rq_9wd88e</code></div>
               <div class="row2">
                 <span class="pill accepted">Accepted</span>
                 <span class="pill role">Secondary</span>
@@ -304,7 +260,7 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=5')"></span>
             <div class="info">
               <div class="em">lapsed@example.com</div>
-              <div class="meta">Sent 2026-05-01 · expired 2026-05-15 by nightly job · <code>inviteId rq_1ab90z</code></div>
+              <div class="meta"><a href="#">the Demos</a> · Sent 2026-05-01 · expired 2026-05-15 · <code>inviteId rq_1ab90z</code></div>
               <div class="row2">
                 <span class="pill expired">Expired</span>
                 <span class="pill role">Secondary</span>
@@ -322,7 +278,7 @@
             <span class="pic" style="background-image:url('https://i.pravatar.cc/96?img=24')"></span>
             <div class="info">
               <div class="em">duplicate@example.com</div>
-              <div class="meta">Sent 2026-05-18 · revoked 2026-05-19 (sent in error) · <code>inviteId rq_5tz44k</code></div>
+              <div class="meta"><a href="#">the Marlowes</a> · Sent 2026-05-18 · revoked 2026-05-19 · <code>inviteId rq_5tz44k</code></div>
               <div class="row2">
                 <span class="pill revoked">Revoked</span>
                 <span class="pill role">Secondary</span>
@@ -339,24 +295,7 @@
   </div>
 
   <script>
-    // permission toggles (kintales_only is server-locked)
-    document.querySelectorAll('.tog').forEach(t=>t.addEventListener('click',()=>{
-      if(t.classList.contains('locked')) return;
-      t.classList.toggle('on');
-    }));
-    // role segmented control
-    document.querySelectorAll('#roleSeg button').forEach(b=>b.addEventListener('click',()=>{
-      document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.remove('on'));
-      b.classList.add('on');
-    }));
-    // revoke (visual only): mirrors revokeInvite -> status REVOKED
-    document.querySelectorAll('[data-revoke]').forEach(btn=>btn.addEventListener('click',()=>{
-      const card=btn.closest('.iv');
-      card.querySelector('.accent').className='accent acc-revoked';
-      const pill=card.querySelector('.pill');
-      pill.className='pill revoked'; pill.textContent='Revoked';
-      btn.remove();
-    }));
+    // Revoke, the form toggles and the role segment were removed per the 2026-08-04 ruling.
     // mesh parallax
     const mesh=document.querySelector('.mesh');
     addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);

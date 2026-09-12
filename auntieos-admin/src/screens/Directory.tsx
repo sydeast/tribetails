@@ -112,13 +112,17 @@ function statusTone(status: string): DenTone {
  * here, and a row in any other state (inactive, archived, prospect, or a status
  * this screen does not know) wears the kit's StatusPill where the mock puts its
  * badge. Blank stays blank: an absent status is not a state to announce.
+ *
+ * The compact size (#780) is the mock's `.badge` itself, 9.5px on 4px 9px; the
+ * kit's default capsule is the detail screens' `.statuspill` and sat larger in
+ * the corner than the mock draws it.
  */
 function CardBadge({ status }: { status: string }) {
   const label = status.trim().toLowerCase();
   if (label === '' || label === 'active') return null;
   return (
     <span className="directory__badge">
-      <StatusPill label={label} tone={statusTone(label)} />
+      <StatusPill label={label} tone={statusTone(label)} size="compact" />
     </span>
   );
 }

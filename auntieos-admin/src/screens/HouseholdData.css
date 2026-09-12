@@ -15,30 +15,55 @@
   margin: 0;
 }
 
-/* Label / value pairs, the KinfolkProfile fact grid. Collapses to one column
-   on narrow viewports so a long address never squeezes its label to nothing. */
+/* The mock's section grid (`.grid2`): two columns of label-over-value cells,
+   14px between rows and 18px between columns. Each cell is the mock's
+   BottomBorderField read back rather than typed into: a small uppercase mono
+   label, the value in body type, and a hairline under the value where the
+   input's bottom border sat. A cell that spans both columns is the mock's
+   `.full`. Collapses to one column on a phone so a long address never
+   squeezes its neighbour to nothing. */
 .hdata__facts {
   display: grid;
-  grid-template-columns: minmax(10rem, max-content) 1fr;
-  gap: var(--space-2) var(--space-4);
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 18px;
   margin: 0;
 }
 
 .hdata__fact {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hdata__fact--wide {
+  grid-column: 1 / -1;
+}
+
+/* Inside a banner or the confirm dialog the list stacks: two columns in a
+   dialog's width crush the values. */
+.hdata__facts--stack {
+  grid-template-columns: 1fr;
+  gap: var(--space-2) 0;
 }
 
 .hdata__fact-label {
-  font-size: var(--type-label-sm-size);
+  font-size: 10px;
   font-family: var(--type-label-sm-family);
-  letter-spacing: var(--type-label-sm-tracking);
+  font-weight: var(--type-label-sm-weight);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--color-text-dim);
+  margin-bottom: 6px;
 }
 
 .hdata__fact-value {
-  font-size: var(--type-body-sm-size);
+  font-size: var(--type-body-md-size);
+  line-height: var(--type-body-md-line);
   color: var(--color-text-primary);
   margin: 0;
+  padding: 7px 1px;
+  min-height: 34px;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -52,15 +77,8 @@
 @media (max-width: 40rem) {
   .hdata__facts {
     grid-template-columns: 1fr;
-    gap: var(--space-1) 0;
-  }
-
-  .hdata__fact {
-    display: block;
-    margin-bottom: var(--space-3);
   }
 }
-
 /* ── Loading skeleton ─────────────────────────────────────────────────────
    Shape only. It shows how much is coming, never how much there is. */
 

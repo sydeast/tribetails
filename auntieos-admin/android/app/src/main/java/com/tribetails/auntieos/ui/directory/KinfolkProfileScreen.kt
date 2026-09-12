@@ -240,20 +240,17 @@ fun KinfolkProfileScreen(
                 item {
                     DenPanel(
                         title = "Kin",
+                        // The count sits BESIDE the section name, not inside it, on
+                        // the kit's own meta slot (#780), the same shape the React
+                        // admin's DenPanel gives this panel. Absent while the read
+                        // is in flight: "0 kin" on a load that has not landed is a
+                        // claim.
+                        meta = if (state.isLoading) null else if (state.kinList.size == 1) "1 kin" else "${state.kinList.size} kin",
                         trailing = {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                // The count sits BESIDE the section name, not inside
-                                // it, the same shape the React admin's DenPanel meta
-                                // slot gives this panel. Absent while the read is in
-                                // flight: "0 kin" on a load that has not landed is a claim.
-                                if (!state.isLoading) {
-                                    PanelMeta(if (state.kinList.size == 1) "1 kin" else "${state.kinList.size} kin")
-                                }
-                                GhostButton(
-                                    label   = "Add kin",
-                                    onClick = { onAddKin(kinfolk.id, kinfolk.displayName) },
-                                )
-                            }
+                            GhostButton(
+                                label   = "Add kin",
+                                onClick = { onAddKin(kinfolk.id, kinfolk.displayName) },
+                            )
                         },
                     ) {
                         if (state.kinList.isEmpty()) {
@@ -277,7 +274,7 @@ fun KinfolkProfileScreen(
                         // The window has a far edge (the mock's own header), so
                         // the card says what it is rather than implying it
                         // shows everything ahead.
-                        trailing = { PanelMeta("next $UPCOMING_HORIZON_DAYS days") },
+                        meta = "next $UPCOMING_HORIZON_DAYS days",
                     ) {
                         if (state.upcomingVisits.isEmpty()) {
                             EmptyHint("No visits booked in the next $UPCOMING_HORIZON_DAYS days.")
@@ -291,7 +288,7 @@ fun KinfolkProfileScreen(
                 item {
                     DenPanel(
                         title = "Recent KinTales",
-                        trailing = { PanelMeta(feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false)) },
+                        meta = feedCountMeta(state.recentTales.size, state.sentTaleCount, capped = false),
                     ) {
                         if (state.recentTales.isEmpty()) {
                             EmptyHint("No KinTales sent to this household yet.")
@@ -311,7 +308,7 @@ fun KinfolkProfileScreen(
                 item {
                     DenPanel(
                         title = "Invoices",
-                        trailing = { PanelMeta(feedCountMeta(state.kinfolkInvoices.size, state.invoiceCount, capped = false)) },
+                        meta = feedCountMeta(state.kinfolkInvoices.size, state.invoiceCount, capped = false),
                     ) {
                         if (state.kinfolkInvoices.isEmpty()) {
                             EmptyHint("No invoices for this household yet.")
@@ -333,22 +330,16 @@ fun KinfolkProfileScreen(
     }
 }
 
-/** The mocks' `.ct`: a right-aligned mono note on the panel header, a count or a window. */
-@Composable
-private fun PanelMeta(text: String) {
-    Text(text, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
-}
-
 /**
  * The mock's hero: the trail, the household's identity, the `.tags` row and
  * the actions that act on the household.
  *
- * `DenScreenHeading` is the kit's hero, and it carries the trail and the
- * title. It has no slot for the avatar or a row of pills, and on Android it
- * paints no band at all, so the avatar sits beside it and the pills and the
- * action row sit under it. Both gaps are named in the PR that made this
- * change (#755) as the kit change the mock needs; nothing here paints a band
- * of its own to stand in for one.
+ * It IS the kit's `DenScreenHeading`, band and all (#780): the trail and the
+ * title are its own, the avatar rides its `leading` slot, the joined line its
+ * `detail`, the status, tenure and tag pills its `badges` row, and the action
+ * row its `trailing`, which a band with a leading slot lays out under the
+ * identity, full width, the way the mock's own phone-width rule does. Nothing
+ * here composes a hero around the band any more, and nothing paints one.
  *
  * #681: household tags are read-only pills here, next to the status and the
  * tenure. Editing them is unchanged on this screen (`ProfileTagsSection`
@@ -369,9 +360,28 @@ private fun ProfileHero(
     onMedia: () -> Unit,
 ) {
     val c = AuntieTheme.colors
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            val initials = kinfolk.displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
+    val initials = kinfolk.displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
+    // WHEN THEY JOINED, spelled for the operator rather than left as
+    // stored. `freeTextDateLabel` formats what it can read and prints
+    // the rest exactly as stored, so a legacy free-text join date never
+    // renders as an error and never becomes a different date.
+    val joined = freeTextDateLabel(kinfolk.joinDate)
+    // The tenure chip is ABSENT when the stored join date is not one
+    // anybody can read, rather than a fabricated "0 months". Same rule,
+    // same branches, as the React admin's hero.
+    val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
+    val active = kinfolk.status.trim().equals("active", ignoreCase = true)
+    val context = LocalContext.current
+    DenScreenHeading(
+        kicker = "The Den · Directory",
+        crumbs = listOf(
+            DenCrumb("Directory", onDirectory),
+            DenCrumb(kinfolk.displayName),
+        ),
+        title = kinfolk.displayName,
+        detail = if (joined.isNotBlank()) "Joined $joined" else null,
+        modifier = Modifier.fillMaxWidth(),
+        leading = {
             AuntieAvatar(
                 imageUrl = kinfolk.profilePictureUrl,
                 initials = initials.ifBlank { "?" },
@@ -379,31 +389,8 @@ private fun ProfileHero(
                 shape = RoundedCornerShape(24.dp),
                 gradientSeed = kinfolk.id,
             )
-            // WHEN THEY JOINED, spelled for the operator rather than left as
-            // stored. `freeTextDateLabel` formats what it can read and prints
-            // the rest exactly as stored, so a legacy free-text join date never
-            // renders as an error and never becomes a different date.
-            val joined = freeTextDateLabel(kinfolk.joinDate)
-            DenScreenHeading(
-                kicker = "The Den · Directory",
-                crumbs = listOf(
-                    DenCrumb("Directory", onDirectory),
-                    DenCrumb(kinfolk.displayName),
-                ),
-                title = kinfolk.displayName,
-                detail = if (joined.isNotBlank()) "Joined $joined" else null,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        // The tenure chip is ABSENT when the stored join date is not one
-        // anybody can read, rather than a fabricated "0 months". Same rule,
-        // same branches, as the React admin's hero.
-        val tenure = tenureLabel(kinfolk.joinDate, java.time.LocalDate.now())
-        val active = kinfolk.status.trim().equals("active", ignoreCase = true)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        },
+        badges = {
             AuntieStatusPill(
                 label = kinfolk.status.trim().ifBlank { "no status" }.lowercase(),
                 tone = if (active) AuntieStatusTone.Teal else AuntieStatusTone.Neutral,
@@ -415,41 +402,42 @@ private fun ProfileHero(
             kinfolk.tagNames().forEach { tag ->
                 AuntieStatusPill(label = tag, tone = AuntieStatusTone.Teal, mono = true)
             }
-        }
+        },
         // The action row: Call and Text on the real number, then the household's
         // other surfaces. Call and Text render only once there is a number to
         // dial, never as dead controls; Email the same on the address.
-        val context = LocalContext.current
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (kinfolk.phoneNumber.isNotBlank()) {
-                GhostButton(
-                    label = "Call",
-                    leading = { Icon(Lucide.Phone, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
-                    onClick = { context.startActivity(Intent(Intent.ACTION_DIAL).apply { data = Uri.parse("tel:${kinfolk.phoneNumber}") }) },
-                )
-                GhostButton(
-                    label = "Text",
-                    leading = { Icon(Lucide.MessageCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
-                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW).apply { data = Uri.parse("sms:${kinfolk.phoneNumber}") }) },
-                )
+        trailing = {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (kinfolk.phoneNumber.isNotBlank()) {
+                    GhostButton(
+                        label = "Call",
+                        leading = { Icon(Lucide.Phone, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                        onClick = { context.startActivity(Intent(Intent.ACTION_DIAL).apply { data = Uri.parse("tel:${kinfolk.phoneNumber}") }) },
+                    )
+                    GhostButton(
+                        label = "Text",
+                        leading = { Icon(Lucide.MessageCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                        onClick = { context.startActivity(Intent(Intent.ACTION_VIEW).apply { data = Uri.parse("sms:${kinfolk.phoneNumber}") }) },
+                    )
+                }
+                if (kinfolk.email.isNotBlank()) {
+                    GhostButton(
+                        label = "Email",
+                        leading = { Icon(Lucide.Mail, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
+                        onClick = { context.startActivity(Intent(Intent.ACTION_SENDTO).apply { data = Uri.parse("mailto:${kinfolk.email}") }) },
+                    )
+                }
+                GhostButton(label = "Household data", onClick = onHouseholdData)
+                // B1: who can reach this household in MyTribe, and its invites.
+                GhostButton(label = "Members and invites", onClick = onMembers)
+                GhostButton(label = "Media", onClick = onMedia)
+                GhostButton(label = "Edit", onClick = onEdit)
             }
-            if (kinfolk.email.isNotBlank()) {
-                GhostButton(
-                    label = "Email",
-                    leading = { Icon(Lucide.Mail, contentDescription = null, modifier = Modifier.size(16.dp), tint = c.textPrimary) },
-                    onClick = { context.startActivity(Intent(Intent.ACTION_SENDTO).apply { data = Uri.parse("mailto:${kinfolk.email}") }) },
-                )
-            }
-            GhostButton(label = "Household data", onClick = onHouseholdData)
-            // B1: who can reach this household in MyTribe, and its invites.
-            GhostButton(label = "Members and invites", onClick = onMembers)
-            GhostButton(label = "Media", onClick = onMedia)
-            GhostButton(label = "Edit", onClick = onEdit)
-        }
-    }
+        },
+    )
 }
 
 /** One of the mock's `.field` rows, declared so a panel can lay a run of them out. */
@@ -642,7 +630,7 @@ private fun AuntieNotesPanel(
     val c = AuntieTheme.colors
     DenPanel(
         title = "Auntie's notes",
-        trailing = { PanelMeta("admin only") },
+        meta = "admin only",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (dossier == null || dossier.needsMoreSamples) {

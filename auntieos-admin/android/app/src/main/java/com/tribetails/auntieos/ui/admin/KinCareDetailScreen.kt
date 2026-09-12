@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -16,11 +17,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.tribetails.auntieos.AuntieOSApp
@@ -52,6 +57,18 @@ import java.time.format.DateTimeFormatter
  * Time row body - it's the in-the-field reference card she pulls up while
  * standing at the door or mid-visit. Action buttons live on the *list* row,
  * not here; this screen is read-only context.
+ *
+ * THE LAYOUT IS THE MOCK'S, `ui-ideas/auntieos-kincare-detail-2026-05-27.html`,
+ * since the #755 sweep, the same pass the web detail took: a Den hero band
+ * naming the visit by its Kin and service with the status pill on its right
+ * edge, then Visit lifecycle (the five-node stepper), the route map and its
+ * Location section, the two note boxes, and a Details panel of key/value
+ * rows. The Android-only sections (Assigned Auntie, the address with its
+ * maps chip, household access, emergency contact, the Kin 411 cards, the
+ * KinTales sent) follow as kit panels in that order; the mock has no ruling
+ * against them and the Auntie at the door needs them. What the mock draws
+ * that this screen does not is the Kin photo stack at the front of the hero,
+ * which needs a leading slot on `DenScreenHeading`.
  *
  * #446: resolves its visit BY ID (`KinCareRepository.getKinCareSession`)
  * instead of reading every `kin_care_sessions` doc and scanning for a match,
@@ -210,7 +227,7 @@ fun KinCareDetailScreen(
                     "This Kin Care isn't available to open. A visit gets its own record " +
                         "only once the request is approved, so a request still waiting on " +
                         "you has none yet. Otherwise it may have been cancelled or removed.",
-                    color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                    color = AuntieTheme.colors.textDim,
                 )
             }
             return@AuntieScreenScaffold
@@ -221,107 +238,61 @@ fun KinCareDetailScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {
-            item { Subhead(text = listOfNotNull(
-                s.serviceType.takeIf { it.isNotBlank() },
-                window(s),
-            ).joinToString(" · ")) }
-
-            // Assigned Auntie lives on the MyTribe kinCare visit doc, so it can
-            // only be set when the session carries the envelope FKs. When it
-            // cannot, the section still renders and SAYS SO: hiding it outright
-            // (the old behaviour) left an operator unable to tell "nobody is
-            // assigned" from "this visit cannot be assigned".
-            val assignBatchId = s.kinCareBatchId.orEmpty()
-            val assignVisitId = s.kinCareVisitId.orEmpty()
-            if (canAssignAuntie(s.kinfolkId, assignBatchId, assignVisitId)) {
-                item {
-                    AssignedAuntieSection(
-                        kinfolkId = s.kinfolkId,
-                        batchId = assignBatchId,
-                        visitId = assignVisitId,
-                    )
-                }
-            } else {
-                item {
-                    DetailSection("Assigned Auntie") {
-                        EmptyHint(assignUnavailableReason())
-                    }
-                }
-            }
-
-            kinfolk?.serviceAddress?.takeIf { it.isNotBlank() }?.let { addr ->
-                item { DetailSection("Address") { AddressBlock(addr) } }
-            }
-
-            kinfolk?.let { kf ->
-                val anyAccess = listOf(
-                    kf.gateCode, kf.parkingInstructions, kf.entryNotes,
-                    kf.wifiName, kf.wifiPassword,
-                ).any { it.isNotBlank() }
-                if (anyAccess) {
-                    item {
-                        DetailSection("Household access") {
-                            FactRow(Lucide.KeyRound, "Gate / door code", kf.gateCode)
-                            FactRow(Lucide.House, "Parking", kf.parkingInstructions)
-                            FactRow(Lucide.Wifi, "Wi-Fi", wifiSummary(kf))
-                            FactRow(Lucide.NotebookPen, "Entry notes", kf.entryNotes, multiline = true)
-                        }
-                    }
-                }
-                if (kf.emergencyContactName.isNotBlank() || kf.emergencyContactPhone.isNotBlank()) {
-                    item {
-                        DetailSection("Emergency contact") {
-                            FactRow(Lucide.Phone, "Name",         kf.emergencyContactName)
-                            FactRow(Lucide.Phone, "Phone",        kf.emergencyContactPhone)
-                            FactRow(Lucide.Phone, "Relationship", kf.emergencyContactRelation)
-                        }
-                    }
-                }
-            }
+            val orderedIds = (s.kinIds + listOf(s.kinId)).filter { it.isNotBlank() }.distinct()
+            // The mock names the visit by its Kin and its service ("Biscuit &
+            // Gravy · 30-min walk"), puts the window, the household and the
+            // door on the line under it, and hangs the status pill off the
+            // right edge. The household is the fallback name, never the first
+            // choice: on this screen the family is context, the visit is the
+            // subject.
+            val kinLabel = orderedIds
+                .mapNotNull { kinById[it]?.name?.takeIf { n -> n.isNotBlank() } }
+                .joinToString(" & ")
+            val household = s.kinfolkName.ifBlank { "Kin Care" }
+            val heroTitle = listOf(kinLabel, s.serviceType)
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+                .ifBlank { household }
+            val heroDetail = listOfNotNull(
+                window(s).takeIf { it.isNotBlank() },
+                s.kinfolkName.takeIf { it.isNotBlank() },
+                kinfolk?.serviceAddress?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
 
             item {
-                BookingNotesSection(
-                    session = s,
-                    notesRepo = notesRepo,
+                DenScreenHeading(
+                    kicker = "The Den · Auntie Time",
+                    // The crumb IS the way back, the same trail the web detail
+                    // draws: the rail's name for the board, then the Kin.
+                    crumbs = listOf(
+                        DenCrumb("Auntie Time", onBack),
+                        DenCrumb(kinLabel.ifBlank { household }),
+                    ),
+                    title = heroTitle,
+                    detail = heroDetail.ifBlank { null },
+                    trailing = {
+                        AuntieStatusPill(
+                            label = statusLabel(s.status),
+                            tone = kinCareStatusTone(s.status),
+                            mono = true,
+                        )
+                    },
                 )
             }
 
-            run {
-                val orderedIds = (s.kinIds + listOf(s.kinId)).filter { it.isNotBlank() }.distinct()
-                if (orderedIds.isNotEmpty()) {
-                    item {
-                        DetailSection("Kin in this care") {
-                            if (kinById.isEmpty() && fourOnes.isEmpty()) {
-                                EmptyHint("No Kin records linked to this Kin Care.")
-                            } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    orderedIds.forEach { kid ->
-                                        KinCard(kin = kinById[kid], fourOneOne = fourOnes[kid])
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             item {
-                DetailSection("Lifecycle") {
-                    TimelineRow("Scheduled", s.startTime)
-                    TimelineRow("On my way", s.onMyWayAt.orEmpty())
-                    TimelineRow("Arrived",   s.arrivedAt.orEmpty())
-                    TimelineRow("Departed",  s.departedAt.orEmpty())
-                    TimelineRow("Completed", s.completedAt.orEmpty())
+                DetailSection("Visit lifecycle") {
+                    LifecycleStepper(steps = lifecycleSteps(s))
                 }
             }
 
             val isActive = !s.arrivedAt.isNullOrBlank() && s.departedAt.isNullOrBlank()
             val hasRoute = s.visitRouteId.isNotBlank()
 
-            // #760: the route map, DIRECTLY under the Lifecycle section, which
-            // is where the arrival and departure times are. Operator ruling
-            // 2026-09-11: "this is what the map looks like and is usually
-            // listed under the arrival departure times".
+            // #760: the route map, DIRECTLY under the Visit lifecycle section,
+            // which is where the arrival and departure times are. Operator
+            // ruling 2026-09-11: "this is what the map looks like and is
+            // usually listed under the arrival departure times".
             run {
                 val summaryRoute = s.gpsSummary?.route.orEmpty()
                 val trail = if (crumbs.isNotEmpty()) crumbs else summaryRoute
@@ -387,6 +358,104 @@ fun KinCareDetailScreen(
                                 "No GPS breadcrumbs were recorded for this Kin Care because it was never tracked."
                             }
                         )
+                    }
+                }
+            }
+
+            // The mock's two note boxes: what the household said about their
+            // own house, and what the office keeps to itself.
+            item {
+                BookingNotesSection(
+                    session = s,
+                    notesRepo = notesRepo,
+                )
+            }
+
+            // The mock's Details: key on the left, value on the right, one
+            // hairline per row. Read-only here; the edit lives on the web
+            // detail and the Bookings sheet.
+            item {
+                DetailSection("Details") {
+                    DetailFieldRow("Service", s.serviceType)
+                    DetailFieldRow(
+                        "Visit length",
+                        if (s.serviceDurationMinutes > 0) "${s.serviceDurationMinutes} min" else "",
+                    )
+                    // Present only once the visit has been billed, the same
+                    // rule as the board's "Invoice linked" chip: an unbilled
+                    // visit is the normal state of a visit, not a gap.
+                    DetailFieldRow("Invoice", if (s.invoiceId.isNotBlank()) "Linked" else "")
+                    if (s.serviceType.isBlank() && s.serviceDurationMinutes <= 0 && s.invoiceId.isBlank()) {
+                        EmptyHint("No service, length or invoice on this record yet.")
+                    }
+                }
+            }
+
+            // Assigned Auntie lives on the MyTribe kinCare visit doc, so it can
+            // only be set when the session carries the envelope FKs. When it
+            // cannot, the section still renders and SAYS SO: hiding it outright
+            // (the old behaviour) left an operator unable to tell "nobody is
+            // assigned" from "this visit cannot be assigned".
+            val assignBatchId = s.kinCareBatchId.orEmpty()
+            val assignVisitId = s.kinCareVisitId.orEmpty()
+            if (canAssignAuntie(s.kinfolkId, assignBatchId, assignVisitId)) {
+                item {
+                    AssignedAuntieSection(
+                        kinfolkId = s.kinfolkId,
+                        batchId = assignBatchId,
+                        visitId = assignVisitId,
+                    )
+                }
+            } else {
+                item {
+                    DetailSection("Assigned Auntie") {
+                        EmptyHint(assignUnavailableReason())
+                    }
+                }
+            }
+
+            kinfolk?.serviceAddress?.takeIf { it.isNotBlank() }?.let { addr ->
+                item { DetailSection("Address") { AddressBlock(addr) } }
+            }
+
+            kinfolk?.let { kf ->
+                val anyAccess = listOf(
+                    kf.gateCode, kf.parkingInstructions, kf.entryNotes,
+                    kf.wifiName, kf.wifiPassword,
+                ).any { it.isNotBlank() }
+                if (anyAccess) {
+                    item {
+                        DetailSection("Household access") {
+                            FactRow(Lucide.KeyRound, "Gate / door code", kf.gateCode)
+                            FactRow(Lucide.House, "Parking", kf.parkingInstructions)
+                            FactRow(Lucide.Wifi, "Wi-Fi", wifiSummary(kf))
+                            FactRow(Lucide.NotebookPen, "Entry notes", kf.entryNotes, multiline = true)
+                        }
+                    }
+                }
+                if (kf.emergencyContactName.isNotBlank() || kf.emergencyContactPhone.isNotBlank()) {
+                    item {
+                        DetailSection("Emergency contact") {
+                            FactRow(Lucide.Phone, "Name",         kf.emergencyContactName)
+                            FactRow(Lucide.Phone, "Phone",        kf.emergencyContactPhone)
+                            FactRow(Lucide.Phone, "Relationship", kf.emergencyContactRelation)
+                        }
+                    }
+                }
+            }
+
+            if (orderedIds.isNotEmpty()) {
+                item {
+                    DetailSection("Kin in this care") {
+                        if (kinById.isEmpty() && fourOnes.isEmpty()) {
+                            EmptyHint("No Kin records linked to this Kin Care.")
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                orderedIds.forEach { kid ->
+                                    KinCard(kin = kinById[kid], fourOneOne = fourOnes[kid])
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -575,13 +644,13 @@ private fun StaffPickRow(
         Icon(
             imageVector = if (selected) Lucide.Check else Lucide.UserRound,
             contentDescription = null,
-            tint = if (selected) c.kinfolkOrange else c.textPrimary.copy(alpha = 0.5f),
+            tint = if (selected) c.kinfolkOrange else c.textDim,
             modifier = Modifier.size(14.dp),
         )
         Text(
             text = name,
             style = AuntieTheme.typography.bodyMedium,
-            color = if (enabled || selected) c.textPrimary else c.textPrimary.copy(alpha = 0.5f),
+            color = if (enabled || selected) c.textPrimary else c.textDim,
             modifier = Modifier.weight(1f),
         )
         if (selected) {
@@ -594,34 +663,153 @@ private fun StaffPickRow(
     }
 }
 
+/**
+ * One section of the detail as the kit's glass panel with its serif title
+ * (#755). This used to be an `AuntieCard` with an uppercase label, which is
+ * the one shape the mock never draws; every other admin screen's section is a
+ * `DenPanel`, and now so is this one.
+ */
 @Composable
-private fun Subhead(text: String) {
-    if (text.isBlank()) return
-    Text(
-        text = text,
-        style = AuntieTheme.typography.bodyMedium,
-        color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
-        modifier = Modifier.padding(vertical = 4.dp),
-    )
+private fun DetailSection(
+    title: String,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    DenPanel(title = title, modifier = Modifier.fillMaxWidth(), trailing = trailing) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            content()
+        }
+    }
 }
 
+/**
+ * The mock's `.field`: dim key on the left, bold value on the right, a
+ * hairline under the row. Renders nothing when the value is blank, the same
+ * rule [FactRow] applies, so an absent field is absent rather than "".
+ */
 @Composable
-private fun DetailSection(title: String, content: @Composable () -> Unit) {
-    AuntieCard(
-        modifier = Modifier.fillMaxWidth(),
-        border = androidx.compose.foundation.BorderStroke(0.5.dp, AuntieTheme.colors.border),
-        shape  = RoundedCornerShape(10.dp),
+private fun DetailFieldRow(label: String, value: String) {
+    if (value.isBlank()) return
+    val c = AuntieTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawLine(
+                    color = c.borderSoft,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text  = title.uppercase(),
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.textPrimary.copy(alpha = 0.6f),
-            )
-            content()
+        Text(label, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            value,
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+/**
+ * The mock's `.life`: five nodes on a hairline, the teal bar running to the
+ * last one that has happened, the lit node in orange with a soft halo. The
+ * line runs from the first node's centre to the last node's centre (each
+ * node is centred in a fifth of the row, so 10% in from either edge).
+ */
+@Composable
+private fun LifecycleStepper(steps: List<LifecycleStep>) {
+    val c = AuntieTheme.colors
+    val progress = lifecycleProgress(steps)
+    val haloSize = 36.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                val y = haloSize.toPx() / 2f
+                val x0 = size.width * 0.1f
+                val x1 = size.width * 0.9f
+                val stroke = 2.dp.toPx()
+                drawLine(color = c.border, start = Offset(x0, y), end = Offset(x1, y), strokeWidth = stroke)
+                if (progress > 0f) {
+                    drawLine(
+                        color = c.accent,
+                        start = Offset(x0, y),
+                        end = Offset(x0 + (x1 - x0) * progress, y),
+                        strokeWidth = stroke,
+                    )
+                }
+            },
+    ) {
+        steps.forEach { step ->
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val now = step.mood == LifecycleMood.Now
+                val done = step.mood == LifecycleMood.Done
+                Box(
+                    modifier = Modifier
+                        .size(haloSize)
+                        .clip(CircleShape)
+                        .background(if (now) c.primary.copy(alpha = 0.25f) else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    now -> c.primary
+                                    done -> c.accent
+                                    else -> c.surface2
+                                },
+                            )
+                            .then(if (now || done) Modifier else Modifier.border(2.dp, c.border, CircleShape)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (now || done) {
+                            Text(
+                                text = if (done) "✓" else "●",
+                                style = AuntieTheme.typography.labelSmall,
+                                color = if (now) c.background else c.textPrimary,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = step.name,
+                    style = AuntieTheme.typography.labelSmall,
+                    color = if (step.mood == LifecycleMood.Todo) c.textDim else c.textPrimary,
+                    textAlign = TextAlign.Center,
+                )
+                // A stamp when there is one. A node still to come reads "-";
+                // a lit node with nothing on the record (Scheduled has no
+                // booking timestamp on the session) reads nothing, rather
+                // than a dash that says "not yet".
+                val ts = when {
+                    step.stamp.isNotBlank() -> shortIso(step.stamp)
+                    step.mood == LifecycleMood.Todo -> "-"
+                    else -> ""
+                }
+                if (ts.isNotBlank()) {
+                    Text(
+                        text = ts,
+                        style = AuntieTheme.typography.mono.copy(fontSize = 10.sp),
+                        color = c.textDim,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
     }
 }
@@ -633,11 +821,11 @@ private fun FactRow(icon: ImageVector, label: String, value: String, multiline: 
         verticalAlignment = if (multiline) Alignment.Top else Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = AuntieTheme.colors.textPrimary.copy(alpha = 0.5f), modifier = Modifier.size(14.dp))
+        Icon(icon, contentDescription = null, tint = AuntieTheme.colors.textDim, modifier = Modifier.size(14.dp))
         Text(
             text  = label,
             style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+            color = AuntieTheme.colors.textDim,
             modifier = Modifier.padding(end = 6.dp),
         )
         Text(
@@ -681,38 +869,11 @@ private fun AddressBlock(address: String) {
 }
 
 @Composable
-private fun TimelineRow(label: String, iso: String) {
-    val hit = iso.isNotBlank()
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(if (hit) AuntieTheme.colors.kinfolkOrange else AuntieTheme.colors.textPrimary.copy(alpha = 0.3f)),
-        )
-        Text(
-            text  = label,
-            style = AuntieTheme.typography.bodyMedium,
-            color = if (hit) AuntieTheme.colors.textPrimary else AuntieTheme.colors.textPrimary.copy(alpha = 0.5f),
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text  = if (hit) shortIso(iso) else "-",
-            style = AuntieTheme.typography.labelSmall,
-            color = AuntieTheme.colors.textPrimary.copy(alpha = 0.4f),
-        )
-    }
-}
-
-@Composable
 private fun KinTaleSnippet(report: KinCareReport) {
     val accent = when (report.status.uppercase()) {
         "SENT"   -> AuntieTheme.colors.success
         "FAILED" -> AuntieTheme.colors.error
-        else     -> AuntieTheme.colors.textPrimary.copy(alpha = 0.6f)
+        else     -> AuntieTheme.colors.textDim
     }
     AuntieCard(
         modifier = Modifier.fillMaxWidth(),
@@ -730,14 +891,14 @@ private fun KinTaleSnippet(report: KinCareReport) {
                 )
                 val ts = report.sentAt.orEmpty().ifBlank { report.updatedAt.ifBlank { report.createdAt } }
                 if (ts.isNotBlank()) {
-                    Text(ts, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.5f))
+                    Text(ts, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
                 }
             }
             if (report.bodyCopy.isNotBlank()) {
                 Text(
                     text  = report.bodyCopy.take(180) + if (report.bodyCopy.length > 180) "…" else "",
                     style = AuntieTheme.typography.bodySmall,
-                    color = AuntieTheme.colors.textPrimary.copy(alpha = 0.7f),
+                    color = AuntieTheme.colors.textDim,
                 )
             }
         }
@@ -776,7 +937,7 @@ private fun KinCard(kin: Kin?, fourOneOne: Kin411?) {
                         Text(
                             text = sublineParts.joinToString(" · "),
                             style = AuntieTheme.typography.labelSmall,
-                            color = AuntieTheme.colors.textPrimary.copy(alpha = 0.6f),
+                            color = AuntieTheme.colors.textDim,
                         )
                     }
                 }
@@ -816,15 +977,6 @@ private fun vetSummary(k: Kin411?): String {
     if (k == null) return ""
     val parts = listOf(k.vetName, k.vetPhone).filter { !it.isNullOrBlank() }
     return parts.joinToString(" · ")
-}
-
-@Composable
-private fun EmptyHint(text: String) {
-    Text(
-        text  = text,
-        style = AuntieTheme.typography.bodySmall,
-        color = AuntieTheme.colors.textPrimary.copy(alpha = 0.5f),
-    )
 }
 
 private fun wifiSummary(k: Kinfolk): String {
@@ -901,121 +1053,136 @@ private fun BookingNotesSection(
     var savingInternal by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    DetailSection("Pre-visit notes") {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                text = "Kinfolk-facing",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.textDim,
-            )
-            // Legacy inline notes (still present on existing session docs)
-            if (session.kinfolkNotes.isNotBlank()) {
-                FactRow(Lucide.NotebookPen, "On file", session.kinfolkNotes, multiline = true)
-            }
-            kinfolkFacing.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
-                FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "note" }, note.body, multiline = true)
-            }
-            if (session.kinfolkNotes.isBlank() && kinfolkFacing.isEmpty()) {
-                EmptyHint("No kinfolk-facing notes yet.")
-            }
-            AuntieField(
-                value = kinfolkInput,
-                onValueChange = { kinfolkInput = it },
-                label = "Add kinfolk-facing note",
-                placeholder = "Editable until 3 hours before visit.",
-                singleLine = false,
-                minLines = 3,
-                enabled = canStream && !locked,
-            )
-            noteCutoffWarning(locked)?.let { msg ->
-                Text(
-                    text = msg,
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.warning,
+    // The mock's two note boxes, one panel each, with the mock's `.who-can`
+    // note on the header rule saying who sees the box. The composers and
+    // their 3-hour cutoff are unchanged; only the container moved.
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        DetailSection(
+            "Kinfolk-facing note",
+            trailing = { PanelWhoCan("visible to ${session.kinfolkName.ifBlank { "the household" }}") },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Legacy inline notes (still present on existing session docs)
+                if (session.kinfolkNotes.isNotBlank()) {
+                    FactRow(Lucide.NotebookPen, "On file", session.kinfolkNotes, multiline = true)
+                }
+                kinfolkFacing.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
+                    FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "note" }, note.body, multiline = true)
+                }
+                if (session.kinfolkNotes.isBlank() && kinfolkFacing.isEmpty()) {
+                    EmptyHint("No kinfolk-facing notes yet.")
+                }
+                AuntieField(
+                    value = kinfolkInput,
+                    onValueChange = { kinfolkInput = it },
+                    label = "Add kinfolk-facing note",
+                    placeholder = "Editable until 3 hours before visit.",
+                    singleLine = false,
+                    minLines = 3,
+                    enabled = canStream && !locked,
                 )
-            }
-            PrimaryButton(
-                label = if (savingKinfolk) "Saving…" else "Save kinfolk-facing note",
-                enabled = canStream && !locked && !savingKinfolk && kinfolkInput.isNotBlank(),
-                onClick = {
-                    scope.launch {
-                        savingKinfolk = true
-                        error = null
-                        notesRepo.addKinfolkFacingNote(session.kinfolkId, bookingId, kinfolkInput.trim())
-                            .onSuccess { kinfolkInput = "" }
-                            .onFailure { error = it.message ?: "Note save failed." }
-                        savingKinfolk = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Internal - staff only",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.textDim,
-            )
-            if (session.notes.isNotBlank()) {
-                FactRow(Lucide.NotebookPen, "On file", session.notes, multiline = true)
-            }
-            internal.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
-                FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "admin" }, note.body, multiline = true)
-            }
-            if (session.notes.isBlank() && internal.isEmpty()) {
-                EmptyHint("No internal notes yet.")
-            }
-            AuntieField(
-                value = internalInput,
-                onValueChange = { internalInput = it },
-                label = "Add internal note",
-                placeholder = "Hidden from kinfolk. Visible to staff on every session of this booking.",
-                singleLine = false,
-                minLines = 3,
-                // Locked on the same 3-hour cutoff as the kinfolk-facing thread.
-                // addInternalBookingNote enforces it server-side too, so this is
-                // a mirror that closes the composer early, not the guard itself;
-                // see BookingNoteCutoff.kt.
-                enabled = canStream && !locked,
-            )
-            noteCutoffWarning(locked)?.let { msg ->
-                Text(
-                    text = msg,
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.warning,
-                )
-            }
-            PrimaryButton(
-                label = if (savingInternal) "Saving…" else "Save internal note",
-                enabled = canStream && !locked && !savingInternal && internalInput.isNotBlank(),
-                onClick = {
-                    scope.launch {
-                        savingInternal = true
-                        error = null
-                        notesRepo.addInternalNote(session.kinfolkId, bookingId, internalInput.trim())
-                            .onSuccess { internalInput = "" }
-                            .onFailure { error = it.message ?: "Note save failed." }
-                        savingInternal = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            error?.let { msg ->
-                Text(
-                    text = msg,
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.error,
-                )
-            }
-
-            if (!canStream) {
-                Text(
-                    text = "Notes unavailable - session is missing kinfolkId or bookingId.",
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.error,
+                noteCutoffWarning(locked)?.let { msg ->
+                    Text(
+                        text = msg,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.warning,
+                    )
+                }
+                PrimaryButton(
+                    label = if (savingKinfolk) "Saving…" else "Save kinfolk-facing note",
+                    enabled = canStream && !locked && !savingKinfolk && kinfolkInput.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            savingKinfolk = true
+                            error = null
+                            notesRepo.addKinfolkFacingNote(session.kinfolkId, bookingId, kinfolkInput.trim())
+                                .onSuccess { kinfolkInput = "" }
+                                .onFailure { error = it.message ?: "Note save failed." }
+                            savingKinfolk = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
+
+        DetailSection("Admin-internal note", trailing = { PanelWhoCan("private") }) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (session.notes.isNotBlank()) {
+                    FactRow(Lucide.NotebookPen, "On file", session.notes, multiline = true)
+                }
+                internal.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
+                    FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "admin" }, note.body, multiline = true)
+                }
+                if (session.notes.isBlank() && internal.isEmpty()) {
+                    EmptyHint("No internal notes yet.")
+                }
+                AuntieField(
+                    value = internalInput,
+                    onValueChange = { internalInput = it },
+                    label = "Add internal note",
+                    placeholder = "Hidden from kinfolk. Visible to staff on every session of this booking.",
+                    singleLine = false,
+                    minLines = 3,
+                    // Locked on the same 3-hour cutoff as the kinfolk-facing thread.
+                    // addInternalBookingNote enforces it server-side too, so this is
+                    // a mirror that closes the composer early, not the guard itself;
+                    // see BookingNoteCutoff.kt.
+                    enabled = canStream && !locked,
+                )
+                noteCutoffWarning(locked)?.let { msg ->
+                    Text(
+                        text = msg,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.warning,
+                    )
+                }
+                PrimaryButton(
+                    label = if (savingInternal) "Saving…" else "Save internal note",
+                    enabled = canStream && !locked && !savingInternal && internalInput.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            savingInternal = true
+                            error = null
+                            notesRepo.addInternalNote(session.kinfolkId, bookingId, internalInput.trim())
+                                .onSuccess { internalInput = "" }
+                                .onFailure { error = it.message ?: "Note save failed." }
+                            savingInternal = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                error?.let { msg ->
+                    Text(
+                        text = msg,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.error,
+                    )
+                }
+
+                if (!canStream) {
+                    Text(
+                        text = "Notes unavailable - session is missing kinfolkId or bookingId.",
+                        style = AuntieTheme.typography.labelSmall,
+                        color = AuntieTheme.colors.error,
+                    )
+                }
+            }
+        }
     }
+}
+
+/**
+ * The mock's `.who-can`: a short mono note on the panel header saying who
+ * sees the box. The web twin is `DenPanel`'s `meta` prop; the Android panel
+ * has only a trailing slot, so the same mono text rides there.
+ */
+@Composable
+private fun PanelWhoCan(text: String) {
+    Text(
+        text = text,
+        style = AuntieTheme.typography.mono.copy(fontSize = 10.sp),
+        color = AuntieTheme.colors.textDim,
+    )
 }

@@ -2,6 +2,8 @@ package com.tribetails.auntieos.ui.admin
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -121,8 +123,21 @@ class KinCareDetailScreenTest {
 
         mount(kinCareRepo)
 
-        rule.onNodeWithText("The Wrens").assertIsDisplayed()
-        rule.onNodeWithText("Dog walk · Aug 19 · 14:00 - 14:30").assertIsDisplayed()
+        // #755: the hero names the visit by its Kin and service (no Kin on
+        // this record, so the service alone), and puts the window and the
+        // household on the line under it, the mock's "Wed May 27 · 9:00 to
+        // 9:30a · the Wrens". The household is also the top bar's title and
+        // the trail's last step, hence "first".
+        rule.onAllNodesWithText("Dog walk").onFirst().assertIsDisplayed()
+        rule.onNodeWithText("Aug 19 · 14:00 - 14:30 · The Wrens").assertIsDisplayed()
+        rule.onAllNodesWithText("The Wrens").onFirst().assertIsDisplayed()
+        // The status pill hangs off the hero, and the lifecycle stepper draws
+        // every node whatever the record holds.
+        rule.onNodeWithText("SCHEDULED").assertIsDisplayed()
+        rule.onNodeWithText("Visit lifecycle").assertIsDisplayed()
+        rule.onNodeWithText("Completed").assertIsDisplayed()
+        rule.onNodeWithText("Kinfolk-facing note").assertIsDisplayed()
+        rule.onNodeWithText("Admin-internal note").assertIsDisplayed()
     }
 
     @Test
@@ -187,7 +202,7 @@ class KinCareDetailScreenTest {
         rule.onNodeWithText("Retry").performClick()
         rule.waitForIdle()
 
-        rule.onNodeWithText("The Devlins").assertIsDisplayed()
+        rule.onAllNodesWithText("The Devlins").onFirst().assertIsDisplayed()
         rule.onNodeWithText("Network unreachable").assertDoesNotExist()
     }
 
