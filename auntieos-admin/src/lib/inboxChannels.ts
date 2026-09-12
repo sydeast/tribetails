@@ -1,6 +1,6 @@
 import { str, arr } from './coerce';
 import { sessionTimeOf } from './sessionFormat';
-import { formatWhen, machineWhen } from './time';
+import { machineWhen, tsToDate } from './time';
 import type { CallRow, EmailRow, SmsRow, VoicemailRow } from '../api/inboxChannels';
 
 /**
@@ -356,9 +356,21 @@ export function entryTitle(entry: InboxEntry): string {
   return 'Unknown contact';
 }
 
-/** LOCAL `MM-DD HH:mm` for a row's ISO timestamp (the AO-18 local-time rule). */
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/**
+ * LOCAL `Mon D · HH:mm` for a row's ISO timestamp (the AO-18 local-time rule).
+ *
+ * The shape is the inbox mock's `.ts` ("May 27 · 08:42") and Android's
+ * `shortDateTime`, not `formatWhen`'s `MM-DD HH:mm`: the two admins print the
+ * same row and should print the same clock. A missing timestamp degrades the
+ * way `formatWhen` does.
+ */
 export function entryWhen(iso: string): string {
-  return formatWhen(sessionTimeOf(iso));
+  const d = tsToDate(sessionTimeOf(iso));
+  if (!d) return '(no time)';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${SHORT_MONTHS[d.getMonth()]} ${d.getDate()} · ${hh}:${mm}`;
 }
 
 /** Machine-readable local datetime for a row's `<time dateTime={…}>`. */

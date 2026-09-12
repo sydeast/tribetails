@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type Kinfolk } from '../api/directory';
@@ -373,6 +373,35 @@ describe('approve', () => {
 
     expect(await screen.findByText(/audit chain busy/)).toBeInTheDocument();
     expect(screen.getByText(/Draft approved/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The #755 sweep, against `ui-ideas/auntieos-communicate-2026-05-27.html`:
+   * the generator wears the purple-to-pink `.gen` wash, and the draft sits in
+   * the purple `.draft` card with a "needs approval" capsule that leaves once
+   * the draft is approved.
+   */
+  it('paints the generator as Auntie AI and the draft as a purple card that needs approval', async () => {
+    const user = setup();
+    await draftReady(user);
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toHaveClass('personalize__generate');
+    const draft = screen.getByRole('heading', { name: 'Auntie AI draft' }).closest('section');
+    expect(draft).toHaveClass('den-panel', 'personalize__draft');
+    const pill = within(draft as HTMLElement).getByText('needs approval');
+    expect(pill).toHaveClass('den-statuspill');
+    expect(pill).toHaveAttribute('data-tone', 'purple');
+
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+    await screen.findByText(/Draft approved/i);
+    expect(within(draft as HTMLElement).queryByText('needs approval')).toBeNull();
+  });
+
+  it('keeps the whole surface in the left column of the Communicate grid', async () => {
+    const user = setup();
+    await draftReady(user);
+    const main = screen.getByRole('heading', { name: 'Personalize' }).closest('.communicate__main');
+    expect(main).not.toBeNull();
+    expect(main?.contains(screen.getByRole('heading', { name: 'Auntie AI draft' }))).toBe(true);
   });
 });
 describe('the recipient context panel', () => {

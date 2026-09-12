@@ -236,13 +236,22 @@ export function CommunicateCompose() {
   }
 
   if (result) {
-    return <BroadcastResultPanel result={result} channels={channels} onSendAnother={sendAnother} />;
+    return (
+      <div className="communicate__main">
+        <BroadcastResultPanel result={result} channels={channels} onSendAnother={sendAnother} />
+      </div>
+    );
   }
 
+  // A FRAGMENT, on purpose. `Communicate` lays this screen out as the mock's
+  // two columns, and it is the grid; these three children land in it directly.
+  // `.communicate__main` is the left column; `.communicate__preview` is the
+  // right column's top slot, above Recent. The Dialog is `position: fixed` and
+  // takes no cell.
   return (
     <>
-      <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
-        <div className="compose__layout">
+      <div className="communicate__main">
+        <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
         <div className="compose__form">
           {sendError !== null && (
             <Banner tone="error" title="Broadcast failed">
@@ -497,16 +506,19 @@ export function CommunicateCompose() {
           and the footnote says what each channel does with it rather than
           leaving the operator to find out from a customer.
         */}
-        <div className="compose__preview">
+        </DenPanel>
+      </div>
+
+      <div className="communicate__preview">
+        <DenPanel title="Live preview" subtitle="How this reads once it lands, as an email.">
           <MergePreview
             subject={subject}
             body={body}
             sample={{}}
             footnote="A broadcast carries no merge data. Email sends these blank; in-app, SMS and push send the braces as typed."
           />
-        </div>
-        </div>
-      </DenPanel>
+        </DenPanel>
+      </div>
 
       {confirmOpen && audienceArgs !== null && (
         <Dialog

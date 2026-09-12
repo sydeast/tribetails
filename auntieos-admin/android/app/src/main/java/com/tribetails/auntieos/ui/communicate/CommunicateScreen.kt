@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronUp
@@ -69,7 +70,9 @@ import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.PrimaryButton
+import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.config.LocalFeatureFlags
+import com.tribetails.auntieos.ui.theme.AuntieColors
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.domain.engagementSummary
 import com.tribetails.auntieos.domain.channelLabel
@@ -187,23 +190,31 @@ fun CommunicateScreen(viewModel: CommunicateViewModel) {
             ),
         ) {
             // ── Heading ──────────────────────────────────────────────────────
+            // The mock's one title, "Talk to your kinfolk", over both modes
+            // (`ui-ideas/auntieos-communicate-2026-05-27.html`); the web screen
+            // prints the same words. The explanation follows the mode, behind
+            // the info button.
             item {
                 DenScreenHeading(
                     kicker = "The Den · Communicate",
                     title = "Talk to your",
-                    accentTail = "kinfolk.",
-                    subtitle = "Write from scratch, let Auntie draft it, then approve before it goes home.",
+                    accentTail = "kinfolk",
+                    subtitle = if (mode == ComposeMode.Broadcast)
+                        "Send to a saved audience or one you build here, across in-app, email, text, and push."
+                    else
+                        "Give Auntie the notes, pick a tone and a length, then read the draft and approve it before it goes home.",
                 )
             }
 
-            // ── Compose mode segmented chips (Personalize / Broadcast) ────────
+            // ── Compose mode switch (Personalize / Broadcast) ─────────────────
+            // The mock's `.modesw`: one track with the selected segment filled,
+            // which is the kit's SegmentedPicker, not a row of filter chips.
             item {
-                AuntieChipGroup(
+                SegmentedPicker(
                     options = ComposeMode.values().toList(),
-                    selected = setOf(mode),
-                    onSelectionChange = { next -> next.firstOrNull()?.let { mode = it } },
+                    selected = mode,
+                    onSelect = { mode = it },
                     label = { it.label },
-                    singleSelect = true,
                 )
             }
 
@@ -1349,26 +1360,49 @@ private fun RecentPanel(state: CommunicateUiState) {
             )
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 state.recentSends.forEach { snd ->
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "${channelLabel(snd.channel)} · ${snd.recipientRedacted}",
-                            style = AuntieTheme.typography.titleMedium,
-                            color = c.textPrimary,
+                    // The mock's `.br`: a 9dp dot in the channel's tone leads
+                    // the row. Teal for email (the mock's default), orange for
+                    // a text, purple for push, dim for anything else.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(11.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(recentSendDot(snd.channel, c)),
                         )
-                        snd.subject?.takeIf { it.isNotBlank() }?.let { subj ->
-                            Text(subj, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "${channelLabel(snd.channel)} · ${snd.recipientRedacted}",
+                                style = AuntieTheme.typography.titleMedium,
+                                color = c.textPrimary,
+                            )
+                            snd.subject?.takeIf { it.isNotBlank() }?.let { subj ->
+                                Text(subj, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            }
+                            Text(
+                                text = engagementSummary(snd.channel, snd.counts),
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
                         }
-                        Text(
-                            text = engagementSummary(snd.channel, snd.counts),
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textDim,
-                        )
                     }
                 }
             }
         }
     }
 }
+
+/** The Recent row's dot colour per channel; mirrors `.communicate__row-dot` on web. */
+private fun recentSendDot(channel: String, c: AuntieColors): Color =
+    when (channel.trim().lowercase()) {
+        "email" -> c.accent
+        "sms" -> c.primary
+        "push" -> c.tertiary
+        else -> c.textFaint
+    }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
