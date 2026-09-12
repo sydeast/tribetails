@@ -558,7 +558,7 @@ describe('Settings — Business profile editor', () => {
   });
 });
 
-describe('Settings — Booking behavior (instant-save toggles)', () => {
+describe('Settings: Scheduling (instant-save toggles)', () => {
   it('saves a toggle immediately and reflects the new value once the write resolves', async () => {
     getBusinessSettings.mockResolvedValue(withOverrides({ autoConfirmRepeatKinfolk: false }));
     saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });

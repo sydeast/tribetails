@@ -237,7 +237,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   );
 }
 
-// ── Booking behavior ─────────────────────────────────────────────────────────
+// ── Scheduling (the booking toggles) ─────────────────────────────────────────────────────────
 
 type BookingToggleKey =
   | 'autoConfirmRepeatKinfolk'
@@ -393,7 +393,7 @@ function seedDraft(data: PaymentSettings): PaymentDraft {
  * next to its switch, and the ones that are a sentence rather than a link get
  * a place to write it.
  *
- * ONE SAVE BUTTON, not per-flip saves like Booking behavior. A toggle and the
+ * ONE SAVE BUTTON, not per-flip saves like the Scheduling toggles. A toggle and the
  * handle beside it are one decision ("offer Venmo, at this handle"), and
  * saving the switch the instant it moves would persist "Venmo is on" before
  * the operator has typed where to send the money.

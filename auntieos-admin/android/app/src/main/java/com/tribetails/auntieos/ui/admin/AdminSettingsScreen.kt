@@ -94,6 +94,7 @@ import com.composables.icons.lucide.PawPrint
 import com.composables.icons.lucide.Plane
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.AtSign
+import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Stethoscope
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
@@ -2420,6 +2421,9 @@ internal fun SecurityPanel(
     DenPanel(
         title = "Security",
         subtitle = "Keep your account safe.",
+        trailing = {
+            AuntieIconTile(icon = Lucide.ShieldCheck, tone = AuntieStatusTone.Success, size = 40.dp)
+        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             message?.let {
