@@ -1,16 +1,26 @@
 package com.tribetails.auntieos.ui.members
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,26 +31,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.ShieldAlert
 import com.tribetails.auntieos.data.repository.MembersRepository
 import com.tribetails.auntieos.data.repository.inviteDate
 import com.tribetails.auntieos.data.repository.inviteHandle
+import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDialog
-import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieToggle
-import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenCrumb
+import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.GlassSurface
+import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
+import com.tribetails.auntieos.ui.components.color
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 /**
@@ -54,25 +72,48 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  * today" banners, which stopped being true with this change, and minus their
  * sample data, which is placeholder by their own admission.
  *
+ * THE SHAPE IS THE MOCK'S (#755). The kit hero band carries the household's
+ * crest, its name, and the mock's mono `.where` line (family id and the
+ * member counts). Under it the roster is split by role: a Primary contact
+ * panel with the mock's `role: PRIMARY` note, a Secondary contacts panel with
+ * `N of role: SECONDARY`, then Invites. Every member is the mock's `.member`
+ * block: a 58dp circle, the name in Fraunces, a compact role capsule and a
+ * compact status capsule, the uid in mono, and for a secondary the label
+ * (read-only, see below) and the permission list under a hairline with the
+ * mock's "Locked on" chip beside the kintales switch. A primary carries the
+ * mock's footnote capsule, "all permissions granted by role", and no rows.
+ * Before this pass each member was a `DenPanel` nested inside the Members
+ * `DenPanel`, which the kit's own note says no screen does.
+ *
  * PLACEMENT follows page-specs Decision 8 (LOCKED): members live under
  * Directory / Households / {household} / Members, not Settings, so this is
  * opened from the household profile and takes the household as context. There
  * is no free-text family-id field, unlike the invites mock: a typed tenant id
  * is a way to invite a stranger into the wrong family.
  *
- * The mocks' "invite to app" button is not repeated here. It already ships one
- * screen up, on the household profile
- * (`DirectoryViewModel.inviteKinfolkToPortal`), which is where this screen is
- * reached from. The empty roster says so rather than growing a second button
- * for the same call.
+ * THE HERO CARRIES NO ACTION ON ANDROID. The mock's primary action is the
+ * admin's one invite, and on this client that button ships one screen up, on
+ * the household profile (`DirectoryViewModel.inviteKinfolkToPortal`), which
+ * is where this screen is reached from; [MembersRepository] leaves it out on
+ * purpose and the empty roster says where it is. The mock's "Swap primary" is
+ * `executePrimaryRecovery`, which the web screen offers (#378, #426) and this
+ * client has never carried: a pre-existing gap, reported rather than widened
+ * by a sweep.
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it on their behalf. It also offers no typed-address way to invite the
- * primary any more: "Invite a primary by email" sent the same claim link the
- * household profile button already sends, and the operator rejected that use
- * case (issue #684). `MembersRepository.mintInvite` stays registered
- * (PRIMARY-only) with no caller left in this screen.
+ * do it on their behalf: the mock's "Add secondary contact" is not built. It
+ * also offers no typed-address way to invite the primary any more: "Invite a
+ * primary by email" sent the same claim link the household profile button
+ * already sends, and the operator rejected that use case (issue #684).
+ * `MembersRepository.mintInvite` stays registered (PRIMARY-only) with no
+ * caller left in this screen.
+ *
+ * Two more of the mock's controls are PRIMARY-only on the server and so are
+ * not offered to an admin: the editable `secondaryLabel` input
+ * (`updateMemberLabel` calls `requirePrimary`) and "Swap contact info"
+ * (`swapPrimaryContact` edits the CALLER's own client record). The label is
+ * shown read-only in the mock's shape.
  *
  * WHAT A PRIMARY MAY LOSE: nothing. Their entitlements are inherent to the role
  * (`requirePerm` answers for a PRIMARY before it reads the flags), so a primary
@@ -108,6 +149,9 @@ fun HouseholdMembersScreen(
     }
 }
 
+/** The mock's `.member` corner, and the web `--radius-18`. */
+private val MemberBlockShape = RoundedCornerShape(18.dp)
+
 @Composable
 fun HouseholdMembersBody(
     kinfolkName: String,
@@ -122,6 +166,9 @@ fun HouseholdMembersBody(
     var removeTarget by remember { mutableStateOf<MembersRepository.Member?>(null) }
 
     LaunchedEffect(Unit) { viewModel.load() }
+
+    val primaries = state.members.filter { it.role == MembersRepository.MemberRole.PRIMARY }
+    val secondaries = state.members.filter { it.role == MembersRepository.MemberRole.SECONDARY }
 
     LazyColumn(
         contentPadding = PaddingValues(horizontal = dims.space4, vertical = dims.space4),
@@ -140,9 +187,28 @@ fun HouseholdMembersBody(
                     DenCrumb(kinfolkName, onBack),
                     DenCrumb("Members and invites"),
                 ),
-                title = "Members and",
-                accentTail = "invites.",
-                subtitle = "Who can reach $kinfolkName in MyTribe, and what each of them may do.",
+                // The mock's hero names the HOUSEHOLD; the trail already says
+                // Members. The crest is the mock's 72dp tile.
+                title = kinfolkName,
+                subtitle = "Who can reach $kinfolkName in MyTribe, and what each of them may do. " +
+                    "The portal invite lives on the household profile.",
+                leading = {
+                    AuntieAvatar(
+                        initials = householdInitial(kinfolkName),
+                        gradientSeed = viewModel.kinfolkId,
+                        size = 72.dp,
+                        shape = RoundedCornerShape(22.dp),
+                        ring = false,
+                    )
+                },
+                content = {
+                    // The mock's `.where`: mono, 13.5, dim, under the name.
+                    Text(
+                        text = whereLine(viewModel.kinfolkId, state),
+                        style = AuntieTheme.typography.mono.copy(fontSize = 13.5.sp, letterSpacing = 0.3.sp),
+                        color = c.textDim,
+                    )
+                },
             )
         }
 
@@ -163,19 +229,12 @@ fun HouseholdMembersBody(
 
         item {
             DenPanel(
-                title = "Members",
-                subtitle = "Everyone with a MyTribe account on this household. A secondary's " +
-                    "permissions are yours to set; a primary's come with the role and are shown " +
-                    "here rather than offered as switches. KinTales access is locked on by the " +
-                    "server for everyone.",
-                trailing = {
-                    if (state.membersLoaded) {
-                        AuntieStatusPill(
-                            label = "${state.members.size} on file",
-                            tone = AuntieStatusTone.Neutral,
-                        )
-                    }
-                },
+                title = "Primary contact",
+                meta = "role: PRIMARY",
+                subtitle = "The household account owner. Held by role, not by setting: full " +
+                    "billing, home access, kin edits and messaging come with being the primary, " +
+                    "and the server reads the role rather than these flags, so there is nothing " +
+                    "here to switch off.",
             ) {
                 when {
                     state.membersError != null -> {
@@ -185,13 +244,50 @@ fun HouseholdMembersBody(
                         Spacer(Modifier.height(dims.space2))
                         GhostButton(label = "Retry", onClick = { viewModel.loadMembers() })
                     }
-                    state.membersLoading && !state.membersLoaded -> EmptyHint("Loading members…")
+                    state.membersLoading && !state.membersLoaded -> LoadingHint("Loading members…")
                     state.membersLoaded && state.members.isEmpty() -> EmptyHint(
                         "Nobody has claimed this household yet. Send the portal invite from the " +
-                            "household profile, and this list fills in once it is accepted.",
+                            "household profile, and this fills in once it is accepted.",
                     )
-                    else -> Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-                        state.members.forEach { member ->
+                    state.membersLoaded && primaries.isEmpty() -> EmptyHint(
+                        "There is no active primary. Send the portal invite from the household " +
+                            "profile, and whoever accepts becomes the primary.",
+                    )
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        primaries.forEach { member ->
+                            MemberBlock(
+                                member = member,
+                                savingPermission = state.savingPermission,
+                                onToggle = { key, next -> viewModel.togglePermission(member, key, next) },
+                                onRemove = { removeTarget = member },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            DenPanel(
+                title = "Secondary contacts",
+                meta = if (state.membersLoaded) "${secondaries.size} of role: SECONDARY" else null,
+                subtitle = "Household members the primary invited from MyTribe. Each carries a " +
+                    "label and a permission set you can edit here. KinTales access is locked on " +
+                    "by the server for everyone.",
+            ) {
+                when {
+                    // The failure is named once, in the panel above. This one
+                    // only says it is unknown.
+                    state.membersError != null -> EmptyHint(
+                        "Secondary contacts unavailable while the member list is failing.",
+                        error = true,
+                    )
+                    state.membersLoading && !state.membersLoaded ->
+                        LoadingHint("Loading secondary contacts…")
+                    state.membersLoaded && secondaries.isEmpty() ->
+                        EmptyHint("No secondary contacts yet. The primary invites them from MyTribe.")
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        secondaries.forEach { member ->
                             MemberBlock(
                                 member = member,
                                 savingPermission = state.savingPermission,
@@ -207,6 +303,7 @@ fun HouseholdMembersBody(
         item {
             DenPanel(
                 title = "Invites",
+                meta = if (state.invitesLoaded) "${state.invites.size} total" else null,
                 subtitle = "Every invite this household has been sent. An invite past its expiry " +
                     "reads Expired here from the moment it lapses, even though the nightly sweep " +
                     "has not stamped it yet.",
@@ -217,15 +314,33 @@ fun HouseholdMembersBody(
                         Spacer(Modifier.height(dims.space2))
                         GhostButton(label = "Retry", onClick = { viewModel.loadInvites() })
                     }
-                    state.invitesLoading && !state.invitesLoaded -> EmptyHint("Loading invites…")
+                    state.invitesLoading && !state.invitesLoaded -> LoadingHint("Loading invites…")
                     state.invitesLoaded && state.invites.isEmpty() ->
                         EmptyHint("No invite has ever been sent to this household.")
-                    else -> Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
                         INVITE_GROUPS.forEach { group ->
                             val inGroup = state.invites.filter { it.effectiveStatus in group.statuses }
                             if (inGroup.isEmpty()) return@forEach
-                            Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-                                AuntieFieldLabel(text = "${group.heading} (${inGroup.size})")
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                // The invites mock's `.sec h3`: the serif heading
+                                // and the mono status note beside it.
+                                Row(
+                                    verticalAlignment = Alignment.Bottom,
+                                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                    modifier = Modifier.padding(bottom = 1.dp),
+                                ) {
+                                    Text(
+                                        text = group.heading,
+                                        style = AuntieTheme.typography.headlineSmall.copy(fontSize = 19.sp),
+                                        color = c.textPrimary,
+                                        modifier = Modifier.semantics { heading() },
+                                    )
+                                    Text(
+                                        text = inviteGroupNote(group, inGroup.size),
+                                        style = AuntieTheme.typography.labelSmall,
+                                        color = c.textDim,
+                                    )
+                                }
                                 inGroup.forEach { invite ->
                                     InviteRow(
                                         invite = invite,
@@ -306,6 +421,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.errorBannerItem(
     }
 }
 
+/**
+ * The mock's `.member` block, and its `.primecard` (the same identity row with
+ * the footnote capsule instead of the permission list): the second surface on
+ * a hairline at 18dp, 18dp inside. Not a panel and not nested in one.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MemberBlock(
     member: MembersRepository.Member,
@@ -315,94 +436,168 @@ private fun MemberBlock(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
-    DenPanel(title = member.label, detail = member.uid) {
+    val byRole = permissionsFollowRole(member.role)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MemberBlockShape)
+            .background(c.surface2)
+            .border(dims.borderHairline, c.border, MemberBlockShape)
+            .padding(18.dp),
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dims.space2),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            AuntieStatusPill(
-                label = if (member.role == MembersRepository.MemberRole.PRIMARY) "PRIMARY" else "SECONDARY",
-                tone = if (member.role == MembersRepository.MemberRole.PRIMARY) {
-                    AuntieStatusTone.Purple
-                } else {
-                    AuntieStatusTone.Teal
-                },
+            // The mock's `.who .photo`: a 58dp ringed circle. A member has no
+            // photo field, so the kit avatar's letter on its seeded gradient
+            // stands in.
+            AuntieAvatar(
+                initials = member.label.take(1),
+                gradientSeed = member.uid,
+                size = 58.dp,
             )
-            AuntieStatusPill(
-                label = member.status.name,
-                tone = memberStatusTone(member.status),
-                showDot = true,
-            )
-            member.secondaryLabel?.let {
-                AuntieStatusPill(label = it, tone = AuntieStatusTone.Neutral)
-            }
-            Spacer(Modifier.weight(1f))
-            GhostButton(label = "Remove", onClick = onRemove)
-        }
-
-        Spacer(Modifier.height(dims.space3))
-
-        val byRole = permissionsFollowRole(member.role)
-        if (byRole) {
-            // Prose, not disabled switches: a greyed-out toggle still says
-            // "this could be switched", which is the thing the ruling is about.
-            Text(
-                "Held by role, not by setting. The primary of a household has full billing, " +
-                    "home access, kin edits and messaging because they are the primary, and the " +
-                    "server reads the role rather than these flags. There is nothing here to " +
-                    "switch off.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
-            Spacer(Modifier.height(dims.space2))
-        }
-
-        PERMISSION_ROWS.forEach { row ->
-            val busy = savingPermission == row.key?.let { "${member.uid}:${it.name}" }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(dims.space3),
-                modifier = Modifier.fillMaxWidth().padding(vertical = dims.space2),
-            ) {
-                Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = member.label,
+                        style = AuntieTheme.typography.headlineSmall.copy(fontSize = 19.sp),
+                        color = c.textPrimary,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                    AuntieStatusPill(
+                        label = roleLabel(member.role),
+                        tone = roleTone(member.role),
+                        mono = true,
+                        compact = true,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                    AuntieStatusPill(
+                        label = memberStatusLabel(member.status),
+                        tone = memberStatusTone(member.status),
+                        mono = true,
+                        compact = true,
+                        showDot = true,
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                // The mock's `.contact`: mono and dim. The uid is what this
+                // screen has where the mock shows an email and a phone; the
+                // name above is the email.
+                Text(
+                    text = member.uid,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
+                    color = c.textDim,
+                )
+                val label = member.secondaryLabel?.trim().orEmpty()
+                if (member.role == MembersRepository.MemberRole.SECONDARY && label.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    // The mock's `.labelwrap`, read-only: `updateMemberLabel`
+                    // is PRIMARY-only on the server.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(dims.space2),
                     ) {
                         Text(
-                            row.label,
-                            style = AuntieTheme.typography.bodyMedium,
-                            color = c.textPrimary,
+                            text = "SECONDARYLABEL",
+                            style = AuntieTheme.typography.labelSmall,
+                            color = c.textDim,
                         )
-                        if (row.key == null && !byRole) {
-                            AuntieStatusPill(label = "LOCKED ON", tone = AuntieStatusTone.Teal)
-                        }
+                        Text(
+                            text = label,
+                            style = AuntieTheme.typography.labelMedium,
+                            color = c.textPrimary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(c.surface)
+                                .border(dims.borderHairline, c.border, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 9.dp, vertical = 4.dp),
+                        )
                     }
+                }
+            }
+            GhostButton(label = "Remove", onClick = onRemove)
+        }
+
+        if (byRole) {
+            // The mock's `.cbar` footnote under the primary card. One capsule
+            // that reads as state, where a secondary's rows carry controls.
+            Spacer(Modifier.height(14.dp))
+            AuntieStatusPill(
+                label = "All permissions granted by role",
+                tone = AuntieStatusTone.Success,
+                mono = true,
+                compact = true,
+            )
+            return@Column
+        }
+
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider(color = c.borderSoft, thickness = dims.borderHairline)
+        Spacer(Modifier.height(14.dp))
+        // The mock's `.permhdr`.
+        Text(
+            text = "PERMISSIONS",
+            style = AuntieTheme.typography.labelSmall.copy(fontSize = 10.sp, letterSpacing = 1.2.sp),
+            color = c.textDim,
+        )
+        PERMISSION_ROWS.forEachIndexed { index, row ->
+            val busy = savingPermission == row.key?.let { "${member.uid}:${it.name}" }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dims.space3),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = row.label,
+                        style = AuntieTheme.typography.mono.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                        color = c.textPrimary,
+                    )
                     Text(row.description, style = AuntieTheme.typography.bodySmall, color = c.textDim)
                 }
-                if (byRole) {
-                    // State, where a secondary's row carries a control.
-                    AuntieStatusPill(label = "GRANTED", tone = AuntieStatusTone.Success)
-                } else {
-                    if (busy) {
-                        Text("Saving…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                        Spacer(Modifier.width(dims.space2))
-                    }
-                    AuntieToggle(
-                        // A null key is `kintales_only`, which the server refuses
-                        // to change, so it renders on and disabled rather than as
-                        // a control that silently no-ops.
-                        checked = row.key?.let { readPermission(member.permissions, it) } ?: true,
-                        onCheckedChange = { next -> row.key?.let { onToggle(it, next) } },
-                        enabled = row.key != null && savingPermission == null,
+                if (busy) {
+                    Text("Saving…", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    Spacer(Modifier.width(dims.space2))
+                }
+                if (row.key == null) {
+                    // The mock's lock chip, beside the locked switch.
+                    AuntieStatusPill(
+                        label = "Locked on",
+                        tone = AuntieStatusTone.Teal,
+                        mono = true,
+                        compact = true,
                     )
                 }
+                AuntieToggle(
+                    // A null key is `kintales_only`, which the server refuses
+                    // to change, so it renders on and disabled rather than as
+                    // a control that silently no-ops.
+                    checked = row.key?.let { readPermission(member.permissions, it) } ?: true,
+                    onCheckedChange = { next -> row.key?.let { onToggle(it, next) } },
+                    enabled = row.key != null && savingPermission == null,
+                )
+            }
+            if (index < PERMISSION_ROWS.lastIndex) {
+                HorizontalDivider(color = c.borderSoft, thickness = dims.borderHairline)
             }
         }
     }
 }
 
+/**
+ * The invites mock's `.iv`, as the admin-wide Invites screen draws it: a 4dp
+ * tone stripe, a 42dp circle, the address, the provenance line, the pills.
+ * Revoke sits at the right, and ONLY while the server says the invite is
+ * still redeemable: a Revoke on a dead invite is a button that fails when
+ * tapped.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InviteRow(
     invite: MembersRepository.Invite,
@@ -410,34 +605,76 @@ private fun InviteRow(
     revokeBusy: Boolean,
     onRevoke: () -> Unit,
 ) {
-    val dims = AuntieTheme.dims
-    Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-        androidx.compose.foundation.layout.Box {
-            com.tribetails.auntieos.ui.components.AuntieEntityRow(
-                title = invite.invitedEmail,
-                subtitle = inviteMetaLine(invite),
-                trailing = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(dims.space2),
-                    ) {
-                        AuntieStatusPill(
-                            label = inviteStatusLabel(invite.effectiveStatus),
-                            tone = inviteStatusTone(invite.effectiveStatus),
-                        )
-                        // Revoke is offered ONLY when the server says the invite
-                        // is still redeemable. Offering it on a dead invite
-                        // would be a button that fails when tapped.
-                        if (invite.redeemable) {
-                            GhostButton(
-                                label = if (revoking) "Revoking…" else "Revoke",
-                                onClick = onRevoke,
-                                enabled = !revokeBusy,
-                            )
-                        }
-                    }
-                },
+    val c = AuntieTheme.colors
+    val tone = invitePillTone(invite.effectiveStatus)
+    val label = invite.secondaryLabel?.trim().orEmpty()
+    GlassSurface(cornerRadius = 16.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+            // Intrinsic height so the stripe can run the row's full height, the
+            // mock's `align-self: stretch`.
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .heightIn(min = 54.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(tone.color(c)),
             )
+            AuntieAvatar(
+                initials = invite.invitedEmail.take(1),
+                size = 42.dp,
+                gradientSeed = invite.invitedEmail,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = invite.invitedEmail,
+                    style = AuntieTheme.typography.titleMedium,
+                    color = c.textPrimary,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = inviteMetaLine(invite),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AuntieStatusPill(
+                        label = inviteStatusLabel(invite.effectiveStatus),
+                        tone = tone,
+                        mono = true,
+                        compact = true,
+                    )
+                    AuntieStatusPill(
+                        label = roleLabel(invite.proposedRole),
+                        tone = AuntieStatusTone.Purple,
+                        mono = true,
+                        compact = true,
+                    )
+                    if (label.isNotEmpty()) {
+                        AuntieStatusPill(
+                            label = label,
+                            tone = AuntieStatusTone.Neutral,
+                            mono = true,
+                            compact = true,
+                        )
+                    }
+                }
+            }
+            if (invite.redeemable) {
+                GhostButton(
+                    label = if (revoking) "Revoking…" else "Revoke",
+                    onClick = onRevoke,
+                    enabled = !revokeBusy,
+                )
+            }
         }
     }
 }
@@ -451,6 +688,44 @@ private fun InviteRow(
 // the 2026-08-04 invite ruling) with no caller left in this screen.
 
 // ── pure display helpers, unit-tested directly ──────────────────────────────
+
+/**
+ * The mock's crest letter: "W" for "the Wrens". A leading article is skipped
+ * so a household named "the Walls" reads W rather than T; an id-only fallback
+ * name keeps its first letter, which is honest if not pretty.
+ */
+internal fun householdInitial(name: String): String {
+    val trimmed = name.trim().replace(Regex("^the\\s+", RegexOption.IGNORE_CASE), "")
+    val source = if (trimmed.isEmpty()) name.trim() else trimmed
+    return source.take(1).uppercase()
+}
+
+/**
+ * The mock's `.where` line under the household name: `familyId: fam_7Qk2 · 3
+ * members · 1 PRIMARY, 2 SECONDARY`. Counts are by ROLE, which is what the
+ * two panels are split by, and they are only written once the roster has been
+ * read: before that the line is the id alone, never "0 members".
+ */
+internal fun whereLine(kinfolkId: String, state: HouseholdMembersUiState): String {
+    val head = "familyId: $kinfolkId"
+    if (!state.membersLoaded) return head
+    val total = state.members.size
+    val primary = state.members.count { it.role == MembersRepository.MemberRole.PRIMARY }
+    val noun = if (total == 1) "member" else "members"
+    return "$head · $total $noun · $primary PRIMARY, ${total - primary} SECONDARY"
+}
+
+/** The invites mock's `.sec h3 .ct`: the wire statuses and the count. */
+internal fun inviteGroupNote(group: InviteGroup, count: Int): String =
+    group.statuses.joinToString(" / ") { it.name } + " · $count"
+
+/** "Active" from ACTIVE. The mock's LED text is title case. */
+internal fun memberStatusLabel(status: MembersRepository.MemberStatus): String =
+    status.name.first() + status.name.drop(1).lowercase()
+
+/** The mock's `.role` chip: PRIMARY in purple, SECONDARY in teal. */
+internal fun roleTone(role: MembersRepository.MemberRole): AuntieStatusTone =
+    if (role == MembersRepository.MemberRole.PRIMARY) AuntieStatusTone.Purple else AuntieStatusTone.Teal
 
 /**
  * One permission row. A null [key] is `kintales_only`, which no callable on any
@@ -522,16 +797,27 @@ internal val INVITE_GROUPS: List<InviteGroup> = listOf(
     InviteGroup("Revoked", listOf(MembersRepository.InviteStatus.REVOKED)),
 )
 
+/**
+ * The members mock's `.status` LED: active in teal, invited in orange.
+ * Suspended is not drawn there; coral is the app's colour for a member who
+ * has been removed. Mirrors `memberStatusTone` in `src/api/members.ts`.
+ */
 internal fun memberStatusTone(status: MembersRepository.MemberStatus): AuntieStatusTone = when (status) {
-    MembersRepository.MemberStatus.ACTIVE -> AuntieStatusTone.Success
-    MembersRepository.MemberStatus.INVITED -> AuntieStatusTone.Warning
+    MembersRepository.MemberStatus.ACTIVE -> AuntieStatusTone.Teal
+    MembersRepository.MemberStatus.INVITED -> AuntieStatusTone.Orange
     MembersRepository.MemberStatus.SUSPENDED -> AuntieStatusTone.Error
 }
 
+/**
+ * The invites mock's tints, and the same map as [invitePillTone] on the
+ * admin-wide Invites screen: pending and email sent in orange, accepted in
+ * teal, revoked in coral, expired in the muted grey. Mirrors
+ * `inviteStatusTone` in `src/api/members.ts`.
+ */
 internal fun inviteStatusTone(status: MembersRepository.InviteStatus): AuntieStatusTone = when (status) {
-    MembersRepository.InviteStatus.ACCEPTED -> AuntieStatusTone.Success
+    MembersRepository.InviteStatus.ACCEPTED -> AuntieStatusTone.Teal
     MembersRepository.InviteStatus.PENDING,
-    MembersRepository.InviteStatus.EMAIL_SENT -> AuntieStatusTone.Warning
+    MembersRepository.InviteStatus.EMAIL_SENT -> AuntieStatusTone.Orange
     MembersRepository.InviteStatus.REVOKED -> AuntieStatusTone.Error
     MembersRepository.InviteStatus.EXPIRED -> AuntieStatusTone.Muted
 }

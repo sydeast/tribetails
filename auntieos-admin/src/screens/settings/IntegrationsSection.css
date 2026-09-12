@@ -1,92 +1,118 @@
 /**
  * Settings > Integrations. Scoped to this section and imported by
  * IntegrationsSection.tsx (the DenScreenKit.css / Banner.css convention), so
- * nothing here lands in the shared styles. Every value comes from
- * styles/tokens.css: no literal colours, radii, or durations.
+ * nothing here lands in the shared styles. Every colour comes from
+ * styles/tokens.css; the pixel sizes are the settings mock's own (issue #755
+ * pass, `.intgrid` / `.int` / `.conn`).
  *
- * The status tint is applied through one `--den-tone` variable set on the pill,
- * the same mechanism `.den-pill` uses, so a status can never read as one colour
- * in the pill and another on the row.
+ * The status tint is applied through one `--den-tone` variable set on the
+ * state line, the same mechanism `.den-pill` uses, so a status can never read
+ * as one colour in the LED and another in its words.
  */
 
-.integrations__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-3);
-}
-
-.integrations__checked {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  color: var(--color-text-faint);
-}
-
-.integrations__list {
+/* The mock's `.intgrid`: as many 250px-minimum cards per row as fit, 13px apart. */
+.integrations__grid {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 13px;
 }
 
-.integrations__row {
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: var(--space-3);
+/* The mock's `.int`: tile beside a body column on the raised surface, a
+   hairline at 15px, 15px inside, and a lift with an orange rim on hover. */
+.integrations__card {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px;
+  border-radius: 15px;
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: var(--color-hero-bottom);
+  transition:
+    transform var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.integrations__card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-primary-dim) 35%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .integrations__card:hover {
+    transform: none;
+  }
+}
+
+/* The mock's `.logo` letter: serif, bold, 17px, cream on the tile's gradient. */
+.integrations__monogram {
+  font-family: var(--font-fraunces);
+  font-weight: 700;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.integrations__body {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.integrations__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.integrations__naming {
-  min-width: 0;
-}
-
 .integrations__name {
   margin: 0;
-  font-size: var(--type-body-md-size);
+  font-size: 14.5px;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .integrations__purpose {
-  margin: 0;
-  font-size: var(--type-body-sm-size);
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--color-text-dim);
 }
 
-/* The pill: words plus tint, never tint alone. */
-.integrations__pill {
-  flex: 0 0 auto;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  border: var(--border-hairline) solid var(--den-tone);
-  background: color-mix(in srgb, var(--den-tone) 14%, transparent);
-  color: var(--den-tone);
+/* The mock's `.foot`: the state at the left, the row's one control at the right. */
+.integrations__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+
+/* The mock's `.conn`: a 7px LED and the state in 9.5px mono caps, both in the
+   status tone. Words plus tint, never tint alone. */
+.integrations__conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--den-tone);
   white-space: nowrap;
 }
-.integrations__pill[data-tone='success'] {
+.integrations__conn[data-tone='success'] {
   --den-tone: var(--color-success);
 }
-.integrations__pill[data-tone='warning'] {
+.integrations__conn[data-tone='warning'] {
   --den-tone: var(--color-warning);
 }
-.integrations__pill[data-tone='error'] {
+.integrations__conn[data-tone='error'] {
   --den-tone: var(--color-error);
+}
+.integrations__led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--den-tone);
+  box-shadow: 0 0 8px var(--den-tone);
 }
 
 .integrations__summary {
@@ -102,6 +128,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+.integrations__secrets:empty {
+  display: none;
 }
 
 .integrations__secret {
@@ -187,16 +216,4 @@
   color: var(--color-text-dim);
   border-left: 2px solid var(--color-border-soft);
   padding-left: var(--space-3);
-}
-
-.integrations__handoff {
-  display: flex;
-  gap: var(--space-2);
-}
-
-@media (max-width: 40rem) {
-  .integrations__head {
-    flex-direction: column;
-    align-items: flex-start;
-  }
 }

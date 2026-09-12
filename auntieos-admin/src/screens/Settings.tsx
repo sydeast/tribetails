@@ -6,6 +6,7 @@ import { DenScreenHeading } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { lastSavedLabel } from '../lib/settingsFormat';
 import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
+import { SECTION_ICONS } from './settings/sectionIcons';
 import { BookingBehaviorSection, MyTribePortalSection, PaymentOptionsSection } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
 import { PhoneLineSection } from './settings/PhoneLineSection';
@@ -94,15 +95,18 @@ type SectionId =
   | 'tags'
   | 'integrations';
 
-/** Nav order. Matches the section order the operator saw approved for this screen. */
+/**
+ * Nav order. Matches the section order the operator saw approved for this
+ * screen. Each entry carries the mock's glyph (`settings/sectionIcons.tsx`).
+ */
 const SECTIONS: readonly SectionNavItem<SectionId>[] = [
-  { id: 'businessProfile', label: 'Business profile' },
-  { id: 'businessHours', label: 'Business hours' },
+  { id: 'businessProfile', label: 'Business profile', icon: SECTION_ICONS.businessProfile },
+  { id: 'businessHours', label: 'Business hours', icon: SECTION_ICONS.businessHours },
   // ISSUE #397. Directly after Business hours, because the live transfer is
   // gated on them: the first question an operator has after turning it off is
   // when it applies.
-  { id: 'phoneLine', label: 'Phone line' },
-  { id: 'timeOff', label: 'Time off' },
+  { id: 'phoneLine', label: 'Phone line', icon: SECTION_ICONS.phoneLine },
+  { id: 'timeOff', label: 'Time off', icon: SECTION_ICONS.timeOff },
   // ISSUE #711: "There are settings all over the place and are not grouped by
   // topic very well. 'Visits & Tracking' is Just KinCare settings. So put it
   // under the KinCare 'Types' which needs to be changed to KinCare Settings."
@@ -114,19 +118,19 @@ const SECTIONS: readonly SectionNavItem<SectionId>[] = [
   // operator's ruling above, so its answer moved in with the KinCare types
   // editor rather than staying its own tab. `bookingRules` is unaffected: it
   // still answers the first question, on its own.
-  { id: 'kinCare', label: 'KinCare Settings' },
-  { id: 'bookingRules', label: 'Booking rules' },
-  { id: 'payments', label: 'Payments' },
-  { id: 'mytribe', label: 'MyTribe portal' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'tags', label: 'Tags' },
+  { id: 'kinCare', label: 'KinCare Settings', icon: SECTION_ICONS.kinCare },
+  { id: 'bookingRules', label: 'Booking rules', icon: SECTION_ICONS.bookingRules },
+  { id: 'payments', label: 'Payments', icon: SECTION_ICONS.payments },
+  { id: 'mytribe', label: 'MyTribe portal', icon: SECTION_ICONS.mytribe },
+  { id: 'notifications', label: 'Notifications', icon: SECTION_ICONS.notifications },
+  { id: 'tags', label: 'Tags', icon: SECTION_ICONS.tags },
   // Last because it is the one section that reports rather than edits: the
   // place an operator goes when something ELSE on this screen stopped
   // working. ISSUE #715 folded the Calendar tab in here too (the free/busy
   // import and the editable OAuth calendars, sub-headed inside one panel,
   // opened in place from the Google Calendar row below): "And Calendar needs
   // to go under integrations."
-  { id: 'integrations', label: 'Integrations' },
+  { id: 'integrations', label: 'Integrations', icon: SECTION_ICONS.integrations },
 ];
 
 /** The section the screen opens on. Named (not `SECTIONS[0]`) so it stays a
@@ -211,16 +215,20 @@ export function Settings({ initialSection }: SettingsProps = {}) {
 
   return (
     <div className="screen">
+      {/* The mock's `.head`: kicker "The Den · Settings", title "How the Den
+          runs". The explanation is the heading's tooltip; the last-saved stamp
+          is a value, so it sits on `detail` once the doc is in. */}
       <DenScreenHeading
-        kicker="The Den · Admin"
-        title="Settings"
-        accentTail="by section."
+        kicker="The Den · Settings"
+        title="How the Den"
+        accentTail="runs."
         subtitle="Pick a section on the left. Each one edits and saves on its own."
+        detail={
+          settings.status === 'ready'
+            ? lastSavedLabel(settings.data.updatedAt, settings.data.updatedBy)
+            : undefined
+        }
       />
-
-      {settings.status === 'ready' ? (
-        <p className="settings__updated">{lastSavedLabel(settings.data.updatedAt, settings.data.updatedBy)}</p>
-      ) : null}
 
       <div className="settings__layout">
         <SectionNav items={SECTIONS} selected={selected} onSelect={selectSection} />
@@ -294,17 +302,18 @@ function renderDataSection(
   applyServerChange: (patch: Partial<BusinessSettings>) => void,
 ): ReactNode {
   switch (id) {
-    // FOUR PANELS, ONE TAB. Weather area was one text box and Booking behavior
-    // was two toggles, each behind its own nav entry. Mark 16 of the
+    // FOUR PANELS, ONE TAB. Weather area was one text box and the booking
+    // toggles were two switches, each behind its own nav entry. Mark 16 of the
     // 2026-08-17 walk: "move this and weather area to related setting pages. it
     // does not need to be its own page with so little fields", and the operator
     // named Business profile as where they go.
     //
-    // Booking behavior stays its own PANEL rather than being folded into the
-    // fields above, because the two save differently: the profile fields stage
-    // a draft behind a Save button, the toggles write on every flip. Merging
-    // them into one panel would put a Save button next to controls that have
-    // already saved.
+    // The toggles stay their own PANEL (titled "Scheduling", the mock's word,
+    // since the #755 pass) rather than being folded into the fields above,
+    // because the two save differently: the profile fields stage a draft
+    // behind a Save button, the toggles write on every flip. Merging them into
+    // one panel would put a Save button next to controls that have already
+    // saved.
     //
     // ISSUE #519 gave the time zone its own panel here, on the reasoning that a
     // validated picker whose wrong value silently makes the phone line answer

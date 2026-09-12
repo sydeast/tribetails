@@ -22,11 +22,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.ArrowUp
+import com.composables.icons.lucide.ClipboardList
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Trash2
@@ -38,16 +40,15 @@ import com.tribetails.auntieos.data.model.FormSchemaSection
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChipGroup
-import com.tribetails.auntieos.ui.components.AuntieDashedAddButton
 import com.tribetails.auntieos.ui.components.AuntieDialog
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconButton
+import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieSaveBar
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSpinner
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
-import com.tribetails.auntieos.ui.components.AuntieToggle
 import com.tribetails.auntieos.ui.components.BottomBorderField
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
@@ -55,18 +56,26 @@ import com.tribetails.auntieos.ui.components.DynamicFormFields
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.GlassSurface
+import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.ui.components.StatusToast
 import com.tribetails.auntieos.ui.components.ToastKind
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
 /**
- * Den-redesign Form Schema editor (admin). Mirrors the Web sibling
- * (web/.../formschemas/FormSchemaEditorScreen.kt) and
- * ui-ideas/auntieos-formschema-editor-2026-05-27.html: a mono kicker + serif
- * heading ("New" vs "Edit" form schema) with an "Unsaved" dirty pill, glass
- * DenPanels for the schema meta and the section/field list, the type chip row,
- * the conditional Options field, the Required toggle, fail-loud validation
- * banners, and an AuntieSaveBar footer.
+ * Den-redesign Form Schema editor (admin), matched to
+ * ui-ideas/auntieos-formschema-editor-2026-05-27.html on the navy ground
+ * (#755, 2026-09-12): the kit hero band with the clipboard tile, "New" or
+ * "Edit form schema", the "{id} · v{version}" line as the band's detail and
+ * the mock's "Unsaved" pill (its own suggestion, built) under it; the schema
+ * inputs on the ground with no panel around them; a serif "Sections" bar
+ * with "Add section" as a ghost button with a plus; one glass section card
+ * per section with its "Fields (n)" bar and "Add field" ghost; the type chip
+ * row; the conditional comma-separated Options line; the Yes / No segmented
+ * picker for Required; fail-loud validation banners; and an AuntieSaveBar
+ * footer. The two DenPanels that used to wrap the meta inputs and the
+ * section list, each with a sentence of explanation under its title, are
+ * gone: the mock draws neither, and the 2026-09-11 subtitle ruling struck
+ * the sentences.
  *
  * The ViewModel contract is preserved verbatim (load / update* / move* / add* /
  * remove* / save / delete and the [FormSchemaEditorState] shape).
@@ -86,11 +95,28 @@ fun FormSchemaEditorScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val title = if (state.isNew) "New" else "Edit"
-    val subtitle = when {
+    // The mock's subtitle "{id} • v{version}" is a VALUE, so it is the band's
+    // detail line, never the tooltip.
+    val detail = when {
         state.name.isNotBlank() && state.schemaId.isNotBlank() ->
             "${state.schemaId} · v${state.originalVersion}"
         state.schemaId.isNotBlank() -> state.schemaId
         else -> null
+    }
+
+    // The mock's `.dirtypill` (its own suggestion, built): drawn in the band's
+    // badge row only while there is something to save.
+    val dirtyBadge: (@Composable () -> Unit)? = if (state.isDirty) {
+        {
+            AuntieStatusPill(
+                label = "Unsaved",
+                tone = AuntieStatusTone.Orange,
+                mono = true,
+                compact = true,
+            )
+        }
+    } else {
+        null
     }
 
     AuntieScreenScaffold(
@@ -116,16 +142,17 @@ fun FormSchemaEditorScreen(
                             kicker = "The Den · Form Schemas",
                             title = title,
                             accentTail = "form schema",
-                            subtitle = subtitle,
-                            trailing = {
-                                if (state.isDirty) {
-                                    AuntieStatusPill(
-                                        label = "Unsaved",
-                                        tone = AuntieStatusTone.Orange,
-                                        mono = true,
-                                    )
-                                }
+                            detail = detail,
+                            // The mock's `.hicon`: the clipboard on the teal-to-purple
+                            // brand gradient, 44dp on this screen.
+                            leading = {
+                                AuntieIconTile(
+                                    icon = Lucide.ClipboardList,
+                                    size = 44.dp,
+                                    background = Brush.linearGradient(c.tealToPurpleColors),
+                                )
                             },
+                            badges = dirtyBadge,
                         )
                     }
 
@@ -149,14 +176,29 @@ fun FormSchemaEditorScreen(
                         }
                     }
 
-                    item { SchemaMetaPanel(state = state, viewModel = viewModel) }
+                    item { SchemaMetaFields(state = state, viewModel = viewModel) }
 
+                    // The mock's `.secbar`: the serif "Sections" heading with "Add
+                    // section" as a ghost button with a plus on the right, then the
+                    // cards. No panel around the list.
                     item {
-                        DenPanel(
-                            title = "Sections",
-                            subtitle = "Each section groups the fields a kinfolk fills in. Need at least one section, each with at least one field.",
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "Sections",
+                                    style = AuntieTheme.typography.headlineMedium,
+                                    color = c.textPrimary,
+                                )
+                                GhostButton(
+                                    label = "Add section",
+                                    onClick = { viewModel.addSection() },
+                                    leading = { PlusGlyph() },
+                                )
+                            }
                             if (state.sections.isEmpty()) {
                                 EmptyHint("No sections yet. Use Add section to create one.")
                             }
@@ -176,21 +218,14 @@ fun FormSchemaEditorScreen(
                         )
                     }
 
-                    item {
-                        AuntieDashedAddButton(
-                            text = "Add section",
-                            onClick = { viewModel.addSection() },
-                            leadingIcon = Lucide.Plus,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-
                     // Live preview: renders the in-progress schema through the SAME
                     // runtime renderer (DynamicFormFields) a kinfolk sees. Read-only
                     // preview state - the values map below is local sample/empty data
                     // and is NEVER persisted to the schema or repository.
                     item { LivePreviewPanel(sections = state.sections) }
 
+                    // The mock's footer "Delete schema": a ghost with the coral trash,
+                    // on the left of the row. Cancel and Save are the sticky save bar's.
                     if (!state.isNew && state.schemaId.isNotBlank()) {
                         item {
                             GhostButton(
@@ -204,7 +239,6 @@ fun FormSchemaEditorScreen(
                                         modifier = Modifier.size(14.dp),
                                     )
                                 },
-                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
@@ -265,71 +299,69 @@ fun FormSchemaEditorScreen(
     }
 }
 
+/**
+ * The mock's `.meta`: the schema id, name and description inputs on the
+ * ground, 14dp apart, with nothing around them. "Applies to" is a shipped
+ * field the concept predates and stays here with them.
+ */
 @Composable
-private fun SchemaMetaPanel(
+private fun SchemaMetaFields(
     state: FormSchemaEditorState,
     viewModel: FormSchemaEditorViewModel,
 ) {
-    val c = AuntieTheme.colors
     // Schema-level validation (name / id / min-section) lives in the -1 bucket;
     // render it right under the meta inputs it concerns.
     val topErrors = FormSchemaValidator.errorsFor(state.validationErrors, -1, null)
 
-    DenPanel(
-        title = "Schema details",
-        subtitle = "Identifier, display name, and an optional admin-facing description.",
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-            FieldGroup(
-                label = if (state.isNew) "Schema ID" else "Schema ID (immutable once persisted)",
-                required = true,
-            ) {
-                BottomBorderField(
-                    value = state.schemaId,
-                    onValueChange = { viewModel.updateId(it) },
-                    label = "",
-                    placeholder = "tribeProfile",
-                    enabled = state.isNew,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            FieldGroup(label = "Name", required = true) {
-                BottomBorderField(
-                    value = state.name,
-                    onValueChange = { viewModel.updateName(it) },
-                    label = "",
-                    placeholder = "Tribe Profile",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            FieldGroup(label = "Description", optionalNote = "optional") {
-                BottomBorderField(
-                    value = state.description,
-                    onValueChange = { viewModel.updateDescription(it) },
-                    label = "",
-                    placeholder = "Optional admin-facing description",
-                    singleLine = false,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            // 1C placement: which entity this schema attaches to. NONE = global
-            // (Tribe Profile, Account Settings); entity targets replace the retired
-            // dynamic_fields appliesTo.
-            FieldGroup(label = "Applies to") {
-                AuntieChipGroup(
-                    options = FormSchemaAppliesTo.ALL,
-                    selected = setOf(state.appliesTo),
-                    onSelectionChange = { sel -> sel.firstOrNull()?.let { viewModel.updateAppliesTo(it) } },
-                    label = { it },
-                    singleSelect = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+        FieldGroup(
+            label = if (state.isNew) "Schema ID" else "Schema ID (immutable once persisted)",
+            required = true,
+        ) {
+            BottomBorderField(
+                value = state.schemaId,
+                onValueChange = { viewModel.updateId(it) },
+                label = "",
+                placeholder = "tribeProfile",
+                enabled = state.isNew,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        FieldGroup(label = "Name", required = true) {
+            BottomBorderField(
+                value = state.name,
+                onValueChange = { viewModel.updateName(it) },
+                label = "",
+                placeholder = "Tribe Profile",
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        FieldGroup(label = "Description", optionalNote = "optional") {
+            BottomBorderField(
+                value = state.description,
+                onValueChange = { viewModel.updateDescription(it) },
+                label = "",
+                placeholder = "Optional admin-facing description",
+                singleLine = false,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // 1C placement: which entity this schema attaches to. NONE = global
+        // (Tribe Profile, Account Settings); entity targets replace the retired
+        // dynamic_fields appliesTo.
+        FieldGroup(label = "Applies to") {
+            AuntieChipGroup(
+                options = FormSchemaAppliesTo.ALL,
+                selected = setOf(state.appliesTo),
+                onSelectionChange = { sel -> sel.firstOrNull()?.let { viewModel.updateAppliesTo(it) } },
+                label = { it },
+                singleSelect = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
-            if (topErrors.isNotEmpty()) {
-                ValidationBanner(messages = topErrors.map { it.message })
-            }
+        if (topErrors.isNotEmpty()) {
+            ValidationBanner(messages = topErrors.map { it.message })
         }
     }
 }
@@ -456,6 +488,8 @@ private fun SectionCard(
                 ValidationBanner(messages = sectionLevelErrors.map { it.message })
             }
 
+            // The mock's `.fldsbar`: the count on the left, "Add field" as a ghost
+            // with a plus on the right, over the field cards.
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -465,6 +499,12 @@ private fun SectionCard(
                     text = "Fields (${fields.size})",
                     style = AuntieTheme.typography.titleSmall,
                     color = c.textPrimary,
+                )
+                GhostButton(
+                    label = "Add field",
+                    onClick = { viewModel.addField(index) },
+                    leading = { PlusGlyph() },
+                    modifier = Modifier.testTag("add-field-$index"),
                 )
             }
 
@@ -489,13 +529,6 @@ private fun SectionCard(
                     }
                 }
             }
-
-            AuntieDashedAddButton(
-                text = "Add field",
-                onClick = { viewModel.addField(index) },
-                leadingIcon = Lucide.Plus,
-                modifier = Modifier.fillMaxWidth().testTag("add-field-$index"),
-            )
         }
     }
 }
@@ -574,14 +607,15 @@ private fun FieldCard(
                 onSelect = { viewModel.updateFieldType(sectionIndex, fieldIndex, it) },
             )
 
+            // The mock's "Options (comma-separated) *" line. The view model already
+            // splits on commas as well as newlines, so the label and the value agree.
             if (FormSchemaFieldType.requiresOptions(field.type)) {
-                FieldGroup(label = "Options (one per line)", required = true) {
+                FieldGroup(label = "Options (comma-separated)", required = true) {
                     BottomBorderField(
-                        value = field.options.orEmpty().joinToString("\n"),
+                        value = field.options.orEmpty().joinToString(", "),
                         onValueChange = { viewModel.updateFieldOptions(sectionIndex, fieldIndex, it) },
                         label = "",
-                        placeholder = "Option 1\nOption 2",
-                        singleLine = false,
+                        placeholder = "Small, Medium, Large",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -620,15 +654,19 @@ private fun FieldCard(
                 )
             }
 
+            // The mock's `.reqrow`: "Required" with a Yes / No segmented picker,
+            // the chosen half cream on navy, not a toggle.
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text("Required", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                AuntieToggle(
-                    checked = field.required,
-                    onCheckedChange = { viewModel.updateFieldRequired(sectionIndex, fieldIndex, it) },
+                SegmentedPicker(
+                    options = listOf(true, false),
+                    selected = field.required,
+                    onSelect = { viewModel.updateFieldRequired(sectionIndex, fieldIndex, it) },
+                    label = { if (it) "Yes" else "No" },
                 )
             }
 
@@ -655,6 +693,16 @@ private fun FieldTypeChipRow(
         label = { it.displayLabel },
         singleSelect = true,
         modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** The plus the mock draws inside its "Add section" and "Add field" ghosts. */
+@Composable
+private fun PlusGlyph() {
+    androidx.compose.material3.Icon(
+        imageVector = Lucide.Plus,
+        contentDescription = null,
+        modifier = Modifier.size(14.dp),
     )
 }
 

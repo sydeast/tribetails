@@ -31,6 +31,24 @@
 
   Where Kotlin uses a placeholder em dash for empty values, this renders a plain hyphen "-".
   Sample field labels / values are illustrative placeholder, NOT real data (see HTML comments).
+
+  OPERATOR RULINGS SINCE THIS CONCEPT (recorded 2026-09-12, #755, so a later pass does not undo them):
+    - THE WEB EDITOR IS A WORKFLOW MODAL, NOT THIS PAGE (operator instruction, 2026-08-08, recorded in the
+      header of auntieos-admin/src/screens/FormSchemaEditor.tsx). The 2026-08-06 layout review found this and the
+      KinTale template editor to be the two tallest screens in the set, and splitting the form across named
+      steps was the chosen answer. The web editor opens over the list in `components/WizardModal` with three
+      steps, Schema / Sections / Review, and the list stays behind it. This page's hero, Back button and footer
+      row are therefore the wizard's title, Cancel and Save on web; the "{id} • v{version}" subtitle is a
+      Version row on the Review step. Android, a full screen, keeps the hero band and the footer as drawn.
+    - NOTHING IS FOLDED (same ruling, 2026-08-08): helper text, placeholder, default value and group are always
+      drawn in the field card. Suggestion 3 (collapse / expand on section cards) is ruled out by the same words.
+    - SUGGESTIONS 1 AND 2 ARE BUILT: the live preview is the wizard's aside column on web and a panel on
+      Android; the "Unsaved" pill is the Android hero's badge, and the wizard's discard guard on web.
+    - "Applies to" (NONE / KINFOLK / KIN / SESSION) is a shipped, persisted field the concept predates. It sits
+      with the header inputs on both platforms and is not drawn below.
+    - Everything inside the page is matched as drawn: bottom-border inputs, the section card on the panel
+      gradient, the field card on navy-3, the type chip row, the comma-separated Options line, the stacked
+      optional fields and the Yes / No segmented picker.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

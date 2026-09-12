@@ -22,10 +22,11 @@ import {
 } from '../lib/mediaFormat';
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
-import { DenScreenHeading } from '../components/DenScreenKit';
+import { DenScreenHeading, StatusPill, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
+import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { deleteMediaFile, mediaWriteErrorMessage } from '../api/mediaWrite';
@@ -76,6 +77,18 @@ import './Gallery.css';
  *   The mock's back arrow has no counterpart here, and that is not a gap: the
  *   mock mirrors the entity-scoped Android screen, and this Gallery is a
  *   top-level nav destination with nowhere to go back to.
+ *
+ *   SKIN (#755, the glass sweep) is the mock's too, on the navy ground the kit
+ *   paints since #759. The 2026-09-10 pass matched structure; this one matched
+ *   what the tile is painted with: the mock's play badge (navy glass, primary
+ *   glyph), the duration badge at the bottom start, the profile marker as the
+ *   kit's compact teal `StatusPill`, a document or audio file drawn as the
+ *   mock's file cell (glyph and file name, in the tile, at rest) instead of a
+ *   bare glyph, the hover strip and the tag chip tinted from the brand navy
+ *   token instead of black, the tile lifting on hover through the shared `lift`
+ *   utility, and the mock's empty block with its own two lines of copy. The
+ *   heading takes the mock's `<scope> Media` shape: the accent word is
+ *   "media", the scope of this screen being every household.
  *
  *   DELETE (#692) goes through the `deleteMediaFile` callable, the same path
  *   `Media.tsx` uses, with the mock's confirm copy verbatim. It passes NO
@@ -192,11 +205,17 @@ export function Gallery() {
       {/* Upload and the count chip both ride in the heading's trailing slot, as
           the mock puts them in its top bar, rather than on a row of their own
           below the subtitle. The mock's back arrow has no counterpart here: it
-          is entity-scoped and this Gallery is a top-level nav screen. */}
+          is entity-scoped and this Gallery is a top-level nav screen.
+
+          The kicker names the nav destination, the way every list screen's
+          does (Directory, Invites); the mock's "The Den · Media" belongs to the
+          entity-scoped screen it mirrors. The title takes the mock's shape,
+          "<scope> Media" with the last word accented: this screen's scope is
+          every household, so the scope word is "All". */}
       <DenScreenHeading
         kicker="The Den · Gallery"
-        title="Every"
-        accentTail="moment."
+        title="All"
+        accentTail="media"
         subtitle="All media from every KinTale, tagged to its household."
         trailing={
           <div className="gallery__header-actions">
@@ -228,10 +247,8 @@ export function Gallery() {
         state={mediaState}
         what="media"
         isEmpty={(rows) => rows.length === 0}
-        loading={<p className="gallery__hint">Loading media…</p>}
-        empty={
-          <p className="gallery__hint">No media uploaded yet. Photos and videos from KinTales show up here.</p>
-        }
+        loading={<LoadingRow label="Loading media…" className="den-hint" />}
+        empty={<GalleryEmpty />}
       >
         {(rows) => (
           <GalleryGrid
@@ -360,6 +377,26 @@ function GalleryCountChip({ total }: { total: number }) {
           not emphasis, and a screen reader should not stress it. */}
       <span className="gallery__count-chip-n">{total}</span> {total === 1 ? 'file' : 'files'}
     </span>
+  );
+}
+
+/**
+ * The mock's `.empty` block (#755): a dashed hairline frame on a faint hero
+ * wash, the image glyph at half strength, a serif title and one dim line under
+ * it, with the mock's own two lines of copy verbatim ("No media files found" /
+ * "Upload photos and videos to see them here"). The kit's `EmptyHint` is the
+ * quiet one-line hint for a panel; the mock draws this screen's proven-empty
+ * state as a block of its own, so the block is local. Rendered only from a
+ * resolved, genuinely empty read: `AsyncRegion` never shows `empty` on a
+ * failure.
+ */
+function GalleryEmpty() {
+  return (
+    <div className="gallery__empty">
+      <ImageGlyph className="gallery__empty-glyph" />
+      <p className="gallery__empty-title">No media files found</p>
+      <p className="gallery__empty-sub">Upload photos and videos to see them here</p>
+    </div>
   );
 }
 
@@ -519,7 +556,7 @@ function GalleryGrid({
       </p>
 
       {visible.length === 0 ? (
-        <p className="gallery__hint">No media matches these filters.</p>
+        <EmptyHint>No media matches these filters.</EmptyHint>
       ) : (
         <ul className="gallery__grid">
           {visible.map((m) => (
@@ -671,31 +708,59 @@ function GalleryTile({ media, householdName, taggedNames, onOpen, onDelete }: Ga
   // be able to see without opening a log.
   const stripFailed = mediaGpsStripState(media) === 'failed';
   const accessibleLabel = caption !== '' ? caption : 'Media';
+  /**
+   * The mock's `.filecell` (#755): a DOCUMENT or AUDIO file has no frame to
+   * preview, so the mock draws its glyph and its `originalFileName` in the
+   * tile itself, at rest, two lines at most. That is the one text the mock
+   * prints on a tile without hover, and it is the file name, never the caption:
+   * the caption (`description`) stays in the hover strip like every other
+   * tile's. When the two are the same string (no description, so `mediaCaption`
+   * fell back to the file name) the strip drops its caption line rather than
+   * reading the name out twice.
+   */
+  const fileCell = kind === 'document' || kind === 'audio';
+  const fileName = str(media.originalFileName).trim() !== '' ? str(media.originalFileName).trim() : caption;
+  const stripCaption = caption !== '' && !(fileCell && caption === fileName);
 
   return (
     <li className="gallery__cell">
-      <button type="button" className="gallery__tile" onClick={() => onOpen(media)} aria-label={`Open ${accessibleLabel}`}>
+      <button type="button" className="gallery__tile lift" onClick={() => onOpen(media)} aria-label={`Open ${accessibleLabel}`}>
         <div className="gallery__tile-media">
-          <Avatar
-            label={accessibleLabel}
-            // Only image/video kinds ever try a thumbnail: a document/audio row
-            // with a stray thumbnailUrl set would still not get an image preview,
-            // matching the wasm's `canShowImage` gate exactly.
-            imageUrl={mediaKindHasPreview(kind) ? previewUrl : undefined}
-            glyph={<TypeGlyph kind={kind} />}
-            gradientSeed={media._id !== '' ? media._id : accessibleLabel}
-            shape="rounded"
-            ring={false}
-            size={TILE_GLYPH_SCALE}
-            className="gallery__tile-avatar"
-          />
+          {fileCell ? (
+            <span className="gallery__tile-file">
+              <span className="gallery__tile-file-glyph" aria-hidden="true">
+                <TypeGlyph kind={kind} />
+              </span>
+              {fileName !== '' && <span className="gallery__tile-file-name">{fileName}</span>}
+            </span>
+          ) : (
+            <Avatar
+              label={accessibleLabel}
+              // Only image/video kinds ever try a thumbnail: a row of another
+              // kind with a stray thumbnailUrl set would still not get an image
+              // preview, matching the wasm's `canShowImage` gate exactly.
+              imageUrl={mediaKindHasPreview(kind) ? previewUrl : undefined}
+              glyph={<TypeGlyph kind={kind} />}
+              gradientSeed={media._id !== '' ? media._id : accessibleLabel}
+              shape="rounded"
+              ring={false}
+              size={TILE_GLYPH_SCALE}
+              className="gallery__tile-avatar"
+            />
+          )}
           {kind === 'video' && (
             <span className="gallery__tile-play" aria-hidden="true">
               <PlayGlyph />
             </span>
           )}
           {duration !== undefined && <span className="gallery__tile-duration">{duration}</span>}
-          {media.isProfilePhoto && <span className="gallery__tile-profile-badge">Profile</span>}
+          {/* The mock's `.pf` marker: a small uppercase mono capsule tinted
+              teal, which is the kit's compact StatusPill in its default tone. */}
+          {media.isProfilePhoto && (
+            <span className="gallery__tile-profile-badge">
+              <StatusPill label="Profile" tone="teal" size="compact" />
+            </span>
+          )}
           {stripFailed && (
             <span className="gallery__tile-strip-badge" title="Location metadata could not be removed from this video.">
               Location not removed
@@ -710,7 +775,7 @@ function GalleryTile({ media, householdName, taggedNames, onOpen, onDelete }: Ga
             global grid unable to say whose photo a tile is.
           */}
           <span className="gallery__tile-caption-strip">
-            {caption !== '' && <span className="gallery__tile-caption">{caption}</span>}
+            {stripCaption && <span className="gallery__tile-caption">{caption}</span>}
             <span className="gallery__tile-household">
               {householdText(str(media.kinfolkId), householdName)}
             </span>
@@ -798,6 +863,17 @@ function AudioGlyph() {
       <path d="M9 17V5l11-2v12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
       <circle cx="6.5" cy="17.5" r="2.5" />
       <circle cx="17.5" cy="15.5" r="2.5" />
+    </svg>
+  );
+}
+
+/** The mock's empty-state image glyph (a frame, a sun, a hill), drawn at half strength over the block. */
+function ImageGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" className={className} aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <circle cx="8.5" cy="8.5" r="1.6" />
+      <path d="m21 15-5-5L5 21" />
     </svg>
   );
 }

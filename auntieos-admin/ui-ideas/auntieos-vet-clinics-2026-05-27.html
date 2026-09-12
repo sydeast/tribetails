@@ -9,6 +9,16 @@
   Same "Den" aesthetic. No em dashes. Palette from AuntieColors.kt.
   Mirrors VetClinic data model (name, phone, address, notes) from FirestoreClient.kt.
   Sample content is illustrative placeholder, not real clinic data.
+  AMENDED 2026-09-12 (issue #755 sweep) to the rulings that postdate this concept:
+    * The row action is RETIRE, not Remove. There is no delete callable
+      (auntieos-admin/src/api/vetClinicsWrite.ts, "There is no delete") and the ruling on
+      this screen is to build on the callables that exist, so the control archives through
+      archiveVetClinic: households point at a clinic by id with no referential integrity,
+      and a hard delete would strand every one of them. The trash can is an archive box and
+      the title reads Retire on both platforms.
+    * The "New admin surface" banner is a concept-time note about where the mock came from,
+      not screen content. The screen exists now and renders no banner; its explanation is the
+      hero's info tooltip (subtitle ruling, 2026-09-11).
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -129,6 +139,7 @@
       <button class="add">＋ Add clinic</button>
     </div>
 
+    <!-- Concept-time note about the mock's origin. Not screen content: the screen exists now. -->
     <div class="banner">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
       <div class="bx">
@@ -160,7 +171,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>5</b> households</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -178,7 +189,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>3</b> households</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -196,7 +207,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>2</b> households</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -214,7 +225,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>4</b> households</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -232,7 +243,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>1</b> household</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>
@@ -250,7 +261,7 @@
           <span class="linked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V7a3 3 0 0 1 6 0v4"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg> <b>0</b> households</span>
           <div class="vact">
             <button class="iconbtn" title="Edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
-            <button class="iconbtn danger" title="Remove"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button class="iconbtn danger" title="Retire"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg></button>
           </div>
         </div>
       </div>

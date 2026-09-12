@@ -86,13 +86,15 @@ describe('account photo', () => {
     });
     cy.wait('@cloudinary');
 
-    cy.get('.account__hero img', { timeout: 6_000 }).should('have.attr', 'src', PNG_DATA_URI);
+    // `.account__hero` is the kit band since the #755 sweep; the avatar sits in
+    // its leading slot.
+    cy.get('.account__hero .den-heading-leading img', { timeout: 6_000 }).should('have.attr', 'src', PNG_DATA_URI);
 
     // The write, not the state. A screen that showed the returned URL and
     // never saved it would pass everything above.
     cy.reload();
     cy.get('.account__fields', { timeout: 6_000 }).should('exist');
-    cy.get('.account__hero img').should('have.attr', 'src', PNG_DATA_URI);
+    cy.get('.account__hero .den-heading-leading img').should('have.attr', 'src', PNG_DATA_URI);
   });
 
   it('keeps the current photo and says why when Cloudinary refuses', () => {
@@ -112,7 +114,7 @@ describe('account photo', () => {
     // uploaded one, the initials fallback on a fresh seed. Captured as markup
     // so "unchanged" holds for either, and this test does not depend on the
     // upload test having run first.
-    cy.get('.account__hero')
+    cy.get('.account__hero .den-heading-leading')
       .find('img, [role="img"]')
       .first()
       .invoke('prop', 'outerHTML')
@@ -130,10 +132,10 @@ describe('account photo', () => {
         // spec does not stub them), and a bare `get` would assert against the
         // concatenated text of both.
         cy.contains('[role="alert"]', 'e2e: refused on purpose').should('exist');
-        cy.get('.account__hero').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
+        cy.get('.account__hero .den-heading-leading').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
         cy.reload();
         cy.get('.account__fields', { timeout: 6_000 }).should('exist');
-        cy.get('.account__hero').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
+        cy.get('.account__hero .den-heading-leading').find('img, [role="img"]').first().invoke('prop', 'outerHTML').should('eq', before);
       });
   });
 });

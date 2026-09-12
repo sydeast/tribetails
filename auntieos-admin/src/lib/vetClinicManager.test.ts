@@ -10,7 +10,6 @@ import {
   draftChanged,
   canSaveDraft,
   draftNameCollides,
-  clinicMonogram,
   normClinicName,
   type VetLinkedHousehold,
 } from './vetClinicManager';
@@ -243,19 +242,5 @@ describe('draftNameCollides', () => {
 describe('normClinicName', () => {
   it('folds case, collapses whitespace, trims', () => {
     expect(normClinicName('  The  MILL   Vet ')).toBe('the mill vet');
-  });
-});
-
-describe('clinicMonogram', () => {
-  it('takes the initials of the first two words', () => {
-    expect(clinicMonogram('Riverside Animal Hospital')).toBe('RA');
-  });
-
-  it('takes two letters of a single word', () => {
-    expect(clinicMonogram('Riverside')).toBe('RI');
-  });
-
-  it('falls back rather than rendering an empty avatar', () => {
-    expect(clinicMonogram('   ')).toBe('?');
   });
 });

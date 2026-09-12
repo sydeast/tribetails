@@ -1,8 +1,11 @@
+import { type ReactNode } from 'react';
 import { useRovingTabs } from '../../lib/useRovingTabs';
 
 export interface SectionNavItem<Id extends string> {
   id: Id;
   label: string;
+  /** The mock's 17px stroke glyph before the label. Decorative: the label is the name. */
+  icon?: ReactNode;
 }
 
 interface SectionNavProps<Id extends string> {
@@ -28,11 +31,15 @@ export function sectionPanelId(id: string): string {
 /**
  * The left, vertical section nav: a real WAI-ARIA `tablist`, the same
  * `useRovingTabs` keyboard contract every other tablist in this app uses
- * (`NotificationGate`, `Templates`, `Invoices`…), only oriented vertically so
+ * (`NotificationGate`, `Templates`, `Invoices`...), only oriented vertically so
  * Up/Down move between sections and one Tab keypress leaves the whole list.
  * Clicking (or Enter/Space on a focused tab) switches which single panel the
  * shell renders in the right column; this component owns none of that state, it
  * just reports the chosen id up through `onSelect`.
+ *
+ * Drawn as the mock's `.secnav` (issue #755): a glass panel of its own on the
+ * navy ground, each row an icon and a label, the open one painted cream with
+ * navy text. The surface and the row states live in `Settings.css`.
  */
 export function SectionNav<Id extends string>({
   items,
@@ -70,7 +77,8 @@ export function SectionNav<Id extends string>({
             onClick={() => onSelect(item.id)}
             {...getTabProps(index)}
           >
-            {item.label}
+            {item.icon}
+            <span className="settings__nav-label">{item.label}</span>
           </button>
         );
       })}

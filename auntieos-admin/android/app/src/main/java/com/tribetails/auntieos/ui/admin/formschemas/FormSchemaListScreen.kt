@@ -1,17 +1,19 @@
 package com.tribetails.auntieos.ui.admin.formschemas
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,9 +25,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronUp
+import com.composables.icons.lucide.ClipboardList
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -36,37 +43,44 @@ import com.tribetails.auntieos.data.model.FormSchemaSummary
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
-import com.tribetails.auntieos.ui.components.AuntieDashedAddButton
 import com.tribetails.auntieos.ui.components.AuntieDialog
-import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieIconButton
+import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSearchField
-import com.tribetails.auntieos.ui.components.AuntieStatusPill
-import com.tribetails.auntieos.ui.components.AuntieStatusTone
-import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
-import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.launch
 
 /**
- * Den-redesign Form Schemas list ("The Den · Admin"), ported from the redesigned
- * web counterpart (web/.../admin/formschemas/FormSchemaListScreen.kt).
+ * Den-redesign Form Schemas list ("The Den · Admin"), matched to
+ * ui-ideas/auntieos-formschema-list-2026-05-27.html on the navy ground
+ * (#755, 2026-09-12).
  *
- * A mono kicker + serif heading, a dashed "New schema" add affordance, and a glass
- * [DenPanel] holding a sort strip ([SchemaSortHeader], issue #717) over the schema
- * rows. Each row is an [AuntieEntityRow] showing the schema name, its id, and
- * updated metadata, with an [AuntieStatusPill] version tag. Load failures surface
- * loudly via [AuntieBanner] (fail-loud policy), never a silent empty list.
+ * The mock's head is the kit hero band with the clipboard tile before the
+ * kicker and title and a PrimaryButton "New schema"; under it the mock's
+ * controls row (the filter box and the count chip, both the mock's own
+ * SUGGESTION items, built) and then the table: a hairline frame with the
+ * sort strip ([SchemaSortHeader], issue #717) as its header row on navy-3 and
+ * striped rows below. No DenPanel wraps any of it and no second title sits
+ * over it; that panel-with-a-title shape was this screen's own invention.
+ * Reload is the mock's footer ghost button. Load failures surface loudly via
+ * [AuntieBanner] (fail-loud policy), never a silent empty list, and the
+ * loading, failing and proven-empty states sit in the mock's centred box.
+ *
+ * A phone row stays ONE row per schema, not four literal columns: the row
+ * carries the same four fields the web table lays out side by side (name,
+ * version, updated, updated by), stacked, the way the design doc's Android
+ * rule reads. The sort strip is the part of the mock's table that does have a
+ * phone analogue, choosing what order the rows come in.
  *
  * The android ViewModel/repository contract is preserved exactly:
  * [AuntieRepository.listFormSchemas] returns Result<List<FormSchemaSummary>>, and
  * [onOpenEditor] takes a nullable schemaId (null = create-new) as before.
  *
- * The client-side search field and the visible-count chip are always on. Per-row
- * delete is wired to the deployed `deleteFormSchema` callable (via
+ * Per-row delete is wired to the deployed `deleteFormSchema` callable (via
  * [AuntieRepository.deleteFormSchema]) behind a confirm dialog; the list reloads on
  * success and fails loud on error.
  */
@@ -183,8 +197,8 @@ fun FormSchemaListScreen(
     // every successful reload so a stale failure never lingers behind fresh data.
     var loadError by remember { mutableStateOf<String?>(null) }
     // Default: most-recently-updated first (matches the mock's shipped default).
-    // Actually reachable now: the sort strip below calls setSortColumn/onSort,
-    // where before this state had no header to move it and never changed.
+    // The sort strip below calls onSort, where before #717 this state had no
+    // header to move it and never changed.
     var sortColumn by remember { mutableStateOf(SortColumn.UPDATED_AT) }
     var sortDescending by remember { mutableStateOf(true) }
     // uid -> email, from listBusinessAdmins (issue #450's roster reader). Loaded
@@ -263,21 +277,39 @@ fun FormSchemaListScreen(
                     title = "Form",
                     accentTail = "Schemas",
                     subtitle = "Author the dynamic forms kinfolk fill out.",
+                    // The mock's `.hicon`: a 46dp tile on the teal-to-purple brand
+                    // gradient with the clipboard glyph in cream. Decorative: it
+                    // restates the title, so it announces nothing of its own.
+                    leading = {
+                        AuntieIconTile(
+                            icon = Lucide.ClipboardList,
+                            size = 46.dp,
+                            background = Brush.linearGradient(c.tealToPurpleColors),
+                        )
+                    },
                     trailing = {
-                        AuntieDashedAddButton(
-                            text = "New schema",
+                        // The mock's PrimaryButton "New schema" with a plus. Under the
+                        // title block: that is where the band puts the actions of a
+                        // heading that has a leading tile.
+                        PrimaryButton(
+                            label = "New schema",
                             // Preserve the android create-new contract: null opens the
                             // editor in create mode.
                             onClick = { onOpenEditor(null) },
-                            leadingIcon = Lucide.Plus,
+                            leading = {
+                                Icon(
+                                    imageVector = Lucide.Plus,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
                         )
                     },
                 )
             }
 
             // Fail-loud: surface a list-load failure as a persistent error banner with
-            // a retry, never a silent empty list. Surfaced above the panel so it is
-            // unmissable.
+            // a retry, never a silent empty list. Above the table so it is unmissable.
             loadError?.let { msg ->
                 item {
                     AuntieBanner(
@@ -316,81 +348,58 @@ fun FormSchemaListScreen(
                 }
             }
 
-            item {
-                DenPanel(
-                    title = "All schemas",
-                    subtitle = "Tap a row to open it in the editor. The editor owns create, edit, save, and delete.",
-                    modifier = Modifier.fillMaxWidth(),
-                    trailing = {
-                        if (!loading && loadError == null && sorted.isNotEmpty()) {
-                            // Row-count chip reflecting the visible (filtered) count.
-                            AuntieStatusPill(
-                                label = "${visible.size} schemas",
-                                tone = AuntieStatusTone.Neutral,
-                                mono = true,
-                            )
-                        }
-                    },
-                ) {
-                    when {
-                        loading -> EmptyHint("Loading schemas…")
-                        loadError != null -> EmptyHint(
-                            "Schemas unavailable while the load is failing.",
-                            error = true,
-                        )
-                        sorted.isEmpty() -> EmptyHint("No schemas yet. Tap New schema to create one.")
-                        else -> {
-                            // Client-side search over the loaded schemas (always on).
+            when {
+                loading -> item { SchemaStateBox("Loading schemas…") }
+                loadError != null -> item {
+                    SchemaStateBox("Schemas unavailable while the load is failing.", error = true)
+                }
+                // "Tap", not the mock's "Click": the mock quotes the web screen and
+                // this is the one place the word has to match the device.
+                sorted.isEmpty() -> item { SchemaStateBox("No schemas yet. Tap New schema to create one.") }
+                else -> {
+                    item {
+                        // The mock's `.controls`: the filter box taking the row and
+                        // the count chip beside it, reflecting the visible count.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(dims.space3),
+                        ) {
                             AuntieSearchField(
                                 value = query,
                                 onValueChange = { query = it },
                                 placeholder = "Filter schemas by name or id...",
                                 leadingIcon = Lucide.Search,
                                 onClear = { query = "" },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = dims.space3),
+                                modifier = Modifier.weight(1f),
                             )
-
-                            // The sort strip: four tappable column labels, the active one
-                            // tinted with a caret. This is what makes sortColumn /
-                            // sortDescending (declared above) reachable at all; before this
-                            // change nothing in the composable ever assigned them.
-                            SchemaSortHeader(
-                                sortColumn = sortColumn,
-                                sortDescending = sortDescending,
-                                onSort = { column ->
-                                    if (sortColumn == column) {
-                                        sortDescending = !sortDescending
-                                    } else {
-                                        sortColumn = column
-                                        sortDescending = false
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = dims.space2),
-                            )
-
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(dims.space2),
-                            ) {
-                                visible.forEachIndexed { idx, row ->
-                                    SchemaRow(
-                                        row = row,
-                                        emailByUid = emailByUid,
-                                        showDivider = idx < visible.lastIndex,
-                                        deleting = deletingId == row.id,
-                                        deleteEnabled = deletingId == null,
-                                        onClick = { onOpenEditor(row.id) },
-                                        onRequestDelete = { deleteTarget = row },
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.height(dims.space4))
-                            GhostButton(label = "Reload", onClick = { scope.launch { reload() } })
+                            SchemaCountChip(count = visible.size)
                         }
+                    }
+
+                    item {
+                        SchemaTable(
+                            rows = visible,
+                            emailByUid = emailByUid,
+                            sortColumn = sortColumn,
+                            sortDescending = sortDescending,
+                            onSort = { column ->
+                                if (sortColumn == column) {
+                                    sortDescending = !sortDescending
+                                } else {
+                                    sortColumn = column
+                                    sortDescending = false
+                                }
+                            },
+                            deletingId = deletingId,
+                            onOpen = { onOpenEditor(it.id) },
+                            onRequestDelete = { deleteTarget = it },
+                        )
+                    }
+
+                    // The mock's footer: Reload as a ghost button under the table.
+                    item {
+                        GhostButton(label = "Reload", onClick = { scope.launch { reload() } })
                     }
                 }
             }
@@ -423,72 +432,198 @@ fun FormSchemaListScreen(
     }
 }
 
+/** The mock's `.table` corner: it says 9px. */
+private val SchemaTableShape = RoundedCornerShape(9.dp)
+
+/** The mock's `.search`, `.countchip` and `.panel` corner: 13 and 12; one step. */
+private val SchemaBoxShape = RoundedCornerShape(12.dp)
+
+/**
+ * The mock's `.panel`: the loading, failing and proven-empty states in one
+ * centred box on the panel top, on a hairline, 26dp inside, in the dim text
+ * (coral when it is a failure). A state, not a titled section, so not a
+ * DenPanel.
+ */
+@Composable
+private fun SchemaStateBox(text: String, error: Boolean = false) {
+    val c = AuntieTheme.colors
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(SchemaBoxShape)
+            .background(c.surface)
+            .border(AuntieTheme.dims.borderHairline, c.border, SchemaBoxShape)
+            .padding(26.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = AuntieTheme.typography.bodyMedium,
+            color = if (error) c.error else c.textDim,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * The mock's `.countchip`: the visible count in 11sp mono on the navy-3 box
+ * the search field wears, with a hairline. Not an AuntieStatusPill: it is a
+ * count, not a state, and the mock draws it as a box rather than a capsule.
+ */
+@Composable
+private fun SchemaCountChip(count: Int) {
+    val c = AuntieTheme.colors
+    Box(
+        modifier = Modifier
+            .clip(SchemaBoxShape)
+            .background(c.surface2)
+            .border(AuntieTheme.dims.borderHairline, c.border, SchemaBoxShape)
+            .padding(horizontal = 13.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = "$count schemas",
+            style = AuntieTheme.typography.mono.copy(fontSize = 11.sp, letterSpacing = 0.6.sp),
+            color = c.textDim,
+        )
+    }
+}
+
+/**
+ * The mock's `.table`: a hairline frame, the sort strip as the header row on
+ * navy-3, then one striped [SchemaRow] per schema. The stripes are the panel
+ * gradient's two stops laid out as alternate rows, the way the mock's
+ * `.trow:nth-child` rules read.
+ */
+@Composable
+private fun SchemaTable(
+    rows: List<FormSchemaSummary>,
+    emailByUid: Map<String, String>,
+    sortColumn: SortColumn,
+    sortDescending: Boolean,
+    onSort: (SortColumn) -> Unit,
+    deletingId: String?,
+    onOpen: (FormSchemaSummary) -> Unit,
+    onRequestDelete: (FormSchemaSummary) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(SchemaTableShape)
+            .border(dims.borderHairline, c.border, SchemaTableShape),
+    ) {
+        SchemaSortHeader(
+            sortColumn = sortColumn,
+            sortDescending = sortDescending,
+            onSort = onSort,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(c.surface2)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+        )
+        rows.forEachIndexed { idx, row ->
+            SchemaRow(
+                row = row,
+                emailByUid = emailByUid,
+                striped = idx % 2 == 1,
+                deleting = deletingId == row.id,
+                deleteEnabled = deletingId == null,
+                onClick = { onOpen(row) },
+                onRequestDelete = { onRequestDelete(row) },
+            )
+        }
+    }
+}
+
+/**
+ * One schema, the mock's `.trow` on a phone: the name in Fraunces over the
+ * mono id, the updated line under them, the version in mono and the
+ * hover-revealed trash on the right. Tapping the row opens the editor.
+ *
+ * The updated line goes through [formSchemaUpdatedMeta], NOT the raw
+ * `updatedAt`. This line used to interpolate `row.updatedAt` directly and
+ * printed the machine instant ("updated 2026-08-02T10:15:00.000Z by
+ * e2e-admin") at the operator; the helper formats it as a LOCAL `MM-DD HH:mm`
+ * and says `date unknown` out loud when the field is absent. This
+ * intentionally does NOT match the web table's own Updated cell, which prints
+ * the FULL local timestamp with the year in its own column: a bare "-" is
+ * unambiguous under a column header naming the field, but ambiguous stacked
+ * into one line with nothing to say what field it names, so this row keeps
+ * `formSchemaUpdatedLabel`'s "date unknown" here instead of borrowing "-".
+ *
+ * `updatedBy` is resolved through `emailByUid` (from `listBusinessAdmins`,
+ * loaded by [FormSchemaListScreen]) before it reaches the meta string, so a
+ * known admin's uid reads as their email, matching the web table's Updated
+ * by column; an unresolved value (a seed script name, staff who left) is
+ * shown as-is.
+ */
 @Composable
 private fun SchemaRow(
     row: FormSchemaSummary,
     emailByUid: Map<String, String>,
-    showDivider: Boolean,
+    striped: Boolean,
     deleting: Boolean,
     deleteEnabled: Boolean,
     onClick: () -> Unit,
     onRequestDelete: () -> Unit,
 ) {
-    // Fold the Updated / Updated-by fields into the row subtitle: a phone is one
-    // column wide, so the web table's four columns collapse to this single-line
-    // AuntieEntityRow, per the design doc's Android rule for the redesign (a
-    // phone row carries the same FIELDS the web draws in columns, name/version/
-    // updated/updated-by, all four are still here, just stacked into one line
-    // instead of laid out side by side).
-    //
-    // Through [formSchemaUpdatedMeta], NOT the raw `updatedAt`. This line used
-    // to interpolate `row.updatedAt` directly and printed the machine instant
-    // ("updated 2026-08-02T10:15:00.000Z by e2e-admin") at the operator; the
-    // helper formats it as a LOCAL `MM-DD HH:mm` and says `date unknown` out
-    // loud when the field is absent. This intentionally does NOT match the web
-    // table's own Updated cell, which now prints the FULL local timestamp with
-    // the year in its own column: a bare "-" is unambiguous under a column
-    // header naming the field, but ambiguous stacked into one subtitle line
-    // with nothing to say what field it names, so this row keeps
-    // `formSchemaUpdatedLabel`'s "date unknown" here instead of borrowing "-".
-    //
-    // `updatedBy` is resolved through `emailByUid` (from `listBusinessAdmins`,
-    // loaded by [FormSchemaListScreen]) before it reaches the meta string, so a
-    // known admin's uid reads as their email, matching the web table's Updated
-    // by column; an unresolved value (a seed script name, staff who left) is
-    // shown as-is.
-    val subtitle = if (deleting) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val name = row.name.ifBlank { row.id }
+    val meta = if (deleting) {
         "Deleting..."
     } else {
         val by = emailByUid[row.updatedBy] ?: row.updatedBy
-        "${row.id}  ·  ${formSchemaUpdatedMeta(row.updatedAt, by)}"
+        formSchemaUpdatedMeta(row.updatedAt, by)
     }
-
-    AuntieEntityRow(
-        title = row.name.ifBlank { row.id },
-        subtitle = subtitle,
-        showDivider = showDivider,
-        onClick = onClick,
-        trailing = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space2),
-            ) {
-                AuntieStatusPill(
-                    label = "v${row.version}",
-                    tone = AuntieStatusTone.Teal,
-                    mono = true,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (striped) c.surface2.copy(alpha = 0.5f) else c.surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(dims.space3),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = AuntieTheme.typography.titleLarge,
+                    color = c.textPrimary,
                 )
-                AuntieIconButton(
-                    icon = Lucide.Trash2,
-                    contentDescription = "Delete ${row.name.ifBlank { row.id }}",
-                    onClick = onRequestDelete,
-                    destructive = true,
-                    enabled = deleteEnabled,
-                    size = 36.dp,
+                Text(
+                    text = row.id,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
+                    color = c.textFaint,
                 )
             }
-        },
-    )
+            // The mock's `.ver`: mono 13 in the dim text, not a capsule.
+            Text(
+                text = "v${row.version}",
+                style = AuntieTheme.typography.mono.copy(fontSize = 13.sp),
+                color = c.textDim,
+            )
+            AuntieIconButton(
+                icon = Lucide.Trash2,
+                contentDescription = "Delete $name",
+                onClick = onRequestDelete,
+                destructive = true,
+                revealOnHover = true,
+                enabled = deleteEnabled,
+                size = 32.dp,
+            )
+        }
+        Text(
+            text = meta,
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textDim,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
 }
 
 /**
@@ -499,9 +634,11 @@ private fun SchemaRow(
  * direction; clicking a different column selects it ascending, the same click
  * semantics the mock's header (and this screen's `onSort` callback) describe.
  *
- * A phone still renders [SchemaRow] as one card, not four literal columns
+ * A phone still renders [SchemaRow] as one row, not four literal columns
  * (see the design doc's Android rule), so this strip is the part of the mock's
- * table that DOES have a phone analogue: choosing what order the cards come in.
+ * table that DOES have a phone analogue: choosing what order the rows come in.
+ * Since #755 it is the header row of [SchemaTable], on navy-3, the way the
+ * mock's `.thead` sits over its striped rows.
  */
 @Composable
 private fun SchemaSortHeader(

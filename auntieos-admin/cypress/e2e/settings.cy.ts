@@ -95,7 +95,7 @@ describe('settings', () => {
       cy.signIn();
       cy.visit('/settings');
       // Business profile is the default section and, since #709/#712, stacks
-      // four panels (Business profile, Logo, Branding, Booking behavior).
+      // four panels (Business profile, Logo, Branding, Scheduling, the booking toggles).
       // Asserted on real layout geometry, not a computed `gap` value: on the
       // OLD unpatched `.settings__panel` (plain block layout, no flex, no gap
       // rule at all) `getComputedStyle().gap` reads `"normal"`, never `"0px"`,

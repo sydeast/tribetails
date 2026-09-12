@@ -1,8 +1,9 @@
 /**
  * Form Schemas screen styling. Scoped to this screen and imported directly by
  * FormSchemas.tsx (the DenScreenKit.css / Banner.css / Buttons.css convention),
- * so nothing here needs to land in the shared styles/screens.css. Every value
- * comes from styles/tokens.css, no literal colours, radii, or durations.
+ * so nothing here needs to land in the shared styles/screens.css. Every colour
+ * comes from styles/tokens.css; the pixel sizes are the mock's own numbers,
+ * the way DenScreenKit.css carries the hero's 22px.
  *
  * The sortable table (`.schemas__table`) is the shape
  * `ui-ideas/auntieos-formschema-list-2026-05-27.html` draws: a header row of
@@ -11,60 +12,92 @@
  * wraps it; the controls row (filter + count chip) sits directly under the
  * screen heading, and Reload sits in its own footer below the table, matching
  * the mock's bare layout rather than the panel-with-a-second-title shape this
- * screen used to render.
+ * screen used to render. The 2026-09-12 pass (#755) put the skin on that
+ * structure: the mock's stripes, frame, search box, count chip and state box,
+ * on the navy tokens.
  */
 
-.schemas__hint {
-  color: var(--color-text-dim);
+/* The mock's `.panel`: the loading, proven-empty and no-match states sit in
+   a centred box on the panel top, on a hairline, at the card-lg radius, 26px
+   inside, in the dim text. It is a state, not a titled section, so it is not
+   a DenPanel. */
+.schemas__state {
   margin: 0;
+  padding: 26px;
+  text-align: center;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-dim);
+  background: var(--color-panel-top);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
 }
-
+/* The mock's `.controls`: the filter box and the count chip in one row over
+   the table, 16px above it. Both are the mock's SUGGESTION items, built. */
 .schemas__controls {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-
+/* The mock's `.search`: navy-3 on a hairline at the 13px radius, 10px 14px
+   inside, the magnifier before the input, the box taking the row. */
+.schemas__search {
+  flex: 1 1 auto;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  color: var(--color-text-dim);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-13);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.schemas__search:focus-within {
+  border-color: var(--color-primary);
+}
+.schemas__search svg {
+  flex: 0 0 auto;
+}
 .schemas__search-input {
   flex: 1 1 auto;
   min-width: 0;
-  box-sizing: border-box;
-  font: inherit;
-  font-size: var(--type-body-md-size);
-  color: var(--color-text-primary);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-2) var(--space-3);
-  transition: border-color var(--dur-base) var(--ease-standard);
-}
-.schemas__search-input:focus-visible {
+  margin: 0;
+  padding: 0;
+  border: none;
   outline: none;
-  border-color: var(--color-primary);
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--color-text-primary);
 }
 .schemas__search-input::placeholder {
   color: var(--color-text-faint);
 }
-
+/* The mock's `.countchip`: mono 11px on the same box as the search. */
 .schemas__count {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   color: var(--color-text-dim);
-  background: var(--color-surface-2);
-  border-radius: var(--radius-pill);
-  padding: 0.4rem 0.75rem;
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-13);
+  padding: 10px 13px;
   white-space: nowrap;
 }
 
 /* ── table ─────────────────────────────────────────────────────────────── */
 
+/* The mock's `.table`: a hairline frame at the card radius (the mock says 9),
+   the header row on navy-3, striped rows below. */
 .schemas__table-wrap {
   overflow-x: auto;
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card-lg);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card);
 }
 
 .schemas__table {
@@ -91,15 +124,15 @@
 }
 
 .schemas__table thead {
-  background: var(--color-surface-2);
+  background: var(--color-hero-bottom);
 }
 
 .schemas__th {
   text-align: left;
-  padding: var(--space-3);
+  padding: 11px 14px;
 }
 .schemas__th--actions {
-  padding: var(--space-3) var(--space-2);
+  padding: 11px var(--space-2);
 }
 
 .schemas__sort {
@@ -112,9 +145,9 @@
   cursor: pointer;
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-text-dim);
   transition: color var(--dur-base) var(--ease-standard);
@@ -139,27 +172,38 @@
   transform: rotate(180deg);
 }
 
+/* The mock's `.trow` stripes are the panel gradient's two stops laid out as
+   alternate rows: navy-2 on the odd rows, the translucent navy-3 on the even
+   ones, navy-3 solid under the pointer, a soft hairline between rows. */
 .schemas__row {
-  border-top: var(--border-hairline) solid var(--color-border);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+  background: var(--color-panel-top);
   transition: background var(--dur-base) var(--ease-standard);
 }
 .schemas__row:nth-child(even) {
-  background: var(--color-surface-2);
+  background: var(--color-panel-bottom);
 }
 .schemas__row--clickable {
   cursor: pointer;
 }
 .schemas__row:hover {
-  background: var(--color-surface-glass);
+  background: var(--color-hero-bottom);
 }
 
 .schemas__td {
-  padding: var(--space-3);
+  padding: 13px 14px;
   vertical-align: middle;
 }
 .schemas__td--updated,
 .schemas__td--by {
-  font-size: var(--type-body-sm-size);
+  font-size: 12.5px;
+  color: var(--color-text-dim);
+}
+
+/* The mock's `.ver`: mono 13px in the dim text, no capsule. */
+.schemas__version {
+  font-family: var(--font-mono);
+  font-size: 13px;
   color: var(--color-text-dim);
 }
 .schemas__td--actions {
@@ -196,16 +240,17 @@ button.schemas__row-main:focus-visible {
   cursor: default;
 }
 
+/* The mock's `.nm` and `.id`: Fraunces 16 at 500 over a 10.5px mono id. */
 .schemas__row-name {
   font-family: var(--font-fraunces);
-  font-size: var(--type-title-md-size);
-  font-weight: var(--type-title-md-weight);
+  font-size: 16px;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
 .schemas__row-id {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 10.5px;
   color: var(--color-text-faint);
   word-break: break-all;
 }
@@ -214,38 +259,7 @@ button.schemas__row-main:focus-visible {
   margin-top: var(--space-4);
 }
 
-/* ── delete confirm (screen-local; no shared Dialog primitive exists yet) ── */
-
-.schemas__dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  z-index: 100;
-}
-
-.schemas__dialog {
-  width: 100%;
-  max-width: 30rem;
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-panel);
-  padding: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.schemas__dialog-title {
-  margin: 0;
-  font-family: var(--font-fraunces);
-  font-size: var(--type-headline-sm-size);
-  font-weight: var(--type-headline-sm-weight);
-  color: var(--color-text-primary);
-}
+/* ── delete confirm body (the frame is the kit Dialog) ────────────────── */
 
 .schemas__dialog-hint {
   margin: 0;
@@ -257,11 +271,4 @@ button.schemas__row-main:focus-visible {
   font-size: 0.78rem;
   color: var(--color-text-faint);
   word-break: break-all;
-}
-
-.schemas__dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  margin-top: var(--space-2);
 }

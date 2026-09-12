@@ -1,4 +1,14 @@
-/* Vet clinics manager. Tokens only, per styles/tokens.css. */
+/**
+ * Vet clinics manager. Tokens only, per styles/tokens.css: no literal colours,
+ * radii or durations, and nothing here sets a light value.
+ *
+ * The shapes are the mock's (`ui-ideas/auntieos-vet-clinics-2026-05-27.html`,
+ * issue #755): a controls row with the search box and the count pill in the
+ * same bordered navy-3 box, and a card drawn as the kit's panel gradient on a
+ * hairline at 20px with 18px inside. The hero, the panels around the queue and
+ * the archive, the avatar tile, the status pill, the icon buttons and the hints
+ * are the kit's own; only the controls row and the card live here.
+ */
 
 .vetbank {
   display: flex;
@@ -6,47 +16,99 @@
   gap: var(--space-5);
 }
 
-.vetbank-blurb {
-  font-size: var(--type-body-sm-size);
-  line-height: var(--type-body-sm-line);
-  color: var(--color-text-dim);
-  margin: 0 0 var(--space-4);
+/* ── controls row: search · count ───────────────────────────────────────── */
+
+.vetbank-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
 }
 
+/* The mock's `.search`: glyph then field inside one navy-3 box on a hairline. */
 .vetbank-search {
-  font-family: var(--font-hanken);
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  box-sizing: border-box;
   background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-4);
-  min-width: 18rem;
-  max-width: 100%;
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-13);
+  padding: 10px 14px;
+  color: var(--color-text-dim);
+  transition: border-color var(--dur-base) var(--ease-standard);
 }
 
-.vetbank-search:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+.vetbank-search:focus-within {
+  border-color: var(--color-primary);
 }
 
-/* The three grids on this screen (pending, catalog, retired) are all
-   `EntityCardGrid` now, the one definition behind the list-shape rule. The
-   19rem this screen passes is the width the copy that used to live here used,
-   kept as-is so the consolidation changes no rendering; the mock draws 300px
-   (`ui-ideas/auntieos-vet-clinics-2026-05-27.html` l.75), a 4px difference
-   nothing photographs, so correcting it is a separate, verifiable change.
-   Cards still read as a single readable column on a phone without a breakpoint
-   ladder, which is what auto-fill buys. */
+.vetbank-search-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 16px;
+}
 
+.vetbank-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+
+.vetbank-search-input::placeholder {
+  color: var(--color-text-dim);
+}
+
+/* The mock's `.countpill`: "CATALOG" in mono, the count beside it, in the same
+   box as the search. Text, never a control: it states what the grid holds. */
+.vetbank-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-13);
+  padding: 10px 14px;
+  font-size: var(--type-body-md-size);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.vetbank-count-kicker {
+  font-family: var(--type-label-sm-family);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+/* ── the card ───────────────────────────────────────────────────────────── */
+
+/* The mock's `.vcard`: the panel gradient on a hairline at 20px, 18px inside,
+   a hover that tints the border teal. The three grids on this screen are all
+   `EntityCardGrid` at the mock's 300px. */
 .vetcard {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-card);
-  padding: var(--space-4);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+
+.vetcard:hover {
+  border-color: var(--color-accent);
 }
 
 /* Retired rows stay legible rather than being greyed into unreadability: a
@@ -57,26 +119,18 @@
 
 .vetcard--new {
   border-color: var(--color-primary);
-  margin-bottom: var(--space-4);
 }
 
 .vetcard-top {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 13px;
 }
 
-.vetcard-logo {
-  display: grid;
-  place-items: center;
-  inline-size: 2.5rem;
-  block-size: 2.5rem;
-  border-radius: var(--radius-chip);
-  background: var(--gradient-teal-purple);
-  color: var(--tt-brand-cream);
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  flex: none;
+/* The tile is the kit avatar; only its glyph size is this screen's (the mock
+   draws 24px in a 50px tile). */
+.vetcard-logo .avatar-glyph {
+  font-size: 24px;
 }
 
 .vetcard-name {
@@ -85,37 +139,36 @@
   min-width: 0;
 }
 
+/* The mock's `.nm b`: Fraunces at 18.5px, medium. The kit's largest title
+   token is the serif at 17px; the size is stepped once here so the name reads
+   as the card's heading rather than a label. */
 .vetcard-name b {
-  font-family: var(--type-title-sm-family);
-  font-size: var(--type-title-sm-size);
+  font-family: var(--type-title-lg-family);
+  font-weight: var(--type-title-lg-weight);
+  font-size: 18.5px;
+  line-height: 1.15;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
 
 .vetcard-id {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+  font-size: 10px;
+  color: var(--color-text-dim);
+  margin-top: 3px;
   overflow-wrap: anywhere;
 }
 
 .vetcard-tag {
   margin-inline-start: auto;
-  font-family: var(--type-label-sm-family);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  color: var(--color-coral);
-  border: 1px solid var(--color-coral);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-  white-space: nowrap;
   flex: none;
 }
 
+/* The mock's `.vmeta`: rows 9px apart, a teal 15px glyph then the value. */
 .vetcard-meta {
-  display: grid;
-  grid-template-columns: minmax(4.5rem, max-content) 1fr;
-  gap: var(--space-1) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
   margin: 0;
 }
 
@@ -123,18 +176,37 @@
   display: contents;
 }
 
-.vetcard-row dt {
-  font-family: var(--type-label-sm-family);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  color: var(--color-text-dim);
+/* The label is for assistive tech: a phone glyph is not a word. Visually
+   hidden the same way the dialogs hide theirs, never `display: none`, which
+   would drop it from the accessibility tree too. */
+.vetcard-row-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .vetcard-row dd {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   margin: 0;
+  font-size: 13px;
+  color: var(--color-text-primary);
   overflow-wrap: anywhere;
+}
+
+.vetcard-row-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 15px;
+  color: var(--color-accent);
 }
 
 .vetcard-blank {
@@ -142,22 +214,42 @@
   font-style: italic;
 }
 
+/* The mock's `.vbase`: a hairline above, the count left, the actions right. */
 .vetcard-base {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   flex-wrap: wrap;
-  border-top: 1px solid var(--color-border-soft);
-  padding-top: var(--space-3);
+  border-top: var(--border-hairline) solid var(--color-hairline);
+  padding-top: 13px;
   margin-top: auto;
 }
 
+/* The mock's `.linked`: a teal lock, then mono uppercase with the number in
+   teal Hanken bold. */
 .vetcard-usage {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
   font-family: var(--type-label-sm-family);
   font-size: var(--type-label-sm-size);
   letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
   color: var(--color-text-dim);
+}
+
+.vetcard-usage svg {
+  font-size: 14px;
+  color: var(--color-accent);
+}
+
+.vetcard-usage b {
+  font-family: var(--font-hanken);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-accent);
 }
 
 .vetcard-usage--unknown {
@@ -166,13 +258,16 @@
 }
 
 .vetcard-usage-note {
+  flex-basis: 100%;
+  text-transform: none;
+  letter-spacing: 0;
   color: var(--color-text-faint);
 }
 
 .vetcard-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 7px;
   flex-wrap: wrap;
 }
 

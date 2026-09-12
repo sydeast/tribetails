@@ -47,8 +47,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.sp
+import com.composables.icons.lucide.CirclePlus
+import com.composables.icons.lucide.Clock
+import com.composables.icons.lucide.Globe
+import com.composables.icons.lucide.Phone
+import com.composables.icons.lucide.Plus
+import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.StickyNote
+import com.tribetails.auntieos.ui.components.AuntieSearchField
+import com.tribetails.auntieos.ui.components.GlassSurface
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil3.compose.AsyncImage
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.Bell
 import com.composables.icons.lucide.BellOff
@@ -63,14 +77,9 @@ import com.composables.icons.lucide.X
 import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChevronLeft
-import com.composables.icons.lucide.ChevronRight
-import com.composables.icons.lucide.Database
-import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.LayoutGrid
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Mail
-import com.composables.icons.lucide.Map
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Trash2
@@ -78,14 +87,13 @@ import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.ArrowUp
 import com.composables.icons.lucide.ArrowDown
 import com.composables.icons.lucide.ClipboardList
+import com.composables.icons.lucide.ListOrdered
 import com.tribetails.auntieos.ui.components.AuntieIconButton
-import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.PawPrint
 import com.composables.icons.lucide.Plane
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.AtSign
 import com.composables.icons.lucide.ShieldCheck
-import com.composables.icons.lucide.Smartphone
 import com.composables.icons.lucide.Stethoscope
 import com.composables.icons.lucide.Tag
 import com.composables.icons.lucide.Webhook
@@ -100,11 +108,9 @@ import com.tribetails.auntieos.ui.components.AuntieAvatar
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
-import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
 import com.tribetails.auntieos.ui.components.AuntieIconTile
-import com.tribetails.auntieos.ui.components.AuntiePasswordField
 import com.tribetails.auntieos.ui.components.AuntieModal
 import com.tribetails.auntieos.ui.components.AuntieRadio
 import com.tribetails.auntieos.ui.components.AuntieSaveBar
@@ -118,6 +124,9 @@ import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.DenScreenHeading
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
+import androidx.compose.ui.graphics.Brush
+import com.tribetails.auntieos.ui.theme.BrandCream
+import com.tribetails.auntieos.ui.theme.TribeGradients
 import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.StatusToast
@@ -202,6 +211,13 @@ import kotlinx.coroutines.launch
  * instead of one endless scroll: this enum drives BOTH the tappable list
  * [AdminSettingsSectionNav] renders and the `when` in [AdminSettingsScreen] that
  * renders the matching panel. Order mirrors the web Settings section nav.
+ *
+ * [blurb] is no longer drawn (issue #755 pass): the settings mock's `.secnav`
+ * is an icon and a label per row, and the operator's 2026-09-11 ruling on
+ * explanatory copy (#752) applies to a row's sub line as it does to a panel's.
+ * The field stays on the constructor so every entry, including ones added by
+ * PRs in flight, keeps compiling; it is the one-line description a future
+ * tooltip would carry.
  */
 internal enum class SettingsSection(
     val title: String,
@@ -216,6 +232,13 @@ internal enum class SettingsSection(
     // different question: this is what a booking is ALLOWED to be, Business
     // operations is what happens once you are out on the visit. Panels live in
     // `BusinessRulesPanels.kt`.
+    // ISSUE #755: the KinCare types rate card, `business_settings.serviceRates`
+    // plus `serviceDurations`. Decoded, diffed and read by the schedule, the
+    // booking wizard and the package builder, and until this section nothing
+    // on the phone could edit it. Sits before Booking rules as it does on web
+    // (KinCare Settings, then Booking rules). Panel lives in
+    // `KinCareTypesPanel.kt`.
+    KinCareTypes("KinCare types", "Names, lengths and prices the booking screen offers", Lucide.ListOrdered),
     BookingRules("Booking rules", "Time zone, booking modes, and bookable blocks", Lucide.CalendarClock),
     BusinessOperations("Business operations", "Booking modes, tracking, retention", Lucide.Building2),
     Payments("Payments", "Handles clients pay you through", Lucide.Wallet),
@@ -224,7 +247,10 @@ internal enum class SettingsSection(
     CalendarSync("Google Calendar sync", "Import busy events as private blocks", Lucide.RefreshCw),
     TimeOff("Time off", "Holidays observed and Den closures", Lucide.Plane),
     Notifications("Notifications", "The per-notification channel gate", Lucide.Bell),
-    BookingBehavior("Booking behavior", "Auto-confirm and drag-to-snap", Lucide.Check),
+    // "Scheduling" is the settings mock's title for these three switches
+    // (issue #755 pass); web's panel of the same name sits under Business
+    // profile.
+    BookingBehavior("Scheduling", "Auto-confirm and drag-to-snap", Lucide.Check),
     Integrations("Integrations", "Connected services and their status", Lucide.Webhook),
     Tags("Tags", "Household and pet tag banks", Lucide.Tag),
     // ISSUE #397 M10: the kinfolk PORTAL's Home layout (not this app's own
@@ -241,7 +267,8 @@ internal enum class SettingsSection(
  * testable without standing up the heavy [AdminSettingsViewModel]:
  *
  *  - [selected] null  -> the section LIST: an optional [listHeader] (the
- *    navigate-away buttons) above one tappable [AuntieEntityRow] per section.
+ *    navigate-away buttons) above the mock's `.secnav`, a glass panel of one
+ *    tappable icon-and-label row per section (issue #755 pass).
  *  - [selected] set   -> that section's DETAIL: an "All settings" affordance
  *    back to the list, then the caller's [detail] slot for that section. A
  *    [BackHandler] routes the system back gesture to the list too, so back never
@@ -280,29 +307,36 @@ internal fun AdminSettingsSectionNav(
             listHeader()
             Spacer(Modifier.height(dims.space4))
 
-            SettingsSection.entries.forEachIndexed { index, section ->
-                AuntieEntityRow(
-                    title = section.title,
-                    subtitle = section.blurb,
-                    leading = {
-                        Icon(
-                            imageVector = section.icon,
-                            contentDescription = null,
-                            tint = colors.textDim,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    },
-                    trailing = {
-                        Icon(
-                            imageVector = Lucide.ChevronRight,
-                            contentDescription = null,
-                            tint = colors.textFaint,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    showDivider = index < SettingsSection.entries.lastIndex,
-                    onClick = { onSelect(section) },
-                )
+            // The mock's `.secnav`: a glass panel one radius step under a
+            // DenPanel, 10dp inside, each row a 17dp glyph and a 14sp label
+            // at 10dp by 12dp on an 11dp corner. No sub line and no chevron:
+            // the mock draws neither, and the row itself is the affordance.
+            GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SettingsSection.entries.forEach { section ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(11.dp))
+                                .clickable { onSelect(section) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = section.icon,
+                                contentDescription = null,
+                                tint = colors.textDim,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            Text(
+                                text = section.title,
+                                style = AuntieTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                color = colors.textDim,
+                            )
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -487,6 +521,12 @@ fun AdminSettingsScreen(
                             onSave = { viewModel.saveNavConfig(it) },
                         )
 
+                        SettingsSection.KinCareTypes -> KinCareTypesPanel(
+                            settings = uiState.businessSettings,
+                            isLoading = uiState.isLoading,
+                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                        )
+
                         SettingsSection.BookingRules -> BookingRulesPanel(
                             settings = uiState.businessSettings,
                             isLoading = uiState.isLoading,
@@ -602,142 +642,6 @@ fun AdminSettingsScreen(
             kind = toastKind,
             onDismiss = { toastVisible = false },
             modifier = Modifier.align(Alignment.BottomCenter).padding(dims.space4),
-        )
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Profile
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-internal fun ProfilePanel(
-    profile: com.tribetails.auntieos.data.model.UserProfile,
-    isUploadingAvatar: Boolean,
-    isLoading: Boolean,
-    onPickAvatar: () -> Unit,
-    onProfileField: ((com.tribetails.auntieos.data.model.UserProfile) -> com.tribetails.auntieos.data.model.UserProfile) -> Unit,
-    onSaveProfile: () -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    DenPanel(title = "Profile", subtitle = "Who the kinfolk see on your KinTales and replies.") {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dims.space4),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(88.dp)
-                    .clip(CircleShape)
-                    .background(c.surface2)
-                    .clickable(enabled = !isUploadingAvatar) { onPickAvatar() },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (profile.photoUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = profile.photoUrl,
-                        contentDescription = "Profile photo",
-                        modifier = Modifier.fillMaxSize().clip(CircleShape),
-                    )
-                } else {
-                    Text(
-                        text = profile.displayLabel.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                        style = AuntieTheme.typography.displayLarge,
-                        color = c.textDim,
-                    )
-                }
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = profile.displayLabel,
-                    style = AuntieTheme.typography.titleLarge,
-                    color = c.textPrimary,
-                )
-                Text(
-                    text = profile.title.ifBlank { "Admin" },
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.primary,
-                )
-                Text(
-                    text = profile.email.ifBlank { "No email on file" },
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textDim,
-                )
-                AuntieTextBtn(
-                    onClick = onPickAvatar,
-                    enabled = !isUploadingAvatar,
-                ) {
-                    AuntieIconTile(icon = Lucide.Camera, tone = AuntieStatusTone.Orange, size = 22.dp)
-                    Spacer(Modifier.width(dims.space2))
-                    Text(if (isUploadingAvatar) "Uploading…" else "Change Picture")
-                }
-            }
-        }
-
-        Spacer(Modifier.height(dims.space4))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(dims.space3), modifier = Modifier.fillMaxWidth()) {
-            AuntieField(
-                value = profile.firstName,
-                onValueChange = { v -> onProfileField { it.copy(firstName = v) } },
-                label = "First Name",
-                modifier = Modifier.weight(1f),
-            )
-            AuntieField(
-                value = profile.lastName,
-                onValueChange = { v -> onProfileField { it.copy(lastName = v) } },
-                label = "Last Name",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.displayName,
-            onValueChange = { v -> onProfileField { it.copy(displayName = v) } },
-            label = "Display Name",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(dims.space3))
-        Row(horizontalArrangement = Arrangement.spacedBy(dims.space3), modifier = Modifier.fillMaxWidth()) {
-            AuntieField(
-                value = profile.email,
-                onValueChange = { v -> onProfileField { it.copy(email = v) } },
-                label = "Email Address",
-                modifier = Modifier.weight(1f),
-            )
-            AuntieField(
-                value = profile.phone,
-                onValueChange = { v -> onProfileField { it.copy(phone = v) } },
-                label = "Phone",
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.title,
-            onValueChange = { v -> onProfileField { it.copy(title = v) } },
-            label = "Title / Role",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(dims.space3))
-        AuntieField(
-            value = profile.bio,
-            onValueChange = { v -> onProfileField { it.copy(bio = v) } },
-            label = "Bio",
-            singleLine = false,
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        Spacer(Modifier.height(dims.space4))
-
-        PrimaryButton(
-            label = "Save Profile",
-            onClick = onSaveProfile,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !isLoading && !isUploadingAvatar,
         )
     }
 }
@@ -883,9 +787,6 @@ private fun BusinessOperationsPanel(
     DenPanel(
         title = "Business operations",
         subtitle = "GPS tracking, liability protection, and visit defaults.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.Building2, tone = AuntieStatusTone.Orange, size = 40.dp)
-        },
     ) {
         Column {
             AuntieSettingRow(
@@ -1011,9 +912,6 @@ private fun BusinessHoursPanel(
     DenPanel(
         title = "Business hours",
         subtitle = "When the Den is open for visits. Use 24h times like 09:00 to 17:00.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.CalendarClock, tone = AuntieStatusTone.Purple, size = 40.dp)
-        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
             hours.forEach { row ->
@@ -1088,7 +986,6 @@ private fun PaymentOptionsPanel(
     DenPanel(
         title = "Payment options",
         subtitle = "Handles clients pay you through. Shown on invoices and the invoice PDF. Leave a field blank to hide that method.",
-        trailing = { AuntieIconTile(icon = Lucide.Wallet, tone = AuntieStatusTone.Success, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = venmo, onValueChange = { venmo = it }, label = "Venmo handle", placeholder = "@your-venmo")
@@ -1120,7 +1017,6 @@ private fun WeatherAreaPanel(
     DenPanel(
         title = "Weather area",
         subtitle = "Where the Home weather widgets forecast for. A city, metro, or ZIP (e.g. \"Austin, TX\"), not your street address. For a metro the centre point covers the whole area.",
-        trailing = { AuntieIconTile(icon = Lucide.CloudSun, tone = AuntieStatusTone.Teal, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = area, onValueChange = { area = it }, label = "City, metro, or ZIP", placeholder = "Austin, TX")
@@ -1193,7 +1089,6 @@ private fun NotificationMatrixPanel() {
         subtitle = "For each notification, switch a channel On to make it available in the recipient's own " +
             "notification settings, or Off to hide it. Lock forces a channel on so they can't change it. " +
             "Off across all channels hides the notification entirely. Pick the audience with the tabs below.",
-        trailing = { AuntieIconTile(icon = Lucide.Bell, tone = AuntieStatusTone.Teal, size = 40.dp) },
     ) {
         Column {
             when {
@@ -1800,31 +1695,36 @@ private fun BookingBehaviorPanel(
     settings: com.tribetails.auntieos.data.model.BusinessSettings,
     onSettingsChange: (com.tribetails.auntieos.data.model.BusinessSettings) -> Unit,
 ) {
+    // The settings mock's "Scheduling" panel (issue #755 pass): its `.trow`
+    // rows in its order, each a bold label with the mock's one-line note
+    // under it and the switch at the right, no leading icon. The mock's
+    // fourth row, "Sync Google Calendar busy events", is the free/busy
+    // import, which lives on the Scheduling options screen (#715 on web).
     DenPanel(
-        title = "Booking behavior",
-        subtitle = "How new bookings are confirmed and adjusted.",
+        title = "Scheduling",
+        subtitle = "How new bookings are confirmed and adjusted. Each switch saves the moment it is flipped.",
     ) {
         // #9 (2026-06-08): real persisted toggles (parity with web). Each flip merges
         // the change onto the business_settings doc via updateBusinessSettings.
         Column {
+            // #517: parity with web. Writes enableConflictDetection, the field
+            // EnhancedSchedulingViewModel already gates its availability check on
+            // and that guardBookingBusyConflict now reads server-side before every
+            // booking write. Defaults ON, so the switch starts where the model does.
             AuntieSettingRow(
-                title = "Auto-confirm repeat kinfolk",
-                description = "Kinfolk who have booked before skip the manual approval queue. New kinfolk still need approval.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                title = "Block bookings during busy events",
+                description = "Stop new visits from landing on top of a Google Calendar block.",
                 showDivider = true,
                 trailing = {
                     AuntieToggle(
-                        checked = settings.autoConfirmRepeatKinfolk,
-                        onCheckedChange = { next -> onSettingsChange(settings.copy(autoConfirmRepeatKinfolk = next)) },
+                        checked = settings.enableConflictDetection,
+                        onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
                     )
                 },
             )
             AuntieSettingRow(
                 title = "Snap drag-to-reschedule to 15 min",
-                description = "Visits align to quarter-hour slots when dragged on the schedule.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                description = "Visits align to quarter-hour slots when dragged.",
                 showDivider = true,
                 trailing = {
                     AuntieToggle(
@@ -1833,20 +1733,14 @@ private fun BookingBehaviorPanel(
                     )
                 },
             )
-            // #517: parity with web. Writes enableConflictDetection, the field
-            // EnhancedSchedulingViewModel already gates its availability check on
-            // and that guardBookingBusyConflict now reads server-side before every
-            // booking write. Defaults ON, so the switch starts where the model does.
             AuntieSettingRow(
-                title = "Block bookings during busy events",
-                description = "Refuse a new visit that lands on a busy block imported from Google Calendar.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
+                title = "Auto-confirm repeat kinfolk",
+                description = "Trusted kinfolk bookings skip manual approval.",
                 showDivider = false,
                 trailing = {
                     AuntieToggle(
-                        checked = settings.enableConflictDetection,
-                        onCheckedChange = { next -> onSettingsChange(settings.copy(enableConflictDetection = next)) },
+                        checked = settings.autoConfirmRepeatKinfolk,
+                        onCheckedChange = { next -> onSettingsChange(settings.copy(autoConfirmRepeatKinfolk = next)) },
                     )
                 },
             )
@@ -2018,16 +1912,28 @@ private fun IntegrationsPanel(
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
+    // The header carries what is about the whole report: WHEN it was made (a
+    // value, so `detail`) and the control that makes it again (`trailing`).
+    // Both wait for an answer; a failed read offers Try again on its banner
+    // instead, so there is never a second button beside it. Mirrors web.
     DenPanel(
         title = "Integrations",
-        subtitle = "The outside services this business runs on, checked on the server. The last two rows are about this phone.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.LayoutGrid, tone = AuntieStatusTone.Orange, size = 40.dp)
+        subtitle = "The outside services this business runs on, checked on the server. The rows under This phone are about this handset.",
+        detail = health?.let { integrationsCheckedLabel(it.checkedAt) },
+        trailing = if (health != null) {
+            {
+                GhostButton(
+                    label = if (loading) "Checking..." else "Check again",
+                    onClick = onRetry,
+                    enabled = !loading,
+                )
+            }
+        } else {
+            null
         },
     ) {
-        Column {
+        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
             Text("OUTSIDE SERVICES", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
 
             when {
                 error != null -> {
@@ -2082,40 +1988,21 @@ private fun IntegrationsPanel(
                                 )
                             },
                         )
-                        Spacer(Modifier.height(dims.space2))
                     }
-                    health.integrations.forEachIndexed { idx, row ->
-                        ServerIntegrationRow(
+                    health.integrations.forEach { row ->
+                        ServerIntegrationCard(
                             row = row,
                             declaredKnown = health.declaredKnown,
-                            showDivider = idx < health.integrations.lastIndex,
                             onOpenGoogleCalendar = onOpenGoogleCalendar,
                         )
-                    }
-                    Spacer(Modifier.height(dims.space2))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            integrationsCheckedLabel(health.checkedAt),
-                            style = AuntieTheme.typography.bodySmall,
-                            color = c.textFaint,
-                            modifier = Modifier.weight(1f),
-                        )
-                        GhostButton(label = if (loading) "Checking..." else "Check again", onClick = onRetry, enabled = !loading)
                     }
                 }
             }
 
-            Spacer(Modifier.height(dims.space3))
-
             // The two facts a server genuinely cannot see, kept for that reason
             // and labelled so they are never read as claims about the business.
             Text("THIS PHONE", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
-            deviceProbes.forEachIndexed { idx, row ->
-                IntegrationRow(row, showDivider = idx < deviceProbes.lastIndex)
-            }
-
-            Spacer(Modifier.height(dims.space3))
+            deviceProbes.forEach { row -> DeviceProbeCard(row) }
 
             // Stripe CONNECT, which is not the same thing as the Stripe row
             // above: that one is card payments on an invoice, this is paying a
@@ -2123,23 +2010,29 @@ private fun IntegrationsPanel(
             // code in this repo holds, so it is named rather than staged behind
             // a button that could not work.
             Text("PAYOUTS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
-            IntegrationNeedsKeysRow(
+            IntegrationCard(
                 name = "Stripe Connect",
-                detail = "Paying out to a connected account, separate from card payments on an invoice",
-                hint = "Connecting needs your Stripe Connect client ID and secret from dashboard.stripe.com/settings/connect. Card payments on invoices work without it.",
+                purpose = "Paying out to a connected account, separate from card payments on an invoice",
+                stateLabel = "Needs your keys",
+                stateTone = AuntieStatusTone.Warning,
+                report = {
+                    Text(
+                        "Connecting needs your Stripe Connect client ID and secret from dashboard.stripe.com/settings/connect. Card payments on invoices work without it.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                },
             )
 
-            Spacer(Modifier.height(dims.space3))
-
             // #8: optional third-party ADD-ONS (Zapier, to-do apps, etc.). None are built
-            // yet - shown honestly as "Coming soon", never faked as connected.
+            // yet: shown honestly as "Coming soon", never faked as connected. The
+            // operator's 2026-08-29 ruling keeps these three rows visible as
+            // reminders of planned work; building the connect flows waits until
+            // the apps are fully functional in everything else.
             Text("ADD-ONS", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Spacer(Modifier.height(dims.space2))
             AddOnComingSoon("Zapier", "Automate workflows across thousands of apps")
             AddOnComingSoon("Make", "Visual multi-step automations")
             AddOnComingSoon("Google Tasks", "Push KinCare to-dos to your task list")
-            Spacer(Modifier.height(dims.space2))
             Text(
                 "Add-ons aren't available yet: connecting one needs an OAuth / connect flow that does not exist yet. The system services above power the Den.",
                 style = AuntieTheme.typography.bodySmall,
@@ -2150,75 +2043,139 @@ private fun IntegrationsPanel(
 }
 
 /**
- * #8: an integration that is a NAMED external-secret defer (Stripe Connect). Shown
- * honestly as "Needs your keys" with the exact secret named; never faked, never a
- * dead Manage button. Manage activates once the operator supplies the keys.
+ * The settings mock's `.int` card (issue #755 pass), the Android twin of the
+ * web `.integrations__card`: a 40dp brand-gradient tile carrying the
+ * service's monogram, the name, what it is for, the caller's [report], and
+ * last the mock's `.foot`: the state as an LED with its words, beside the
+ * one [control] a row can have. On the raised surface, a hairline at 15dp,
+ * 15dp inside.
  */
 @Composable
-private fun IntegrationNeedsKeysRow(name: String, detail: String, hint: String) {
+private fun IntegrationCard(
+    name: String,
+    purpose: String,
+    stateLabel: String,
+    stateTone: AuntieStatusTone,
+    stateGlow: Boolean = false,
+    control: (@Composable () -> Unit)? = null,
+    report: (@Composable ColumnScope.() -> Unit)? = null,
+) {
     val c = AuntieTheme.colors
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+    val dims = AuntieTheme.dims
+    val shape = RoundedCornerShape(15.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surface2)
+            .border(dims.borderHairline, c.border, shape)
+            .padding(15.dp),
+        horizontalArrangement = Arrangement.spacedBy(13.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        IntegrationMonogramTile(name)
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = AuntieTheme.typography.bodyMedium.copy(fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold),
+                color = c.textPrimary,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(purpose, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            if (report != null) {
+                Spacer(Modifier.height(dims.space2))
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) { report() }
             }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .border(AuntieTheme.dims.borderHairline, c.warning, RoundedCornerShape(999.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            ) {
-                Text("Needs your keys", style = AuntieTheme.typography.labelSmall, color = c.warning)
+            Spacer(Modifier.height(11.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IntegrationStateLine(stateLabel, stateTone, stateGlow, Modifier.weight(1f))
+                control?.invoke()
             }
         }
-        Text(hint, style = AuntieTheme.typography.bodySmall, color = c.textDim, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
 /**
- * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built; never
- * faked as connected). The #397 audit flagged these as invented scope and recommended
- * deleting them; the operator OVERRULED that on 2026-08-26 ("these a[re] soon to be
- * implementations") — they stay, as a ruled, planned backlog item, not an unexplained
- * placeholder. When the connect flow ships, this becomes connect + settings + link.
+ * The mock's `.logo`: the service's first letter in the serif, cream, on a
+ * brand gradient picked by the name so the same service always reads with
+ * the same colour signature (the web card seeds `gradientForSeed` the same
+ * way). Decorative: the name beside it is the accessible text.
+ */
+@Composable
+private fun IntegrationMonogramTile(name: String) {
+    val gradients = listOf(TribeGradients.orangeToPink(), TribeGradients.tealToPurple(), TribeGradients.tribe())
+    val brush: Brush = gradients[integrationGradientIndex(name, gradients.size)]
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(brush),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            integrationMonogram(name),
+            style = AuntieTheme.typography.headlineSmall.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+            color = BrandCream,
+        )
+    }
+}
+
+/**
+ * The mock's `.conn`: a 7dp LED and the state in mono caps, both in the
+ * tone. The words come with the colour, never colour alone: whoever is on
+ * call reads this on whatever screen they have.
+ */
+@Composable
+private fun IntegrationStateLine(
+    label: String,
+    tone: AuntieStatusTone,
+    glow: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val c = AuntieTheme.colors
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        AuntieStatusPill(label = label, tone = tone, dotOnly = true, glow = glow)
+        Text(
+            label.uppercase(),
+            style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.7.sp),
+            color = tone.color(c),
+        )
+    }
+}
+
+/**
+ * #8: a third-party add-on row, shown honestly as "Coming soon" (none are built;
+ * never faked as connected). The #397 audit flagged these as invented scope and
+ * recommended deleting them; the operator OVERRULED that on 2026-08-26 ("these
+ * a[re] soon to be implementations") and again on 2026-08-29: they stay, as a
+ * ruled, planned backlog item, not an unexplained placeholder. When the connect
+ * flow ships, this becomes connect + settings + link. Drawn as the same card as
+ * a live service, with no Connect button: a button that could not work is the
+ * fake the ruling forbids.
  */
 @Composable
 private fun AddOnComingSoon(name: String, detail: String) {
-    val c = AuntieTheme.colors
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-            Text(detail, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(999.dp))
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text("Coming soon", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-        }
-    }
+    IntegrationCard(
+        name = name,
+        purpose = detail,
+        stateLabel = "Coming soon",
+        stateTone = AuntieStatusTone.Muted,
+    )
 }
 
 /**
  * One outside service, exactly as the server described it.
  *
  * NOTHING IS DECIDED HERE. The status, the one-line summary and the remediation
- * all arrive settled; this composable chooses an icon and a tone and prints the
- * rest. The remediation in particular is shown VERBATIM in mono, because it is a
- * command to paste, and a friendlier paraphrase would delete the only text on
- * the screen that says what to do next.
+ * all arrive settled; this composable chooses a tone and prints the rest. The
+ * remediation in particular is shown VERBATIM in mono, because it is a command
+ * to paste, and a friendlier paraphrase would delete the only text on the
+ * screen that says what to do next.
  */
 @Composable
-private fun ServerIntegrationRow(
+private fun ServerIntegrationCard(
     row: ServerIntegration,
     declaredKnown: Boolean,
-    showDivider: Boolean,
     onOpenGoogleCalendar: () -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -2231,70 +2188,51 @@ private fun ServerIntegrationRow(
         // beside checks that passed.
         IntegrationStatus.UNKNOWN -> AuntieStatusTone.Warning
     }
-    val icon = when (row.key) {
-        "stripe" -> Lucide.Wallet
-        "twilio" -> Lucide.MessageSquare
-        "smtp2go" -> Lucide.Mail
-        "cloudinary" -> Lucide.Image
-        "mapbox" -> Lucide.Map
-        "googleCalendar" -> Lucide.CalendarClock
-        "sentry" -> Lucide.ShieldCheck
-        else -> Lucide.LayoutGrid
-    }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        AuntieSettingRow(
-            title = row.name,
-            description = row.purpose,
-            leadingIcon = icon,
-            iconTone = AuntieStatusTone.Neutral,
-            showDivider = false,
-            trailing = {
-                AuntieStatusPill(
-                    label = integrationStatusLabel(row.status),
-                    tone = tone,
-                    showDot = true,
-                    mono = true,
-                )
-            },
-        )
-        Text(row.summary, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-        row.secrets.forEach { secret ->
-            Text(
-                integrationSecretLine(secret, declaredKnown),
-                style = AuntieTheme.typography.labelSmall,
-                color = if (secret.resolves) c.textDim else c.error,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        if (row.remediation.isNotBlank()) {
-            Spacer(Modifier.height(dims.space2))
-            Text("WHAT TO DO", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
-            Text(
-                row.remediation,
-                style = AuntieTheme.typography.labelSmall,
-                color = c.textPrimary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(c.surfaceGlass)
-                    .padding(dims.space2),
-            )
-        }
-        if (row.externalStep.isNotBlank()) {
-            Spacer(Modifier.height(dims.space2))
-            Text(row.externalStep, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        }
+    IntegrationCard(
+        name = row.name,
+        purpose = row.purpose,
+        stateLabel = integrationStatusLabel(row.status),
+        stateTone = tone,
         // The connect flow already exists, on the Scheduling options screen.
-        // This row reports and hands off; a second copy of the OAuth flow here
-        // would be two places for one connection to drift.
-        if (row.ownedBySection == "googleCalendar") {
-            Spacer(Modifier.height(dims.space2))
-            GhostButton(label = "Open Google Calendar setup", onClick = onOpenGoogleCalendar)
-        }
-        if (showDivider) {
-            Spacer(Modifier.height(dims.space3))
-        }
-    }
+        // This card reports and hands off; a second copy of the OAuth flow here
+        // would be two places for one connection to drift. ANY non-empty
+        // `ownedBySection` opens it, never a specific string: the server sends
+        // `calendar` today and sent `googleCalendar` before #715, and this card
+        // only asks "does something own this row," never "what."
+        control = if (row.ownedBySection.isNotBlank()) {
+            { GhostButton(label = "Open Google Calendar setup", onClick = onOpenGoogleCalendar) }
+        } else {
+            null
+        },
+        report = {
+            Text(row.summary, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+            row.secrets.forEach { secret ->
+                Text(
+                    integrationSecretLine(secret, declaredKnown),
+                    style = AuntieTheme.typography.labelSmall,
+                    color = if (secret.resolves) c.textDim else c.error,
+                )
+            }
+            if (row.remediation.isNotBlank()) {
+                Column {
+                    Text("WHAT TO DO", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                    Text(
+                        row.remediation,
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.surfaceGlass)
+                            .padding(dims.space2),
+                    )
+                }
+            }
+            if (row.externalStep.isNotBlank()) {
+                Text(row.externalStep, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        },
+    )
 }
 
 /**
@@ -2302,7 +2240,7 @@ private fun ServerIntegrationRow(
  * can answer either question: they are about the handset, not the business.
  */
 @Composable
-private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
+private fun DeviceProbeCard(row: IntegrationHealth) {
     val tone = when (row.state) {
         IntegrationHealthState.HEALTHY -> AuntieStatusTone.Success
         IntegrationHealthState.CONFIGURED -> AuntieStatusTone.Orange
@@ -2310,107 +2248,13 @@ private fun IntegrationRow(row: IntegrationHealth, showDivider: Boolean) {
         IntegrationHealthState.CHECKING -> AuntieStatusTone.Neutral
         IntegrationHealthState.UNKNOWN -> AuntieStatusTone.Muted
     }
-    val icon = when (row.name) {
-        "Firestore" -> Lucide.Database
-        "Push notifications" -> Lucide.Smartphone
-        else -> Lucide.LayoutGrid
-    }
-    val iconTone = when (row.name) {
-        "Firestore" -> AuntieStatusTone.Teal
-        "Push notifications" -> AuntieStatusTone.Purple
-        else -> AuntieStatusTone.Neutral
-    }
-    AuntieSettingRow(
-        title = row.name,
-        description = row.description,
-        leadingIcon = icon,
-        iconTone = iconTone,
-        showDivider = showDivider,
-        trailing = {
-            AuntieStatusPill(
-                label = integrationPillLabel(row.state),
-                tone = tone,
-                showDot = true,
-                glow = row.state == IntegrationHealthState.CHECKING,
-                mono = true,
-            )
-        },
+    IntegrationCard(
+        name = row.name,
+        purpose = row.description,
+        stateLabel = integrationPillLabel(row.state),
+        stateTone = tone,
+        stateGlow = row.state == IntegrationHealthState.CHECKING,
     )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Security
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable
-internal fun SecurityPanel(
-    email: String,
-    isSending: Boolean,
-    busy: Boolean,
-    message: String?,
-    onSendReset: () -> Unit,
-    onChangeEmail: (currentPassword: String, newEmail: String) -> Unit,
-    onChangePassword: (currentPassword: String, newPassword: String, confirm: String) -> Unit,
-) {
-    val c = AuntieTheme.colors
-    val dims = AuntieTheme.dims
-    var newEmail by remember { mutableStateOf("") }
-    var emailPw by remember { mutableStateOf("") }
-    var curPw by remember { mutableStateOf("") }
-    var newPw by remember { mutableStateOf("") }
-    var confirmPw by remember { mutableStateOf("") }
-    val pwMismatch = newPw.isNotEmpty() && confirmPw.isNotEmpty() && newPw != confirmPw
-
-    DenPanel(
-        title = "Security",
-        subtitle = "Keep your account safe.",
-        trailing = {
-            AuntieIconTile(icon = Lucide.ShieldCheck, tone = AuntieStatusTone.Success, size = 40.dp)
-        },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
-            message?.let {
-                Text(it, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.success)
-            }
-
-            // Login email (15.4): editable via verify-before-update.
-            Text("Login email", style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
-            Text(
-                "Signed in as ${email.ifBlank { "(not signed in)" }}. This is your account login, not your business contact email.",
-                style = AuntieTheme.typography.bodySmall, color = c.textDim,
-            )
-            AuntieField(value = newEmail, onValueChange = { newEmail = it }, label = "New login email", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = emailPw, onValueChange = { emailPw = it }, label = "Current password", modifier = Modifier.fillMaxWidth())
-            PrimaryButton(
-                label = if (busy) "Sending..." else "Send verification link",
-                enabled = !busy && isPlausibleEmail(newEmail) && emailPw.isNotBlank(),
-                onClick = { onChangeEmail(emailPw, newEmail.trim()); emailPw = "" },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(dims.space3))
-            Text("Change password", style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
-            AuntiePasswordField(value = curPw, onValueChange = { curPw = it }, label = "Current password", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = newPw, onValueChange = { newPw = it }, label = "New password", modifier = Modifier.fillMaxWidth())
-            AuntiePasswordField(value = confirmPw, onValueChange = { confirmPw = it }, label = "Confirm new password", modifier = Modifier.fillMaxWidth())
-            if (pwMismatch) Text("Passwords don't match.", style = AuntieTheme.typography.bodySmall, color = c.error)
-            PrimaryButton(
-                label = if (busy) "Updating..." else "Update password",
-                enabled = !busy && curPw.isNotBlank() && newPw.length >= 6 && newPw == confirmPw,
-                onClick = { onChangePassword(curPw, newPw, confirmPw); curPw = ""; newPw = ""; confirmPw = "" },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(dims.space2))
-            Text("Forgot your password?", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            GhostButton(
-                label = if (isSending) "Sending..." else "Send reset email",
-                onClick = onSendReset,
-                enabled = !isSending && isPlausibleEmail(email),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2494,9 +2338,6 @@ private fun TimeOffPanel(
         subtitle = "Holidays the Den observes and your own closures.",
         collapsible = true,
         initiallyExpanded = false,
-        trailing = {
-            AuntieIconTile(icon = Lucide.Plane, tone = AuntieStatusTone.Purple, size = 40.dp)
-        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
             AuntieFieldLabel(text = "US Holidays Observed")
@@ -2992,7 +2833,6 @@ private fun TagVocabSection(
     DenPanel(
         title = title,
         subtitle = subtitle,
-        trailing = { AuntieIconTile(icon = Lucide.Tag, tone = AuntieStatusTone.Orange, size = 40.dp) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (tags.isEmpty()) {
@@ -3307,21 +3147,26 @@ internal fun vetClinicUsage(clinic: VetClinic, households: List<VetClinicHouseho
     return VetClinicUsage(linked = linked, unlinked = unlinked)
 }
 
-/** #6: two-letter monogram for a clinic's logo avatar. Pure; tested. */
-internal fun vetClinicMonogram(name: String): String {
-    val words = name.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-    return when {
-        words.isEmpty() -> "?"
-        words.size == 1 -> words[0].take(2).uppercase()
-        else -> "${words[0].first()}${words[1].first()}".uppercase()
-    }
-}
-
+/**
+ * The Vet clinics section, matched to `ui-ideas/auntieos-vet-clinics-2026-05-27.html`
+ * (issue #755) and to the web screen: the kit hero with Add clinic in its
+ * trailing slot, a controls row of search field and count pill, then the bank as
+ * cards straight on the ground. The mock draws one section; the approval queue
+ * and the retired rows are not in it and sit in kit panels above and below the
+ * bank, so the queue reads as work and the archive as an archive while the bank
+ * stays the mock's bare grid.
+ *
+ * The section's explanation is the hero's info tooltip, never a banner: the
+ * concept's "New admin surface" banner was a note about where the mock came
+ * from (annotated there), and the shared-bank paragraph that stood here was
+ * explanatory copy of the kind the 2026-09-11 subtitle ruling moved behind the
+ * "i". The error, notice and near-match banners stay: those are state.
+ */
 @Composable
 private fun VetClinicsPanel(
     vm: VetClinicsViewModel = viewModel { VetClinicsViewModel(AuntieOSApp.instance.repository) },
 ) {
-    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
     val clinics by vm.clinics.collectAsState()
     val error by vm.error.collectAsState()
     val notice by vm.notice.collectAsState()
@@ -3329,164 +3174,330 @@ private fun VetClinicsPanel(
     // zero: the control beside the badge retires the clinic, so "nobody uses
     // this" must not look like "we have not been able to check".
     val households by vm.households.collectAsState()
+    val choice by vm.pendingChoice.collectAsState()
     var query by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
 
-    DenPanel(
-        title = "Vet clinics",
-        subtitle = "The shared vet bank every household can pick from. Approve clinics kinfolk submit, then add, edit, or tidy any entry here.",
-        trailing = { AuntieIconTile(icon = Lucide.Stethoscope, tone = AuntieStatusTone.Teal, size = 40.dp) },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            // #6: shared admin surface; each card's badge counts households using it.
-            AuntieBanner(tone = AuntieBannerTone.Info, title = "Shared vet directory") {
-                Text(
-                    "Households and the kinfolk portal both read these clinics. A correction here rewrites the copy stored on every household linked to the clinic, so the number on file at a doorstep changes with it.",
-                    style = AuntieTheme.typography.bodySmall, color = c.textDim,
+    val pending = pendingVetClinics(clinics)
+    val bank = activeVetClinics(clinics)
+    val approved = filterVetClinics(bank, query)
+    val retired = filterVetClinics(archivedVetClinics(clinics), query)
+
+    Column(verticalArrangement = Arrangement.spacedBy(dims.space5)) {
+        DenScreenHeading(
+            kicker = "The Den · Directory",
+            title = "Vet",
+            accentTail = "clinics",
+            subtitle = "The shared bank every household and the kinfolk portal pick from. " +
+                "Correcting a clinic here rewrites the copy stored on every household linked to it, " +
+                "so the number on file at a doorstep changes with it.",
+            trailing = {
+                PrimaryButton(
+                    label = "Add clinic",
+                    enabled = !adding,
+                    onClick = { adding = true },
+                    leading = { Icon(Lucide.Plus, contentDescription = null, modifier = Modifier.size(16.dp)) },
                 )
-            }
-            // Fail loud: surface any add / save / retire / approve failure, never swallow it.
-            error?.let { msg ->
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "Vet clinic action failed") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                }
-            }
-            // A landed write says how far it reached, not just that it landed.
-            notice?.let { msg ->
-                AuntieBanner(tone = AuntieBannerTone.Success, title = "Done") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
-                }
-            }
+            },
+        )
 
-            val pending = pendingVetClinics(clinics)
-            val approved = filterVetClinics(activeVetClinics(clinics), query)
-            val retired = filterVetClinics(archivedVetClinics(clinics), query)
-
-            if (pending.isNotEmpty()) {
-                Text("Pending approval (${pending.size})", style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                Text(
-                    "A household submitted these. Approve to publish one to the shared bank, or reject to retire it. Rejecting keeps who submitted it on file rather than discarding the evidence.",
-                    style = AuntieTheme.typography.bodySmall, color = c.textDim,
-                )
-                pending.forEach { clinic ->
-                    PendingVetClinicCard(
-                        clinic = clinic,
-                        onApprove = { vm.approve(clinic) },
-                        onReject = { vm.reject(clinic.id, clinic.name) },
-                    )
-                }
+        // Fail loud: surface any add / save / retire / approve failure, never swallow it.
+        error?.let { msg ->
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Vet clinic action failed") {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
             }
+        }
+        // A landed write says how far it reached, never only that it landed.
+        notice?.let { msg ->
+            AuntieBanner(tone = AuntieBannerTone.Success, title = "Done") {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth(),
+        // The queue sits above the bank: it is work, and the mock's banner slot
+        // is where anything that wants attention before the controls row goes.
+        if (pending.isNotEmpty()) {
+            DenPanel(
+                title = "Pending approval",
+                subtitle = "A household added these from its own record. Approving publishes a clinic " +
+                    "to the shared bank. Rejecting retires it, which keeps who submitted it on file " +
+                    "rather than discarding the evidence.",
+                meta = "${pending.size} submitted",
             ) {
-                AuntieField(value = query, onValueChange = { query = it }, label = "Search clinics", modifier = Modifier.weight(1f))
-                AuntieStatusPill(label = "${approved.size} clinics", tone = AuntieStatusTone.Muted, mono = true)
-            }
-
-            if (clinics.isEmpty()) {
-                Text("No vet clinics yet. Add the first one below.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            } else if (approved.isEmpty() && query.isNotBlank()) {
-                Text("No clinics match \"$query\".", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-            }
-            approved.forEach { clinic ->
-                VetClinicRow(
-                    clinic = clinic,
-                    usage = households?.let { vetClinicUsage(clinic, it) },
-                    onSave = { updated -> vm.save(updated) },
-                    onRetire = { vm.retire(clinic.id, clinic.name) },
-                )
-            }
-            AddVetClinicForm(onCreate = { draft -> vm.add(draft) })
-            // THE CHOICE. The bank already holds something that looks like the
-            // clinic just typed, and nothing was written. Using an existing
-            // record is listed first; creating a second one is the deliberate
-            // fallback (operator ruling 2026-08-01).
-            val choice by vm.pendingChoice.collectAsState()
-            if (choice.isNotEmpty()) {
-                AuntieBanner(tone = AuntieBannerTone.Warning, title = "A clinic like that is already in the bank") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Nothing was added. Use one of these, or say yours is a separate practice.",
-                            style = AuntieTheme.typography.bodySmall, color = c.textDim,
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
+                    pending.forEach { clinic ->
+                        PendingVetClinicCard(
+                            clinic = clinic,
+                            usage = households?.let { vetClinicUsage(clinic, it) },
+                            onApprove = { vm.approve(clinic) },
+                            onReject = { vm.reject(clinic.id, clinic.name) },
                         )
-                        choice.forEach { cand ->
-                            Text(
-                                listOf(cand.name, cand.address, cand.phone)
-                                    .filter { it.isNotBlank() }.joinToString(" · ") +
-                                    if (!cand.verified) " · waiting for approval" else "",
-                                style = AuntieTheme.typography.bodySmall, color = c.textPrimary,
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            GhostButton(label = "Add mine as a different clinic", onClick = { vm.addAnyway() })
-                            GhostButton(label = "Cancel", onClick = { vm.clearPendingChoice() })
-                        }
                     }
                 }
             }
-            if (retired.isNotEmpty()) {
-                Text("Retired (${retired.size})", style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                Text(
-                    "Hidden from every picker and from the kinfolk portal. Kept, not deleted: a household already on one still reads the name, phone and address it always did, and restoring one puts it back in the bank.",
-                    style = AuntieTheme.typography.bodySmall, color = c.textDim,
-                )
-                retired.forEach { clinic ->
-                    VetClinicRow(
-                        clinic = clinic,
-                        usage = households?.let { vetClinicUsage(clinic, it) },
-                        onSave = { updated -> vm.save(updated) },
-                        onRetire = { vm.retire(clinic.id, clinic.name) },
-                        retired = true,
-                        onRestore = { vm.restore(clinic.id, clinic.name) },
+        }
+
+        // The mock's `.controls`: the search field and the count pill in one row.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(dims.space3),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            AuntieSearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Search clinics by name, phone, or address",
+                leadingIcon = Lucide.Search,
+                onClear = { query = "" },
+                modifier = Modifier.weight(1f),
+            )
+            VetCatalogCount(shown = approved.size, total = bank.size, filtering = query.isNotBlank())
+        }
+
+        if (adding) {
+            AddVetClinicCard(
+                onCreate = { draft -> vm.add(draft); adding = false },
+                onCancel = { adding = false },
+            )
+        }
+        // THE CHOICE. The bank already holds something that looks like the
+        // clinic just typed, and nothing was written. Using an existing
+        // record is listed first; creating a second one is the deliberate
+        // fallback (operator ruling 2026-08-01).
+        if (choice.isNotEmpty()) {
+            AuntieBanner(tone = AuntieBannerTone.Warning, title = "A clinic like that is already in the bank") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Nothing was added. Use one of these, or say yours is a separate practice.",
+                        style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim,
                     )
+                    choice.forEach { cand ->
+                        Text(
+                            listOf(cand.name, cand.address, cand.phone)
+                                .filter { it.isNotBlank() }.joinToString(" · ") +
+                                if (!cand.verified) " · waiting for approval" else "",
+                            style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        GhostButton(label = "Add mine as a different clinic", onClick = { vm.addAnyway() })
+                        GhostButton(label = "Cancel", onClick = { vm.clearPendingChoice() })
+                    }
+                }
+            }
+        }
+
+        when {
+            clinics.isEmpty() && !adding -> EmptyHint(
+                "The bank is empty. Add the first clinic, or one will be created the next time a " +
+                    "household types a vet into its record.",
+            )
+            approved.isEmpty() && !adding -> EmptyHint("No clinic matches that search.")
+        }
+        approved.forEach { clinic ->
+            VetClinicRow(
+                clinic = clinic,
+                usage = households?.let { vetClinicUsage(clinic, it) },
+                onSave = { updated -> vm.save(updated) },
+                onRetire = { vm.retire(clinic.id, clinic.name) },
+            )
+        }
+
+        if (retired.isNotEmpty()) {
+            DenPanel(
+                title = "Retired",
+                subtitle = "Retired clinics are hidden from every picker and from the kinfolk portal. " +
+                    "They are kept, not deleted: a household already on one still reads the name, " +
+                    "phone and address it always did, and restoring one puts it back in the bank.",
+                meta = "${retired.size} out of the bank",
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space4)) {
+                    retired.forEach { clinic ->
+                        VetClinicRow(
+                            clinic = clinic,
+                            usage = households?.let { vetClinicUsage(clinic, it) },
+                            onSave = { updated -> vm.save(updated) },
+                            onRetire = { vm.retire(clinic.id, clinic.name) },
+                            retired = true,
+                            onRestore = { vm.restore(clinic.id, clinic.name) },
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/** Soft card surface matching the Den vet-clinics mock (rounded, hairline border). */
+/**
+ * The mock's `.countpill`, beside the search field and in the same capsule:
+ * "CATALOG" in mono, then the count. Text, never a control: it states what the
+ * grid below holds, and while a search is typed it says how much of the bank
+ * is showing.
+ */
 @Composable
-private fun VetCardSurface(content: @Composable ColumnScope.() -> Unit) {
+internal fun VetCatalogCount(shown: Int, total: Int, filtering: Boolean) {
     val c = AuntieTheme.colors
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    val noun = if (total == 1) "clinic" else "clinics"
+    val count = if (filtering) "$shown of $total $noun" else "$total $noun"
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .border(AuntieTheme.dims.borderHairline, c.borderSoft, RoundedCornerShape(16.dp))
-            .background(c.surface2)
-            .padding(16.dp),
-        content = content,
-    )
+            .height(42.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(c.surfaceGlass)
+            .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(999.dp))
+            .padding(horizontal = 14.dp),
+    ) {
+        Text("CATALOG", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(count, style = AuntieTheme.typography.titleMedium, color = c.textPrimary)
+    }
 }
 
-/** One labelled detail line, omitted entirely when [value] is blank. */
+/**
+ * The mock's `.vcard`: the kit's glass gradient on a hairline at 20dp, 18dp
+ * inside. Retired rows wear the same surface: a household is still reading
+ * this clinic's number off its own record, so it is not greyed into
+ * unreadability.
+ */
 @Composable
-private fun VetDetailLine(label: String, value: String) {
-    if (value.isBlank()) return
+private fun VetCardSurface(content: @Composable ColumnScope.() -> Unit) {
+    GlassSurface(cornerRadius = 20.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(18.dp),
+            content = content,
+        )
+    }
+}
+
+/**
+ * The mock's `.vtop`: a 50dp tile on a gradient that differs card to card with
+ * the same glyph on each (the kit avatar's seeded gradient is that variation;
+ * the seed is the id so a rename keeps its colour), the name in serif, the
+ * document path in mono under it, and the emergency flag as a compact kit pill.
+ */
+@Composable
+private fun VetCardHeader(clinic: VetClinic) {
     val c = AuntieTheme.colors
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("$label:", style = AuntieTheme.typography.bodySmall, color = c.textDim)
-        Text(value, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+        AuntieAvatar(
+            glyph = Lucide.CirclePlus,
+            size = 50.dp,
+            shape = RoundedCornerShape(15.dp),
+            ring = false,
+            gradientSeed = clinic.id.ifBlank { clinic.name },
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                clinic.name.ifBlank { "Unnamed clinic" },
+                style = AuntieTheme.typography.headlineSmall,
+                color = c.textPrimary,
+            )
+            if (clinic.id.isNotBlank()) {
+                Text(
+                    "vet_clinics/${clinic.id}",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = c.textDim,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+        }
+        if (clinic.isEmergency) AuntieStatusPill(label = "24 hour", tone = AuntieStatusTone.Orange, compact = true)
+    }
+}
+
+/**
+ * The mock's `.vmeta` row: a teal glyph then the value. Phone, address and
+ * hours are always drawn and a blank one reads "Not set", the same as web:
+ * this is a record whose gaps are content. Website and notes show only when
+ * set. The label reaches TalkBack through the glyph's description, since a
+ * phone glyph is not a word.
+ */
+@Composable
+private fun VetDetailLine(label: String, icon: ImageVector, value: String, always: Boolean = true) {
+    val shown = value.trim()
+    if (shown.isEmpty() && !always) return
+    val c = AuntieTheme.colors
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+        Icon(icon, contentDescription = label, tint = c.kinTeal, modifier = Modifier.size(15.dp))
+        Text(
+            if (shown.isEmpty()) "Not set" else shown,
+            style = AuntieTheme.typography.bodyMedium,
+            color = if (shown.isEmpty()) c.textFaint else c.textPrimary,
+        )
+    }
+}
+
+/** The detail rows, in the mock's order, then the two this screen adds. */
+@Composable
+private fun VetCardDetails(clinic: VetClinic) {
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        VetDetailLine("Phone", Lucide.Phone, clinic.phone)
+        VetDetailLine("Address", Lucide.MapPin, clinic.address)
+        // Hours live on the CLINIC: every household using this practice
+        // shares them, so there is one copy rather than one per household.
+        VetDetailLine("Hours", Lucide.Clock, clinic.hours)
+        VetDetailLine("Website", Lucide.Globe, clinic.website, always = false)
+        VetDetailLine("Notes", Lucide.StickyNote, clinic.notes, always = false)
+    }
+}
+
+/**
+ * The mock's `.linked`: a teal lock, then the count in mono uppercase with the
+ * number in teal bold. `linked` households are the ones a correction actually
+ * reaches; `by name only` ones carry the clinic's name with no id, so nothing
+ * can find them from the catalog. Summing them would overstate what a save
+ * does, on the screen where that matters most. Null usage is "we have not
+ * been able to check", never zero.
+ */
+@Composable
+private fun VetUsageLine(usage: VetClinicUsage?) {
+    val c = AuntieTheme.colors
+    val number = SpanStyle(color = c.kinTeal, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    val text = buildAnnotatedString {
+        when {
+            usage == null -> append("HOUSEHOLDS: CHECKING")
+            usage.linked == 0 && usage.unlinked == 0 -> append("NO HOUSEHOLDS")
+            else -> {
+                if (usage.linked > 0) {
+                    withStyle(number) { append("${usage.linked}") }
+                    append(" LINKED")
+                }
+                if (usage.unlinked > 0) {
+                    if (usage.linked > 0) append(" · ")
+                    withStyle(number) { append("${usage.unlinked}") }
+                    append(" BY NAME ONLY")
+                }
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Icon(Lucide.Lock, contentDescription = null, tint = c.kinTeal, modifier = Modifier.size(14.dp))
+            Text(text, style = AuntieTheme.typography.labelSmall, color = if (usage == null) c.textFaint else c.textDim)
+        }
+        if (usage != null && usage.unlinked > 0) {
+            Text(
+                "Name-only households are not updated by a save: they carry no clinic id to match on.",
+                style = AuntieTheme.typography.bodySmall, color = c.textFaint,
+            )
+        }
     }
 }
 
 @Composable
-private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onReject: () -> Unit) {
-    val c = AuntieTheme.colors
+private fun PendingVetClinicCard(
+    clinic: VetClinic,
+    usage: VetClinicUsage?,
+    onApprove: () -> Unit,
+    onReject: () -> Unit,
+) {
     var confirmingReject by remember(clinic) { mutableStateOf(false) }
     VetCardSurface {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(clinic.name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(1f))
-            AuntieStatusPill(label = "Pending", tone = AuntieStatusTone.Warning, showDot = true)
-        }
-        VetDetailLine("Phone", clinic.phone)
-        VetDetailLine("Address", clinic.address)
-        VetDetailLine("Website", clinic.website)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        VetCardHeader(clinic)
+        VetCardDetails(clinic)
+        VetCardBase(usage) {
             PrimaryButton(label = "Approve", onClick = onApprove)
             if (confirmingReject) {
                 GhostButton(label = "Confirm reject", onClick = { confirmingReject = false; onReject() })
@@ -3495,6 +3506,26 @@ private fun PendingVetClinicCard(clinic: VetClinic, onApprove: () -> Unit, onRej
                 GhostButton(label = "Reject", onClick = { confirmingReject = true })
             }
         }
+    }
+}
+
+/** The mock's `.vbase`: a hairline above, the count left, the actions right. */
+@Composable
+private fun VetCardBase(usage: VetClinicUsage?, actions: @Composable RowScope.() -> Unit) {
+    val c = AuntieTheme.colors
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind { drawLine(c.border, Offset.Zero, Offset(size.width, 0f), 1f) }
+            .padding(top = 13.dp),
+    ) {
+        VetUsageLine(usage)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            content = actions,
+        )
     }
 }
 
@@ -3508,71 +3539,27 @@ internal fun VetClinicRow(
     retired: Boolean = false,
     onRestore: () -> Unit = {},
 ) {
-    val c = AuntieTheme.colors
     var editing by remember(clinic) { mutableStateOf(false) }
     var confirmingRetire by remember(clinic) { mutableStateOf(false) }
 
     VetCardSurface {
-        // #6: logo monogram + name + emergency pill (matches the vet-clinics mock).
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(c.kinTeal.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(vetClinicMonogram(clinic.name), style = AuntieTheme.typography.labelMedium, color = c.kinTeal)
-            }
-            Text(clinic.name, style = AuntieTheme.typography.titleSmall, color = c.textPrimary, modifier = Modifier.weight(1f))
-            if (clinic.isEmergency) AuntieStatusPill(label = "24hr / ER", tone = AuntieStatusTone.Orange)
-        }
-        // The usage badge. `linked` households are the ones a correction
-        // actually reaches; `by name only` ones carry the clinic's name with no
-        // id, so nothing can find them from the catalog. Summing them would
-        // overstate what a save does, on the screen where that matters most.
-        when {
-            usage == null -> AuntieStatusPill(label = "Households: checking", tone = AuntieStatusTone.Muted, mono = true)
-            usage.linked == 0 && usage.unlinked == 0 ->
-                AuntieStatusPill(label = "No households", tone = AuntieStatusTone.Muted, mono = true)
-            else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (usage.linked > 0) {
-                    AuntieStatusPill(label = "${usage.linked} linked", tone = AuntieStatusTone.Teal, mono = true)
-                }
-                if (usage.unlinked > 0) {
-                    AuntieStatusPill(label = "${usage.unlinked} by name only", tone = AuntieStatusTone.Warning, mono = true)
-                }
-            }
-        }
-        if (usage != null && usage.unlinked > 0) {
-            Text(
-                "Name-only households are not updated by a save: they carry no clinic id to match on.",
-                style = AuntieTheme.typography.bodySmall, color = c.textDim,
-            )
-        }
+        VetCardHeader(clinic)
 
         if (!editing) {
-            VetDetailLine("Phone", clinic.phone)
-            VetDetailLine("Address", clinic.address)
-            // Hours live on the CLINIC: every household using this practice
-            // shares them, so there is one copy rather than one per household.
-            VetDetailLine("Hours", clinic.hours)
-            VetDetailLine("Website", clinic.website)
-            VetDetailLine("Notes", clinic.notes)
-            val vetCtx = androidx.compose.ui.platform.LocalContext.current
-            // #6: icon actions (mock fidelity): Maps + Website deep-links + edit/delete.
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            VetCardDetails(clinic)
+            val vetCtx = LocalContext.current
+            VetCardBase(usage) {
                 if (clinic.googleMapsUrl.isNotBlank()) {
-                    AuntieIconButton(icon = Lucide.MapPin, contentDescription = "Open in Maps", onClick = {
+                    AuntieIconButton(icon = Lucide.MapPin, contentDescription = "Open in Maps", size = 32.dp, onClick = {
                         vetCtx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(clinic.googleMapsUrl)))
                     })
                 }
                 if (clinic.website.isNotBlank()) {
-                    AuntieIconButton(icon = Lucide.ExternalLink, contentDescription = "Open website", onClick = {
+                    AuntieIconButton(icon = Lucide.ExternalLink, contentDescription = "Open website", size = 32.dp, onClick = {
                         vetCtx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(clinic.website)))
                     })
                 }
-                AuntieIconButton(icon = Lucide.Pencil, contentDescription = "Edit clinic", onClick = { editing = true })
+                AuntieIconButton(icon = Lucide.Pencil, contentDescription = "Edit clinic", size = 32.dp, onClick = { editing = true })
                 if (retired) {
                     // Reversible, so no confirm step: restoring puts the row back
                     // in the bank and changes nothing on any household.
@@ -3581,10 +3568,11 @@ internal fun VetClinicRow(
                     GhostButton(label = "Confirm retire", onClick = { confirmingRetire = false; onRetire() })
                     GhostButton(label = "Cancel", onClick = { confirmingRetire = false })
                 } else {
-                    // "Retire", not "Delete": this archives. The row and every
-                    // household pointing at it survive, so a label promising
+                    // "Retire" on an archive glyph, not the concept's "Remove" on
+                    // a trash can: this archives. The row and every household
+                    // pointing at it survive, so a label or a glyph promising
                     // removal would misdescribe what the button does.
-                    AuntieIconButton(icon = Lucide.Archive, contentDescription = "Retire clinic", destructive = true, onClick = { confirmingRetire = true })
+                    AuntieIconButton(icon = Lucide.Archive, contentDescription = "Retire clinic", size = 32.dp, destructive = true, onClick = { confirmingRetire = true })
                 }
             }
         } else {
@@ -3593,7 +3581,7 @@ internal fun VetClinicRow(
     }
 }
 
-/** Inline editor for an existing clinic (name/phone/address/website/emergency/notes). */
+/** Inline editor for an existing clinic (name/phone/address/website/hours/emergency/notes). */
 @Composable
 private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit, onCancel: () -> Unit) {
     var name        by remember(clinic) { mutableStateOf(clinic.name) }
@@ -3618,7 +3606,7 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
     AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it })
-        Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
+        Text("Open 24 hours / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         PrimaryButton(label = "Save", enabled = canSave, onClick = { onSaved(draft.copy(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), hours = hours.trim(), notes = notes.trim())) })
@@ -3626,8 +3614,14 @@ private fun VetClinicEditFields(clinic: VetClinic, onSaved: (VetClinic) -> Unit,
     }
 }
 
+/**
+ * The add card, opened by the hero's Add clinic and drawn above the bank on the
+ * same surface as a clinic, the way the web screen does. Hours are absent here
+ * on purpose: a brand new row is added from a phone call or a card, and the
+ * hours get curated on the clinic afterwards through Edit.
+ */
 @Composable
-private fun AddVetClinicForm(onCreate: (VetClinic) -> Unit) {
+private fun AddVetClinicCard(onCreate: (VetClinic) -> Unit, onCancel: () -> Unit) {
     var name        by remember { mutableStateOf("") }
     var phone       by remember { mutableStateOf("") }
     var address     by remember { mutableStateOf("") }
@@ -3635,8 +3629,8 @@ private fun AddVetClinicForm(onCreate: (VetClinic) -> Unit) {
     var notes       by remember { mutableStateOf("") }
     var isEmergency by remember { mutableStateOf(false) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Add a clinic", style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
+    VetCardSurface {
+        Text("New clinic", style = AuntieTheme.typography.headlineSmall, color = AuntieTheme.colors.textPrimary)
         AuntieField(value = name, onValueChange = { name = it }, label = "Clinic name", modifier = Modifier.fillMaxWidth())
         AuntieField(value = phone, onValueChange = { phone = it }, label = "Phone", modifier = Modifier.fillMaxWidth())
         AuntieField(value = address, onValueChange = { address = it }, label = "Address", modifier = Modifier.fillMaxWidth())
@@ -3644,16 +3638,18 @@ private fun AddVetClinicForm(onCreate: (VetClinic) -> Unit) {
         AuntieField(value = notes, onValueChange = { notes = it }, label = "Notes", modifier = Modifier.fillMaxWidth())
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             AuntieToggle(checked = isEmergency, onCheckedChange = { isEmergency = it })
-            Text("24hr / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
+            Text("Open 24 hours / emergency clinic", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textPrimary)
         }
-        PrimaryButton(
-            label = "Add clinic",
-            enabled = name.isNotBlank(),
-            onClick = {
-                // Admin-authored clinics are approved immediately (verified defaults true).
-                onCreate(VetClinic(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), notes = notes.trim(), isEmergency = isEmergency))
-                name = ""; phone = ""; address = ""; website = ""; notes = ""; isEmergency = false
-            },
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PrimaryButton(
+                label = "Add to bank",
+                enabled = name.isNotBlank(),
+                onClick = {
+                    // Admin-authored clinics are approved immediately (verified defaults true).
+                    onCreate(VetClinic(name = name.trim(), phone = phone.trim(), address = address.trim(), website = website.trim(), notes = notes.trim(), isEmergency = isEmergency))
+                },
+            )
+            GhostButton(label = "Cancel", onClick = onCancel)
+        }
     }
 }

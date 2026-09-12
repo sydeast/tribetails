@@ -319,17 +319,17 @@ describe('display helpers', () => {
     expect(memberLabel({ ...base, secondaryLabel: null, invitedEmail: null })).toBe('u1');
   });
 
-  it('tones invite statuses so revoked and expired never read as live', () => {
-    expect(inviteStatusTone('ACCEPTED')).toBe('success');
-    expect(inviteStatusTone('EMAIL_SENT')).toBe('warning');
-    expect(inviteStatusTone('PENDING')).toBe('warning');
+  it('tones invite statuses in the mock tints, so revoked and expired never read as live', () => {
+    expect(inviteStatusTone('ACCEPTED')).toBe('teal');
+    expect(inviteStatusTone('EMAIL_SENT')).toBe('orange');
+    expect(inviteStatusTone('PENDING')).toBe('orange');
     expect(inviteStatusTone('REVOKED')).toBe('error');
     expect(inviteStatusTone('EXPIRED')).toBe('muted');
   });
 
-  it('tones member statuses', () => {
-    expect(memberStatusTone('ACTIVE')).toBe('success');
-    expect(memberStatusTone('INVITED')).toBe('warning');
+  it('tones member statuses as the members mock draws its LED', () => {
+    expect(memberStatusTone('ACTIVE')).toBe('teal');
+    expect(memberStatusTone('INVITED')).toBe('orange');
     expect(memberStatusTone('SUSPENDED')).toBe('error');
   });
 

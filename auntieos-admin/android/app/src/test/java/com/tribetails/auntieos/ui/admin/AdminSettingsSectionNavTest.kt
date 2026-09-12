@@ -61,6 +61,19 @@ class AdminSettingsSectionNavTest {
         }
     }
 
+    // Issue #755: the list is the settings mock's `.secnav`, an icon and a
+    // label per row. The blurb is not drawn, and the toggle section carries
+    // the mock's title.
+    @Test
+    fun `list rows are label only, with the mock's Scheduling title`() {
+        setContent()
+        SettingsSection.entries.forEach { section ->
+            composeRule.onNodeWithText(section.blurb).assertDoesNotExist()
+        }
+        composeRule.onNodeWithText("Scheduling").assertExists()
+        composeRule.onNodeWithText("Booking behavior").assertDoesNotExist()
+    }
+
     @Test
     fun `tapping a section opens only its detail panel`() {
         setContent()

@@ -237,7 +237,7 @@ export function TextFieldsSection({ title, subtitle, data, fields, onSave }: Tex
   );
 }
 
-// ── Booking behavior ─────────────────────────────────────────────────────────
+// ── Scheduling (the booking toggles) ─────────────────────────────────────────────────────────
 
 type BookingToggleKey =
   | 'autoConfirmRepeatKinfolk'
@@ -258,13 +258,22 @@ interface BookingBehaviorSectionProps {
  * exactly where it was (the fail-loud error banner explains why) instead of
  * showing a flip that never actually persisted.
  *
- * The third, "Block bookings during busy events" (#517), is the one whose
- * default is ON: it writes `enableConflictDetection`, which
+ * "Block bookings during busy events" (#517) is the one whose default is ON:
+ * it writes `enableConflictDetection`, which
  * `mytribe/functions/src/lib/bookingBusyConflict.ts` reads before every booking
  * write, so turning it off really does let a visit land on a Google-imported
  * busy block. It reads `!== false` rather than `=== true` for the same reason
  * the server does: a settings doc written before the field existed must decode
  * as ON, not as an open gate.
+ *
+ * THE MOCK'S "SCHEDULING" PANEL (issue #755 pass). The settings mock draws
+ * these three switches as its `.trow` rows under the title "Scheduling", in
+ * this order, each with a one-line note under the bold label; the title, the
+ * order and the notes are the mock's. The mock's fourth row, "Sync Google
+ * Calendar busy events", is not here: that switch is the free/busy import,
+ * which lives with the Calendar panels under Integrations (#715). The panel
+ * itself still sits under Business profile (walk 2026-08-17, mark 16), which
+ * the mock's nav predates.
  */
 export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionProps) {
   const [savingKey, setSavingKey] = useState<BookingToggleKey | null>(null);
@@ -285,26 +294,34 @@ export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionP
 
   return (
     <DenPanel
-      title="Booking behavior"
-      subtitle="How new bookings are confirmed and adjusted. Each toggle saves immediately."
+      title="Scheduling"
+      subtitle="How new bookings are confirmed and adjusted. Each switch saves the moment it is flipped."
     >
       {error ? (
         <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">
           {error}
         </Banner>
       ) : null}
-      <ul className="settingsEdit__toggleList">
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Auto-confirm repeat kinfolk</span>
+      <ul className="settingsEdit__toggleList settingsEdit__toggleList--ruled">
+        <li className="settingsEdit__toggleRow settingsEdit__toggleRow--ruled">
+          <span className="settingsEdit__toggleText">
+            <span className="settingsEdit__toggleLabel">Block bookings during busy events</span>
+            <span className="settingsEdit__toggleNote">
+              Stop new visits from landing on top of a Google Calendar block.
+            </span>
+          </span>
           <Toggle
-            label="Toggle auto-confirm repeat kinfolk"
-            checked={data.autoConfirmRepeatKinfolk}
+            label="Toggle block bookings during busy events"
+            checked={data.enableConflictDetection !== false}
             disabled={savingKey !== null}
-            onChange={(next) => void toggle('autoConfirmRepeatKinfolk', next)}
+            onChange={(next) => void toggle('enableConflictDetection', next)}
           />
         </li>
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Snap drag-to-reschedule to 15 min</span>
+        <li className="settingsEdit__toggleRow settingsEdit__toggleRow--ruled">
+          <span className="settingsEdit__toggleText">
+            <span className="settingsEdit__toggleLabel">Snap drag-to-reschedule to 15 min</span>
+            <span className="settingsEdit__toggleNote">Visits align to quarter-hour slots when dragged.</span>
+          </span>
           <Toggle
             label="Toggle snap drag-to-reschedule to 15 min"
             checked={data.snapRescheduleTo15Min}
@@ -312,13 +329,16 @@ export function BookingBehaviorSection({ data, onSave }: BookingBehaviorSectionP
             onChange={(next) => void toggle('snapRescheduleTo15Min', next)}
           />
         </li>
-        <li className="settingsEdit__toggleRow">
-          <span className="settingsEdit__toggleLabel">Block bookings during busy events</span>
+        <li className="settingsEdit__toggleRow settingsEdit__toggleRow--ruled">
+          <span className="settingsEdit__toggleText">
+            <span className="settingsEdit__toggleLabel">Auto-confirm repeat kinfolk</span>
+            <span className="settingsEdit__toggleNote">Trusted kinfolk bookings skip manual approval.</span>
+          </span>
           <Toggle
-            label="Toggle block bookings during busy events"
-            checked={data.enableConflictDetection !== false}
+            label="Toggle auto-confirm repeat kinfolk"
+            checked={data.autoConfirmRepeatKinfolk}
             disabled={savingKey !== null}
-            onChange={(next) => void toggle('enableConflictDetection', next)}
+            onChange={(next) => void toggle('autoConfirmRepeatKinfolk', next)}
           />
         </li>
       </ul>
@@ -373,7 +393,7 @@ function seedDraft(data: PaymentSettings): PaymentDraft {
  * next to its switch, and the ones that are a sentence rather than a link get
  * a place to write it.
  *
- * ONE SAVE BUTTON, not per-flip saves like Booking behavior. A toggle and the
+ * ONE SAVE BUTTON, not per-flip saves like the Scheduling toggles. A toggle and the
  * handle beside it are one decision ("offer Venmo, at this handle"), and
  * saving the switch the instant it moves would persist "Venmo is on" before
  * the operator has typed where to send the money.

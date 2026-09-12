@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -976,19 +977,22 @@ private fun SelectPill(
     modifier: Modifier = Modifier,
 ) {
     val c = AuntieTheme.colors
+    // The create-booking mock's `.type` / `.wd` (#755): a chosen chip is SOLID
+    // orange with navy text, not a tinted one with an orange rim. At rest it is
+    // navy-3 on a hairline, which surface2 and borderSoft are on this theme.
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(if (selected) c.surface2 else c.surface)
-            .border(1.dp, if (selected) c.kinfolkOrange else c.border, RoundedCornerShape(999.dp))
+            .background(if (selected) c.kinfolkOrange else c.surface2)
+            .border(1.dp, if (selected) Color.Transparent else c.borderSoft, RoundedCornerShape(999.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            style = AuntieTheme.typography.bodySmall,
-            color = if (selected) c.textPrimary else c.textDim,
+            style = AuntieTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+            color = if (selected) c.background else c.textDim,
             textAlign = TextAlign.Center,
         )
     }
@@ -1177,14 +1181,17 @@ private fun DayCell(
     modifier: Modifier,
 ) {
     val c = AuntieTheme.colors
+    // A picked day is TEAL (#755): the create-booking mock's `.day.sel`, the
+    // colour it spends on a date the operator chose, where orange is what it
+    // spends on a chosen service or weekday. The web calendar paints the same.
     val background = when {
-        selected -> c.kinfolkOrange
+        selected -> c.kinTeal
         info.badge == BookingDayBadge.CLOSED -> c.error.copy(alpha = 0.12f)
         info.badge == BookingDayBadge.BLOCKED -> c.warning.copy(alpha = 0.14f)
         else -> c.surface
     }
     val textColor = when {
-        selected -> c.background
+        selected -> c.textPrimary
         !info.pickable -> c.textFaint
         else -> c.textPrimary
     }

@@ -9,6 +9,15 @@
   Same "Den" aesthetic. No em dashes. Reflects writeAuditEntry seq/prevHash/entryHash
   chain + verifyActivityLogChain integrity check. Palette from AuntieColors.kt.
   Sample content is illustrative placeholder.
+  Amended 2026-09-11 (issue #755 sweep) for two operator rulings both apps
+  already draw, so a later pass does not strip them:
+  - R5, 2026-08-03 ("the Activity Log is seriously lacking, cant see shit or
+    what the fuck actually happened"): every row opens in place to the full
+    sealed record (identity and provenance, the flattened payload, the chain
+    seal). The first row below is drawn open. The same ruling added the status
+    facet (Problems / Success / Pending) beside the category chips.
+  - #714: verifyActivityLogChain cold-starts at up to 8.3s, so while it runs
+    the badge's dot gives way to a spinner and the verdict says so.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -47,6 +56,9 @@
   .fchip{font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:30px;cursor:pointer;border:1px solid var(--line);background:var(--navy-3);color:var(--cream-dim);transition:.16s var(--ease)}
   .fchip.on{background:var(--cream);color:var(--navy);border-color:var(--cream)}
   .fchip:not(.on):hover{color:var(--cream)}
+  /* R5: the status facet, a second question behind a hairline. */
+  .fgroup{display:contents}
+  .fsep{width:1px;height:22px;background:var(--line);margin:0 2px}
   .search{display:flex;align-items:center;gap:9px;background:var(--navy-3);border:1px solid var(--line);border-radius:12px;padding:9px 13px;color:var(--cream-dim);font-size:13px;margin-left:auto;min-width:200px}
   .search input{background:none;border:none;outline:none;color:var(--cream);font-family:inherit;font-size:13px;width:100%}
 
@@ -68,6 +80,16 @@
   .seq .n{color:var(--cream);font-size:12px}
   .seq .hash{display:inline-flex;align-items:center;gap:5px;margin-top:3px;color:var(--teal);opacity:.85}
   .seq .hash .lk{width:8px;height:8px;border-radius:50%;background:var(--teal);box-shadow:0 0 6px rgba(10,133,149,.6)}
+  /* R5: the opened record under a row. Three blocks, mono where the values
+     are machine values an operator compares character by character. */
+  .row.open{background:var(--navy-3)}
+  .detail{padding:4px 20px 16px;background:var(--navy-3);border-top:1px solid var(--line-2)}
+  .detail h5{font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);margin:14px 0 5px}
+  .detail dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:2px 20px;margin:0}
+  .detail dt{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--cream-dim)}
+  .detail dd{font-size:13px;margin:0;overflow-wrap:anywhere}
+  .detail dl.mono dt{font-family:"Spline Sans Mono",monospace;text-transform:none;letter-spacing:0}
+  .detail dl.mono dd{font-family:"Spline Sans Mono",monospace;font-size:12px}
 
   @keyframes rise{to{opacity:1;transform:translateY(0)}}
   .note{margin-top:26px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
@@ -93,12 +115,21 @@
     </div>
 
     <div class="filters">
-      <span class="fchip on">All</span>
-      <span class="fchip">Auth</span>
-      <span class="fchip">Bookings</span>
-      <span class="fchip">KinTales</span>
-      <span class="fchip">Notifications</span>
-      <span class="fchip">Admin</span>
+      <span class="fgroup">
+        <span class="fchip on">All</span>
+        <span class="fchip">Auth</span>
+        <span class="fchip">Bookings</span>
+        <span class="fchip">KinTales</span>
+        <span class="fchip">Notifications</span>
+        <span class="fchip">Admin</span>
+      </span>
+      <span class="fsep"></span>
+      <span class="fgroup">
+        <span class="fchip on">Any status</span>
+        <span class="fchip">Problems</span>
+        <span class="fchip">Success</span>
+        <span class="fchip">Pending</span>
+      </span>
       <div class="search">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
         <input placeholder="Search actor, action, target…" />
@@ -108,11 +139,35 @@
     <div class="log">
       <div class="daysep">Today · May 27</div>
 
-      <div class="row">
+      <div class="row open">
         <span class="t">2:14p</span>
         <span class="ico tale">✎</span>
         <div class="meta"><b>KinTale draft approved</b> <span class="ac">DRAFT_APPROVED</span><small>Auntie Syd · generated_drafts/dr_8841</small></div>
         <div class="seq"><span class="n">#1482</span><span class="hash"><i class="lk"></i>a3f1e9</span></div>
+      </div>
+      <div class="detail">
+        <dl>
+          <div><dt>When</dt><dd>2026-05-27T14:14:02.118Z</dd></div>
+          <div><dt>Action</dt><dd>DRAFT_APPROVED</dd></div>
+          <div><dt>Status</dt><dd>SUCCESS</dd></div>
+          <div><dt>Severity</dt><dd>info</dd></div>
+          <div><dt>Actor</dt><dd>Auntie Syd</dd></div>
+          <div><dt>Actor role</dt><dd>AUNTIE</dd></div>
+          <div><dt>Target</dt><dd>generated_drafts/dr_8841</dd></div>
+          <div><dt>Request</dt><dd>req_5f1c</dd></div>
+        </dl>
+        <h5>What happened</h5>
+        <dl class="mono">
+          <div><dt>draftId</dt><dd>dr_8841</dd></div>
+          <div><dt>familyId</dt><dd>fam_wren</dd></div>
+          <div><dt>template</dt><dd>kintale.visit.v3</dd></div>
+        </dl>
+        <h5>Chain seal</h5>
+        <dl class="mono">
+          <div><dt>Sequence</dt><dd>#1482</dd></div>
+          <div><dt>Entry hash</dt><dd>a3f1e9c02b7d44e18f6a9c3d5e7b8a1f2c4d6e8f0a1b3c5d7e9f1a2b4c6d8e0f</dd></div>
+          <div><dt>Previous hash</dt><dd>77c0b2d19e4f5a6b8c0d2e4f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2a4b</dd></div>
+        </dl>
       </div>
       <div class="row">
         <span class="t">11:32a</span>
@@ -161,12 +216,12 @@
       </div>
     </div>
 
-    <p class="note">// concept mockup · Activity log · seq + entryHash chain (writeAuditEntry) · verifyActivityLogChain · placeholder content</p>
+    <p class="note">// concept mockup · Activity log · seq + entryHash chain (writeAuditEntry) · verifyActivityLogChain · placeholder content · R5 opened record and status facet, #714 verify spinner (amended 2026-09-11)</p>
   </div>
 
   <script>
     document.querySelectorAll('.fchip').forEach(c=>c.addEventListener('click',()=>{
-      document.querySelectorAll('.fchip').forEach(x=>x.classList.remove('on')); c.classList.add('on');}));
+      c.closest('.fgroup').querySelectorAll('.fchip').forEach(x=>x.classList.remove('on')); c.classList.add('on');}));
     const mesh=document.querySelector('.mesh');
     addEventListener('pointermove',e=>{const x=(e.clientX/innerWidth-.5),y=(e.clientY/innerHeight-.5);
       mesh.style.transform=`translate3d(${x*-14}px,${y*-14}px,0)`;},{passive:true});
