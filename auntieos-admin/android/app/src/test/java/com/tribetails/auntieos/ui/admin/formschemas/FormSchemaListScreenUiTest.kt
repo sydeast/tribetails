@@ -83,8 +83,13 @@ class FormSchemaListScreenUiTest {
         // The mock's `.ver`: plain mono text per row.
         composeRule.onNodeWithText("v3").assertIsDisplayed()
         composeRule.onNodeWithText("v1").assertIsDisplayed()
-        // The roster resolves the uid to the admin's address on the updated line.
-        composeRule.onNodeWithText("auntie@tribetails.example", substring = true).assertIsDisplayed()
+        // The roster resolves the uid to the admin's address on the updated line,
+        // once per row: both rows were saved by admin1.
+        assertEquals(
+            2,
+            composeRule.onAllNodesWithText("auntie@tribetails.example", substring = true)
+                .fetchSemanticsNodes().size,
+        )
         composeRule.onNodeWithText("Reload").assertIsDisplayed()
         // The old wrapper panel and its title are gone; the table sits on the ground.
         assertEquals(0, composeRule.onAllNodesWithText("All schemas").fetchSemanticsNodes().size)
