@@ -37,11 +37,11 @@ import { describe, expect, it } from 'vitest';
  * wearer strings, three staggered screens) and changed five times in eighty
  * commits keeping them current, and a test every new screen must edit is a
  * test that gets edited on autopilot. What stays written down is only what a
- * scan cannot know: which two surfaces are ALLOWED the brand gradient
- * (exclusivity is the rule). A new screen that follows the rules changes
- * nothing here; one that breaks them fails here. The `.signin .signin__card`
- * pin that used to sit beside that list went with the #780 ruling below: the
- * sign-in card is glass, and nothing about it is pinned here any more.
+ * scan cannot know: which surface is ALLOWED the brand gradient (exclusivity
+ * is the rule). A new screen that follows the rules changes nothing here; one
+ * that breaks them fails here. The `.signin .signin__card` opaque-fill pin
+ * that used to sit beside that list went with the #780 ruling below: the
+ * sign-in card is glass, and what is pinned now is the glass itself.
  */
 
 const stylesDir = dirname(fileURLToPath(import.meta.url));
@@ -433,10 +433,27 @@ describe('the brand gradient renders somewhere real', () => {
   // translucent over the shared orbs, with no cap and no wash of its own.
   //
   // Ruling (#780, 2026-09-11): the mock wins. The sign-in card is a kit glass
-  // surface and the sign-in sweep (#773) takes the wash and the cap out with
-  // the rest of the restyle. This file no longer requires any of the three,
-  // and it must not be brought back to requiring them: the brand mark's one
-  // required surface is the hero stat below.
+  // surface. #773 restyled the screen around the three pins and #788 lifted
+  // them; the follow-up to #755 then took the wash and the cap out of
+  // signin.css and put the panel gradient on the card. This file must not be
+  // brought back to requiring any of the three: the brand mark's one required
+  // surface is the hero stat below, and the sign-in card is held to the glass
+  // it draws now.
+  it('draws the sign-in card as the panel glass, with no cap and no wash', () => {
+    const card = signin.slice(
+      signin.indexOf('.signin .signin__card {'),
+      signin.indexOf('}', signin.indexOf('.signin .signin__card {')),
+    );
+    expect(card).toContain(
+      'linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom))',
+    );
+    expect(card).toContain('border-color: var(--color-hairline)');
+    expect(card).toContain('border-radius: var(--radius-lg)');
+    expect(card).not.toContain('var(--color-surface)');
+    // The two pseudo-elements were the wash (on `.signin`) and the cap (on the
+    // card). Neither is in the mock, so neither may come back.
+    expect(signin).not.toMatch(/\.signin(?:\s+\.signin__card)?::before/);
+  });
 
   // NO HOME HERO, and that is settled, not missing. The 2026-07-25 audit named
   // "the sign-in panel and the Home hero stat" as the pair. `Home.tsx` renders
@@ -462,20 +479,19 @@ describe('the brand gradient renders somewhere real', () => {
   it('stays a MARK: the hero stat carries it, and everyone else comes up empty', () => {
     // "Reserved for hero and CTA moments" (tokens.css). A brand gradient on
     // every panel is wallpaper, not a mark. The hero stat carries it once.
-    // Sign-in is ALLOWED it, at most twice (the audit's wash and cap), until
-    // the sweep lands the glass card and both uses go; it is not required to
-    // carry it, which is the half of the old pin the #780 ruling lifted.
-    expect(uses(signin)).toBeLessThanOrEqual(2);
+    // Sign-in carried it twice (the audit's wash and cap) until the #780
+    // ruling; the glass card took both uses out, and it does not get them back.
+    expect(uses(signin)).toBe(0);
     expect(uses(kit)).toBe(1);
 
     // Offenders are DISCOVERED, not listed: every stylesheet in the app is
     // scanned (screen, component and shared sheet alike, where the old check
     // read only screens/),
-    // and anything outside the two carriers that names the gradient fails here
+    // and anything outside the one carrier that names the gradient fails here
     // without this test growing a ledger. The carrier list is the one thing
     // that stays written down, because exclusivity IS the rule being pinned: a
-    // third surface must show up here as a deliberate edit, never as drift.
-    const carriers = new Set(['styles/signin.css', 'components/DenScreenKit.css']);
+    // second surface must show up here as a deliberate edit, never as drift.
+    const carriers = new Set(['components/DenScreenKit.css']);
     const offenders = FILES.filter((f) => !carriers.has(rel(f)))
       .filter((f) => uses(readFileSync(f, 'utf8')) > 0)
       .map(rel);
