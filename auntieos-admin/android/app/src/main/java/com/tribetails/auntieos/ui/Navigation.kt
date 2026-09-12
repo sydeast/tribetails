@@ -117,6 +117,17 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object EditKin : Screen("edit_kin/{kinId}", "Edit Kin", Lucide.Users) {
         fun createRoute(kinId: String) = "edit_kin/$kinId"
     }
+    /**
+     * The pet's own screen, `ui-ideas/auntieos-kin-detail-2026-05-27.html`. The
+     * React admin has had it since the port; on Android a pet was a card inside
+     * the household profile whose only tap opened the editor, so there was
+     * nowhere the pet was described in full. Both entry points (the Directory's
+     * Kin tab and that same profile card) land here, and "Edit kin" from here
+     * opens [EditKin].
+     */
+    object KinDetail : Screen("kin_detail/{kinId}", "Kin", Lucide.Users) {
+        fun createRoute(kinId: String) = "kin_detail/$kinId"
+    }
 
     // Admin Data Screens
     object AdminData : Screen("admin_data", "Business Data", Lucide.LayoutDashboard)
@@ -737,8 +748,14 @@ private fun AuthenticatedNavHost(
                     onKinfolkClick = { id ->
                         navController.navigate(Screen.KinfolkProfile.createRoute(id))
                     },
+                    // The Kin tab opens the PET, not the pet's editor, the same
+                    // as the React admin's Kin tab. It used to go straight to
+                    // EditKin, which also could not load: that screen resolved
+                    // the pet out of `profileState.kinList`, which only
+                    // `loadProfile` fills, so a cold tap here read "Kin not
+                    // found". The detail screen fetches by document id.
                     onKinClick = { kinId ->
-                        navController.navigate(Screen.EditKin.createRoute(kinId))
+                        navController.navigate(Screen.KinDetail.createRoute(kinId))
                     },
                     onAddKinfolk = { navController.navigate(Screen.AddKinfolk.route) }
                 )
@@ -822,7 +839,11 @@ private fun AuthenticatedNavHost(
                     onAddKin = { kinfolkId, kinfolkName ->
                         navController.navigate(Screen.AddKin.createRoute(kinfolkId, kinfolkName))
                     },
-                    onEditKin = { kinId -> navController.navigate(Screen.EditKin.createRoute(kinId)) },
+                    // The Kin card stays, and its rows now open the PET rather
+                    // than the pet's editor (the card is the mock's own `.pet`
+                    // row and carries the three 411 facts this profile has
+                    // always shown, so it is the entry point, not the screen).
+                    onOpenKin = { kinId -> navController.navigate(Screen.KinDetail.createRoute(kinId)) },
                     onNavigateToHouseholdData = { kinfolkId, kinfolkName ->
                         navController.navigate(Screen.HouseholdData.createRoute(kinfolkId, kinfolkName))
                     },
@@ -982,6 +1003,29 @@ private fun AuthenticatedNavHost(
                         directoryVm.clearEditKinForm()
                         navController.popBackStack()
                     }
+                )
+            }
+            composable(Screen.KinDetail.route) { backStackEntry ->
+                val kinId = backStackEntry.arguments?.getString("kinId") ?: return@composable
+                com.tribetails.auntieos.ui.directory.KinDetailScreen(
+                    kinId = kinId,
+                    onBack = { navController.popBackStack() },
+                    // The trail's first step, all the way out to the Directory
+                    // list, the same wiring HouseholdData and HouseholdMembers
+                    // use: a bare pop lands on whatever opened this.
+                    onDirectory = { navController.popBackStack(Screen.Directory.route, false) },
+                    // The middle step. From the household profile it CLOSES
+                    // back down to the profile already underneath; from the
+                    // Directory's Kin tab there is no profile on the stack, so
+                    // the false return is what says "open one".
+                    onHousehold = { kinfolkId ->
+                        if (!navController.popBackStack(Screen.KinfolkProfile.createRoute(kinfolkId), false)) {
+                            navController.navigate(Screen.KinfolkProfile.createRoute(kinfolkId))
+                        }
+                    },
+                    onEditKin = { id -> navController.navigate(Screen.EditKin.createRoute(id)) },
+                    onOpenReport = { sessionId -> navController.navigate(Screen.KinTaleReport.createRoute(sessionId)) },
+                    onOpenVisit = { sessionId -> navController.navigate(Screen.KinCareDetail.createRoute(sessionId)) },
                 )
             }
 

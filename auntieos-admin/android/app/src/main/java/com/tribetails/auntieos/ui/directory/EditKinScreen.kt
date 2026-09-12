@@ -386,6 +386,20 @@ fun EditKinScreen(
                     )
                 }
 
+                // Archive / Restore, where the React editor puts it, and the only
+                // control that writes `kin.status`. Android could not reach the
+                // field at all before this: a pet archived from the web could not
+                // be brought back from the phone.
+                item {
+                    val archived = state.status.equals("archived", ignoreCase = true)
+                    GhostButton(
+                        label = if (archived) "Restore" else "Archive",
+                        onClick = { viewModel.setKinArchived(!archived) },
+                        enabled = !state.isSaving && state.kinId.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 // Phase 3: refresh-intelligence. Synthesis is per-HOUSEHOLD, so this
                 // refreshes the kin's parent household (state.kinfolkId), not just this
                 // pet; the label and caption say so. In-flight guarded; result toasts.

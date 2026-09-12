@@ -58,7 +58,8 @@ fun KinfolkProfileScreen(
     onBack: () -> Unit,
     onEdit: (String) -> Unit,
     onAddKin: (String, String) -> Unit,
-    onEditKin: (String) -> Unit = {},
+    /** A Kin card row opens the PET (its own screen since the Kin detail build), not the editor. */
+    onOpenKin: (String) -> Unit = {},
     onNavigateToHouseholdData: (String, String) -> Unit = { _, _ -> },
     onNavigateToMediaGallery: (String, String) -> Unit = { _, _ -> },
     onOpenReport: (sessionId: String) -> Unit = {},
@@ -235,8 +236,10 @@ fun KinfolkProfileScreen(
                 // dossier" action) moved OFF this read-only profile and onto the Edit
                 // screen, where editing belongs. See EditKinfolkScreen.
 
-                // Kin: the mock's `.pet` rows, one tap opening the pet. On Android
-                // the pet's own screen is its editor, so that is where a row goes.
+                // Kin: the mock's `.pet` rows, one tap opening the pet. The pet
+                // now HAS its own screen (`KinDetailScreen`), so that is where a
+                // row goes; it used to go straight to the editor because there
+                // was nothing else to open.
                 item {
                     DenPanel(
                         title = "Kin",
@@ -258,7 +261,7 @@ fun KinfolkProfileScreen(
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                                 state.kinList.forEach { kin ->
-                                    KinRow(kin = kin, kin411 = state.kin411Map[kin.id], onOpen = { onEditKin(kin.id) })
+                                    KinRow(kin = kin, kin411 = state.kin411Map[kin.id], onOpen = { onOpenKin(kin.id) })
                                 }
                             }
                         }
@@ -441,7 +444,7 @@ private fun ProfileHero(
 }
 
 /** One of the mock's `.field` rows, declared so a panel can lay a run of them out. */
-private class Field(
+internal class Field(
     val label: String,
     val value: String,
     val mono: Boolean = false,
@@ -459,7 +462,7 @@ private class Field(
  * hairlines land between the rows that are actually there.
  */
 @Composable
-private fun FieldRows(vararg fields: Field) {
+internal fun FieldRows(vararg fields: Field) {
     val shown = fields.filter { it.value.isNotBlank() && !it.value.contains("()") }
     val context = LocalContext.current
     Column {
@@ -727,9 +730,15 @@ private fun KinRow(kin: Kin, kin411: Kin411?, onOpen: () -> Unit) {
  * The mock's `.visit` line: a dot in the service tone, the time in mono, what
  * the visit is, and the service pill at the far edge. A hairline under every
  * line but the last.
+ *
+ * [onOpen] opens the visit, which is the operator's standing directive on the
+ * bookings mock ("cards should open displaying fuller details") and what the
+ * React twin's rows do. It defaults to null so a caller with nowhere to send
+ * the tap draws a plain line rather than a control that does nothing; the
+ * household profile is still that caller, and wiring it there is its own change.
  */
 @Composable
-private fun VisitLine(s: KinCareSession, last: Boolean) {
+internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: (() -> Unit)? = null) {
     val c = AuntieTheme.colors
     val tone = serviceTone(s.serviceType)
     val description = if (s.serviceDurationMinutes > 0) {
@@ -739,7 +748,10 @@ private fun VisitLine(s: KinCareSession, last: Boolean) {
     }
     Column {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (onOpen == null) Modifier else Modifier.clickable(onClick = onOpen))
+                .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -762,7 +774,7 @@ private fun VisitLine(s: KinCareSession, last: Boolean) {
  * session to open.
  */
 @Composable
-private fun TaleTile(report: KinCareReport, onOpen: (() -> Unit)?) {
+internal fun TaleTile(report: KinCareReport, onOpen: (() -> Unit)?) {
     val c = AuntieTheme.colors
     val title = report.title.ifBlank { report.serviceType.orEmpty().ifBlank { "KinTale" } }
     val body = report.bodyCopy.trim().lineSequence().firstOrNull().orEmpty()
