@@ -40,6 +40,7 @@ import {
   ErrorHint,
   ServicePill,
   StatCard,
+  StatusPill,
   serviceTone,
 } from './DenScreenKit';
 import { asyncScalar, type Async, type ResolvedScalar } from '../lib/async';
@@ -289,6 +290,90 @@ describe('DenScreenHeading', () => {
   it('renders no breadcrumb trail on a kicker heading', () => {
     render(<DenScreenHeading kicker="The Den · Directory" title="Your" accentTail="kinfolk" />);
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+  });
+
+  /**
+   * #780: the profile mocks' hero is more than a title. `leading` is the
+   * photo before the text, `children` the line under the detail, `badges` the
+   * tag row last. The order is the mock's (`.hero .photo`, h1, `.breed`,
+   * `.owner`, `.tags`), and it is asserted here because the slots' whole point
+   * is that a screen stops laying its own hero out around the band.
+   */
+  it('lays the hero slots out in the mock\'s order: photo, title, detail, line, tags', () => {
+    const { container } = render(
+      <DenScreenHeading
+        crumbs={[{ label: 'Directory', link: linkOptions({ to: '/directory' }) }, { label: 'Biscuit' }]}
+        title="Biscuit"
+        detail="Labrador Retriever · 5 yrs"
+        leading={<img alt="Biscuit's photo" src="x" />}
+        badges={
+          <>
+            <StatusPill label="Yellow lab" tone="muted" />
+            <StatusPill label="Microchipped" tone="muted" />
+          </>
+        }
+      >
+        <p>belongs to the Wrens</p>
+      </DenScreenHeading>,
+    );
+    const band = container.querySelector('header.den-heading') as HTMLElement;
+    // The photo sits outside the text block, before it, and never shrinks.
+    const leading = band.querySelector('.den-heading-leading') as HTMLElement;
+    expect(within(leading).getByRole('img', { name: "Biscuit's photo" })).toBeInTheDocument();
+    expect(leading.nextElementSibling).toHaveClass('den-heading-main');
+    // Inside the text block the order is title row, detail, line, tags.
+    const main = band.querySelector('.den-heading-main') as HTMLElement;
+    const order = [...main.children].map((el) => el.className);
+    expect(order.indexOf('den-heading-titlerow')).toBeLessThan(order.indexOf('den-heading-detail'));
+    expect(order.indexOf('den-heading-detail')).toBeLessThan(order.indexOf('den-heading-extra'));
+    expect(order.indexOf('den-heading-extra')).toBeLessThan(order.indexOf('den-heading-badges'));
+    expect(within(main).getByText('belongs to the Wrens')).toBeInTheDocument();
+    const badges = main.querySelector('.den-heading-badges') as HTMLElement;
+    expect(within(badges).getAllByText(/lab|chipped/i)).toHaveLength(2);
+    // None of it joins the page's accessible name.
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Biscuit$/);
+  });
+
+  it('draws no slot wrapper at all when a slot is absent, null or false', () => {
+    // A screen writes `leading={loaded !== null && <Avatar />}` while the read
+    // is in flight, which hands the slot `false`. An empty wrapper would still
+    // draw its gap and its top margin, so there must be none.
+    const { container } = render(
+      <DenScreenHeading kicker="k" title="t" leading={false} badges={null}>
+        {undefined}
+      </DenScreenHeading>,
+    );
+    expect(container.querySelector('.den-heading-leading')).toBeNull();
+    expect(container.querySelector('.den-heading-extra')).toBeNull();
+    expect(container.querySelector('.den-heading-badges')).toBeNull();
+  });
+});
+
+describe('StatusPill', () => {
+  it('is the teal capsule unless told otherwise, and strikes only when asked', () => {
+    render(<StatusPill label="Arrived" />);
+    const pill = screen.getByText('Arrived');
+    expect(pill).toHaveClass('den-statuspill');
+    expect(pill).toHaveAttribute('data-tone', 'teal');
+    expect(pill).not.toHaveClass('den-statuspill--struck');
+    expect(pill).not.toHaveClass('den-statuspill--compact');
+  });
+
+  it('takes the compact size for a card corner or a card row (#780)', () => {
+    // The mocks' `.badge` (Directory) and `.pill` (Auntie Time) are 9.5px on
+    // 4px 9px; the 11px `.statuspill` is the detail screens' and the hero's.
+    render(<StatusPill label="New" tone="orange" size="compact" />);
+    const pill = screen.getByText('New');
+    expect(pill).toHaveClass('den-statuspill');
+    expect(pill).toHaveClass('den-statuspill--compact');
+    expect(pill).toHaveAttribute('data-tone', 'orange');
+  });
+
+  it('can be both struck and compact', () => {
+    render(<StatusPill label="Cancelled" tone="neutral" struck size="compact" />);
+    const pill = screen.getByText('Cancelled');
+    expect(pill).toHaveClass('den-statuspill--struck');
+    expect(pill).toHaveClass('den-statuspill--compact');
   });
 });
 

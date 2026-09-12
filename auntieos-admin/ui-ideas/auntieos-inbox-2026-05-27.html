@@ -27,8 +27,21 @@
 
   SUGGESTION (NOT in InboxScreen.kt, tagged inline below):
     - Unread count chips on the channel filter pills (mirrors the directory tab counts).
-    - "Mark all read" header action.
     These are design suggestions only; gaps in real copy use TODO.
+
+  AMENDED 2026-09-11 (#755 sweep). Two things the shipped screen has that this mock
+  predates. The first is a product ruling, the second a shipped decision recorded in
+  source; neither is a suggestion, so a later pass does not remove them:
+    - MESSAGES. Product ruling D1 (commit e1d35e3): "Inbox = conversations/messages,
+      Notifications = alerts/bell". The two-way kinfolk<->auntie threads (MyTribe
+      messages, Stage 2 step 7) are a panel ABOVE the channel list, grouped Waiting on
+      a reply / Answered (#301), with the bulk "Mark all read" on that panel. The
+      "Mark all read" that this mock used to tag as a header suggestion is that
+      control: it clears message THREADS only, which is why it sits on the Messages
+      panel and not in the head, where it would read as clearing the whole inbox.
+    - The channel list below keeps its own noun, "waiting on a reply", for an
+      unanswered voicemail, rather than "unread": the nav rail already owns "unread"
+      for message threads (lib/inboxChannels.ts). The pip reads the same otherwise.
 
   Sample message/voicemail/transcript content is illustrative placeholder, not real kinfolk data.
 -->
@@ -73,7 +86,7 @@
   .head h2 b{color:var(--pink);font-weight:500}
   .head .sub{color:var(--cream-dim);font-size:13.5px;margin-top:7px;max-width:560px;}
   .spacer{flex:1}
-  /* SUGGESTION: "Mark all read" header action (not in InboxScreen.kt) */
+  /* "Mark all read": the Messages panel bulk action (ruling D1 amendment, see header comment) */
   .markall{background:none;border:1px solid var(--line);color:var(--cream-dim);font-family:"Hanken Grotesk";
     font-weight:600;font-size:13px;padding:9px 14px;border-radius:12px;cursor:pointer;transition:.18s var(--ease);
     white-space:nowrap;align-self:center;}
@@ -96,6 +109,20 @@
     background:rgba(223,132,49,.85);border-radius:999px;padding:1px 6px;line-height:1.4;}
   .chip .ct.warn{background:var(--warning);color:var(--navy)}
   .chip .ct.err{background:var(--error);color:var(--navy)}
+
+  /* Messages panel (D1 amendment). The reference panel from auntieos-kincare-detail:
+     160deg navy gradient on a hairline at 20px, serif title, then this mock's own
+     `.row` cards underneath, one per thread. */
+  .panel{background:linear-gradient(160deg,var(--navy-2),rgba(30,34,53,.5));border:1px solid var(--line);
+    border-radius:20px;padding:22px;margin-bottom:20px;opacity:0;transform:translateY(16px);
+    animation:rise .7s var(--ease) .06s forwards;}
+  .panel .ph{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+  .panel h3{font-family:"Fraunces",serif;font-weight:500;font-size:18px;font-variation-settings:"SOFT" 50;}
+  .panel .ph .spacer{flex:1}
+  .grp{font-size:13px;font-weight:600;letter-spacing:.04em;margin:10px 0 8px;}
+  .grp.dim{color:var(--cream-dim)}
+  .row .dot{width:8px;height:8px;border-radius:50%;background:var(--orange);flex:0 0 auto;align-self:center;}
+  .row .ct{font-family:"Spline Sans Mono",monospace;font-size:10.5px;color:var(--cream-dim);opacity:.7;}
 
   /* InboxRow list */
   .list{display:flex;flex-direction:column;gap:8px;}
@@ -182,9 +209,37 @@
         <!-- subtitle VERBATIM from source (em dash rendered as plain hyphen per house rule) -->
         <div class="sub">Voicemails, calls, SMS, and emails - everywhere kinfolk reach out</div>
       </div>
-      <div class="spacer"></div>
-      <!-- SUGGESTION: header action, not in InboxScreen.kt -->
-      <button class="markall">Mark all read <span class="sg">Suggestion</span></button>
+    </div>
+
+    <!-- Messages (product ruling D1, see the header comment): two-way kinfolk<->auntie
+         threads, above the channel list. "Mark all read" lives here because it clears
+         these threads and nothing else. Grouped Waiting on a reply / Answered (#301);
+         day headers sit inside each group on the shipped screen and are elided here.
+         Sample names are placeholder, not real kinfolk data. -->
+    <div class="panel">
+      <div class="ph"><h3>Messages</h3><div class="spacer"></div><button class="markall">Mark all read</button></div>
+      <div class="grp">Waiting on a reply</div>
+      <div class="list">
+        <div class="row on">
+          <span class="dot"></span>
+          <div class="body">
+            <div class="nm"><b>Lorna Wren</b></div>
+            <div class="pv">Is Thursday still good for Biscuit and Gravy?</div>
+          </div>
+          <div class="ts">09:12<br><span class="ct">3</span></div>
+        </div>
+      </div>
+      <div class="grp dim">Answered</div>
+      <div class="list">
+        <div class="row">
+          <span class="dot" style="visibility:hidden"></span>
+          <div class="body">
+            <div class="nm"><b>Ada Devlin</b></div>
+            <div class="pv">You: See you at 11:30, I will text when I am leaving.</div>
+          </div>
+          <div class="ts">May 26<br><span class="ct">8</span></div>
+        </div>
+      </div>
     </div>
 
     <!-- ChannelFilterRow: All / Voicemails / Calls / SMS / Emails (source order + labels verbatim).
@@ -415,7 +470,7 @@
 
     </div>
 
-    <p class="note">// concept mockup · Inbox (web admin) · mirrors InboxScreen.kt · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
+    <p class="note">// concept mockup · Inbox (web admin) · mirrors InboxScreen.kt · Messages panel added 2026-09-11 per product ruling D1 · palette from AuntieColors.kt · sample content is placeholder, not real kinfolk data</p>
   </div>
 
   <script>

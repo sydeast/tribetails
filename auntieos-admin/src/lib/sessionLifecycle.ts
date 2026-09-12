@@ -32,7 +32,7 @@ export interface LifecycleActionDef {
    *
    * A second field rather than a rename: "Clock in" / "Clock out" is what the
    * detail sheet has said since #397 L19, and it is the right phrasing beside a
-   * Timing panel of stamped clock times. One action, two surfaces, two
+   * lifecycle stepper of stamped clock times. One action, two surfaces, two
    * vocabularies, one definition.
    */
   cardLabel: string;

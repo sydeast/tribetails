@@ -1,10 +1,14 @@
 /**
- * SessionDetail ("Auntie Time" read-only detail) styling. Scoped to this screen
- * and imported directly by SessionDetail.tsx (the KinfolkProfile.css / Sessions.css
- * convention). Every value comes from styles/tokens.css, no literal colours,
- * radii, or spacing outside the status-chip block below, which mirrors Sessions.css's
- * own chip palette verbatim (session states need more distinct hues than the shared
- * DenTone palette carries; the same rem chip padding Sessions.css uses).
+ * SessionDetail (the Kin Care detail under Auntie Time) styling. Scoped to this
+ * screen and imported directly by SessionDetail.tsx (the KinfolkProfile.css /
+ * Sessions.css convention). Every value comes from styles/tokens.css: no
+ * literal colours, and the few px sizes written out are the mock's own node
+ * and type sizes, which sit between scale steps.
+ *
+ * The shapes are `ui-ideas/auntieos-kincare-detail-2026-05-27.html`'s: the
+ * `.life` stepper, the `.cols` two-column note grid, the `.nbox` note box and
+ * the `.field` key/value rows. The panel, the hero band, the status pill and
+ * the tooltip are the kit's and are not redrawn here.
  */
 
 .sdetail__hint {
@@ -13,76 +17,162 @@
   font-size: var(--type-body-sm-size);
 }
 
-.sdetail__head {
+/* ── visit lifecycle ──────────────────────────────────────────────────────
+   The mock's `.life`: five nodes on a hairline, the teal bar running to the
+   last one that has happened, the lit node in orange with a soft halo. The
+   line and the bar run from the first node's centre to the last node's centre
+   (each node is centred in a fifth of the row, so 10% in from either edge)
+   rather than the mock's fixed 18px, which only works at its one width. */
+.sdetail__life {
+  position: relative;
+  margin: var(--space-2) var(--space-1) 0;
+}
+.sdetail__life::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: 10%;
+  right: 10%;
+  height: 2px;
+  background: var(--color-hairline);
+}
+.sdetail__lifebar {
+  position: absolute;
+  top: 13px;
+  left: 10%;
+  height: 2px;
+  background: var(--color-accent);
+}
+.sdetail__steps {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.sdetail__step {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-}
-
-.sdetail__head-tags {
-  display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  text-align: center;
 }
-
-.sdetail__facts {
+.sdetail__node {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
   display: grid;
-  grid-template-columns: minmax(8rem, max-content) 1fr;
-  gap: var(--space-2) var(--space-4);
-  margin: 0;
+  place-items: center;
+  font-size: 13px;
+  background: var(--color-surface-2);
+  border: 2px solid var(--color-hairline);
+  color: var(--color-text-dim);
 }
-
-.sdetail__fact {
-  display: contents;
+.sdetail__step[data-mood='done'] .sdetail__node {
+  background: var(--color-accent);
+  border-color: transparent;
+  color: var(--color-text-primary);
 }
-
-.sdetail__fact-label {
-  font-size: var(--type-label-sm-size);
+.sdetail__step[data-mood='now'] .sdetail__node {
+  background: var(--color-primary);
+  border-color: transparent;
+  color: var(--tt-brand-navy);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+.sdetail__step-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.sdetail__step[data-mood='todo'] .sdetail__step-name {
+  color: var(--color-text-dim);
+}
+.sdetail__step-ts {
+  font-family: var(--font-mono);
+  font-size: 10px;
   color: var(--color-text-dim);
 }
 
-.sdetail__fact-value {
-  font-size: var(--type-body-sm-size);
-  color: var(--color-text-primary);
-  margin: 0;
-  word-break: break-word;
+/* ── the two note boxes ───────────────────────────────────────────────────
+   The mock's `.cols` and `.nbox`. Panels come from the kit; this is only the
+   grid they sit in and the box the note text sits in. */
+.sdetail__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
 }
-
-.sdetail__fact-value--mono {
-  font-family: var(--font-mono);
-}
-
-.sdetail__notes {
+.sdetail__nbox {
   margin: 0;
-  font-size: var(--type-body-sm-size);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-panel);
+  padding: var(--space-4);
+  font-size: var(--type-body-md-size);
+  line-height: 1.55;
+  min-height: 84px;
   color: var(--color-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
+.sdetail__nbox--empty {
+  color: var(--color-text-dim);
+  font-style: italic;
+}
 
-/* ── status chip ──────────────────────────────────────────────────────────
-   Gone, and deliberately not replaced here. This screen's eight rules (a base
-   plus one per state) drew the same object the mocks call `.statuspill`, at a
-   different size and shape from the four other screens drawing their own. It
-   is `StatusPill` in the kit now (issue #751), tinted from `--den-tone`, and
-   the state-to-tone map lives beside the markup in SessionDetail.tsx. Sessions,
-   Directory and HouseholdMembers still draw their own; they move next. */
+/* ── details rows ─────────────────────────────────────────────────────────
+   The mock's `.field`: dim key left, bold value right, a hairline under each
+   row but the last. An editable row puts its control where the value goes. */
+.sdetail__rows {
+  display: flex;
+  flex-direction: column;
+}
+.sdetail__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 9px 0;
+  margin: 0;
+  border: 0;
+  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+  font-size: var(--type-body-md-size);
+  min-width: 0;
+}
+.sdetail__row:last-child {
+  border-bottom: 0;
+}
+.sdetail__row-key {
+  color: var(--color-text-dim);
+  padding: 0;
+}
+.sdetail__row-value {
+  font-weight: 600;
+  text-align: right;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+/* The Kin picker is a row whose value is a list, so it stacks under its key. */
+.sdetail__row--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
 /* ── write surface (#397 L19) ─────────────────────────────────────────────
-   The visit clock, the details editor and the note composer. Every value from
-   styles/tokens.css; the form controls deliberately reuse the same box the
-   Sessions archive range inputs wear (Sessions.css `.sessions__range-input`),
-   so the two Auntie Time surfaces do not grow two different field shapes. */
+   The visit clock's action row, the details editor and the note composer.
+   The form controls deliberately reuse the same box the Sessions archive
+   range inputs wear (Sessions.css `.sessions__range-input`), so the two Auntie
+   Time surfaces do not grow two different field shapes. */
 .sdetail__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-3);
-}
-.sdetail__form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
 }
 .sdetail__field {
   display: flex;
@@ -90,7 +180,7 @@
   gap: var(--space-1);
   border: 0;
   padding: 0;
-  margin: 0;
+  margin: var(--space-3) 0 0;
   min-width: 0;
 }
 .sdetail__field-label {
@@ -110,13 +200,11 @@
   border-radius: var(--radius-card);
   padding: var(--space-2) var(--space-3);
   max-width: 26rem;
+  min-width: 0;
 }
 .sdetail__textarea {
   max-width: none;
   resize: vertical;
-}
-.sdetail__kin-picker {
-  gap: var(--space-2);
 }
 .sdetail__check {
   display: flex;
@@ -133,4 +221,28 @@
   margin: var(--space-2) 0 0;
   font-size: var(--type-body-sm-size);
   color: var(--color-success);
+}
+
+/* ── Phone width ──────────────────────────────────────────────────────────
+   The mock folds its two note columns into one under 780px. The stepper keeps
+   five nodes across but drops its labels to the small size so "Completed" fits
+   its fifth. A details row whose value is a control stacks, so the control is
+   never squeezed beside its key. */
+@media (max-width: 780px) {
+  .sdetail__cols {
+    grid-template-columns: 1fr;
+  }
+  .sdetail__step-name {
+    font-size: var(--type-label-sm-size);
+  }
+  .sdetail__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sdetail__row-value {
+    text-align: left;
+  }
+  .sdetail__input {
+    max-width: none;
+  }
 }

@@ -31,34 +31,43 @@
   margin-bottom: var(--space-4);
 }
 
+/* The mock's `.chip`: a navy-3 pill on a hairline, glyph then word. The
+   ACTIVE chip is an orange WASH with an orange rim and orange text, not a solid
+   orange fill: the mock's `.chip.on` is `rgba(223,132,49,.12)` on the brand
+   orange border, and a solid fill here made the chip row read as a button bar
+   rather than a filter. */
 .inbox__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font: inherit;
   font-size: var(--type-label-md-size);
   font-weight: var(--type-label-md-weight);
   letter-spacing: var(--type-label-md-tracking);
   color: var(--color-text-dim);
   background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border);
+  border: var(--border-hairline) solid var(--color-hairline);
   border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-4);
+  padding: 7px 13px;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background var(--dur-base) var(--ease-standard),
     border-color var(--dur-base) var(--ease-standard),
     color var(--dur-base) var(--ease-standard);
 }
 .inbox__tab:hover {
-  border-color: var(--color-primary);
+  background: var(--color-surface);
   color: var(--color-text-primary);
 }
 .inbox__tab:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: 2px;
 }
 .inbox__tab--active {
-  background: var(--color-primary);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
   border-color: var(--color-primary);
-  color: var(--color-background);
+  color: var(--color-primary);
 }
 
 /* ── status sections (waiting / answered) ────────────────────────────────── */
@@ -140,19 +149,31 @@
 
 /* ── row list ────────────────────────────────────────────────────────────── */
 
-.inbox__row {
-  border-bottom: var(--border-hairline) solid var(--color-border-soft);
+/* The mock's `.row`: every entry is its own card, navy-2 on a hairline at the
+   12px radius, 8px apart, and the hover tints only the rim. The old rows were
+   hairline-separated lines inside the panel; a card is what the mock draws,
+   and both lists on this screen (threads above, channels below) take it so
+   they read as one Den. */
+.inbox__day-rows,
+.inbox__list--flat {
+  gap: var(--space-2);
 }
-.inbox__row:last-child {
-  border-bottom: none;
+.inbox__row--card {
+  background: var(--color-panel-top);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.inbox__row--card:hover {
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 40%, transparent);
 }
 
 .inbox__row-main {
   width: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: auto 1.8fr auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: flex-start;
   gap: var(--space-3);
   text-align: left;
   background: none;
@@ -160,13 +181,12 @@
   cursor: pointer;
   font: inherit;
   color: inherit;
-  padding: var(--space-3) var(--space-2);
-  border-radius: var(--radius-card);
-  transition: background var(--dur-base) var(--ease-standard);
+  padding: 13px 15px;
+  border-radius: var(--radius-card-lg);
 }
 .inbox__row-main:hover,
 .inbox__row-main:focus-visible {
-  background: var(--color-surface-2);
+  background: none;
 }
 /* Unwired (no thread/detail route yet): a plain, non-interactive row, no hand
    cursor, no hover, so it never reads as a clickable control that no-ops. */
@@ -177,7 +197,7 @@
   background: none;
 }
 .inbox__row-main:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: var(--border-emphasis) solid var(--color-primary);
   outline-offset: -2px;
 }
 
@@ -189,6 +209,30 @@
   border-radius: var(--radius-pill);
   background: var(--color-primary);
   justify-self: center;
+  align-self: center;
+}
+
+/* The mock's `.nm`: the household in the serif at 16px, weight 500, then the
+   number or address after a middle dot, dimmer and smaller. */
+.inbox__row-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.inbox__row-counterpart {
+  font-size: 12.5px;
+  color: var(--color-text-dim);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+/* The mock's `.pv`: two lines, then clipped. */
+.inbox__row-preview--clamp {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .inbox__row-who {
@@ -198,9 +242,9 @@
   min-width: 0;
 }
 .inbox__row-name {
-  font-family: var(--font-hanken);
-  font-size: var(--type-title-md-size);
-  font-weight: var(--type-title-md-weight);
+  font-family: var(--type-title-lg-family);
+  font-size: 16px;
+  font-weight: var(--type-title-lg-weight);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -218,8 +262,12 @@
    title token in the scale) so an unread thread reads distinctly without
    inventing an off-scale font-weight. */
 .inbox__row--unread {
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
-  border-radius: var(--radius-card);
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 55%, transparent);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--tt-kinfolk-orange) 8%, transparent),
+    var(--color-panel-top)
+  );
 }
 
 .inbox__row-side {
@@ -230,9 +278,11 @@
 }
 .inbox__row-time {
   font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  color: var(--color-text-faint);
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+  opacity: 0.7;
   white-space: nowrap;
+  text-align: right;
 }
 .inbox__row-count {
   font-family: var(--font-mono);
@@ -244,72 +294,40 @@
   margin-top: var(--space-4);
 }
 /* ── channels section (Task 6.1) ─────────────────────────────────────────── */
-/* The channel list is a single newest-first stream rather than day groups, so
-   it drops the gap the day-grouped message list needs between its groups. */
-.inbox__list--flat {
-  gap: 0;
+/* The mock's `.ictile`, drawn by the kit IconTile at 36px in the row's tone
+   (orange, or warning for an unread voicemail, error for a missed call). */
+.inbox__tile {
+  margin-top: 2px;
 }
-.inbox__row-main--channel {
-  grid-template-columns: auto 1.8fr auto;
-}
-/* A short text tag instead of a glyph tile: it names the channel without
-   pulling an icon set in, and it is aria-hidden because the row's accessible
-   name already carries the household and the preview. */
-.inbox__channel-tag {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  color: var(--color-text-dim);
-  background: var(--color-surface-2);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-chip);
-  padding: var(--space-1) var(--space-2);
-  min-width: 3.4rem;
-  text-align: center;
-}
-.inbox__channel-tag[data-channel='voicemail'] {
-  border-color: var(--color-warning);
-  color: var(--color-warning);
-}
-.inbox__channel-tag[data-channel='call'] {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-.inbox__channel-tag[data-channel='sms'] {
-  border-color: var(--color-tertiary);
-  color: var(--color-tertiary);
-}
-.inbox__channel-tag[data-channel='email'] {
-  border-color: var(--color-success);
-  color: var(--color-success);
-}
-.inbox__pills {
+/* The mock's `.meta` pips: a tiny glyph and a dim word, under the preview.
+   Not pills. The two states that need answering keep their tone. */
+.inbox__pips {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-1);
+  align-items: center;
+  gap: 11px;
+  margin-top: 3px;
 }
-.inbox__pill {
-  font-family: var(--font-mono);
-  font-size: var(--type-label-sm-size);
-  letter-spacing: var(--type-label-sm-tracking);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
+.inbox__pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  opacity: 0.65;
   white-space: nowrap;
-  color: var(--color-text-faint);
-  border: var(--border-hairline) solid var(--color-border-soft);
 }
-.inbox__pill[data-tone='error'] {
+.inbox__pip[data-tone='error'] {
   color: var(--color-error);
-  border-color: var(--color-error);
+  opacity: 1;
 }
-.inbox__pill[data-tone='warning'] {
+.inbox__pip[data-tone='warning'] {
   color: var(--color-warning);
-  border-color: var(--color-warning);
+  opacity: 1;
 }
-.inbox__pill[data-tone='success'] {
+.inbox__pip[data-tone='success'] {
   color: var(--color-success);
-  border-color: var(--color-success);
+  opacity: 1;
 }
 /* Per-stream retry, inline inside the failure line, so a single failing
    collection can be re-subscribed without reloading the other three. */
@@ -374,5 +392,11 @@
     justify-content: flex-start;
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-2);
+  }
+  /* The channel row's trailing child is the timestamp itself (the pips moved
+     under the preview, where the mock puts them), so it left-aligns under the
+     body like the thread row's side block does. */
+  .inbox__row-main--channel .inbox__row-time {
+    text-align: left;
   }
 }

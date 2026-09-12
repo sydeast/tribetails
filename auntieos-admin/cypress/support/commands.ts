@@ -101,7 +101,7 @@ Cypress.Commands.add('signInAs', (email: string, password: string) => {
     if ($body.find('.shell__rail').length > 0) return; // already signed in
     cy.get('.signin__form input[type="email"]').type(email);
     cy.get('.signin__form input[type="password"]').type(password, { log: false });
-    cy.contains('.signin__form button', 'Sign in').click();
+    cy.contains('.signin__form button', 'Jump back in!').click();
     // The route change is the gate's verdict. Asserting on it, rather than on
     // "no error banner appeared", means a denial cannot pass as a pass.
     cy.location('pathname', { timeout: 30_000 }).should('eq', '/home');

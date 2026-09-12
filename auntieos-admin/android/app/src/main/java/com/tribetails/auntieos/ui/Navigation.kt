@@ -1130,7 +1130,10 @@ private fun AuthenticatedNavHost(
                 com.tribetails.auntieos.ui.directory.HouseholdDataScreen(
                     kinfolkId = kinfolkId,
                     kinfolkName = kinfolkName,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    // The breadcrumb's first step, past the household profile
+                    // a bare pop lands on (same wiring as HouseholdMembers).
+                    onDirectory = { navController.popBackStack(Screen.Directory.route, false) },
                 )
             }
             // B1: household members and invites. Behind AdminGate because every

@@ -464,7 +464,7 @@ private fun KinCareCard(
     onTransition: (BookingTransitionAction, String, String) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val tone = statusTone(session.status)
+    val tone = kinCareStatusTone(session.status)
     val isArrived = session.status.equals("ARRIVED", ignoreCase = true)
     val isInFlight = session.status.uppercase() in setOf("ARRIVED", "DEPARTED")
     val context = LocalContext.current
@@ -537,10 +537,13 @@ private fun KinCareCard(
                         color = c.textDim,
                     )
                 }
+                // The mock's card-row `.pill` is 9.5px: the kit's compact size
+                // (#780), where the default capsule sat larger on the card.
                 AuntieStatusPill(
                     label = statusLabel(session.status),
                     tone = tone,
                     mono = true,
+                    compact = true,
                 )
             }
 
@@ -911,8 +914,10 @@ private fun AddressChip(address: String, context: Context) {
  * state by state and the twin of web's `SESSION_STATE_TONE`. Completed is
  * teal, not success green: the mock paints a wrap in the same hue as an
  * arrival, one shade quieter, and the label is what tells them apart.
+ * Internal since #755: the Kin Care detail's hero pill reads the same map, so
+ * the card and the detail cannot drift on which hue a state takes.
  */
-private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED" -> AuntieStatusTone.Teal
     "DEPARTED" -> AuntieStatusTone.Purple

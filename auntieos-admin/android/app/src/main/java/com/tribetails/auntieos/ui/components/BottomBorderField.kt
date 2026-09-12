@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +50,13 @@ fun BottomBorderField(
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Next,
     singleLine: Boolean = true,
+    // What the soft keyboard's action key does. Default is the platform's
+    // (Next moves focus, Done hides the keyboard).
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    // Applied to the inner BasicTextField so a caller can attach autofill
+    // semantics to the actual focusable input. Default no-op, same as
+    // AuntieField's.
+    fieldModifier: Modifier = Modifier,
 ) {
     val c = AuntieTheme.colors
     val showError = fieldHasError(isError, errorMessage)
@@ -98,6 +106,7 @@ fun BottomBorderField(
                 cursorBrush = SolidColor(AuntieTheme.colors.kinfolkOrange),
                 textStyle = AuntieTheme.typography.bodyMedium.copy(color = AuntieTheme.colors.textPrimary),
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
+                keyboardActions = keyboardActions,
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
@@ -109,7 +118,8 @@ fun BottomBorderField(
                         if (blurOccurred(wasFocused, now)) onFocusLost?.invoke()
                         wasFocused = now
                         focused = now
-                    },
+                    }
+                    .then(fieldModifier),
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {

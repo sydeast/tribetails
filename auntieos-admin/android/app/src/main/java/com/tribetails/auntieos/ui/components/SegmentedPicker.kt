@@ -19,6 +19,17 @@ import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
+/**
+ * The mocks' `.tabs`: a segmented control on a surface track, the selected
+ * segment filled with the page's text colour and lettered in the page's
+ * ground (`.tabs button.on{background:var(--cream);color:var(--navy)}`), so
+ * cream on navy in the dark scheme and navy on cream in the light. It used to
+ * select in Kinfolk Orange, which no mock draws for a segment (#780); orange
+ * is the primary button's, and a filter that lit up like a CTA read as one.
+ * `textPrimary` and `background` are the two role tokens that swap together
+ * across the schemes, which is why the pair is read off the theme rather than
+ * the brand constants.
+ */
 @Composable
 fun <T> SegmentedPicker(
     options: List<T>,
@@ -37,7 +48,7 @@ fun <T> SegmentedPicker(
     ) {
         options.forEach { opt ->
             val isOn = opt == selected
-            val bg = animateColorAsState(if (isOn) AuntieTheme.colors.kinfolkOrange else AuntieTheme.colors.surface2, label = "segBg").value
+            val bg = animateColorAsState(if (isOn) AuntieTheme.colors.textPrimary else AuntieTheme.colors.surface2, label = "segBg").value
             val fg = animateColorAsState(if (isOn) AuntieTheme.colors.background else AuntieTheme.colors.textDim, label = "segFg").value
             Box(
                 modifier = Modifier

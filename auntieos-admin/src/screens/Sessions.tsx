@@ -117,7 +117,7 @@ interface SessionsProps {
  *
  * SessionDetail is still one click away, from the card's own header, and it
  * remains the home of the details editor, the note to office, the full route map
- * and the Timing panel. The board is the run sheet; the sheet is the record.
+ * and the lifecycle stepper with its stamps. The board is the run sheet; the sheet is the record.
  *
  * THE DETAIL IS A ROUTE NOW, NOT A VIEW OF THIS SCREEN (#753). "KinCares should
  * have their own id numbers in the params. I don't want to refresh the KinCare."
@@ -501,12 +501,13 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           {metaLine !== '' && <span className="sessions__card-svc">{metaLine}</span>}
         </span>
 
-        {/* The kit's capsule, in the state's tone. Not struck through when
-            cancelled: this mock draws its cancelled pill as the plain dim
+        {/* The kit's capsule, in the state's tone, at the compact size the
+            mock's `.pill` draws on a card row (9.5px, #780). Not struck through
+            when cancelled: this mock draws its cancelled pill as the plain dim
             capsule, the same one the scheduled card wears. The wrapper span is
             the phone-width layout hook (Sessions.css moves it above the name). */}
         <span className="sessions__chip">
-          <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} />
+          <StatusPill label={info.chipLabel} tone={SESSION_STATE_TONE[state]} size="compact" />
         </span>
       </button>
 

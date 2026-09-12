@@ -157,7 +157,10 @@ describe('kinfolk profile', () => {
 
     it('#681 household tags render as pills in the hero', () => {
       cy.visit('/directory/e2e-kf-1');
-      cy.get('.kprofile__hero .kprofile__chip--tag', { timeout: 8_000 }).should('contain.text', TAG);
+      // The chips row holds the status and tenure pills too, all the kit's
+      // `StatusPill` since PR #777, so this picks the one pill that carries the
+      // tag rather than reading the whole row's text.
+      cy.contains('.kprofile__hero .kprofile__chips .den-statuspill', TAG, { timeout: 8_000 }).should('exist');
     });
 
     it('#685 the service address is a link that opens Google Maps directions', () => {

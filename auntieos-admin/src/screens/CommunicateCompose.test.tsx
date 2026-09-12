@@ -469,4 +469,21 @@ describe('CommunicateCompose: live preview', () => {
     await screen.findByRole('region', { name: 'Live preview' });
     expect(screen.queryByRole('status')).toBeNull();
   });
+  /**
+   * The #755 sweep: the mock puts the preview in the SCREEN's right column, in
+   * its own panel above Recent, not inside the compose panel. This surface
+   * returns a fragment so `Communicate`'s grid can place the two halves; the
+   * class names are the contract with `Communicate.css`.
+   */
+  it('renders the form in the left column and the preview panel in the right, as grid siblings', async () => {
+    render(<CommunicateCompose />);
+    const preview = await screen.findByRole('region', { name: 'Live preview' });
+    const previewSlot = preview.closest('.communicate__preview');
+    expect(previewSlot).not.toBeNull();
+    expect(within(previewSlot as HTMLElement).getByRole('heading', { name: 'Live preview' })).toBeInTheDocument();
+    const form = screen.getByRole('heading', { name: 'Compose' }).closest('.communicate__main');
+    expect(form).not.toBeNull();
+    // Siblings, not nested: the preview must not sit inside the compose panel.
+    expect(form?.contains(previewSlot)).toBe(false);
+  });
 });

@@ -79,8 +79,8 @@ export function HouseholdSectionDialog({ section, kinfolkName, record, onClose, 
         <Banner tone="error" title="This section has no text form">
           <p>
             {section.title} is chosen from the shared vet bank by search, so there is nothing here
-            to type. Nothing was changed. Close this and use Edit veterinary, which searches the
-            bank.
+            to type. Nothing was changed. Close this and use Edit veterinary information, which
+            searches the bank.
           </p>
         </Banner>
       </Dialog>
@@ -176,7 +176,13 @@ function SectionField({ field, value, error, onChange }: SectionFieldProps) {
   const invalid = error !== null;
 
   return (
-    <div className={field.kind === 'multiline' ? 'hsection__field hsection__field--wide' : 'hsection__field'}>
+    <div
+      className={
+        field.kind === 'multiline' || field.wide === true
+          ? 'hsection__field hsection__field--wide'
+          : 'hsection__field'
+      }
+    >
       <label className="hsection__label" htmlFor={inputId}>
         {field.label}
       </label>
