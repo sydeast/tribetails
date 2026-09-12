@@ -400,12 +400,17 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
   const household = sessionHousehold(str(entry.kinfolkName));
-  const clock = useVisitLifecycle(entry._id, household, onWritten);
+  // The whole ENTRY, not its id: the clock writes the status straight to
+  // Firestore now, and it decides legality, no-op and notification routing from
+  // this row rather than reading the document back first.
+  const clock = useVisitLifecycle(entry, household, onWritten);
 
-  // "Complete" is NOT a `setVisitLifecycle` action and so does not go through
-  // the hook: completing a visit is terminal and billable, so it goes through
+  // "Complete" is NOT an in-visit clock action and so does not go through the
+  // hook: completing a visit is terminal and billable, so it goes through
   // `transitionBookingStatus` like every other booking-status change, and the
-  // server's refusal is what the operator reads.
+  // server's refusal is what the operator reads. It is also the one button on
+  // this card that still pays a cold start, deliberately -- the clock actions
+  // beside it write straight to Firestore now, terminal ones never will.
   const [completing, setCompleting] = useState(false);
   const [completeAsked, setCompleteAsked] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);

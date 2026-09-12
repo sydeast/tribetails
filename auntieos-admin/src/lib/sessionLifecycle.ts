@@ -12,12 +12,30 @@ import { type VisitLifecycleAction } from '../api/sessionsWrite';
  *   `appendOfficeNote`     the timestamped note format
  *
  * THE BUTTON LIST IS A COURTESY, NOT THE ENFORCEMENT, and that distinction is
- * load-bearing enough to repeat wherever it applies. The real guard is
- * `functions/src/lib/visitLifecycle.ts`, which refuses an illegal action from a
- * stale row, a second operator or a direct invocation, and audits the attempt.
- * This map exists so the operator is not shown a control that will fail --
- * exactly what Android's `LifecycleButton` `enabled = ... && status == ...`
- * gates are, and it is transcribed from them rather than re-derived.
+ * load-bearing enough to repeat wherever it applies. This map exists so the
+ * operator is not shown a control that will fail -- exactly what Android's
+ * `LifecycleButton` `enabled = ... && status == ...` gates are, and it is
+ * transcribed from them rather than re-derived.
+ *
+ * WHERE THE REAL GUARD IS DEPENDS ON THE ACTION, and this used to be one
+ * sentence pointing at `functions/src/lib/visitLifecycle.ts`. Since the field
+ * tap stopped paying a Cloud Run cold start it is two:
+ *
+ *   the four in-visit actions   `mytribe/firestore.rules:487`. The web clock
+ *                               writes them straight to the document now
+ *                               (`api/sessionsWrite.ts#patchVisitLifecycle`),
+ *                               so the rules are what refuse a client anything
+ *                               terminal. `lib/visitLifecyclePatch.ts` runs the
+ *                               state machine before the write, which catches a
+ *                               stale row this browser can see but not one it
+ *                               cannot -- that is the accepted cost, and it is
+ *                               Android's cost too.
+ *   COMPLETE / CANCEL           `transitionBookingStatus`, server-side and
+ *                               audited inside the write, unchanged.
+ *
+ * `functions/src/lib/visitLifecycle.ts` is still the authority behind the
+ * `setVisitLifecycle` callable, which is still deployed and still correct. It
+ * is simply no longer what a button press goes through.
  */
 
 export interface LifecycleActionDef {
@@ -132,7 +150,7 @@ export function lifecycleActionsFor(state: SessionState): readonly LifecycleActi
  * on the detail sheet, which still offers it (a card is one click from there).
  *
  * `Complete`, `Complete KinTale` and `View KinTale` are NOT in this list and
- * never will be: they are not `setVisitLifecycle` actions. Complete goes
+ * never will be: they are not in-visit clock actions at all. Complete goes
  * through `transitionBookingStatus` (terminal and billable, the server owns
  * it) and the two KinTale buttons are navigation. `Sessions.tsx` owns those
  * three.

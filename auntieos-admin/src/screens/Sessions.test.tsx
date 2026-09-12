@@ -30,17 +30,19 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 /**
- * The writes. `setVisitLifecycle` is the card's own clock (through
- * `lib/useVisitLifecycle.ts`, the hook SessionDetail shares) and
- * `transitionBookingStatus` is Complete, which is terminal and billable and so
- * goes through the booking state machine instead.
+ * The writes, and the split between them is the whole point of this block.
+ * `patchVisitLifecycle` is the card's own clock (through
+ * `lib/useVisitLifecycle.ts`, the hook SessionDetail shares) and it writes
+ * Firestore DIRECTLY, so a field tap no longer waits out a Cloud Run cold
+ * start. `transitionBookingStatus` is Complete, which is terminal and billable,
+ * and it still goes through the booking state machine on the server.
  */
-const { setVisitLifecycle, transitionBookingStatus } = vi.hoisted(() => ({
-  setVisitLifecycle: vi.fn(),
+const { patchVisitLifecycle, transitionBookingStatus } = vi.hoisted(() => ({
+  patchVisitLifecycle: vi.fn(),
   transitionBookingStatus: vi.fn(),
 }));
 vi.mock('../api/sessionsWrite', () => ({
-  setVisitLifecycle,
+  patchVisitLifecycle,
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus }));
@@ -194,15 +196,13 @@ beforeEach(() => {
   directory();
   loadMore.mockReset();
   reload.mockReset();
-  setVisitLifecycle.mockReset().mockResolvedValue({
-    ok: true,
+  patchVisitLifecycle.mockReset().mockResolvedValue({
     sessionId: 'sess1',
     action: 'ARRIVED',
     from: 'SCHEDULED',
     status: 'ARRIVED',
     changed: true,
-    notified: true,
-    notifySkipped: null,
+    notification: Promise.resolve({ notified: true, notifySkipped: null }),
   });
   transitionBookingStatus.mockReset().mockResolvedValue({
     ok: true,
@@ -539,8 +539,11 @@ describe('Auntie Time: one fully populated action card', () => {
 
 /**
  * THE LIFECYCLE BUTTONS. The board hosts writes now, and every one of them goes
- * through the same handler `SessionDetail` uses: `setVisitLifecycle` for the
- * four in-visit actions, `transitionBookingStatus` for Complete.
+ * through the same handler `SessionDetail` uses: `patchVisitLifecycle` (a direct
+ * Firestore write) for the four in-visit actions, `transitionBookingStatus` (a
+ * callable) for Complete. Each assertion below names the row handed to the
+ * write, not just an id: deciding from the row the card is already painting is
+ * what removed the read that would otherwise have replaced the cold start.
  */
 describe('Auntie Time: the card runs the visit', () => {
   function mount(over: Partial<SessionEntry>) {
@@ -548,28 +551,44 @@ describe('Auntie Time: the card runs the visit', () => {
     renderBoard();
   }
 
-  it('OMW on a scheduled card calls setVisitLifecycle with ON_MY_WAY', async () => {
+  it('OMW on a scheduled card writes ON_MY_WAY', async () => {
     mount({ status: 'SCHEDULED', startTime: at(1) });
     await act(/^OMW$/, /yes, mark it on the way/i);
-    expect(setVisitLifecycle).toHaveBeenCalledWith('sess1', 'ON_MY_WAY', expect.anything());
+    expect(patchVisitLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'sess1' }),
+      'ON_MY_WAY',
+      expect.anything(),
+    );
   });
 
-  it('Arrived on a scheduled card calls setVisitLifecycle with ARRIVED', async () => {
+  it('Arrived on a scheduled card writes ARRIVED', async () => {
     mount({ status: 'SCHEDULED', startTime: at(1) });
     await act(/^Arrived$/, /yes, clock in/i);
-    expect(setVisitLifecycle).toHaveBeenCalledWith('sess1', 'ARRIVED', expect.anything());
+    expect(patchVisitLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'sess1' }),
+      'ARRIVED',
+      expect.anything(),
+    );
   });
 
-  it('Departed on an arrived card calls setVisitLifecycle with DEPARTED', async () => {
+  it('Departed on an arrived card writes DEPARTED', async () => {
     mount({ status: 'ARRIVED', startTime: at(0, 9) });
     await act(/^Departed$/, /yes, clock out/i);
-    expect(setVisitLifecycle).toHaveBeenCalledWith('sess1', 'DEPARTED', expect.anything());
+    expect(patchVisitLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'sess1' }),
+      'DEPARTED',
+      expect.anything(),
+    );
   });
 
-  it('Undo arrived on an arrived card calls setVisitLifecycle with UNDO_ARRIVAL', async () => {
+  it('Undo arrived on an arrived card writes UNDO_ARRIVAL', async () => {
     mount({ status: 'ARRIVED', startTime: at(0, 9) });
     await act(/^Undo arrived$/, /yes, undo the arrival/i);
-    expect(setVisitLifecycle).toHaveBeenCalledWith('sess1', 'UNDO_ARRIVAL', expect.anything());
+    expect(patchVisitLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'sess1' }),
+      'UNDO_ARRIVAL',
+      expect.anything(),
+    );
   });
 
   it('Complete goes through transitionBookingStatus, not the visit clock', async () => {
@@ -578,7 +597,7 @@ describe('Auntie Time: the card runs the visit', () => {
     expect(transitionBookingStatus).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'sess1', action: 'COMPLETE' }),
     );
-    expect(setVisitLifecycle).not.toHaveBeenCalled();
+    expect(patchVisitLifecycle).not.toHaveBeenCalled();
   });
 
   it('refreshes the page after a write that changed the document, so the card stops lying', async () => {
@@ -588,7 +607,7 @@ describe('Auntie Time: the card runs the visit', () => {
   });
 
   it('surfaces a refusal beside the card rather than swallowing it', async () => {
-    setVisitLifecycle.mockRejectedValue(new Error('Already departed.'));
+    patchVisitLifecycle.mockRejectedValue(new Error('Already departed.'));
     mount({ status: 'ARRIVED', startTime: at(0, 9) });
     await act(/^Departed$/, /yes, clock out/i);
     expect(await screen.findByText(/Already departed\./)).toBeInTheDocument();
@@ -598,7 +617,7 @@ describe('Auntie Time: the card runs the visit', () => {
     mount({ status: 'SCHEDULED', startTime: at(1) });
     await user.click(screen.getByRole('button', { name: /^Arrived$/ }));
     await user.click(screen.getByRole('button', { name: /not yet/i }));
-    expect(setVisitLifecycle).not.toHaveBeenCalled();
+    expect(patchVisitLifecycle).not.toHaveBeenCalled();
   });
 
   it('offers "Complete KinTale" on a departed card and routes it to the composer', async () => {

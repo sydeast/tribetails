@@ -36,7 +36,10 @@ vi.mock('../lib/firestore', () => ({ useDocById, useCollection }));
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 vi.mock('../api/sessionsWrite', () => ({
-  setVisitLifecycle: vi.fn(),
+  // `patchVisitLifecycle`, not the callable: this view's clock writes Firestore
+  // directly. A mock still naming the old export would satisfy the import and
+  // then let a real regression through silently.
+  patchVisitLifecycle: vi.fn(),
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus: vi.fn() }));
