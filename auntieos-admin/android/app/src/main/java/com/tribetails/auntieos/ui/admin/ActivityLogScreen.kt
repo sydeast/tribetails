@@ -160,16 +160,16 @@ fun ActivityLogScreen(
                     title      = "Every move,",
                     accentTail = "sealed.",
                     subtitle   = "A tamper-evident audit trail, newest first. Every login, edit and system event the app records, sealed into the SHA-256 hash chain. Tap an entry for the full record. Re-verify walks the chain server-side.",
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // The mock draws this badge in the heading's right-hand slot.
-                // On a phone the serif title and a three-part badge do not fit
-                // one row, so it sits under the heading until the kit's hero
-                // band and its badges slot land (#780).
-                ChainBadge(
-                    verifyState = chainVerify,
-                    onVerify    = { viewModel.verifyChain() },
+                    // The mock draws the badge beside the title. A phone row
+                    // cannot hold the serif title and a three-part badge, so
+                    // it takes the band's content slot (#780) under the title,
+                    // inside the band rather than beneath it.
+                    content = {
+                        ChainBadge(
+                            verifyState = chainVerify,
+                            onVerify    = { viewModel.verifyChain() },
+                        )
+                    },
                 )
                 Spacer(Modifier.height(16.dp))
 

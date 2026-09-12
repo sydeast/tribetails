@@ -343,8 +343,22 @@
 
 /* The mock at 720px: the seq column goes, the time column narrows. */
 @media (max-width: 720px) {
+  /* The time column takes its own width rather than the mock's 54px, and the
+     inset drops to 16px: at 390px the meta column has to keep 60 percent of
+     the row (e2e/phone-layout.spec.ts), and 54px plus 20px each side left
+     it 58. */
   .activity__summary {
-    grid-template-columns: 54px 24px minmax(0, 1fr);
+    grid-template-columns: auto 24px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .activity__time {
+    white-space: nowrap;
+  }
+  .activity__day-label,
+  .activity__detail {
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .activity__seq {
     display: none;
