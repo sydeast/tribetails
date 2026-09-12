@@ -167,6 +167,17 @@ class KinDetailScreenTest {
         assertEquals("kf1", opened)
     }
 
+    /** A line that names a destination has to go there, the same as the crumb. */
+    @Test
+    fun `the belongs-to line opens the household too`() {
+        var opened: String? = null
+        show(onHousehold = { opened = it })
+
+        rule.onNodeWithText("belongs to Lorna Wren").performClick()
+
+        assertEquals("kf1", opened)
+    }
+
     /** Tags are pills beside the name (#686), with the editor behind a toggle. */
     @Test
     fun `the pet's tags are pills in the band`() {

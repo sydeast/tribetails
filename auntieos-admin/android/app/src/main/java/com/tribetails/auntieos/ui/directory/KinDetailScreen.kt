@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.directory
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -292,12 +293,17 @@ private fun KinHero(
             }
         },
         content = {
+            // The mock's `.owner` line, and a real anchor into the household
+            // the way the React twin's is. A line that names a destination and
+            // does not go there is the same defect as a dead crumb.
             if (householdName.isNotBlank() && householdId.isNotBlank()) {
                 Text(
                     text = "belongs to $householdName",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .clickable { onHousehold(householdId) },
                 )
             }
         },
