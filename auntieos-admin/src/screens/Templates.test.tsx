@@ -61,6 +61,22 @@ function tpl(over: Partial<TemplateSummary>): TemplateSummary {
   };
 }
 
+
+/**
+ * The editor is a sibling view since the #755 sweep (a page with the mock's
+ * "Template bank / Edit template" crumb trail), so "the editor is open" is the
+ * crumb marked current and the bank's own heading gone, and "closed" is the
+ * bank heading back.
+ */
+function editorCrumb(label: 'Edit template' | 'New template'): HTMLElement {
+  const crumb = screen.getByText(label);
+  expect(crumb).toHaveAttribute('aria-current', 'page');
+  return crumb;
+}
+function expectBankShowing(): void {
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Template Bank.');
+}
+
 beforeEach(() => {
   listTemplates.mockReset();
   listTemplateCategories.mockReset();
@@ -231,7 +247,7 @@ describe('Templates screen', () => {
     render(<Templates onSelect={onSelect} />);
     await userEvent.click(await screen.findByText('Booking Confirmed'));
     expect(onSelect).toHaveBeenCalledWith('booking.confirmed');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expectBankShowing();
   });
 
   /**
@@ -313,7 +329,7 @@ describe('Templates screen', () => {
   it('cards are always live buttons: with no onSelect override, activating a card opens the built-in editor', async () => {
     // Unlike the pre-editor placeholder, there is no unwired/dead-control case
     // left: the router mounts <Templates/> propless in production, so this
-    // default (opening the overlay) is what every operator actually gets.
+    // default (opening the editor page) is what every operator actually gets.
     listTemplates.mockResolvedValue([
       tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed', subject: 'Your booking is confirmed' }),
     ]);
@@ -321,7 +337,7 @@ describe('Templates screen', () => {
     const row = await screen.findByText('Booking Confirmed');
     expect(row.closest('.templates__card-main')?.tagName).toBe('BUTTON');
     await userEvent.click(row);
-    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -345,7 +361,7 @@ describe('Templates screen', () => {
 
     await userEvent.click(edit);
 
-    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    editorCrumb('Edit template');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
   });
 
@@ -358,7 +374,7 @@ describe('Templates screen', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'Edit' }));
 
     expect(onSelect).toHaveBeenCalledWith('booking.confirmed');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expectBankShowing();
   });
 
   it('labels the subject line "Subject:", the way the mock does', async () => {
@@ -388,7 +404,7 @@ describe('Templates screen', () => {
     render(<Templates />);
     await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
+    editorCrumb('New template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
   });
 
@@ -399,7 +415,7 @@ describe('Templates screen', () => {
     await screen.findByText(TEMPLATE_BANK_EMPTY_COPY);
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
     expect(onNew).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expectBankShowing();
   });
 
   it('saving a new template closes the editor and reloads the list', async () => {
@@ -417,7 +433,7 @@ describe('Templates screen', () => {
     await userEvent.type(screen.getByLabelText(/^body$/i), 'Hi {{kinfolk_name}}');
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
   });
@@ -432,7 +448,7 @@ describe('Templates screen', () => {
 
     const row = await screen.findByText('Booking Confirmed');
     await userEvent.click(row);
-    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    editorCrumb('Edit template');
 
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
@@ -442,6 +458,7 @@ describe('Templates screen', () => {
       acknowledgeLiveKey: false,
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expectBankShowing());
     await waitFor(() => expect(listTemplates).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(TEMPLATE_BANK_EMPTY_COPY)).toBeInTheDocument();
   });
@@ -453,9 +470,23 @@ describe('Templates screen', () => {
     // exercises openEditorFor's guard indirectly via New template still being
     // available and NOT throwing while templates.status !== 'ready'.
     await userEvent.click(screen.getByRole('button', { name: /new template/i }));
-    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
+    editorCrumb('New template');
   });
 
+  it('the editor replaces the bank while it is open, and the Template bank crumb brings the bank back', async () => {
+    listTemplates.mockResolvedValue([
+      tpl({ templateId: 'booking.confirmed', title: 'Booking Confirmed' }),
+    ]);
+    render(<Templates />);
+    await userEvent.click(await screen.findByText('Booking Confirmed'));
+    // One page at a time: no bank heading, no card grid, one h1.
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.queryByText('Template Bank.')).toBeNull();
+    expect(document.querySelector('.templates__card')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Template bank' }));
+    expectBankShowing();
+    expect(await screen.findByText('Booking Confirmed')).toBeInTheDocument();
+  });
   it('every category chip carries its own live count', async () => {
     listTemplates.mockResolvedValue([
       tpl({ templateId: 'a', title: 'A', category: 'Booking' }),

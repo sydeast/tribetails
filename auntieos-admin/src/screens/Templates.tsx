@@ -40,7 +40,7 @@ const TEMPLATE_PAGE_SIZE = 50;
  * heading with one primary action, one controls row (category chips left,
  * search right), and the card grid directly under it. What the list itself
  * shows is still ported from `TemplateBankScreen.kt#TemplateBankBody` plus
- * `TemplateEditorOverlay` (create/edit), now that the editor exists: see
+ * `TemplateEditorScreen` (create/edit), now that the editor exists: see
  * TemplateEditor.tsx.
  *
  *  - Reads via TWO one-shot admin callables, `listTemplates` (the
@@ -61,11 +61,14 @@ const TEMPLATE_PAGE_SIZE = 50;
  *  - Manage assignments, Import from repo and New binding live behind the
  *    heading's overflow menu. The mock draws one header action, and these
  *    three are real flows the operator uses, so they move rather than go.
- *  - The editor is an OVERLAY, not a route: this screen owns opening it
- *    (a row click, or the header's "New template" action), the same way the
- *    wasm's `TemplateEditorOverlay` sits on top of `TemplateBankScreen`
- *    rather than being a separate destination. `listTemplates` already
- *    returns every field the editor needs (see `api/templates.ts`'s
+ *  - The editor is a sibling VIEW of this screen, not a route: this screen
+ *    owns opening it (a row click, or the header's "New template" action)
+ *    and shows it in place of the bank, the same swap the assignments and
+ *    import views get. The email creation mock (#755,
+ *    `ui-ideas/auntieos-email-creation-2026-05-27.html`) draws the editor as
+ *    a page with a "Template bank / Edit template" crumb trail, and that
+ *    first crumb is how the operator comes back here. `listTemplates`
+ *    already returns every field the editor needs (see `api/templates.ts`'s
  *    `TemplateSummary`), so opening the editor for an existing row is a
  *    local lookup in the already-loaded list, never a second fetch.
  *
@@ -85,14 +88,14 @@ const TEMPLATE_PAGE_SIZE = 50;
 export interface TemplatesProps {
   /**
    * Row-activation override. Defaults to opening the built-in Template
-   * Editor overlay, pre-filled from that row, when omitted: the router
+   * Editor view, pre-filled from that row, when omitted: the router
    * mounts this screen PROPLESS in production (see `router.tsx`), so this
    * default is what actually runs for every operator. A caller (a test, or a
    * future route that wants different behavior) can still override it.
    */
   onSelect?: (templateId: string) => void;
   /**
-   * "New template" override. Defaults to opening the editor overlay in
+   * "New template" override. Defaults to opening the editor view in
    * create mode (a blank template) when omitted, for the same PROPLESS
    * reason as `onSelect` above.
    */
@@ -443,6 +446,21 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
   if (view === 'assignments') {
     return <TemplateAssignments onClose={() => setView('bank')} />;
   }
+  // The editor replaces the bank while it is open (see the doc comment
+  // above): a page of its own with the crumb trail as the way back, never a
+  // modal over the list. Checked after the roving-tabs hook above so the
+  // hook order is the same on every render.
+  if (editor) {
+    return (
+      <TemplateEditor
+        template={editor.mode === 'edit' ? editor.template : null}
+        categories={categoryList}
+        onClose={() => setEditor(null)}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
+      />
+    );
+  }
   if (view === 'import') {
     return (
       <TemplateImport
@@ -604,15 +622,6 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         }}
       </AsyncRegion>
 
-      {editor ? (
-        <TemplateEditor
-          template={editor.mode === 'edit' ? editor.template : null}
-          categories={categoryList}
-          onClose={() => setEditor(null)}
-          onSaved={handleSaved}
-          onDeleted={handleDeleted}
-        />
-      ) : null}
 
       {bindingOpen ? (
         <CategoryBindingDialog

@@ -4,11 +4,52 @@
  * convention), so nothing here needs to land in the shared styles/screens.css.
  * Every value comes from styles/tokens.css, no literal colours, radii, or
  * durations, matching FormSchemas.css / Templates.css.
+ *
+ * The layout is the email creation mock's
+ * (ui-ideas/auntieos-email-creation-2026-05-27.html): `.cols` at 1.32fr / 1fr,
+ * the form in one panel on the left, the preview and the resolved-values
+ * legend stacked on the right, mono caps labels with a coral required mark,
+ * teal mono for the key and the subject, teal token chips, orange tag capsules.
  */
 
+/* On the page the `.screen` gap spaces the banner; inside the confirm dialog
+   nothing does, so the dialog's banners keep a margin of their own. */
 .template-editor__error {
+  margin: 0;
+}
+.template-editor__dialog-error {
   margin-bottom: var(--space-4);
 }
+
+/* ── the two columns ───────────────────────────────────────────────────────── */
+
+.template-editor__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 55rem) {
+  .template-editor__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.template-editor__aside {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* The panels carry no title (the mock's `.panel` has none here). The kit's
+   header row is empty and has no height, so the content loses the gap it
+   would otherwise keep under a title and sits at the panel's own padding. */
+.template-editor__panel > .den-panel-content {
+  margin-top: 0;
+}
+
+/* ── the form ──────────────────────────────────────────────────────────────── */
 
 .template-editor__fields {
   display: flex;
@@ -34,16 +75,66 @@
   border: 0;
 }
 
+/* The mock's `.idrow`: two fields side by side, one column on a phone. */
+.template-editor__row2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+@media (max-width: 40rem) {
+  .template-editor__row2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .template-editor__field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
+.template-editor__labelrow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* The mock's `label.cap`: mono, 10.5px, .12em tracking, uppercase, dim. */
 .template-editor__label {
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--color-text-dim);
+}
+
+.template-editor__req {
+  color: var(--color-coral);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+}
+
+/* The mock's `.opt` tag after a label: smaller, quieter, lowercase. */
+.template-editor__opt {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+}
+
+/* "Handlebars supported" after the Body label: purple, not uppercase. */
+.template-editor__hbs {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--color-tertiary);
+}
+
+.template-editor__mfhint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-faint);
 }
 
 .template-editor__input,
@@ -53,16 +144,16 @@
   font: inherit;
   font-size: var(--type-body-md-size);
   color: var(--color-text-primary);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-3) 14px;
   transition: border-color var(--dur-base) var(--ease-standard);
 }
 .template-editor__input:focus-visible,
 .template-editor__textarea:focus-visible {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 50%, transparent);
 }
 .template-editor__input::placeholder,
 .template-editor__textarea::placeholder {
@@ -74,10 +165,21 @@
   cursor: not-allowed;
 }
 
+/* The mock's `.input.mono`: the key and the subject in teal mono. */
+.template-editor__input--mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-size);
+  letter-spacing: 0.01em;
+  color: var(--color-accent);
+}
+.template-editor__input--mono::placeholder {
+  color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
 .template-editor__textarea {
   resize: vertical;
   min-height: 4.5rem;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .template-editor__textarea--mono {
@@ -85,20 +187,173 @@
   font-size: 0.85rem;
 }
 
+/* The mock's `.editor`: taller, mono, looser leading. */
+.template-editor__textarea--body {
+  min-height: 188px;
+  line-height: 1.65;
+  font-size: var(--type-body-lg-size);
+}
+
+/* The mock's `.edmeta` under the body: a purple handlebars badge, the count,
+   and the sentence about tokens. */
+.template-editor__edmeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+}
+.template-editor__hbsbadge {
+  color: var(--color-tertiary);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--color-tertiary) 50%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+
 .template-editor__id-static {
   display: block;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  color: var(--color-text-dim);
+  font-size: var(--type-mono-size);
+  color: var(--color-accent);
   background: var(--color-surface-2);
-  border-radius: var(--radius-card);
-  padding: var(--space-2) var(--space-3);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-3) 14px;
 }
 
 .template-editor__hint {
   margin: 0;
   font-size: 0.75rem;
   color: var(--color-text-faint);
+}
+
+.template-editor__rule {
+  border: 0;
+  height: var(--border-hairline);
+  margin: var(--space-1) 0;
+  background: var(--color-hairline);
+}
+
+/* ── the channel strip ─────────────────────────────────────────────────────── */
+
+.template-editor__strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--color-surface-2);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-3) 15px;
+}
+.template-editor__channel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-accent);
+}
+
+/* ── merge-field chips ─────────────────────────────────────────────────────── */
+
+.template-editor__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The mock's `.chip`: teal mono on navy-3, lifts and washes teal on hover. */
+.template-editor__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 7px 11px;
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  border: var(--border-hairline) solid var(--color-hairline);
+  background: var(--color-surface-2);
+  color: var(--color-accent);
+  transition:
+    transform var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    background var(--dur-fast) var(--ease-standard);
+}
+.template-editor__chip:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.template-editor__chip:focus-visible {
+  outline: var(--border-emphasis) solid var(--color-primary);
+  outline-offset: 2px;
+}
+.template-editor__chip-plus {
+  color: var(--color-text-dim);
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+/* ── tags ──────────────────────────────────────────────────────────────────── */
+
+.template-editor__tagrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* The mock's `.tag`: an orange wash capsule with its own remove. */
+.template-editor__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 16%, transparent);
+  color: var(--color-primary);
+}
+.template-editor__tag-x {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.template-editor__tag-x:hover,
+.template-editor__tag-x:focus-visible {
+  opacity: 1;
+}
+
+/* The mock's `.tagadd`: a dashed capsule that is also the add box. */
+.template-editor__tagadd {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: none;
+  border: var(--border-hairline) dashed var(--color-hairline);
+  color: var(--color-text-primary);
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  width: 7rem;
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.template-editor__tagadd::placeholder {
+  color: var(--color-text-dim);
+}
+.template-editor__tagadd:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--tt-kinfolk-orange) 50%, transparent);
 }
 
 /* ── section rows (I9) ─────────────────────────────────────────────────────── */
@@ -117,8 +372,8 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: var(--border-hairline) solid var(--color-border-soft);
-  border-radius: var(--radius-card);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
   background: var(--color-surface-2);
 }
 
@@ -131,34 +386,46 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* ── the live preview column ───────────────────────────────────────────────── */
-/* Two columns on a wide dialog (Dialog size="wide"), stacked below that. The
-   form keeps a readable measure and the preview takes what is left; `auto-fit`
-   is not used because the two columns are not interchangeable, the preview is
-   the narrower one on purpose. */
-.template-editor__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
+
+/* ── the resolved-values legend ────────────────────────────────────────────── */
+
+/* The mock's `.legend`: one hairline-ruled row per token, the token in teal
+   mono at a fixed width, an arrow, then the sample value in bold. */
+.template-editor__legend {
+  margin: var(--space-3) 0 0;
+  padding: 0;
 }
-@media (max-width: 48rem) {
-  .template-editor__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.template-editor__legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
 }
-/* `position: sticky` as the mocks draw it, so the preview stays in view while
-   the author scrolls a long form. The scroll container is `.dialog` (it carries
-   `overflow-y: auto`), which is what this sticks against. On the stacked
-   layout above it is NOT sticky: a preview pinned above the fields it previews
-   would cover them. */
-.template-editor__preview {
-  position: sticky;
-  top: var(--space-4);
+.template-editor__legend-row:last-child {
+  border-bottom: none;
+}
+.template-editor__legend-row dt,
+.template-editor__legend-row dd {
+  margin: 0;
+}
+.template-editor__legend-row dt {
+  flex: 0 0 auto;
+  min-width: 118px;
+}
+.template-editor__legend-row code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-accent);
+}
+.template-editor__legend-arrow {
+  color: var(--color-text-dim);
+  opacity: 0.5;
+}
+.template-editor__legend-row dd {
+  font-size: var(--type-title-sm-size);
+  font-weight: var(--type-title-sm-weight);
+  color: var(--color-text-primary);
   min-width: 0;
-}
-@media (max-width: 48rem) {
-  .template-editor__preview {
-    position: static;
-  }
+  overflow-wrap: anywhere;
 }

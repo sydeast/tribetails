@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,9 +17,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,9 +47,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.Mail
 import androidx.compose.ui.unit.sp
 import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Mail
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.Search
@@ -64,10 +70,12 @@ import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieStatusPill
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
+import com.tribetails.auntieos.ui.components.DenCrumb
 import com.tribetails.auntieos.ui.components.DenScreenHeading
+import com.tribetails.auntieos.ui.components.GlassSurface
+import com.tribetails.auntieos.ui.components.TagAssignField
 import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
-import com.tribetails.auntieos.ui.components.GlassSurface
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.AuntieSearchField
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -239,6 +247,9 @@ fun TemplateBankBody(
     // (Save persists a new doc) from editing an existing one.
     var editing by remember { mutableStateOf<TemplateRepository.EmailTemplate?>(null) }
     var creating by remember { mutableStateOf(false) }
+    // A failed save is the editor's to show: the editor replaces the bank while
+    // it is open (#755), so a banner on the bank would sit behind it unread.
+    var saveError by remember { mutableStateOf<String?>(null) }
     // Read-only view target. A row tap sets this so the operator can read the full
     // subject / body / html / description without entering the editor.
     var viewing by remember { mutableStateOf<TemplateRepository.EmailTemplate?>(null) }
@@ -285,6 +296,34 @@ fun TemplateBankBody(
 
     // Filter chips come from the real category list now (was hardcoded FILTER_OPTIONS).
     val filterOptions = remember(categories) { listOf("All") + categories }
+
+    // The editor replaces the bank while it is open: a page of its own with the
+    // email creation mock's "Template bank / Edit template" crumb trail, the
+    // same swap the web Templates screen makes. It was an AuntieDialog over the
+    // list until the #755 sweep.
+    editing?.let { current ->
+        TemplateEditorScreen(
+            template = current,
+            creating = creating,
+            categories = categories,
+            // Operator-supplied keys already taken (create mode collision guard).
+            existingKeys = templates.map { it.templateId },
+            saveError = saveError,
+            onDismissError = { saveError = null },
+            onDismiss = { editing = null; creating = false; saveError = null },
+            onSave = { updated ->
+                scope.launch {
+                    // expectNew on create: the collision check above only sees
+                    // the templates this screen loaded, and the server sees them
+                    // all. Issue #468.
+                    templateRepo.saveTemplate(updated, expectNew = creating)
+                        .onSuccess { editing = null; creating = false; saveError = null; reload() }
+                        .onFailure { saveError = it.message ?: "Save failed." }
+                }
+            },
+        )
+        return
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -475,27 +514,6 @@ fun TemplateBankBody(
             },
         )
     }
-
-    editing?.let { current ->
-        TemplateEditorOverlay(
-            template = current,
-            creating = creating,
-            categories = categories,
-            // Operator-supplied keys already taken (create mode collision guard).
-            existingKeys = templates.map { it.templateId },
-            onDismiss = { editing = null; creating = false },
-            onSave = { updated ->
-                scope.launch {
-                    // expectNew on create: the collision check above only sees
-                    // the templates this screen loaded, and the server sees them
-                    // all. Issue #468.
-                    templateRepo.saveTemplate(updated, expectNew = creating)
-                        .onSuccess { editing = null; creating = false; reload() }
-                        .onFailure { error = it.message ?: "Save failed." }
-                }
-            },
-        )
-    }
 }
 
 /**
@@ -660,7 +678,7 @@ private fun TemplateCard(
 /**
  * Read-only viewer (row-tap open). Renders the full template plus an inbox preview
  * so the operator can read it without entering edit mode. Edit hands off to
- * [TemplateEditorOverlay].
+ * [TemplateEditorScreen].
  */
 @Composable
 private fun TemplateViewOverlay(
@@ -748,18 +766,31 @@ private fun ReadField(label: String, value: String, mono: Boolean = false) {
 }
 
 /**
- * #15: named merge-field chips (mock auntieos-email-creation). Click drops the specific
- * {{token}} at the cursor; tokens resolve per-recipient at send via Handlebars.
+ * The merge-field chips the mock (auntieos-email-creation) draws over the body.
+ * Tapping one drops its `{{token}}` at the cursor; tokens resolve per recipient
+ * at send via Handlebars.
+ *
+ * The tokens are the keys of [ENRICHABLE_SAMPLE], the twelve
+ * `enrichTemplateData.ts` fills on every notification send, and the same list
+ * the web editor offers. The mock's illustrative names (`{{kinfolk_name}}`,
+ * `{{invoice_no}}`) are not names the enricher knows, and this chip row used to
+ * insert them, so every chip tap was immediately flagged by [MergeFieldWarning]
+ * underneath as a token nothing would fill.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MergeFieldChips(onInsert: (String) -> Unit) {
-    val tokens = listOf(
-        "{{kinfolk_name}}", "{{kin_names}}", "{{date}}", "{{time}}",
-        "{{service}}", "{{invoice_no}}", "{{amount}}", "{{link}}",
-    )
+    val tokens = ENRICHABLE_SAMPLE.keys.map { "{{$it}}" }
     Column {
-        AuntieFieldLabel(text = "Insert merge field")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AuntieFieldLabel(text = "Insert merge field")
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "tap to drop the token at the cursor",
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textFaint,
+            )
+        }
         Spacer(Modifier.height(6.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -809,19 +840,40 @@ internal fun templateKeyError(key: String, existingKeys: List<String>): String? 
         else -> null
     }
 }
+/**
+ * The editor as the email creation mock draws it (#755,
+ * `ui-ideas/auntieos-email-creation-2026-05-27.html`): a page with the
+ * "Template bank / Edit template" crumb trail and "Email template" heading,
+ * Save in the heading, the form in one glass panel, then the live preview and
+ * the resolved sample values in two panels under it (the mock's right-hand
+ * column, stacked on a phone). The first crumb and the system back gesture
+ * both return to the bank without saving; the mock's Cancel button is not
+ * drawn beside Save because the two do not fit beside the title at phone
+ * width, and the crumb is the same action.
+ *
+ * In create mode the operator names a fresh templateId + title. In edit mode
+ * the key is immutable (changing it would orphan the old doc) and shows as a
+ * read-only mono line; the display name stays editable in both modes, as the
+ * mock draws it.
+ *
+ * The mock's Push / SMS switch positions are disabled there and would be dead
+ * here (only the email bank exists), and its "Active binding" toggle belongs
+ * to a TemplateBinding this editor does not hold, so the channel strip states
+ * the channel and nothing else.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TemplateEditorOverlay(
+private fun TemplateEditorScreen(
     template: TemplateRepository.EmailTemplate,
     creating: Boolean,
     categories: List<String>,
     existingKeys: List<String>,
+    saveError: String?,
+    onDismissError: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (TemplateRepository.EmailTemplate) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    // In create mode the operator names a fresh templateId + title. In edit mode the
-    // key is immutable (changing it would orphan the old doc), so it stays hidden.
     var templateId by remember(template.templateId, creating) { mutableStateOf(template.templateId) }
     var title by remember(template.templateId, creating) { mutableStateOf(template.title) }
     var subject by remember(template.templateId, creating) { mutableStateOf(template.subject) }
@@ -830,157 +882,300 @@ private fun TemplateEditorOverlay(
     var bodyValue by remember(template.templateId, creating) { mutableStateOf(TextFieldValue(template.body)) }
     var category by remember(template.templateId, creating) { mutableStateOf(template.category ?: "") }
     var description by remember(template.templateId, creating) { mutableStateOf(template.description ?: "") }
+    // Tags are persisted on the doc and used to be decoded but not editable
+    // here; the mock draws the tag row, so they are.
+    var tags by remember(template.templateId, creating) { mutableStateOf(template.tags) }
 
     val keyError = if (creating) templateKeyError(templateId, existingKeys) else null
     val canSave = subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null
 
-    AuntieDialog(
-        visible = true,
-        title = if (creating) "New template" else "Edit: ${template.title}",
-        onDismiss = onDismiss,
-        closeIcon = Lucide.X,
-        hint = "Stored in Firestore, rendered with Handlebars. SendGrid delivers as a dumb pipe.",
-        footer = {
-            GhostButton(label = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
-            PrimaryButton(
-                label = if (creating) "Create" else "Save",
-                enabled = canSave,
-                onClick = {
-                    onSave(
-                        template.copy(
-                            templateId = templateId.trim(),
-                            title = title.ifBlank { templateId.trim() },
-                            subject = subject,
-                            body = bodyValue.text,
-                            html = markdownToHtml(bodyValue.text).ifBlank { null },
-                            category = category.ifBlank { null },
-                            description = description.ifBlank { null },
-                        ),
-                    )
-                },
-                modifier = Modifier.weight(1f),
-            )
-        },
+    // Back returns to the bank, never out of Templates, the same as the crumb.
+    BackHandler { onDismiss() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        // Only complain once the operator has started typing. An empty field on
-        // a dialog that just opened is not a mistake yet.
-        if (keyError != null && templateId.isNotBlank()) {
+        DenScreenHeading(
+            kicker = "The Den · Template bank",
+            crumbs = listOf(
+                DenCrumb("Template bank", onDismiss),
+                DenCrumb(if (creating) "New template" else "Edit template"),
+            ),
+            title = "Email",
+            accentTail = "template",
+            subtitle = "Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.",
+            modifier = Modifier.fillMaxWidth(),
+            trailing = {
+                PrimaryButton(
+                    label = "Save",
+                    enabled = canSave,
+                    onClick = {
+                        onSave(
+                            template.copy(
+                                templateId = templateId.trim(),
+                                title = title.ifBlank { templateId.trim() },
+                                subject = subject,
+                                body = bodyValue.text,
+                                html = markdownToHtml(bodyValue.text).ifBlank { null },
+                                category = category.ifBlank { null },
+                                description = description.ifBlank { null },
+                                tags = tags,
+                            ),
+                        )
+                    },
+                )
+            },
+        )
+
+        // Fail loud: the save's own error, on the page that made the call.
+        saveError?.let { msg ->
             AuntieBanner(
-                tone = AuntieBannerTone.Warning,
-                title = "That key will not do",
-                modifier = Modifier.fillMaxWidth(),
-                body = {
-                    Text(
-                        keyError,
-                        style = AuntieTheme.typography.bodySmall,
-                        color = c.textDim,
-                    )
-                },
+                tone = AuntieBannerTone.Error,
+                title = "Couldn't save",
+                icon = Lucide.X,
+                onDismiss = onDismissError,
+                body = { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) },
             )
         }
 
-        if (creating) {
-            // Key is the doc id and immutable after create, so it is only editable
-            // here. Title is operator chrome (not customer copy).
-            AuntieField(
-                value = templateId,
-                onValueChange = { templateId = it },
-                label = "Key (e.g. kincare.reschedule.requested)",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            // The rule is readable before it is broken, not only after.
-            Text(
-                TEMPLATE_KEY_RULE,
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            AuntieField(
-                value = title,
-                onValueChange = { title = it },
-                label = "Title",
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        // Category: free-text entry plus tap-to-fill suggestion chips from the
-        // server-deduped list. Editable in both create + edit modes (it is metadata,
-        // not the immutable key). A brand-new name is fine: saveTemplate persists it
-        // into the pool so it appears next time.
-        AuntieField(
-            value = category,
-            onValueChange = { category = it },
-            label = "Category (optional)",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (categories.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                categories.forEach { cat ->
-                    AuntieChip(
-                        label = cat,
-                        selected = category.equals(cat, ignoreCase = true),
-                        onClick = { category = cat },
+        // The mock's left panel. No title of its own: the heading names the
+        // screen and the mono caps name each field.
+        GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Only complain once the operator has started typing. An empty
+                // field on a page that just opened is not a mistake yet.
+                if (keyError != null && templateId.isNotBlank()) {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Warning,
+                        title = "That key will not do",
+                        modifier = Modifier.fillMaxWidth(),
+                        body = {
+                            Text(
+                                keyError,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = c.textDim,
+                            )
+                        },
+                    )
+                }
+
+                // The mock's `.idrow`: key, then display name.
+                if (creating) {
+                    Column {
+                        AuntieFieldLabel(text = "Template key", required = true)
+                        Spacer(Modifier.height(6.dp))
+                        AuntieField(
+                            value = templateId,
+                            onValueChange = { templateId = it },
+                            placeholder = "invoice.sent",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        // The rule is readable before it is broken, not only after.
+                        Text(
+                            TEMPLATE_KEY_RULE,
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textFaint,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    ReadField("Template key", template.templateId, mono = true)
+                }
+                Column {
+                    AuntieFieldLabel(text = "Display name")
+                    Spacer(Modifier.height(6.dp))
+                    AuntieField(
+                        value = title,
+                        onValueChange = { title = it },
+                        placeholder = "Defaults to the template key",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                // The mock's channel strip: the channel, stated with a kit pill.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(c.surface2)
+                        .border(AuntieTheme.dims.borderHairline, c.border, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 15.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AuntieStatusPill(
+                        label = "Channel · Email",
+                        tone = AuntieStatusTone.Teal,
+                        mono = true,
+                        leadingIcon = Lucide.Mail,
+                    )
+                }
+
+                Column {
+                    AuntieFieldLabel(text = "Subject", required = true)
+                    Spacer(Modifier.height(6.dp))
+                    AuntieField(
+                        value = subject,
+                        onValueChange = { subject = it },
+                        placeholder = "Your booking is confirmed",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                // Tap a merge-field chip to drop its {{token}} at the cursor.
+                MergeFieldChips(onInsert = { snip ->
+                    val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                    bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                })
+
+                // 13.3/13.4 Markdown toolbar + body editor; HTML is generated on save.
+                // The field draws its own caps label, so the caption rides on it
+                // rather than a second label above the toolbar.
+                Column {
+                    MarkdownToolbar(
+                        onWrap = { p, s ->
+                            val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
+                            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                        },
+                        onInsert = { snip ->
+                            val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
+                            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
+                        },
+                    )
+                    AuntieMarkdownField(
+                        value = bodyValue,
+                        onValueChange = { bodyValue = it },
+                        label = "Body · Markdown and Handlebars",
+                        minLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    // The mock's `.edmeta`: the count, and what happens to a token.
+                    Text(
+                        "${bodyValue.text.length} chars · tokens left as-is, never sent literally",
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textFaint,
+                    )
+                }
+
+                Column {
+                    AuntieFieldLabel(text = "Internal description", optionalNote = "admin-only note")
+                    Spacer(Modifier.height(6.dp))
+                    AuntieField(
+                        value = description,
+                        onValueChange = { description = it },
+                        placeholder = "What is this template for? Who receives it?",
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = false,
+                        minLines = 2,
+                    )
+                }
+
+                // Category: free-text entry plus tap-to-fill suggestion chips from
+                // the server-deduped list. A brand-new name is fine: saveTemplate
+                // persists it into the pool so it appears next time.
+                Column {
+                    AuntieFieldLabel(text = "Category")
+                    Spacer(Modifier.height(6.dp))
+                    AuntieField(
+                        value = category,
+                        onValueChange = { category = it },
+                        placeholder = "Booking",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (categories.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            categories.forEach { cat ->
+                                AuntieChip(
+                                    label = cat,
+                                    selected = category.equals(cat, ignoreCase = true),
+                                    onClick = { category = cat },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // The mock's tag row: one capsule per tag with its own remove,
+                // then the add box. No vocabulary: template tags are free text.
+                Column {
+                    AuntieFieldLabel(text = "Tags")
+                    Spacer(Modifier.height(6.dp))
+                    TagAssignField(
+                        value = tags,
+                        vocab = emptyList(),
+                        onChange = { tags = it },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
         }
-        AuntieField(
-            value = subject,
-            onValueChange = { subject = it },
-            label = "Subject",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        // #15: click a named merge-field chip to drop its {{token}} at the cursor.
-        MergeFieldChips(onInsert = { snip ->
-            val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-            bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-        })
-        // 13.3/13.4 Markdown toolbar + body editor; HTML is generated on save.
-        MarkdownToolbar(
-            onWrap = { p, s ->
-                val e = wrapSelection(bodyValue.text, bodyValue.selection.start, bodyValue.selection.end, p, s)
-                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-            },
-            onInsert = { snip ->
-                val e = insertSnippet(bodyValue.text, bodyValue.selection.start, snip)
-                bodyValue = TextFieldValue(e.text, TextRange(e.cursor))
-            },
-        )
-        AuntieMarkdownField(
-            value = bodyValue,
-            onValueChange = { bodyValue = it },
-            label = "Body (Markdown + Handlebars)",
-            minLines = 6,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        AuntieField(
-            value = description,
-            onValueChange = { description = it },
-            label = "Description",
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = false,
-            minLines = 2,
-        )
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            AuntieFieldLabel(text = "Live preview")
-            if (subject.isNotBlank()) {
-                Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+        // The mock's right-hand column, stacked: the live preview panel, then
+        // the resolved sample values.
+        GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AuntieFieldLabel(text = "Live preview")
+                if (subject.isNotBlank()) {
+                    Text(subject, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
+                }
+                // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
+                MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
+                // The markdown preview stays, because it is a true picture of the
+                // save path. The warning is the other half: which of those literal
+                // {{vars}} the dispatch pipeline will NOT fill, named while the
+                // author is still in a position to do something about it.
+                MergeFieldWarning(
+                    subject = subject,
+                    body = bodyValue.text,
+                    sample = ENRICHABLE_SAMPLE,
+                )
+                Text(
+                    "Sample values. Dispatch fills these in at send",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = c.textFaint,
+                )
             }
-            // Renders the SAME parsed blocks the save path emits to HTML; {{vars}} literal.
-            MarkdownPreview(bodyValue.text, modifier = Modifier.fillMaxWidth())
-            // The markdown preview stays, because it is a true picture of the
-            // save path. The warning is the other half: which of those literal
-            // {{vars}} the dispatch pipeline will NOT fill, named while the
-            // author is still in a position to do something about it.
-            MergeFieldWarning(
-                subject = subject,
-                body = bodyValue.text,
-                sample = ENRICHABLE_SAMPLE,
-            )
+        }
+
+        GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp)) {
+                AuntieFieldLabel(text = "Resolved with sample values")
+                Spacer(Modifier.height(4.dp))
+                ENRICHABLE_SAMPLE.entries.forEachIndexed { index, (key, value) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            "{{$key}}",
+                            style = AuntieTheme.typography.mono,
+                            color = c.accent,
+                            modifier = Modifier.width(132.dp),
+                        )
+                        Text("→", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(
+                            value,
+                            style = AuntieTheme.typography.titleSmall,
+                            color = c.textPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (index < ENRICHABLE_SAMPLE.size - 1) {
+                        HorizontalDivider(color = c.border, thickness = AuntieTheme.dims.borderHairline)
+                    }
+                }
+            }
         }
     }
 }

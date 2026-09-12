@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { TemplateSummary } from '../api/templates';
 
@@ -71,9 +71,13 @@ beforeEach(() => {
 });
 
 describe('TemplateEditor: create mode', () => {
-  it('renders an empty form with an editable template key field', () => {
+  it('renders an empty form with an editable template key field, as a page with the create crumb', () => {
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    expect(screen.getByRole('dialog', { name: /new template/i })).toBeInTheDocument();
+    // A page, not a modal (#755): the mock's "Template bank / New template"
+    // trail and its "Email template" heading, and no dialog anywhere.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Email template');
+    expect(screen.getByText('New template')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('');
     expect(screen.getByLabelText(/^body$/i)).toHaveValue('');
@@ -132,7 +136,11 @@ describe('TemplateEditor: create mode', () => {
     // Setting the value directly sidesteps that; this test is about the
     // saved payload, not keystroke-level input behavior.
     fireEvent.change(screen.getByLabelText(/^body$/i), { target: { value: 'Hi {{kinfolk_name}}' } });
-    await userEvent.type(screen.getByLabelText(/tags/i), 'booking, confirmation');
+    // The tag row: a comma commits the first, Enter the second, each becoming
+    // its own capsule.
+    await userEvent.type(screen.getByLabelText(/add a tag/i), 'booking,confirmation{Enter}');
+    expect(screen.getByRole('button', { name: 'Remove tag booking' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove tag confirmation' })).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/category/i), 'Booking');
 
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
@@ -183,16 +191,19 @@ describe('TemplateEditor: edit mode', () => {
         onSaved={vi.fn()}
       />,
     );
-    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(screen.getByText('Edit template')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByText('booking.confirmed')).toBeInTheDocument();
     expect(screen.queryByLabelText(/template key/i)).toBeNull(); // no editable input in edit mode
-    expect(screen.getByLabelText(/title/i)).toHaveValue('Booking Confirmed');
+    expect(screen.getByLabelText(/display name/i)).toHaveValue('Booking Confirmed');
     expect(screen.getByLabelText(/^subject$/i)).toHaveValue('Your booking is confirmed');
     expect(screen.getByLabelText(/^body$/i)).toHaveValue('Hi {{kinfolk_name}}');
     expect(screen.getByLabelText(/html/i)).toHaveValue('<p>Hi</p>');
     expect(screen.getByLabelText(/description/i)).toHaveValue('A note');
     expect(screen.getByLabelText(/category/i)).toHaveValue('Booking');
-    expect(screen.getByLabelText(/tags/i)).toHaveValue('a, b');
+    // Tags are the mock's capsules, one remove each, with the add box empty.
+    expect(screen.getByRole('button', { name: 'Remove tag a' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove tag b' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/add a tag/i)).toHaveValue('');
   });
 
   it('saves an edit using the existing templateId, unaffected by any read-only rendering quirk', async () => {
@@ -285,7 +296,7 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
 });
 
 describe('TemplateEditor: save failure (fail loud)', () => {
-  it('surfaces a rejected saveTemplate call, naming the callable, and keeps the dialog open with entered data intact', async () => {
+  it('surfaces a rejected saveTemplate call, naming the callable, and keeps the page up with entered data intact', async () => {
     saveTemplate.mockRejectedValue(new Error('templateId already exists'));
     const onSaved = vi.fn();
     render(<TemplateEditor template={null} onClose={vi.fn()} onSaved={onSaved} />);
@@ -296,7 +307,7 @@ describe('TemplateEditor: save failure (fail loud)', () => {
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
     expect(await screen.findByText(/saveTemplate failed: templateId already exists/)).toBeInTheDocument();
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Email template');
     expect(screen.getByLabelText(/template key/i)).toHaveValue('booking.confirmed');
     expect(onSaved).not.toHaveBeenCalled();
   });
@@ -330,10 +341,10 @@ describe('TemplateEditor: busy + close guards', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('calls onClose on Escape when no save is in flight', async () => {
+  it('the "Template bank" crumb is the way back and calls onClose', async () => {
     const onClose = vi.fn();
     render(<TemplateEditor template={tpl({})} onClose={onClose} onSaved={vi.fn()} />);
-    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: 'Template bank' }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
@@ -352,16 +363,17 @@ describe('TemplateEditor: delete (edit mode only)', () => {
   it('edit mode with onDeleted supplied offers a Delete action that opens a confirm dialog', async () => {
     render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
-    expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
-    expect(screen.getByText('booking.confirmed')).toBeInTheDocument();
+    const confirm = screen.getByRole('dialog', { name: /delete this template\?/i });
+    expect(within(confirm).getByText('booking.confirmed')).toBeInTheDocument();
     expect(deleteTemplate).not.toHaveBeenCalled();
   });
 
-  it('Back returns to the edit dialog without deleting', async () => {
+  it('Back closes the confirm and leaves the page as it was, without deleting', async () => {
     render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^back$/i }));
-    expect(screen.getByRole('dialog', { name: /edit template/i })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Edit template')).toHaveAttribute('aria-current', 'page');
     expect(deleteTemplate).not.toHaveBeenCalled();
   });
 
@@ -606,10 +618,11 @@ describe('TemplateEditor: live preview', () => {
     );
     expect(screen.queryByRole('status')).toBeNull();
   });
-  it('drops the preview on the confirm-delete view, which previews nothing', async () => {
+  it('keeps the page, preview included, under the confirm-delete dialog', async () => {
     render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
-    expect(screen.queryByRole('region', { name: 'Live preview' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: /delete this template\?/i })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Live preview' })).toBeInTheDocument();
   });
 });
 describe('TemplateEditor: a template that also carries HTML', () => {
@@ -683,5 +696,98 @@ describe('TemplateEditor: creating cannot overwrite an existing template', () =>
       await screen.findByText(/The key booking\.confirmed is already in use/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/saveTemplate failed/)).not.toBeInTheDocument();
+  });
+});
+describe('TemplateEditor: the email creation mock (#755)', () => {
+  it('lays the page out as the mock: heading, then the form panel, then preview and legend panels on the right', () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('Email template');
+    // The kicker's place is taken by the crumb trail on a nested screen.
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent('Template bank/Edit template');
+    const panels = document.querySelectorAll('.template-editor__cols .den-panel');
+    expect(panels).toHaveLength(3);
+    expect(panels[0]!.querySelector('fieldset')).not.toBeNull();
+    expect(panels[1]!.querySelector('.merge-preview')).not.toBeNull();
+    expect(panels[2]!.querySelector('.template-editor__legend')).not.toBeNull();
+    // The right-hand pair sits in its own column, after the form panel.
+    expect(panels[1]!.parentElement).toHaveClass('template-editor__aside');
+  });
+  it('puts Cancel and Save in the heading, where the mock draws them', () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} onDeleted={vi.fn()} />);
+    const trailing = document.querySelector('.den-heading-trailing');
+    expect(trailing).not.toBeNull();
+    const names = Array.from(trailing!.querySelectorAll('button')).map((b) => b.textContent?.trim());
+    expect(names).toEqual(['Cancel', 'Delete', 'Save template']);
+  });
+  it('states the channel with a kit pill and nothing else on the strip', () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const strip = document.querySelector('.template-editor__strip');
+    expect(strip).not.toBeNull();
+    const pill = strip!.querySelector('.den-statuspill');
+    expect(pill).toHaveTextContent('Channel · Email');
+    expect(pill).toHaveAttribute('data-tone', 'teal');
+    // No dead Push/SMS switch and no binding toggle: nothing else interactive.
+    expect(strip!.querySelectorAll('button, input')).toHaveLength(0);
+  });
+  it('offers one merge-field chip per token the pipeline fills, and drops it at the caret', async () => {
+    render(<TemplateEditor template={tpl({ body: 'Hello , see you then.' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const chips = screen.getByRole('group', { name: 'Insert merge field' });
+    const labels = within(chips).getAllByRole('button').map((b) => b.textContent?.replace('+', '').trim());
+    expect(labels).toContain('{{kinfolkName}}');
+    expect(labels).toContain('{{kinName}}');
+    // The mock's illustrative names are not what the enricher fills, so they
+    // are not offered.
+    expect(labels).not.toContain('{{kinfolk_name}}');
+    const body = screen.getByLabelText(/^body$/i) as HTMLTextAreaElement;
+    body.focus();
+    body.setSelectionRange(6, 6);
+    await userEvent.click(within(chips).getByRole('button', { name: '{{kinfolkName}}' }));
+    expect(body).toHaveValue('Hello {{kinfolkName}}, see you then.');
+    expect(body.selectionStart).toBe(6 + '{{kinfolkName}}'.length);
+    // A token the pipeline fills, so the preview shows the value and no warning.
+    expect(screen.getByRole('region', { name: 'Live preview' })).toHaveTextContent('Sandy Wren');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+  it('counts the body under the editor, beside the handlebars badge', async () => {
+    render(<TemplateEditor template={tpl({ body: 'Hi there' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByText('8 chars')).toBeInTheDocument();
+    expect(screen.getByText('{{ }} handlebars')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/^body$/i), '!');
+    expect(screen.getByText('9 chars')).toBeInTheDocument();
+  });
+  it('lists every sample value the preview resolves against', () => {
+    render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const legend = document.querySelector('.template-editor__legend')!;
+    const rows = Array.from(legend.querySelectorAll('.template-editor__legend-row'));
+    expect(rows).toHaveLength(12);
+    expect(rows[0]).toHaveTextContent('{{kinfolkName}}');
+    expect(rows[0]).toHaveTextContent('Sandy Wren');
+    expect(rows[5]).toHaveTextContent('{{invoiceNumber}}');
+    expect(rows[5]).toHaveTextContent('INV-1042');
+  });
+  it('removes a tag from its capsule and folds a tag left in the add box into the save', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(
+      <TemplateEditor
+        template={tpl({ tags: ['a', 'b'], subject: 'Hi', body: 'Body' })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Remove tag a' }));
+    expect(screen.queryByRole('button', { name: 'Remove tag a' })).toBeNull();
+    // Typed but never committed with Enter: Save keeps it anyway.
+    await userEvent.type(screen.getByLabelText(/add a tag/i), 'c');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(expect.objectContaining({ tags: ['b', 'c'] })),
+    );
+  });
+  it('keeps the persisted fields the mock does not draw editable: HTML, usage instructions, sections', () => {
+    render(<TemplateEditor template={tpl({ html: '<p>x</p>', usageInstructions: 'When' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText(/^html$/i)).toHaveValue('<p>x</p>');
+    expect(screen.getByLabelText(/usage instructions/i)).toHaveValue('When');
+    expect(screen.getByRole('button', { name: /add section/i })).toBeInTheDocument();
   });
 });
