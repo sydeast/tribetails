@@ -12,8 +12,13 @@
  * teal mono for the key and the subject, teal token chips, orange tag capsules.
  */
 
+/* On the page the `.screen` gap spaces the banner; inside the confirm dialog
+   nothing does, so the dialog's banners keep a margin of their own. */
 .template-editor__error {
   margin: 0;
+}
+.template-editor__dialog-error {
+  margin-bottom: var(--space-4);
 }
 
 /* ── the two columns ───────────────────────────────────────────────────────── */

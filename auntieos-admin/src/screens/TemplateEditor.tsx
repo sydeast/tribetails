@@ -741,7 +741,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           }
         >
           {error ? (
-            <Banner tone="error" title="Couldn&rsquo;t delete" className="template-editor__error">
+            <Banner tone="error" title="Couldn&rsquo;t delete" className="template-editor__dialog-error">
               {error}
             </Banner>
           ) : null}
@@ -749,7 +749,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
             <Banner
               tone="warning"
               title="A notification still sends this"
-              className="template-editor__error"
+              className="template-editor__dialog-error"
             >
               {liveKeyWarning}
             </Banner>
