@@ -9,7 +9,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router';
 import { getAuthState, subscribeAuthState, waitForAuthReady, useSignOut } from './lib/auth';
-import { clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
+import { OfflineAccessError, clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 // O-26: every screen below is code-split via lazyRouteComponent (each
 // resolves to its own chunk at build time) instead of a static import here —
 // the single main bundle had grown to 348KB gz (from 204KB at S3) once
@@ -22,6 +22,7 @@ import { clearAccess, ensureAccess, type AccessState } from './lib/activeTribe';
 import { SignIn } from './screens/SignIn';
 import { LaunchError } from './screens/LaunchError';
 import { SessionNotice } from './components/SessionNotice';
+import { RouteError } from './components/RouteError';
 
 /**
  * Shared chrome: the two drifting orbs behind every screen, and the session
@@ -97,6 +98,29 @@ async function requireSignedIn() {
 }
 
 /**
+ * Tell a lost signal apart from a backend that said no (#812).
+ *
+ * `ensureAccess` catches its own failure into `access.error`, so both guards
+ * below used to treat "the `getMyAccess` callable failed" as one thing and fall
+ * through to `LaunchError`. Two very different things arrive as that one string.
+ * A household out at the vet with no bars is told their tribe would not load,
+ * offered a Try again that cannot work, and offered a Sign out that would clear
+ * the last readable copy of their own data. A real backend failure needs
+ * exactly that screen.
+ *
+ * So the split is made here, once, for both guards: no network means throw, and
+ * `components/RouteError.tsx` renders the offline screen. Anything else falls
+ * through to the behaviour that shipped. See `OfflineAccessError` in
+ * lib/activeTribe.ts for why `navigator.onLine` is the discriminator and what
+ * its one false negative costs.
+ */
+function refuseIfOffline(access: AccessState): void {
+  if (access.error === null) return;
+  const online = typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (!online) throw new OfflineAccessError();
+}
+
+/**
  * Guard for every screen that needs a resolved active tribe (everything past
  * the picker). Mirrors Kotlin's resolveLaunchDestination: 0 tribes -> NoTribes,
  * an operator with none picked yet -> Pick, otherwise falls through with
@@ -117,6 +141,7 @@ async function requireSignedIn() {
 async function requireActiveTribe() {
   await requireSignedIn();
   const access = await ensureAccess();
+  refuseIfOffline(access); // #812: no signal is not a launch failure, see above
   if (access.error !== null) return; // let the screen's own query surface the error via LaunchError
   if (access.kinfolkIds.length === 0) throw redirect({ to: '/no-tribes' });
   if (!access.isOperator && access.kinfolkIds.length >= 2) throw redirect({ to: '/error' }); // data defect, see doc comment above
@@ -145,6 +170,10 @@ export function pickGuardRedirect(access: AccessState): '/home' | '/no-tribes' |
 async function requireOperatorForPick() {
   await requireSignedIn();
   const access = await ensureAccess();
+  // Same split as requireActiveTribe: /pick is reachable by deep link too, and
+  // an operator opening one with no signal gets the offline screen rather than
+  // an empty tribe list.
+  refuseIfOffline(access);
   const target = pickGuardRedirect(access);
   if (target !== null) throw redirect({ to: target });
 }
@@ -369,7 +398,33 @@ const routeTree = rootRoute.addChildren([
   notificationSettingsRoute,
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  // #812: without one, every `beforeLoad` rejection propagated past the router
+  // to main.tsx's Sentry boundary and a household got a crash page. See
+  // components/RouteError.tsx for the two arms and which of them withholds
+  // Sign out.
+  defaultErrorComponent: RouteError,
+});
+/**
+ * Re-launch when the connection comes back (#812).
+ *
+ * `ensureAccess` caches its resolved state, including the FAILED one, under
+ * `resolvedForUid`, so re-running the guard alone would hand back the same
+ * error and the same offline screen forever. `clearAccess()` is what makes the
+ * next pass actually call `getMyAccess` again. `invalidate()` then re-runs every
+ * committed guard, which is what turns the offline screen back into the
+ * household's booking with nothing tapped.
+ *
+ * Same mechanism as the #539 auth subscription below, for the same reason: a
+ * fact about the session that arrives without a navigation reaches no guard.
+ */
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    clearAccess();
+    void router.invalidate();
+  });
+}
 
 /**
  * #539: make the route guards react to the session ending, instead of waiting

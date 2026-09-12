@@ -73,8 +73,16 @@ export function providerLabel(providerId: string): string {
   }
 }
 
-/** Human label for the resolved admin access (the AppShell already resolved this). */
-export function roleLabel(access: AdminAccess): string {
+/**
+ * Human label for the resolved admin access (the AppShell already resolved this).
+ *
+ * Null is the #812 degraded entry: the gate admitted this session without
+ * reading its claims, because the device could not refresh the ID token. There
+ * is no role to print, so it says that rather than defaulting to one. Naming
+ * a permission level nobody checked is the one thing this label must not do.
+ */
+export function roleLabel(access: AdminAccess | null): string {
+  if (access === null) return 'Not checked while offline';
   switch (access.status) {
     case 'admin':
       return 'Operator (full admin)';

@@ -7,10 +7,13 @@ import {
   redirect,
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
-import { resolveAccess } from './lib/access';
+import { resolveAccess, type AdminAccess } from './lib/access';
+import { noteRefreshFailure, subscribeSessionHealth, getSessionHealth } from './lib/sessionHealth';
+import { enterReadOnlySession, leaveReadOnlySession } from './lib/readOnlySession';
 import { NOTIFICATION_GATE_REDIRECT } from './lib/nav';
 import { AppShell } from './components/AppShell';
 import { RoutePending } from './components/RoutePending';
+import { RouteError } from './components/RouteError';
 // Every admin screen below is code-split via lazyRouteComponent (each resolves
 // to its own chunk at build time) instead of being imported here. The single
 // bundle had reached 1,666 KB: the whole app, all 26 routes and the Firebase
@@ -100,12 +103,55 @@ const signInRoute = createRoute({
  * Guard for the whole admin layout: signed in AND access is not `denied`. A
  * signed-in non-admin is bounced to /signin, where the component signs the stale
  * session out. Runs once at the layout level, so every child screen is protected.
+ *
+ * THREE EXITS, AND THEY MUST STAY THREE (#812). `resolveAccess` calls
+ * `getIdTokenResult`, so this one line can fail in two entirely different ways,
+ * and until now they shared a single destination: the Sentry crash fallback,
+ * which is not a destination at all.
+ *
+ *   resolves `denied`       the claims were read and they say no. NOT
+ *                           PERMITTED. /signin, unchanged.
+ *   rejects, `expired`      a refresh failed for a reason retrying cannot fix
+ *                           (`lib/sessionHealth.ts` classifies this off the
+ *                           Firebase code). Only a re-auth mints a token now,
+ *                           so /signin is the honest answer.
+ *   rejects, `unreachable`  `auth/network-request-failed`. CANNOT REACH THE
+ *                           NETWORK. Admitted, read-only.
+ *
+ * The third exit must never fall through to /signin, and that is not a
+ * preference. `screens/SignIn.tsx` presents a form that cannot be submitted
+ * without a network, so bouncing an offline operator there strands them at the
+ * one screen guaranteed not to work, and every route they try lands back on it.
+ * Worse, signing out is what clears the cached session, which is the only thing
+ * still making this app readable at all. A session that is merely out of touch
+ * keeps its place.
+ *
+ * `access` is therefore `AdminAccess | null`, and null means exactly "offline,
+ * so the claims were not read this navigation". It is not a third access level
+ * and nothing may treat it as one. The residual edge, named rather than left to
+ * be found: a Stage 0I test admin entering this way has no `setTestScope` pin,
+ * because nothing resolved a `testTribeId` to pin with. No scoped callable can
+ * fire regardless (`lib/readOnlySession.ts` refuses all of them while the flag
+ * is set), but a direct `onSnapshot` started on this pass would be unscoped,
+ * and the sandbox banner is absent until a gate pass succeeds.
  */
 async function requireAdmin() {
   const state = await waitForAuthReady();
   if (state.status !== 'signedIn') throw redirect({ to: '/signin' });
-  const access = await resolveAccess(state.user);
+  let access: AdminAccess;
+  try {
+    access = await resolveAccess(state.user);
+  } catch (err) {
+    // Handed to sessionHealth rather than classified here, so the shell's
+    // existing banner says it on this paint instead of a minute from now, and
+    // so the retry loop that eventually clears the state starts at the same
+    // moment the operator first sees it.
+    if (noteRefreshFailure(err) === 'expired') throw redirect({ to: '/signin' });
+    enterReadOnlySession();
+    return { access: null };
+  }
   if (access.status === 'denied') throw redirect({ to: '/signin' });
+  leaveReadOnlySession();
   return { access };
 }
 
@@ -374,7 +420,42 @@ export const router = createRouter({
   // What the outlet renders while a screen's chunk is in flight. Without one
   // the wait is a blank content area beside a live nav rail.
   defaultPendingComponent: RoutePending,
+  // #812: and what it renders when a route THROWS. Without one, every
+  // `beforeLoad` rejection, chiefly a token refresh that cannot reach the
+  // network, propagated past the router to `main.tsx`'s Sentry boundary and
+  // the operator got a crash page. See RouteError.tsx.
+  defaultErrorComponent: RouteError,
 });
+
+/**
+ * Re-run the gate when a degraded session recovers (#812).
+ *
+ * `requireAdmin` is the only thing that can leave the read-only state, and it
+ * only runs on a navigation. Without this, an operator whose signal came back
+ * would sit in a read-only app until they clicked something, and every screen
+ * in it would still be refusing callables. `sessionHealth`'s own retry loop is
+ * already probing on a backoff, so its transition back to `ok` is the earliest
+ * trustworthy news that the network is there; `online` is the browser's own,
+ * usually sooner and sometimes wrong, which is why both are wired and neither
+ * is trusted alone. `invalidate()` re-runs every committed guard, so the gate
+ * re-resolves access, clears the flag, and the shell becomes the real app.
+ *
+ * Same mechanism as the portal's #539 auth subscription, for the same reason:
+ * a fact about the session that arrives without a navigation reaches no guard.
+ */
+let lastSessionStatus = getSessionHealth().status;
+subscribeSessionHealth(() => {
+  const status = getSessionHealth().status;
+  if (status === lastSessionStatus) return;
+  lastSessionStatus = status;
+  if (status === 'ok') void router.invalidate();
+});
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    void router.invalidate();
+  });
+}
 
 declare module '@tanstack/react-router' {
   interface Register {

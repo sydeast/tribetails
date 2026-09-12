@@ -22,6 +22,38 @@ import { auth } from './firebase';
  */
 export type LaunchDestination = 'loading' | 'signIn' | 'noTribes' | 'pick' | 'home' | 'error';
 
+/**
+ * Thrown by the route guards when access could not be fetched AND the device
+ * says it has no network (#812).
+ *
+ * A SEPARATE TYPE, not a flag on `AccessState`, because the guards want to do
+ * something with it that no other consumer does. `access.error` stays exactly
+ * what it was (a string a screen can show), and this is the one signal meaning
+ * "do not mount this route at all, show the offline screen".
+ * `components/RouteError.tsx` is what catches it.
+ *
+ * WHY `navigator.onLine` IS THE DISCRIMINATOR, given that guessing at causes is
+ * what produced this issue. The failure arrives as whatever `getMyAccess`
+ * rejected with, and `lib/fns.ts`'s own header records that the Functions SDK
+ * reports `functions/internal` for ANY transport failure: a dropped connection,
+ * a reply that never came back, a wedged revision. The error genuinely cannot
+ * tell us which. The browser can, and it is the only thing here that can.
+ *
+ * Its false negative, written down rather than left to be discovered: a phone
+ * on a wifi network with no route out reports `onLine === true`, so that
+ * household falls through to today's `LaunchError` path. That is the screen
+ * they already get, so nothing regresses; it is simply not improved. The false
+ * POSITIVE is the one that would matter, and it cannot happen: `onLine` is
+ * false only when the device has no usable network at all, and no callable is
+ * reaching a backend in that state.
+ */
+export class OfflineAccessError extends Error {
+  constructor() {
+    super('This device is offline, so your tribe could not be loaded.');
+    this.name = 'OfflineAccessError';
+  }
+}
+
 export interface AccessState {
   kinfolkIds: string[];
   isOperator: boolean;

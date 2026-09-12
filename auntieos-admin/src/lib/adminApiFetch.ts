@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
 
 /**
  * The one way this app talks to its own `/api/*` endpoints.
@@ -62,6 +63,13 @@ export async function adminApiFetch(
   action: string,
   init: AdminApiFetchInit,
 ): Promise<Response> {
+  // #812: the second of the two seams that make the degraded entry read-only.
+  // These two endpoints are the strictest thing this app calls (they verify
+  // with `checkRevoked`, which is the whole subject of the header above), so a
+  // session whose token could not be refreshed has no business reaching them.
+  // Refused before `getIdToken` rather than after, because that call is itself
+  // the refresh that just failed.
+  if (isReadOnlySession()) throw new OfflineSessionError(action);
   const user = auth.currentUser;
   if (!user) throw new NotSignedInError(`Sign-in required before ${action}.`);
 
