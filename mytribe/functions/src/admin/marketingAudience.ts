@@ -243,11 +243,21 @@ export async function countMarketingReach(key: string, resolved: ResolvedAudienc
   const businessOverride = await loadBusinessOverride(key);
   const stream = streamForRecipient(def, 'clients');
 
+  // Read the prefs documents in slices rather than one at a time. A preview is
+  // something an operator is WAITING on, and the React admin gives every
+  // callable 20 seconds (`lib/fns.ts`); a strictly sequential round trip per
+  // household spends that budget on latency for an audience of any size. The
+  // slice is small enough not to open a thousand concurrent Firestore reads.
+  const SLICE = 50;
   let suppressedByPrefs = 0;
-  for (const uid of resolved.uids) {
-    const prefs = await loadUserPrefs(uid, 'clients');
-    const channels = resolveChannels(def, prefs, businessOverride, stream);
-    if (!channels.email && !channels.sms && !channels.push) suppressedByPrefs += 1;
+  for (let i = 0; i < resolved.uids.length; i += SLICE) {
+    const prefsList = await Promise.all(
+      resolved.uids.slice(i, i + SLICE).map((uid) => loadUserPrefs(uid, 'clients')),
+    );
+    for (const prefs of prefsList) {
+      const channels = resolveChannels(def, prefs, businessOverride, stream);
+      if (!channels.email && !channels.sms && !channels.push) suppressedByPrefs += 1;
+    }
   }
 
   return {
