@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -74,6 +75,15 @@ data class BroadcastResult(
     val broadcastId: String,
     val recipientCount: Int,
     val perChannel: Map<String, ChannelCounts>,
+    /**
+     * #823. True when this invocation ran out of budget and handed the rest of
+     * the audience to `outboundFanoutSweep`. `recipientCount` is the whole
+     * audience either way, so without this the banner reads a half-finished
+     * send as a finished one.
+     */
+    val pending: Boolean = false,
+    /** How many households this invocation actually reached. */
+    val sent: Int = 0,
 )
 
 /**
@@ -183,6 +193,8 @@ fun decodeBroadcastResult(dataJson: String): BroadcastResult {
         broadcastId = o["broadcastId"]?.jsonPrimitive?.contentOrNull ?: "",
         recipientCount = o["recipientCount"]?.jsonPrimitive?.intOrNull ?: 0,
         perChannel = per,
+        pending = o["pending"]?.jsonPrimitive?.booleanOrNull ?: false,
+        sent = o["sent"]?.jsonPrimitive?.intOrNull ?: 0,
     )
 }
 
@@ -196,13 +208,37 @@ fun broadcastErrorText(message: String): String = when {
         "That audience has no kinfolk right now. Nothing was sent."
     message.contains("broadcast_all_failed", ignoreCase = true) ->
         "Every send failed. Nothing reached anyone. Check the provider settings and try again."
+    // #823's two, from stopBroadcast. Both mean the stop was a no-op and both
+    // are good news, so raw sentinel text would read as a failure it is not.
+    message.contains("already_finished", ignoreCase = true) ->
+        "It had already finished sending, so there was nothing left to stop."
+    message.contains("already_stopping", ignoreCase = true) ->
+        "A stop is already going through. It finishes within a minute."
     else -> message
 }
 
-/** One-line human summary of a broadcast result for the success banner. Pure. */
+/**
+ * One-line human summary of a broadcast result for the success banner. Pure.
+ *
+ * #823. A broadcast too large for one invocation comes back part-way through,
+ * and `recipientCount` is still the WHOLE audience, so "Reached 900 kinfolk"
+ * beside "email: 61 sent" would be an outright false claim about email that
+ * has not been sent yet. When the reply says `pending`, the banner says how far
+ * it got and who finishes it.
+ *
+ * This console has no live progress panel, unlike the React admin and Android
+ * screens #813 and #816 built. That is deliberate scope: it is the fallback
+ * console, and the fix owed to it is an honest sentence, not a second progress
+ * language.
+ */
 fun broadcastSummary(result: BroadcastResult): String {
     val parts = result.perChannel.entries
         .filter { it.value.sent > 0 || it.value.failed > 0 || it.value.skipped > 0 }
         .map { (ch, c) -> "$ch: ${c.sent} sent" + (if (c.skipped > 0) ", ${c.skipped} skipped" else "") + (if (c.failed > 0) ", ${c.failed} failed" else "") }
-    return "Reached ${result.recipientCount} kinfolk. " + parts.joinToString("; ")
+    val head = if (result.pending) {
+        "Still sending: ${result.sent} of ${result.recipientCount} kinfolk so far. It carries on in the background."
+    } else {
+        "Reached ${result.recipientCount} kinfolk."
+    }
+    return "$head " + parts.joinToString("; ")
 }
