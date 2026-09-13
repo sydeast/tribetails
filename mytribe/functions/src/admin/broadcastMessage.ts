@@ -21,6 +21,13 @@ import {
 import { SEGMENTS_COLLECTION } from './audienceSegments';
 import { UNSUBSCRIBE_FOOTER, suppressionDocId } from './sendExternalMessage';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import {
+  BroadcastIdempotencyKeyArg,
+  assertSameCaller,
+  claimIdempotentRow,
+  storedCount,
+  type FanoutState,
+} from '../lib/sendIdempotency';
 import { getNotificationDef } from '../notifications/catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from '../notifications/prefs';
 import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/types';
@@ -78,6 +85,22 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  * households were targeted, how many actually received something, and how many
  * were silenced by their preferences, and the same numbers land in the
  * `broadcasts` doc and the audit entry.
+ *
+ * IDEMPOTENCY (#814, 2026-09-12). The `broadcasts/{id}` row is now written
+ * BEFORE the fan-out rather than after it, and an optional `idempotencyKey`
+ * becomes its id. That is what lets a second attempt at one submission be
+ * recognised while the first one is still sending, the window a duplicate is
+ * most likely to arrive in, because it is when the client's 20-second budget
+ * expires and the operator presses Send again. Without it a retry re-ran the
+ * whole fan-out, and this callable sends real email and SMS, which cannot be
+ * recalled. `lib/sendIdempotency.ts` has the mechanism; #644 / #646 have the
+ * booking-create precedent it copies.
+ *
+ * Two consequences of writing the row first, both deliberate: a broadcast that
+ * dies mid-send now leaves a row stamped `fanoutState: 'running'` where it used
+ * to leave nothing, and an all-failed broadcast leaves one stamped 'failed'.
+ * Both are more honest than the silence they replace, and the second is what a
+ * same-key retry is permitted to re-run from.
  */
 
 export const BROADCASTS_COLLECTION = 'broadcasts';
@@ -97,6 +120,13 @@ export const Args = z
     channels: z.array(z.enum(ALL_BROADCAST_CHANNELS)).min(1).max(4),
     subject: z.string().min(1).max(200).optional(),
     body: z.string().min(1).max(5000),
+    /**
+     * #814. One key per SUBMISSION, held across every attempt at it, so a
+     * dropped reply can be retried without sending the whole audience a second
+     * copy. Optional: without one this callable behaves exactly as it did
+     * before, server-minted id and no dedupe.
+     */
+    idempotencyKey: BroadcastIdempotencyKeyArg,
   })
   .superRefine((val, ctx) => {
     if (!val.segmentId && !val.criteria) {
@@ -183,15 +213,73 @@ async function isSuppressed(normalized: string): Promise<boolean> {
   return snap.exists;
 }
 
-export async function broadcastMessageHandler(
-  req: CallableRequest<unknown>,
-): Promise<{
+export interface BroadcastMessageResult {
   ok: true;
   broadcastId: string;
   recipientCount: number;
   perChannel: Record<BroadcastChannel, ChannelCounts>;
   reach: BroadcastReach;
-}> {
+  /**
+   * #814. True when this reply describes a broadcast an EARLIER attempt with
+   * the same `idempotencyKey` already sent. Nothing left the building on this
+   * call.
+   */
+  deduped: boolean;
+  /**
+   * #814. True when that earlier attempt's fan-out has not finished. The counts
+   * are what is stored so far, not a total.
+   */
+  pending: boolean;
+}
+
+/** Reads a stored `perChannel` map back for a replayed reply. */
+function storedPerChannel(stored: Record<string, unknown>): Record<BroadcastChannel, ChannelCounts> {
+  const raw = (stored['perChannel'] ?? {}) as Record<string, Record<string, unknown>>;
+  const out = {} as Record<BroadcastChannel, ChannelCounts>;
+  for (const ch of ALL_BROADCAST_CHANNELS) {
+    const c = (raw[ch] ?? {}) as Record<string, unknown>;
+    out[ch] = {
+      sent: storedCount(c, 'sent'),
+      skipped: storedCount(c, 'skipped'),
+      failed: storedCount(c, 'failed'),
+    };
+  }
+  return out;
+}
+
+/**
+ * Answers a retry from the row the first attempt already claimed.
+ *
+ * Unlike the blast, the send itself is not recoverable: this reply exists so
+ * the operator learns the broadcast went out, not so they can be told it did
+ * not. When the first attempt is still fanning out, `pending` says so and the
+ * counts are a snapshot rather than a total.
+ */
+function replayBroadcast(
+  broadcastId: string,
+  stored: Record<string, unknown>,
+  actorUid: string,
+): BroadcastMessageResult {
+  assertSameCaller(stored, actorUid, 'actorUid');
+  const reach = (stored['reach'] ?? {}) as Record<string, unknown>;
+  return {
+    ok: true,
+    broadcastId,
+    recipientCount: storedCount(stored, 'recipientCount'),
+    perChannel: storedPerChannel(stored),
+    reach: {
+      targeted: storedCount(reach, 'targeted'),
+      reached: storedCount(reach, 'reached'),
+      suppressedByPrefs: storedCount(reach, 'suppressedByPrefs'),
+    },
+    deduped: true,
+    pending: stored['fanoutState'] !== 'complete',
+  };
+}
+
+export async function broadcastMessageHandler(
+  req: CallableRequest<unknown>,
+): Promise<BroadcastMessageResult> {
   initSentry();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
@@ -221,14 +309,67 @@ export async function broadcastMessageHandler(
     throw new HttpsError('failed-precondition', 'no_recipients');
   }
 
+  /**
+   * THE ROW NOW GOES FIRST (#814).
+   *
+   * It used to be written after the fan-out, which meant there was nothing for
+   * a second attempt to collide with while the first one was still sending,
+   * the window in which a duplicate is most likely, because it is exactly when
+   * the client's 20-second budget expires and the operator clicks again. A row
+   * written first is the claim, and `create()` referees it.
+   *
+   * Written after `no_recipients` deliberately: resolving the audience is a
+   * read, so a broadcast that reaches nobody still burns no id and the operator
+   * can fix the criteria and send again with the same key.
+   */
+  const subject = args.subject?.trim() ?? '';
+  const body = args.body;
+  const description = describeCriteria(criteria);
+  const startedAtMs = Date.now();
+  const broadcasts = db().collection(BROADCASTS_COLLECTION);
+  const ref = args.idempotencyKey ? broadcasts.doc(args.idempotencyKey) : broadcasts.doc();
+  const row = {
+    segmentId: args.segmentId ?? null,
+    criteria,
+    criteriaDescription: description,
+    channels,
+    subject: subject || null,
+    bodyLength: body.length,
+    recipientCount: recipients.length,
+    actorUid: uid,
+    sentAtMs: startedAtMs,
+    createdAt: FieldValue.serverTimestamp(),
+    fanoutState: 'running' satisfies FanoutState,
+  };
+
+  if (args.idempotencyKey) {
+    const claim = await claimIdempotentRow({ ref, row, actorUid: uid, actorField: 'actorUid' });
+    if (!claim.claimed) {
+      /**
+       * A CLAIM LEFT AT 'failed' MAY BE RE-RUN, and only that one.
+       *
+       * `broadcast_all_failed` is thrown when every attempted send failed and
+       * nothing was even skipped, nobody heard anything, so re-running under
+       * the same key cannot duplicate a delivery. Refusing it instead would
+       * leave the operator holding a key that can never succeed, and the only
+       * way out would be a new key, which is the unguarded path this whole
+       * change exists to close.
+       */
+      if (claim.stored['fanoutState'] !== 'failed') {
+        return replayBroadcast(ref.id, claim.stored, uid);
+      }
+      await ref.set({ ...row, retriedAfterFailureAtMs: startedAtMs }, { merge: true });
+    }
+  } else {
+    await ref.set(row);
+  }
+
   const perChannel: Record<BroadcastChannel, ChannelCounts> = {
     inapp: emptyCounts(),
     email: emptyCounts(),
     sms: emptyCounts(),
     push: emptyCounts(),
   };
-  const subject = args.subject?.trim() ?? '';
-  const body = args.body;
 
   // The gate row is ONE document for the whole business (businessSettings/
   // notifications), so it is read once here rather than once per recipient. A
@@ -400,29 +541,22 @@ export async function broadcastMessageHandler(
   const totalSent = channels.reduce((n, ch) => n + perChannel[ch].sent, 0);
   const totalFailed = channels.reduce((n, ch) => n + perChannel[ch].failed, 0);
   const totalSkipped = channels.reduce((n, ch) => n + perChannel[ch].skipped, 0);
+  const totals = { sent: totalSent, skipped: totalSkipped, failed: totalFailed };
   if (totalSent === 0 && totalSkipped === 0 && totalFailed > 0) {
+    // The counts are recorded before the throw, and the row is stamped 'failed'
+    // rather than left at 'running': an all-failed attempt reached nobody, and
+    // that is exactly the state a same-key retry is allowed to re-run from.
+    await ref.set(
+      { perChannel, reach, totals, fanoutState: 'failed' satisfies FanoutState },
+      { merge: true },
+    );
     throw new HttpsError('unavailable', 'broadcast_all_failed', { perChannel });
   }
 
-  const now = Date.now();
-  const description = describeCriteria(criteria);
-  const ref = await db()
-    .collection(BROADCASTS_COLLECTION)
-    .add({
-      segmentId: args.segmentId ?? null,
-      criteria,
-      criteriaDescription: description,
-      channels,
-      subject: subject || null,
-      bodyLength: body.length,
-      recipientCount: recipients.length,
-      perChannel,
-      reach,
-      totals: { sent: totalSent, skipped: totalSkipped, failed: totalFailed },
-      actorUid: uid,
-      sentAtMs: now,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+  await ref.set(
+    { perChannel, reach, totals, fanoutState: 'complete' satisfies FanoutState },
+    { merge: true },
+  );
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -449,7 +583,15 @@ export async function broadcastMessageHandler(
     extra: { broadcastId: ref.id, channels, recipientCount: recipients.length, totalSent, totalSkipped, totalFailed, reach },
   });
 
-  return { ok: true, broadcastId: ref.id, recipientCount: recipients.length, perChannel, reach };
+  return {
+    ok: true,
+    broadcastId: ref.id,
+    recipientCount: recipients.length,
+    perChannel,
+    reach,
+    deduped: false,
+    pending: false,
+  };
 }
 
 export const broadcastMessage = onCall(

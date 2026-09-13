@@ -925,12 +925,24 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("deleteAudienceSegment failed", it) }
 
+    /**
+     * Sends one admin-authored message to a whole audience, now.
+     *
+     * [idempotencyKey] (#814) is minted once per SUBMISSION by
+     * `mintBroadcastIdempotencyKey` and held across every attempt at it. It is
+     * what makes the single retry in [invokeSend] safe: without it, a retry
+     * after a dropped reply puts a second email and a second text in front of
+     * every household the segment matched, and neither can be recalled.
+     * Optional, so a caller that has not adopted it behaves exactly as it did
+     * before, server-minted id, no dedupe, and no retry.
+     */
     suspend fun broadcastMessage(
         segmentId: String?,
         criteria: com.tribetails.auntieos.ui.communicate.BroadcastCriteria?,
         channels: List<com.tribetails.auntieos.ui.communicate.BroadcastChannel>,
         subject: String?,
         body: String,
+        idempotencyKey: String? = null,
     ): Result<com.tribetails.auntieos.ui.communicate.BroadcastResult> = runCatching {
         authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
@@ -939,11 +951,54 @@ class AuntieRepository(
             put("channels", channels.distinct().map { it.wire })
             if (!subject.isNullOrBlank()) put("subject", subject)
             put("body", body)
+            if (!idempotencyKey.isNullOrBlank()) put("idempotencyKey", idempotencyKey)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("broadcastMessage").call(payload).awaitCallable().data as? Map<String, Any?>
+        val raw = invokeSend(
+            name = "broadcastMessage",
+            payload = payload,
+            retryOnInternal = !idempotencyKey.isNullOrBlank(),
+        ) as? Map<String, Any?>
         com.tribetails.auntieos.ui.communicate.decodeBroadcastResult(raw)
     }.onFailure { AuntieLog.e("broadcastMessage failed", it) }
+
+    /**
+     * #814 / #630: one retry, on INTERNAL only, and only for a keyed send.
+     *
+     * `INTERNAL` is what the SDK reports for a transport failure, so this client
+     * cannot tell "the request never reached the container" from "the fan-out
+     * ran and the reply was lost". Retrying repairs the first and double-sends
+     * the second, unless the payload carries an `idempotencyKey`, which is what
+     * lets the server recognise the second attempt as the same send and answer
+     * from the row the first one claimed.
+     *
+     * So `retryOnInternal` is not a tuning knob. It is false whenever the key is
+     * absent, because without the key the retry IS the duplicate. Once, not
+     * until it works: a service that is genuinely down should surface as a
+     * failure the operator can see rather than as a client that keeps trying.
+     * Every other code is rethrown untouched, a deadline included. Mirrors
+     * `BookingRepository.invokeCreateMultiDate`, which #646 built for the same
+     * reason.
+     */
+    private suspend fun invokeSend(
+        name: String,
+        payload: Map<String, Any?>,
+        retryOnInternal: Boolean,
+    ): Any? {
+        try {
+            return functions.getHttpsCallable(name).call(payload).awaitCallable().data
+        } catch (e: com.google.firebase.functions.FirebaseFunctionsException) {
+            if (!retryOnInternal ||
+                e.code != com.google.firebase.functions.FirebaseFunctionsException.Code.INTERNAL
+            ) {
+                throw e
+            }
+            AuntieLog.w("$name dropped (INTERNAL); retrying once with the same key")
+        }
+        // The IDENTICAL payload, key included. A retry that re-minted the key
+        // would be a brand new send as far as the server is concerned.
+        return functions.getHttpsCallable(name).call(payload).awaitCallable().data
+    }
 
     // ── Marketing blasts (scheduled campaigns) ────────────────────────────────
     // Four admin-gated callables in MyTribe
@@ -981,6 +1036,7 @@ class AuntieRepository(
         audience: com.tribetails.auntieos.ui.marketing.BlastAudience,
         data: Map<String, Any?>,
         title: String?,
+        idempotencyKey: String? = null,
     ): Result<com.tribetails.auntieos.ui.marketing.ScheduleBlastResult> = runCatching {
         authGate.ensureAuthenticated()
         val payload = buildMap<String, Any?> {
@@ -989,10 +1045,17 @@ class AuntieRepository(
             putAll(audience.toPayload())
             put("data", data)
             if (!title.isNullOrBlank()) put("title", title.trim())
+            // #814: becomes the `marketingBlasts/{id}` document id, so a second
+            // attempt at this campaign is answered from the blast the first one
+            // made rather than queueing a second set of marketing emails.
+            if (!idempotencyKey.isNullOrBlank()) put("idempotencyKey", idempotencyKey)
         }
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("scheduleMarketingBlast")
-            .call(payload).awaitCallable().data as? Map<String, Any?>
+        val raw = invokeSend(
+            name = "scheduleMarketingBlast",
+            payload = payload,
+            retryOnInternal = !idempotencyKey.isNullOrBlank(),
+        ) as? Map<String, Any?>
         com.tribetails.auntieos.ui.marketing.decodeScheduleResult(raw)
     }.onFailure { AuntieLog.e("scheduleMarketingBlast failed", it) }
 

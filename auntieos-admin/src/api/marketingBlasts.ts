@@ -134,6 +134,11 @@ export interface ScheduleBlastArgs {
   data: Record<string, unknown>;
   /** The operator's own name for this campaign. Optional; the key is the fallback in the list. */
   title?: string;
+  /**
+   * #814. Minted once per SUBMISSION by `lib/sendIdempotency.ts` and held across
+   * every attempt at it. Required here, not optional: see the guard below.
+   */
+  idempotencyKey: string;
 }
 
 export interface ScheduleBlastResult {
@@ -143,9 +148,21 @@ export interface ScheduleBlastResult {
   dispatched: number;
   suppressed: number;
   failed: number;
+  /** #814. The blast already existed: this call queued nothing. */
+  deduped: boolean;
+  /** #814. Its fan-out has not finished, so the counts are a snapshot. */
+  pending: boolean;
 }
 
 export async function scheduleBlast(args: ScheduleBlastArgs): Promise<ScheduleBlastResult> {
+  if (!args.idempotencyKey) {
+    // #814: refused rather than silently sent unkeyed. The call below opts into
+    // a retry on `functions/internal`, and the ONE thing that makes that safe is
+    // the server deduping on this key. A caller that forgot it would send the
+    // whole audience a second marketing email, which cannot be recalled. Same
+    // refusal as `createMultiDateBookingRequest` in `api/bookingsWrite.ts`.
+    throw new Error('scheduleBlast needs an idempotencyKey. See lib/sendIdempotency.ts.');
+  }
   const title = (args.title ?? '').trim();
   const res = await call<Record<string, unknown>, Partial<ScheduleBlastResult> & { ok: true; blastId: string }>(
     'scheduleMarketingBlast',
@@ -157,7 +174,12 @@ export async function scheduleBlast(args: ScheduleBlastArgs): Promise<ScheduleBl
       // The server's zod requires min(1) when present, so a blank title has to
       // be absent rather than empty.
       ...(title !== '' ? { title } : {}),
+      idempotencyKey: args.idempotencyKey,
     },
+    // #814: one retry on a transport failure, safe only because of the key. A
+    // deadline is untouched, so the 20s budget stays the visible, operator-driven
+    // retry it was built to be, and that retry now lands on the same key.
+    { idempotent: true },
   );
   return {
     blastId: res.blastId,
@@ -166,6 +188,8 @@ export async function scheduleBlast(args: ScheduleBlastArgs): Promise<ScheduleBl
     dispatched: num(res.dispatched),
     suppressed: num(res.suppressed),
     failed: num(res.failed),
+    deduped: res.deduped === true,
+    pending: res.pending === true,
   };
 }
 

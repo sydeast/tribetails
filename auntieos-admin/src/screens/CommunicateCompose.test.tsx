@@ -153,6 +153,8 @@ describe('CommunicateCompose screen', () => {
       channels: ['email'],
       subject: 'Big news',
       body: 'Hello kinfolk',
+      // #814: minted per submission, so the value is matched by shape.
+      idempotencyKey: expect.stringMatching(/^bcast_\d+_[a-z0-9]+$/),
     });
 
     release(resultOf({ recipientCount: 5, reach: { targeted: 5, reached: 5, suppressedByPrefs: 0 } }));
@@ -217,6 +219,53 @@ describe('CommunicateCompose screen', () => {
     expect(screen.getByLabelText(/subject/i)).toHaveValue('Big news');
   });
 
+  /**
+   * #814. The operator's own retry is the dangerous path: they saw an error, so
+   * they press Send again, and without a held key that second press is a second
+   * email and a second text to every household the segment matched.
+   */
+  it('reuses one idempotency key when the operator sends again after a failure', async () => {
+    sendBroadcast.mockRejectedValueOnce(new Error('internal'));
+    sendBroadcast.mockResolvedValueOnce(resultOf({ deduped: true }));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    expect(await screen.findByText(/sendBroadcast failed/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await waitFor(() => expect(sendBroadcast).toHaveBeenCalledTimes(2));
+
+    const [first, second] = sendBroadcast.mock.calls.map((c) => c[0].idempotencyKey);
+    expect(first).toMatch(/^bcast_\d+_[a-z0-9]+$/);
+    expect(second).toBe(first);
+    // And the screen says what actually happened rather than claiming a second send.
+    expect(
+      await screen.findByText(/You already sent this message\. Nothing went out twice/i),
+    ).toBeInTheDocument();
+  });
+
+  it('mints a NEW key once the message has been edited, because that is a different send', async () => {
+    sendBroadcast.mockRejectedValueOnce(new Error('internal'));
+    sendBroadcast.mockResolvedValueOnce(resultOf());
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    expect(await screen.findByText(/sendBroadcast failed/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/message/i), ' and more');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await waitFor(() => expect(sendBroadcast).toHaveBeenCalledTimes(2));
+
+    const [first, second] = sendBroadcast.mock.calls.map((c) => c[0].idempotencyKey);
+    expect(second).not.toBe(first);
+  });
+
   it('maps the no_recipients failure to an honest, specific message', async () => {
     sendBroadcast.mockRejectedValueOnce(new Error('no_recipients'));
     render(<CommunicateCompose />);
@@ -268,6 +317,7 @@ describe('push channel', () => {
         channels: ['email', 'push'],
         subject: 'Big news',
         body: 'Hello kinfolk',
+        idempotencyKey: expect.stringMatching(/^bcast_\d+_[a-z0-9]+$/),
       }),
     );
   });

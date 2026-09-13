@@ -62,6 +62,7 @@ import com.tribetails.auntieos.web.data.GenerateRequest
 import com.tribetails.auntieos.web.data.GenerateResponse
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kin411
+import com.tribetails.auntieos.web.data.mintBroadcastIdempotencyKey
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.N8nClient
@@ -681,6 +682,16 @@ private fun BroadcastForm(
     var savingSegment by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<BroadcastResult?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    /**
+     * #814: one key per SUBMISSION, re-minted only when the message or its
+     * audience has changed since the key was minted. An operator who sees an
+     * error presses Send again, and that press is what used to put a second
+     * email and a second text in front of every household the segment matched;
+     * with the key the server answers from the broadcast the first press
+     * claimed. There is no automatic retry here, see `data/SendIdempotency.kt`.
+     */
+    var submissionKey by remember { mutableStateOf<String?>(null) }
+    var submissionSignature by remember { mutableStateOf<String?>(null) }
 
     fun adhocCriteria(): BroadcastCriteria = BroadcastCriteria(
         kind = kind,
@@ -751,6 +762,21 @@ private fun BroadcastForm(
         val blocker = tagCapProblem() ?: broadcastBlocker(channels.toSet(), effectiveCriteria, subject, body)
         if (blocker != null) { errorText = blocker; onToast(blocker, ToastKind.Error); return }
         sending = true
+        val signature = listOf(
+            selectedSegmentId.orEmpty(),
+            kind.name,
+            statusesText,
+            selectedTags.toString(),
+            tagMatch.name,
+            channels.map { it.wire }.sorted().toString(),
+            subject,
+            body,
+        ).joinToString("\u001F") // a separator no typed field can contain
+        if (submissionKey == null || submissionSignature != signature) {
+            submissionKey = mintBroadcastIdempotencyKey()
+            submissionSignature = signature
+        }
+        val key = submissionKey
         scope.launch {
             when (val r = firestore.broadcastMessage(
                 segmentId = selectedSegmentId,
@@ -758,10 +784,12 @@ private fun BroadcastForm(
                 channels = channels.toList(),
                 subject = subject.trim().ifBlank { null },
                 body = body.trim(),
+                idempotencyKey = key,
             )) {
                 is WriteResult.Ok -> {
                     result = r.value
                     errorText = null
+                    submissionKey = null
                     onToast(broadcastSummary(r.value), ToastKind.Success)
                 }
                 is WriteResult.Err -> {

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { blastBlocker, fireAtMsFrom, mergeFieldsToData, parseUidList } from './marketingBlastEdit';
+import {
+  blastBlocker,
+  fireAtMsFrom,
+  mergeFieldsToData,
+  parseUidList,
+  scheduleNotice,
+} from './marketingBlastEdit';
 
 describe('parseUidList', () => {
   it('splits on commas, spaces and newlines, because a pasted column has no commas', () => {
@@ -91,5 +97,32 @@ describe('blastBlocker', () => {
 
   it('allows a previewed audience that reaches someone', () => {
     expect(blastBlocker(audience, now + 60_000, now, 12)).toBeNull();
+  });
+});
+describe('scheduleNotice (#814)', () => {
+  const counts = { dispatched: 9, suppressed: 1, failed: 0 };
+  it('reports a fresh blast with its counts', () => {
+    expect(scheduleNotice({ ...counts, deduped: false, pending: false }, 'Fri 9am')).toBe(
+      'Scheduled for Fri 9am. 9 queued, 1 suppressed.',
+    );
+  });
+  it('names the failures separately when there are some', () => {
+    expect(scheduleNotice({ ...counts, failed: 2, deduped: false, pending: false }, 'Fri 9am')).toContain(
+      '2 failed',
+    );
+  });
+  it('says a deduped reply was the campaign that already existed, not a second one', () => {
+    const text = scheduleNotice({ ...counts, deduped: true, pending: false }, 'Fri 9am');
+    expect(text).toContain('You already scheduled this campaign');
+    expect(text).toContain('Nothing went out twice');
+    expect(text).toContain('9 queued');
+    expect(text).not.toContain('Scheduled for Fri 9am.');
+  });
+  it('leaves the counts out entirely while the first attempt is still queueing', () => {
+    // They are a snapshot of a fan-out in progress. Printing them as a total
+    // would be the confident wrong number this codebase keeps refusing to draw.
+    const text = scheduleNotice({ ...counts, deduped: true, pending: true }, 'Fri 9am');
+    expect(text).toContain('still queueing');
+    expect(text).not.toContain('9 queued');
   });
 });

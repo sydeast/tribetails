@@ -138,6 +138,13 @@ export interface SendBroadcastArgs {
   /** Required by the backend when 'email' or 'inapp' is in `channels`; validated by the caller before send. */
   subject?: string;
   body: string;
+  /**
+   * #814. Minted once per SUBMISSION by `lib/sendIdempotency.ts` and held across
+   * every attempt at it, so a dropped reply can be retried without sending the
+   * whole audience a second copy. Required here, not optional: see the guard in
+   * `sendBroadcast`.
+   */
+  idempotencyKey: string;
 }
 
 /** One channel's outcome tally. Mirrors the backend's `ChannelCounts` (broadcastMessage.ts lines 84-88). */
@@ -169,6 +176,17 @@ export interface SendBroadcastResult {
    * field must not make this screen render a fabricated number.
    */
   reach?: BroadcastReach;
+  /**
+   * #814. True when the server recognised this `idempotencyKey` and answered
+   * from the broadcast an earlier attempt already sent. Nothing left the
+   * building on this call, and the screen says so rather than reporting a send
+   * that did not happen twice. Optional for the same reason `reach` is: a
+   * deployment that predates the field must not make this read as `false`
+   * when it is really "unknown". `=== true` is the only truthy test used.
+   */
+  deduped?: boolean;
+  /** #814. That earlier attempt's fan-out has not finished, so the counts are a snapshot. */
+  pending?: boolean;
 }
 
 /** Recipient-level outcome of a broadcast. Mirrors the backend's `BroadcastReach`. */
@@ -223,5 +241,13 @@ export function channelCountsOf(
  * the `listRecentSends`/`deleteFormSchema` convention this repo already uses.
  */
 export async function sendBroadcast(args: SendBroadcastArgs): Promise<SendBroadcastResult> {
-  return call<SendBroadcastArgs, SendBroadcastResult>('broadcastMessage', args);
+  if (!args.idempotencyKey) {
+    // #814: refused rather than silently sent unkeyed. The call below opts into
+    // a retry on `functions/internal`, and the only thing that makes that safe
+    // is the server deduping on this key, this callable sends real email and
+    // SMS, so an unkeyed retry is an unrecallable second copy. Same refusal as
+    // `createMultiDateBookingRequest` in `api/bookingsWrite.ts`.
+    throw new Error('sendBroadcast needs an idempotencyKey. See lib/sendIdempotency.ts.');
+  }
+  return call<SendBroadcastArgs, SendBroadcastResult>('broadcastMessage', args, { idempotent: true });
 }

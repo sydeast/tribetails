@@ -92,3 +92,34 @@ export function blastBlocker(
   if (reachable === 0) return 'This audience reaches nobody. Widen it, or check who has opted in.';
   return null;
 }
+/**
+ * What the operator is told after pressing Schedule (#814).
+ *
+ * Three outcomes, and they are three different facts:
+ *
+ *   a fresh blast    the counts, as before.
+ *   a deduped reply  this press landed on a blast an earlier attempt already
+ *                    made. Saying "Scheduled" again would tell the operator
+ *                    they had just sent a second campaign, which is precisely
+ *                    what the key prevented.
+ *   still queueing   the first attempt is mid fan-out, so the stored counts are
+ *                    a snapshot. Reporting them as a total would be a confident
+ *                    wrong number, so the counts are left out and the campaign
+ *                    list is where the final ones show up.
+ */
+export function scheduleNotice(
+  res: { dispatched: number; suppressed: number; failed: number; deduped: boolean; pending: boolean },
+  whenLabel: string,
+): string {
+  const counts =
+    `${res.dispatched} queued, ${res.suppressed} suppressed` +
+    (res.failed > 0 ? `, ${res.failed} failed` : '') +
+    '.';
+  if (res.deduped && res.pending) {
+    return `You already scheduled this campaign for ${whenLabel}, and it is still queueing. Nothing went out twice. The campaign list has the counts once it finishes.`;
+  }
+  if (res.deduped) {
+    return `You already scheduled this campaign for ${whenLabel}. Nothing went out twice. ${counts}`;
+  }
+  return `Scheduled for ${whenLabel}. ${counts}`;
+}

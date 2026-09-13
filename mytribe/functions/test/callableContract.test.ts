@@ -393,6 +393,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
     signature: [
       'body', 'channels[]',
       'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
+      // #814: the caller-supplied key that lets a dropped reply be retried
+      // without sending the whole audience a second copy. Optional on the wire,
+      // so a client that has not adopted it still validates.
+      'idempotencyKey',
       'segmentId', 'subject',
     ],
   },
@@ -401,7 +405,7 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
     signature: [
       'audienceUids[]',
       'criteria.kind', 'criteria.statuses[]', 'criteria.tagMatch', 'criteria.tags[]',
-      'data', 'fireAtMs', 'key', 'segmentId', 'title',
+      'data', 'fireAtMs', 'idempotencyKey', 'key', 'segmentId', 'title',
     ],
   },
   createTrainingDocument: {

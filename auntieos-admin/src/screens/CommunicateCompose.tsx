@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   sendBroadcast,
   describeAudience,
@@ -15,6 +15,7 @@ import {
   type AudienceSegment,
 } from '../api/audienceSegments';
 import { segmentSaveBlocker, broadcastBlocker, broadcastAudienceArgs } from '../lib/audienceSegmentEdit';
+import { mintBroadcastIdempotencyKey } from '../lib/sendIdempotency';
 import { channelLabel } from '../lib/communicateFormat';
 import { DenPanel } from '../components/DenScreenKit';
 import { MergePreview } from '../components/MergePreview';
@@ -114,6 +115,37 @@ export function CommunicateCompose() {
 
   const legendId = useId();
 
+  /**
+   * #814: the key that makes pressing Send twice safe.
+   *
+   * Minted on the first attempt at a message and held for every retry of it,
+   * the automatic one inside `call(..., { idempotent: true })` and the
+   * operator's own after seeing an error. Both are the SAME send, and reusing
+   * the key is what stops the second one putting a second email and a second
+   * text in front of every household in the audience.
+   *
+   * Cleared by the effect below whenever any part of the message or its
+   * audience changes: an edited broadcast is a new send, and a held key would
+   * replay the first one and report success for words that never left the
+   * browser.
+   */
+  const submissionKey = useRef<string | null>(null);
+  useEffect(() => {
+    submissionKey.current = null;
+  }, [
+    selectedSegmentId,
+    audienceKind,
+    statusesRaw,
+    tagsRaw,
+    tagMatch,
+    inappOn,
+    emailOn,
+    smsOn,
+    pushOn,
+    subject,
+    body,
+  ]);
+
   const loadSegments = useCallback(() => {
     let live = true;
     listAudienceSegments()
@@ -171,14 +203,17 @@ export function CommunicateCompose() {
     if (!formValid || audienceArgs === null || sending) return;
     setSending(true);
     setSendError(null);
+    submissionKey.current ??= mintBroadcastIdempotencyKey();
     try {
       const res = await sendBroadcast({
         ...audienceArgs,
         channels,
         ...(subjectRequired || trimmedSubject.length > 0 ? { subject: trimmedSubject } : {}),
         body: trimmedBody,
+        idempotencyKey: submissionKey.current,
       });
       setResult(res);
+      submissionKey.current = null;
       setConfirmOpen(false);
     } catch (err) {
       setSendError(`sendBroadcast failed: ${friendlySendError(err)}`);
@@ -594,6 +629,16 @@ interface BroadcastResultPanelProps {
  * than reporting a fabricated one.
  */
 function reachSentence(result: SendBroadcastResult): string {
+  // #814: a deduped reply describes a broadcast an EARLIER attempt sent, so it
+  // must not be read as this press having sent one. The pending case leaves the
+  // counts out entirely: the first attempt is still fanning out and the stored
+  // numbers are a snapshot, not a total.
+  if (result.deduped === true && result.pending === true) {
+    return 'You already sent this message, and it is still going out. Nothing went out twice.';
+  }
+  if (result.deduped === true) {
+    return 'You already sent this message. Nothing went out twice.';
+  }
   const reach = reachOf(result);
   if (!reach) return `Sent to ${result.recipientCount} kinfolk.`;
   const base = `Reached ${reach.reached} of ${reach.targeted} kinfolk.`;
