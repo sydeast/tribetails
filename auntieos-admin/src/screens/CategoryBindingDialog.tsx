@@ -4,6 +4,7 @@ import { assignTemplatesToCategory } from '../api/templatesWrite';
 import { filterTemplates, templateCategoryDisplay, templateRowTitle } from '../lib/templateFormat';
 import { type Async } from '../lib/async';
 import { Dialog } from '../components/Dialog';
+import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -199,7 +200,7 @@ export function CategoryBindingDialog({ categories, onClose, onBound }: Category
             state={templates}
             what="templates"
             isEmpty={(rows) => rows.length === 0}
-            loading={<p className="cbind__hint">Loading templates…</p>}
+            loading={<LoadingRow label="Loading templates…" className="cbind__hint" />}
             empty={<EmptyHint>No templates to bind yet.</EmptyHint>}
           >
             {() =>

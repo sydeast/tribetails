@@ -14,6 +14,7 @@ import {
 import { getBusinessSettings } from '../api/settings';
 import { useCollection, useDocById } from '../lib/firestore';
 import { DenScreenHeading, EmptyHint, StatusPill, type DenTone } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
@@ -650,7 +651,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         state={rows}
         what="bookings"
         isEmpty={(data) => data.length === 0}
-        loading={<p className="bookings__hint">Loading bookings…</p>}
+        loading={<LoadingRow label="Loading bookings…" className="bookings__hint" />}
         empty={<EmptyHint>No bookings yet. New requests land here.</EmptyHint>}
       >
         {(data) =>

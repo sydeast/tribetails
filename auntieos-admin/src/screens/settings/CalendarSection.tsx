@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { BusinessSettings } from '../../api/settings';
 import { type Async } from '../../lib/async';
 import { AsyncRegion } from '../../components/AsyncRegion';
+import { LoadingRow } from '../../components/LoadingRow';
 import { CalendarSyncSection } from './CalendarSyncSection';
 import { GoogleCalendarSection } from './GoogleCalendarSection';
 
@@ -44,7 +45,7 @@ export function CalendarSection({ settings, onSave }: CalendarSectionProps): Rea
         state={settings}
         what="business settings"
         isEmpty={() => false}
-        loading={<p className="settings__hint">Loading business settings…</p>}
+        loading={<LoadingRow label="Loading business settings…" className="settings__hint" />}
         empty={<p className="settings__hint">No settings found.</p>}
       >
         {(data) => <CalendarSyncSection data={data} onSave={onSave} />}

@@ -13,6 +13,7 @@ import {
   type Crumb,
 } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { RecentKinTalesPanel, UpcomingVisitsPanel } from '../components/KinfolkProfileFeeds';
@@ -315,7 +316,7 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
         state={kin}
         what="kin"
         isEmpty={() => false}
-        loading={<p className="kview__hint">Loading kin…</p>}
+        loading={<LoadingRow label="Loading kin…" className="kview__hint" />}
         empty={<EmptyHint>Nothing to show.</EmptyHint>}
       >
         {(k) => {

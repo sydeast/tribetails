@@ -25,6 +25,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
+import { BusyLabel } from '../components/Loading';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -395,7 +396,7 @@ export function Account() {
                     onClick={() => invite.mutate()}
                     disabled={invite.isPending || !backupEmail.trim().includes('@') || readOnly}
                   >
-                    {'✉️'} {invite.isPending ? 'Sending…' : 'Send Invite'}
+                    {'✉️'} {invite.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send Invite'}
                   </button>
                   {inviteStatus && (
                     <span className={`note${inviteStatus.tone === 'err' ? ' err' : ''}`}>
@@ -467,7 +468,7 @@ export function Account() {
                           disabled={startCardSetup.isPending || removeCard.isPending}
                         >
                           {startCardSetup.isPending
-                            ? 'Opening Stripe…'
+                            ? <BusyLabel>Opening Stripe…</BusyLabel>
                             : cardOnFile
                               ? 'Replace card'
                               : 'Add a card'}
@@ -481,7 +482,7 @@ export function Account() {
                                 onClick={() => removeCard.mutate()}
                                 disabled={removeCard.isPending}
                               >
-                                {removeCard.isPending ? 'Removing…' : 'Yes, take it off'}
+                                {removeCard.isPending ? <BusyLabel>Removing…</BusyLabel> : 'Yes, take it off'}
                               </button>
                               <button
                                 className="btn ghost sm"
@@ -585,7 +586,7 @@ export function Account() {
                 Cancel
               </button>
               <button className="btn coral" type="button" onClick={signOut} disabled={signingOut}>
-                {signingOut ? 'Signing out…' : 'Yes, Sign Out'}
+                {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Yes, Sign Out'}
               </button>
             </>
           ) : (
@@ -595,7 +596,7 @@ export function Account() {
           )}
           {!readOnly && (
             <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid}>
-              {save.isPending ? 'Saving…' : <>{'✓'} Save Changes</>}
+              {save.isPending ? <BusyLabel>Saving…</BusyLabel> : <>{'✓'} Save Changes</>}
             </button>
           )}
         </div>

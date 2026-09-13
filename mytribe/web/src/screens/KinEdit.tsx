@@ -13,6 +13,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -234,7 +235,7 @@ export function KinEdit() {
           <section style={{ marginTop: 6 }}>
             <div className="savebar">
               <button className="btn grad" type="button" onClick={submit} disabled={!canSave}>
-                {'\u{1F4BE}'} {save.isPending ? 'Saving…' : 'Save Changes'}
+                {'\u{1F4BE}'} {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Changes'}
               </button>
               <Link className="btn ghost" to="/kin/$kinId" params={{ kinId }}>
                 Cancel

@@ -32,6 +32,7 @@ import {
 } from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -202,7 +203,7 @@ export function MyNotificationsEdit() {
           adminVisibleNotifications(data.matrix, STREAM_BUSINESS).length === 0 &&
           adminVisibleNotifications(data.matrix, STREAM_STAFF).length === 0
         }
-        loading={<p className="mynotif__hint">Loading your notification settings…</p>}
+        loading={<LoadingRow label="Loading your notification settings…" className="mynotif__hint" />}
         empty={
           <DenPanel title="Your notifications" subtitle="Nothing to set just yet.">
             <p className="mynotif__hint">

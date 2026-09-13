@@ -10,6 +10,7 @@ import {
 } from '../lib/inboxFormat';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -116,7 +117,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
           state={messages}
           what="messages"
           isEmpty={(data) => data.length === 0}
-          loading={<p className="thread__hint">Loading messages…</p>}
+          loading={<LoadingRow label="Loading messages…" className="thread__hint" />}
           empty={<EmptyHint>No messages in this thread yet. Send the first reply below.</EmptyHint>}
         >
           {(data) => (

@@ -1,6 +1,7 @@
 import type { PayMethod } from '../api/types';
 import { formatCentsUsd } from '../lib/invoiceFormat';
 import './PayOptions.css';
+import { BusyLabel } from '../components/Loading';
 
 export interface PayOptionsProps {
   /** Resolved server-side — never raw operator handles. Prefer an invoice's own `payMethods`. */
@@ -48,7 +49,7 @@ export function PayOptions({ methods, amountDue, onCheckout, checkingOut = false
               onClick={onCheckout}
               disabled={checkingOut}
             >
-              {checkingOut ? 'Opening checkout…' : method.label}
+              {checkingOut ? <BusyLabel>Opening checkout…</BusyLabel> : method.label}
             </button>
           );
         }

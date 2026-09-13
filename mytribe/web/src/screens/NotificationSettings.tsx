@@ -25,6 +25,7 @@ import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
+import { BusyLabel } from '../components/Loading';
 import '../styles/notifications.css';
 
 /**
@@ -510,7 +511,7 @@ export function NotificationSettings() {
 
             <div className="savebar">
               <button type="button" className="btn grad" onClick={() => save.mutate()} disabled={save.isPending}>
-                {'\u{1F4BE}'} {save.isPending ? 'Saving…' : 'Save Notification Preferences'}
+                {'\u{1F4BE}'} {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Notification Preferences'}
               </button>
               <span className={`savedchip ${showSaved ? 'show' : ''}`}>{'✓'} Preferences saved.</span>
               {save.isError && !showSaved && (

@@ -28,6 +28,7 @@ import {
   type DenTone,
 } from '../components/DenScreenKit';
 import { IconTile } from '../components/IconTile';
+import { LoadingRow } from '../components/LoadingRow';
 import {
   ListToolbar,
   DATE_RANGE_PRESETS,
@@ -407,7 +408,7 @@ export function KinTales({ onSelect }: KinTalesProps) {
           state={rows}
           what="KinTales"
           isEmpty={(data) => data.length === 0}
-          loading={<p className="kintales__hint">Loading KinTales…</p>}
+          loading={<LoadingRow label="Loading KinTales…" className="kintales__hint" />}
           empty={<EmptyHint>{`No KinTales in ${windowLabel}.`}</EmptyHint>}
         >
           {(data) => {

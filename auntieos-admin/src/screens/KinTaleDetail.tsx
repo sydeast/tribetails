@@ -49,6 +49,7 @@ import {
   type DenTone,
 } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import './KinTaleDetail.css';
@@ -491,7 +492,7 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTal
       what="kin"
       isEmpty={() => false}
       empty={null}
-      loading={<p className="kintale-detail__hint">Loading kin&hellip;</p>}
+      loading={<LoadingRow label="Loading kin&hellip;" className="kintale-detail__hint" />}
     >
       {(kinData) => (
         <ul className="kintale-detail__kin-list">

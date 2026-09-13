@@ -10,6 +10,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
+import { BusyLabel } from '../components/Loading';
 
 const FALLBACK = 'Not set';
 
@@ -203,7 +204,7 @@ export function KinDetail() {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 16 }}>
                     <button className="btn coralout block" onClick={() => archive.mutate('restore')} disabled={archive.isPending}>
-                      {archive.isPending ? 'Restoring…' : 'Restore as Active'}
+                      {archive.isPending ? <BusyLabel>Restoring…</BusyLabel> : 'Restore as Active'}
                     </button>
                   </div>
                 </>
@@ -221,7 +222,7 @@ export function KinDetail() {
                       <>
                         <p className="sub">Are you sure? This can be undone from this page.</p>
                         <button className="btn purple block" onClick={() => archive.mutate('noLongerWithUs')} disabled={archive.isPending}>
-                          {archive.isPending ? 'Saving…' : 'Yes, mark No Longer With Us'}
+                          {archive.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Yes, mark No Longer With Us'}
                         </button>
                         <button className="btn ghost block" onClick={() => setConfirmingArchive(false)} disabled={archive.isPending}>
                           Cancel

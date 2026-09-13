@@ -41,6 +41,7 @@ import { useRovingTabs } from '../lib/useRovingTabs';
 import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import {
   NotificationQuickActions,
   type NotificationPendingKind,
@@ -470,7 +471,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
           state={rows}
           what="notifications"
           isEmpty={(data) => data.length === 0}
-          loading={<EmptyHint>Loading notifications…</EmptyHint>}
+          loading={<LoadingRow label="Loading notifications…" className="den-hint" />}
           empty={
             <EmptyHint>
               No notifications yet. Catalog-dispatched events appear here when MyTribe functions emit them.

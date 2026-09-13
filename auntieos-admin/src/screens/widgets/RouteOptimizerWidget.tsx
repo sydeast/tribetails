@@ -4,6 +4,7 @@ import { optimizeRoute } from '../../api/route';
 import { localDateIso } from '../../lib/invoiceFormat';
 import { formatMiles, formatDuration } from '../../lib/dashboardInsights';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import './widgets.css';
 
@@ -31,7 +32,7 @@ export function RouteOptimizerWidget() {
         state={plan}
         what="the route"
         isEmpty={(data) => data.stops.length === 0 && data.unroutable.length === 0}
-        loading={<EmptyHint>Optimizing route…</EmptyHint>}
+        loading={<LoadingRow label="Optimizing route…" className="den-hint" />}
         empty={<EmptyHint>No visits to route today.</EmptyHint>}
       >
         {(data) => (

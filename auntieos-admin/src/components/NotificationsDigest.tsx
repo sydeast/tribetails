@@ -9,6 +9,7 @@ import { AsyncRegion } from './AsyncRegion';
 import { Banner } from './Banner';
 import { PrimaryButton } from './Buttons';
 import './NotificationsDigest.css';
+import { LoadingRow } from '../components/LoadingRow';
 
 interface NotificationsDigestProps {
   /**
@@ -69,7 +70,7 @@ export function NotificationsDigest({ state, limit = 6 }: NotificationsDigestPro
         state={state}
         what="notifications"
         isEmpty={(data) => unreadNotificationCount(data) === 0}
-        loading={<EmptyHint>Loading notifications…</EmptyHint>}
+        loading={<LoadingRow label="Loading notifications…" className="den-hint" />}
         empty={
           <EmptyHint>
             No unread notifications. Business alerts land here when MyTribe dispatches them.

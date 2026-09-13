@@ -8,6 +8,7 @@ import { useBreadcrumbs } from '../lib/breadcrumbs';
 import { RouteMap } from '../components/RouteMap';
 import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { LaunchError } from './LaunchError';
 import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
 import { bookingChip, calTile, fullDateKick, isoTime, speciesEmoji, visitSubtitle, visitVariant } from '../lib/portalFormat';
@@ -117,9 +118,9 @@ export function Schedule() {
         */}
         {!liveVisit && visitsView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
         {!liveVisit && visitsView.kind === 'loading' && (
-          <p className="offline-line" role="status">
+          <LoadingLine what="whether a visit is under way" retry={() => void visits.refetch()}>
             Checking whether a visit is under way&hellip;
-          </p>
+          </LoadingLine>
         )}
         {liveVisit && (
           <section className="live" aria-label="Visit in progress">
@@ -184,7 +185,9 @@ export function Schedule() {
                     <p>Nothing on the calendar yet. Request a booking and your Auntie will confirm a time.</p>
                   </div>
                 ) : upcomingView.kind !== 'data' ? (
-                  <p className="sub">Loading your schedule…</p>
+                  <LoadingLine what="your schedule" retry={() => void bookings.refetch()}>
+                    Loading your schedule…
+                  </LoadingLine>
                 ) : (
                   upcomingView.data.upcoming.map((b, i) => {
                     const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
@@ -222,7 +225,9 @@ export function Schedule() {
                     <p>Completed visits will live here, each with a Visit Replays photo and note from your Auntie.</p>
                   </div>
                 ) : pastView.kind !== 'data' ? (
-                  <p className="sub">Loading your visit history…</p>
+                  <LoadingLine what="your visit history" retry={() => void bookings.refetch()}>
+                    Loading your visit history…
+                  </LoadingLine>
                 ) : (
                   pastView.data.recent.map((b, i) => {
                     const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };

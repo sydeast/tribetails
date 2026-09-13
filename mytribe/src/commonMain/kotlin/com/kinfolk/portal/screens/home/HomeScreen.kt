@@ -37,6 +37,7 @@ import com.kinfolk.portal.components.EmptyState
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinGhostButton
+import com.kinfolk.portal.components.KinLoading
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinStaggerReveal
 import com.kinfolk.portal.components.KinfolkAvatar
@@ -88,6 +89,13 @@ fun HomeScreen(
     var talesFailed by remember { mutableStateOf(false) }
     // Bumped by the widget's Retry action to re-run the tales fetch.
     var talesReloadKey by remember { mutableStateOf(0) }
+    // Same idiom for the other two reads, so the 10s "Tap to sync" on each
+    // section has a real re-attempt behind it rather than a dead button
+    // (operator ruling, 2026-09-12). Bumping the key re-runs the
+    // LaunchedEffect below; nulling the data puts the section back into its
+    // waiting state so the cue is visible while the retry runs.
+    var bookingsReloadKey by remember { mutableStateOf(0) }
+    var rosterReloadKey by remember { mutableStateOf(0) }
 
     // Resolve the section layout from the operator config. Empty/absent config →
     // the canonical hardcoded order, every section enabled (today's behavior).
@@ -97,7 +105,7 @@ fun HomeScreen(
     // limit so we don't over-fetch when the operator capped the section.
     val talesLimit = cfg("tales")?.limit?.takeIf { it > 0 } ?: 3
 
-    LaunchedEffect(kinfolkId) {
+    LaunchedEffect(kinfolkId, bookingsReloadKey) {
         try {
             data = portalApi.getMyBookings(kinfolkId)
             error = null
@@ -107,7 +115,7 @@ fun HomeScreen(
     }
     // Roster + tales load independently and fail soft: a broken aside never
     // takes down the schedule column.
-    LaunchedEffect(kinfolkId) {
+    LaunchedEffect(kinfolkId, rosterReloadKey) {
         try {
             roster = portalApi.getMyKin(kinfolkId).kin
             rosterFailed = false
@@ -131,9 +139,10 @@ fun HomeScreen(
         Text("Live Visit", style = type.heritageSection, modifier = Modifier.padding(horizontal = KinfolkSpacing.l))
         when {
             error != null -> EmptyState(title = "Couldn't load Home", message = error ?: "")
-            data == null -> Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.l), contentAlignment = Alignment.Center) {
-                KinSpinner()
-            }
+            data == null -> KinLoading(
+                text = "Checking whether a visit is under way\u2026",
+                onSync = { data = null; bookingsReloadKey += 1 },
+            )
             data?.liveVisit == null -> EmptyState(
                 title = "No active visit",
                 message = "When an Auntie checks in for a visit, you'll see live status here.",
@@ -146,6 +155,7 @@ fun HomeScreen(
             data = data,
             limit = cfg("upNext")?.limit?.takeIf { it > 0 } ?: 5,
             onOpenSchedule = onOpenSchedule,
+            onReloadBookings = { data = null; bookingsReloadKey += 1 },
         )
     }
     val talesSection: @Composable () -> Unit = {
@@ -170,6 +180,7 @@ fun HomeScreen(
             onOpenKin = onOpenKin,
             onOpenKinDetail = onOpenKinDetail,
             onAddKin = onAddKin,
+            onReloadRoster = { roster = null; rosterReloadKey += 1 },
         )
     }
     val quickStartSection: @Composable () -> Unit = {
@@ -310,14 +321,20 @@ private fun SectionNote(title: String, message: String) {
 }
 
 @Composable
-private fun UpNextSection(data: BookingsResult?, limit: Int = 5, onOpenSchedule: () -> Unit) {
+private fun UpNextSection(
+    data: BookingsResult?,
+    limit: Int = 5,
+    onOpenSchedule: () -> Unit,
+    onReloadBookings: () -> Unit,
+) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("Up next", linkText = "Full schedule", onLink = onOpenSchedule)
             when {
-                data == null -> Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.m), contentAlignment = Alignment.Center) {
-                    KinSpinner()
-                }
+                data == null -> KinLoading(
+                    text = "Loading your schedule\u2026",
+                    onSync = onReloadBookings,
+                )
                 data.upcoming.isEmpty() -> SectionNote(
                     title = "Nothing scheduled",
                     message = "Once your Auntie books visits, your upcoming care will appear here.",
@@ -376,9 +393,10 @@ private fun TalesSection(
                             .padding(horizontal = KinfolkSpacing.xs, vertical = 2.dp),
                     )
                 }
-                tales == null -> Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.m), contentAlignment = Alignment.Center) {
-                    KinSpinner()
-                }
+                tales == null -> KinLoading(
+                    text = "Loading recent KinTales\u2026",
+                    onSync = onRetry,
+                )
                 tales.isEmpty() -> SectionNote(
                     title = "No tales yet",
                     message = "After each visit, your Auntie's KinTale lands here.",
@@ -423,6 +441,7 @@ private fun RosterSection(
     onOpenKin: () -> Unit,
     onOpenKinDetail: (String) -> Unit,
     onAddKin: () -> Unit,
+    onReloadRoster: () -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
@@ -433,9 +452,10 @@ private fun RosterSection(
                     title = "Tribe unavailable",
                     message = "We couldn't load your Kin right now. Try The Kin from the account menu.",
                 )
-                roster == null -> Box(modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.m), contentAlignment = Alignment.Center) {
-                    KinSpinner()
-                }
+                roster == null -> KinLoading(
+                    text = "Loading your kin\u2026",
+                    onSync = onReloadRoster,
+                )
                 else -> {
                     roster.take(limit).forEachIndexed { index, kin -> KinRosterRow(kin, index, onOpenKinDetail) }
                 }

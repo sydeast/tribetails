@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { formatUsd } from '../../lib/invoiceFormat';
 import { mondayOfWeekIso, outstandingTotals, weeklyRevenue } from '../../lib/dashboardInsights';
@@ -45,7 +46,7 @@ export function CashFlowWidget() {
         // and hiding it behind an empty state would make a quiet week look like
         // a broken card.
         isEmpty={() => false}
-        loading={<EmptyHint>Loading invoices…</EmptyHint>}
+        loading={<LoadingRow label="Loading invoices…" className="den-hint" />}
         empty={<EmptyHint>No invoices on the books yet.</EmptyHint>}
       >
         {(rows) => {

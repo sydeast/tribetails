@@ -14,6 +14,7 @@ import { PortalNav } from '../components/PortalNav';
 import { BookingMonthPicker } from '../components/BookingMonthPicker';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_HORIZON_DAYS,
@@ -457,7 +458,16 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   if (kinView.kind !== 'data' || servicesView.kind !== 'data') {
     return (
       <div className="wrap">
-        <p className="sub">Loading the booking wizard…</p>
+        <LoadingLine
+          variant="block"
+          what="the booking wizard"
+          retry={() => {
+            void kinQuery.refetch();
+            void servicesQuery.refetch();
+          }}
+        >
+          Loading the booking wizard…
+        </LoadingLine>
       </div>
     );
   }
@@ -589,7 +599,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   disabled={submit.isPending || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
                   onClick={() => submit.mutate()}
                 >
-                  {submit.isPending ? 'Creating…' : 'Create Booking'}
+                  {submit.isPending ? <BusyLabel>Creating…</BusyLabel> : 'Create Booking'}
                 </button>
               )}
             </div>

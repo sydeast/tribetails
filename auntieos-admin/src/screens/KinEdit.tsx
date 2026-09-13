@@ -5,6 +5,7 @@ import { useBreedBanks } from '../api/breeds';
 import { breedBankNote, breedCatalogForSpecies } from '../lib/breedSearch';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { BreedField } from '../components/BreedField';
@@ -228,7 +229,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         state={loaded}
         what="kin"
         isEmpty={() => false}
-        loading={<p className="kedit__hint">Loading kin…</p>}
+        loading={<LoadingRow label="Loading kin…" className="kedit__hint" />}
         empty={<p className="kedit__hint">Nothing to edit.</p>}
       >
         {() =>

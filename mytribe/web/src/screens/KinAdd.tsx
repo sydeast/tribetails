@@ -5,6 +5,7 @@ import { addKin } from '../api/portal';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Add New Kin (B3, punchlist item): the create counterpart to KinEdit.tsx.
@@ -128,7 +129,7 @@ export function KinAdd() {
           <section style={{ marginTop: 6 }}>
             <div className="savebar">
               <button className="btn grad" type="button" onClick={submit} disabled={!canSave}>
-                {'\u{1F43E}'} {save.isPending ? 'Adding…' : 'Add Kin'}
+                {'\u{1F43E}'} {save.isPending ? <BusyLabel>Adding…</BusyLabel> : 'Add Kin'}
               </button>
               <Link className="btn ghost" to="/kin">
                 Cancel

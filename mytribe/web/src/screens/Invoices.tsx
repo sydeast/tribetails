@@ -17,6 +17,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
@@ -134,7 +135,9 @@ export function Invoices() {
                   <p>You are all caught up. New invoices will land here.</p>
                 </div>
               ) : openView.kind !== 'data' ? (
-                <p className="sub">Loading your invoices…</p>
+                <LoadingLine what="your invoices" retry={() => void invoices.refetch()}>
+            Loading your invoices…
+          </LoadingLine>
               ) : (
                 openView.data.open.map((inv, i) => (
                   <OpenRow
@@ -159,7 +162,15 @@ export function Invoices() {
                   <b>No paid invoices yet</b>
                   <p>Past payments and receipts will appear here.</p>
                 </div>
-              ) : paidView.kind !== 'data' ? null : (
+              ) : paidView.kind !== 'data' ? (
+                // Was `null`: a silent wait, with the section label sitting over
+                // an empty card and nothing to tell a slow read from a finished
+                // one. The 2026-09-12 ruling covers the waits that showed
+                // nothing at all, not just the ones that showed a bare line.
+                <LoadingLine what="your payment history" retry={() => void invoices.refetch()}>
+                  Loading your payment history…
+                </LoadingLine>
+              ) : (
                 paidView.data.paid.map((inv, i) => <PaidRow key={inv.id} invoice={inv} divider={i > 0} />)
               )}
             </section>
@@ -252,7 +263,7 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
               }}
               disabled={paying}
             >
-              {paying ? 'Opening…' : 'Pay now'}
+              {paying ? <BusyLabel>Opening…</BusyLabel> : 'Pay now'}
             </button>
           ) : (
             <span className="btn ghost sm">View</span>
@@ -316,7 +327,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: bo
         {!redeemed && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
             <button className="btn grad block" onClick={() => onRedeem()} disabled={redeeming}>
-              {redeeming ? 'Working…' : 'Save to Account Balance'}
+              {redeeming ? <BusyLabel>Working…</BusyLabel> : 'Save to Account Balance'}
             </button>
             {redeemError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{redeemError}</p>}
           </div>

@@ -7,6 +7,7 @@ import { PortalNav } from '../components/PortalNav';
 import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
 
@@ -46,7 +47,9 @@ export function Kin() {
             <OfflineNotice what="your kin" />
           </section>
         ) : kinView.kind !== 'data' && kinView.kind !== 'empty' ? (
-          <p className="sub">Loading your kin…</p>
+          <LoadingLine what="your kin" retry={() => void kin.refetch()}>
+          Loading your kin…
+        </LoadingLine>
         ) : kinView.kind === 'empty' ? (
           <section className="glass card emptystate">
             <div className="ehug">{'\u{1F43E}'}</div>

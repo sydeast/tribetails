@@ -30,6 +30,7 @@ import { usePagedCollection } from '../lib/usePagedCollection';
 import { asyncScalar } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import {
   ListToolbar,
   DATE_RANGE_PRESETS,
@@ -602,7 +603,7 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
           state={rows}
           what="invoices"
           isEmpty={(data) => data.length === 0}
-          loading={<p className="invoices__hint">Loading invoices…</p>}
+          loading={<LoadingRow label="Loading invoices…" className="invoices__hint" />}
           empty={<EmptyHint>{`No invoices in ${windowLabel}.`}</EmptyHint>}
         >
           {(data) => {

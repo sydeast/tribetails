@@ -6,6 +6,7 @@ import { localDateIso } from '../../lib/invoiceFormat';
 import { careFlags, type CareFlag, type KinCareInfo } from '../../lib/dashboardInsights';
 import type { Async } from '../../lib/async';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import './widgets.css';
 
@@ -62,7 +63,7 @@ export function CareFlagsWidget() {
         state={combined}
         what="care flags"
         isEmpty={(data) => data.length === 0}
-        loading={<EmptyHint>Loading care flags…</EmptyHint>}
+        loading={<LoadingRow label="Loading care flags…" className="den-hint" />}
         empty={<EmptyHint>No special care notes for today's roster.</EmptyHint>}
       >
         {(flags) => (

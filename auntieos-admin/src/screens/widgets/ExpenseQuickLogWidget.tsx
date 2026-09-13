@@ -11,6 +11,7 @@ import { recentExpenses, formatCents } from '../../lib/dashboardInsights';
 import { humanizeDate } from '../../lib/invoiceFormat';
 import { str } from '../../lib/coerce';
 import { DenPanel, EmptyHint, ErrorHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { PrimaryButton } from '../../components/Buttons';
 import './widgets.css';
@@ -48,7 +49,7 @@ export function ExpenseQuickLogWidget() {
         state={summary}
         what="expenses"
         isEmpty={() => false}
-        loading={<EmptyHint>Loading expenses…</EmptyHint>}
+        loading={<LoadingRow label="Loading expenses…" className="den-hint" />}
         empty={<EmptyHint>No expenses logged yet.</EmptyHint>}
       >
         {(data) => {

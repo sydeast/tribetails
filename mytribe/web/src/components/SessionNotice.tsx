@@ -1,5 +1,6 @@
 import { useSignOut } from '../lib/auth';
 import { useSessionHealth, type SessionHealth } from '../lib/sessionHealth';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * The portal's notice for a session that can no longer renew its own sign-in
@@ -55,7 +56,7 @@ export function SessionNotice() {
       </div>
       {content.reauth ? (
         <button className="btn grad block" onClick={signOut} disabled={signingOut}>
-          {signingOut ? 'Signing out…' : 'Sign in again'}
+          {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign in again'}
         </button>
       ) : null}
     </section>

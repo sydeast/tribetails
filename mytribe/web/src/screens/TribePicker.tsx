@@ -6,6 +6,7 @@ import { useSignOut } from '../lib/auth';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { setActiveKinfolkId, useAccessState } from '../lib/activeTribe';
+import { BusyLabel } from '../components/Loading';
 
 const AVATAR_VARIANTS = ['', 't2', 't3'] as const;
 
@@ -117,7 +118,7 @@ export function TribePicker() {
         {/* An anchor ignores `disabled`; useSignOut's ref guard is the real
             double-tap defence, aria-disabled just tells AT the same story. */}
         <a onClick={signOut} aria-disabled={signingOut} style={signingOut ? { opacity: 0.5 } : undefined}>
-          {signingOut ? 'Signing out…' : 'Sign Out'}
+          {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign Out'}
         </a>
       </div>
     </main>

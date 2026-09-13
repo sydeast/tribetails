@@ -29,6 +29,7 @@ import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
+import { BusyLabel } from '../components/Loading';
 
 
 /**
@@ -510,7 +511,7 @@ export function TribeProfile() {
                         onClick={() => submitClinicToSharedList()}
                         style={{ opacity: submittingClinic ? 0.6 : 1 }}
                       >
-                        <b>{submittingClinic ? 'Checking…' : `+ Add "${vetQuery.trim()}" as a new clinic`}</b>
+                        <b>{submittingClinic ? <BusyLabel>Checking…</BusyLabel> : `+ Add "${vetQuery.trim()}" as a new clinic`}</b>
                         <small>Sent to Auntie for approval before other households see it.</small>
                       </div>
                     </div>
@@ -636,7 +637,7 @@ export function TribeProfile() {
               <section style={{ marginTop: 6 }}>
                 <div className="savebar">
                   <button className="btn grad" type="button" onClick={() => void handleSave()} disabled={saving || effectiveDisplayName.trim().length === 0}>
-                    {'\u{1F4BE}'} {saving ? 'Saving…' : 'Save Changes'}
+                    {'\u{1F4BE}'} {saving ? <BusyLabel>Saving…</BusyLabel> : 'Save Changes'}
                   </button>
                   {status && (
                     <span className={`status ${status.startsWith('Saved') ? '' : 'err'}`}>
@@ -838,7 +839,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         </label>
       </div>
       <button className="btn ghost block" type="button" onClick={() => save.mutate()} disabled={save.isPending}>
-        {save.isPending ? 'Saving…' : 'Save'}
+        {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save'}
       </button>
       {save.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 6 }}>Saved.</p>}
       {save.isError && <p className="sub" style={{ color: 'var(--coral)', marginTop: 6 }}>Save failed. Try again.</p>}
@@ -908,7 +909,7 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
         </span>
       </label>
       <button className="btn grad block" type="button" style={{ marginTop: 12 }} onClick={() => invite.mutate()} disabled={invite.isPending || !email.includes('@')}>
-        {invite.isPending ? 'Sending…' : 'Send Invite'}
+        {invite.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send Invite'}
       </button>
       {invite.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent.</p>}
       {invite.isError && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}

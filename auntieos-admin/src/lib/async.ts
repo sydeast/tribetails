@@ -19,13 +19,25 @@
  */
 
 export type Async<T> =
-  | { status: 'loading' }
+  /**
+   * [retry] is what "Sync now" re-runs once this load passes
+   * `lib/slowWait.ts#SLOW_WAIT_MS` (operator ruling, 2026-09-12). It is the same
+   * closure the error state already carries, and most producers already hoist
+   * one for exactly that reason (`load` in FormSchemas.tsx, FeatureFlags.tsx),
+   * so supplying it is usually `{ status: 'loading', retry: load }`.
+   *
+   * OPTIONAL, so no existing producer had to change and none is forced to
+   * invent a retry it does not have. A loading state without one still
+   * escalates: `components/SlowWaitNotice.tsx` falls back to offering a page
+   * reload, because the ruling's floor is that no wait is ever a dead end.
+   */
+  | { status: 'loading'; retry?: () => void }
   | { status: 'error'; message: string; retry?: () => void }
   | { status: 'ready'; data: T };
 
 /** What a region should render. Exactly one; the caller cannot combine them. */
 export type Resolved<T> =
-  | { kind: 'loading' }
+  | { kind: 'loading'; retry?: () => void }
   | { kind: 'error'; message: string; retry?: () => void }
   | { kind: 'empty' }
   | { kind: 'data'; data: T };
@@ -42,7 +54,9 @@ export type Resolved<T> =
 export function resolveAsync<T>(state: Async<T>, isEmpty: (data: T) => boolean): Resolved<T> {
   switch (state.status) {
     case 'loading':
-      return { kind: 'loading' };
+      // Same shape as the error arm below, and for the same reason: spreading
+      // `state` would carry `status` in alongside `kind`.
+      return state.retry ? { kind: 'loading', retry: state.retry } : { kind: 'loading' };
     case 'error':
       // Not `{ kind: 'error', ...state }`: that would spread `status` in too.
       return state.retry

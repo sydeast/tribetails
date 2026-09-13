@@ -40,6 +40,7 @@ import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinCalendarBadge
 import com.kinfolk.portal.components.KinField
 import com.kinfolk.portal.components.KinGhostButton
+import com.kinfolk.portal.components.KinLoading
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinTintPill
 import com.kinfolk.portal.components.ScreenHeader
@@ -143,6 +144,10 @@ fun ScheduleScreen(
                     envelopeOn = true,
                     onOpenKinCare = onOpenKinCare,
                     onOpenEnvelope = onOpenEnvelope,
+                    // Nulling data first puts the card back into its waiting
+                    // state, so the cue is visible while the retry runs rather
+                    // than the tap looking like it did nothing.
+                    onReload = { scope.launch { data = null; reload() } },
                 )
 
                 // Active visit (status ARRIVED on AuntieOS) — live polyline grows as
@@ -264,16 +269,17 @@ private fun UpcomingCard(
     envelopeOn: Boolean,
     onOpenKinCare: (visitId: String, batchId: String?) -> Unit,
     onOpenEnvelope: (batchId: String) -> Unit,
+    onReload: () -> Unit,
 ) {
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.m)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             SectLabel("UPCOMING BOOKINGS")
             when {
                 error != null -> CardEmpty(title = "Couldn't load schedule", message = error)
-                data == null -> Box(
-                    modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.m),
-                    contentAlignment = Alignment.Center,
-                ) { KinSpinner() }
+                data == null -> KinLoading(
+                    text = "Loading your schedule\u2026",
+                    onSync = onReload,
+                )
                 data.upcoming.isEmpty() -> CardEmpty(
                     title = "No upcoming bookings",
                     message = "Request your first booking below or wait for your Auntie to confirm one.",

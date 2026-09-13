@@ -10,6 +10,7 @@ import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { useHistoryBack } from '../lib/useHistoryBack';
 import { DenPanel, DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
 import { AuntieNotesPanel } from '../components/AuntieNotesPanel';
@@ -391,7 +392,7 @@ export function KinfolkProfile({
             state={profile}
             what="household"
             isEmpty={() => false}
-            loading={<p className="kprofile__hint">Loading household…</p>}
+            loading={<LoadingRow label="Loading household…" className="kprofile__hint" />}
             empty={<EmptyHint>Nothing to show.</EmptyHint>}
           >
             {(p) => (

@@ -21,6 +21,7 @@ import { deleteMediaFile, setMediaProfilePhoto, mediaWriteErrorMessage } from '.
 import { type UploadEntityType } from '../api/mediaUpload';
 import { str } from '../lib/coerce';
 import { DenScreenHeading } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
@@ -206,7 +207,7 @@ export function Media({ targetType, targetId }: MediaProps) {
             state={mediaState}
             what="media"
             isEmpty={(rows) => rows.length === 0}
-            loading={<p className="media__hint">Loading media…</p>}
+            loading={<LoadingRow label="Loading media…" className="media__hint" />}
             empty={
               <p className="media__hint">
                 No media on file for this {label.toLowerCase()} yet. Upload photos and videos to see

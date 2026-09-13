@@ -22,6 +22,7 @@ import { asyncScalar } from '../lib/async';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, StatCard, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
@@ -169,7 +170,7 @@ export function TribalIntel() {
           state={rows}
           what="Tribal Intel"
           isEmpty={(data) => dropEmptyTribalIntel(data).length === 0}
-          loading={<p className="tribal-intel__hint">Loading Tribal Intel…</p>}
+          loading={<LoadingRow label="Loading Tribal Intel…" className="tribal-intel__hint" />}
           empty={
             <EmptyHint>No Tribal Intel yet. Training materials and guides will appear here once uploaded.</EmptyHint>
           }

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { FallbackImage } from './FallbackImage';
 import '../styles/signedImageUpload.css';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Wire shape shared by every signed-Cloudinary-upload callable in this app
@@ -225,7 +226,7 @@ export function SignedImageUpload({
         ? `Uploading… ${phase.progress}%`
         : 'Uploading…'
       : phase.kind === 'confirming'
-        ? 'Saving…'
+        ? <BusyLabel>Saving…</BusyLabel>
         : null;
 
   return (

@@ -8,6 +8,7 @@ import { listBusinessAdmins } from '../api/businessAdmins';
 import { type Async } from '../lib/async';
 import { formSchemaUpdatedFull } from '../lib/formSchemaFormat';
 import { DenScreenHeading } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
@@ -392,7 +393,7 @@ export function FormSchemas({ onSelect, onNew }: FormSchemasProps) {
         state={schemas}
         what="schemas"
         isEmpty={(rows) => rows.length === 0}
-        loading={<p className="schemas__state">Loading schemas…</p>}
+        loading={<LoadingRow label="Loading schemas…" className="schemas__state" />}
         empty={<p className="schemas__state">No schemas yet. Click New schema to create one.</p>}
       >
         {(rows) => {
