@@ -280,6 +280,8 @@ data class CreateInvoiceArgs(
     val lineItems: List<CreateInvoiceArgsLineItem>? = null,
     /** Optional: omitted from the payload when null. */
     val invoiceDiscountCents: Long? = null,
+    /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -302,6 +304,7 @@ data class CreateInvoiceArgs(
         put("sessionIds", sessionIds)
         if (lineItems != null) put("lineItems", lineItems.map { it.toPayload() })
         if (invoiceDiscountCents != null) put("invoiceDiscountCents", invoiceDiscountCents)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
     }
 }
 
@@ -383,6 +386,8 @@ data class CreateQuoteArgs(
     val invoiceDiscountCents: Long? = null,
     /** The server defaults this to `false`. */
     val sendToKinfolk: Boolean = false,
+    /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -406,6 +411,7 @@ data class CreateQuoteArgs(
         if (lineItems != null) put("lineItems", lineItems.map { it.toPayload() })
         if (invoiceDiscountCents != null) put("invoiceDiscountCents", invoiceDiscountCents)
         put("sendToKinfolk", sendToKinfolk)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
     }
 }
 
@@ -1080,6 +1086,8 @@ data class MarkInvoicePaidArgs(
     val reference: String? = null,
     /** Optional: omitted from the payload when null. */
     val paidAt: String? = null,
+    /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1091,6 +1099,7 @@ data class MarkInvoicePaidArgs(
         if (method != null) put("method", method)
         if (reference != null) put("reference", reference)
         if (paidAt != null) put("paidAt", paidAt)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
     }
 }
 
@@ -1133,6 +1142,8 @@ data class PayInvoiceArgs(
     val kinfolkId: String? = null,
     val successUrl: String,
     val cancelUrl: String,
+    /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1143,6 +1154,7 @@ data class PayInvoiceArgs(
         if (kinfolkId != null) put("kinfolkId", kinfolkId)
         put("successUrl", successUrl)
         put("cancelUrl", cancelUrl)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
     }
 }
 
@@ -1256,6 +1268,8 @@ data class RecordPaymentArgs(
     val autoApply: Boolean = false,
     /** The server defaults this to `false`. */
     val sendConfirmationEmail: Boolean = false,
+    /** Optional: omitted from the payload when null. */
+    val idempotencyKey: String? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1279,6 +1293,7 @@ data class RecordPaymentArgs(
         if (apply != null) put("apply", apply.toPayload())
         put("autoApply", autoApply)
         put("sendConfirmationEmail", sendConfirmationEmail)
+        if (idempotencyKey != null) put("idempotencyKey", idempotencyKey)
     }
 }
 

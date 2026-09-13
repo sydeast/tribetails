@@ -148,6 +148,7 @@ export interface CreateInvoiceArgs {
   sessionIds?: string[];
   lineItems?: CreateInvoiceArgsLineItem[];
   invoiceDiscountCents?: number;
+  idempotencyKey?: string;
 }
 
 /**
@@ -202,6 +203,7 @@ export interface CreateQuoteArgs {
   invoiceDiscountCents?: number;
   /** Optional in the request; the server defaults it to false. */
   sendToKinfolk?: boolean;
+  idempotencyKey?: string;
 }
 
 /**
@@ -545,6 +547,7 @@ export interface MarkInvoicePaidArgs {
   method?: string;
   reference?: string;
   paidAt?: string;
+  idempotencyKey?: string;
 }
 
 /**
@@ -571,6 +574,7 @@ export interface PayInvoiceArgs {
   kinfolkId?: string;
   successUrl: string;
   cancelUrl: string;
+  idempotencyKey?: string;
 }
 
 /**
@@ -649,6 +653,7 @@ export interface RecordPaymentArgs {
   autoApply?: boolean;
   /** Optional in the request; the server defaults it to false. */
   sendConfirmationEmail?: boolean;
+  idempotencyKey?: string;
 }
 
 /**

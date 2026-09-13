@@ -96,7 +96,18 @@ the stale "~26":
   attempt to collide with, and a deduped reply carries `deduped: true` with the
   stored counts. An all-failed attempt leaves the row at `fanoutState: 'failed'`
   and is the one state a same-key retry may re-run from, because nobody heard
-  anything). The `shapeSignature` walker unwraps optional/nullable/
+  anything). #825 gave the same treatment to the four MONEY callables —
+  `recordPayment` (`pay_`), `markInvoicePaid` (`ipay_`), `createInvoice`
+  (`inv_`) and `createQuote` (`quot_`) — and to `payInvoice`, whose key is
+  handed to STRIPE as a request option rather than checked here, because the
+  duplicate a replay makes is a second Checkout Session in Stripe's database
+  and both stay payable. All five are optional, so every frozen shape stays a
+  SUPERSET. The four Firestore ones use a TRANSACTION rather than #814's bare
+  `create()` claim: each moves a second thing beside its anchor row (a family
+  balance, an invoice's settlement, a sequence value from
+  `counters/invoiceNumber`), so the read that finds a prior attempt and the
+  writes it cancels have to share one snapshot. See
+  `src/lib/moneyIdempotency.ts`. The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
@@ -272,7 +283,7 @@ at warn (`portal.invoices.stampMissing`). Mirror:
 handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### createInvoice
-- req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */ }`
+- req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */, idempotencyKey?: string /* #825, `inv_<millis>_<suffix>`; becomes the `invoices/{key}` document id, and a replay never reaches the number counter */ }`
 - res `{ ok: true, invoiceId: string }`
 - Every `?` field above is a zod `.default('')` / `.default([])` or genuinely
   optional, so an omitted key validates. The freeze in
@@ -316,7 +327,11 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### createQuote
 - req: identical to `createInvoice` (including optional `lineItems` and
-  `invoiceDiscountCents`), plus `sendToKinfolk?: boolean` (default false)
+  `invoiceDiscountCents`), plus `sendToKinfolk?: boolean` (default false) and
+  `idempotencyKey?: string` (#825), shaped `quot_<millis>_<suffix>` rather than
+  `createInvoice`'s `inv_`: both callables write the same `invoices`
+  collection, and a distinct prefix is what stops a key minted for one from
+  answering at the other.
 - res `{ ok: true, invoiceId: string }`
 - A quote is NOT a separate model, it is an invoice in QUOTE status. The caller's
   `status` is IGNORED: the server always stamps `status: 'quote'` (lowercase
@@ -364,7 +379,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   so a notification outage cannot undo a decision that was already recorded.
 
 ### markInvoicePaid
-- req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, MAY BE PARTIAL; defaults to what the recorded payments leave outstanding */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */ }`
+- req `{ invoiceId: string /* 1..200 */, amount?: number /* DOLLARS, MAY BE PARTIAL; defaults to what the recorded payments leave outstanding */, method?: string /* 1..200 */, reference?: string /* 1..200 */, paidAt?: string /* ISO-8601, defaults to now */, idempotencyKey?: string /* #825, `ipay_<millis>_<suffix>`; becomes the id of the `invoices/{invoiceId}/payments/{key}` row, so a retried PARTIAL lands once */ }`
 - res `{ ok: true, invoiceId: string, paymentId: string, state: 'unpaid'|'partial'|'settled'|'overpaid', totalCents: number, paidCents: number, amountDueCents: number, overpaidCents: number }`
 - Writes an `invoices/{invoiceId}/payments/{paymentId}` entry (amount,
   amountCents, method, reference, paidAt, recordedBy) in the SAME batch as the
@@ -521,7 +536,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
 
 ### recordPayment
-- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false */, sendConfirmationEmail?: boolean /* default false */ }` (every `?` defaults to `''`/`0`/`false`; `apply` is omitted, not defaulted)
+- req `{ amount: number /* DOLLARS, float, the legacy shape of this collection. THE WHOLE TRANSACTION, gross tip included */, kinfolkId?: string /* <=120, default '' */, kinfolkName?: string, client?: string, address?: string, date?: string /* free text */, paymentMethod?: string, referenceNumber?: string, email?: string, tip?: number /* default 0. GROSS: what the client tipped, BEFORE the processor fee */, fee?: number /* default 0. The processor's cut, off the business's proceeds. NOT part of amount */, notes?: string /* STAFF ONLY */, invoiceId?: string /* '' = standalone payment. A DISPLAY LINK, never an apply */, invoiceNumber?: string, apply?: { invoiceId: string, invoiceNumber?: string, amount: number } /* the "Apply: $" box. ONE invoice; omitted = no balance is touched */, autoApply?: boolean /* default false */, sendConfirmationEmail?: boolean /* default false */, idempotencyKey?: string /* #825, `pay_<millis>_<suffix>`; becomes the `payments/{key}` row id, so a retry records neither a second payment nor a second account credit */ }` (every `?` defaults to `''`/`0`/`false`; `apply` and `idempotencyKey` are omitted, not defaulted)
 - res `{ ok: true, paymentId: string, kinfolkId: string /* what was actually stored; the sandbox id for a test admin */, amountCents: number, tipCents: number, feeCents: number, tipBasis: 'gross'|'net'|'unknown', appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, tipNetCents: number /* SIGNED */, autoApply: boolean, application: { invoiceId, invoiceNumber, paymentId, appliedCents, state, totalCents, paidCents, amountDueCents, overpaidCents }|null, creditedToAccountCents: number, confirmationEmailSent: boolean }`
 - W2-1 (ADR-0002): replaces `AuntieRepository.createPayment`, the direct create
   on the ROOT `payments` collection. This is the DISPLAY LEDGER the payment

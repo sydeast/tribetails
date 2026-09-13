@@ -11,12 +11,28 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { settingsForInvoice, stripeCheckoutMethodTypes } from '../lib/paymentMethods';
 import { readLivePayMethodSettings } from '../lib/payMethodSnapshot';
+import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
   kinfolkId: z.string().optional(),
   successUrl: z.string().url(),
   cancelUrl: z.string().url(),
+  /**
+   * #825: mint one per SUBMISSION, not per tap, and Stripe answers a retry with
+   * the session the first attempt created instead of opening a second one.
+   *
+   * THIS KEY IS HANDED TO STRIPE, NOT CHECKED HERE, and that is the only place
+   * it can work: the duplicate a replay makes is a second Checkout Session in
+   * STRIPE's database, and both sessions stay payable. Two sessions become two
+   * PaymentIntents; `stripeWebhook` claims on the PaymentIntent id, so both
+   * settle, and the household is charged twice for one bill — with no refund
+   * available to put it back, by standing ruling. Nothing this server writes
+   * can prevent that. Only Stripe can, and this is how it is asked to.
+   *
+   * OPTIONAL, so the portal and the desktop console adopt it separately.
+   */
+  idempotencyKey: CheckoutIdempotencyKeyArg,
 });
 
 /**
@@ -131,7 +147,28 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const methodTypes = stripeCheckoutMethodTypes(settingsForInvoice(inv, liveSettings));
 
   const stripe = await getStripe();
-  const createSession = (paymentMethodTypes: string[]) =>
+  /**
+   * #825: the key rides as a REQUEST OPTION, Stripe's second argument, which is
+   * where Stripe's own idempotency lives. Given one, Stripe replays the stored
+   * response for 24 hours rather than creating a second session.
+   *
+   * `suffix` EXISTS BECAUSE THE FALLBACK SENDS A DIFFERENT BODY. Stripe refuses
+   * a key reused with different parameters, and the card-only retry below is a
+   * deliberately different request, so it carries its own derived key. Reusing
+   * one key across both would turn the graceful fallback into a hard error on
+   * a bill somebody is trying to settle.
+   */
+  // Deliberately un-annotated. `Stripe.RequestOptions` resolves to two
+  // incompatible declarations in this package (a cjs copy and an esm copy, each
+  // with its own private `StripeContext`), so naming the type makes the call
+  // below unassignable to itself. An object literal is checked against
+  // whichever declaration the call site actually uses, which is the one that
+  // matters.
+  const requestOptions = (suffix: string) =>
+    args.idempotencyKey === undefined
+      ? undefined
+      : { idempotencyKey: `${args.idempotencyKey}${suffix}` };
+  const createSession = (paymentMethodTypes: string[], keySuffix: string) =>
     stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
@@ -160,7 +197,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       // resolve the household, and a household that really was charged keeps an
       // invoice reading outstanding and keeps getting reminder emails.
       payment_intent_data: { metadata: checkoutMetadata },
-    });
+    }, requestOptions(keySuffix));
 
   // WHEN STRIPE REFUSES A METHOD TYPE, THE HOUSEHOLD STILL GETS TO PAY.
   //
@@ -177,7 +214,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // would fail identically and hide the real cause.
   let session;
   try {
-    session = await createSession(methodTypes);
+    session = await createSession(methodTypes, '');
   } catch (err) {
     const extraTypes = methodTypes.filter((t) => t !== 'card');
     if (extraTypes.length === 0 || !isUnsupportedMethodTypeError(err)) throw err;
@@ -189,7 +226,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       errorMessage: (err as Error)?.message,
       extra: { invoiceId: args.invoiceId, rejectedTypes: extraTypes, retriedWith: ['card'] },
     });
-    session = await createSession(['card']);
+    session = await createSession(['card'], '_card');
   }
 
   await firestore.collection('invoices').doc(args.invoiceId).set({
