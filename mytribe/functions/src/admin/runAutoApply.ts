@@ -32,10 +32,19 @@ import { drawAccountCredit } from '../lib/accountCredit';
  * no second ledger; see `lib/accountCredit.ts` for what this tranche extended
  * and why.
  *
- * IT IS IDEMPOTENT because the balance is decremented as it is spent: run it
- * twice and the second pass finds nothing left and reports `no_credit`. Every
- * guard is re-read from the stored documents, so pressing the button is a
- * request to look, never an instruction to move money.
+ * RUNNING IT TWICE DRAWS ONCE, and since #830 that holds for two passes in
+ * flight TOGETHER and not only for one after the other. The whole pass — the
+ * reads, the plan and the writes — is a single Firestore transaction, so a
+ * second pass cannot commit a draw it planned from a balance the first had
+ * already spent. It re-runs against what the first committed, finds either the
+ * invoice settled or the balance gone, and reports `invoice_not_collectable` or
+ * `no_credit`. This is what makes the operator pressing this button while the
+ * trigger is mid-flight on the same invoice safe.
+ *
+ * IT IS NOT AN IDEMPOTENCY KEY and must not be read as one. Nothing here
+ * remembers a particular call; what it has is a plan re-derived from the stored
+ * documents under a lock. Every guard is re-read from those documents, so
+ * pressing the button is a request to look, never an instruction to move money.
  *
  * GATE: `resolveInvoiceWriteActor`, the ADR-0002 invoice-surface gate, plus the
  * sandbox ownership check on the invoice itself. A scoped test admin may run it
