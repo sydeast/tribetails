@@ -197,10 +197,20 @@ data class ScheduleBlastResult(
      */
     val deduped: Boolean = false,
     /**
-     * #814. That earlier attempt's fan-out has not finished, so the counts above
-     * are a snapshot rather than a total.
+     * #814. The fan-out has not finished, so the counts above are a snapshot
+     * rather than a total.
+     *
+     * #823 made this the ORDINARY reply for any audience past about sixty
+     * households. `scheduleMarketingBlast` queues for fifteen seconds and hands
+     * the rest to a cron sweep, because five thousand recipients at five to six
+     * Firestore round trips each cannot finish inside a function's 540-second
+     * ceiling.
      */
     val pending: Boolean = false,
+    /** #823. Recipients accounted for so far, out of [audienceSize]. */
+    val queued: Int = 0,
+    /** #823. The frozen roster's size: everyone this campaign will reach. */
+    val audienceSize: Int = 0,
 )
 
 /** Decodes the scheduleMarketingBlast payload. Pure; unit-tested. */
@@ -215,6 +225,8 @@ fun decodeScheduleResult(raw: Map<String, Any?>?): ScheduleBlastResult = Schedul
     // as an unknown that some other branch might treat as true.
     deduped = raw?.get("deduped") == true,
     pending = raw?.get("pending") == true,
+    queued = (raw?.get("queued") as? Number)?.toInt() ?: 0,
+    audienceSize = (raw?.get("audienceSize") as? Number)?.toInt() ?: 0,
 )
 
 /** One-line summary of what a schedule actually did. Pure. */
@@ -248,15 +260,63 @@ fun scheduleNotice(result: ScheduleBlastResult, whenLabel: String): String {
         return "You already scheduled this campaign for $whenLabel. Nothing went out twice. " +
             scheduleSummary(result)
     }
+    if (result.pending) {
+        // #823, and now the ordinary outcome past about sixty households. The
+        // counts describe one leg of the send; reporting them as the whole thing
+        // would be true of this second and wrong of the next.
+        return "Scheduled for $whenLabel. Still queueing: ${result.queued} of ${result.audienceSize} " +
+            "so far. It carries on in the background."
+    }
     return "Scheduled for $whenLabel. " + scheduleSummary(result)
+}
+/**
+ * The progress line on a campaign that is still being queued: the mock's "256 of
+ * 410 dispatched", drawn from numbers the row can back. Pure.
+ *
+ * A STALLED fan-out is named rather than dressed up as a slow one. Its lease has
+ * been gone for two sweep ticks with nothing moving, and an operator told "still
+ * sending" about a campaign that stopped twenty minutes ago has been misled by a
+ * progress bar.
+ *
+ * Mirrors `auntieos-admin/src/lib/marketingBlastEdit.ts#sendingLabel`.
+ */
+fun sendingLabel(queued: Int, audienceSize: Int, stalled: Boolean): String {
+    val of = if (audienceSize > 0) "$queued of $audienceSize" else "$queued"
+    return if (stalled) "Stopped at $of queued. It picks up again within a minute." else "$of queued"
+}
+/**
+ * What a cancel actually achieved, in the operator's terms. Pure.
+ *
+ * A cancel that lands MID fan-out cannot prove the worker stopped, so it does
+ * not claim to have. The campaign reads Cancelling until the sweep confirms it,
+ * and this sentence says the same thing rather than announcing a finality the
+ * server refused to write down.
+ *
+ * Mirrors `auntieos-admin/src/lib/marketingBlastEdit.ts#cancelNotice`.
+ */
+fun cancelNotice(result: CancelBlastResult): String {
+    val word = if (result.cancelled == 1) "notification" else "notifications"
+    val removed = "${result.cancelled} queued $word removed"
+    if (result.stopped) return "Cancelled. $removed."
+    return "Stopping. $removed, and ${result.neverQueued} were never queued. " +
+        "It finishes stopping within a minute."
 }
 
 // ── campaign list ────────────────────────────────────────────────────────────
 
+/**
+ * #823 added three. [Sending] is a campaign whose fan-out is still walking its
+ * roster, [Cancelling] one whose stop has been asked for and not yet confirmed,
+ * and [Failed] one whose fan-out never armed, so nothing was queued and nothing
+ * ever will be.
+ */
 enum class BlastStatus(val wire: String, val label: String) {
     Scheduled("scheduled", "Scheduled"),
+    Sending("sending", "Sending"),
     Sent("sent", "Sent"),
+    Cancelling("cancelling", "Cancelling"),
     Cancelled("cancelled", "Cancelled"),
+    Failed("failed", "Failed"),
     ;
 
     companion object {
@@ -270,6 +330,25 @@ enum class BlastStatus(val wire: String, val label: String) {
     }
 }
 
+/** #823. How the fan-out itself is doing, beside the campaign's own status. */
+enum class BlastFanoutState(val wire: String) {
+    Running("running"),
+    /** Running with a long-dead lease: queueing that stopped moving. */
+    Stalled("stalled"),
+    Complete("complete"),
+    Failed("failed"),
+    Cancelled("cancelled"),
+    ;
+    companion object {
+        /**
+         * An unknown state, and a missing one, read as [Complete]. A campaign
+         * from a backend that does not report progress is not in flight, and a
+         * progress bar that could never move would be worse than none.
+         */
+        fun fromWire(wire: String?): BlastFanoutState =
+            entries.firstOrNull { it.wire == wire } ?: Complete
+    }
+}
 data class MarketingBlastRow(
     val id: String,
     val key: String,
@@ -282,9 +361,17 @@ data class MarketingBlastRow(
     val dispatched: Int,
     val suppressed: Int,
     val failed: Int,
+    /** #823. `Stalled` is running with a long-dead lease. */
+    val fanoutState: BlastFanoutState = BlastFanoutState.Complete,
+    /** #823. Recipients accounted for, out of [audienceSize]. */
+    val queued: Int = 0,
+    /** #823. The frozen roster's size. 0 on a campaign written before this shipped. */
+    val audienceSize: Int = 0,
 ) {
     /** What the row is called in the list. The key is the fallback for an unnamed campaign. */
     val displayName: String get() = title.ifBlank { key }
+    /** 0f..1f for the mock's Sending bar, or 0f when the roster size is unknown. */
+    val progress: Float get() = if (audienceSize > 0) queued.toFloat() / audienceSize else 0f
 }
 
 /**
@@ -311,12 +398,34 @@ fun decodeBlasts(raw: Map<String, Any?>?): List<MarketingBlastRow> {
             dispatched = (b["dispatched"] as? Number)?.toInt() ?: 0,
             suppressed = (b["suppressed"] as? Number)?.toInt() ?: 0,
             failed = (b["failed"] as? Number)?.toInt() ?: 0,
+            fanoutState = BlastFanoutState.fromWire(b["fanoutState"] as? String),
+            queued = (b["queued"] as? Number)?.toInt() ?: 0,
+            audienceSize = (b["audienceSize"] as? Number)?.toInt() ?: 0,
         )
     }.sortedByDescending { it.fireAtMs }
 }
 
-/** Decodes how many queued notifications a cancel removed. Pure. */
-fun decodeCancelledCount(raw: Map<String, Any?>?): Int = (raw?.get("cancelled") as? Number)?.toInt() ?: 0
+/**
+ * What a cancel achieved (#823).
+ *
+ * [stopped] is false when the blast was still being queued, so the fan-out was
+ * ASKED to stop rather than proven to have stopped; the sweep confirms it within
+ * a minute and the campaign reads Cancelling until it does.
+ */
+data class CancelBlastResult(
+    val cancelled: Int = 0,
+    val stopped: Boolean = true,
+    val neverQueued: Int = 0,
+)
+/** Decodes the cancelMarketingBlast payload. Pure. */
+fun decodeCancelResult(raw: Map<String, Any?>?): CancelBlastResult = CancelBlastResult(
+    cancelled = (raw?.get("cancelled") as? Number)?.toInt() ?: 0,
+    // `!= false` rather than `== true`: a backend older than #823 sends neither
+    // field and really did finish the cancel synchronously, so the honest
+    // reading for it is "stopped".
+    stopped = raw?.get("stopped") != false,
+    neverQueued = (raw?.get("neverQueued") as? Number)?.toInt() ?: 0,
+)
 
 /** Maps a raw callable error to operator-facing text (server sentinels + passthrough). */
 fun blastErrorText(message: String): String = when {

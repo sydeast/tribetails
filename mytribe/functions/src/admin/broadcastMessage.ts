@@ -26,8 +26,16 @@ import {
   assertSameCaller,
   claimIdempotentRow,
   storedCount,
-  type FanoutState,
 } from '../lib/sendIdempotency';
+import {
+  INLINE_FANOUT_BUDGET_MS,
+  LEASE_MS,
+  releaseFanoutLease,
+  runFanout,
+  writeFanoutRoster,
+  type FanoutState,
+  type RecipientOutcome,
+} from '../lib/fanoutResume';
 import { getNotificationDef } from '../notifications/catalog';
 import { loadBusinessOverride, loadUserPrefs, resolveChannels, streamForRecipient } from '../notifications/prefs';
 import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/types';
@@ -228,8 +236,16 @@ export interface BroadcastMessageResult {
   /**
    * #814. True when that earlier attempt's fan-out has not finished. The counts
    * are what is stored so far, not a total.
+   *
+   * #823 made this a state with a way out rather than only a warning: a pending
+   * fan-out is resumed by `outboundFanoutSweep`, and the two counts below say
+   * how far it has got.
    */
   pending: boolean;
+  /** #823. Households the send has reached a verdict on, out of [audienceSize]. */
+  sent: number;
+  /** #823. The frozen roster's size. */
+  audienceSize: number;
 }
 
 /** Reads a stored `perChannel` map back for a replayed reply. */
@@ -273,7 +289,348 @@ function replayBroadcast(
       suppressedByPrefs: storedCount(reach, 'suppressedByPrefs'),
     },
     deduped: true,
-    pending: stored['fanoutState'] !== 'complete',
+    // `=== 'running'`, not `!== 'complete'`, since #823 added 'cancelled' to the
+    // domain and kept 'failed' in it. Neither is pending: nothing more is going
+    // to happen, and telling the operator to keep waiting would be wrong in both
+    // cases. (A 'failed' row reaches here only when the retry path above did not
+    // claim it, which is the unkeyed call, it has no key to retry with.)
+    pending: stored['fanoutState'] === 'running',
+    sent: storedCount(stored, 'fanoutProcessed'),
+    audienceSize: storedCount(stored, 'fanoutTotal'),
+  };
+}
+
+/**
+ * What one recipient's marker records, beyond the coarse outcome the fan-out
+ * engine tallies.
+ *
+ * Per-CHANNEL, because the broadcast's report is per channel and the engine's
+ * sent/suppressed/failed cannot carry it. Written on the marker rather than
+ * kept in the worker's memory so a resume does not lose the channels a dead
+ * worker had already counted (#823).
+ */
+type ChannelResult = 'sent' | 'skipped' | 'failed';
+
+/** The per-recipient detail folded into the row when a chunk closes. */
+interface RecipientDetail extends Record<string, unknown> {
+  channelResults: Partial<Record<BroadcastChannel, ChannelResult>>;
+  reached: boolean;
+  suppressedByPrefs: boolean;
+}
+
+/**
+ * Folds a closed chunk's markers into the row's `perChannel` and `reach`.
+ *
+ * Derived entirely from the markers and the row the transaction read, never
+ * from a counter this process happens to hold, which is what makes it correct
+ * across a hand-off AND idempotent if the transaction retries. See
+ * `lib/fanoutResume.ts#ChunkRowFields`.
+ */
+export function broadcastChunkRowFields(
+  row: Record<string, unknown>,
+  markers: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  const perChannel = storedPerChannel(row);
+  const reach = (row['reach'] ?? {}) as Record<string, unknown>;
+  let reached = storedCount(reach, 'reached');
+  let suppressedByPrefs = storedCount(reach, 'suppressedByPrefs');
+
+  for (const marker of markers) {
+    const results = (marker['channelResults'] ?? {}) as Record<string, unknown>;
+    for (const ch of ALL_BROADCAST_CHANNELS) {
+      const r = results[ch];
+      if (r === 'sent') perChannel[ch].sent += 1;
+      else if (r === 'skipped') perChannel[ch].skipped += 1;
+      else if (r === 'failed') perChannel[ch].failed += 1;
+    }
+    if (marker['reached'] === true) reached += 1;
+    if (marker['suppressedByPrefs'] === true) suppressedByPrefs += 1;
+  }
+
+  const totals = ALL_BROADCAST_CHANNELS.reduce(
+    (acc, ch) => ({
+      sent: acc.sent + perChannel[ch].sent,
+      skipped: acc.skipped + perChannel[ch].skipped,
+      failed: acc.failed + perChannel[ch].failed,
+    }),
+    { sent: 0, skipped: 0, failed: 0 },
+  );
+
+  return {
+    perChannel,
+    reach: { targeted: storedCount(reach, 'targeted'), reached, suppressedByPrefs },
+    totals,
+  };
+}
+
+/**
+ * Sends one broadcast to one household, and it stays in THIS file on purpose.
+ *
+ * `test/notificationProvenance.test.ts` asserts that the set of files calling
+ * `resolveChannels` is exactly the set named in `notifications/provenance.ts`,
+ * so that a dispatch path cannot land undocumented. That holds only while the
+ * gate resolution stays at its own call site, which is why `runFanout` takes
+ * this closure as an argument rather than importing the gate itself.
+ *
+ * THE HOUSEHOLD IS RE-READ HERE, NOT CARRIED ON THE ROSTER. The frozen roster
+ * holds kinfolk IDS only: this callable's contract is "no plaintext recipient is
+ * stored (only aggregate counts)", and a roster of email addresses and phone
+ * numbers stored under `broadcasts/{id}` would quietly break it. One extra read
+ * per recipient, with the side benefit that a corrected address is the one used.
+ */
+export function broadcastSender(ctx: {
+  actorUid: string;
+  channels: BroadcastChannel[];
+  subject: string;
+  body: string;
+  def: ReturnType<typeof getNotificationDef>;
+  businessOverride: Awaited<ReturnType<typeof loadBusinessOverride>>;
+  stream: ReturnType<typeof streamForRecipient>;
+  /**
+   * The households this caller ALREADY holds, by id.
+   *
+   * The inline leg resolved the whole audience a moment ago and has them all in
+   * memory, so re-reading each one would be 5,000 round trips to learn what it
+   * just read. A RESUME has none of that and passes nothing, which is the case
+   * the read below exists for.
+   */
+  known?: Map<string, KinfolkLike>;
+}): (kinfolkId: string) => Promise<{ outcome: RecipientOutcome; detail: RecipientDetail }> {
+  const { actorUid: uid, channels, subject, body, def, businessOverride, stream, known } = ctx;
+
+  return async (kinfolkId: string) => {
+    const detail: RecipientDetail = {
+      channelResults: {},
+      reached: false,
+      suppressedByPrefs: false,
+    };
+    const mark = (ch: BroadcastChannel, r: ChannelResult): void => {
+      detail.channelResults[ch] = r;
+    };
+
+    let k = known?.get(kinfolkId);
+    if (!k) {
+      const snap = await db().collection(KINFOLK_COLLECTION).doc(kinfolkId).get();
+      if (!snap.exists) {
+        // The household left the roster between send and resume. Nothing can be
+        // delivered and nothing was, so every chosen channel is skipped rather
+        // than failed: failed would read as "we tried and the provider refused".
+        for (const ch of channels) mark(ch, 'skipped');
+        return { outcome: 'suppressed' as RecipientOutcome, detail };
+      }
+      k = toKinfolkLike(kinfolkId, snap.data() as Record<string, unknown>);
+    }
+
+    // Preference resolution, identical to the dispatcher's: the operator's gate
+    // for this row, then the household's own choice within it. A kinfolk with no
+    // linked MyTribe account has no prefs document to read, so they resolve to
+    // the catalog defaults, still gated by the operator's override.
+    const userPrefs: UserNotificationPrefs = k.uid ? await loadUserPrefs(k.uid, 'clients') : {};
+    const allowed = resolveChannels(def, userPrefs, businessOverride, stream);
+
+    if (allChannelsOff(allowed)) {
+      // Nothing is attempted for this household on ANY surface, in-app included
+      // (see the header docstring). Counted, logged, and reported back: a
+      // suppressed recipient is a fact about the broadcast's reach, not a silent
+      // no-op.
+      detail.suppressedByPrefs = true;
+      for (const ch of channels) mark(ch, 'skipped');
+      logEvent({
+        severity: 'info',
+        function: 'broadcastMessage',
+        event: 'recipient.suppressed',
+        uid,
+        extra: { kinfolkId: k.id, reason: 'no-channels-after-prefs' },
+      });
+      return { outcome: 'suppressed' as RecipientOutcome, detail };
+    }
+
+    // ---- in-app -------------------------------------------------------------
+    if (channels.includes('inapp')) {
+      if (!k.uid) {
+        mark('inapp', 'skipped'); // no linked MyTribe install -> cannot target an in-app inbox.
+      } else {
+        try {
+          await db().collection('notifications').doc().set({
+            key: BROADCAST_NOTIFICATION_KEY,
+            // The CATALOG row's category (#386). It used to say 'broadcast',
+            // a bucket in no catalog, so every catalog-driven surface filed
+            // broadcasts under a category it had never heard of. `title` and
+            // `description` below stay the operator's own words rather than the
+            // catalog label/description, because the copy is authored per send.
+            category: def.category,
+            recipientUid: k.uid,
+            actorUid: uid,
+            data: { kinfolkId: k.id },
+            title: subject,
+            // `description` is the field every card renderer already reads for
+            // the second line (it carries the catalog description on dispatched
+            // notifications). `body` alone was written by nothing else and read
+            // by nothing, so a broadcast landed in the inbox as a bare subject.
+            description: body,
+            body,
+            broadcast: true,
+            targetType: 'kinfolk',
+            targetId: k.id,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+          mark('inapp', 'sent');
+          detail.reached = true;
+        } catch (err) {
+          mark('inapp', 'failed');
+          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'inapp.write.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+        }
+      }
+    }
+
+    // ---- email --------------------------------------------------------------
+    if (channels.includes('email')) {
+      const email = (k.email ?? '').trim();
+      if (!allowed.email) {
+        mark('email', 'skipped'); // gate or household preference says no email.
+      } else if (!email) {
+        mark('email', 'skipped');
+      } else if (await isSuppressed(email.toLowerCase())) {
+        mark('email', 'skipped');
+      } else {
+        try {
+          await sendTemplatedEmail({
+            to: email,
+            subjectTemplate: subject,
+            bodyTemplate: `${body}${UNSUBSCRIBE_FOOTER}`,
+            data: {},
+          });
+          mark('email', 'sent');
+          detail.reached = true;
+        } catch (err) {
+          mark('email', 'failed');
+          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'email.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+        }
+      }
+    }
+
+    // ---- sms ----------------------------------------------------------------
+    if (channels.includes('sms')) {
+      const e164 = normalizeE164((k.phoneNumber ?? '').trim());
+      if (!allowed.sms) {
+        mark('sms', 'skipped'); // gate or household preference says no SMS.
+      } else if (!e164) {
+        mark('sms', 'skipped');
+      } else if (await isSuppressed(e164)) {
+        mark('sms', 'skipped');
+      } else {
+        try {
+          const twilio = await getTwilio();
+          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body });
+          mark('sms', 'sent');
+          detail.reached = true;
+        } catch (err) {
+          mark('sms', 'failed');
+          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+        }
+      }
+    }
+
+    // ---- push ---------------------------------------------------------------
+    if (channels.includes('push')) {
+      if (!allowed.push) {
+        mark('push', 'skipped'); // gate or household preference says no push.
+      } else if (!k.uid) {
+        mark('push', 'skipped');
+      } else {
+        try {
+          const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', k.uid).get();
+          const tokens = tokensSnap.docs.map((d) => d.id);
+          if (tokens.length === 0) {
+            mark('push', 'skipped');
+          } else {
+            const resp = await getAdmin()
+              .messaging()
+              .sendEachForMulticast({
+                tokens,
+                notification: { title: subject || 'Tribe Tails', body },
+                data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
+              });
+            // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
+            // where one recipient == one send), not per-token. A kinfolk with
+            // several devices counts once if any token took the push.
+            if (resp.successCount > 0) {
+              mark('push', 'sent');
+              detail.reached = true;
+            } else {
+              mark('push', 'failed');
+            }
+          }
+        } catch (err) {
+          mark('push', 'failed');
+          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'push.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+        }
+      }
+    }
+
+    // The engine's coarse word for this household. `failed` only when every
+    // chosen channel failed: a broadcast that reached the household on one
+    // channel and lost another is a partial success, not a failure, and the
+    // per-channel detail above is where that shows.
+    const results = channels.map((ch) => detail.channelResults[ch]);
+    const outcome: RecipientOutcome = detail.reached
+      ? 'sent'
+      : results.every((r) => r === 'failed')
+        ? 'failed'
+        : 'suppressed';
+    return { outcome, detail };
+  };
+}
+
+/**
+ * Resumes a broadcast the sweep found mid-fan-out. Here rather than in the
+ * sweep for the provenance reason on [broadcastSender].
+ */
+export async function resumeBroadcastFanout(opts: {
+  broadcastId: string;
+  row: Record<string, unknown>;
+  workerId: string;
+  deadlineMs: number;
+}): Promise<{ ran: boolean; complete: boolean; processed: number; total: number; cancelled: boolean }> {
+  const { broadcastId, row, workerId, deadlineMs } = opts;
+  const ref = db().collection(BROADCASTS_COLLECTION).doc(broadcastId);
+  const channels = (Array.isArray(row['channels']) ? row['channels'] : []).filter(
+    (c): c is BroadcastChannel => (ALL_BROADCAST_CHANNELS as readonly string[]).includes(c as string),
+  );
+  const def = getNotificationDef(BROADCAST_NOTIFICATION_KEY);
+  const businessOverride = await loadBusinessOverride(BROADCAST_NOTIFICATION_KEY);
+  const run = await runFanout({
+    ref,
+    workerId,
+    deadlineMs,
+    fnName: 'outboundFanoutSweep',
+    chunkRowFields: broadcastChunkRowFields,
+    sendOne: broadcastSender({
+      actorUid: typeof row['actorUid'] === 'string' ? row['actorUid'] : '',
+      channels,
+      subject: typeof row['subject'] === 'string' ? row['subject'] : '',
+      // The body is stored for the resume (see the handler): a broadcast that
+      // cannot be finished without it is not resumable at all.
+      body: typeof row['body'] === 'string' ? row['body'] : '',
+      def,
+      businessOverride,
+      stream: streamForRecipient(def, 'clients'),
+    }),
+  });
+  if (run.ran) {
+    await releaseFanoutLease({
+      ref,
+      workerId,
+      patch: run.complete ? { fanoutState: 'complete' satisfies FanoutState } : {},
+      fnName: 'outboundFanoutSweep',
+    });
+  }
+  return {
+    ran: run.ran,
+    complete: run.complete,
+    processed: run.processed,
+    total: run.total,
+    cancelled: run.cancelled,
   };
 }
 
@@ -281,6 +638,12 @@ export async function broadcastMessageHandler(
   req: CallableRequest<unknown>,
 ): Promise<BroadcastMessageResult> {
   initSentry();
+  // #823. The fan-out's deadline is measured from the REQUEST's start, not from
+  // the moment the roster is armed: the audience resolve ahead of it scans the
+  // whole kinfolk collection, and a budget started after that would let the
+  // reply land past the client's own 20-second ceiling. Same reasoning, and the
+  // same field name, as `scheduleMarketingBlast`.
+  const enteredAtMs = Date.now();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
@@ -326,6 +689,9 @@ export async function broadcastMessageHandler(
   const body = args.body;
   const description = describeCriteria(criteria);
   const startedAtMs = Date.now();
+  // #823. This invocation's own name, so the lease it takes is its own and its
+  // release cannot evict a successor that legitimately took over.
+  const workerId = `callable-${startedAtMs.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const broadcasts = db().collection(BROADCASTS_COLLECTION);
   const ref = args.idempotencyKey ? broadcasts.doc(args.idempotencyKey) : broadcasts.doc();
   const row = {
@@ -340,7 +706,48 @@ export async function broadcastMessageHandler(
     sentAtMs: startedAtMs,
     createdAt: FieldValue.serverTimestamp(),
     fanoutState: 'running' satisfies FanoutState,
+    /**
+     * #823. THE BODY IS NOW STORED, and `bodyLength` above is kept beside it
+     * rather than replaced.
+     *
+     * A broadcast that cannot be finished without its own copy is not resumable,
+     * and the sweep has nothing else to render from: the copy is authored per
+     * send and there is no `emailTemplates/{key}` behind it (that is the whole
+     * difference between this callable and a marketing blast). The subject was
+     * already stored for the same reason.
+     *
+     * This is admin-authored copy to a whole audience, not a recipient's data,
+     * so the "no plaintext recipient is stored" rule in the header is untouched:
+     * the roster holds kinfolk IDS and the marker holds per-channel outcomes.
+     */
+    body,
+    cancelRequestedAtMs: null,
+    // The lease is taken in the claim itself. See the same field on the blast
+    // row for why it cannot wait until the roster is written.
+    fanoutLeaseOwner: workerId,
+    fanoutLeaseExpiresAtMs: startedAtMs + LEASE_MS,
+    fanoutUpdatedAtMs: startedAtMs,
+    fanoutRosterReady: false,
+    fanoutTotal: recipients.length,
+    fanoutProcessed: 0,
+    perChannel: {
+      inapp: emptyCounts(),
+      email: emptyCounts(),
+      sms: emptyCounts(),
+      push: emptyCounts(),
+    },
+    reach: { targeted: recipients.length, reached: 0, suppressedByPrefs: 0 },
+    dispatched: 0,
+    suppressed: 0,
+    failed: 0,
   };
+
+  // #823. Which attempt's chunk and marker ids this run owns. Bumped only on the
+  // retry-after-failure path below, so that path is not silently no-opped by the
+  // first attempt's markers, which is exactly what would have happened with one
+  // id space, and would have turned #822's deliberate "a failed send may be
+  // re-run" into a reply that claimed success and sent nothing.
+  let attempt = 0;
 
   if (args.idempotencyKey) {
     const claim = await claimIdempotentRow({ ref, row, actorUid: uid, actorField: 'actorUid' });
@@ -358,18 +765,25 @@ export async function broadcastMessageHandler(
       if (claim.stored['fanoutState'] !== 'failed') {
         return replayBroadcast(ref.id, claim.stored, uid);
       }
-      await ref.set({ ...row, retriedAfterFailureAtMs: startedAtMs }, { merge: true });
+      attempt = storedCount(claim.stored, 'fanoutAttempt') + 1;
+      await ref.set(
+        { ...row, fanoutAttempt: attempt, retriedAfterFailureAtMs: startedAtMs },
+        { merge: true },
+      );
     }
   } else {
     await ref.set(row);
   }
 
-  const perChannel: Record<BroadcastChannel, ChannelCounts> = {
-    inapp: emptyCounts(),
-    email: emptyCounts(),
-    sms: emptyCounts(),
-    push: emptyCounts(),
-  };
+  // #823. The roster is frozen into `{broadcast}/fanoutChunks` before anything
+  // is sent, and it is what a resume walks. IDs only: see `broadcastSender`.
+  const roster = await writeFanoutRoster({
+    ref,
+    attempt,
+    recipientIds: recipients.map((k) => k.id),
+    nowMs: startedAtMs,
+  });
+  await ref.set(roster.fields, { merge: true });
 
   // The gate row is ONE document for the whole business (businessSettings/
   // notifications), so it is read once here rather than once per recipient. A
@@ -377,186 +791,70 @@ export async function broadcastMessageHandler(
   const def = getNotificationDef(BROADCAST_NOTIFICATION_KEY);
   const businessOverride = await loadBusinessOverride(BROADCAST_NOTIFICATION_KEY);
   const stream = streamForRecipient(def, 'clients');
-  const reach: BroadcastReach = { targeted: recipients.length, reached: 0, suppressedByPrefs: 0 };
 
-  for (const k of recipients) {
-    // Preference resolution, identical to the dispatcher's: the operator's gate
-    // for this row, then the household's own choice within it. A kinfolk with no
-    // linked MyTribe account has no prefs document to read, so they resolve to
-    // the catalog defaults, still gated by the operator's override.
-    const userPrefs: UserNotificationPrefs = k.uid ? await loadUserPrefs(k.uid, 'clients') : {};
-    const allowed = resolveChannels(def, userPrefs, businessOverride, stream);
+  const run = await runFanout({
+    ref,
+    workerId,
+    // The same 15-second inline budget the blast takes, from the same point and
+    // for the same reason. See `enteredAtMs`.
+    deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
+    fnName: 'broadcastMessage',
+    leaseHeld: true,
+    armed: { row: { ...row, ...roster.fields, fanoutAttempt: attempt }, chunks: roster.chunks },
+    chunkRowFields: broadcastChunkRowFields,
+    sendOne: broadcastSender({
+      actorUid: uid,
+      channels,
+      subject,
+      body,
+      def,
+      businessOverride,
+      stream,
+      known: new Map(recipients.map((k) => [k.id, k])),
+    }),
+  });
 
-    if (allChannelsOff(allowed)) {
-      // Nothing is attempted for this household on ANY surface, in-app included
-      // (see the header docstring). Counted, logged, and reported back: a
-      // suppressed recipient is a fact about the broadcast's reach, not a silent
-      // no-op.
-      reach.suppressedByPrefs += 1;
-      for (const ch of channels) perChannel[ch].skipped += 1;
-      logEvent({
-        severity: 'info',
-        function: 'broadcastMessage',
-        event: 'recipient.suppressed',
-        uid,
-        extra: { kinfolkId: k.id, reason: 'no-channels-after-prefs' },
-      });
-      continue;
-    }
+  // From what the run last WROTE, not from a fresh read of a document this
+  // invocation wrote a moment ago. `broadcastChunkRowFields` computed these
+  // inside the closing transaction from the chunk's markers, so they are the
+  // durable numbers and they already include anything a previous leg did.
+  const perChannel = storedPerChannel(run.rowFields);
+  const storedReach = (run.rowFields['reach'] ?? {}) as Record<string, unknown>;
+  const reach: BroadcastReach = {
+    targeted: recipients.length,
+    reached: storedCount(storedReach, 'reached'),
+    suppressedByPrefs: storedCount(storedReach, 'suppressedByPrefs'),
+  };
 
-    let reachedThisRecipient = false;
-
-    // ---- in-app -------------------------------------------------------------
-    if (channels.includes('inapp')) {
-      const c = perChannel.inapp;
-      if (!k.uid) {
-        c.skipped += 1; // no linked MyTribe install -> cannot target an in-app inbox.
-      } else {
-        try {
-          await db().collection('notifications').doc().set({
-            key: BROADCAST_NOTIFICATION_KEY,
-            // The CATALOG row's category (#386). It used to say 'broadcast',
-            // a bucket in no catalog, so every catalog-driven surface filed
-            // broadcasts under a category it had never heard of. `title` and
-            // `description` below stay the operator's own words rather than the
-            // catalog label/description, because the copy is authored per send.
-            category: def.category,
-            recipientUid: k.uid,
-            actorUid: uid,
-            data: { kinfolkId: k.id },
-            title: subject,
-            // `description` is the field every card renderer already reads for
-            // the second line (it carries the catalog description on dispatched
-            // notifications). `body` alone was written by nothing else and read
-            // by nothing, so a broadcast landed in the inbox as a bare subject.
-            description: body,
-            body,
-            broadcast: true,
-            targetType: 'kinfolk',
-            targetId: k.id,
-            createdAt: FieldValue.serverTimestamp(),
-          });
-          c.sent += 1;
-          reachedThisRecipient = true;
-        } catch (err) {
-          c.failed += 1;
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'inapp.write.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
-        }
-      }
-    }
-
-    // ---- email --------------------------------------------------------------
-    if (channels.includes('email')) {
-      const c = perChannel.email;
-      const email = (k.email ?? '').trim();
-      if (!allowed.email) {
-        c.skipped += 1; // gate or household preference says no email.
-      } else if (!email) {
-        c.skipped += 1;
-      } else if (await isSuppressed(email.toLowerCase())) {
-        c.skipped += 1;
-      } else {
-        try {
-          await sendTemplatedEmail({
-            to: email,
-            subjectTemplate: subject,
-            bodyTemplate: `${body}${UNSUBSCRIBE_FOOTER}`,
-            data: {},
-          });
-          c.sent += 1;
-          reachedThisRecipient = true;
-        } catch (err) {
-          c.failed += 1;
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'email.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
-        }
-      }
-    }
-
-    // ---- sms ----------------------------------------------------------------
-    if (channels.includes('sms')) {
-      const c = perChannel.sms;
-      const e164 = normalizeE164((k.phoneNumber ?? '').trim());
-      if (!allowed.sms) {
-        c.skipped += 1; // gate or household preference says no SMS.
-      } else if (!e164) {
-        c.skipped += 1;
-      } else if (await isSuppressed(e164)) {
-        c.skipped += 1;
-      } else {
-        try {
-          const twilio = await getTwilio();
-          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body });
-          c.sent += 1;
-          reachedThisRecipient = true;
-        } catch (err) {
-          c.failed += 1;
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
-        }
-      }
-    }
-
-    // ---- push ---------------------------------------------------------------
-    if (channels.includes('push')) {
-      const c = perChannel.push;
-      if (!allowed.push) {
-        c.skipped += 1; // gate or household preference says no push.
-      } else if (!k.uid) {
-        c.skipped += 1;
-      } else {
-        try {
-          const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', k.uid).get();
-          const tokens = tokensSnap.docs.map((d) => d.id);
-          if (tokens.length === 0) {
-            c.skipped += 1;
-          } else {
-            const resp = await getAdmin()
-              .messaging()
-              .sendEachForMulticast({
-                tokens,
-                notification: { title: subject || 'Tribe Tails', body },
-                data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
-              });
-            // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
-            // where one recipient == one send), not per-token. A kinfolk with
-            // several devices counts once if any token took the push.
-            if (resp.successCount > 0) {
-              c.sent += 1;
-              reachedThisRecipient = true;
-            } else {
-              c.failed += 1;
-            }
-          }
-        } catch (err) {
-          c.failed += 1;
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'push.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
-        }
-      }
-    }
-
-    if (reachedThisRecipient) reach.reached += 1;
-  }
 
   // If every attempted send across every channel failed (and nothing sent /
   // nothing legitimately skipped), surface it loud rather than reporting "done".
   const totalSent = channels.reduce((n, ch) => n + perChannel[ch].sent, 0);
   const totalFailed = channels.reduce((n, ch) => n + perChannel[ch].failed, 0);
   const totalSkipped = channels.reduce((n, ch) => n + perChannel[ch].skipped, 0);
-  const totals = { sent: totalSent, skipped: totalSkipped, failed: totalFailed };
-  if (totalSent === 0 && totalSkipped === 0 && totalFailed > 0) {
+  // #823. Only asked of a fan-out that FINISHED. A run that handed off with
+  // three failures and 4,900 recipients still to go has not failed, it has
+  // barely started, and stamping it 'failed' would both lie and arm the
+  // retry-after-failure path against a send that is still going.
+  if (run.complete && totalSent === 0 && totalSkipped === 0 && totalFailed > 0) {
     // The counts are recorded before the throw, and the row is stamped 'failed'
     // rather than left at 'running': an all-failed attempt reached nobody, and
     // that is exactly the state a same-key retry is allowed to re-run from.
-    await ref.set(
-      { perChannel, reach, totals, fanoutState: 'failed' satisfies FanoutState },
-      { merge: true },
-    );
+    await releaseFanoutLease({
+      ref,
+      workerId,
+      patch: { fanoutState: 'failed' satisfies FanoutState },
+      fnName: 'broadcastMessage',
+    });
     throw new HttpsError('unavailable', 'broadcast_all_failed', { perChannel });
   }
 
-  await ref.set(
-    { perChannel, reach, totals, fanoutState: 'complete' satisfies FanoutState },
-    { merge: true },
-  );
+  await releaseFanoutLease({
+    ref,
+    workerId,
+    patch: run.complete ? { fanoutState: 'complete' satisfies FanoutState } : {},
+    fnName: 'broadcastMessage',
+  });
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -569,8 +867,23 @@ export async function broadcastMessageHandler(
     // households" and "reached 120 of them, 280 have it switched off" are
     // different facts, and the operator should read the second one without
     // opening a payload.
-    description: `Broadcast to ${recipients.length} kinfolk (${description}) via ${channels.join(', ')}: ${totalSent} sent, ${totalSkipped} skipped, ${totalFailed} failed; reached ${reach.reached} of ${reach.targeted} households, ${reach.suppressedByPrefs} silenced by notification preferences`,
-    payload: { broadcastId: ref.id, channels, recipientCount: recipients.length, perChannel, reach },
+    description:
+      `Broadcast to ${recipients.length} kinfolk (${description}) via ${channels.join(', ')}: ${totalSent} sent, ${totalSkipped} skipped, ${totalFailed} failed; reached ${reach.reached} of ${reach.targeted} households, ${reach.suppressedByPrefs} silenced by notification preferences` +
+      // #823. A handed-off send must not read as a finished one in the audit
+      // trail, which is the one place the counts are quoted later.
+      (run.complete
+        ? ''
+        : `. Still sending at ${run.processed} of ${run.total}, handed to outboundFanoutSweep`),
+    payload: {
+      broadcastId: ref.id,
+      channels,
+      recipientCount: recipients.length,
+      perChannel,
+      reach,
+      fanoutComplete: run.complete,
+      fanoutProcessed: run.processed,
+      fanoutTotal: run.total,
+    },
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });
   });
@@ -590,7 +903,11 @@ export async function broadcastMessageHandler(
     perChannel,
     reach,
     deduped: false,
-    pending: false,
+    // #823. Honest about what this invocation finished. `outboundFanoutSweep`
+    // has the rest, and the two counts say how much.
+    pending: !run.complete,
+    sent: run.processed,
+    audienceSize: run.total,
   };
 }
 

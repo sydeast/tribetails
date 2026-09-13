@@ -3,9 +3,12 @@ import {
   sendBroadcast,
   describeAudience,
   channelCountsOf,
+  getBroadcastProgress,
   reachOf,
+  stopBroadcast,
   type BroadcastCriteria,
   type BroadcastChannel,
+  type BroadcastProgress,
   type SendBroadcastResult,
 } from '../api/communicateWrite';
 import {
@@ -23,6 +26,9 @@ import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
+// The still-sending panel borrows the wait treatment's classes for its manual
+// re-read. Imported rather than copied so the two cannot drift apart.
+import '../components/SlowWaitNotice.css';
 import './CommunicateCompose.css';
 
 const BODY_MAX = 5000;
@@ -600,12 +606,20 @@ export function CommunicateCompose() {
   );
 }
 
-/** Maps a callable rejection to a readable message, naming the two documented backend failure codes honestly. */
-function friendlySendError(err: unknown): string {
+/** Maps a callable rejection to a readable message, naming the documented backend failure codes honestly. */
+export function friendlySendError(err: unknown): string {
   const message = err instanceof Error ? err.message : 'Send failed';
   if (message.includes('no_recipients')) return 'No kinfolk match this audience. Nothing was sent.';
   if (message.includes('broadcast_all_failed')) {
     return 'Every attempted send failed. Nothing went out, check the email/SMS provider configuration.';
+  }
+  // #823's two, from `stopBroadcast`. Both mean the press changed nothing and
+  // both are good news, so the raw sentinel would read as a failure it is not.
+  if (message.includes('already_finished')) {
+    return 'It had already finished sending, so there was nothing left to stop.';
+  }
+  if (message.includes('already_stopping')) {
+    return 'A stop is already going through. It finishes within a minute.';
   }
   return message;
 }
@@ -660,7 +674,11 @@ function reachSentence(result: SendBroadcastResult): string {
  */
 function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResultPanelProps) {
   return (
-    <DenPanel title="Broadcast sent" detail={reachSentence(result)}>
+    <DenPanel
+      title={result.pending === true ? 'Broadcast sending' : 'Broadcast sent'}
+      detail={reachSentence(result)}
+    >
+      {result.pending === true && <StillSending broadcastId={result.broadcastId} />}
       <ul className="compose__result-list">
         {channels.map((ch) => {
           const counts = channelCountsOf(result.perChannel, ch);
@@ -678,5 +696,121 @@ function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResu
         <PrimaryButton label="Send another" onClick={onSendAnother} />
       </div>
     </DenPanel>
+  );
+}
+
+/**
+ * What a broadcast that is still going shows the operator (#823).
+ *
+ * `broadcastMessage` sends for fifteen seconds and hands the rest to a cron
+ * sweep, because five thousand households cannot be reached inside a function's
+ * 540-second ceiling. Before this, a send past about sixty households replied
+ * `pending: true` and this screen printed a per-channel table that described one
+ * leg of it as though it were the whole thing.
+ *
+ * THE NUMBERS ARE ASKED FOR, NOT PUSHED. There is no poll. The fan-out is on the
+ * server, the sweep runs once a minute, and the count moves about once every
+ * twenty-five seconds, so a screen that re-read every second would spend a
+ * callable a second to watch a number that is standing still. This borrows the
+ * treatment #819 built instead, say what is being waited on, offer a manual
+ * sync, which is that ruling's own shape for a wait past ten seconds. The
+ * re-read is safe to press repeatedly because it is a READ.
+ *
+ * STOPPING IS HONEST ABOUT WHAT IT CANNOT DO. Email and SMS already sent cannot
+ * be recalled, and nothing here pretends otherwise. The button stops the
+ * REMAINDER, and the confirmation says which households that leaves in numbers
+ * rather than in a word.
+ */
+function StillSending({ broadcastId }: { broadcastId: string }) {
+  const [progress, setProgress] = useState<BroadcastProgress | null>(null);
+  const [checks, setChecks] = useState(0);
+  const [stopping, setStopping] = useState(false);
+  const [stopNotice, setStopNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const check = useCallback(() => {
+    getBroadcastProgress(broadcastId)
+      .then((p) => {
+        setProgress(p);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        // Left null rather than zeroed: "we could not look" and "nothing has
+        // gone out" are different facts, and a progress bar cannot tell them
+        // apart.
+        setProgress(null);
+        setError(`getBroadcastProgress failed: ${err instanceof Error ? err.message : 'Read failed'}`);
+      });
+  }, [broadcastId]);
+
+  useEffect(check, [check]);
+
+  async function handleStop() {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      const res = await stopBroadcast(broadcastId);
+      setStopNotice(
+        `Stopping. ${res.sent} ${res.sent === 1 ? 'household has' : 'households have'} already been contacted and cannot be called back. ${res.neverSent} will not be.`,
+      );
+      check();
+    } catch (err) {
+      setError(friendlySendError(err));
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  const stalled = progress?.fanoutState === 'stalled';
+  const running = progress !== null && (progress.fanoutState === 'running' || stalled);
+
+  return (
+    <div className="compose__sending">
+      {error !== null && <Banner tone="error">{error}</Banner>}
+      {stopNotice !== null && <Banner tone="warning">{stopNotice}</Banner>}
+
+      {progress !== null && (
+        <>
+          <p className="compose__sending-line">
+            {!running
+              ? `Finished. ${progress.sent} of ${progress.audienceSize} households.`
+              : stalled
+                ? `Stopped at ${progress.sent} of ${progress.audienceSize} households. It picks up again within a minute.`
+                : `${progress.sent} of ${progress.audienceSize} households so far.`}
+          </p>
+          <progress
+            className="compose__sending-bar"
+            max={1}
+            value={progress.audienceSize > 0 ? progress.sent / progress.audienceSize : 0}
+            aria-label="Households contacted so far"
+          />
+        </>
+      )}
+
+      {(progress === null || running) && (
+        <div className="slowWait" role="group" aria-label="This broadcast is still going out">
+          <p className="slowWait__line">
+            {checks === 0 ? 'This carries on in the background.' : 'Asked again. Still going.'}
+          </p>
+          <button
+            type="button"
+            className="slowWait__sync"
+            onClick={() => {
+              setChecks((n) => n + 1);
+              check();
+            }}
+          >
+            {checks === 0 ? 'Check again' : 'Ask again'}
+          </button>
+          {progress !== null && !progress.stopRequested && (
+            <GhostButton
+              label={stopping ? 'Stopping...' : 'Stop the rest'}
+              disabled={stopping}
+              onClick={() => void handleStop()}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }

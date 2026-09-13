@@ -225,6 +225,37 @@
   color: var(--color-text-dim);
 }
 
+/* The mock's `.sendprog` bar on a campaign that is still being queued (#823).
+   A real `<progress>` element rather than a painted div, so its value reaches a
+   screen reader without a second aria-label restating the sentence above it, and
+   so the browser owns whatever the viewer's reduced-motion setting asks for.
+   Every colour is a token. `--color-primary` is the orange the mock's Sending
+   accent uses, resolved the same way the row's `data-tone="orange"` pill does,
+   rather than picked again by eye. */
+.blasts__progress {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  height: 4px;
+  margin-top: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-soft);
+}
+.blasts__progress::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--color-border-soft);
+}
+.blasts__progress::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
+.blasts__progress::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
 .blasts__row-side {
   display: flex;
   align-items: center;

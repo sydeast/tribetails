@@ -74,8 +74,19 @@ data class BroadcastResult(
      * on this attempt.
      */
     val deduped: Boolean = false,
-    /** #814. That earlier fan-out has not finished, so the counts are a snapshot. */
+    /**
+     * #814. The fan-out has not finished, so the counts are a snapshot.
+     *
+     * #823 made this the ORDINARY reply for any audience past about sixty
+     * households: `broadcastMessage` sends for fifteen seconds and a cron sweep
+     * carries the rest, because five thousand households cannot be reached
+     * inside a function's 540-second ceiling.
+     */
     val pending: Boolean = false,
+    /** #823. Households the send has reached a verdict on, out of [audienceSize]. */
+    val sent: Int = 0,
+    /** #823. The frozen roster's size. */
+    val audienceSize: Int = 0,
 )
 
 /**
@@ -163,9 +174,91 @@ internal fun decodeBroadcastResult(raw: Map<String, Any?>?): BroadcastResult {
         // than as an unknown some branch might take for true.
         deduped = raw?.get("deduped") == true,
         pending = raw?.get("pending") == true,
+        sent = (raw?.get("sent") as? Number)?.toInt() ?: 0,
+        audienceSize = (raw?.get("audienceSize") as? Number)?.toInt() ?: 0,
     )
 }
 
+// ── #823: a broadcast whose fan-out outlived its call ────────────────────────
+/** How a broadcast's fan-out is doing. */
+enum class BroadcastFanoutState(val wire: String) {
+    Running("running"),
+    /** Running with a long-dead lease: a send that stopped moving. */
+    Stalled("stalled"),
+    Complete("complete"),
+    Failed("failed"),
+    Cancelled("cancelled"),
+    ;
+    companion object {
+        /**
+         * An unknown state, and a missing one, read as [Complete]. A send from a
+         * backend that does not report progress is not in flight, and a progress
+         * bar that could never move would be worse than none.
+         */
+        fun fromWire(wire: String?): BroadcastFanoutState =
+            entries.firstOrNull { it.wire == wire } ?: Complete
+    }
+}
+data class BroadcastProgress(
+    val broadcastId: String = "",
+    val fanoutState: BroadcastFanoutState = BroadcastFanoutState.Complete,
+    /** Households the send has reached a verdict on. */
+    val sent: Int = 0,
+    /** The frozen roster's size. */
+    val audienceSize: Int = 0,
+    /** Households that received it on at least one channel. */
+    val reached: Int = 0,
+    /** Households whose channels all resolved OFF, so nothing was attempted. */
+    val suppressedByPrefs: Int = 0,
+    /** True when a stop has been asked for and the fan-out has not confirmed it. */
+    val stopRequested: Boolean = false,
+) {
+    /** True while there is still something to watch, and something to stop. */
+    val running: Boolean
+        get() = fanoutState == BroadcastFanoutState.Running || fanoutState == BroadcastFanoutState.Stalled
+    /** 0f..1f for the progress bar, or 0f when the roster size is unknown. */
+    val progress: Float get() = if (audienceSize > 0) sent.toFloat() / audienceSize else 0f
+}
+/** Decodes the getBroadcastProgress payload. Pure. */
+fun decodeBroadcastProgress(broadcastId: String, raw: Map<String, Any?>?): BroadcastProgress = BroadcastProgress(
+    broadcastId = broadcastId,
+    fanoutState = BroadcastFanoutState.fromWire(raw?.get("fanoutState") as? String),
+    sent = (raw?.get("sent") as? Number)?.toInt() ?: 0,
+    audienceSize = (raw?.get("audienceSize") as? Number)?.toInt() ?: 0,
+    reached = (raw?.get("reached") as? Number)?.toInt() ?: 0,
+    suppressedByPrefs = (raw?.get("suppressedByPrefs") as? Number)?.toInt() ?: 0,
+    stopRequested = raw?.get("stopRequested") == true,
+)
+data class StopBroadcastResult(
+    /** Households already contacted. Nothing here can be recalled. */
+    val sent: Int = 0,
+    /** Households the roster still held. These will not be contacted. */
+    val neverSent: Int = 0,
+)
+/** Decodes the stopBroadcast payload. Pure. */
+fun decodeStopBroadcastResult(raw: Map<String, Any?>?): StopBroadcastResult = StopBroadcastResult(
+    sent = (raw?.get("sent") as? Number)?.toInt() ?: 0,
+    neverSent = (raw?.get("neverSent") as? Number)?.toInt() ?: 0,
+)
+/**
+ * What the operator is told after stopping a send part-way. Pure.
+ *
+ * Counts rather than a word, because "stopped" on its own would invite the
+ * reading that nothing went out. Mirrors the sentence
+ * `auntieos-admin/src/screens/CommunicateCompose.tsx` renders.
+ */
+fun stopBroadcastNotice(result: StopBroadcastResult): String {
+    val have = if (result.sent == 1) "household has" else "households have"
+    return "Stopping. ${result.sent} $have already been contacted and cannot be called back. " +
+        "${result.neverSent} will not be."
+}
+/** The still-sending line: how far a broadcast has got, or that it stopped moving. Pure. */
+fun broadcastSendingLabel(progress: BroadcastProgress): String = when {
+    !progress.running -> "Finished. ${progress.sent} of ${progress.audienceSize} households."
+    progress.fanoutState == BroadcastFanoutState.Stalled ->
+        "Stopped at ${progress.sent} of ${progress.audienceSize} households. It picks up again within a minute."
+    else -> "${progress.sent} of ${progress.audienceSize} households so far."
+}
 /** Decodes the saved-segment id from saveAudienceSegment. Pure. */
 internal fun decodeSavedSegmentId(raw: Map<String, Any?>?): String = (raw?.get("id") as? String).orEmpty()
 
@@ -175,6 +268,12 @@ fun broadcastErrorText(message: String): String = when {
         "That audience has no kinfolk right now. Nothing was sent."
     message.contains("broadcast_all_failed", ignoreCase = true) ->
         "Every send failed. Nothing reached anyone. Check the provider settings and try again."
+    // #823's two, from `stopBroadcast`. Both mean the press changed nothing and
+    // both are good news, so the raw sentinel would read as a failure it is not.
+    message.contains("already_finished", ignoreCase = true) ->
+        "It had already finished sending, so there was nothing left to stop."
+    message.contains("already_stopping", ignoreCase = true) ->
+        "A stop is already going through. It finishes within a minute."
     else -> message
 }
 

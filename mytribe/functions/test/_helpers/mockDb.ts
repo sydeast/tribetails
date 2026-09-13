@@ -365,6 +365,15 @@ export function buildDbMock(opts: {
       id: path.split('/').pop(),
       path,
       parent: parentChain(path),
+      // Real DocumentReferences carry `.firestore`, and a caller that only ever
+      // holds a ref uses it to reach `batch()`, `getAll()` and `runTransaction()`
+      // without being handed the database separately. `lib/fanoutResume.ts` is
+      // written that way on purpose, so that the fan-out engine takes an anchor
+      // row and nothing else. A getter rather than a field because `fakeDb` is
+      // declared below this function.
+      get firestore() {
+        return fakeDb;
+      },
       get: vi.fn(async () => {
         const data = docs[path];
         return {
@@ -463,12 +472,38 @@ export function buildDbMock(opts: {
   }
 
   function makeCollection(path: string): any {
-    const source = (): Row[] =>
-      (queryDocs[path] ?? []).map((d) => ({
-        id: d.id,
-        data: d.data,
-        docPath: `${path}/${d.id}`,
-      }));
+    /**
+     * The rows a query over `path` can see.
+     *
+     * The `queryDocs` fixture is the base. Under `writeThrough` the documents
+     * this run has WRITTEN are merged on top, keyed by id, so a document created
+     * during a test is findable by a query and not only by its own id.
+     *
+     * Added for #823, and the gap it closes was not cosmetic: `outboundFanoutSweep`
+     * finds its work with `where('fanoutState', '==', 'running')`, and a blast
+     * the test had just scheduled was invisible to it. The sweep did nothing,
+     * every resume assertion failed, and the failure said "still running" rather
+     * than "your mock cannot see this". Gated on `writeThrough` so the suites
+     * written against a static fixture are untouched.
+     */
+    const source = (): Row[] => {
+      const byId = new Map<string, Row>();
+      for (const d of queryDocs[path] ?? []) {
+        byId.set(d.id, { id: d.id, data: d.data, docPath: `${path}/${d.id}` });
+      }
+      if (writeThrough) {
+        const prefix = `${path}/`;
+        for (const [docPath, data] of Object.entries(docs)) {
+          if (!docPath.startsWith(prefix)) continue;
+          const rest = docPath.slice(prefix.length);
+          // Direct children only: `a/b/c/d` is a document in a SUBcollection of
+          // `a/b`, not a document in `a`.
+          if (rest.includes('/') || data == null) continue;
+          byId.set(rest, { id: rest, data, docPath });
+        }
+      }
+      return [...byId.values()];
+    };
 
     return Object.assign(makeQuery(source, []), {
       path,
@@ -500,18 +535,42 @@ export function buildDbMock(opts: {
 
   // WriteBatch shim — records set/update/delete against the same in-memory
   // `writes`/`deletes` arrays so batch effects are assertable like direct writes.
+  //
+  // Under `writeThrough` the batch also APPLIES its writes, and only on
+  // `commit()`. Before #823 it recorded intent and never applied, so a caller
+  // that wrote through a batch and then read the result back saw nothing, which
+  // would have made every roster the fan-out engine writes invisible to the run
+  // that walks it, and the whole suite green for the wrong reason. Applying on
+  // commit rather than on `set` is also the real semantics: an uncommitted batch
+  // has changed nothing.
   function makeBatch(): any {
+    const pending: Array<() => void> = [];
     return {
       set: (ref: any, data: any, options?: SetOptionsLike) => {
         writes.push({ path: ref.path, data, merge: !!options?.merge, options });
+        pending.push(() => {
+          if (!writeThrough) return;
+          docs[ref.path] = options?.merge ? { ...(docs[ref.path] ?? {}), ...data } : { ...data };
+        });
       },
       update: (ref: any, data: any) => {
         writes.push({ path: ref.path, data, merge: true });
+        pending.push(() => {
+          if (!writeThrough) return;
+          docs[ref.path] = { ...(docs[ref.path] ?? {}), ...data };
+        });
       },
       delete: (ref: any) => {
         deletes.push(ref.path);
+        pending.push(() => {
+          if (!writeThrough) return;
+          delete docs[ref.path];
+        });
       },
-      commit: vi.fn(async () => {}),
+      commit: vi.fn(async () => {
+        for (const apply of pending) apply();
+        pending.length = 0;
+      }),
     };
   }
 
@@ -559,6 +618,13 @@ export function buildDbMock(opts: {
         // quietly downgraded it to `set` would let every "two attempts, one
         // key" test pass without the guard being there at all. The doc-ref
         // `create` above rejects with gRPC status 6, the real code.
+        //
+        // #823 reached the same conclusion independently on the same line, from
+        // the fan-out side rather than the money side. Main's version is kept
+        // whole: the promise staging it added is a second real fix (an async
+        // shim's rejection used to escape as an unhandled rejection while the
+        // handler carried on), and the fan-out's chunk-closing transaction is
+        // exactly the shape that needs it.
         create: (ref: any, data: any) => stage(ref.create(data)),
       };
       const result = await fn(tx);

@@ -5,10 +5,16 @@ import userEvent from '@testing-library/user-event';
 import { splitList, buildCriteria } from './CommunicateCompose';
 import { type SendBroadcastResult } from '../api/communicateWrite';
 
-const { sendBroadcast } = vi.hoisted(() => ({ sendBroadcast: vi.fn() }));
+const { sendBroadcast, getBroadcastProgress, stopBroadcast } = vi.hoisted(() => ({
+  sendBroadcast: vi.fn(),
+  getBroadcastProgress: vi.fn(),
+  stopBroadcast: vi.fn(),
+}));
 vi.mock('../api/communicateWrite', async (orig) => ({
   ...(await orig<typeof import('../api/communicateWrite')>()),
   sendBroadcast,
+  getBroadcastProgress,
+  stopBroadcast,
 }));
 
 const { listAudienceSegments, saveAudienceSegment, deleteAudienceSegment } = vi.hoisted(() => ({
@@ -22,6 +28,8 @@ import { CommunicateCompose } from './CommunicateCompose';
 
 beforeEach(() => {
   sendBroadcast.mockReset();
+  getBroadcastProgress.mockReset();
+  stopBroadcast.mockReset();
   listAudienceSegments.mockReset();
   saveAudienceSegment.mockReset();
   deleteAudienceSegment.mockReset();
@@ -204,6 +212,126 @@ describe('CommunicateCompose screen', () => {
     expect(await screen.findByText('Sent to 3 kinfolk.')).toBeInTheDocument();
   });
 
+  /**
+   * #823. A broadcast past about sixty households does not finish inside the
+   * callable: it sends for fifteen seconds and a cron sweep carries the rest.
+   *
+   * Before this, the screen printed "Broadcast sent" and a per-channel table
+   * over one leg of a send that was a tenth done, the confident wrong number
+   * this screen's own docs warn about, on the one number that matters most.
+   */
+  it('says a broadcast is still sending, and shows how far it has got', async () => {
+    sendBroadcast.mockResolvedValue(
+      resultOf({ recipientCount: 900, pending: true, sent: 61, audienceSize: 900 }),
+    );
+    getBroadcastProgress.mockResolvedValue({
+      broadcastId: 'b1',
+      fanoutState: 'running',
+      sent: 61,
+      audienceSize: 900,
+      reached: 61,
+      suppressedByPrefs: 0,
+      stopRequested: false,
+    });
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    // The panel title itself is the first honest thing on the screen.
+    expect(await screen.findByText('Broadcast sending')).toBeInTheDocument();
+    expect(await screen.findByText('61 of 900 households so far.')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Households contacted so far' })).toHaveValue(61 / 900);
+  });
+  it('offers a manual re-read rather than polling, and says a second press did something', async () => {
+    sendBroadcast.mockResolvedValue(resultOf({ pending: true, sent: 61, audienceSize: 900 }));
+    getBroadcastProgress.mockResolvedValue({
+      broadcastId: 'b1',
+      fanoutState: 'running',
+      sent: 61,
+      audienceSize: 900,
+      reached: 61,
+      suppressedByPrefs: 0,
+      stopRequested: false,
+    });
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    const check = await screen.findByRole('button', { name: 'Check again' });
+    getBroadcastProgress.mockClear();
+    await userEvent.click(check);
+    await waitFor(() => expect(getBroadcastProgress).toHaveBeenCalledWith('b1'));
+    // A tap with no visible consequence reads as a dead button, and the sweep
+    // runs once a minute, so the numbers may well not have moved.
+    expect(await screen.findByRole('button', { name: 'Ask again' })).toBeInTheDocument();
+  });
+  /**
+   * Stopping a broadcast stops the REMAINDER. Email and SMS already sent cannot
+   * be recalled, and the confirmation says so in numbers rather than announcing
+   * a cancellation that did not happen.
+   */
+  it('stops the rest of a running broadcast and is honest about what already went', async () => {
+    sendBroadcast.mockResolvedValue(resultOf({ pending: true, sent: 61, audienceSize: 900 }));
+    getBroadcastProgress.mockResolvedValue({
+      broadcastId: 'b1',
+      fanoutState: 'running',
+      sent: 61,
+      audienceSize: 900,
+      reached: 61,
+      suppressedByPrefs: 0,
+      stopRequested: false,
+    });
+    stopBroadcast.mockResolvedValue({ sent: 61, neverSent: 839 });
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop the rest' }));
+    await waitFor(() => expect(stopBroadcast).toHaveBeenCalledWith('b1'));
+    expect(
+      await screen.findByText(/61 households have already been contacted and cannot be called back\. 839 will not be\./),
+    ).toBeInTheDocument();
+  });
+  /**
+   * #823. Both stop sentinels mean the press changed nothing, and both are good
+   * news. Raw sentinel text next to mapped copy for every other failure would
+   * read as a broken stop.
+   */
+  it('reads a stop that raced the last recipient as finished, not as a failure', async () => {
+    sendBroadcast.mockResolvedValue(resultOf({ pending: true, sent: 61, audienceSize: 900 }));
+    getBroadcastProgress.mockResolvedValue({
+      broadcastId: 'b1',
+      fanoutState: 'running',
+      sent: 61,
+      audienceSize: 900,
+      reached: 61,
+      suppressedByPrefs: 0,
+      stopRequested: false,
+    });
+    stopBroadcast.mockRejectedValueOnce(new Error('FAILED_PRECONDITION: already_finished'));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop the rest' }));
+    expect(await screen.findByText(/already finished sending/)).toBeInTheDocument();
+    expect(screen.queryByText(/already_finished/)).not.toBeInTheDocument();
+  });
+  it('shows no still-sending block at all for a broadcast that finished inside the call', async () => {
+    sendBroadcast.mockResolvedValue(resultOf());
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    expect(await screen.findByText('Broadcast sent')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+    expect(getBroadcastProgress).not.toHaveBeenCalled();
+  });
   it('fails loud, naming the callable, and leaves the form intact for a retry (no data loss)', async () => {
     sendBroadcast.mockRejectedValueOnce(new Error('permission-denied'));
     render(<CommunicateCompose />);

@@ -134,6 +134,21 @@ data class CommunicateUiState(
     val isBroadcasting: Boolean = false,
     val isSavingSegment: Boolean = false,
     val broadcastResult: BroadcastResult? = null,
+    /**
+     * #823. How far a broadcast that outlived its own callable has got.
+     *
+     * `broadcastMessage` sends for fifteen seconds and a cron sweep carries the
+     * rest, because five thousand households cannot be reached inside a
+     * function's 540-second ceiling. Null until the first progress read lands,
+     * and null for a send that finished inline, which is most of them.
+     */
+    val broadcastProgress: BroadcastProgress? = null,
+    /** #823. Manual progress-read presses. Changes the copy; see [checkBroadcastProgress]. */
+    val broadcastChecks: Int = 0,
+    /** #823. True while `stopBroadcast` is in flight. */
+    val stoppingBroadcast: Boolean = false,
+    /** #823. What the operator was told after stopping a send part-way. */
+    val stopBroadcastNotice: String? = null,
     val broadcastError: String? = null,
 
     // Recent sends + engagement (Communicate "Recent" panel; counts from the webhooks).
@@ -686,7 +701,76 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
     fun setBcSubject(s: String) { _uiState.value = _uiState.value.copy(bcSubject = s, broadcastError = null) }
     fun setBcBody(b: String) { _uiState.value = _uiState.value.copy(bcBody = b, broadcastError = null) }
     fun clearBroadcastError() { _uiState.value = _uiState.value.copy(broadcastError = null) }
-    fun clearBroadcastResult() { _uiState.value = _uiState.value.copy(broadcastResult = null) }
+    fun clearBroadcastResult() {
+        _uiState.value = _uiState.value.copy(
+            broadcastResult = null,
+            broadcastProgress = null,
+            broadcastChecks = 0,
+            stopBroadcastNotice = null,
+        )
+    }
+
+    /**
+     * Asks how far a still-sending broadcast has got (#823).
+     *
+     * There is no poll. The fan-out is on the server, the sweep runs once a
+     * minute, and the count moves about once every twenty-five seconds, so a
+     * screen that re-read every second would spend a callable a second to watch
+     * a number standing still. This is the manual sync the 2026-09-12 ruling
+     * asks for instead, and it is safe to press repeatedly because it is a READ.
+     */
+    fun checkBroadcastProgress(manual: Boolean = true) {
+        val id = _uiState.value.broadcastResult?.broadcastId ?: return
+        if (manual) {
+            _uiState.value = _uiState.value.copy(broadcastChecks = _uiState.value.broadcastChecks + 1)
+        }
+        viewModelScope.launch {
+            repo.getBroadcastProgress(id).fold(
+                onSuccess = { p -> _uiState.value = _uiState.value.copy(broadcastProgress = p, broadcastError = null) },
+                onFailure = { e ->
+                    // Left null rather than zeroed: "we could not look" and
+                    // "nothing has gone out" are different facts, and a progress
+                    // bar cannot tell them apart.
+                    _uiState.value = _uiState.value.copy(
+                        broadcastProgress = null,
+                        broadcastError = "getBroadcastProgress failed: ${e.message ?: "Read failed"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Stops the REMAINDER of a broadcast that is still going (#823).
+     *
+     * Nothing already sent is recalled, and the notice says so in numbers rather
+     * than announcing a cancellation that did not happen.
+     */
+    fun stopBroadcast() {
+        val id = _uiState.value.broadcastResult?.broadcastId ?: return
+        if (_uiState.value.stoppingBroadcast) return
+        _uiState.value = _uiState.value.copy(stoppingBroadcast = true)
+        viewModelScope.launch {
+            repo.stopBroadcast(id).fold(
+                onSuccess = { res ->
+                    _uiState.value = _uiState.value.copy(
+                        stoppingBroadcast = false,
+                        stopBroadcastNotice = stopBroadcastNotice(res),
+                    )
+                    checkBroadcastProgress(manual = false)
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        stoppingBroadcast = false,
+                        // Through the same mapper the send uses: a raw
+                        // `already_finished` beside mapped copy for every other
+                        // sentinel reads as a failure, and it is the opposite.
+                        broadcastError = broadcastErrorText(e.message ?: "Stop failed"),
+                    )
+                },
+            )
+        }
+    }
 
     fun toggleBcChannel(ch: BroadcastChannel) {
         val cur = _uiState.value.bcChannels
@@ -799,7 +883,18 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
             ).onSuccess { result ->
                 submissionKey = null
                 AuntieLog.i("Broadcast ok: ${result.broadcastId}")
-                _uiState.value = _uiState.value.copy(isBroadcasting = false, broadcastResult = result, broadcastError = null)
+                _uiState.value = _uiState.value.copy(
+                    isBroadcasting = false,
+                    broadcastResult = result,
+                    broadcastError = null,
+                    broadcastProgress = null,
+                    broadcastChecks = 0,
+                    stopBroadcastNotice = null,
+                )
+                // #823. A send that handed off to the sweep is still going, so
+                // the first progress read is taken straight away rather than
+                // waiting for the operator to wonder.
+                if (result.pending) checkBroadcastProgress(manual = false)
             }.onFailure { e ->
                 AuntieLog.e("Broadcast failed", e)
                 _uiState.value = _uiState.value.copy(isBroadcasting = false, broadcastError = broadcastErrorText(e.message ?: "Broadcast failed"))

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -749,8 +750,92 @@ private fun BroadcastSection(state: CommunicateUiState, viewModel: CommunicateVi
             }
         }
         state.broadcastResult?.let { r ->
-            AuntieBanner(tone = AuntieBannerTone.Success, title = "Broadcast sent", icon = Lucide.Megaphone) {
-                Text(text = broadcastSummary(r), style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+            // #823. A send past about sixty households does not finish inside the
+            // callable: it sends for fifteen seconds and a cron sweep carries the
+            // rest. "Broadcast sent" over one leg of that would be a confident
+            // wrong number on the one number that matters most.
+            val sending = r.pending
+            AuntieBanner(
+                tone = if (sending) AuntieBannerTone.Warning else AuntieBannerTone.Success,
+                title = if (sending) "Broadcast sending" else "Broadcast sent",
+                icon = Lucide.Megaphone,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+                    Text(text = broadcastSummary(r), style = AuntieTheme.typography.bodyMedium, color = c.textDim)
+                    if (sending) StillSending(state = state, viewModel = viewModel)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What a broadcast that is still going shows the operator (#823).
+ *
+ * The numbers are ASKED for, not pushed: the fan-out is on the server, the sweep
+ * runs once a minute, and the count moves about once every twenty-five seconds.
+ * So this borrows the treatment `ui/components/SlowWait.kt` built for the
+ * 2026-09-12 ruling, say what is being waited on, offer a manual sync, rather
+ * than inventing a second progress language or a poll.
+ *
+ * Stopping is honest about what it cannot do: email and SMS already sent cannot
+ * be recalled, so the button stops the REMAINDER and the confirmation says which
+ * households that leaves, in numbers rather than in a word.
+ */
+@Composable
+private fun StillSending(state: CommunicateUiState, viewModel: CommunicateViewModel) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    val progress = state.broadcastProgress
+
+    Column(verticalArrangement = Arrangement.spacedBy(dims.space2)) {
+        state.stopBroadcastNotice?.let { msg ->
+            Text(text = msg, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+        }
+        if (progress != null) {
+            Text(
+                text = broadcastSendingLabel(progress),
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            LinearProgressIndicator(
+                progress = { progress.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(AuntieTheme.shapes.pill),
+                color = c.primary,
+                trackColor = c.border,
+                gapSize = 0.dp,
+                drawStopIndicator = {},
+            )
+        }
+        if (progress == null || progress.running) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(dims.space2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (state.broadcastChecks > 0) {
+                        "Asked again. Still going."
+                    } else {
+                        "This carries on in the background."
+                    },
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                    modifier = Modifier.weight(1f),
+                )
+                GhostButton(
+                    label = if (state.broadcastChecks > 0) "Ask again" else "Check again",
+                    onClick = { viewModel.checkBroadcastProgress() },
+                )
+            }
+            if (progress != null && !progress.stopRequested) {
+                GhostButton(
+                    label = if (state.stoppingBroadcast) "Stopping..." else "Stop the rest",
+                    onClick = { viewModel.stopBroadcast() },
+                    enabled = !state.stoppingBroadcast,
+                )
             }
         }
     }

@@ -506,6 +506,8 @@ export {
   deleteAudienceSegment,
 } from './admin/audienceSegments';
 export { broadcastMessage } from './admin/broadcastMessage';
+// #823. Watching and stopping a broadcast whose fan-out outlived its callable.
+export { getBroadcastProgress, stopBroadcast } from './admin/broadcastProgress';
 export {
   listConversations,
   getConversationThread,
@@ -633,6 +635,10 @@ export { expireStaleInvites } from './scheduled/expireStaleInvites';
 export { notificationDebounceSweep } from './scheduled/notificationDebounceSweep';
 export { notificationScheduledSweep } from './scheduled/notificationScheduledSweep';
 export { notificationBatchSweep } from './scheduled/notificationBatchSweep';
+// #823. Finishes a marketing blast or a broadcast whose fan-out did not fit in
+// one invocation. Declares the broadcast's email and SMS secrets, because
+// resuming one sends real mail.
+export { outboundFanoutSweep } from './scheduled/outboundFanoutSweep';
 export { invoiceRemindersCron, invoiceOverdueCron } from './scheduled/invoiceRemindersCron';
 export { aiBatchPollCron } from './scheduled/aiBatchPollCron';
 export { kincareReminderCron } from './scheduled/kincareReminderCron';

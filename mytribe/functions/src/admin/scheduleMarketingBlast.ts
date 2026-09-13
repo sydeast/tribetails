@@ -15,8 +15,16 @@ import {
   assertSameCaller,
   claimIdempotentRow,
   storedCount,
-  type FanoutState,
 } from '../lib/sendIdempotency';
+import {
+  INLINE_FANOUT_BUDGET_MS,
+  LEASE_MS,
+  releaseFanoutLease,
+  runFanout,
+  writeFanoutRoster,
+  type FanoutState,
+  type RecipientOutcome,
+} from '../lib/fanoutResume';
 import {
   AudienceArgsShape,
   MAX_AUDIENCE,
@@ -80,6 +88,21 @@ export type MarketingKey = (typeof MARKETING_KEYS)[number];
  * See `lib/sendIdempotency.ts` for why the claim is a `create()` rather than a
  * read-then-write, and `#644` / `#646` for the booking-create precedent this
  * copies.
+ *
+ * ── AND WHY THE FAN-OUT NO LONGER LIVES IN THIS INVOCATION (#823) ───────────
+ * `timeoutSeconds` is 540, the ceiling a 2nd-gen function may ask for, and
+ * MAX_AUDIENCE is 5000 at five to six sequential Firestore round trips each.
+ * Twenty minutes of work against a nine-minute wall: a blast to a large
+ * audience could not finish here, and nothing resumed it.
+ *
+ * So the roster is now FROZEN into `{blast}/fanoutChunks` before anything is
+ * queued, this invocation walks it for [INLINE_FANOUT_BUDGET_MS], and
+ * `scheduled/outboundFanoutSweep.ts` finishes whatever is left. One recipient
+ * is reached exactly once across every worker that ever touches the blast,
+ * because each is claimed with a `create()` on `{blast}/fanoutRecipients/{id}` ,
+ * the same server-refereed write this file's own idempotency key uses, one
+ * level down. `lib/fanoutResume.ts` has the whole argument, including why a
+ * cron sweep rather than Cloud Tasks and what that costs in vCPU.
  */
 export const Args = z
   .object({
@@ -124,9 +147,22 @@ export interface ScheduleMarketingBlastResult {
    * first attempt is still running (the usual case for a retry that beat it) or
    * it died part-way. The counts are then what is stored so far, not a total,
    * and the screen must not report them as one.
+   *
+   * #823 made this a state with a way out rather than only a warning: a pending
+   * fan-out is resumed by `outboundFanoutSweep`, and `queued` / `audienceSize`
+   * below say how far it has got.
    */
   pending: boolean;
+  /**
+   * #823. Recipients accounted for so far, out of [audienceSize]. Equal when the
+   * fan-out is finished. These are what the "Sending, N of M" line on both
+   * screens is drawn from.
+   */
+  queued: number;
+  /** #823. The frozen roster's size: every recipient this blast will reach. */
+  audienceSize: number;
 }
+
 
 /**
  * Answers a retry from the row the first attempt already wrote.
@@ -158,7 +194,110 @@ function replayBlast(
     suppressed: storedCount(stored, 'suppressed'),
     failed: storedCount(stored, 'failed'),
     deduped: true,
-    pending: stored['fanoutState'] !== 'complete',
+    // `=== 'running'`, not `!== 'complete'`, since #823 added 'cancelled' to the
+    // domain. A cancelled fan-out is FINISHED, and calling it pending would tell
+    // the operator to keep waiting for counts that will never move again.
+    pending: stored['fanoutState'] === 'running',
+    queued: storedCount(stored, 'fanoutProcessed'),
+    audienceSize: storedCount(stored, 'fanoutTotal'),
+  };
+}
+
+/**
+ * The per-recipient send, and it stays in THIS file on purpose.
+ *
+ * `test/notificationProvenance.test.ts` asserts that the set of files calling
+ * `enqueueNotification` is exactly the set named in `notifications/provenance.ts`,
+ * and that a file claiming to emit a key contains that key literally. Both
+ * hold only while the dispatch call and the `MARKETING_KEYS` literals live
+ * here. The resumable fan-out in `lib/fanoutResume.ts` therefore takes this
+ * closure as an argument rather than importing the dispatcher itself.
+ */
+export function blastSender(ctx: {
+  blastId: string;
+  key: MarketingKey;
+  data: Record<string, unknown>;
+  fireAtMs: number;
+  actorUid: string;
+}): (uid: string) => Promise<RecipientOutcome> {
+  return async (uid: string): Promise<RecipientOutcome> => {
+    try {
+      const ids = await enqueueNotification({
+        key: ctx.key,
+        recipientUid: uid,
+        // `blastId` is what `cancelMarketingBlast` queries on, and `audienceUid`
+        // is kept from the original shape so nothing downstream that read it
+        // starts seeing undefined.
+        data: { ...ctx.data, audienceUid: uid, blastId: ctx.blastId },
+        fireAtMs: ctx.fireAtMs,
+        actorUid: ctx.actorUid,
+      });
+      return ids.length === 0 ? 'suppressed' : 'sent';
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'scheduleMarketingBlast',
+        event: 'notification.dispatch.failed',
+        uid: ctx.actorUid,
+        extra: {
+          key: ctx.key,
+          blastId: ctx.blastId,
+          recipientUid: uid,
+          err: (err as Error)?.message,
+        },
+      });
+      return 'failed';
+    }
+  };
+}
+
+/**
+ * Resumes a blast the sweep found mid-fan-out.
+ *
+ * Lives here rather than in the sweep for the provenance reason above: the
+ * dispatch call and the campaign-key literals must stay in the file
+ * `notifications/provenance.ts` names as their emitter, and the sweep is not
+ * that file.
+ */
+export async function resumeBlastFanout(opts: {
+  blastId: string;
+  row: Record<string, unknown>;
+  workerId: string;
+  deadlineMs: number;
+}): Promise<{ ran: boolean; complete: boolean; processed: number; total: number; cancelled: boolean }> {
+  const { blastId, row, workerId, deadlineMs } = opts;
+  const ref = db().collection(BLASTS_COLLECTION).doc(blastId);
+  const key = row['key'];
+  if (!(MARKETING_KEYS as readonly string[]).includes(key as string)) {
+    throw new Error(`marketingBlasts/${blastId} carries an unknown campaign key.`);
+  }
+  const run = await runFanout({
+    ref,
+    workerId,
+    deadlineMs,
+    sendOne: blastSender({
+      blastId,
+      key: key as MarketingKey,
+      data: (row['data'] ?? {}) as Record<string, unknown>,
+      fireAtMs: storedCount(row, 'fireAtMs'),
+      actorUid: typeof row['scheduledByUid'] === 'string' ? row['scheduledByUid'] : '',
+    }),
+    fnName: 'outboundFanoutSweep',
+  });
+  if (run.ran) {
+    await releaseFanoutLease({
+      ref,
+      workerId,
+      patch: run.complete ? { fanoutState: 'complete' satisfies FanoutState } : {},
+      fnName: 'outboundFanoutSweep',
+    });
+  }
+  return {
+    ran: run.ran,
+    complete: run.complete,
+    processed: run.processed,
+    total: run.total,
+    cancelled: run.cancelled,
   };
 }
 
@@ -166,6 +305,19 @@ export async function scheduleMarketingBlastHandler(
   req: CallableRequest<unknown>,
 ): Promise<ScheduleMarketingBlastResult> {
   initSentry();
+  /**
+   * #823. The fan-out's deadline is measured from HERE, not from the moment the
+   * roster is armed.
+   *
+   * What the operator's client is waiting on is the whole request, and the
+   * audience resolve ahead of the fan-out is a scan of the entire kinfolk
+   * collection, which is seconds at five thousand rows. A budget started after
+   * it would let the reply land at resolve + 15s + release + audit, which is
+   * within a whisker of the client's own 20-second ceiling, and blowing that
+   * puts the operator back on the timeout / retry / dedupe-replay path this
+   * whole change exists to keep them off.
+   */
+  const enteredAtMs = Date.now();
   const actorUid = req.auth?.uid;
   if (!actorUid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
@@ -215,6 +367,12 @@ export async function scheduleMarketingBlastHandler(
   // fireAtMs and cancelledAt, because a stored status would go stale the moment
   // the sweep fires and nothing would be there to correct it.
   const ref = args.idempotencyKey ? blasts.doc(args.idempotencyKey) : blasts.doc();
+  const startedAtMs = Date.now();
+  // #823. This invocation's own name, so the lease it takes below is its own
+  // and `releaseFanoutLease` cannot evict a successor that legitimately took
+  // over. Random rather than derived from the request: two attempts at one
+  // submission must not look like the same worker.
+  const workerId = `callable-${startedAtMs.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const row = {
     key: args.key,
     title: args.title?.trim() ?? '',
@@ -228,12 +386,26 @@ export async function scheduleMarketingBlastHandler(
     data: args.data,
     scheduledByUid: actorUid,
     cancelledAt: null,
-    createdAtMs: Date.now(),
+    createdAtMs: startedAtMs,
     createdAt: FieldValue.serverTimestamp(),
-    // #814. 'running' until the loop below finishes. A row still saying
-    // 'running' after the invocation ended is a fan-out that was killed
-    // part-way, which is a different fact from a blast that queued nothing.
+    // #814. 'running' until the fan-out finishes. #823 made that a state the
+    // system can act on rather than only report: a row still saying 'running'
+    // is a fan-out the sweep will pick up and finish.
     fanoutState: 'running' satisfies FanoutState,
+    cancelRequestedAtMs: null,
+    // #823. The lease is taken HERE, in the claim itself, rather than after the
+    // roster is written. Otherwise there is a window in which the row says
+    // 'running', the roster is half-written, and the sweep is entitled to walk
+    // it. `fanoutRosterReady` closes the other half of that window.
+    fanoutLeaseOwner: workerId,
+    fanoutLeaseExpiresAtMs: startedAtMs + LEASE_MS,
+    fanoutUpdatedAtMs: startedAtMs,
+    fanoutRosterReady: false,
+    fanoutTotal: audience.uids.length,
+    fanoutProcessed: 0,
+    dispatched: 0,
+    suppressed: 0,
+    failed: 0,
   };
 
   if (args.idempotencyKey) {
@@ -250,39 +422,39 @@ export async function scheduleMarketingBlastHandler(
     await ref.set(row);
   }
 
-  let dispatched = 0;
-  let suppressed = 0;
-  let failed = 0;
-  for (const uid of audience.uids) {
-    try {
-      const ids = await enqueueNotification({
-        key: args.key,
-        recipientUid: uid,
-        // `blastId` is what `cancelMarketingBlast` queries on, and `audienceUid`
-        // is kept from the original shape so nothing downstream that read it
-        // starts seeing undefined.
-        data: { ...args.data, audienceUid: uid, blastId: ref.id },
-        fireAtMs: args.fireAtMs,
-        actorUid,
-      });
-      if (ids.length === 0) suppressed += 1;
-      else dispatched += 1;
-    } catch (err) {
-      failed += 1;
-      logEvent({
-        severity: 'warn',
-        function: 'scheduleMarketingBlast',
-        event: 'notification.dispatch.failed',
-        uid: actorUid,
-        extra: { key: args.key, blastId: ref.id, recipientUid: uid, err: (err as Error)?.message },
-      });
-    }
-  }
+  // #823. The roster is frozen into `{blast}/fanoutChunks` BEFORE anything is
+  // queued, and it is what a resume walks. The lease was taken in the row above,
+  // so the sweep cannot pick this blast up while this invocation is on it.
+  const roster = await writeFanoutRoster({
+    ref,
+    attempt: 0,
+    recipientIds: audience.uids,
+    nowMs: startedAtMs,
+  });
+  await ref.set(roster.fields, { merge: true });
 
-  await ref.set(
-    { dispatched, suppressed, failed, fanoutState: 'complete' satisfies FanoutState },
-    { merge: true },
-  );
+  const run = await runFanout({
+    ref,
+    workerId,
+    armed: { row: { ...row, ...roster.fields }, chunks: roster.chunks },
+    // THE INLINE BUDGET, measured against the CLIENT's, not the platform's, and
+    // from the REQUEST's start rather than the fan-out's. See `enteredAtMs`.
+    deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
+    sendOne: blastSender({ blastId: ref.id, key: args.key, data: args.data, fireAtMs: args.fireAtMs, actorUid }),
+    fnName: 'scheduleMarketingBlast',
+    leaseHeld: true,
+  });
+
+  await releaseFanoutLease({
+    ref,
+    workerId,
+    patch: run.complete ? { fanoutState: 'complete' satisfies FanoutState } : {},
+    fnName: 'scheduleMarketingBlast',
+  });
+
+  const dispatched = run.totals.sent;
+  const suppressed = run.totals.suppressed;
+  const failed = run.totals.failed + run.totals.abandoned;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -291,7 +463,13 @@ export async function scheduleMarketingBlastHandler(
     actorRole: 'AUNTIE',
     actorUid,
     targetCollection: BLASTS_COLLECTION,
-    description: `Marketing blast scheduled: ${args.key} to ${audience.description} (${dispatched} scheduled, ${suppressed} suppressed)`,
+    // The audit sentence says whether the fan-out FINISHED, because "412
+    // scheduled" and "412 of 5000 scheduled so far, the sweep has the rest" are
+    // different facts and the first one read alone would be a lie about the
+    // second (#823).
+    description: run.complete
+      ? `Marketing blast scheduled: ${args.key} to ${audience.description} (${dispatched} scheduled, ${suppressed} suppressed)`
+      : `Marketing blast scheduled: ${args.key} to ${audience.description}, fan-out handed to outboundFanoutSweep at ${run.processed} of ${run.total} (${dispatched} scheduled, ${suppressed} suppressed so far)`,
     payload: {
       blastId: ref.id,
       key: args.key,
@@ -300,6 +478,9 @@ export async function scheduleMarketingBlastHandler(
       dispatched,
       suppressed,
       failed,
+      fanoutComplete: run.complete,
+      fanoutProcessed: run.processed,
+      fanoutTotal: run.total,
     },
   }).catch((err) => {
     logEvent({
@@ -321,7 +502,12 @@ export async function scheduleMarketingBlastHandler(
     suppressed,
     failed,
     deduped: false,
-    pending: false,
+    // #823. Honest about what this invocation actually finished. `false` means
+    // the roster is exhausted; `true` means the sweep has the rest, and the
+    // two counts below say how much of it.
+    pending: !run.complete,
+    queued: run.processed,
+    audienceSize: run.total,
   };
 }
 
@@ -340,6 +526,13 @@ export const scheduleMarketingBlast = onCall(
   // sees. 540 is the ceiling the platform allows; past it the fan-out has to
   // leave the request path entirely, and the row's `fanoutState` is what makes
   // that visible when it happens.
+  //
+  // #823 IS THAT "past it". The handler now stops fanning out after 15 seconds
+  // and hands the remainder to `outboundFanoutSweep`, so 540 is no longer the
+  // budget it spends, it is headroom for the audience resolve, the roster
+  // commit and an unlucky burst of slow round trips. It is kept rather than
+  // lowered because a timeout is a hard kill and there is nothing to gain from
+  // making one more likely.
   {
     region: 'us-central1',
     cors: TRIBETAILS_CORS,

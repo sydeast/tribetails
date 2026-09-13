@@ -245,9 +245,120 @@ class MarketingBlastTest {
     }
 
     @Test
-    fun `decodeCancelledCount reads the removed count`() {
-        assertEquals(12, decodeCancelledCount(mapOf("cancelled" to 12)))
-        assertEquals(0, decodeCancelledCount(null))
+    fun `decodeCancelResult reads the removed count`() {
+        val res = decodeCancelResult(mapOf("cancelled" to 12, "stopped" to true, "neverQueued" to 0))
+        assertEquals(12, res.cancelled)
+        assertEquals(true, res.stopped)
+        assertEquals(0, decodeCancelResult(null).cancelled)
+    }
+
+    /**
+     * #823. A cancel that lands mid fan-out cannot prove the worker stopped, so
+     * the server says so and this must carry it through rather than flattening
+     * it to a count the screen would announce as final.
+     */
+    @Test
+    fun `decodeCancelResult carries through that a mid fan-out cancel has not finished`() {
+        val res = decodeCancelResult(mapOf("cancelled" to 120, "stopped" to false, "neverQueued" to 780))
+        assertEquals(false, res.stopped)
+        assertEquals(780, res.neverQueued)
+    }
+
+    @Test
+    fun `decodeCancelResult reads a reply with no stop fields as a cancel that DID finish`() {
+        // A backend older than #823 really did finish the cancel synchronously,
+        // so `stopped` defaults true. Defaulting the other way would put "It
+        // finishes stopping within a minute" under every cancel on a deployment
+        // where nothing is left to stop.
+        assertEquals(true, decodeCancelResult(mapOf("cancelled" to 4)).stopped)
+    }
+
+    @Test
+    fun `cancelNotice says Cancelled only when the fan-out was already finished`() {
+        assertEquals(
+            "Cancelled. 3 queued notifications removed.",
+            cancelNotice(CancelBlastResult(cancelled = 3, stopped = true)),
+        )
+        assertEquals(
+            true,
+            cancelNotice(CancelBlastResult(cancelled = 1, stopped = true)).contains("1 queued notification removed"),
+        )
+    }
+
+    @Test
+    fun `cancelNotice refuses to claim a mid fan-out cancel finished`() {
+        // The callable stamps a request and the sweep confirms it. Saying
+        // "Cancelled" here would restore exactly the dishonesty #823 removed
+        // from the server: a row that reads cancelled while the loop keeps
+        // queueing.
+        val text = cancelNotice(CancelBlastResult(cancelled = 120, stopped = false, neverQueued = 780))
+        assertEquals(true, text.startsWith("Stopping."))
+        assertEquals(true, text.contains("780 were never queued"))
+        assertEquals(false, text.contains("Cancelled."))
+    }
+
+    // ── #823: the still-queueing progress line ───────────────────────────────
+
+    @Test
+    fun `sendingLabel reads as the mock does, how many of how many`() {
+        assertEquals("256 of 410 queued", sendingLabel(256, 410, stalled = false))
+    }
+
+    @Test
+    fun `sendingLabel names a stalled fan-out rather than calling it slow`() {
+        // "still sending" about a campaign that stopped moving twenty minutes
+        // ago is a progress bar telling a lie.
+        val text = sendingLabel(256, 410, stalled = true)
+        assertEquals(true, text.startsWith("Stopped at 256 of 410"))
+        assertEquals(true, text.contains("picks up again"))
+    }
+
+    @Test
+    fun `sendingLabel invents no denominator for a campaign written before the roster existed`() {
+        assertEquals("12 queued", sendingLabel(12, 0, stalled = false))
+    }
+
+    @Test
+    fun `scheduleNotice says where a handed-off fan-out reached and that it continues`() {
+        val text = scheduleNotice(
+            ScheduleBlastResult(dispatched = 61, suppressed = 4, pending = true, queued = 65, audienceSize = 900),
+            "Fri 9am",
+        )
+        assertEquals(true, text.contains("Scheduled for Fri 9am"))
+        assertEquals(true, text.contains("65 of 900"))
+        assertEquals(true, text.contains("carries on in the background"))
+        // Never the counts, which describe one leg and not the send.
+        assertEquals(false, text.contains("61 queued, 4 suppressed"))
+    }
+
+    @Test
+    fun `decodeBlasts reads the fan-out progress a sending campaign carries`() {
+        val rows = decodeBlasts(
+            mapOf(
+                "blasts" to listOf(
+                    mapOf(
+                        "id" to "b1",
+                        "status" to "sending",
+                        "fanoutState" to "running",
+                        "queued" to 256,
+                        "audienceSize" to 410,
+                    ),
+                ),
+            ),
+        )
+        assertEquals(BlastStatus.Sending, rows[0].status)
+        assertEquals(BlastFanoutState.Running, rows[0].fanoutState)
+        assertEquals(256, rows[0].queued)
+        assertEquals(410, rows[0].audienceSize)
+        assertEquals(256f / 410f, rows[0].progress)
+    }
+
+    @Test
+    fun `a campaign from a backend with no progress fields is not drawn as in flight`() {
+        // A progress bar that could never move would be worse than none.
+        val rows = decodeBlasts(mapOf("blasts" to listOf(mapOf("id" to "b1", "status" to "sent"))))
+        assertEquals(BlastFanoutState.Complete, rows[0].fanoutState)
+        assertEquals(0f, rows[0].progress)
     }
 
     // ── error text ───────────────────────────────────────────────────────────
@@ -302,6 +413,34 @@ class MarketingBlastTest {
             failed = 0,
         )
         assertTrue(blastMeta(row).contains("3 sent, 1 suppressed"))
+    }
+
+    @Test
+    fun `a failed row that queued nothing says so, and one that queued copies does not`() {
+        // #823. Both rows are Failed, and they are not the same event. The first
+        // is a claim whose roster never armed: nothing left the building. The
+        // second is a row the pre-#823 build stranded mid fan-out, and it is the
+        // population the issue was filed about. Printing "never queued" over 61
+        // sent copies is the confident wrong number.
+        val base = MarketingBlastRow(
+            id = "b3",
+            key = "newsletter.announcement",
+            title = "June",
+            fireAtMs = 1L,
+            status = BlastStatus.Failed,
+            audienceDescription = "All active kinfolk",
+            matched = 900,
+            noLinkedAccount = 0,
+            dispatched = 0,
+            suppressed = 0,
+            failed = 0,
+        )
+        assertTrue(blastMeta(base).contains("never queued"))
+
+        val stranded = base.copy(id = "b4", dispatched = 61, suppressed = 4)
+        val meta = blastMeta(stranded)
+        assertTrue(meta.contains("61 sent, 4 suppressed, stopped part-way"))
+        assertTrue(!meta.contains("never queued"))
     }
 
     @Test

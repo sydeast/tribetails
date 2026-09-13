@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   blastBlocker,
+  cancelNotice,
   fireAtMsFrom,
   mergeFieldsToData,
   parseUidList,
   scheduleNotice,
+  sendingLabel,
 } from './marketingBlastEdit';
 
 describe('parseUidList', () => {
@@ -100,7 +102,7 @@ describe('blastBlocker', () => {
   });
 });
 describe('scheduleNotice (#814)', () => {
-  const counts = { dispatched: 9, suppressed: 1, failed: 0 };
+  const counts = { dispatched: 9, suppressed: 1, failed: 0, queued: 10, audienceSize: 10 };
   it('reports a fresh blast with its counts', () => {
     expect(scheduleNotice({ ...counts, deduped: false, pending: false }, 'Fri 9am')).toBe(
       'Scheduled for Fri 9am. 9 queued, 1 suppressed.',
@@ -124,5 +126,57 @@ describe('scheduleNotice (#814)', () => {
     const text = scheduleNotice({ ...counts, deduped: true, pending: true }, 'Fri 9am');
     expect(text).toContain('still queueing');
     expect(text).not.toContain('9 queued');
+  });
+  /**
+   * #823: the hand-off reply, which is now the ORDINARY one for any audience
+   * past about sixty households. The old copy said "Scheduled for Fri 9am. 61
+   * queued, 4 suppressed." for a send that was a tenth done, which is the exact
+   * confident-wrong-number the deduped branch above already refuses.
+   */
+  it('says where a handed-off fan-out reached, out of how many, and that it continues', () => {
+    const text = scheduleNotice(
+      { ...counts, dispatched: 61, suppressed: 4, deduped: false, pending: true, queued: 65, audienceSize: 900 },
+      'Fri 9am',
+    );
+    expect(text).toContain('Scheduled for Fri 9am');
+    expect(text).toContain('65 of 900');
+    expect(text).toContain('carries on in the background');
+    // Never the per-channel totals, which describe one leg and not the send.
+    expect(text).not.toContain('61 queued, 4 suppressed');
+  });
+});
+describe('sendingLabel (#823)', () => {
+  it('reads as the mock does: how many of how many', () => {
+    expect(sendingLabel(256, 410, false)).toBe('256 of 410 queued');
+  });
+  it('names a stalled fan-out rather than calling it slow', () => {
+    // "still sending" about a campaign that stopped moving twenty minutes ago is
+    // a progress bar telling a lie.
+    const text = sendingLabel(256, 410, true);
+    expect(text).toContain('Stopped at 256 of 410');
+    expect(text).toContain('picks up again');
+  });
+  it('does not invent a denominator for a campaign written before the roster existed', () => {
+    expect(sendingLabel(12, 0, false)).toBe('12 queued');
+  });
+});
+describe('cancelNotice (#823)', () => {
+  it('says Cancelled only when the fan-out was already finished', () => {
+    expect(cancelNotice({ cancelled: 3, stopped: true, neverQueued: 0 })).toBe(
+      'Cancelled. 3 queued notifications removed.',
+    );
+  });
+  it('refuses to claim a mid-fan-out cancel finished, because the server refused to', () => {
+    // The callable stamps a request and the sweep confirms it. Saying
+    // "Cancelled" here would restore exactly the dishonesty #823 removed from
+    // the server: a row that reads cancelled while the loop keeps queueing.
+    const text = cancelNotice({ cancelled: 120, stopped: false, neverQueued: 780 });
+    expect(text).toContain('Stopping.');
+    expect(text).toContain('120 queued notifications removed');
+    expect(text).toContain('780 were never queued');
+    expect(text).not.toContain('Cancelled.');
+  });
+  it('gets the singular right for one removed copy', () => {
+    expect(cancelNotice({ cancelled: 1, stopped: true, neverQueued: 0 })).toContain('1 queued notification removed');
   });
 });

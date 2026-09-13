@@ -144,6 +144,11 @@ describe('scheduleBlast', () => {
       failed: 0,
       deduped: false,
       pending: false,
+      // #823. A backend that sends neither reads as a fan-out with nothing
+      // measured rather than one that finished, which is what `pending: false`
+      // beside it already says.
+      queued: 0,
+      audienceSize: 0,
     });
   });
   /**
@@ -231,9 +236,40 @@ describe('listMarketingBlasts', () => {
 describe('cancelMarketingBlast', () => {
   it('returns how many queued notifications were removed', async () => {
     callMock.mockReset();
-    callMock.mockResolvedValue({ ok: true, cancelled: 12 });
-    await expect(cancelMarketingBlast('b1')).resolves.toBe(12);
+    callMock.mockResolvedValue({ ok: true, cancelled: 12, stopped: true, neverQueued: 0 });
+    await expect(cancelMarketingBlast('b1')).resolves.toEqual({
+      cancelled: 12,
+      stopped: true,
+      neverQueued: 0,
+    });
     expect(callMock).toHaveBeenCalledWith('cancelMarketingBlast', { blastId: 'b1' });
+  });
+  /**
+   * #823. A cancel that lands mid fan-out cannot prove the worker stopped, so
+   * the server says so and this must carry that through rather than flattening
+   * it back to a count the screen would announce as final.
+   */
+  it('carries through that a mid fan-out cancel has not finished stopping', async () => {
+    callMock.mockReset();
+    callMock.mockResolvedValue({ ok: true, cancelled: 120, stopped: false, neverQueued: 780 });
+    await expect(cancelMarketingBlast('b1')).resolves.toEqual({
+      cancelled: 120,
+      stopped: false,
+      neverQueued: 780,
+    });
+  });
+  it('reads a reply with no stop fields as a cancel that DID finish', async () => {
+    // A backend older than #823 really did finish the cancel synchronously, so
+    // `stopped` defaults true rather than false. Defaulting the other way would
+    // put "It finishes stopping within a minute" under every cancel on a
+    // deployment where nothing is left to stop.
+    callMock.mockReset();
+    callMock.mockResolvedValue({ ok: true, cancelled: 4 });
+    await expect(cancelMarketingBlast('b1')).resolves.toEqual({
+      cancelled: 4,
+      stopped: true,
+      neverQueued: 0,
+    });
   });
 
   it('lets the server rejection through rather than swallowing it', async () => {

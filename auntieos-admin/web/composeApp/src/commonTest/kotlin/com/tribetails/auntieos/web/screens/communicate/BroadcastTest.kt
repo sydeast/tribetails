@@ -120,6 +120,35 @@ class BroadcastTest {
         assertTrue(broadcastErrorText("FAILED_PRECONDITION: no_recipients").contains("no kinfolk", ignoreCase = true))
         assertTrue(broadcastErrorText("UNAVAILABLE: broadcast_all_failed").contains("failed", ignoreCase = true))
         assertEquals("raw provider boom", broadcastErrorText("raw provider boom"))
+        // #823's stopBroadcast sentinels. Both mean the stop was a no-op, and
+        // raw sentinel text would read as a failure neither one is.
+        assertTrue(
+            broadcastErrorText("FAILED_PRECONDITION: already_finished")
+                .contains("already finished", ignoreCase = true),
+        )
+        assertTrue(
+            broadcastErrorText("FAILED_PRECONDITION: already_stopping")
+                .contains("already going through", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun broadcastSummary_does_not_claim_a_send_that_is_still_running() {
+        // #823. recipientCount is the whole audience whether or not the fan-out
+        // finished, so a pending reply must not be summarised as a finished one.
+        val pending = BroadcastResult(
+            broadcastId = "b1",
+            recipientCount = 900,
+            perChannel = mapOf("email" to ChannelCounts(sent = 61, skipped = 0, failed = 0)),
+            pending = true,
+            sent = 61,
+        )
+        val text = broadcastSummary(pending)
+        assertTrue(text.contains("Still sending: 61 of 900"))
+        assertTrue(!text.contains("Reached 900"))
+
+        val done = pending.copy(pending = false, sent = 900)
+        assertTrue(broadcastSummary(done).startsWith("Reached 900 kinfolk."))
     }
 
     @Test fun summaryMentionsRecipientCountAndChannels() {
