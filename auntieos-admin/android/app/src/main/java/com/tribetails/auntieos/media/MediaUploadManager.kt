@@ -118,6 +118,13 @@ class MediaUploadManager(
                 uploadedBy = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "auntie",
                 tags = tags,
                 description = description,
+                // #802. TOP-LEVEL field, matching web's `durationSeconds` byte for
+                // byte -- see MediaFile's field comment. `metadata.duration` below
+                // is a second, older copy of the same value that nothing on web
+                // (or this app's own readers, as of #802) ever looks at; kept for
+                // now rather than removed, but this is the field every renderer
+                // reads.
+                durationSeconds = uploadResult.durationSeconds ?: 0,
                 metadata = MediaMetadata(
                     width = uploadResult.width,
                     height = uploadResult.height,

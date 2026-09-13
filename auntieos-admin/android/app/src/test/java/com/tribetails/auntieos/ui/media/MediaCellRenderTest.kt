@@ -78,4 +78,37 @@ class MediaCellRenderTest {
         composeRule.onAllNodesWithText("Profile").assertCountEquals(0)
         composeRule.onNodeWithText("2026-05-27 · jo@tribetails.com").assertIsDisplayed()
     }
+
+    // ── #802: video duration badge ───────────────────────────────────────────
+    //
+    // Unlike the kit's `AuntieMediaCell` (whose play/duration overlay only
+    // shows once its own thumbnail has loaded), `MediaThumbnail`'s VIDEO
+    // branch paints the play glyph and this badge unconditionally alongside
+    // the AsyncImage, so it renders here without a real network fetch.
+
+    private fun videoMedia(durationSeconds: Int) = MediaFile(
+        id = "v1",
+        fileType = MediaType.VIDEO,
+        durationSeconds = durationSeconds,
+    )
+
+    @Test
+    fun `video with a known duration shows the m colon ss badge`() {
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(mediaFile = videoMedia(durationSeconds = 75), onDelete = {})
+            }
+        }
+        composeRule.onNodeWithText("1:15").assertIsDisplayed()
+    }
+
+    @Test
+    fun `video with no known duration shows no fabricated 0 colon 00 badge`() {
+        composeRule.setContent {
+            AuntieOSTheme {
+                MediaThumbnail(mediaFile = videoMedia(durationSeconds = 0), onDelete = {})
+            }
+        }
+        composeRule.onAllNodesWithText("0:00").assertCountEquals(0)
+    }
 }

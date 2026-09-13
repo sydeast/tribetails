@@ -84,6 +84,7 @@ import com.tribetails.auntieos.ui.components.EmptyHint
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.LoadingHint
 import com.tribetails.auntieos.ui.components.MediaCellGlyphs
+import com.tribetails.auntieos.ui.components.mediaDurationLabel
 import com.tribetails.auntieos.ui.components.PrimaryButton
 import com.tribetails.auntieos.ui.components.SegmentedPicker
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -574,6 +575,16 @@ private fun MediaViewerDialog(
                     style = AuntieTheme.typography.labelSmall,
                     color = c.textDim,
                 )
+                // #802. Parity with web's MediaViewerDialog, which folds this into
+                // its meta line as "Duration m:ss"; null (no duration known) omits
+                // the line entirely rather than showing a fabricated "0:00".
+                mediaDurationLabel(media.durationSeconds)?.let { label ->
+                    Text(
+                        "Duration $label",
+                        style = AuntieTheme.typography.labelSmall,
+                        color = c.textDim,
+                    )
+                }
             }
             if (media.description.isNotBlank()) {
                 Text(media.description, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
