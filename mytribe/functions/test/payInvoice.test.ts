@@ -462,6 +462,8 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     amountDue: 12.5,
     ...over,
   });
+
+  /** Runs one call and hands back the key that actually reached Stripe. */
   async function mint(docs: Record<string, unknown>, data: Record<string, unknown> = args) {
     const ctx = buildDbMock({ docs: { ...baseDocs, ...docs } as any });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -469,6 +471,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     await payInvoiceHandler({ data, auth: { uid: 'u1' } } as any);
     return mocks.stripeMock.checkout.sessions.create.mock.calls[0][1]?.idempotencyKey;
   }
+
   it('sends no request options at all when the caller supplied no key', async () => {
     const key = await mint({ 'invoices/inv-1': invoice() }, {
       invoiceId: 'inv-1',
@@ -477,10 +480,12 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     });
     expect(key).toBeUndefined();
   });
+
   it('derives the Stripe key from the caller key, the round and the amount', async () => {
     const key = await mint({ 'invoices/inv-1': invoice({ stripeCheckoutRound: 2 }) });
     expect(key).toBe('chk_1757700000000_ab12cd_r2_1250');
   });
+
   it('sends the SAME Stripe key for a retry of one submission at one balance', async () => {
     // The whole point. Two attempts, nothing changed in between, so Stripe
     // replays the first session instead of opening a second live checkout.
@@ -489,6 +494,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     const second = await mint({ 'invoices/inv-1': invoice() });
     expect(second).toBe(first);
   });
+
   it('sends a DIFFERENT Stripe key once the balance has moved', async () => {
     // #826 mints a fresh session when the amount no longer matches. If the key
     // did not move with it, Stripe would refuse the changed body and a
@@ -500,12 +506,14 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     expect(after).not.toBe(before);
     expect(after).toBe('chk_1757700000000_ab12cd_r0_750');
   });
+
   it('sends a DIFFERENT Stripe key once the settlement round has closed', async () => {
     const before = await mint({ 'invoices/inv-1': invoice() });
     mocks.stripeMock.checkout.sessions.create.mockClear();
     const after = await mint({ 'invoices/inv-1': invoice({ stripeCheckoutRound: 1 }) });
     expect(after).not.toBe(before);
   });
+
   it('gives the card-only fallback its own key, because it sends a different body', async () => {
     const ctx = buildDbMock({
       docs: {
@@ -531,6 +539,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     // is trying to settle.
     expect(calls[1][1]?.idempotencyKey).toBe('chk_1757700000000_ab12cd_r0_1250_card');
   });
+
   it('never reaches Stripe at all when the reuse answers first', async () => {
     // Layer order: the reuse runs BEFORE the create, so a session that can be
     // handed back costs no Stripe write and consumes no key.
@@ -557,6 +566,7 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
     expect(res.sessionId).toBe('cs_open_1');
   });
 });
+
 describe('payInvoice checkout round and session reuse (issue #826)', () => {
   const baseDocs = {
     'clients/u1': { kinfolkIds: ['3'] },
