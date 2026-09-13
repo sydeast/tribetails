@@ -28,6 +28,8 @@ import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
 
 const PAGE_SIZE = 20;
@@ -101,6 +103,7 @@ export function KinTales() {
     );
   }
 
+  const firstPageView = viewOfQuery(firstPage);
   const allTales = [...(firstPage.data?.tales ?? []), ...extraPages];
   const filtered = filterTales(allTales, filter);
   const hasMore = hasMoreOverride ?? firstPage.data?.hasMore ?? false;
@@ -134,7 +137,9 @@ export function KinTales() {
           ))}
         </div>
 
-        {firstPage.isLoading ? (
+        {firstPageView.kind === 'offline' ? (
+          <OfflineNotice what="your KinTales" />
+        ) : firstPageView.kind !== 'data' ? (
           <p className="sub">Loading your KinTales…</p>
         ) : !featuredTale ? (
           <section className="glass card emptystate">
@@ -164,7 +169,7 @@ export function KinTales() {
           </>
         )}
 
-        {hasMore && !firstPage.isLoading && (
+        {hasMore && firstPageView.kind === 'data' && (
           <div className="loadmore">
             <button
               className="btn ghost"
@@ -195,6 +200,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
     enabled: galleryOpen && tale.mediaIds.length > 0,
   });
 
+  const mediaView = viewOfQuery(media);
   const headline = tale.title || tale.body.slice(0, featured ? 90 : 70);
   const meta = taleMetaLabel(tale);
   const paragraphs = tale.body.split(/\n+/).filter((p) => p.length > 0);
@@ -216,10 +222,12 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
         </button>
       </div>
       {galleryOpen &&
-        (media.isLoading ? (
-          <p className="sub">Loading photos…</p>
-        ) : media.isError ? (
+        (mediaView.kind === 'offline' ? (
+          <OfflineNotice what="these photos" />
+        ) : mediaView.kind === 'error' ? (
           <p className="sub">Couldn&rsquo;t load photos.</p>
+        ) : mediaView.kind !== 'data' ? (
+          <p className="sub">Loading photos…</p>
         ) : (media.data?.media.length ?? 0) === 0 ? (
           <p className="sub">Photos no longer available. They may have expired.</p>
         ) : (
@@ -472,6 +480,10 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
     },
   });
 
+  // No offline arm, deliberately, and it is the PortalNav rule again: this
+  // renders a decoration, not a claim about the household's data. A paused read
+  // leaves `data` undefined, the button is simply absent, and an absent heart
+  // says nothing false. A love count of 0 would.
   if (reactionQuery.isLoading || !reactionQuery.data) {
     return null;
   }
@@ -571,6 +583,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
     );
   }
 
+  const commentsView = viewOfQuery(commentsQuery);
   const comments = commentsQuery.data?.comments ?? [];
   const { topLevel, repliesByParent } = threadComments(comments);
 
@@ -578,10 +591,12 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
     <div className="thread">
       <div className="thlabel">Comments {'·'} {comments.length}</div>
 
-      {commentsQuery.isLoading ? (
-        <p className="sub">Loading comments…</p>
-      ) : commentsQuery.isError ? (
+      {commentsView.kind === 'offline' ? (
+        <OfflineNotice what="the comments" />
+      ) : commentsView.kind === 'error' ? (
         <p className="sub">Couldn&rsquo;t load comments.</p>
+      ) : commentsView.kind !== 'data' ? (
+        <p className="sub">Loading comments…</p>
       ) : topLevel.length === 0 ? (
         <p className="empty-cmt">Be the first to say something nice.</p>
       ) : (

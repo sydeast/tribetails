@@ -7,6 +7,8 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
 
 const FALLBACK = 'Not set';
@@ -41,7 +43,23 @@ export function KinDetail() {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
-  if (kin.isLoading) {
+  // Paused, this gate used to be false and the screen fell through to the
+  // `!found` card below: "we couldn't find that Kin", about a roster nobody
+  // ever read.
+  const kinView = viewOfQuery(kin);
+  if (kinView.kind === 'offline') {
+    return (
+      <>
+        <PortalNav active="tribe" />
+        <div className="wrap">
+          <section className="glass card">
+            <OfflineNotice what="this profile" />
+          </section>
+        </div>
+      </>
+    );
+  }
+  if (kinView.kind !== 'data') {
     return (
       <>
         <PortalNav active="tribe" />

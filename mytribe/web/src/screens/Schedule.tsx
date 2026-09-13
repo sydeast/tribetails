@@ -7,7 +7,9 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { useBreadcrumbs } from '../lib/breadcrumbs';
 import { RouteMap } from '../components/RouteMap';
 import { PortalNav } from '../components/PortalNav';
+import { OfflineNotice } from '../components/OfflineNotice';
 import { LaunchError } from './LaunchError';
+import { countLabel, countOfQuery, viewOfQuery } from '../lib/queryState';
 import { bookingChip, calTile, fullDateKick, isoTime, speciesEmoji, visitSubtitle, visitVariant } from '../lib/portalFormat';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 
@@ -32,6 +34,13 @@ function findBookingBySessionId(
  * that's the signal that also unlocks the breadcrumbs live map. getMyVisits
  * is best-effort: a failure there only drops the live map + replay data,
  * it never blocks the upcoming/recent lists (which come from getMyBookings).
+ *
+ * Every branch below goes through lib/queryState.ts rather than reading
+ * `isLoading` and a list length. A signal drop with the tab open PAUSES these
+ * queries, which leaves `isLoading` false, `isError` false and `data`
+ * undefined, and this screen used to answer that with "No upcoming bookings.
+ * Nothing on the calendar yet. Request a booking and your Auntie will confirm a
+ * time." Households booked the same visit twice off that sentence.
  */
 export function Schedule() {
   const [tab, setTab] = useState<Tab>('upcoming');
@@ -57,8 +66,14 @@ export function Schedule() {
     );
   }
 
-  const upcoming = bookings.data?.upcoming ?? [];
-  const past = bookings.data?.recent ?? [];
+  // `bookings.isError` is answered by the early return above and these queries
+  // are not gated, so 'error' and 'idle' are unreachable in the branches below;
+  // they fall in with loading rather than being given copy that cannot show.
+  const upcomingView = viewOfQuery(bookings, { isEmpty: (d) => d.upcoming.length === 0 });
+  const pastView = viewOfQuery(bookings, { isEmpty: (d) => d.recent.length === 0 });
+  const upcomingCount = countLabel(countOfQuery(bookings, (d) => d.upcoming.length));
+  const pastCount = countLabel(countOfQuery(bookings, (d) => d.recent.length));
+  const visitsView = viewOfQuery(visits);
   const visitsBySession = new Map((visits.data?.visits ?? []).map((v) => [v.id, v]));
 
   return (
@@ -80,13 +95,32 @@ export function Schedule() {
 
         <div className="tabrow" role="tablist" aria-label="Schedule view">
           <button className={tab === 'upcoming' ? 'act' : ''} role="tab" aria-selected={tab === 'upcoming'} onClick={() => setTab('upcoming')}>
-            Upcoming <span className="count">{upcoming.length}</span>
+            Upcoming{' '}
+            <span className="count" title={upcomingCount.hint ?? undefined} aria-label={upcomingCount.hint ?? undefined}>
+              {upcomingCount.text}
+            </span>
           </button>
           <button className={tab === 'past' ? 'act' : ''} role="tab" aria-selected={tab === 'past'} onClick={() => setTab('past')}>
-            Past Visits <span className="count">{past.length}</span>
+            Past Visits{' '}
+            <span className="count" title={pastCount.hint ?? undefined} aria-label={pastCount.hint ?? undefined}>
+              {pastCount.text}
+            </span>
           </button>
         </div>
 
+        {/*
+          The hero used to appear out of nothing: `visits.isLoading` was never
+          read, so between mount and the answer landing there was no sign the
+          screen was still deciding, and while paused there never would be one.
+          A compact line rather than a second full panel, because the card below
+          already carries the offline panel for the same outage.
+        */}
+        {!liveVisit && visitsView.kind === 'offline' && <OfflineNotice compact what="whether a visit is under way" />}
+        {!liveVisit && visitsView.kind === 'loading' && (
+          <p className="offline-line" role="status">
+            Checking whether a visit is under way&hellip;
+          </p>
+        )}
         {liveVisit && (
           <section className="live" aria-label="Visit in progress">
             <div className="lrow">
@@ -141,16 +175,18 @@ export function Schedule() {
             {tab === 'upcoming' ? (
               <section className="glass card d1" aria-label="Upcoming bookings">
                 <div className="sectlabel">Upcoming bookings</div>
-                {bookings.isLoading ? (
-                  <p className="sub">Loading your schedule…</p>
-                ) : upcoming.length === 0 ? (
+                {upcomingView.kind === 'offline' ? (
+                  <OfflineNotice what="your schedule" />
+                ) : upcomingView.kind === 'empty' ? (
                   <div className="empty">
                     <div className="ring">{'\u{1F4C5}'}</div>
                     <b>No upcoming bookings</b>
                     <p>Nothing on the calendar yet. Request a booking and your Auntie will confirm a time.</p>
                   </div>
+                ) : upcomingView.kind !== 'data' ? (
+                  <p className="sub">Loading your schedule…</p>
                 ) : (
-                  upcoming.map((b, i) => {
+                  upcomingView.data.upcoming.map((b, i) => {
                     const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
                     const chip = bookingChip(b.status);
                     return (
@@ -168,7 +204,7 @@ export function Schedule() {
                           <div className="pet">{speciesEmoji(null)}</div>
                           <span className={`chip ${chip.tone}`}>{chip.label}</span>
                         </Link>
-                        {i < upcoming.length - 1 && <div className="rowdiv" />}
+                        {i < upcomingView.data.upcoming.length - 1 && <div className="rowdiv" />}
                       </div>
                     );
                   })
@@ -177,16 +213,18 @@ export function Schedule() {
             ) : (
               <section className="glass card d2" aria-label="Past visits">
                 <div className="sectlabel">Past Visits</div>
-                {bookings.isLoading ? (
-                  <p className="sub">Loading your visit history…</p>
-                ) : past.length === 0 ? (
+                {pastView.kind === 'offline' ? (
+                  <OfflineNotice what="your visit history" />
+                ) : pastView.kind === 'empty' ? (
                   <div className="empty">
                     <div className="ring">{'\u{1F4DD}'}</div>
                     <b>No past visits</b>
                     <p>Completed visits will live here, each with a Visit Replays photo and note from your Auntie.</p>
                   </div>
+                ) : pastView.kind !== 'data' ? (
+                  <p className="sub">Loading your visit history…</p>
                 ) : (
-                  past.map((b, i) => {
+                  pastView.data.recent.map((b, i) => {
                     const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
                     const chip = bookingChip(b.status);
                     const visit = b.sessionId ? visitsBySession.get(b.sessionId) : undefined;
@@ -228,7 +266,7 @@ export function Schedule() {
                             <RouteMap route={route} distanceMeters={visit?.gpsSummary?.distanceMeters} durationSeconds={visit?.gpsSummary?.durationSeconds} />
                           </div>
                         )}
-                        {i < past.length - 1 && <div className="rowdiv" />}
+                        {i < pastView.data.recent.length - 1 && <div className="rowdiv" />}
                       </div>
                     );
                   })

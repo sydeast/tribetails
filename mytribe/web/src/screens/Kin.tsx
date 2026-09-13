@@ -6,6 +6,8 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
 
 const CARD_VARIANTS = ['p1', 'p2', 'p3', 'p4'] as const;
@@ -21,6 +23,7 @@ export function Kin() {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
+  const kinView = viewOfQuery(kin, { isEmpty: (d) => d.kin.length === 0 });
   const roster = kin.data?.kin ?? [];
 
   return (
@@ -38,9 +41,13 @@ export function Kin() {
           </Link>
         </div>
 
-        {kin.isLoading ? (
+        {kinView.kind === 'offline' ? (
+          <section className="glass card">
+            <OfflineNotice what="your kin" />
+          </section>
+        ) : kinView.kind !== 'data' && kinView.kind !== 'empty' ? (
           <p className="sub">Loading your kin…</p>
-        ) : roster.length === 0 ? (
+        ) : kinView.kind === 'empty' ? (
           <section className="glass card emptystate">
             <div className="ehug">{'\u{1F43E}'}</div>
             <h3>No Kin added yet</h3>

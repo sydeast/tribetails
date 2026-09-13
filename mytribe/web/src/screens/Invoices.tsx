@@ -16,6 +16,8 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
 /**
@@ -60,6 +62,11 @@ export function Invoices() {
   }
 
   const data = invoices.data;
+  // Two views over the one query, because the panels report separately: a
+  // household with open bills and no paid history must still see the empty
+  // "No paid invoices yet" card, and neither may show while the read is paused.
+  const openView = viewOfQuery(invoices, { isEmpty: (d) => d.open.length === 0 });
+  const paidView = viewOfQuery(invoices, { isEmpty: (d) => d.paid.length === 0 });
 
   // Derived balance-hero metrics, computed from already-fetched real fields
   // (no dedicated billing-summary callable exists).
@@ -118,16 +125,18 @@ export function Invoices() {
           <div className="stack">
             <section className="glass card d1">
               <div className="sectlabel">Open Invoices</div>
-              {invoices.isLoading ? (
-                <p className="sub">Loading your invoices…</p>
-              ) : !data || data.open.length === 0 ? (
+              {openView.kind === 'offline' ? (
+                <OfflineNotice what="your invoices" />
+              ) : openView.kind === 'empty' ? (
                 <div className="empty">
                   <span className="ico">{'\u{1F4CB}'}</span>
                   <b>No open invoices</b>
                   <p>You are all caught up. New invoices will land here.</p>
                 </div>
+              ) : openView.kind !== 'data' ? (
+                <p className="sub">Loading your invoices…</p>
               ) : (
-                data.open.map((inv, i) => (
+                openView.data.open.map((inv, i) => (
                   <OpenRow
                     key={inv.id}
                     invoice={inv}
@@ -142,14 +151,16 @@ export function Invoices() {
 
             <section className="glass card d2">
               <div className="sectlabel">Paid History</div>
-              {invoices.isLoading ? null : !data || data.paid.length === 0 ? (
+              {paidView.kind === 'offline' ? (
+                <OfflineNotice what="your payment history" />
+              ) : paidView.kind === 'empty' ? (
                 <div className="empty">
                   <span className="ico">{'\u{1F9FE}'}</span>
                   <b>No paid invoices yet</b>
                   <p>Past payments and receipts will appear here.</p>
                 </div>
-              ) : (
-                data.paid.map((inv, i) => <PaidRow key={inv.id} invoice={inv} divider={i > 0} />)
+              ) : paidView.kind !== 'data' ? null : (
+                paidView.data.paid.map((inv, i) => <PaidRow key={inv.id} invoice={inv} divider={i > 0} />)
               )}
             </section>
           </div>

@@ -24,6 +24,8 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
 /**
@@ -115,7 +117,22 @@ export function InvoiceDetail() {
     return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
-  if (invoices.isLoading) {
+  // Paused, this fell through to the "invoice not found" card, about a bill
+  // that is on the account and was simply never fetched.
+  const invoicesView = viewOfQuery(invoices);
+  if (invoicesView.kind === 'offline') {
+    return (
+      <>
+        <PortalNav active="invoices" />
+        <div className="wrap">
+          <section className="glass card">
+            <OfflineNotice what="this invoice" />
+          </section>
+        </div>
+      </>
+    );
+  }
+  if (invoicesView.kind !== 'data') {
     return (
       <>
         <PortalNav active="invoices" />

@@ -14,6 +14,12 @@ import { QueryClient } from '@tanstack/react-query';
  * It must NOT be created inside `main.tsx`'s render call for the same reason:
  * two clients would mean the one sign-out clears is not the one the screens
  * read.
+ *
+ * `networkMode` IS DELIBERATELY LEFT AT ITS DEFAULT of 'online', which means a
+ * query that starts while the device is offline PAUSES instead of failing.
+ * Read `lib/queryState.ts` before changing that: flipping it to 'always' looks
+ * like a one-line fix for the false-empty screens and is not one. The reasoning,
+ * and the state machine the screens use instead, are both in that file.
  */
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { BookingWizardBody } from './BookingWizard';
 import type {
   GetBookingPolicyResult,
@@ -1021,5 +1021,44 @@ describe('BookingWizard: time-block booking', () => {
     expect(await screen.findByText(/has\s+already\s+started/)).toBeInTheDocument();
     expect(screen.getByText(/Pick a later block/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+  });
+});
+
+/**
+ * The wizard is the site where a paused read does real damage, not just a
+ * misleading sentence. `kinQuery.isLoading || servicesQuery.isLoading` is false
+ * while a query is PAUSED, so the gate fell through and drew the whole booking
+ * form over an empty kin roster and an empty service catalog: a household could
+ * work it and submit a request built on nothing it had read.
+ *
+ * The pause here is the real one. `onlineManager` is driven offline before
+ * render and both query functions are asserted never to have run.
+ */
+describe('BookingWizard, signal lost with the tab open', () => {
+  afterEach(() => {
+    // Unmount before restoring the network, or the still-mounted wizard resumes
+    // its paused queries into the next test.
+    cleanup();
+    onlineManager.setOnline(true);
+  });
+  it('refuses to open the wizard, and says the reason', () => {
+    onlineManager.setOnline(false);
+    renderWizard();
+    expect(getMyKin).not.toHaveBeenCalled();
+    expect(getServiceCatalog).not.toHaveBeenCalled();
+    expect(screen.getByText(/We can.t reach Tribe Tails/)).toBeInTheDocument();
+    expect(screen.getByText(/the booking wizard has not loaded/)).toBeInTheDocument();
+    // None of the wizard itself, and above all no way to submit a booking
+    // against a roster and a catalog that were never read.
+    expect(screen.queryByText('Select Kin')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create Booking/ })).not.toBeInTheDocument();
+  });
+  it('does not offer a Try again that cannot try', () => {
+    // refetch() on a paused query goes straight back to pause() (retryer.js
+    // canStart), so a retry control here would be inert every time.
+    onlineManager.setOnline(false);
+    renderWizard();
+    expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
   });
 });

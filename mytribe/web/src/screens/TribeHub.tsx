@@ -7,6 +7,8 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { FallbackImage } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { relativeDay, speciesEmoji } from '../lib/portalFormat';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
@@ -46,6 +48,9 @@ export function TribeHub() {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
+  const kinView = viewOfQuery(kin, { isEmpty: (d) => d.kin.filter((k) => k.status === 'active').length === 0 });
+  const talesView = viewOfQuery(tales, { isEmpty: (d) => d.tales.length === 0 });
+  const profileView = viewOfQuery(profile);
   const roster = kin.data?.kin.filter((k) => k.status === 'active') ?? [];
   const gallery = roster.filter((k) => k.photoUrl);
   const recentTales = (tales.data?.tales ?? []).slice(0, 3);
@@ -68,7 +73,13 @@ export function TribeHub() {
       <div className="wrap">
         <header className="hero-greet">
           <div className="kick">Your family base</div>
-          <h1>{profile.isLoading ? 'Loading your tribe…' : displayName || 'Your Tribe'}</h1>
+          <h1>
+            {profileView.kind === 'offline'
+              ? 'We can\u2019t reach your tribe right now.'
+              : profileView.kind !== 'data'
+                ? 'Loading your tribe…'
+                : displayName || 'Your Tribe'}
+          </h1>
         </header>
 
         <Link className="btn ghost" to="/tribe/edit" style={{ marginBottom: 24 }}>
@@ -80,10 +91,12 @@ export function TribeHub() {
             <div className="sectlabel">
               Your Kin <Link to="/kin">Manage</Link>
             </div>
-            {kin.isLoading ? (
-              <p className="sub">Loading your kin…</p>
-            ) : roster.length === 0 ? (
+            {kinView.kind === 'offline' ? (
+              <OfflineNotice what="your kin" />
+            ) : kinView.kind === 'empty' ? (
               <p className="sub">No Kin yet. Add them from Manage.</p>
+            ) : kinView.kind !== 'data' ? (
+              <p className="sub">Loading your kin…</p>
             ) : (
               roster.map((k, i) => (
                 <Link className={`kinrow ${KIN_VARIANTS[i % KIN_VARIANTS.length]}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>
@@ -123,12 +136,14 @@ export function TribeHub() {
             <div className="sectlabel">
               KinTales <Link to="/kintales">All tales</Link>
             </div>
-            {tales.isLoading ? (
-              <p className="sub">Loading recent KinTales…</p>
-            ) : tales.isError ? (
+            {talesView.kind === 'offline' ? (
+              <OfflineNotice what="your KinTales" />
+            ) : talesView.kind === 'error' ? (
               <p className="sub">KinTales unavailable right now.</p>
-            ) : recentTales.length === 0 ? (
+            ) : talesView.kind === 'empty' ? (
               <p className="sub">After each visit, your Auntie&rsquo;s KinTale lands here.</p>
+            ) : talesView.kind !== 'data' ? (
+              <p className="sub">Loading recent KinTales…</p>
             ) : (
               recentTales.map((t, i) => (
                 <div className={`tale a${(i % 3) + 1}`} key={t.id}>
@@ -149,10 +164,12 @@ export function TribeHub() {
             <div className="sectlabel">
               Home Information <Link to="/tribe/edit">Edit</Link>
             </div>
-            {profile.isLoading ? (
-              <p className="sub">Loading home details…</p>
-            ) : profile.isError ? (
+            {profileView.kind === 'offline' ? (
+              <OfflineNotice what="your home details" />
+            ) : profileView.kind === 'error' ? (
               <p className="sub">Home details unavailable right now.</p>
+            ) : profileView.kind !== 'data' ? (
+              <p className="sub">Loading home details…</p>
             ) : homeFacts.length === 0 ? (
               <p className="sub">No home details yet. Add gate codes, key location, and your vet.</p>
             ) : (
