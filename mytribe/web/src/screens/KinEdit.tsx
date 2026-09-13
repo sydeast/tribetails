@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKin, updateKin } from '../api/portal';
 import { BREEDS_QUERY, EMPTY_BREED_BANKS } from '../api/breeds';
 import type { KinPayloadPartial } from '../api/types';
@@ -13,7 +13,8 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { useIsMounted, usePortalMutation } from '../lib/mutationState';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -51,13 +52,21 @@ export function KinEdit() {
     }
   }, [found]);
 
-  const save = useMutation({
+  // HOLD. `updateKin` is a set/merge on families/{id}/kin/{kinId}, a
+  // deterministic document id, so a replay only re-stamps `updatedAt`.
+  const isMounted = useIsMounted();
+  const save = usePortalMutation({
     mutationFn: (changes: KinPayloadPartial) => updateKin(kinId, changes, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
-      void navigate({ to: '/kin/$kinId', params: { kinId } });
+      // Guarded because this write is HELD: a queued save resumes on
+      // reconnect whether or not this screen is still open, and navigating
+      // from a dead screen drops the household onto a Kin profile they did
+      // not ask for. The cache invalidation above is the part that still
+      // matters when they are elsewhere.
+      if (isMounted()) void navigate({ to: '/kin/$kinId', params: { kinId } });
     },
-  });
+  }, { policy: 'hold', what: 'this update' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -235,17 +244,21 @@ export function KinEdit() {
           <section style={{ marginTop: 6 }}>
             <div className="savebar">
               <button className="btn grad" type="button" onClick={submit} disabled={!canSave}>
-                {'\u{1F4BE}'} {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Changes'}
+                {'\u{1F4BE}'}{' '}
+                <MutationLabel mutation={save} busy="Saving…">
+                  Save Changes
+                </MutationLabel>
               </button>
               <Link className="btn ghost" to="/kin/$kinId" params={{ kinId }}>
                 Cancel
               </Link>
-              {save.isError && (
+              {save.phase === 'failed' && (
                 <span className="status err">
                   <span className="dot" />
                   {save.error instanceof Error ? save.error.message : 'Could not save. Try again.'}
                 </span>
               )}
+              <OfflineMutationNotice phase={save.phase} what="this update" check="this Kin" />
               {!save.isError && nothingToSave && !hasErrors(errors) && <span className="sub">No changes yet.</span>}
               {hasErrors(errors) && <span className="sub">Fix the highlighted fields to save.</span>}
             </div>

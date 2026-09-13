@@ -1,4 +1,5 @@
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
 

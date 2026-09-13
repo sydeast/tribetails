@@ -57,9 +57,18 @@ describe('PayOptions', () => {
   });
 
   it('disables and relabels the checkout button while checkout is opening', () => {
-    render(<PayOptions methods={[stripe()]} amountDue={12750} onCheckout={vi.fn()} checkingOut />);
+    render(<PayOptions methods={[stripe()]} amountDue={12750} onCheckout={vi.fn()} checkoutPhase="sending" />);
     const btn = screen.getByRole('button', { name: 'Opening checkout…' });
     expect(btn).toBeDisabled();
+  });
+
+  it('never says a queued payment is opening checkout (#807)', () => {
+    // A paused mutation reports `isPending`, which is what the old
+    // `checkingOut` boolean was built from. "Opening checkout…" over a request
+    // still sitting on the phone is the sentence that invites the second tap.
+    render(<PayOptions methods={[stripe()]} amountDue={12750} onCheckout={vi.fn()} checkoutPhase="queued" />);
+    expect(screen.queryByRole('button', { name: 'Opening checkout…' })).toBeNull();
+    expect(screen.getByRole('button', { name: /waiting for signal/i })).toBeDisabled();
   });
 
   it('never renders a processor fee — kinfolk do not see them', () => {

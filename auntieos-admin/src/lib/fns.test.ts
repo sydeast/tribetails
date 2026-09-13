@@ -1,5 +1,5 @@
 import { FirebaseError } from 'firebase/app';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The callable choke point's error mapping.
@@ -44,6 +44,7 @@ const { noteSessionAlive, reactToCallableError } = vi.hoisted(() => ({
 vi.mock('./revokedSession', () => ({ noteSessionAlive, reactToCallableError }));
 
 const { call, CallableNotStubbedError, CallableTimeoutError } = await import('./fns');
+const { LostSignalError, OfflineCallError } = await import('./offlineWrite');
 
 /** Makes the next `call()` reject with [code], as the SDK would. */
 function rejectWith(code: string): void {
@@ -235,5 +236,55 @@ describe('call, the opt-in retry', () => {
     // A retry that re-minted the key would be a fresh booking to the server.
     expect(fn.mock.calls[0]?.[0]).toEqual(payload);
     expect(fn.mock.calls[1]?.[0]).toEqual(payload);
+  });
+});
+/**
+ * #807: what `call` does when the DEVICE, not the backend, is the problem.
+ *
+ * `readOnlySession`'s flag does not cover this. It is set only by
+ * `requireAdmin`, which runs on a NAVIGATION, so an operator who was already on
+ * a screen when the signal went has `degraded === false` and dials — landing on
+ * `functions/internal`, the code that cannot distinguish "never arrived" from
+ * "committed, reply lost". On `recordPayment` that ambiguity is a
+ * double-counted payment and, with `autoApply`, spendable account credit made
+ * from nothing.
+ */
+describe('call, with no connection (#807)', () => {
+  // See offlineWrite.test.ts: node's `navigator` has no `onLine` to spy on.
+  function goOffline(): void {
+    vi.stubGlobal('navigator', { onLine: false });
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  it('refuses before dialling, so "nothing was sent" is sayable', async () => {
+    goOffline();
+    const fn = vi.fn();
+    httpsCallable.mockReturnValue(fn);
+    const err = await call('recordPayment', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OfflineCallError);
+    // The whole point: the request never happened, and only a refusal on this
+    // side of the wire can prove it.
+    expect(fn).not.toHaveBeenCalled();
+    expect((err as Error).message).toMatch(/was not sent/i);
+    expect((err as Error).message).toMatch(/Nothing has changed/i);
+  });
+  it('says the outcome is UNKNOWN when the signal went mid-flight', async () => {
+    // Online at the preflight, offline by the time the rejection lands: the
+    // request WAS away, and its fate is not knowable from here.
+    httpsCallable.mockReturnValue(() => {
+      goOffline();
+      return Promise.reject(new FirebaseError('functions/internal', 'internal'));
+    });
+    const err = await call('recordPayment', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LostSignalError);
+    expect(err).not.toBeInstanceOf(OfflineCallError);
+    expect((err as Error).message).toMatch(/no way to tell/i);
+  });
+  it('leaves a genuine backend failure alone while the device is online', async () => {
+    rejectWith('functions/internal');
+    const err = await call('recordPayment', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect(err).not.toBeInstanceOf(LostSignalError);
   });
 });

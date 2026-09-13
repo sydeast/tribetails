@@ -1,4 +1,5 @@
-import { addDoc, collection, doc, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, writeBatch } from 'firebase/firestore';
+import { addDoc, commitBatch, setDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { type KinTaleTemplate } from '../lib/kinTale/model';
 
@@ -141,7 +142,7 @@ export async function saveKinTaleTemplate(
       batch.update(doc(db, 'kintale_templates', other._id), { isDefault: false });
     }
 
-    await batch.commit();
+    await commitBatch(batch, 'a KinTale template');
     return savedId;
   }
 

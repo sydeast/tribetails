@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyKinTales } from '../api/portal';
 import type { KinTaleDto } from '../api/types';
 import {
@@ -31,7 +31,8 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -84,13 +85,15 @@ export function KinTales() {
     queryFn: () => getMyKinTales(kinfolkId, { limit: PAGE_SIZE }),
   });
 
-  const loadMore = useMutation({
+  // HOLD. This is a READ wearing a mutation's clothes — `getMyKinTales` with
+  // a cursor — so a resumed one appends the page the household asked for.
+  const loadMore = usePortalMutation({
     mutationFn: (before: number) => getMyKinTales(kinfolkId, { limit: PAGE_SIZE, before }),
     onSuccess: (res) => {
       setExtraPages((prev) => [...prev, ...res.tales]);
       setHasMoreOverride(res.hasMore);
     },
-  });
+  }, { policy: 'hold', what: 'this page of KinTales' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -177,9 +180,12 @@ export function KinTales() {
               disabled={loadMore.isPending || cursor === undefined}
               onClick={() => cursor !== undefined && loadMore.mutate(cursor)}
             >
-              {loadMore.isPending ? <BusyLabel>Loading…</BusyLabel> : 'Load More'}
+              <MutationLabel mutation={loadMore} busy="Loading…">
+                Load More
+              </MutationLabel>
             </button>
-            {loadMore.isError && <p className="sub">Couldn&rsquo;t load more. Try again.</p>}
+            <OfflineMutationNotice phase={loadMore.phase} what="this page of KinTales" />
+            {loadMore.phase === 'failed' && <p className="sub">Couldn&rsquo;t load more. Try again.</p>}
           </div>
         )}
 
@@ -460,7 +466,13 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
     queryFn: () => getKinTaleReaction(taleId, kinfolkId),
   });
 
-  const toggle = useMutation({
+  // ABANDON, and it is the most retry-hostile callable in the portal.
+  // `toggleKinTaleLove` READS the reaction doc and writes the opposite, so a
+  // replay does not converge — it REVERSES what the first attempt did
+  // (functions/src/portal/kinTaleEngagement.ts). A held love that fires again
+  // on reconnect silently un-loves the tale. There is nothing on the server to
+  // guard against that, so the write does not get to wait.
+  const toggle = usePortalMutation({
     mutationFn: () => toggleKinTaleLove(taleId, kinfolkId),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey });
@@ -479,7 +491,7 @@ function TaleReaction(props: { taleId: string; kinfolkId: string | undefined }) 
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey });
     },
-  });
+  }, { policy: 'abandon', what: 'your love' });
 
   // No offline arm, deliberately, and it is the PortalNav rule again: this
   // renders a decoration, not a claim about the household's data. A paused read
@@ -538,7 +550,9 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   const [replyInput, setReplyInput] = useState('');
   const [replyError, setReplyError] = useState<string | null>(null);
 
-  const post = useMutation({
+  // ABANDON. `addKinTaleComment` is a bare `.add()` with no dedupe key, so a
+  // replay posts the comment twice under the household's own name.
+  const post = usePortalMutation({
     mutationFn: (args: { body: string; parentCommentId?: string }) =>
       addKinTaleComment(taleId, args.body, {
         ...(args.parentCommentId !== undefined ? { parentCommentId: args.parentCommentId } : {}),
@@ -547,7 +561,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['kinTaleComments', kinfolkId, taleId] });
     },
-  });
+  }, { policy: 'abandon', what: 'your comment' });
 
   function submitTop() {
     const body = topInput.trim();
@@ -560,7 +574,11 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
       { body },
       {
         onSuccess: () => setTopInput(''),
-        onError: (err) => setTopError(err instanceof Error ? err.message : 'Could not post your comment. Try again.'),
+        onError: (err) => {
+          // #807: the offline notice under the composer says it better.
+          if (isOfflineError(err)) return;
+          setTopError(err instanceof Error ? err.message : 'Could not post your comment. Try again.');
+        },
       },
     );
   }
@@ -579,7 +597,10 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
           setReplyInput('');
           setReplyParentId(null);
         },
-        onError: (err) => setReplyError(err instanceof Error ? err.message : 'Could not post your reply. Try again.'),
+        onError: (err) => {
+          if (isOfflineError(err)) return;
+          setReplyError(err instanceof Error ? err.message : 'Could not post your reply. Try again.');
+        },
       },
     );
   }
@@ -628,7 +649,9 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
                   />
                   <div className="frow">
                     <button className="btn grad" disabled={post.isPending} onClick={() => submitReply(c.id)}>
-                      {post.isPending ? <BusyLabel>Posting…</BusyLabel> : 'Reply'}
+                      <MutationLabel mutation={post} busy="Posting…">
+                        Reply
+                      </MutationLabel>
                     </button>
                     <button
                       type="button"
@@ -663,7 +686,9 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
           />
           <div className="frow">
             <button className="btn grad" disabled={post.isPending} onClick={submitTop}>
-              {post.isPending ? <BusyLabel>Posting…</BusyLabel> : 'Post Comment'}
+              <MutationLabel mutation={post} busy="Posting…">
+                Post Comment
+              </MutationLabel>
             </button>
             {topError ? <span className="hint err">{topError}</span> : <span className="hint ok">Be kind, your Aunties read these.</span>}
           </div>

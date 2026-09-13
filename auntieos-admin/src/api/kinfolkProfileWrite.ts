@@ -1,4 +1,5 @@
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
+import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
 

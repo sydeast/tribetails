@@ -50,7 +50,44 @@ import { centsToInputDollars } from '../lib/invoiceMoneyInput';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { Banner } from './Banner';
+import { phaseOfError } from '../lib/offlineWrite';
 import './InvoiceDetail.css';
+
+/**
+ * What this panel says when a money action fails (#807).
+ *
+ * THE SENTENCE THAT MATTERS IS WHICH OF THREE THINGS HAPPENED, and until now
+ * all three read the same: "markInvoicePaid failed: internal". The SDK reports
+ * `functions/internal` for every transport failure, so that one string covered
+ * "never left the device", "we cannot tell", and a genuine server refusal —
+ * and on this panel those call for different actions:
+ *
+ *   blocked  nothing was sent. Re-enter it when there is a signal. Safe.
+ *   unknown  it was away when the signal went. DO NOT re-enter it without
+ *            looking: `recordPayment` writes an auto-id row into the root
+ *            `payments` collection with no dedupe key of any kind, and with
+ *            `autoApply` it also increments `families/{id}.accountBalanceCents`
+ *            — so a second one is a double-counted payment AND spendable
+ *            credit made from nothing. `markInvoicePaid` refuses a replay only
+ *            when the first call SETTLED the invoice; on an explicit partial it
+ *            writes a second subcollection row and drops the balance twice.
+ *            None of the invoice callables accepts an idempotency key (checked:
+ *            only `createMultiDateBookingRequest` does).
+ *   failed   the server answered. Its own sentence is the useful one.
+ *
+ * The offline classes carry their whole sentence, so the callable-name prefix
+ * is dropped for them: "markInvoicePaid failed: This device is offline…" reads
+ * as a bug in the app rather than a fact about the phone.
+ */
+export function invoiceActionError(caught: unknown, callableName: string): string {
+  const phase = phaseOfError(caught);
+  const message = caught instanceof Error && caught.message ? caught.message : 'Action failed';
+  if (phase === 'blocked') return message;
+  if (phase === 'unknown') {
+    return `${message} Open the Payments screen and check whether this payment is already there before recording it again.`;
+  }
+  return `${callableName} failed: ${message}`;
+}
 
 /**
  * THE CHARGEBACK PANEL: the only thing on this screen that can contradict the
@@ -973,7 +1010,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       setPending(null);
     } catch (caught) {
       setBusy(false);
-      setActionError(`${meta.callableName} failed: ${caught instanceof Error ? caught.message : 'Action failed'}`);
+      setActionError(invoiceActionError(caught, meta.callableName));
     }
   }
 

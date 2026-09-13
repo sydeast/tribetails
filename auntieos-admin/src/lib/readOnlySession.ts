@@ -26,26 +26,37 @@
  *   lib/adminApiFetch.ts   the two `/api/*` endpoints behind the rewrites
  *
  * Both refuse locally and throw `OfflineSessionError` instead of dialling.
- * READS ARE REFUSED TOO, deliberately rather than by omission: this app keeps
- * no offline data cache (no `persistQueryClient`, no Firestore persistence),
- * so every "read" is a network read that would spend `fns.ts`'s twenty-second
- * timeout and land on `AsyncRegion`'s error arm regardless. Refusing now
- * reaches the same screen sooner, and with a sentence naming the cause instead
- * of a deadline. So what read-only leaves standing is the shell: the rail, the
- * account chip, the session banner, and whatever each screen can draw without
- * asking the network. That is a smaller app than the operator wanted, and a far
- * larger one than a crash page.
+ * READS ARE REFUSED TOO, deliberately rather than by omission: a network read
+ * offline would spend `fns.ts`'s twenty-second timeout and land on
+ * `AsyncRegion`'s error arm regardless. Refusing now reaches the same screen
+ * sooner, and with a sentence naming the cause instead of a deadline. So what
+ * read-only leaves standing is the shell: the rail, the account chip, the
+ * session banner, and whatever each screen can draw without asking the
+ * network. That is a smaller app than the operator wanted, and a far larger
+ * one than a crash page.
  *
- * WHAT IT DOES NOT COVER, said plainly rather than left to be discovered. Ten
- * modules write to Firestore directly (`screens/KinTaleCompose.tsx`,
- * `screens/KinEdit.tsx`, `screens/TagsEditor.tsx`, `screens/KinfolkEdit.tsx`,
- * `screens/Media.tsx`, `screens/settings/sections.tsx`,
- * `components/MediaViewerDialog.tsx`, `lib/closureRecurrence.ts`,
- * `lib/visitTracking.ts`, `api/sessionsWrite.ts`). Offline those sit on
- * "Saving…" until the SDK gives up, which is what they already do today and is
- * not a regression this issue introduced. Routing ten call sites through a new
- * guard is a different change with a different blast radius; it is named here
- * so the next reader knows the boundary was chosen rather than missed.
+ * TWO CLAIMS THAT WERE TRUE WHEN THIS WAS WRITTEN AND ARE NOT NOW (#807).
+ *
+ * THIS APP DOES HAVE A FIRESTORE CACHE. The paragraph above used to say it
+ * kept none — "no `persistQueryClient`, no Firestore persistence".
+ * `lib/firebase.ts` has initialised `persistentLocalCache` since 2026-09-12
+ * (`lib/firestoreCache.ts` decides which mode), and that is what makes a
+ * direct Firestore write offline a genuine DURABLE queue rather than a lost
+ * one: it survives a browser restart, which the portal's in-memory mutation
+ * queue does not. The refusal of network reads still stands on its own
+ * reasoning; it is only no longer true that nothing is cached.
+ *
+ * AND THE DIRECT-WRITE BOUNDARY HAS BEEN CROSSED. This used to name ten
+ * modules that write to Firestore directly and say they "sit on 'Saving…'
+ * until the SDK gives up", and that routing them through a guard was a
+ * different change with a different blast radius. It was, and #807 is that
+ * change: those writes never settle AT ALL offline, because the promise
+ * resolves on server ack, so the spinner ran for as long as the tab stayed
+ * open. They now go through `lib/offlineWrite.ts#settleWrite`, which stops
+ * waiting on an acknowledgement that cannot arrive and reports the write as
+ * queued. The old list was also wrong in detail — it named screens, and the
+ * writes are almost all in `api/` — so it is dropped rather than corrected in
+ * place. `settleWrite`'s header is where that boundary is described now.
  *
  * WHY THIS IS NOT `lib/sessionHealth.ts`'s FLAG. That module reports
  * `unreachable` for a blip while the cached token is still valid. Its own

@@ -19,6 +19,7 @@ import { NOTIFICATION_GATE_REDIRECT } from './lib/nav';
 import { AppShell } from './components/AppShell';
 import { RoutePending } from './components/RoutePending';
 import { RouteError } from './components/RouteError';
+import { QueuedWritesBanner } from './components/QueuedWritesBanner';
 // Every admin screen below is code-split via lazyRouteComponent (each resolves
 // to its own chunk at build time) instead of being imported here. The single
 // bundle had reached 1,666 KB: the whole app, all 26 routes and the Firebase
@@ -83,6 +84,12 @@ function RootLayout() {
       <span className="orb c" aria-hidden="true" />
       <span className="grain" aria-hidden="true" />
       <Outlet />
+      {/* #807: the writes Firestore is holding while the device is offline.
+          Mounted at the ROOT rather than on the admin layout, because a queued
+          write outlives the screen that made it and has to stay visible while
+          the operator moves on. Renders nothing when the queue is empty, which
+          is almost always. */}
+      <QueuedWritesBanner />
     </>
   );
 }

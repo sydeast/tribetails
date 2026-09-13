@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { addDoc, collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { addDoc } from './firestoreWrite';
 import { totalDistanceMeters } from '@tribetails/geo';
 import { db } from './firebase';
 import { waitForAuthReady } from './auth';

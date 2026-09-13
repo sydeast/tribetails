@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
@@ -21,7 +21,9 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav, type PortalNavTab } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { BusyLabel, LoadingLine } from '../components/Loading';
+import { LoadingLine } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/messages.css';
 
@@ -148,19 +150,28 @@ export function Messages() {
   const messages: ThreadMessageDto[] = liveMessages ?? threadQuery.data?.messages ?? [];
 
   const [sendError, setSendError] = useState<string | null>(null);
-  const sendMutation = useMutation({
+  // ABANDON. `lib/conversations.ts` mints a fresh auto-id for every message
+  // and there is no client message id to dedupe on, so a replay appends a
+  // second identical message, bumps `messageCount` again and re-fires the
+  // notification. A household would see themselves say it twice.
+  const sendMutation = usePortalMutation({
     mutationFn: (body: string) => sendKinfolkMessage(body, kinfolkId),
-  });
+  }, { policy: 'abandon', what: 'your message' });
 
   // O-8 writing helper. One mutation for both modes — the pending mode
   // (assistMutation.variables) drives which button shows its busy label.
   // 'polish' sends the current draft; 'suggest_reply' sends no body at all,
   // the server reads the thread itself.
   const [assistError, setAssistError] = useState<string | null>(null);
-  const assistMutation = useMutation({
+  // ABANDON on two counts. `generate` persists no content, but every call
+  // spends one of 30/uid/hour and 60/household/hour and makes a paid model
+  // call, so a replay is not free. And it writes its answer INTO the composer:
+  // a held assist landing twenty minutes later would overwrite whatever the
+  // household had typed since.
+  const assistMutation = usePortalMutation({
     mutationFn: ({ mode, body }: { mode: GenerateAssistMode; body?: string }) =>
       generateAssist(mode, body, kinfolkId),
-  });
+  }, { policy: 'abandon', what: 'the writing helper' });
 
   // Explicit mark-read for messages the realtime listener delivers after the
   // initial getMyConversation load (see the file-header comment). Guarded so
@@ -275,6 +286,10 @@ export function Messages() {
       // KinTales.tsx): a failed post must surface inline, and the draft
       // must stay in the composer so "try again" is just a re-click.
       onError: (err) => {
+        // #807: an offline failure already has its own sentence under the
+        // composer, and `mapSendMessageError` would print a second one about
+        // a server that was never reached.
+        if (isOfflineError(err)) return;
         setSendError(mapSendMessageError(err));
       },
     });
@@ -297,6 +312,7 @@ export function Messages() {
         // Same rule as handleSend's onError: a failed helper call surfaces
         // inline and never touches the draft, so "try again" is a re-click.
         onError: (err) => {
+          if (isOfflineError(err)) return;
           setAssistError(mapGenerateError(err));
         },
       },
@@ -414,7 +430,12 @@ export function Messages() {
                 disabled={!editor || !editorState || editorState.isEmpty || assistBusy}
                 onClick={() => handleAssist('polish')}
               >
-                {assistPendingMode === 'polish' ? <BusyLabel>Polishing…</BusyLabel> : 'Polish'}
+                <MutationLabel
+                  mutation={{ phase: assistPendingMode === 'polish' ? assistMutation.phase : 'idle' }}
+                  busy="Polishing…"
+                >
+                  Polish
+                </MutationLabel>
               </button>
               <button
                 type="button"
@@ -422,7 +443,12 @@ export function Messages() {
                 disabled={!editor || assistBusy || messages.length === 0}
                 onClick={() => handleAssist('suggest_reply')}
               >
-                {assistPendingMode === 'suggest_reply' ? <BusyLabel>Thinking…</BusyLabel> : 'Suggest reply'}
+                <MutationLabel
+                  mutation={{ phase: assistPendingMode === 'suggest_reply' ? assistMutation.phase : 'idle' }}
+                  busy="Thinking…"
+                >
+                  Suggest reply
+                </MutationLabel>
               </button>
               <button
                 type="button"
@@ -430,8 +456,12 @@ export function Messages() {
                 disabled={!editor || !editorState || editorState.isEmpty || sendMutation.isPending}
                 onClick={handleSend}
               >
-                {sendMutation.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send'}
+                <MutationLabel mutation={sendMutation} busy="Sending…">
+                  Send
+                </MutationLabel>
               </button>
+              <OfflineMutationNotice phase={sendMutation.phase} what="your message" check="the thread above" />
+              <OfflineMutationNotice phase={assistMutation.phase} what="the writing helper" />
             </div>
           </div>
         </section>

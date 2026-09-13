@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyInvoices, payInvoice, redeemCredit } from '../api/invoicesApi';
 import type { InvoiceDto } from '../contracts/invoiceContracts.generated';
 import {
@@ -17,8 +17,10 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { BusyLabel, LoadingLine } from '../components/Loading';
+import { LoadingLine } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
+import { errorLine, usePortalMutation, type MutationPhase } from '../lib/mutationState';
 import '../styles/invoices.css';
 
 /**
@@ -34,27 +36,32 @@ export function Invoices() {
   const kinfolkId = getActiveKinfolkId();
   const invoices = useQuery({ queryKey: ['myInvoices', kinfolkId], queryFn: () => getMyInvoices(kinfolkId) });
 
-  const pay = useMutation({
+  const pay = usePortalMutation({
     mutationFn: (invoiceId: string) =>
       payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
     onSuccess: (res) => {
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
-  });
+  }, { policy: 'abandon', what: 'your payment' });
 
-  const redeem = useMutation({
+  // HOLD. `redeemCredit` claims and applies inside one Firestore transaction,
+  // so a second attempt re-reads the committed `creditRedeemedAt` and is
+  // refused. It cannot credit an account twice.
+  const redeem = usePortalMutation({
     mutationFn: (vars: { invoiceId: string }) => redeemCredit(vars.invoiceId, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
     },
-  });
+  }, { policy: 'hold', what: 'this credit' });
 
   // These two used to fail silently — a rejected mutation just stopped the
   // spinner with nothing telling the kinfolk why (same class of bug KinTales'
   // comment-post had before it was fixed). Surface each distinctly.
-  function mutationErrorMessage(err: unknown, fallback: string): string {
-    return err instanceof Error && err.message ? err.message : fallback;
-  }
+  //
+  // #807: `errorLine` returns null for the three OFFLINE failures, which now
+  // have their own sentence under the button. A red "Couldn't open checkout.
+  // Try again." over a payment whose fate is unknown is the one line this
+  // screen must not print.
 
   const { signOut, signingOut } = useSignOut();
 
@@ -144,9 +151,9 @@ export function Invoices() {
                     key={inv.id}
                     invoice={inv}
                     divider={i > 0}
-                    paying={pay.isPending && pay.variables === inv.id}
+                    payPhase={pay.variables === inv.id ? pay.phase : 'idle'}
                     onPay={() => pay.mutate(inv.id)}
-                    payError={pay.isPending || pay.variables !== inv.id ? null : (pay.isError ? mutationErrorMessage(pay.error, "Couldn't open checkout. Try again.") : null)}
+                    payError={pay.variables !== inv.id ? null : errorLine(pay, "Couldn't open checkout. Try again.")}
                   />
                 ))
               )}
@@ -185,9 +192,9 @@ export function Invoices() {
                     key={inv.id}
                     invoice={inv}
                     divider={i > 0}
-                    redeeming={redeem.isPending && redeem.variables?.invoiceId === inv.id}
+                    redeemPhase={redeem.variables?.invoiceId === inv.id ? redeem.phase : 'idle'}
                     onRedeem={() => redeem.mutate({ invoiceId: inv.id })}
-                    redeemError={redeem.isPending || redeem.variables?.invoiceId !== inv.id ? null : (redeem.isError ? mutationErrorMessage(redeem.error, "Couldn't redeem this credit. Try again.") : null)}
+                    redeemError={redeem.variables?.invoiceId !== inv.id ? null : errorLine(redeem, "Couldn't redeem this credit. Try again.")}
                   />
                 ))}
               </section>
@@ -207,8 +214,12 @@ function invoiceTitle(inv: InvoiceDto): string {
   return inv.client ?? `Invoice #${inv.id}`;
 }
 
-function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean; onPay: () => void; payError?: string | null }) {
-  const { invoice: inv, paying, onPay, payError } = props;
+function OpenRow(props: { invoice: InvoiceDto; divider: boolean; payPhase: MutationPhase; onPay: () => void; payError?: string | null }) {
+  const { invoice: inv, payPhase, onPay, payError } = props;
+  // Was a `paying: boolean` off `isPending`, which is true for a mutation that
+  // PAUSED offline as well as one the server is working on. The phase tells
+  // those apart, which is all #807 is about.
+  const paying = payPhase === 'sending' || payPhase === 'queued';
   // Part-paid keeps the open bucket and the Pay button; only what the row SAYS
   // about itself changes. "PENDING" alone would hide a payment already made.
   const status = invoiceRowStatusInfo(inv);
@@ -263,13 +274,16 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
               }}
               disabled={paying}
             >
-              {paying ? <BusyLabel>Opening…</BusyLabel> : 'Pay now'}
+              <MutationLabel mutation={{ phase: payPhase }} busy="Opening…">
+                Pay now
+              </MutationLabel>
             </button>
           ) : (
             <span className="btn ghost sm">View</span>
           )}
         </div>
       </Link>
+      <OfflineMutationNotice phase={payPhase} what="your payment" check="this invoice" />
       {payError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{payError}</p>}
     </>
   );
@@ -305,8 +319,9 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
   );
 }
 
-function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: boolean; onRedeem: () => void; redeemError?: string | null }) {
-  const { invoice: inv, redeeming, onRedeem, redeemError } = props;
+function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeemPhase: MutationPhase; onRedeem: () => void; redeemError?: string | null }) {
+  const { invoice: inv, redeemPhase, onRedeem, redeemError } = props;
+  const redeeming = redeemPhase === 'sending' || redeemPhase === 'queued';
   const redeemed = inv.creditRedeemedAtMs !== null;
   const cents = inv.creditAmountCents ?? 0;
 
@@ -327,8 +342,11 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: bo
         {!redeemed && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
             <button className="btn grad block" onClick={() => onRedeem()} disabled={redeeming}>
-              {redeeming ? <BusyLabel>Working…</BusyLabel> : 'Save to Account Balance'}
+              <MutationLabel mutation={{ phase: redeemPhase }} busy="Working…">
+                Save to Account Balance
+              </MutationLabel>
             </button>
+            <OfflineMutationNotice phase={redeemPhase} what="this credit" check="your account balance" />
             {redeemError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{redeemError}</p>}
           </div>
         )}

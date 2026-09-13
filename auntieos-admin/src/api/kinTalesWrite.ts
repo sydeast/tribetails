@@ -1,4 +1,5 @@
-import { addDoc, arrayUnion, collection, doc, increment, setDoc, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, doc, increment, writeBatch } from 'firebase/firestore';
+import { addDoc, commitBatch, setDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
 import { checklistHasContent } from '../lib/kinTaleChecklist';
@@ -236,5 +237,5 @@ export async function sendKinTale(input: SendKinTaleInput): Promise<void> {
     autoCompleteEligible: true,
     updatedAt: now,
   });
-  await batch.commit();
+  await commitBatch(batch, 'this KinTale');
 }

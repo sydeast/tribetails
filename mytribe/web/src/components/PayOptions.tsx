@@ -1,7 +1,8 @@
 import type { PayMethod } from '../api/types';
 import { formatCentsUsd } from '../lib/invoiceFormat';
 import './PayOptions.css';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel } from './OfflineMutationNotice';
+import type { MutationPhase } from '../lib/mutationState';
 
 export interface PayOptionsProps {
   /** Resolved server-side — never raw operator handles. Prefer an invoice's own `payMethods`. */
@@ -10,8 +11,16 @@ export interface PayOptionsProps {
   amountDue: number;
   /** `kind: 'checkout'` (Stripe) click. Link methods are plain anchors and never call this. */
   onCheckout: () => void;
-  /** True while the Stripe checkout mutation is in flight. */
-  checkingOut?: boolean;
+  /**
+   * Where the Stripe checkout mutation has got to.
+   *
+   * Was a `checkingOut` boolean off `isPending`, which is true for a paused
+   * mutation as well as a running one — so a household with no signal read
+   * "Opening checkout…" about a request that had not been sent (#807). The
+   * button's own copy is all that changes here; the sentence explaining it
+   * belongs to the screen, beside the rest of the invoice.
+   */
+  checkoutPhase?: MutationPhase;
 }
 
 /**
@@ -34,7 +43,10 @@ export interface PayOptionsProps {
  * the caller (`InvoiceDetail`) decides what "no methods configured" means for
  * that screen, this component only renders what it's given.
  */
-export function PayOptions({ methods, amountDue, onCheckout, checkingOut = false }: PayOptionsProps) {
+export function PayOptions({ methods, amountDue, onCheckout, checkoutPhase = 'idle' }: PayOptionsProps) {
+  // Disabled while it is queued too: a second tap on a payment nobody has sent
+  // yet is the exact gesture #807 is about.
+  const checkingOut = checkoutPhase === 'sending' || checkoutPhase === 'queued';
   if (methods.length === 0) return null;
 
   return (
@@ -49,7 +61,9 @@ export function PayOptions({ methods, amountDue, onCheckout, checkingOut = false
               onClick={onCheckout}
               disabled={checkingOut}
             >
-              {checkingOut ? <BusyLabel>Opening checkout…</BusyLabel> : method.label}
+              <MutationLabel mutation={{ phase: checkoutPhase }} busy="Opening checkout…">
+                {method.label}
+              </MutationLabel>
             </button>
           );
         }
