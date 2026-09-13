@@ -103,8 +103,13 @@ async function importRouterTrackingListeners() {
 function dropBootedOnlineListeners(): void {
   for (const fn of bootedOnlineListeners.splice(0)) window.removeEventListener('online', fn);
 }
+/** The type of the router `./router` hands back, without importing it eagerly. */
+type PortalRouter = Awaited<ReturnType<typeof importRouterTrackingListeners>>['router'];
+/** The most recently booted router, so `afterEach` can drain it without every test threading it through. */
+let lastRouter: PortalRouter | undefined;
 async function boot() {
   const { router } = await importRouterTrackingListeners();
+  lastRouter = router;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -112,6 +117,30 @@ async function boot() {
     </QueryClientProvider>,
   );
   return { router };
+}
+
+/**
+ * Every `beforeLoad` guard above can throw `redirect()`, which the router
+ * follows as ITS OWN further navigation -- a promise chain no test holds a
+ * reference to. A `findByText` match on the destination screen proves that
+ * chain reached the point of rendering, not that it has fully committed:
+ * `router.state.status` stays `'pending'` for a few more microtasks while
+ * TanStack finishes `startTransition`. Confirmed by instrumenting this exact
+ * spot: "registers an errorComponent" -- the one test here that reads
+ * `router.options` straight off `boot()` without waiting on any screen --
+ * left its router `'pending'`, not `'idle'`, every other test's boot had
+ * already reached `'idle'` by the time its own assertions ran. Left running,
+ * that tail settles whenever the real clock gets to it, which can land after
+ * this FILE's jsdom environment is torn down. `window` is gone by then, so
+ * React's scheduler throws `ReferenceError: window is not defined` as an
+ * unhandled rejection vitest reports as a run failure, rather than a test
+ * failure anyone sees. So every test drains its own router to `'idle'` before
+ * finishing, whether or not it did anything past the initial boot.
+ */
+async function settleRouter(): Promise<void> {
+  if (!lastRouter) return;
+  const router = lastRouter;
+  await waitFor(() => expect(router.state.status).toBe('idle'));
 }
 
 describe('#812 a portal deep link opened with no signal', () => {
@@ -126,7 +155,9 @@ describe('#812 a portal deep link opened with no signal', () => {
     window.history.replaceState(null, '', '/schedule/bk-2291');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await settleRouter();
+    lastRouter = undefined;
     dropBootedOnlineListeners();
     setOnline(true);
     sessionStorage.clear();
