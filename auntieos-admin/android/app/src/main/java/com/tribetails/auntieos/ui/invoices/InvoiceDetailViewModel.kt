@@ -11,6 +11,8 @@ import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.mintInvoicePaymentIdempotencyKey
+import com.tribetails.auntieos.data.repository.mintPaymentIdempotencyKey
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.invoicePartPaid
@@ -119,6 +121,45 @@ class InvoiceDetailViewModel(
 
     private val _uiState = MutableStateFlow(InvoiceDetailUiState())
     val uiState: StateFlow<InvoiceDetailUiState> = _uiState.asStateFlow()
+
+    /**
+     * #825: the two keys that make pressing Record twice safe.
+     *
+     * TWO KEYS, ONE SUBMISSION, BECAUSE [recordPayment] IS TWO CALLABLES. The
+     * operator fills in one dialog and presses one button; behind it
+     * `markInvoicePaid` writes the audit-grade row into the invoice's `payments`
+     * subcollection and `recordPayment` writes the display row. They are two
+     * documents in two collections with two key shapes (`ipay_` and `pay_`), and
+     * they are ONE thing the operator did. So they are minted together, held
+     * together, and released together: a retry has to name BOTH rows the first
+     * attempt made, or the half that gets a fresh key is the half that
+     * duplicates.
+     *
+     * Minted on the first attempt at a payment and held for every retry of it,
+     * which here means the operator pressing Record again after seeing the
+     * error toast. That press is the dangerous one: the SDK reports `INTERNAL`
+     * for a request that never arrived AND for a write that committed with a
+     * lost reply, so the retry that repairs the first case is the retry that
+     * puts the same money against the same bill twice in the second — settling
+     * or overpaying an invoice on money nobody collected, and, on the display
+     * row, crediting `accountBalanceCents` a second time with money this
+     * business has no refund mechanism to take back.
+     *
+     * Re-minted the moment the payment being submitted changes, compared at
+     * submit time via [paymentSignature] rather than tracked through the
+     * dialog's own state: an edited amount is a different payment, and a held
+     * key would replay the first attempt and report the OLD figure back as
+     * though the edit had landed.
+     *
+     * The signature deliberately reads the invoice ID AND THE PAYMENT ONLY, and
+     * nothing off [InvoiceDetailUiState.invoice]. That invoice's `amountDue`
+     * moves the instant `markInvoicePaid` settles it and the quiet reload lands,
+     * so folding it in would make the successful first attempt look like an edit
+     * to the retry that follows a partial failure.
+     */
+    private var paymentSubmissionKey: String? = null
+    private var invoicePaymentSubmissionKey: String? = null
+    private var paymentSubmissionSignature: String? = null
 
     fun loadInvoice(invoiceId: String) {
         _uiState.value = InvoiceDetailUiState(isLoading = true)
@@ -250,12 +291,27 @@ class InvoiceDetailViewModel(
     fun recordPayment(payment: Payment) {
         val invoiceId = _uiState.value.invoice?.id ?: return
         _uiState.value = _uiState.value.copy(recordingPayment = true)
+        // #825: one pair of keys per payment, re-minted only when the payment
+        // itself has changed since they were minted. Minted HERE, outside the
+        // coroutine, so that a second press while the first attempt is still in
+        // flight reads the same held pair: a nine-second cold start is long
+        // enough for an operator to press again, and two attempts overlapping is
+        // the ordinary case this protects, not the exotic one.
+        val signature = paymentSignature(invoiceId, payment)
+        if (paymentSubmissionKey == null || paymentSubmissionSignature != signature) {
+            paymentSubmissionKey = mintPaymentIdempotencyKey()
+            invoicePaymentSubmissionKey = mintInvoicePaymentIdempotencyKey()
+            paymentSubmissionSignature = signature
+        }
+        val ledgerKey = invoicePaymentSubmissionKey
+        val displayKey = paymentSubmissionKey
         viewModelScope.launch {
             val settlement = invoiceRepository.markInvoicePaid(
                 invoiceId = invoiceId,
                 amount = payment.amount,
                 method = payment.paymentMethod,
                 reference = payment.referenceNumber,
+                idempotencyKey = ledgerKey,
             ).getOrElse { err ->
                 _uiState.value = _uiState.value.copy(
                     recordingPayment = false,
@@ -266,10 +322,26 @@ class InvoiceDetailViewModel(
                 return@launch
             }
 
+            // #825: the money callable answered, so this submission is done and
+            // both keys are released. The NEXT press of Record is a second
+            // payment the operator meant to make, not a retry of this one, and
+            // holding a key across it would have the server hand back the first
+            // payment and report it as though the second had landed.
+            //
+            // RELEASED HERE EVEN THOUGH THE DISPLAY WRITE BELOW MAY STILL FAIL,
+            // deliberately. That write is best-effort by design: this flow
+            // reports success and closes the dialog whatever it does, so there
+            // is no retry surface behind which a held `pay_` key could be of any
+            // use. A payment re-entered afterwards is a new intent, and a stale
+            // key would make it a replay of this one.
+            paymentSubmissionKey = null
+            invoicePaymentSubmissionKey = null
+            paymentSubmissionSignature = null
+
             // Best-effort: the money has already landed server-side, so a failure
             // here costs this screen's list row, not the payment. Logged, never
             // swallowed.
-            invoiceRepository.createPayment(payment)
+            invoiceRepository.createPayment(payment, idempotencyKey = displayKey)
                 .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
 
             com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -298,6 +370,38 @@ class InvoiceDetailViewModel(
             )
         }
     }
+
+    /**
+     * Everything that decides WHAT is being paid, against WHICH invoice (#825).
+     *
+     * Deliberately excludes every busy flag, toast and loaded list on
+     * [InvoiceDetailUiState]: those change while a submission is in flight, and
+     * treating that as an edit would mint a new pair of keys for the retry and
+     * re-arm the duplicate this exists to stop.
+     *
+     * The fields are listed one by one rather than taken from [Payment]'s own
+     * `toString()`, for the same reason the marketing and broadcast signatures
+     * list theirs: `id` is `@DocumentId` and never goes on the wire, so folding
+     * it in would let a value the server never sees decide whether two presses
+     * are the same payment. The four fields that do not appear
+     * (`kinfolkId`, `kinfolkName`, `client`, `address`) are copied off the
+     * invoice by `buildInvoicePayment` and cannot change without `invoiceId`
+     * changing with them.
+     */
+    private fun paymentSignature(invoiceId: String, payment: Payment): String = listOf(
+        invoiceId,
+        payment.amount.toString(),
+        payment.tip.toString(),
+        payment.fee.toString(),
+        payment.date,
+        payment.paymentMethod,
+        payment.referenceNumber,
+        payment.email,
+        payment.notes.orEmpty(),
+        payment.invoiceNumber,
+        payment.autoApply.toString(),
+        payment.sendConfirmationEmail.toString(),
+    ).joinToString("\u001F") // a separator no typed field can contain
 
     private fun loadSessionsForKinfolk(kinfolkId: String) {
         if (kinfolkId.isBlank()) return

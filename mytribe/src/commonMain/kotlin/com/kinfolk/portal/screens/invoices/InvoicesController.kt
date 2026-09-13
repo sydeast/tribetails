@@ -12,6 +12,7 @@ import com.kinfolk.portal.portal.InvoicesResult
 import com.kinfolk.portal.portal.PayMethod
 import com.kinfolk.portal.portal.PayMethodKind
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.portal.mintCheckoutIdempotencyKey
 import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.launch
@@ -134,17 +135,38 @@ class InvoicesController internal constructor(
         }
     }
 
+    /**
+     * #825: ONE CHECKOUT KEY PER INVOICE, held across a re-tap.
+     *
+     * Kept per invoice id rather than in one field, because a household with
+     * two open bills can tap one, fail, and tap the other: a single held key
+     * would then carry the first invoice's key to the second invoice's
+     * checkout, and Stripe would either refuse it (different body) or hand back
+     * a session for the wrong bill.
+     *
+     * Dropped the moment a checkout URL comes back, so the only tap that reuses
+     * a key is a tap after a visible failure — which is the one that used to
+     * open a second live session. `CheckoutIdempotency.kt` says why a second
+     * session is money this business cannot get back.
+     */
+    private val checkoutKeys = mutableMapOf<String, String>()
     fun startPay(invoice: Invoice) {
         if (paying != null) return
         paying = invoice.id
         scope.launch {
             try {
+                val key = checkoutKeys.getOrPut(invoice.id) { mintCheckoutIdempotencyKey() }
                 val res = portalApi.payInvoice(
                     invoiceId = invoice.id,
                     kinfolkId = kinfolkId,
                     successUrl = "https://kinfolk.tribetails.com/portal/payment-success",
                     cancelUrl = "https://kinfolk.tribetails.com/portal/payment-cancel",
+                    idempotencyKey = key,
                 )
+                // Dropped BEFORE the hand-off. A household that comes back to
+                // pay a different balance later must not reuse a key Stripe
+                // still holds: the body would differ and Stripe would refuse it.
+                checkoutKeys.remove(invoice.id)
                 if (res.checkoutUrl.isNotBlank()) openExternalUrl(res.checkoutUrl)
             } catch (t: Throwable) {
                 error = t.message ?: "Could not start payment"
