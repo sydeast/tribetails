@@ -472,7 +472,7 @@ private fun UpcomingKinCarePanel(kin: Kin, state: KinDetailUiState, onOpenVisit:
                     VisitLine(
                         s = session,
                         last = index == state.upcomingVisits.lastIndex,
-                        onOpen = session.id.takeIf { it.isNotBlank() }?.let { id -> { onOpenVisit(id) } },
+                        onOpen = { session.id.takeIf { it.isNotBlank() }?.let(onOpenVisit) },
                     )
                 }
             }
