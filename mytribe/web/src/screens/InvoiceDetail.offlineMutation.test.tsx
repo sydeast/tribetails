@@ -226,4 +226,31 @@ describe('InvoiceDetail: a mutation with no signal (#807)', () => {
     // And still exactly one call's worth of intent: none.
     expect(mocks.payInvoice).not.toHaveBeenCalled();
   });
+
+  /**
+   * The same property on a write that really IS waiting, which the payment case
+   * cannot exercise: an abandoned write settles at once, so there is no wait
+   * there for an escalation to grow out of. A QUEUED write waits indefinitely
+   * by design, and is therefore the one that could sprout a "Tap to sync" and
+   * must not — `refetch()`'s twin on a paused write goes straight back to a
+   * pause, so the button would be dead, and #819's escalation is for a slow
+   * SERVER rather than for no signal at all.
+   */
+  it('never escalates a queued write into a tap-to-sync, however long it waits', async () => {
+    await renderLoaded('cr1');
+    const button = await screen.findByRole('button', { name: /Save to Account Balance/i });
+
+    onlineManager.setOnline(false);
+    await act(() => void button.click());
+    await flush();
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS * 2));
+
+    // Still queued, still saying so, and still offering nothing to press.
+    expect(screen.getByText(/waiting on this phone/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Tap to sync' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Ask again' })).toBeNull();
+    expect(document.querySelector('.slow-wait')).toBeNull();
+    expect(mocks.redeemCredit).not.toHaveBeenCalled();
+  });
 });

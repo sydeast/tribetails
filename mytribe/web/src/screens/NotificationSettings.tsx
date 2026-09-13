@@ -242,7 +242,7 @@ export function NotificationSettings() {
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 4000);
     },
-  }, { policy: 'hold', what: 'your preferences' });
+  }, { policy: 'hold', what: 'this update' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -532,7 +532,7 @@ export function NotificationSettings() {
                   Couldn&rsquo;t save. Try again.
                 </span>
               )}
-              <OfflineMutationNotice phase={save.phase} what="your preferences" check="this page" />
+              <OfflineMutationNotice phase={save.phase} what="this update" check="this page" />
               <span className="savehint">Changes apply across MyTribe push, email, and SMS.</span>
             </div>
           </>

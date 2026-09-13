@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef } from 'react';
 import { onlineManager, useMutation } from '@tanstack/react-query';
 import type { UseMutationOptions, UseMutationResult } from '@tanstack/react-query';
 
@@ -215,6 +215,19 @@ export function isOfflinePhase(phase: MutationPhase): boolean {
 }
 
 /**
+ * Is this one of the two offline failures, rather than an answer from a server?
+ *
+ * For an `onError` handler, which sees the error and not the mutation.
+ * `errorLine` covers the screens that render off `isError` at paint; the ones
+ * that push a sentence into state as it happens need the same rule, and
+ * without it they say "Save failed" over a write whose outcome is unknown.
+ * "Failed" is exactly the claim this whole change exists to stop making.
+ */
+export function isOfflineError(err: unknown): boolean {
+  return err instanceof OfflineMutationError || err instanceof LostSignalError;
+}
+
+/**
  * Does this phone have a connection, by both readings?
  *
  * BOTH, because each misses a case the other catches. `onlineManager` starts
@@ -237,19 +250,6 @@ export function isConnected(): boolean {
   return typeof navigator.onLine === 'boolean' ? navigator.onLine : true;
 }
 
-/**
- * Whether the phone has a connection, re-rendering when that changes.
- *
- * Not used by the phase — that is latched — but a screen may want to disable a
- * control that cannot work offline before it is ever tapped.
- */
-export function useOnline(): boolean {
-  return useSyncExternalStore(
-    (cb) => onlineManager.subscribe(cb),
-    () => isConnected(),
-    () => true,
-  );
-}
 
 /**
  * Is the screen that started this write still on screen?

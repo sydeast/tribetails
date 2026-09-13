@@ -10,7 +10,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { phaseOfMutation, usePortalMutation } from '../lib/mutationState';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_TIMELINE_STEPS,
@@ -116,7 +116,7 @@ export function BookingDetail() {
       // that could have an opinion, and `OfflineMutationNotice` says what did
       // happen. Overwriting that with a server sentence nobody wrote is the
       // same lie in a different place.
-      if (phaseOfMutation({ isPending: false, isPaused: false, isError: true, error: err }) !== 'failed') return;
+      if (isOfflineError(err)) return;
       setRescheduleProblem(err instanceof Error ? err.message : 'Could not send the request. Try again.');
     },
   }, { policy: 'hold', what: 'your new time' });

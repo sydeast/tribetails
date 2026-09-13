@@ -66,7 +66,7 @@ export function KinEdit() {
       // matters when they are elsewhere.
       if (isMounted()) void navigate({ to: '/kin/$kinId', params: { kinId } });
     },
-  }, { policy: 'hold', what: 'your changes' });
+  }, { policy: 'hold', what: 'this update' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -258,7 +258,7 @@ export function KinEdit() {
                   {save.error instanceof Error ? save.error.message : 'Could not save. Try again.'}
                 </span>
               )}
-              <OfflineMutationNotice phase={save.phase} what="your changes" check="this Kin" />
+              <OfflineMutationNotice phase={save.phase} what="this update" check="this Kin" />
               {!save.isError && nothingToSave && !hasErrors(errors) && <span className="sub">No changes yet.</span>}
               {hasErrors(errors) && <span className="sub">Fix the highlighted fields to save.</span>}
             </div>

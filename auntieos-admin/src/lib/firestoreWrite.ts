@@ -14,7 +14,7 @@ import type {
   WithFieldValue,
   WriteBatch,
 } from 'firebase/firestore';
-import { isConnected, settleWrite } from './offlineWrite';
+import { LostSignalError, isConnected, settleWrite } from './offlineWrite';
 
 /**
  * The Firestore write functions, with the same names and the same signatures,
@@ -34,15 +34,15 @@ import { isConnected, settleWrite } from './offlineWrite';
  * that moves money, and it leaves the NEXT direct write — written next month by
  * somebody who never read this issue — hanging exactly as before. Swapping the
  * import means a module either writes through this seam or does not, which is
- * one grep, and `firestoreWriteSeam.test.ts` is that grep.
+ * one grep.
  *
- * `addDoc` IS REBUILT RATHER THAN WRAPPED, and it has to be. Firebase's version
- * resolves the DocumentReference only once the server has it, so offline a
- * caller doing `const ref = await addDoc(…); return ref.id` waits forever for
- * an id that has in fact already been generated on the device. `doc(collection)`
- * mints that id locally with no network at all, so this returns it immediately
- * and lets the write itself queue. Identical behaviour online; the difference
- * is only that offline it now behaves like the rest of Firestore's queue.
+ * OFFLINE AT THE TAP IS NOT THE ONLY OFFLINE. A device with one bar can lose it
+ * a moment after the button is pressed, which on a job site is the common case
+ * rather than the exotic one, and the promise that never settles is the same
+ * promise either way. So `settleWrite` races the wait against the browser's
+ * `offline` event rather than only checking before it starts. `addDoc` is
+ * raced too, and is the one call that cannot answer "queued" when it loses:
+ * see its own note.
  *
  * WHAT IT DOES NOT DO. It does not cancel anything, and it does not decide
  * anything is safe. The write is in Firestore's IndexedDB queue either way
@@ -149,10 +149,38 @@ export async function addDoc<T>(
   reference: CollectionReference<T>,
   data: WithFieldValue<T>,
 ): Promise<DocumentReference<T>> {
-  if (isConnected()) return fbAddDoc(reference, data);
-  const ref = fbDoc(reference);
-  await settleWrite(fbSetDoc(ref, data), subjectOf(reference.path), opts(reference.path));
-  return ref;
+  if (!isConnected()) {
+    const ref = fbDoc(reference);
+    await settleWrite(fbSetDoc(ref, data), subjectOf(reference.path), opts(reference.path));
+    return ref;
+  }
+  // ONLINE AT THE CALL IS NOT ONLINE FOR THE WHOLE WRITE, so this is raced the
+  // same way `settleWrite` races the others. What it CANNOT do is the same
+  // thing they do. They resolve "queued" and let the caller carry on; this one
+  // owes its caller a DocumentReference, and the only id that would be correct
+  // is the one inside the `addDoc` still in flight. Minting a second would
+  // hand back a reference to a document that will never exist, which is worse
+  // than any spinner. So the honest answer is that the outcome is unknown, and
+  // `LostSignalError` is the word for that — the write itself still commits
+  // from Firestore's queue on reconnect, under the id the caller never saw.
+  const settled = await Promise.race([
+    fbAddDoc(reference, data).then((ref) => ({ ref })),
+    offlineDuringWrite(),
+  ]);
+  if ('ref' in settled) return settled.ref;
+  throw new LostSignalError(subjectOf(reference.path));
+}
+
+/** Resolves when the browser reports the connection went, and not otherwise. */
+function offlineDuringWrite(): Promise<{ offline: true }> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return;
+    const onOffline = (): void => {
+      window.removeEventListener('offline', onOffline);
+      resolve({ offline: true });
+    };
+    window.addEventListener('offline', onOffline);
+  });
 }
 
 export async function deleteDoc(reference: DocumentReference<DocumentData>): Promise<void> {

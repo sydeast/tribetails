@@ -27,7 +27,7 @@ import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -157,9 +157,14 @@ export function Account() {
       setBackupPhone(fresh.backupPhone ?? '');
     },
     onError: (err: unknown) => {
+      // #807: NOT "Save failed" for an offline failure. This write is HELD, so
+      // the usual case is that it has not failed at all, and even the
+      // mid-flight one has an unknown outcome rather than a known bad one.
+      // `OfflineMutationNotice` below the save bar says what really happened.
+      if (isOfflineError(err)) return;
       setStatus({ text: `Save failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
     },
-  }, { policy: 'hold', what: 'your changes' });
+  }, { policy: 'hold', what: 'this update' });
 
   // HOLD. `addSecondaryContact` looks for a live PENDING inviteRequest for the
   // same address first and returns it instead of minting a second
@@ -169,8 +174,10 @@ export function Account() {
   const invite = usePortalMutation({
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
     onSuccess: () => setInviteStatus({ text: 'Invite sent.', tone: 'ok' }),
-    onError: (err: unknown) =>
-      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' }),
+    onError: (err: unknown) => {
+      if (isOfflineError(err)) return;
+      setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
+    },
   }, { policy: 'hold', what: 'this invite' });
 
   // ── Card management ────────────────────────────────────────────────────────
@@ -203,7 +210,10 @@ export function Account() {
       // triggers the sync below.
       window.location.href = res.checkoutUrl;
     },
-    onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'add a card'), tone: 'err' }),
+    onError: (err: unknown) => {
+      if (isOfflineError(err)) return;
+      setBillingStatus({ text: billingErrorText(err, 'add a card'), tone: 'err' });
+    },
   }, { policy: 'abandon', what: 'the card setup' });
 
   // HOLD. `removeMyPaymentMethod` answers `alreadyEmpty: true` the second
@@ -216,7 +226,10 @@ export function Account() {
       await queryClient.invalidateQueries({ queryKey: ['myPaymentMethod', kinfolkId] });
       await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
     },
-    onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'remove the card'), tone: 'err' }),
+    onError: (err: unknown) => {
+      if (isOfflineError(err)) return;
+      setBillingStatus({ text: billingErrorText(err, 'remove the card'), tone: 'err' });
+    },
   }, { policy: 'hold', what: 'the card removal' });
 
   // Coming back from Stripe. The webhook stores the card too, but it can arrive
@@ -625,7 +638,7 @@ export function Account() {
           )}
         </div>
 
-        <OfflineMutationNotice phase={save.phase} what="your changes" check="your details" />
+        <OfflineMutationNotice phase={save.phase} what="this update" check="your details" />
 
         <p className="footnote">
           Cared for by <b>{businessName}</b>

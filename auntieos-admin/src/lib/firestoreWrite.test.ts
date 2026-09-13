@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -29,7 +30,7 @@ vi.mock('firebase/firestore', () => ({
 }));
 
 const { addDoc, setDoc, subjectOf, updateDoc } = await import('./firestoreWrite');
-const { queuedWrites, resetQueuedWrites } = await import('./offlineWrite');
+const { LostSignalError, queuedWrites, resetQueuedWrites } = await import('./offlineWrite');
 
 /** See offlineWrite.test.ts: node's `navigator` has no `onLine` to spy on. */
 function goOffline(): void {
@@ -133,6 +134,23 @@ describe('the write seam', () => {
 
     expect(ref.path).toBe('kin_care_reports/local1');
     expect(queuedWrites().map((q) => q.what)).toEqual(['a KinTale']);
+  });
+
+  /**
+   * `addDoc` is the one call that cannot answer "queued" when the signal goes
+   * mid-write: it owes its caller a DocumentReference, and the only correct id
+   * is the one inside the request still in flight. Minting a second would hand
+   * back a reference to a document that will never exist. So it says the
+   * outcome is unknown, which is both true and the thing that stops the
+   * spinner.
+   */
+  it('reports an unknown outcome when the signal goes mid-add', async () => {
+    fb.addDoc.mockReturnValue(never());
+
+    const add = addDoc({ path: 'kin_care_reports' } as never, { body: 'x' } as never);
+    window.dispatchEvent(new Event('offline'));
+
+    await expect(add).rejects.toBeInstanceOf(LostSignalError);
   });
 
   it('keeps a background breadcrumb off the banner', async () => {

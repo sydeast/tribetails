@@ -32,7 +32,7 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -93,7 +93,7 @@ export function KinTales() {
       setExtraPages((prev) => [...prev, ...res.tales]);
       setHasMoreOverride(res.hasMore);
     },
-  }, { policy: 'hold', what: 'more KinTales' });
+  }, { policy: 'hold', what: 'this page of KinTales' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -184,7 +184,7 @@ export function KinTales() {
                 Load More
               </MutationLabel>
             </button>
-            <OfflineMutationNotice phase={loadMore.phase} what="more KinTales" />
+            <OfflineMutationNotice phase={loadMore.phase} what="this page of KinTales" />
             {loadMore.phase === 'failed' && <p className="sub">Couldn&rsquo;t load more. Try again.</p>}
           </div>
         )}
@@ -574,7 +574,11 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
       { body },
       {
         onSuccess: () => setTopInput(''),
-        onError: (err) => setTopError(err instanceof Error ? err.message : 'Could not post your comment. Try again.'),
+        onError: (err) => {
+          // #807: the offline notice under the composer says it better.
+          if (isOfflineError(err)) return;
+          setTopError(err instanceof Error ? err.message : 'Could not post your comment. Try again.');
+        },
       },
     );
   }
@@ -593,7 +597,10 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
           setReplyInput('');
           setReplyParentId(null);
         },
-        onError: (err) => setReplyError(err instanceof Error ? err.message : 'Could not post your reply. Try again.'),
+        onError: (err) => {
+          if (isOfflineError(err)) return;
+          setReplyError(err instanceof Error ? err.message : 'Could not post your reply. Try again.');
+        },
       },
     );
   }

@@ -797,7 +797,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         },
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['members', kinfolkId] }),
-  }, { policy: 'hold', what: 'these permissions' });
+  }, { policy: 'hold', what: 'this permission change' });
 
   const title = member.secondaryLabel?.trim() || member.invitedEmail?.trim() || 'Member';
   const subParts = [member.invitedEmail && member.invitedEmail !== title ? member.invitedEmail : null, memberStatusLabel(member.status)].filter(Boolean);
@@ -850,7 +850,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         </MutationLabel>
       </button>
       {save.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 6 }}>Saved.</p>}
-      <OfflineMutationNotice phase={save.phase} what="these permissions" check="this member" />
+      <OfflineMutationNotice phase={save.phase} what="this permission change" check="this member" />
       {save.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 6 }}>Save failed. Try again.</p>}
     </div>
   );

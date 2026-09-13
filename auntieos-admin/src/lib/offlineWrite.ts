@@ -44,6 +44,19 @@ import { OfflineSessionError } from './readOnlySession';
  * rather than missed." This issue is that change. Two claims in that paragraph
  * have since gone stale and are corrected there.
  *
+ * WHAT A CALLER STILL GETS WRONG, AND WHY IT IS LEFT THAT WAY FOR NOW. Every
+ * direct-write caller runs its success path when this returns `{queued: true}`,
+ * so `settings/sections.tsx` offline shows its "Saved" confirmation while the
+ * banner says the change has not reached Tribe Tails. That is a smaller lie
+ * than the one it replaces — a spinner that never stops, which told the
+ * operator nothing and left them unable to move on — and correcting it means
+ * threading `WriteOutcome` through roughly thirty hand-rolled busy handlers,
+ * which is a second change with a second blast radius. The banner is the
+ * authority in the meantime: it names the change and is on screen for as long
+ * as the write is really waiting. `WriteOutcome.queued` is returned, not
+ * swallowed, so a caller that wants to say "Queued" instead can, one site at a
+ * time.
+ *
  * WHY ONE BANNER RATHER THAN THIRTY INLINE SENTENCES. The portal puts its
  * notice beside the control, because a household taps one thing at a time and
  * the thing they tapped is the thing they are looking at. The admin is not
@@ -132,12 +145,6 @@ export function phaseOfError(err: unknown): WritePhase {
   return 'failed';
 }
 
-/** The sentence a screen shows for a settled write, or null when it is fine. */
-export function writeErrorLine(err: unknown, fallback: string): string | null {
-  if (err === null || err === undefined) return null;
-  if (err instanceof Error && err.message) return err.message;
-  return fallback;
-}
 
 // ── the queue ───────────────────────────────────────────────────────────────
 
@@ -209,7 +216,15 @@ export interface WriteOutcome {
  * network is not a write that failed.
  */
 export async function settleWrite(
-  write: Promise<unknown>,
+  /**
+   * Typed `Promise` but normalised with `Promise.resolve` below, because it is
+   * not always one. A `bare await` tolerated a mock that returned `undefined`
+   * and the racing below does not, and several of the fourteen modules' own
+   * specs stub `updateDoc` exactly that way. Normalising is a line; making
+   * every one of those specs return a promise would be a migration nobody
+   * asked for, over a detail none of them is about.
+   */
+  writeOrValue: Promise<unknown> | unknown,
   what: string,
   /**
    * `silent` keeps the write off the banner. For a BACKGROUND write nobody
@@ -220,28 +235,66 @@ export async function settleWrite(
    */
   options: { silent?: boolean } = {},
 ): Promise<WriteOutcome> {
-  if (!isConnected()) {
-    if (options.silent === true) {
-      void write.catch(() => undefined);
-      return { queued: true };
-    }
-    // Do not await. Firestore has the write; the acknowledgement is what is
-    // unreachable. `catch` so a rejection on reconnect (a rules refusal, most
-    // likely) does not become an unhandled rejection, and so the row leaves the
-    // banner either way — the operator is told it is no longer waiting, which
-    // is true whichever way it went.
-    const entry: QueuedWrite = { id: nextId++, what, at: Date.now() };
-    publish([...queued, entry]);
-    void write.catch(() => undefined).finally(() => {
-      publish(queued.filter((q) => q.id !== entry.id));
-    });
-    return { queued: true };
-  }
+  const write = Promise.resolve(writeOrValue);
+  if (!isConnected()) return queue(write, what, options);
   try {
-    await write;
-    return { queued: false };
+    // ONLINE AT THE TAP IS NOT ONLINE FOR THE WHOLE WRITE, and on a job site
+    // that is the common case rather than the exotic one: one bar when the
+    // button is pressed, none a second later. A bare `await` here would hang
+    // exactly as before, because the promise that never settles is the same
+    // promise — the check above just happened to miss it by a moment.
+    //
+    // So the wait is raced against the browser saying it went offline. The
+    // write itself is untouched: Firestore already has it, in the same
+    // IndexedDB queue, and it commits on reconnect. Only the waiting stops.
+    const settled = await Promise.race([write.then(() => 'acked' as const), offlineSignal()]);
+    if (settled === 'acked') return { queued: false };
+    return queue(write, what, options);
   } catch (err) {
     if (!isConnected()) throw new LostSignalError(what, { cause: err });
     throw err;
   }
+}
+
+/**
+ * Stop waiting on a write Firestore is holding, and put it on the banner.
+ *
+ * Not an await, and not a cancellation. Firestore has the write; the
+ * ACKNOWLEDGEMENT is the unreachable part. The `catch` is there so a rejection
+ * on reconnect (a rules refusal, most likely) does not surface as an unhandled
+ * rejection, and the `finally` takes the row off the banner either way: the
+ * operator is told it is no longer waiting, which is true whichever way it went.
+ */
+function queue(write: Promise<unknown>, what: string, options: { silent?: boolean }): WriteOutcome {
+  if (options.silent === true) {
+    void write.catch(() => undefined);
+    return { queued: true };
+  }
+  const entry: QueuedWrite = { id: nextId++, what, at: Date.now() };
+  publish([...queued, entry]);
+  void write
+    .catch(() => undefined)
+    .finally(() => {
+      publish(queued.filter((q) => q.id !== entry.id));
+    });
+  return { queued: true };
+}
+
+/**
+ * Resolves when the browser says the connection went, and never otherwise.
+ *
+ * The listener is removed by the `Promise.race` losing only in the sense that
+ * nothing holds it after the caller returns; it is attached once per write and
+ * detached on the first event either way, so a long session of successful
+ * writes does not accumulate them.
+ */
+function offlineSignal(): Promise<'offline'> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return;
+    const onOffline = (): void => {
+      window.removeEventListener('offline', onOffline);
+      resolve('offline');
+    };
+    window.addEventListener('offline', onOffline);
+  });
 }

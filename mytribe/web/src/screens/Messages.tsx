@@ -23,7 +23,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
-import { usePortalMutation } from '../lib/mutationState';
+import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/messages.css';
 
@@ -286,6 +286,10 @@ export function Messages() {
       // KinTales.tsx): a failed post must surface inline, and the draft
       // must stay in the composer so "try again" is just a re-click.
       onError: (err) => {
+        // #807: an offline failure already has its own sentence under the
+        // composer, and `mapSendMessageError` would print a second one about
+        // a server that was never reached.
+        if (isOfflineError(err)) return;
         setSendError(mapSendMessageError(err));
       },
     });
@@ -308,6 +312,7 @@ export function Messages() {
         // Same rule as handleSend's onError: a failed helper call surfaces
         // inline and never touches the draft, so "try again" is a re-click.
         onError: (err) => {
+          if (isOfflineError(err)) return;
           setAssistError(mapGenerateError(err));
         },
       },

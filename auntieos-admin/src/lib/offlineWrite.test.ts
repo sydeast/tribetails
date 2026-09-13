@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LostSignalError,
@@ -134,5 +135,25 @@ describe('settleWrite', () => {
   it('lets a real server refusal through untouched', async () => {
     const refusal = new Error('invoice_already_settled');
     await expect(settleWrite(Promise.reject(refusal), 'a payment')).rejects.toBe(refusal);
+  });
+
+  /**
+   * ONLINE AT THE TAP IS NOT ONLINE FOR THE WHOLE WRITE, and on a job site that
+   * is the common case: one bar when the button is pressed, none a second
+   * later. Checking only before the wait starts would leave this hanging
+   * exactly as before, because it is the same never-settling promise.
+   */
+  it('stops waiting when the signal goes mid-write, not only before it', async () => {
+    const outcome = settleWrite(new Promise<void>(() => {}), 'your settings');
+
+    // The browser notices a moment after the write was already away.
+    window.dispatchEvent(new Event('offline'));
+
+    await expect(outcome).resolves.toEqual({ queued: true });
+    expect(queuedWrites().map((q) => q.what)).toEqual(['your settings']);
+  });
+
+  it('still reports an acked write as acked when the signal never went', async () => {
+    await expect(settleWrite(Promise.resolve(), 'your settings')).resolves.toEqual({ queued: false });
   });
 });
