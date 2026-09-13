@@ -606,12 +606,20 @@ export function CommunicateCompose() {
   );
 }
 
-/** Maps a callable rejection to a readable message, naming the two documented backend failure codes honestly. */
-function friendlySendError(err: unknown): string {
+/** Maps a callable rejection to a readable message, naming the documented backend failure codes honestly. */
+export function friendlySendError(err: unknown): string {
   const message = err instanceof Error ? err.message : 'Send failed';
   if (message.includes('no_recipients')) return 'No kinfolk match this audience. Nothing was sent.';
   if (message.includes('broadcast_all_failed')) {
     return 'Every attempted send failed. Nothing went out, check the email/SMS provider configuration.';
+  }
+  // #823's two, from `stopBroadcast`. Both mean the press changed nothing and
+  // both are good news, so the raw sentinel would read as a failure it is not.
+  if (message.includes('already_finished')) {
+    return 'It had already finished sending, so there was nothing left to stop.';
+  }
+  if (message.includes('already_stopping')) {
+    return 'A stop is already going through. It finishes within a minute.';
   }
   return message;
 }
@@ -747,7 +755,7 @@ function StillSending({ broadcastId }: { broadcastId: string }) {
       );
       check();
     } catch (err) {
-      setError(`stopBroadcast failed: ${err instanceof Error ? err.message : 'Stop failed'}`);
+      setError(friendlySendError(err));
     } finally {
       setStopping(false);
     }

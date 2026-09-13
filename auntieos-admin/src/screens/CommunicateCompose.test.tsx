@@ -295,6 +295,32 @@ describe('CommunicateCompose screen', () => {
       await screen.findByText(/61 households have already been contacted and cannot be called back\. 839 will not be\./),
     ).toBeInTheDocument();
   });
+  /**
+   * #823. Both stop sentinels mean the press changed nothing, and both are good
+   * news. Raw sentinel text next to mapped copy for every other failure would
+   * read as a broken stop.
+   */
+  it('reads a stop that raced the last recipient as finished, not as a failure', async () => {
+    sendBroadcast.mockResolvedValue(resultOf({ pending: true, sent: 61, audienceSize: 900 }));
+    getBroadcastProgress.mockResolvedValue({
+      broadcastId: 'b1',
+      fanoutState: 'running',
+      sent: 61,
+      audienceSize: 900,
+      reached: 61,
+      suppressedByPrefs: 0,
+      stopRequested: false,
+    });
+    stopBroadcast.mockRejectedValueOnce(new Error('FAILED_PRECONDITION: already_finished'));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop the rest' }));
+    expect(await screen.findByText(/already finished sending/)).toBeInTheDocument();
+    expect(screen.queryByText(/already_finished/)).not.toBeInTheDocument();
+  });
   it('shows no still-sending block at all for a broadcast that finished inside the call', async () => {
     sendBroadcast.mockResolvedValue(resultOf());
     render(<CommunicateCompose />);

@@ -97,6 +97,16 @@ class BroadcastTest {
         assertTrue(broadcastErrorText("x no_recipients y").contains("no kinfolk", ignoreCase = true))
         assertTrue(broadcastErrorText("x broadcast_all_failed y").contains("failed", ignoreCase = true))
         assertEquals("raw boom", broadcastErrorText("raw boom"))
+        // #823's two, from stopBroadcast. Both mean the press changed nothing,
+        // and both are good news, which the raw sentinel does not convey.
+        assertTrue(
+            broadcastErrorText("FAILED_PRECONDITION: already_finished")
+                .contains("already finished", ignoreCase = true),
+        )
+        assertTrue(
+            broadcastErrorText("FAILED_PRECONDITION: already_stopping")
+                .contains("already going through", ignoreCase = true),
+        )
     }
 
     @Test fun summaryMentionsCountAndChannel() {

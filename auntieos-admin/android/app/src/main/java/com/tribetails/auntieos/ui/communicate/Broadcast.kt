@@ -268,6 +268,12 @@ fun broadcastErrorText(message: String): String = when {
         "That audience has no kinfolk right now. Nothing was sent."
     message.contains("broadcast_all_failed", ignoreCase = true) ->
         "Every send failed. Nothing reached anyone. Check the provider settings and try again."
+    // #823's two, from `stopBroadcast`. Both mean the press changed nothing and
+    // both are good news, so the raw sentinel would read as a failure it is not.
+    message.contains("already_finished", ignoreCase = true) ->
+        "It had already finished sending, so there was nothing left to stop."
+    message.contains("already_stopping", ignoreCase = true) ->
+        "A stop is already going through. It finishes within a minute."
     else -> message
 }
 

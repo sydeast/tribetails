@@ -762,7 +762,10 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 onFailure = { e ->
                     _uiState.value = _uiState.value.copy(
                         stoppingBroadcast = false,
-                        broadcastError = "stopBroadcast failed: ${e.message ?: "Stop failed"}",
+                        // Through the same mapper the send uses: a raw
+                        // `already_finished` beside mapped copy for every other
+                        // sentinel reads as a failure, and it is the opposite.
+                        broadcastError = broadcastErrorText(e.message ?: "Stop failed"),
                     )
                 },
             )
