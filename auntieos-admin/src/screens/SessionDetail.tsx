@@ -272,11 +272,13 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // ── the visit clock ────────────────────────────────────────────────────────
   // The four in-visit writes, the confirm gate and the sentence they produce all
   // live in `lib/useVisitLifecycle.ts` now, because the Auntie Time CARD drives
-  // the same clock since #703 and two copies of "did the server actually change
-  // anything?" would drift. This screen keeps its own dialog and its own action
-  // row; the hook keeps the write. No refresh callback is passed here: `entry`
-  // is a LIVE `useDocById` subscription, so the document repaints itself.
-  const clock = useVisitLifecycle(sessionId, household);
+  // the same clock since #703 and two copies of "did anything actually change?"
+  // would drift. This screen keeps its own dialog and its own action row; the
+  // hook keeps the write. No refresh callback is passed here: `entry` is a LIVE
+  // `useDocById` subscription, so the document repaints itself -- and now that
+  // the clock writes to Firestore directly, that live listener repaints the row
+  // the instant the local write lands, ahead of the server ack.
+  const clock = useVisitLifecycle(entry, household);
   // Whether THIS browser is writing the route (#772). Drives the live line
   // under the clock and the Route panel's empty sentence while ARRIVED.
   const tracking = useVisitTracking(sessionId);

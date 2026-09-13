@@ -25,12 +25,35 @@ import { dispatchVisitNotificationCore } from './dispatchVisitNotification';
  * #397 L19: server-bound On-my-way / Clock in / Clock out / Undo arrival on ONE
  * `kin_care_sessions` document.
  *
+ * THE WEB ADMIN NO LONGER CALLS THIS ON A FIELD TAP (2026-09-12), and the three
+ * reasons below are kept verbatim because two of them are still true and the
+ * third is what changed. What replaced it is
+ * `auntieos-admin/src/api/sessionsWrite.ts#patchVisitLifecycle`: a direct
+ * Firestore write, with `logActivity` and `dispatchVisitNotification` fired
+ * behind it, which is Android's shape exactly.
+ *
+ * WHY, IN ONE MEASUREMENT. Every admin callable runs at minInstances 0, and on
+ * 2026-09-11 this one took 05:26:17.698 -> 05:26:25.617 to answer: 7.9 seconds
+ * of Cloud Run building a container in front of roughly 0.67 s of handler.
+ * `cpu: 1` is already deployed, so import trimming does not touch it. An Auntie
+ * standing at a door waited that out to say she had arrived.
+ *
+ * THIS CALLABLE IS NOT DEAD AND MUST NOT BE DELETED. It is still exported, still
+ * deployed, and still the only path that reads the session server-side before
+ * deciding -- which is the one thing the client path gives up (a stale row or a
+ * second operator). It remains correct for any caller that is not a field tap,
+ * and it is the escape hatch if the direct write turns out to be wrong. Reason
+ * 1 below is the one that was overtaken: the operator has since ruled that
+ * MOBILE WEB IS THE FIELD FALLBACK, so the browser is on a phone in a dead
+ * zone after all, and `auntieos-admin/src/lib/firebase.ts` now runs Firestore
+ * with a persistent offline queue for exactly that.
+ *
  * WHAT THIS IS FOR. The web admin had no write path onto a visit's lifecycle at
  * all: `screens/Sessions.tsx` said so in its own header ("Still NOT built here:
  * the WRITE flows, clock-in/out, GPS tracking"), and `SessionDetail.tsx`
  * rendered clocked-in / clocked-out as read-only `Fact`s. Android ships all of
- * it. This callable is the web half, and it is a CALLABLE rather than the
- * direct `updateDoc` Android uses for three reasons the field app does not
+ * it. This callable was the web half, and it is a CALLABLE rather than the
+ * direct `updateDoc` Android uses for three reasons the field app did not
  * share:
  *
  *   1. ANDROID'S DIRECT PATCH IS AN OFFLINE CONCESSION, and it says so:

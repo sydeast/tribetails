@@ -8,11 +8,11 @@ import { type SessionEntry } from '../api/sessions';
  * mocked at the module this screen actually imports, so a spec drives the same
  * call the browser would make.
  */
-const { setVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
-  setVisitLifecycle: vi.fn(),
+const { patchVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
+  patchVisitLifecycle: vi.fn(),
   updateKinCareSession: vi.fn(),
 }));
-vi.mock('../api/sessionsWrite', () => ({ setVisitLifecycle, updateKinCareSession }));
+vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, updateKinCareSession }));
 // `useDocById` joined the list with #760: the Route panel's purple house marker
 // reads `kinfolk/{id}.serviceLocation` through `lib/householdLocation.ts`, which
 // subscribes to that document. Mocked at `lib/firestore` rather than at
@@ -47,7 +47,7 @@ vi.mock('../lib/visitTracking', () => ({
 import { SessionDetail } from './SessionDetail';
 beforeEach(() => {
   useVisitTracking.mockReturnValue({ phase: 'idle' });
-  setVisitLifecycle.mockReset();
+  patchVisitLifecycle.mockReset();
   updateKinCareSession.mockReset();
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [] });
@@ -385,15 +385,24 @@ describe('SessionDetail: the lifecycle stepper', () => {
  * clocked-in/out as read-only `Fact`s and `Sessions.tsx` said the write flows
  * were "still NOT built here".
  */
-const clockOk = (over: Record<string, unknown> = {}) => ({
-  ok: true,
+/**
+ * What a direct in-visit write resolves with. `notified` is a shorthand for the
+ * `notification` promise the real write returns: it settles AFTER the write, so
+ * the screen says the status change first and amends the sentence when the push
+ * lands. That ordering has its own spec in `lib/useVisitLifecycle.test.ts`;
+ * here it just has to settle.
+ */
+const clockOk = ({
+  notified = true,
+  notifySkipped = null,
+  ...over
+}: Record<string, unknown> & { notified?: boolean; notifySkipped?: string | null } = {}) => ({
   sessionId: 'sess1',
   action: 'ARRIVED',
   from: 'ON_MY_WAY',
   status: 'ARRIVED',
   changed: true,
-  notified: true,
-  notifySkipped: null,
+  notification: Promise.resolve({ notified, notifySkipped }),
   ...over,
 });
 /** Press a clock button and confirm the dialog it opens. */
@@ -412,19 +421,23 @@ describe('SessionDetail: the visit clock', () => {
     // ruling is a second place for it to drift, not a missing control.
     expect(screen.queryByRole('button', { name: /complete/i })).toBeNull();
   });
-  it('clocks in through the callable, with a whole-second instant', async () => {
-    setVisitLifecycle.mockResolvedValue(clockOk());
+  // Straight to Firestore now, not through the callable: the tap used to wait
+  // out a measured 7.9 s Cloud Run cold start. The row itself is handed to the
+  // write, which is what lets it decide legality and routing without a read.
+  it('clocks in with a direct write, on the whole row, with a whole-second instant', async () => {
+    patchVisitLifecycle.mockResolvedValue(clockOk());
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
     await clock(/^clock in$/i, /yes, clock in/i);
-    expect(setVisitLifecycle).toHaveBeenCalledTimes(1);
-    const [id, action, opts] = setVisitLifecycle.mock.calls[0]!;
-    expect(id).toBe('sess1');
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    const [session, action, opts] = patchVisitLifecycle.mock.calls[0]!;
+    expect(session._id).toBe('sess1');
+    expect(session.status).toBe('ON_MY_WAY');
     expect(action).toBe('ARRIVED');
-    expect(opts.atIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(opts.nowIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     expect(await screen.findByText(/ON_MY_WAY → ARRIVED/)).toBeInTheDocument();
   });
   it('says whether the household was actually told, rather than implying it', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ notified: false, notifySkipped: 'session_has_no_routing_ids' }),
     );
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
@@ -432,11 +445,11 @@ describe('SessionDetail: the visit clock', () => {
     expect(await screen.findByText(/household was not notified/i)).toBeInTheDocument();
   });
   it('clocks out from ARRIVED and offers the undo beside it', async () => {
-    setVisitLifecycle.mockResolvedValue(clockOk({ action: 'DEPARTED', from: 'ARRIVED', status: 'DEPARTED' }));
+    patchVisitLifecycle.mockResolvedValue(clockOk({ action: 'DEPARTED', from: 'ARRIVED', status: 'DEPARTED' }));
     render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: '2026-07-16T14:02:00Z' })} onBack={vi.fn()} />);
     expect(screen.getByRole('button', { name: /^undo arrival$/i })).toBeInTheDocument();
     await clock(/^clock out$/i, /yes, clock out/i);
-    expect(setVisitLifecycle.mock.calls[0]![1]).toBe('DEPARTED');
+    expect(patchVisitLifecycle.mock.calls[0]![1]).toBe('DEPARTED');
   });
   // The refusal the server owns. The button is not offered here (the courtesy
   // half), and this pins the courtesy so a state cannot quietly start
@@ -445,8 +458,8 @@ describe('SessionDetail: the visit clock', () => {
     render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /^clock out$/i })).toBeNull();
   });
-  it('surfaces the server’s own refusal verbatim, and does not claim a write', async () => {
-    setVisitLifecycle.mockRejectedValue(
+  it('surfaces the refusal verbatim, and does not claim a write', async () => {
+    patchVisitLifecycle.mockRejectedValue(
       new Error('Cannot clock out of this visit while it is SCHEDULED. Allowed from: ARRIVED.'),
     );
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
@@ -459,7 +472,7 @@ describe('SessionDetail: the visit clock', () => {
   // screen must not report it as a fresh clock-in, or an operator will believe
   // the arrival time moved.
   it('reports a no-op as a no-op, naming the time as unchanged', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ from: 'ARRIVED', status: 'ARRIVED', changed: false, notified: false }),
     );
     render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
@@ -472,14 +485,14 @@ describe('SessionDetail: the visit clock', () => {
     expect(screen.getByText(/its clock is closed/i)).toBeInTheDocument();
   });
   it('undoes an arrival without pretending anyone is told', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ action: 'UNDO_ARRIVAL', from: 'ARRIVED', status: 'SCHEDULED', notified: false }),
     );
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^undo arrival$/i }));
     expect(screen.getByText(/nobody is notified/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /yes, undo the arrival/i }));
-    expect(setVisitLifecycle.mock.calls[0]![1]).toBe('UNDO_ARRIVAL');
+    expect(patchVisitLifecycle.mock.calls[0]![1]).toBe('UNDO_ARRIVAL');
   });
 });
 describe('SessionDetail: editing the visit', () => {
