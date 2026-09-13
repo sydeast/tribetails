@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
 import { resolveAsync, type Async } from '../lib/async';
+import { useSlowWait } from '../lib/slowWait';
+import { SlowWaitNotice } from './SlowWaitNotice';
+import { Spinner } from './Spinner';
 
 interface Props<T> {
   state: Async<T>;
@@ -26,13 +29,54 @@ interface Props<T> {
  * screen reader are concerned, and the visual harness already waits on exactly
  * this selector before it photographs anything (`e2e/visual.capture.spec.ts`),
  * so a second spinner idiom would be a second thing for it to learn.
+ *
+ * IT NOW MOVES, AND IT NOW ESCALATES (operator ruling, 2026-09-12: "any
+ * waits/delays/etc need to have some sort of loading icon", and "a tap to sync
+ * option if server access is taking too long"). Both land here rather than on
+ * sixty screens because this is already the one marker every one of them goes
+ * through -- `AsyncRegion`'s loading branch and `RoutePending` both render it.
+ * Issue #714 built `components/Spinner.tsx` and then wired it into five
+ * settings sections by hand; everything else kept the bare sentence. Putting it
+ * in the seam is what stops that from being the shape of the fix again.
+ *
+ * The spinner is added BESIDE the sentence, never in place of it. "Loading
+ * bookings…" says which of the four regions on a screen is the one still
+ * waiting; a bare ring says only that something is. That is also what keeps
+ * this honest under `prefers-reduced-motion`, where the ring is slowed right
+ * down and the words are doing most of the work (see Spinner.css).
+ *
+ * A CALLER'S OWN [children] SKELETON KEEPS THE ESCALATION AND LOSES NOTHING:
+ * the notice is a sibling of the skeleton, not a replacement for it, so a
+ * screen that drew its own shimmer bars still gains a way forward at 10s.
  */
-export function AsyncLoading({ what, children }: { what: string; children?: ReactNode }) {
+export function AsyncLoading({
+  what,
+  retry,
+  children,
+}: {
+  what: string;
+  /**
+   * What "Sync now" does once the wait passes the threshold. Absent means the
+   * notice offers a page reload instead -- never nothing. See SlowWaitNotice
+   * for the idempotency rule before pointing this at a write.
+   */
+  retry?: (() => void) | undefined;
+  children?: ReactNode;
+}) {
+  const wait = useSlowWait(true, retry);
   return (
     // role=status, not just grey boxes: the wasm canvas exposed nothing to
     // screen readers (AO-15) and we are not repeating that.
     <div role="status" aria-live="polite">
-      {children ?? <p className="async-loading">Loading {what}…</p>}
+      {children ?? (
+        <p className="async-loading loadingRow">
+          <Spinner label={`Loading ${what}`} />
+          <span>Loading {what}…</span>
+        </p>
+      )}
+      {wait.phase === 'slow' && (
+        <SlowWaitNotice what={what} attempt={wait.attempt} onSync={wait.canSync ? wait.sync : undefined} />
+      )}
     </div>
   );
 }
@@ -59,7 +103,14 @@ export function AsyncRegion<T>({ state, what, isEmpty, empty, loading, children 
 
   switch (r.kind) {
     case 'loading':
-      return <AsyncLoading what={what}>{loading}</AsyncLoading>;
+      // `r.retry` is the producer's own reload closure, carried on the loading
+      // state rather than only the error one (see lib/async.ts). A producer
+      // that supplies none still gets the escalation, offering a page reload.
+      return (
+        <AsyncLoading what={what} retry={r.retry}>
+          {loading}
+        </AsyncLoading>
+      );
 
     case 'error':
       return (

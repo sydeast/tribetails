@@ -77,9 +77,12 @@
     transform: rotate(360deg);
   }
 }
+/* Slowed, not stopped, and the `!important` plus full shorthand are what make
+   that hold against `base.css`'s global `* { animation: none !important }`.
+   See the long note in `components/Spinner.css`. */
 @media (prefers-reduced-motion: reduce) {
   .flags__spinner {
-    animation-duration: 2400ms;
+    animation: flags-spin 2400ms linear infinite !important;
   }
 }
 .shell__pending-note {
@@ -283,9 +286,11 @@
   border-radius: var(--radius-pill);
   animation: auntie-btn-spin 800ms linear infinite;
 }
+/* As above: shorthand + `!important` so the global reduced-motion kill in
+   base.css cannot freeze the one thing saying the row is still working. */
 @media (prefers-reduced-motion: reduce) {
   .notif-row__pending {
-    animation-duration: 2400ms;
+    animation: auntie-btn-spin 2400ms linear infinite !important;
   }
 }
 

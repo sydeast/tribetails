@@ -21,6 +21,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav, type PortalNavTab } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/messages.css';
 
@@ -330,7 +331,9 @@ export function Messages() {
             {threadView.kind === 'offline' && liveMessages === null ? (
               <OfflineNotice what="your messages" />
             ) : threadView.kind === 'loading' && liveMessages === null ? (
-              <p className="sub">Loading your messages…</p>
+              <LoadingLine what="your messages" retry={() => void threadQuery.refetch()}>
+            Loading your messages…
+          </LoadingLine>
             ) : threadQuery.isError && liveMessages === null && noThreadYet ? (
               <LaunchError
                 onRetry={() => void threadQuery.refetch()}
@@ -394,7 +397,13 @@ export function Messages() {
             {editor ? (
               <EditorContent editor={editor} className="msgs-editorbody" data-testid="composer-editor" />
             ) : (
-              <p className="sub">Loading composer…</p>
+              // Not a network read -- this is tiptap initialising -- but the
+              // ruling says "any waits/delays/etc", and a wait the household
+              // can see is a wait whether or not a server is involved. No
+              // retry: there is no request to re-send, so the escalation falls
+              // back to offering a reload, which is the real remedy if the
+              // editor never comes up.
+              <LoadingLine what="the composer">Loading composer…</LoadingLine>
             )}
 
             <div className="msgs-composer-foot">

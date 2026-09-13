@@ -15,6 +15,9 @@ import '@fontsource/dm-mono/500.css';
 
 import './styles/tokens.css';
 import './styles/base.css';
+// After base.css on purpose. Its reduced-motion guard is a `*` rule carrying
+// `!important`, and loading.css's slow-spin override has to be able to beat it.
+import './styles/loading.css';
 import './styles/auth.css';
 import './styles/schedule.css';
 import './styles/kin.css';

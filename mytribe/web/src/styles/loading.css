@@ -1,0 +1,142 @@
+/* ===== waiting =====
+   The portal had one spinner (`.siu-spinner`, in the image-upload control) and
+   about thirty bare "Loading …" lines with nothing moving. This is the shared
+   vocabulary those lines now use: a ring beside the sentence, and the
+   escalation that appears under it at 10s (operator ruling, 2026-09-12).
+
+   Geometry, stroke ratio and duration are lifted from `.siu-spinner` rather
+   than invented, so the portal has one spinner idiom and not two. What changes
+   is the palette: that one sits on a dark scrim and is drawn in white, this one
+   sits on cream and glass, so it is drawn from the text and accent tokens.
+   Every colour here is a token. */
+
+.loading-line__row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+}
+
+/* The block form: a panel-sized wait, for a region that owns its own card
+   rather than a row inside one. Same parts, more air, centred. */
+.loading-block {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.loading-block .loading-line__row {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.loading-block .loading-spinner {
+  width: 26px;
+  height: 26px;
+  border-width: 3px;
+}
+
+.loading-spinner {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--orange);
+  animation: loading-spin 0.8s linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* For a wait that has to sit inside running text -- the Home hero's <h1>, where
+   a block-level live region is not valid markup. Sized from the current font
+   rather than fixed, so it reads as part of the line it is in. */
+.loading-spinner--inline {
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  border-width: 2px;
+  margin-right: 0.42em;
+  vertical-align: baseline;
+}
+
+/* REDUCED MOTION SLOWS THIS RING. IT DOES NOT STOP IT, and the `!important` is
+   what makes that true rather than aspirational.
+
+   `base.css` ends with `@media (prefers-reduced-motion: reduce) { * { animation:
+   none !important } }`, which freezes every animation in the app. That is right
+   for the drifting orbs and the entrance rise, and wrong for a progress
+   indicator: a frozen ring is not a loading icon, it is a picture of a hang,
+   which is exactly the reading the ruling exists to prevent. Nothing weaker
+   than `!important` can beat a `*` rule that already has one -- which is why
+   `signedImageUpload.css`'s `animation-duration: 1.6s` override has never had
+   any effect and that spinner has always been frozen.
+
+   `prefers-reduced-motion` asks for no large, vestibular or distracting motion.
+   A 15px ring turning once every 2.4s is none of those, and an indicator that
+   has stopped indicating is the worse accessibility outcome: you cannot tell a
+   working screen from a dead one. The sentence beside it carries the meaning
+   either way, which is why the ring is added next to the words and never
+   instead of them. */
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner {
+    animation: loading-spin 2.4s linear infinite !important;
+  }
+}
+
+/* The escalation. Deliberately quieter than `.offline-notice`: nothing has
+   failed, so this is a hairline rule and dim text rather than a filled card. */
+.slow-wait {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+
+.loading-block .slow-wait {
+  justify-content: center;
+  border-top: none;
+  padding-top: 0;
+}
+
+.slow-wait__line {
+  margin: 0;
+}
+
+/* Echoes the portal's small buttons without the gradient fill: this is an
+   offer, not the screen's primary action, and a filled CTA beside a spinner
+   that is still running would read as the thing to do rather than the thing
+   available. */
+.slow-wait__sync {
+  flex: 0 0 auto;
+  cursor: pointer;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--navy);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  transition: 0.2s var(--ease);
+}
+
+.slow-wait__sync:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.slow-wait__sync:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}

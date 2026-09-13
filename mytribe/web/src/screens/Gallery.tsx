@@ -8,6 +8,7 @@ import { PortalNav } from '../components/PortalNav';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/gallery.css';
 
@@ -115,9 +116,9 @@ export function Gallery() {
             {photosView.kind === 'offline' ? (
               <OfflineNotice what="your photos" />
             ) : photosView.kind !== 'data' && photosView.kind !== 'empty' ? (
-              <p className="sub" data-testid="gallery-loading">
-                Loading your photos…
-              </p>
+              <LoadingLine what="your photos" retry={() => void photos.refetch()}>
+                <span data-testid="gallery-loading">Loading your photos…</span>
+              </LoadingLine>
             ) : photosView.kind === 'empty' ? (
               <p className="sub" data-testid="gallery-empty">
                 No photos yet. Every KinTale your Auntie sends brings its pictures here.

@@ -17,6 +17,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
@@ -134,7 +135,9 @@ export function Invoices() {
                   <p>You are all caught up. New invoices will land here.</p>
                 </div>
               ) : openView.kind !== 'data' ? (
-                <p className="sub">Loading your invoices…</p>
+                <LoadingLine what="your invoices" retry={() => void invoices.refetch()}>
+            Loading your invoices…
+          </LoadingLine>
               ) : (
                 openView.data.open.map((inv, i) => (
                   <OpenRow
@@ -159,7 +162,15 @@ export function Invoices() {
                   <b>No paid invoices yet</b>
                   <p>Past payments and receipts will appear here.</p>
                 </div>
-              ) : paidView.kind !== 'data' ? null : (
+              ) : paidView.kind !== 'data' ? (
+                // Was `null`: a silent wait, with the section label sitting over
+                // an empty card and nothing to tell a slow read from a finished
+                // one. The 2026-09-12 ruling covers the waits that showed
+                // nothing at all, not just the ones that showed a bare line.
+                <LoadingLine what="your payment history" retry={() => void invoices.refetch()}>
+                  Loading your payment history…
+                </LoadingLine>
+              ) : (
                 paidView.data.paid.map((inv, i) => <PaidRow key={inv.id} invoice={inv} divider={i > 0} />)
               )}
             </section>

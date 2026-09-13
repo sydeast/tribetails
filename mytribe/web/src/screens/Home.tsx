@@ -8,6 +8,7 @@ import { LaunchError } from './LaunchError';
 import { InstallAndAlerts } from '../components/InstallAndAlerts';
 import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import {
   bookingChip,
@@ -112,7 +113,16 @@ export function Home() {
               // tribe this is right now, so we do not claim to.
               <>We can&rsquo;t reach your tribe right now.</>
             ) : homeView.kind !== 'data' ? (
-              'Fetching your tribe…'
+              // The bare ring rather than a LoadingLine: this wait lives inside
+              // an <h1>, where a <div role="status"> is not allowed, and the
+              // heading text is already the sentence. The escalation for the
+              // same outage is carried by the sections below, which have room
+              // for it -- the hero would be offering a second Sync button for
+              // a read three other regions are also waiting on.
+              <>
+                <span className="loading-spinner loading-spinner--inline" aria-hidden="true" />
+                Fetching your tribe…
+              </>
             ) : (
               <>
                 Hi {displayName}, your <span>tribe</span> is in good hands.
@@ -172,7 +182,9 @@ export function Home() {
               ) : bookingsView.kind === 'error' ? (
                 <p className="sub">Your schedule is unavailable right now.</p>
               ) : bookingsView.kind !== 'data' ? (
-                <p className="sub">Loading your schedule…</p>
+                <LoadingLine what="your schedule" retry={() => void bookings.refetch()}>
+                  Loading your schedule…
+                </LoadingLine>
               ) : (
                 upcoming.map((b, i) => {
                   const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
@@ -206,7 +218,9 @@ export function Home() {
               ) : talesView.kind === 'error' ? (
                 <p className="sub">KinTales unavailable right now.</p>
               ) : talesView.kind !== 'data' ? (
-                <p className="sub">Loading recent KinTales…</p>
+                <LoadingLine what="your KinTales" retry={() => void kinTales.refetch()}>
+                  Loading recent KinTales…
+                </LoadingLine>
               ) : (
                 tales.map((t, i) => (
                   <div className={`tale a${(i % 3) + 1}`} key={t.id}>
@@ -234,7 +248,9 @@ export function Home() {
               ) : kinView.kind === 'error' ? (
                 <p className="sub">Your kin list is unavailable right now.</p>
               ) : kinView.kind !== 'data' ? (
-                <p className="sub">Loading your kin…</p>
+                <LoadingLine what="your kin" retry={() => void kin.refetch()}>
+                  Loading your kin…
+                </LoadingLine>
               ) : (
                 activeKin.map((k, i) => (
                   <Link className={`kinrow ${kinVariant(i)}`} to="/kin/$kinId" params={{ kinId: k.id }} key={k.id}>

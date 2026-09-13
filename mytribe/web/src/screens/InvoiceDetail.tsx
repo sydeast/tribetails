@@ -25,6 +25,7 @@ import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
@@ -137,7 +138,9 @@ export function InvoiceDetail() {
       <>
         <PortalNav active="invoices" />
         <div className="wrap">
-          <p className="sub">Loading invoice…</p>
+          <LoadingLine variant="block" what="this invoice" retry={() => void invoices.refetch()}>
+          Loading invoice…
+        </LoadingLine>
         </div>
       </>
     );

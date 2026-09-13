@@ -8,6 +8,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
+import { LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_TIMELINE_STEPS,
@@ -133,7 +134,9 @@ export function BookingDetail() {
       <>
         <PortalNav active="schedule" />
         <div className="wrap">
-          <p className="sub">Loading this booking…</p>
+          <LoadingLine variant="block" what="this booking" retry={() => void bookings.refetch()}>
+          Loading this booking…
+        </LoadingLine>
         </div>
       </>
     );

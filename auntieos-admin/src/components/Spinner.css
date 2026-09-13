@@ -22,14 +22,32 @@
   }
 }
 
-/* Belt and braces: base.css already turns every animation off (with
-   !important) once `prefers-reduced-motion: reduce` is set. This is here so
-   the spinner is correct on its own, the same way Toast.css and
-   PulsingBadge.css guard their own animation rather than relying only on the
-   global rule. */
+/* REDUCED MOTION SLOWS THIS SPINNER. IT DOES NOT STOP IT, and the `!important`
+   is what makes that true rather than aspirational.
+
+   This block used to read `animation: none`, which was wrong twice over. It was
+   wrong on the merits -- a frozen ring is not a loading indicator, it is a
+   picture of a hang, which is the exact reading the 2026-09-12 ruling ("any
+   waits/delays/etc need to have some sort of loading icon") exists to prevent.
+   And it was redundant besides: `base.css`'s reduced-motion guard already sets
+   `animation: none !important` on `*`, so this rule overrode nothing and every
+   spinner in the app was frozen anyway.
+
+   That global `!important` is also why the fix needs one of its own. An
+   ordinary declaration cannot beat it, which is how `Buttons.css:214` and
+   `styles/screens.css:80` came to carry slowed-spin blocks whose own comments
+   say "Slowed, not removed... a frozen spinner reads as a hang" while being
+   silently overridden for months. Both are corrected the same way.
+
+   `prefers-reduced-motion` asks for no large, vestibular or distracting
+   motion. A 14px ring turning once every 2.4s is none of those, and a progress
+   indicator that has stopped indicating is the worse accessibility outcome:
+   the user cannot tell a working screen from a dead one. The sentence beside
+   it ("Loading bookings…") carries the meaning either way, which is why
+   AsyncRegion puts the spinner next to the words and never instead of them. */
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    animation: none;
+    animation: spinner-spin 2400ms linear infinite !important;
   }
 }
 

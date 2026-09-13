@@ -218,8 +218,16 @@ button.auntie-icon-btn--reveal:focus-visible {
   }
 
   /* Slowed, not removed: the spinner is the only thing saying work is in
-     flight, and a frozen spinner reads as a hang. */
+     flight, and a frozen spinner reads as a hang.
+
+     THE `!important` AND THE FULL SHORTHAND ARE WHAT MAKE THAT TRUE. A bare
+     `animation-duration: 2400ms` was overridden by `base.css`'s global
+     `* { animation: none !important }`, so this spinner has been frozen for
+     months while this comment said it was not. The shorthand is re-stated
+     rather than just the duration because `none` had already cleared the name
+     and timing that a duration alone would be adjusting. Same correction as
+     `components/Spinner.css`; the long note there has the reasoning. */
   .auntie-btn__spinner {
-    animation-duration: 2400ms;
+    animation: auntie-btn-spin 2400ms linear infinite !important;
   }
 }
