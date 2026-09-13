@@ -880,6 +880,13 @@ private fun AuthenticatedNavHost(
                     onOpenReport = { sessionId ->
                         navController.navigate(Screen.KinTaleReport.createRoute(sessionId))
                     },
+                    // #809: Upcoming KinCare rows open the session itself
+                    // (KinCareDetail), not the KinTale report onOpenReport goes
+                    // to above -- the Kin detail screen's own visit rows (#808)
+                    // navigate the same way.
+                    onOpenVisit = { sessionId ->
+                        navController.navigate(Screen.KinCareDetail.createRoute(sessionId))
+                    },
                     // #552 used to wire the hero's "New KinTale" primary here,
                     // to the picker scoped to this household. #676 (same ruling
                     // as the React profile) removed that entry point, so the

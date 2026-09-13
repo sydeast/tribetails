@@ -172,6 +172,25 @@ describe('UpcomingVisitsPanel', () => {
     expect(links[0]).toHaveAttribute('href', '/sessions/s1');
     expect(screen.getByText('Walk')).toBeInTheDocument();
   });
+  /**
+   * #809 (parity with Android's `VisitLine`): each row has to open ITS OWN
+   * session, not just any session -- a row that always opened the first one
+   * would still pass a test asserting only that links exist.
+   */
+  it('links each of several visits to the session it names, not to each other', () => {
+    useCollection.mockReturnValue(
+      ready([
+        { _id: 's1', kinfolkId: 'k1', status: 'SCHEDULED', startTime: '2026-08-18T09:00:00Z', serviceType: 'Walk' },
+        { _id: 's2', kinfolkId: 'k1', status: 'SCHEDULED', startTime: '2026-08-19T09:00:00Z', serviceType: 'Drop-in' },
+      ]),
+    );
+    render(<UpcomingVisitsPanel kinfolkId="k1" now={now} />);
+
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(2);
+    expect(links[0]).toHaveAttribute('href', '/sessions/s1');
+    expect(links[1]).toHaveAttribute('href', '/sessions/s2');
+  });
   it('draws each visit as the mock line: a dot in the service tone, then who it is for (#755)', () => {
     useCollection.mockReturnValue(
       ready([

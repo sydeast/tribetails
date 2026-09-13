@@ -63,6 +63,8 @@ fun KinfolkProfileScreen(
     onNavigateToHouseholdData: (String, String) -> Unit = { _, _ -> },
     onNavigateToMediaGallery: (String, String) -> Unit = { _, _ -> },
     onOpenReport: (sessionId: String) -> Unit = {},
+    /** #809: a row in Upcoming KinCare opens the session it names, matching web. */
+    onOpenVisit: (sessionId: String) -> Unit = {},
     /** B1: (kinfolkId, kinfolkName) -> the members and invites screen. */
     onNavigateToMembers: (String, String) -> Unit = { _, _ -> },
 ) {
@@ -283,7 +285,13 @@ fun KinfolkProfileScreen(
                             EmptyHint("No visits booked in the next $UPCOMING_HORIZON_DAYS days.")
                         } else {
                             Column {
-                                state.upcomingVisits.forEachIndexed { index, s -> VisitLine(s, last = index == state.upcomingVisits.lastIndex) }
+                                state.upcomingVisits.forEachIndexed { index, s ->
+                                    VisitLine(
+                                        s = s,
+                                        last = index == state.upcomingVisits.lastIndex,
+                                        onOpen = { s.id.takeIf { it.isNotBlank() }?.let(onOpenVisit) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -733,12 +741,16 @@ private fun KinRow(kin: Kin, kin411: Kin411?, onOpen: () -> Unit) {
  *
  * [onOpen] opens the visit, which is the operator's standing directive on the
  * bookings mock ("cards should open displaying fuller details") and what the
- * React twin's rows do. It defaults to null so a caller with nowhere to send
- * the tap draws a plain line rather than a control that does nothing; the
- * household profile is still that caller, and wiring it there is its own change.
+ * React twin's rows do. It is REQUIRED, not defaulted to a no-op: #808 shipped
+ * this with `onOpen: (() -> Unit)? = null` so a forgotten wiring rendered a
+ * plain, silently inert line instead of failing to compile, and that is
+ * exactly how #809 (this component wired on the Kin detail screen but not the
+ * household profile it has always rendered on) happened. A caller with
+ * nowhere to send the tap now has to say so on purpose, by passing `{}`,
+ * rather than getting that for free.
  */
 @Composable
-internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: (() -> Unit)? = null) {
+internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: () -> Unit) {
     val c = AuntieTheme.colors
     val tone = serviceTone(s.serviceType)
     val description = if (s.serviceDurationMinutes > 0) {
@@ -750,7 +762,7 @@ internal fun VisitLine(s: KinCareSession, last: Boolean, onOpen: (() -> Unit)? =
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (onOpen == null) Modifier else Modifier.clickable(onClick = onOpen))
+                .clickable(onClick = onOpen)
                 .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
