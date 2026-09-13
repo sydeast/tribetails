@@ -472,6 +472,7 @@ class FirestoreClient {
         channels: List<com.tribetails.auntieos.web.screens.communicate.BroadcastChannel>,
         subject: String?,
         body: String,
+        idempotencyKey: String? = null,
     ): WriteResult<com.tribetails.auntieos.web.screens.communicate.BroadcastResult> {
         val payload = buildJsonObject {
             if (!segmentId.isNullOrBlank()) put("segmentId", JsonPrimitive(segmentId))
@@ -479,6 +480,12 @@ class FirestoreClient {
             put("channels", buildJsonArray { channels.distinct().forEach { add(JsonPrimitive(it.wire)) } })
             if (!subject.isNullOrBlank()) put("subject", JsonPrimitive(subject))
             put("body", JsonPrimitive(body))
+            // #814: becomes the `broadcasts/{id}` document id the server claims
+            // before it sends, so an operator pressing Send again lands on the
+            // broadcast the first press may already have sent. No automatic
+            // retry here: this console cannot tell a dropped request from a
+            // refusal (see SendIdempotency.kt).
+            if (!idempotencyKey.isNullOrBlank()) put("idempotencyKey", JsonPrimitive(idempotencyKey))
         }
         return when (val r = platformInvokeCallable("broadcastMessage", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)

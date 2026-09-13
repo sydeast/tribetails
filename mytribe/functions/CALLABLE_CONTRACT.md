@@ -90,7 +90,13 @@ the stale "~26":
   `importSeedTemplates` (`dryRun`, `onlyIds[]`, `overwriteIds[]`, issue #468,
   frozen from birth because the React admin and the Android Templates screen
   both hand-mirror it), `broadcastMessage` (a `.superRefine` ZodEffects wrapping
-  a nested `criteria`). The `shapeSignature` walker unwraps optional/nullable/
+  a nested `criteria`; it took an optional `idempotencyKey` in #814, shaped
+  `bcast_<millis>_<suffix>`, which becomes the `broadcasts/{id}` document id,
+  the row is now written BEFORE the fan-out so there is something for a second
+  attempt to collide with, and a deduped reply carries `deduped: true` with the
+  stored counts. An all-failed attempt leaves the row at `fanoutState: 'failed'`
+  and is the one state a same-key retry may re-run from, because nobody heard
+  anything). The `shapeSignature` walker unwraps optional/nullable/
   default/effects and descends arrays, so a rename at ANY depth (e.g.
   `schema.sections[].fields[].required`) fails the guard.
 - The remaining ~34 are lower-complexity (2 to 3 flat fields); freeze as they churn.
@@ -2392,8 +2398,26 @@ A blast adds a third path, an explicit `audienceUids` list, which is the shape
 the callable originally took.
 
 ### scheduleMarketingBlast (shape changed 2026-09-12)
-- req `{ key: 'newsletter.announcement'|'survey.event'|'marketing.optin', fireAtMs: number /* epoch ms, not >60s in the past */, segmentId?: string | criteria?: Criteria | audienceUids?: string[] /* EXACTLY ONE */, data: Record<string, unknown>, title?: string }`
-- res `{ ok: true, blastId: string, key: string, matched: number, noLinkedAccount: number, dispatched: number, suppressed: number, failed: number }`
+- req `{ key: 'newsletter.announcement'|'survey.event'|'marketing.optin', fireAtMs: number /* epoch ms, not >60s in the past */, segmentId?: string | criteria?: Criteria | audienceUids?: string[] /* EXACTLY ONE */, data: Record<string, unknown>, title?: string, idempotencyKey?: string /* blast_<millis>_<suffix> */ }`
+- res `{ ok: true, blastId: string, key: string, matched: number, noLinkedAccount: number, dispatched: number, suppressed: number, failed: number, deduped: boolean, pending: boolean }`
+- **`idempotencyKey` (#814, 2026-09-12).** One key per SUBMISSION, held across
+  every attempt at it, and it becomes the `marketingBlasts/{id}` document id.
+  The row is written before the fan-out (see below), so it is also the
+  idempotency record: a second attempt claims the same id, loses the `create()`,
+  and is answered from the stored row with `deduped: true` instead of queueing a
+  second set of scheduled notifications. `pending` is true while the first
+  attempt's fan-out is still running, and the counts are then a snapshot rather
+  than a total. A different caller's key is refused `already-exists` rather than
+  handed somebody else's campaign. Optional: a payload without one behaves
+  exactly as it did before. Both clients that adopt it also opt into ONE retry
+  on a transport failure (`call(..., { idempotent: true })` / the Android
+  choke point), which is only safe because of this key.
+- The fan-out stays inside the callable, at `timeoutSeconds: 540` (raised from
+  the 60s default in #814, matching `broadcastMessage`). A client that gives up
+  at 20 seconds does not stop the container, so the budget that matters is this
+  one. The row carries `fanoutState: 'running' | 'complete'`; a row still saying
+  'running' after the invocation ended is a fan-out that was killed part-way,
+  which is a different fact from a blast that queued nothing.
 - **The shape change.** It used to take ONLY `audienceUids`, which is why nothing
   ever called it: a screen would have had to enumerate up to 5000 auth uids
   client-side, and no client can read the `kinfolk` collection's uid column that

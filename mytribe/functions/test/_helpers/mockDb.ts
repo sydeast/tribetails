@@ -305,8 +305,25 @@ export function buildDbMock(opts: {
     string,
     Array<{ id: string; path: string; data: Record<string, unknown> }>
   >;
+  /**
+   * Makes writes VISIBLE to later reads (#814).
+   *
+   * Off by default, because every existing suite is written against a static
+   * fixture and a mock that suddenly remembered its own writes would change
+   * what they assert. On, `set` / `update` / `create` / `delete` mutate the same
+   * `docs` map that `get()` reads, which is what an idempotency test needs: the
+   * whole claim is "the SECOND attempt sees what the first one wrote", and
+   * against a static fixture that attempt sees nothing and the test passes for
+   * the wrong reason.
+   *
+   * `set` replaces, `set(..., { merge: true })` and `update` shallow-merge, and
+   * `create` still refuses a path that already exists, so two attempts racing
+   * one key are really refereed here rather than assumed.
+   */
+  writeThrough?: boolean;
 } = {}) {
   const docs = opts.docs ?? {};
+  const writeThrough = opts.writeThrough === true;
   const queryDocs = opts.queryDocs ?? {};
   const collectionGroupDocs = opts.collectionGroupDocs ?? {};
   // `merge` stays a plain boolean for the many suites that assert it. `options`
@@ -359,9 +376,13 @@ export function buildDbMock(opts: {
       }),
       set: vi.fn(async (data: Record<string, unknown>, options?: SetOptionsLike) => {
         writes.push({ path, data, merge: !!options?.merge, options });
+        if (writeThrough) {
+          docs[path] = options?.merge ? { ...(docs[path] ?? {}), ...data } : { ...data };
+        }
       }),
       update: vi.fn(async (data: Record<string, unknown>) => {
         writes.push({ path, data, merge: true });
+        if (writeThrough) docs[path] = { ...(docs[path] ?? {}), ...data };
       }),
       // `create()` is the one write whose OUTCOME depends on what is already
       // stored, so unlike set/update it cannot just record the intent: a caller
@@ -373,9 +394,11 @@ export function buildDbMock(opts: {
           throw Object.assign(new Error(`ALREADY_EXISTS: ${path}`), { code: 6 });
         }
         writes.push({ path, data, merge: false });
+        if (writeThrough) docs[path] = { ...data };
       }),
       delete: vi.fn(async () => {
         deletes.push(path);
+        if (writeThrough) delete docs[path];
       }),
       collection: (sub: string) => makeCollection(`${path}/${sub}`),
     };

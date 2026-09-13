@@ -7,6 +7,9 @@ import { sendBroadcast, describeAudience, channelCountsOf, type SendBroadcastRes
 
 beforeEach(() => call.mockReset());
 
+/** The shape `lib/sendIdempotency.ts` mints and the server's zod insists on. */
+const BROADCAST_KEY = 'bcast_1757700000000_ab12cd';
+
 describe('communicateWrite api', () => {
   describe('sendBroadcast', () => {
     it('calls broadcastMessage with the criteria/channels/subject/body payload verbatim', async () => {
@@ -23,24 +26,46 @@ describe('communicateWrite api', () => {
         channels: ['email' as const],
         subject: 'Hi kinfolk',
         body: 'The Den has news.',
+        idempotencyKey: BROADCAST_KEY,
       };
       const out = await sendBroadcast(args);
 
-      expect(call).toHaveBeenCalledWith('broadcastMessage', args);
+      // #814: the key goes on the wire, and the retry it makes safe is opted
+      // into in the same call.
+      expect(call).toHaveBeenCalledWith('broadcastMessage', args, { idempotent: true });
       expect(out).toEqual(result);
+    });
+
+    /**
+     * #814. The guard sits on the seam that turns the retry on: an unkeyed
+     * retry would put a second email and a second text in front of every
+     * household the segment matched, and neither can be recalled.
+     */
+    it('refuses to send at all without an idempotency key', async () => {
+      call.mockReset();
+      await expect(
+        sendBroadcast({
+          criteria: { kind: 'all' },
+          channels: ['email'],
+          subject: 'x',
+          body: 'y',
+          idempotencyKey: '',
+        }),
+      ).rejects.toThrow(/idempotencyKey/);
+      expect(call).not.toHaveBeenCalled();
     });
 
     it('propagates a rejected call rather than swallowing it (fail loud)', async () => {
       call.mockRejectedValueOnce(new Error('no_recipients'));
       await expect(
-        sendBroadcast({ criteria: { kind: 'all' }, channels: ['email'], subject: 'x', body: 'y' }),
+        sendBroadcast({ criteria: { kind: 'all' }, channels: ['email'], subject: 'x', body: 'y', idempotencyKey: BROADCAST_KEY }),
       ).rejects.toThrow('no_recipients');
     });
 
     it('propagates broadcast_all_failed the same way (no silent partial success)', async () => {
       call.mockRejectedValueOnce(new Error('broadcast_all_failed'));
       await expect(
-        sendBroadcast({ criteria: { kind: 'all' }, channels: ['sms'], body: 'y' }),
+        sendBroadcast({ criteria: { kind: 'all' }, channels: ['sms'], body: 'y', idempotencyKey: BROADCAST_KEY }),
       ).rejects.toThrow('broadcast_all_failed');
     });
   });

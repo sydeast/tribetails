@@ -207,6 +207,78 @@ describe('MarketingBlasts', () => {
     expect(await screen.findByText(/scheduleMarketingBlast failed: no_recipients/)).toBeInTheDocument();
   });
 
+  /**
+   * #814. An operator who sees a timeout presses Schedule again, and that press
+   * is the one that used to queue a second set of marketing emails to real
+   * households. The key is held across it, so the server answers from the blast
+   * the first press already made.
+   */
+  it('reuses one idempotency key when the operator schedules again after a failure', async () => {
+    scheduleBlast.mockRejectedValueOnce(new Error('internal'));
+    scheduleBlast.mockResolvedValueOnce({
+      blastId: 'b1',
+      matched: 9,
+      noLinkedAccount: 0,
+      dispatched: 9,
+      suppressed: 0,
+      failed: 0,
+      deduped: true,
+      pending: false,
+    });
+    const when = futureDateTime();
+    render(<MarketingBlasts />);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByLabelText('Date'), when.date);
+    await userEvent.type(screen.getByLabelText('Time'), when.time);
+    await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
+    expect(await screen.findByText(/scheduleMarketingBlast failed/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
+    await waitFor(() => expect(scheduleBlast).toHaveBeenCalledTimes(2));
+
+    const keys = scheduleBlast.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    expect(keys[0]).toMatch(/^blast_\d+_[a-z0-9]+$/);
+    expect(keys[1]).toBe(keys[0]);
+    // And the notice says what happened rather than claiming a second campaign.
+    expect(
+      await screen.findByText(/You already scheduled this campaign for .*Nothing went out twice/),
+    ).toBeInTheDocument();
+  });
+
+  it('mints a NEW key once the campaign has been edited, because that is a different campaign', async () => {
+    scheduleBlast.mockRejectedValueOnce(new Error('internal'));
+    scheduleBlast.mockResolvedValueOnce({
+      blastId: 'b2',
+      matched: 1,
+      noLinkedAccount: 0,
+      dispatched: 1,
+      suppressed: 0,
+      failed: 0,
+      deduped: false,
+      pending: false,
+    });
+    const when = futureDateTime();
+    render(<MarketingBlasts />);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByLabelText('Date'), when.date);
+    await userEvent.type(screen.getByLabelText('Time'), when.time);
+    await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
+    expect(await screen.findByText(/scheduleMarketingBlast failed/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Name this campaign'), 'July newsletter');
+    await userEvent.click(screen.getByRole('button', { name: 'Schedule blast' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Schedule it' }));
+    await waitFor(() => expect(scheduleBlast).toHaveBeenCalledTimes(2));
+
+    const keys = scheduleBlast.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
   it('sends an explicit uid list when the operator picks accounts', async () => {
     scheduleBlast.mockResolvedValue({
       blastId: 'b2',

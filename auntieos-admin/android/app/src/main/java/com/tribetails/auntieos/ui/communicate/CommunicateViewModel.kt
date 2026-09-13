@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.admin.ActivityLogEntry
 import com.tribetails.auntieos.data.model.*
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.mintBroadcastIdempotencyKey
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.isValidEmail
@@ -149,6 +150,24 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CommunicateUiState())
     val uiState: StateFlow<CommunicateUiState> = _uiState.asStateFlow()
+
+    /**
+     * #814: the key that makes pressing Send twice safe.
+     *
+     * Minted on the first attempt at a message and held for every retry of it,
+     * the automatic one inside `AuntieRepository.invokeSend` and the operator's
+     * own after seeing an error. Both are the SAME send, and reusing the key is
+     * what stops the second one putting a second email and a second text in
+     * front of every household the segment matched.
+     *
+     * Re-minted the moment the message or its audience changes, compared at
+     * send time via [broadcastSignature] rather than cleared inside each of the
+     * twenty-odd setters: an edited broadcast is a new send, and a held key
+     * would replay the first one and report success for words that never left
+     * the phone.
+     */
+    private var submissionKey: String? = null
+    private var submissionSignature: String? = null
 
     init {
         AuntieLog.d("CommunicateViewModel initialized")
@@ -736,6 +755,23 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
     }
 
+    /**
+     * Everything that decides WHAT goes out and to WHOM (#814). Deliberately
+     * excludes the busy flag, the error and the last result, because those
+     * change while a send is in flight and treating that as an edit would mint
+     * a new key for the retry and re-arm the duplicate.
+     */
+    private fun broadcastSignature(s: CommunicateUiState): String = listOf(
+        s.selectedSegmentId.orEmpty(),
+        s.bcKind.name,
+        s.bcStatusesText,
+        s.bcSelectedTags.toString(),
+        s.bcTagMatch.name,
+        s.bcChannels.map { it.wire }.sorted().toString(),
+        s.bcSubject,
+        s.bcBody,
+    ).joinToString("\u001F") // a separator no typed field can contain
+
     fun sendBroadcast() {
         val s = _uiState.value
         val criteria = if (s.selectedSegmentId == null) adhocCriteria(s) else null
@@ -744,6 +780,14 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         if (problem != null) { _uiState.value = s.copy(broadcastError = problem); return }
         if (s.isBroadcasting) return
         _uiState.value = s.copy(isBroadcasting = true, broadcastError = null, broadcastResult = null)
+        // #814: one key per message, re-minted only when the message or its
+        // audience has changed since the key was minted.
+        val signature = broadcastSignature(s)
+        if (submissionKey == null || submissionSignature != signature) {
+            submissionKey = mintBroadcastIdempotencyKey()
+            submissionSignature = signature
+        }
+        val key = submissionKey
         viewModelScope.launch {
             repo.broadcastMessage(
                 segmentId = s.selectedSegmentId,
@@ -751,7 +795,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 channels = s.bcChannels.toList(),
                 subject = s.bcSubject.trim().ifBlank { null },
                 body = s.bcBody.trim(),
+                idempotencyKey = key,
             ).onSuccess { result ->
+                submissionKey = null
                 AuntieLog.i("Broadcast ok: ${result.broadcastId}")
                 _uiState.value = _uiState.value.copy(isBroadcasting = false, broadcastResult = result, broadcastError = null)
             }.onFailure { e ->

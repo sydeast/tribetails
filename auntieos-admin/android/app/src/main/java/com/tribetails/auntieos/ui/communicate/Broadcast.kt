@@ -68,6 +68,14 @@ data class BroadcastResult(
     val broadcastId: String,
     val recipientCount: Int,
     val perChannel: Map<String, ChannelCounts>,
+    /**
+     * #814. The server recognised this send's `idempotencyKey` and answered from
+     * the broadcast an earlier attempt already sent. Nothing left the building
+     * on this attempt.
+     */
+    val deduped: Boolean = false,
+    /** #814. That earlier fan-out has not finished, so the counts are a snapshot. */
+    val pending: Boolean = false,
 )
 
 /**
@@ -151,6 +159,10 @@ internal fun decodeBroadcastResult(raw: Map<String, Any?>?): BroadcastResult {
         broadcastId = (raw?.get("broadcastId") as? String).orEmpty(),
         recipientCount = (raw?.get("recipientCount") as? Number)?.toInt() ?: 0,
         perChannel = per,
+        // `== true`, so a backend older than these fields reads as false rather
+        // than as an unknown some branch might take for true.
+        deduped = raw?.get("deduped") == true,
+        pending = raw?.get("pending") == true,
     )
 }
 
@@ -168,6 +180,12 @@ fun broadcastErrorText(message: String): String = when {
 
 /** One-line human summary of a broadcast result. Pure. */
 fun broadcastSummary(result: BroadcastResult): String {
+    // #814: a deduped reply describes a broadcast an EARLIER attempt sent, so it
+    // must not be read as this press having sent one.
+    if (result.deduped && result.pending) {
+        return "You already sent this message, and it is still going out. Nothing went out twice."
+    }
+    if (result.deduped) return "You already sent this message. Nothing went out twice."
     val parts = result.perChannel.entries
         .filter { it.value.sent > 0 || it.value.failed > 0 || it.value.skipped > 0 }
         .map { (ch, c) -> "$ch: ${c.sent} sent" + (if (c.skipped > 0) ", ${c.skipped} skipped" else "") + (if (c.failed > 0) ", ${c.failed} failed" else "") }

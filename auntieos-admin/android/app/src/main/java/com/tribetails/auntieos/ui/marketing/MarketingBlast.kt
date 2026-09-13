@@ -191,6 +191,16 @@ data class ScheduleBlastResult(
     val dispatched: Int = 0,
     val suppressed: Int = 0,
     val failed: Int = 0,
+    /**
+     * #814. The blast already existed: this attempt carried an `idempotencyKey`
+     * the server had already seen, so nothing was queued a second time.
+     */
+    val deduped: Boolean = false,
+    /**
+     * #814. That earlier attempt's fan-out has not finished, so the counts above
+     * are a snapshot rather than a total.
+     */
+    val pending: Boolean = false,
 )
 
 /** Decodes the scheduleMarketingBlast payload. Pure; unit-tested. */
@@ -201,12 +211,44 @@ fun decodeScheduleResult(raw: Map<String, Any?>?): ScheduleBlastResult = Schedul
     dispatched = (raw?.get("dispatched") as? Number)?.toInt() ?: 0,
     suppressed = (raw?.get("suppressed") as? Number)?.toInt() ?: 0,
     failed = (raw?.get("failed") as? Number)?.toInt() ?: 0,
+    // `== true`, so a backend older than these fields reads as false rather than
+    // as an unknown that some other branch might treat as true.
+    deduped = raw?.get("deduped") == true,
+    pending = raw?.get("pending") == true,
 )
 
 /** One-line summary of what a schedule actually did. Pure. */
 fun scheduleSummary(result: ScheduleBlastResult): String {
     val tail = if (result.failed > 0) ", ${result.failed} failed" else ""
     return "${result.dispatched} queued, ${result.suppressed} suppressed$tail."
+}
+/**
+ * What the operator is told after pressing Schedule (#814). Pure.
+ *
+ * Three outcomes, and they are three different facts:
+ *
+ *   a fresh blast    the counts, as before.
+ *   a deduped reply  this press landed on a blast an earlier attempt already
+ *                    made. Saying "Scheduled" again would tell the operator
+ *                    they had just sent a second campaign, which is precisely
+ *                    what the key prevented.
+ *   still queueing   the first attempt is mid fan-out, so the stored counts are
+ *                    a snapshot. Reporting them as a total would be a confident
+ *                    wrong number, so they are left out and the campaign list is
+ *                    where the final ones show up.
+ *
+ * Mirrors `auntieos-admin/src/lib/marketingBlastEdit.ts#scheduleNotice`.
+ */
+fun scheduleNotice(result: ScheduleBlastResult, whenLabel: String): String {
+    if (result.deduped && result.pending) {
+        return "You already scheduled this campaign for $whenLabel, and it is still queueing. " +
+            "Nothing went out twice. The campaign list has the counts once it finishes."
+    }
+    if (result.deduped) {
+        return "You already scheduled this campaign for $whenLabel. Nothing went out twice. " +
+            scheduleSummary(result)
+    }
+    return "Scheduled for $whenLabel. " + scheduleSummary(result)
 }
 
 // ── campaign list ────────────────────────────────────────────────────────────

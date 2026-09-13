@@ -3,6 +3,7 @@ package com.tribetails.auntieos.ui.marketing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
+import com.tribetails.auntieos.data.repository.mintBlastIdempotencyKey
 import com.tribetails.auntieos.ui.communicate.AudienceSegment
 import com.tribetails.auntieos.ui.communicate.BroadcastCriteria
 import com.tribetails.auntieos.ui.communicate.SegmentKind
@@ -78,6 +79,25 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
     private val _uiState = MutableStateFlow(MarketingBlastsUiState())
     val uiState: StateFlow<MarketingBlastsUiState> = _uiState.asStateFlow()
 
+    /**
+     * #814: the key that makes pressing Schedule twice safe.
+     *
+     * Minted on the first attempt at a campaign and held for every retry of it,
+     * the automatic one inside `AuntieRepository.invokeSend` and the operator's
+     * own after seeing an error. Both are the SAME submission, and reusing the
+     * key is what makes the server hand back the blast the first attempt created
+     * instead of queueing a second set of marketing emails to real households.
+     *
+     * Dropped the moment any part of the campaign changes, which is the case a
+     * held key would get WRONG: a stale key would replay the first attempt's
+     * campaign and report success for an edit that never left the phone. That
+     * is enforced by comparing [campaignSignature] at send time rather than by
+     * asking every setter to remember, which is the same discipline
+     * `CommunicateViewModel` uses and is what a new setter cannot break.
+     */
+    private var submissionKey: String? = null
+    private var submissionSignature: String? = null
+
     init {
         loadSegments()
         loadBlasts()
@@ -94,6 +114,27 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
     private fun update(block: (MarketingBlastsUiState) -> MarketingBlastsUiState) {
         _uiState.value = block(_uiState.value)
     }
+
+    /**
+     * Everything that decides WHAT is sent and WHEN (#814). Deliberately
+     * excludes the transient fields (busy flags, notices, errors, the loaded
+     * campaign list, the preview) because those change while a send is in
+     * flight, and treating that as an edit would mint a new key for the retry
+     * and re-arm the duplicate.
+     */
+    private fun campaignSignature(s: MarketingBlastsUiState): String = listOf(
+        s.campaignKey.wire,
+        s.title,
+        s.mode.name,
+        s.criteria.toString(),
+        s.statusesText,
+        s.tagsText,
+        s.uidsText,
+        s.selectedSegmentId.orEmpty(),
+        s.mergeFields.toString(),
+        s.sendDate,
+        s.sendTime,
+    ).joinToString("\u001F") // a separator no typed field can contain
 
     private fun audienceChanged(block: (MarketingBlastsUiState) -> MarketingBlastsUiState) {
         update { block(it).copy(reach = null, previewError = null) }
@@ -202,6 +243,14 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         val fireAtMs = state.fireAtMs ?: return
         if (state.scheduling || state.blocker(nowMs) != null) return
         update { it.copy(scheduling = true, scheduleError = null) }
+        // #814: one key per campaign, re-minted only when the campaign itself
+        // has changed since the key was minted.
+        val signature = campaignSignature(state)
+        if (submissionKey == null || submissionSignature != signature) {
+            submissionKey = mintBlastIdempotencyKey()
+            submissionSignature = signature
+        }
+        val key = submissionKey
         viewModelScope.launch {
             repo.scheduleMarketingBlast(
                 key = state.campaignKey,
@@ -209,14 +258,16 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
                 audience = audience,
                 data = mergeFieldsToData(state.mergeFields),
                 title = state.title,
+                idempotencyKey = key,
             ).fold(
                 onSuccess = { result ->
+                    submissionKey = null
                     update {
                         it.copy(
                             scheduling = false,
                             confirmOpen = false,
                             reach = null,
-                            notice = "Scheduled for ${fireLabel(fireAtMs)}. ${scheduleSummary(result)}",
+                            notice = scheduleNotice(result, fireLabel(fireAtMs)),
                         )
                     }
                     loadBlasts()

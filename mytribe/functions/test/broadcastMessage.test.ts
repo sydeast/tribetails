@@ -96,8 +96,10 @@ describe('broadcastMessage happy path', () => {
     // (no email, no account) but was not silenced by preferences: email is on
     // for them, they simply have no address on file.
     expect(res.reach).toEqual({ targeted: 2, reached: 1, suppressedByPrefs: 0 });
-    // records a broadcasts doc + audit
-    expect(ctx.adds.find((a) => a.collection === 'broadcasts')).toBeTruthy();
+    // records a broadcasts doc + audit. #814: the row is a doc().set() written
+    // BEFORE the fan-out and merged with the counts afterwards, rather than the
+    // single add() it used to be once the sending was over.
+    expect(ctx.writes.filter((w) => w.path.startsWith('broadcasts/'))).toHaveLength(2);
     expect(writeAuditEntry).toHaveBeenCalledWith(expect.objectContaining({ event: 'BROADCAST_SENT' }));
   });
 
@@ -265,7 +267,10 @@ describe('broadcastMessage notification preferences', () => {
     const ctx = oneKinfolkDb({ 'clients/u1': prefsDoc({ email: false, sms: false, push: false }) });
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }));
-    const stored = ctx.adds.find((a) => a.collection === 'broadcasts');
+    // The counts land on the row the handler claimed before sending (#814), so
+    // the reach is in the MERGE write rather than in a single add().
+    const stored = ctx.writes.filter((w) => w.path.startsWith('broadcasts/')).at(-1);
+    expect(stored?.merge).toBe(true);
     expect(stored?.data.reach).toEqual({ targeted: 1, reached: 0, suppressedByPrefs: 1 });
     const audit = (writeAuditEntry as any).mock.calls[0][0];
     expect(audit.payload.reach).toEqual({ targeted: 1, reached: 0, suppressedByPrefs: 1 });
@@ -342,5 +347,124 @@ describe('broadcastMessage guards', () => {
     await expect(
       broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: [], body: 'B' })),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+});
+/**
+ * #814: two attempts at one broadcast must send ONE copy.
+ *
+ * `broadcastMessage` had the same shape the marketing blast did, and is already
+ * reachable from the Communicate screen: it minted its `broadcasts/{id}`
+ * server-side AFTER the fan-out, so while a send was running there was nothing
+ * for a second attempt to collide with, the exact window in which a duplicate
+ * arrives, because it is when the client's 20-second budget expires and the
+ * operator presses Send again. Here it sends real email and SMS, so the
+ * duplicate is unrecallable.
+ *
+ * `writeThrough` is what makes these assertions mean anything: the claim is that
+ * the SECOND attempt sees what the first one wrote.
+ */
+describe('broadcastMessage idempotency (#814)', () => {
+  const KEY_A = 'bcast_1757700000000_ab12cd';
+  const KEY_B = 'bcast_1757700000001_ef34gh';
+  /** One household with an email and every channel opted in. */
+  function liveDb(docs: Record<string, any> = {}) {
+    return buildDbMock({
+      writeThrough: true,
+      docs: { 'clients/u1': prefsDoc({ email: true, sms: true, push: true }), ...docs },
+      queryDocs: {
+        kinfolk: [
+          { id: 'k1', data: { status: 'active', email: 'a@x.com', phoneNumber: '+14155552671', uid: 'u1' } },
+        ],
+      },
+    });
+  }
+  const send = (over: Record<string, unknown> = {}) => ({
+    criteria: { kind: 'all' },
+    channels: ['email'],
+    subject: 'Hi',
+    body: 'Body',
+    ...over,
+  });
+  function broadcastRowIds(ctx: ReturnType<typeof liveDb>): string[] {
+    return Array.from(
+      new Set(ctx.writes.filter((w) => w.path.startsWith('broadcasts/')).map((w) => w.path.split('/')[1])),
+    );
+  }
+  it('sends once for two calls with the same key', async () => {
+    const ctx = liveDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const first = await broadcastMessageHandler(req(send({ idempotencyKey: KEY_A })));
+    const second = await broadcastMessageHandler(req(send({ idempotencyKey: KEY_A })));
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+    expect(broadcastRowIds(ctx)).toEqual([KEY_A]);
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(true);
+    expect(second.broadcastId).toBe(KEY_A);
+    // The stored counts, so the reply still describes what went out.
+    expect(second.perChannel.email).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(second.reach).toEqual({ targeted: 1, reached: 1, suppressedByPrefs: 0 });
+    // One audit row: the second call sent nothing to audit.
+    expect((writeAuditEntry as any).mock.calls).toHaveLength(1);
+  });
+  it('sends twice for two different keys', async () => {
+    const ctx = liveDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(req(send({ idempotencyKey: KEY_A })));
+    await broadcastMessageHandler(req(send({ idempotencyKey: KEY_B })));
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(2);
+    expect(broadcastRowIds(ctx)).toEqual([KEY_A, KEY_B]);
+  });
+  it('lets only one of two simultaneous attempts send', async () => {
+    const ctx = liveDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const [a, b] = await Promise.all([
+      broadcastMessageHandler(req(send({ idempotencyKey: KEY_A }))),
+      broadcastMessageHandler(req(send({ idempotencyKey: KEY_A }))),
+    ]);
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+    expect(broadcastRowIds(ctx)).toEqual([KEY_A]);
+    expect([a.deduped, b.deduped].sort()).toEqual([false, true]);
+  });
+  it('refuses a key that belongs to a different operator', async () => {
+    const ctx = liveDb({ 'broadcasts/bcast_1757700000000_ab12cd': { actorUid: 'someone-else', fanoutState: 'complete' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      broadcastMessageHandler(req(send({ idempotencyKey: KEY_A }))),
+    ).rejects.toMatchObject({ code: 'already-exists' });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+  it('re-runs a same-key attempt whose every send failed, because nobody heard anything', async () => {
+    const ctx = liveDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp down'));
+    await expect(
+      broadcastMessageHandler(req(send({ idempotencyKey: KEY_A }))),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    // The row is kept, stamped failed, rather than left at 'running' where a
+    // retry would be refused for a send that reached no one.
+    const afterFailure = ctx.writes.filter((w) => w.path === `broadcasts/${KEY_A}`).at(-1);
+    expect(afterFailure?.data.fanoutState).toBe('failed');
+    const retry = await broadcastMessageHandler(req(send({ idempotencyKey: KEY_A })));
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(2);
+    expect(retry.deduped).toBe(false);
+    expect(retry.perChannel.email.sent).toBe(1);
+    expect(broadcastRowIds(ctx)).toEqual([KEY_A]);
+  });
+  it('keeps the old behaviour exactly when no key is sent', async () => {
+    const ctx = liveDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const first = await broadcastMessageHandler(req(send()));
+    const second = await broadcastMessageHandler(req(send()));
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(2);
+    expect(broadcastRowIds(ctx)).toHaveLength(2);
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(false);
+  });
+  it('refuses a key that is not the shape the server mints', async () => {
+    mocks.dbFn.mockReturnValue(liveDb().db);
+    await expect(
+      broadcastMessageHandler(req(send({ idempotencyKey: 'blast_1757700000000_ab12cd' }))),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
   });
 });

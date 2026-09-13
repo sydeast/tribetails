@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   MARKETING_KEYS,
   MARKETING_KEY_LABEL,
@@ -18,8 +18,10 @@ import {
   fireAtMsFrom,
   mergeFieldsToData,
   parseUidList,
+  scheduleNotice,
   type MergeFieldRow,
 } from '../lib/marketingBlastEdit';
+import { mintBlastIdempotencyKey } from '../lib/sendIdempotency';
 import { sendTimeOf } from '../lib/communicateFormat';
 import { formatWhenFull, machineWhen } from '../lib/time';
 import { DenScreenHeading, DenPanel, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
@@ -197,6 +199,39 @@ export function MarketingBlasts() {
     setPreviewError(null);
   }, [mode, criteriaKind, statusesRaw, tagsRaw, tagMatch, uidsRaw, selectedSegmentId, campaignKey]);
 
+  /**
+   * #814: the key that makes pressing Schedule twice safe.
+   *
+   * Minted on the first attempt at a campaign and held for every retry of it,
+   * the automatic one inside `call(..., { idempotent: true })` and the
+   * operator's own after seeing an error. Both are the SAME submission, and
+   * reusing the key is what makes the server hand back the blast the first
+   * attempt created instead of queueing a second set of scheduled marketing
+   * emails to real households.
+   *
+   * Cleared by the effect below whenever any part of the campaign changes,
+   * which is the case a held key would get WRONG: a stale key would replay the
+   * first attempt's campaign and report success for an edit that never left the
+   * browser.
+   */
+  const submissionKey = useRef<string | null>(null);
+  useEffect(() => {
+    submissionKey.current = null;
+  }, [
+    campaignKey,
+    title,
+    mode,
+    criteriaKind,
+    statusesRaw,
+    tagsRaw,
+    tagMatch,
+    uidsRaw,
+    selectedSegmentId,
+    mergeFields,
+    sendDate,
+    sendTime,
+  ]);
+
   async function handlePreview() {
     if (audience === null || busy) return;
     setPreviewing(true);
@@ -215,6 +250,7 @@ export function MarketingBlasts() {
     if (audience === null || fireAtMs === null || scheduling) return;
     setScheduling(true);
     setScheduleError(null);
+    submissionKey.current ??= mintBlastIdempotencyKey();
     try {
       const res = await scheduleBlast({
         key: campaignKey,
@@ -222,13 +258,11 @@ export function MarketingBlasts() {
         audience,
         data: mergeFieldsToData(mergeFields),
         title,
+        idempotencyKey: submissionKey.current,
       });
       setConfirmOpen(false);
-      setNotice(
-        `Scheduled for ${fireLabel(fireAtMs)}. ${res.dispatched} queued, ${res.suppressed} suppressed` +
-          (res.failed > 0 ? `, ${res.failed} failed` : '') +
-          '.',
-      );
+      submissionKey.current = null;
+      setNotice(scheduleNotice(res, fireLabel(fireAtMs)));
       setReach(null);
       loadBlasts();
     } catch (err) {

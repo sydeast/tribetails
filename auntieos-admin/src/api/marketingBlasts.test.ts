@@ -80,6 +80,9 @@ describe('previewBlastAudience', () => {
   });
 });
 
+/** The shape `lib/sendIdempotency.ts` mints and the server's zod insists on. */
+const KEY = 'blast_1757700000000_ab12cd';
+
 describe('scheduleBlast', () => {
   it('omits a blank title, which the server would reject as an empty string', async () => {
     callMock.mockReset();
@@ -91,14 +94,21 @@ describe('scheduleBlast', () => {
       audience: { criteria: { kind: 'all' } },
       data: { headline: 'Hi' },
       title: '   ',
+      idempotencyKey: KEY,
     });
 
-    expect(callMock).toHaveBeenCalledWith('scheduleMarketingBlast', {
-      key: 'marketing.optin',
-      fireAtMs: 123,
-      criteria: { kind: 'all' },
-      data: { headline: 'Hi' },
-    });
+    expect(callMock).toHaveBeenCalledWith(
+      'scheduleMarketingBlast',
+      {
+        key: 'marketing.optin',
+        fireAtMs: 123,
+        criteria: { kind: 'all' },
+        data: { headline: 'Hi' },
+        idempotencyKey: KEY,
+      },
+      // #814: the retry, and it is only safe because of the key above.
+      { idempotent: true },
+    );
   });
 
   it('sends a real title trimmed', async () => {
@@ -110,6 +120,7 @@ describe('scheduleBlast', () => {
       audience: { audienceUids: ['u1'] },
       data: {},
       title: ' June ',
+      idempotencyKey: KEY,
     });
     expect(callMock.mock.calls[0]?.[1]).toMatchObject({ title: 'June', audienceUids: ['u1'] });
   });
@@ -122,6 +133,7 @@ describe('scheduleBlast', () => {
       fireAtMs: 1,
       audience: { segmentId: 's1' },
       data: {},
+      idempotencyKey: KEY,
     });
     expect(res).toEqual({
       blastId: 'b2',
@@ -130,7 +142,49 @@ describe('scheduleBlast', () => {
       dispatched: 7,
       suppressed: 0,
       failed: 0,
+      deduped: false,
+      pending: false,
     });
+  });
+  /**
+   * #814. The guard is on the seam that turns the RETRY on, so it has to refuse
+   * an unkeyed payload rather than trust every caller to remember: a retry
+   * without the key is a second marketing email to every household in the
+   * audience, and it cannot be recalled.
+   */
+  it('refuses to send at all without an idempotency key', async () => {
+    callMock.mockReset();
+    await expect(
+      scheduleBlast({
+        key: 'survey.event',
+        fireAtMs: 1,
+        audience: { segmentId: 's1' },
+        data: {},
+        idempotencyKey: '',
+      }),
+    ).rejects.toThrow(/idempotencyKey/);
+    expect(callMock).not.toHaveBeenCalled();
+  });
+  it('reports a deduped reply as a deduped reply, not as a fresh send', async () => {
+    callMock.mockReset();
+    callMock.mockResolvedValue({
+      ok: true,
+      blastId: KEY,
+      dispatched: 4,
+      suppressed: 1,
+      failed: 0,
+      deduped: true,
+      pending: true,
+    });
+    const res = await scheduleBlast({
+      key: 'survey.event',
+      fireAtMs: 1,
+      audience: { segmentId: 's1' },
+      data: {},
+      idempotencyKey: KEY,
+    });
+    expect(res.deduped).toBe(true);
+    expect(res.pending).toBe(true);
   });
 });
 

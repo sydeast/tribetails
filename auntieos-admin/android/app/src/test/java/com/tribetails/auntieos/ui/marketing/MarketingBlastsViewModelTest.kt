@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -155,7 +156,7 @@ class MarketingBlastsViewModelTest {
     @Test
     fun `schedule sends the key, the criteria, the merge data and the resolved fire time`() =
         runTest(testDispatcher) {
-            coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any()) } returns
+            coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
                 Result.success(ScheduleBlastResult("b1", 9, 0, 9, 0, 0))
             val v = vm()
             advanceUntilIdle()
@@ -179,6 +180,7 @@ class MarketingBlastsViewModelTest {
                     capture(audience),
                     capture(data),
                     "June newsletter",
+                    any(),
                 )
             }
             assertEquals(BlastAudience.Criteria(BroadcastCriteria()), audience.captured)
@@ -188,6 +190,70 @@ class MarketingBlastsViewModelTest {
             coVerify(exactly = 2) { repo.listMarketingBlasts() }
         }
 
+    /**
+     * #814. The operator's own retry is the dangerous path: they saw a timeout,
+     * so they press Schedule again, and that press is what used to queue a
+     * second set of marketing emails to real households.
+     */
+    @Test
+    fun `the idempotency key is minted once and held across a retry of the same campaign`() =
+        runTest(testDispatcher) {
+            coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
+                Result.failure(RuntimeException("internal")) andThen
+                Result.success(ScheduleBlastResult("b1", 9, 0, 9, 0, 0, deduped = true))
+            val v = vm()
+            advanceUntilIdle()
+            v.setSendDate(java.time.LocalDate.now().plusDays(2).toString())
+            v.setSendTime("09:00")
+            v.schedule()
+            advanceUntilIdle()
+            v.schedule()
+            advanceUntilIdle()
+            val keys = mutableListOf<String?>()
+            coVerify(exactly = 2) {
+                repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), captureNullable(keys))
+            }
+            assertTrue(keys[0]!!.matches(Regex("^blast_\\d+_[a-z0-9]+$")))
+            assertEquals(keys[0], keys[1])
+            // And the notice reports the dedupe rather than claiming a second campaign.
+            assertTrue(v.uiState.value.notice!!.contains("Nothing went out twice"))
+        }
+    @Test
+    fun `an edited campaign mints a new key, because it is a different campaign`() =
+        runTest(testDispatcher) {
+            coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
+                Result.failure(RuntimeException("internal")) andThen
+                Result.success(ScheduleBlastResult("b2", 1, 0, 1, 0, 0))
+            val v = vm()
+            advanceUntilIdle()
+            v.setSendDate(java.time.LocalDate.now().plusDays(2).toString())
+            v.setSendTime("09:00")
+            v.schedule()
+            advanceUntilIdle()
+            v.setTitle("July newsletter")
+            v.schedule()
+            advanceUntilIdle()
+            val keys = mutableListOf<String?>()
+            coVerify(exactly = 2) {
+                repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), captureNullable(keys))
+            }
+            assertTrue(keys[0] != keys[1])
+        }
+    @Test
+    fun `a pending dedupe leaves the counts out rather than reporting a snapshot as a total`() =
+        runTest(testDispatcher) {
+            coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
+                Result.success(ScheduleBlastResult("b1", 9, 0, 4, 0, 0, deduped = true, pending = true))
+            val v = vm()
+            advanceUntilIdle()
+            v.setSendDate(java.time.LocalDate.now().plusDays(2).toString())
+            v.setSendTime("09:00")
+            v.schedule()
+            advanceUntilIdle()
+            val notice = v.uiState.value.notice!!
+            assertTrue(notice.contains("still queueing"))
+            assertFalse(notice.contains("4 queued"))
+        }
     @Test
     fun `schedule refuses to fire while the form is blocked`() = runTest(testDispatcher) {
         val v = vm()
@@ -195,12 +261,12 @@ class MarketingBlastsViewModelTest {
 
         v.schedule() // no send time picked
 
-        coVerify(exactly = 0) { repo.scheduleMarketingBlast(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
     fun `a failed schedule surfaces the server sentence and reports no campaign`() = runTest(testDispatcher) {
-        coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any()) } returns
+        coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
             Result.failure(RuntimeException("failed-precondition: no_recipients"))
         val v = vm()
         advanceUntilIdle()
@@ -216,7 +282,7 @@ class MarketingBlastsViewModelTest {
 
     @Test
     fun `an explicit account list goes on the wire as audienceUids`() = runTest(testDispatcher) {
-        coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any()) } returns
+        coEvery { repo.scheduleMarketingBlast(any(), any(), any(), any(), any(), any()) } returns
             Result.success(ScheduleBlastResult("b2", 2, 0, 2, 0, 0))
         val v = vm()
         advanceUntilIdle()
@@ -230,7 +296,7 @@ class MarketingBlastsViewModelTest {
         advanceUntilIdle()
 
         val audience = slot<BlastAudience>()
-        coVerify { repo.scheduleMarketingBlast(any(), any(), capture(audience), any(), any()) }
+        coVerify { repo.scheduleMarketingBlast(any(), any(), capture(audience), any(), any(), any()) }
         assertEquals(BlastAudience.Uids(listOf("u1", "u2")), audience.captured)
     }
 
