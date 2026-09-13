@@ -230,8 +230,15 @@ class DirectoryViewModelExtTest {
         )
     }
 
+    /**
+     * "Not in the loaded profile" is no longer the end of the search: the
+     * editor is reachable cold (the Kin detail screen's "Edit kin", the
+     * Directory's Kin tab, any deep link), so it falls back to a by-id fetch.
+     * The error is for a pet that is not there AT ALL.
+     */
     @Test
-    fun `loadKinForEdit sets error when kin not in profile`() = runTest(testDispatcher) {
+    fun `loadKinForEdit sets error when the pet cannot be fetched either`() = runTest(testDispatcher) {
+        coEvery { mockRepo.getKinByIds(any()) } returns Result.success(emptyMap())
         val vm = buildViewModel()
         advanceUntilIdle()
 
@@ -239,5 +246,23 @@ class DirectoryViewModelExtTest {
         advanceUntilIdle()
 
         assertNotNull(vm.editKinState.value.error)
+    }
+
+    @Test
+    fun `loadKinForEdit falls back to a by-id fetch when no profile is loaded`() = runTest(testDispatcher) {
+        val fetched = Kin(id = "k-cold", kinfolkId = "kf1", name = "Biscuit")
+        coEvery { mockRepo.getKinByIds(listOf("k-cold")) } returns Result.success(mapOf("k-cold" to fetched))
+        coEvery { mockRepo.getKinfolkById(any()) } returns Result.success(null)
+        coEvery { mockRepo.getHouseholdData(any()) } returns Result.success(null)
+        coEvery { mockRepo.getVetClinicsOnce() } returns Result.success(emptyList())
+        coEvery { mockRepo.listFormSchemas() } returns Result.success(emptyList())
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.loadKinForEdit("k-cold")
+        advanceUntilIdle()
+
+        assertEquals("Biscuit", vm.editKinState.value.name)
+        assertNull(vm.editKinState.value.error)
     }
 }

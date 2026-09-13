@@ -320,6 +320,12 @@ data class EditKinUiState(
     val checklist: String = "",
     val reactive: Boolean = false,
     val officeNotes: String = "",
+    /**
+     * Read for the Archive / Restore control's LABEL only. No form field writes
+     * it: `setKinArchived` is the one path that changes `kin.status`, and
+     * `buildKinFromEditState` leaves it off the form's edits on purpose.
+     */
+    val status: String = "active",
     // Structured KIN form_schemas precare checklist (spec 06 item 5 / 1C).
     val formValues: Map<String, String> = emptyMap(),
     val kinSchemas: List<FormSchema> = emptyList(),
@@ -1311,11 +1317,25 @@ class DirectoryViewModel(
         viewModelScope.launch {
             _editKinState.value = _editKinState.value.copy(isLoading = true, error = null)
 
+            // The pet the household profile already read, OR a by-id fetch when
+            // this screen was opened without one. It is the second half that
+            // matters: `kinList` is filled by `loadProfile` alone, so every
+            // cold arrival - the Kin detail screen's "Edit kin", the Directory
+            // Kin tab before it was rerouted, any deep link after - used to land
+            // on "Kin not found". The fetched copy is also what `loadedKin`
+            // becomes, and `loadedKin` is the baseline `saveKinChanges` diffs
+            // against, so without it a cold edit has nothing to diff and refuses
+            // to save at all.
             val kin = _profileState.value.kinList.find { it.id == kinId }
+                ?: repository.getKinByIds(listOf(kinId)).getOrNull()?.get(kinId)
             if (kin != null) {
-                // The owner is still needed for the household NAME.
+                // The owner is still needed for the household NAME. Same
+                // cold-arrival fallback: neither cache is populated when this
+                // screen is the first one opened.
                 val owner = _directoryState.value.allKinfolk.find { it.id == kin.kinfolkId }
                     ?: _profileState.value.kinfolk?.takeIf { it.id == kin.kinfolkId }
+                    ?: kin.kinfolkId.takeIf { it.isNotBlank() }
+                        ?.let { repository.getKinfolkById(it).getOrNull() }
                 // The vet is inherited from `household_data`, resolved through the
                 // clinic catalog, and shown read-only on the kin. It used to be
                 // read off the owning Kinfolk doc, which is the copy that made
@@ -1347,6 +1367,7 @@ class DirectoryViewModel(
                     checklist = kin.checklist,
                     reactive = kin.reactive,
                     officeNotes = kin.officeNotes,
+                    status = kin.status,
                     formValues = kin.formValues,
                     profilePictureUrl = kin.profilePictureUrl,
                     householdName = listOf(owner?.firstName, owner?.lastName)
@@ -1454,6 +1475,62 @@ class DirectoryViewModel(
                     error = error.message ?: "Failed to update Kin"
                 )
             }
+        }
+    }
+
+    /**
+     * Archive or restore a pet: the ONLY control that writes `kin.status`.
+     *
+     * It exists here because the React editor has had it since the port
+     * (`KinEdit.tsx`'s Archive / Restore, `api/directoryWrite.ts#setKinArchived`)
+     * and Android had no way to reach the field at all. A field this project can
+     * edit on one client and not the other is a defect, not a platform
+     * difference, and `KIN_DIFF_FIELDS` already carried `status` waiting for it.
+     *
+     * ONE FIELD. Not through [buildKinFromEditState], which deliberately leaves
+     * `status` off the form's edits - a save of the name must not be able to
+     * un-archive a pet, which is exactly what the old hardcoded
+     * `status = "active"` did. The baseline advances only after the server
+     * accepts, so a later Save diffs against what was really written.
+     */
+    fun setKinArchived(archived: Boolean) {
+        val state = _editKinState.value
+        if (state.kinId.isBlank() || state.isSaving) return
+        val baseline = loadedKin
+        if (baseline == null || baseline.id != state.kinId) {
+            _editKinState.value = state.copy(
+                error = "Reopen this pet before archiving: its saved copy was never loaded."
+            )
+            return
+        }
+        val next = if (archived) "archived" else "active"
+        if (baseline.status == next) {
+            _editKinState.value = state.copy(isSaving = false, isSuccess = true, error = null)
+            return
+        }
+        viewModelScope.launch {
+            _editKinState.value = state.copy(isSaving = true, error = null)
+            repository.updateKinFields(state.kinId, baseline.kinfolkId, mapOf("status" to next))
+                .onSuccess {
+                    loadedKin = baseline.copy(status = next)
+                    com.tribetails.auntieos.data.admin.AuditLog.fire(
+                        scope            = viewModelScope,
+                        repository       = repository,
+                        actionType       = if (archived) "ARCHIVE_KIN" else "RESTORE_KIN",
+                        description      = "${if (archived) "Archived" else "Restored"} kin ${baseline.name}",
+                        targetId         = state.kinId,
+                        targetCollection = "kin",
+                    )
+                    _editKinState.value = EditKinUiState(isSuccess = true)
+                    loadProfile(state.kinfolkId)
+                }
+                .onFailure { error ->
+                    AuntieLog.e("Failed to set kin status", error)
+                    _editKinState.value = state.copy(
+                        isSaving = false,
+                        error = error.message ?: "Failed to update Kin status"
+                    )
+                }
         }
     }
 

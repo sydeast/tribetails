@@ -97,6 +97,10 @@ class DirectorySaveTest {
         coEvery { invoiceRepo.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.updateKinfolkFields(any(), any()) } returns Result.success(Unit)
         coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.success(Unit)
+        // The cold-arrival reads: the by-id pet fetch the editor falls back to
+        // when no household profile has been opened, and the owner behind it.
+        coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf(storedKin.id to storedKin))
+        coEvery { repo.getKinfolkById(any()) } returns Result.success(storedKinfolk)
     }
 
     @After
@@ -133,6 +137,17 @@ class DirectorySaveTest {
         val vm = viewModel()
         vm.loadProfile(storedKin.kinfolkId)
         advanceUntilIdle()
+        vm.loadKinForEdit(storedKin.id)
+        advanceUntilIdle()
+        return vm
+    }
+
+    /**
+     * The editor opened with NO household profile behind it, which is how the
+     * Kin detail screen's "Edit kin" and any deep link reach it.
+     */
+    private fun TestScope.coldKinEditor(): DirectoryViewModel {
+        val vm = viewModel()
         vm.loadKinForEdit(storedKin.id)
         advanceUntilIdle()
         return vm
@@ -335,6 +350,96 @@ class DirectorySaveTest {
 
         coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
         assertTrue(vm.editKinState.value.isSuccess)
+    }
+
+    // ── cold arrival ─────────────────────────────────────────────────────────
+
+    /**
+     * The editor used to resolve its pet out of `profileState.kinList`, which
+     * only `loadProfile` fills, so opened any other way it reported "Kin not
+     * found". The deeper cost was the BASELINE: `loadedKin` is what
+     * `saveKinChanges` diffs against, and with no baseline there is nothing to
+     * save at all. The Kin detail screen's "Edit kin" is exactly that arrival.
+     */
+    @Test
+    fun `a pet opened with no profile behind it still loads`() = runTest(testDispatcher) {
+        val vm = coldKinEditor()
+
+        assertEquals("Byron", vm.editKinState.value.name)
+        assertEquals(null, vm.editKinState.value.error)
+    }
+
+    @Test
+    fun `a pet opened with no profile behind it still saves only the edited field`() = runTest(testDispatcher) {
+        val changes = captureKinChanges()
+        val vm = coldKinEditor()
+
+        vm.updateEditKinBreed("Pembroke Corgi")
+        vm.saveKinChanges()
+        advanceUntilIdle()
+
+        assertEquals(setOf("breed"), changes.captured.keys)
+    }
+
+    // ── archive / restore ────────────────────────────────────────────────────
+
+    /**
+     * `kin.status` is editable on the React admin and, until the Kin detail
+     * build gave the editor this control, on no Android surface at all. It
+     * writes ONE field: an archive must not carry a stale medication note out
+     * with it, and a later Save must not be able to un-archive the pet.
+     */
+    @Test
+    fun `restoring a pet writes only its status`() = runTest(testDispatcher) {
+        val changes = captureKinChanges()
+        val vm = kinEditor()
+
+        vm.setKinArchived(false)
+        advanceUntilIdle()
+
+        assertEquals(mapOf<String, Any>("status" to "active"), changes.captured)
+    }
+
+    @Test
+    fun `archiving a pet writes only its status`() = runTest(testDispatcher) {
+        coEvery { repo.getKin(any()) } returns Result.success(listOf(storedKin.copy(status = "active")))
+        val changes = captureKinChanges()
+        val vm = kinEditor()
+
+        vm.setKinArchived(true)
+        advanceUntilIdle()
+
+        assertEquals(mapOf<String, Any>("status" to "archived"), changes.captured)
+    }
+
+    /** Already in the state being asked for: nothing written, no stamp moved. */
+    @Test
+    fun `archiving an already archived pet writes nothing`() = runTest(testDispatcher) {
+        val vm = kinEditor()
+
+        vm.setKinArchived(true)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+    }
+
+    /**
+     * A rejected status write keeps the operator's pending edit and SAYS SO,
+     * rather than closing the screen on a change that never landed.
+     */
+    @Test
+    fun `a failed archive keeps the form open and reports the failure`() = runTest(testDispatcher) {
+        coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.failure(RuntimeException("offline"))
+        val vm = kinEditor()
+
+        vm.updateEditKinBreed("Pembroke Corgi")
+        vm.setKinArchived(false)
+        advanceUntilIdle()
+
+        val state = vm.editKinState.value
+        assertFalse("a rejected write must not report success", state.isSuccess)
+        assertEquals("offline", state.error)
+        assertEquals("Pembroke Corgi", state.breed)
     }
 }
 
