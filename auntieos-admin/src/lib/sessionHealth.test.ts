@@ -28,11 +28,26 @@ import {
   retryDelayMs,
 } from './sessionHealth';
 
-/** The listener sessionHealth.ts registered at import time. */
-function authListener(): (user: unknown) => void {
+/**
+ * The listener sessionHealth.ts registered at import time.
+ *
+ * Captured once, right here, instead of read from `onAuthStateChanged.mock.calls`
+ * on every call: vitest 5's default `clearMocks: true` wipes a mock's call
+ * history before each test, but sessionHealth.ts registers this listener
+ * exactly once, at module import -- long before any test's `beforeEach` runs.
+ * A per-test helper reading `.mock.calls[0]` only ever worked because a
+ * repo-wide `clearMocks: false` pin kept that first call around; grabbing the
+ * real function once, into a plain closure variable, needs nothing to survive
+ * between tests.
+ */
+const registeredAuthListener = ((): ((user: unknown) => void) => {
   const call = onAuthStateChanged.mock.calls[0];
   if (!call) throw new Error('sessionHealth registered no auth listener');
   return call[1] as (user: unknown) => void;
+})();
+
+function authListener(): (user: unknown) => void {
+  return registeredAuthListener;
 }
 
 function networkError(): Error & { code: string } {
