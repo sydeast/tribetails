@@ -30,6 +30,18 @@ const mocks = vi.hoisted(() => ({
           url: 'https://checkout.stripe.com/test',
           client_secret: null,
         })),
+        /**
+         * Issue #826, the reuse path's one Stripe read.
+         *
+         * REJECTS by default, which is both what Stripe does with an id it does
+         * not know and what keeps this suite honest: a resolving default would
+         * make "did the reuse check even run?" unanswerable, because every test
+         * that never stubs it would take the mint path for the right reason by
+         * accident.
+         */
+        retrieve: vi.fn(async (_id: string): Promise<unknown> => {
+          throw new Error('No such checkout.session');
+        }),
       },
     },
   },
@@ -41,6 +53,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.stripeMock.checkout.sessions.create.mockClear();
+  mocks.stripeMock.checkout.sessions.retrieve.mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -398,5 +411,124 @@ describe('payInvoice payment_method_types (issue #409)', () => {
       /Invalid API Key/,
     );
     expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+  });
+});
+/**
+ * ISSUE #826: the settlement round, and reusing a session instead of minting a
+ * new one on every call.
+ *
+ * `payInvoice` charges nothing itself — it hands back a Stripe-hosted URL — so
+ * nothing here can refuse a duplicate charge. Two things it CAN do: stamp the
+ * round the webhook refuses stale sessions on, and stop handing out a second
+ * session when the invoice already has one open.
+ */
+describe('payInvoice checkout round and session reuse (issue #826)', () => {
+  const baseDocs = {
+    'clients/u1': { kinfolkIds: ['3'] },
+    'families/3/members/u1': PRIMARY_MEMBER,
+  };
+  const args = { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' };
+  /** An open session Stripe would hand back for this invoice at this balance. */
+  function openSession(over: Record<string, unknown> = {}) {
+    return {
+      id: 'cs_open_1',
+      url: 'https://checkout.stripe.com/open',
+      status: 'open',
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      amount_total: 1250,
+      success_url: args.successUrl,
+      cancel_url: args.cancelUrl,
+      metadata: { invoiceId: 'inv-1', checkoutRound: '0' },
+      ...over,
+    };
+  }
+  it('stamps the round on BOTH metadata copies, because the webhook may read either', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, stripeCheckoutRound: 2 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    // A string, because Stripe metadata values are strings.
+    expect(callArg.metadata.checkoutRound).toBe('2');
+    expect(callArg.payment_intent_data?.metadata?.checkoutRound).toBe('2');
+  });
+  it('stamps round 0 on an invoice that has never taken a Stripe payment', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0][0].metadata.checkoutRound).toBe('0');
+  });
+  it('hands back the session this invoice already has open instead of minting a second', async () => {
+    // Defence in depth, NOT the fix: the same session means the same
+    // PaymentIntent, which the webhook's existing per-intent ledger already
+    // dedupes. It keeps the ordinary two-taps case from ever reaching the
+    // invoice-level refusal.
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce(openSession());
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_open_1');
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(res.sessionId).toBe('cs_open_1');
+    expect(res.checkoutUrl).toBe('https://checkout.stripe.com/open');
+  });
+  it.each([
+    ['the session is already complete', { status: 'complete', url: null }],
+    ['the session has expired', { status: 'expired', url: null }],
+    ['it expires within the minute', { expires_at: Math.floor(Date.now() / 1000) + 30 }],
+    ['it charges a stale amount', { amount_total: 5000 }],
+    ['it would return to a different screen', { success_url: 'https://other/ok' }],
+    ['it would cancel to a different screen', { cancel_url: 'https://other/cancel' }],
+    ['it belongs to a settlement round that has closed', { metadata: { invoiceId: 'inv-1', checkoutRound: '1' } }],
+    ['it belongs to a different invoice', { metadata: { invoiceId: 'inv-9', checkoutRound: '0' } }],
+  ])('mints a fresh session when %s', async (_why, over) => {
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_open_1' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce(openSession(over));
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(res.sessionId).toBe('cs_test_1');
+  });
+  it('mints a fresh session when the stored id cannot be read at all', async () => {
+    // Fail-soft, and it has to be: a household must never be unable to pay a
+    // bill because a stale id could not be inspected. `retrieve` rejects by
+    // default in this suite, which is exactly this case.
+    const ctx = buildDbMock({
+      docs: {
+        ...baseDocs,
+        'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5, pendingCheckoutSessionId: 'cs_gone' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_gone');
+    expect(res.sessionId).toBe('cs_test_1');
+  });
+  it('does not call Stripe at all when the invoice has no pending session', async () => {
+    const ctx = buildDbMock({
+      docs: { ...baseDocs, 'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: args, auth: { uid: 'u1' } } as any);
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
   });
 });

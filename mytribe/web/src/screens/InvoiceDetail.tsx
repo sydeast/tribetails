@@ -68,13 +68,27 @@ export function InvoiceDetail() {
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
   // ABANDON. See lib/mutationState.ts for what was established from the
-  // callable: the server has no invoice-level guard against two checkout
-  // sessions, and holding this one would walk a pocketed phone to Stripe on
-  // reconnect.
+  // callable: holding this one would walk a pocketed phone to Stripe on
+  // reconnect, minutes after the household put the phone away.
   const pay = usePortalMutation({
     mutationFn: () =>
       payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
     onSuccess: (res) => {
+      // WHAT THIS REDIRECT GUARANTEES, AND WHAT IT NO LONGER HAS TO (#826).
+      //
+      // `window.location.href` UNLOADS THE PAGE. That is why this screen cannot
+      // hold two live Checkout Sessions at once, and for a while it was the
+      // only thing standing between a household and two real charges for one
+      // bill: `payInvoice` mints a new session, and a new PaymentIntent, on
+      // every call, and the webhook's per-event and per-intent ledgers cannot
+      // see two intents as one invoice.
+      //
+      // The server now refuses that itself — a second completed session for one
+      // balance goes to account credit instead of paying the bill twice
+      // (functions/src/lib/invoiceCheckoutDedupe.ts). So turning this into an
+      // in-page transition, a modal checkout or a router navigation is no
+      // longer a billing decision. It is still worth knowing that it once was,
+      // because nothing about the line says so.
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
   }, { policy: 'abandon', what: 'your payment' });

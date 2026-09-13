@@ -40,6 +40,14 @@ export function Invoices() {
     mutationFn: (invoiceId: string) =>
       payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
     onSuccess: (res) => {
+      // WHAT THIS REDIRECT GUARANTEES (#826). `window.location.href` unloads
+      // the page, so this list cannot hold two live Checkout Sessions — and
+      // for a while that was the only thing stopping a household being charged
+      // twice for one bill, because `payInvoice` mints a fresh session and a
+      // fresh PaymentIntent per call. `stripeWebhook` now refuses the second
+      // settling session at the INVOICE level and sends the money to account
+      // credit, so an in-page transition here is no longer a billing decision.
+      // The longer version of this note is on `InvoiceDetail`'s copy.
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
   }, { policy: 'abandon', what: 'your payment' });

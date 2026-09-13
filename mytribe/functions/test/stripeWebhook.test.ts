@@ -478,6 +478,122 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
+    // ── TWO CHECKOUT SESSIONS, ONE INVOICE (issue #826) ──────────────────
+    //
+    // `payInvoice` mints a NEW Checkout Session per call, each with its OWN
+    // PaymentIntent, so a second completed session is a different intent
+    // carrying different event ids: it passes `stripeEvents/{id}` and
+    // `stripePayments/{intentId}` alike.
+    //
+    // Both sessions below are stamped `checkoutRound: '0'` — they were minted
+    // against the SAME outstanding balance, which is what makes them one
+    // intended payment attempted twice rather than two payments.
+    if (sig === 'race-a') {
+      return {
+        id: 'evt_60a',
+        type: 'checkout.session.completed',
+        created: 6000,
+        data: {
+          object: {
+            id: 'cs_60',
+            payment_intent: 'pi_60',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f60', invoiceId: 'i60', checkoutRound: '0' },
+          },
+        },
+      };
+    }
+    if (sig === 'race-b') {
+      return {
+        id: 'evt_61a',
+        type: 'checkout.session.completed',
+        created: 6001,
+        data: {
+          object: {
+            id: 'cs_61',
+            payment_intent: 'pi_61',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f60', invoiceId: 'i60', checkoutRound: '0' },
+          },
+        },
+      };
+    }
+    // The second session's OWN sibling event. One card payment delivers two,
+    // and the duplicate branch must not credit the account once per event.
+    if (sig === 'race-b-pi') {
+      return {
+        id: 'evt_61b',
+        type: 'payment_intent.succeeded',
+        created: 6001,
+        data: {
+          object: {
+            id: 'pi_61',
+            amount_received: 13750,
+            metadata: { familyId: 'f60', invoiceId: 'i60', checkoutRound: '0' },
+          },
+        },
+      };
+    }
+    // THE LEGITIMATE SECOND PAYMENT. Minted AFTER the first settled, so it
+    // carries the NEXT round. The invoice's balance came back (a line item
+    // added to an already-paid bill, or a partial recorded elsewhere), and this
+    // money is owed.
+    if (sig === 'second-round') {
+      return {
+        id: 'evt_62a',
+        type: 'checkout.session.completed',
+        created: 6002,
+        data: {
+          object: {
+            id: 'cs_62',
+            payment_intent: 'pi_62',
+            payment_status: 'paid',
+            amount_total: 5000,
+            metadata: { familyId: 'f62', invoiceId: 'i62', checkoutRound: '1' },
+          },
+        },
+      };
+    }
+    // A session minted BEFORE the round stamp shipped: no `checkoutRound` at
+    // all. The round comparison cannot see it; the settled-intent record can.
+    if (sig === 'legacy-second') {
+      return {
+        id: 'evt_63a',
+        type: 'checkout.session.completed',
+        created: 6003,
+        data: {
+          object: {
+            id: 'cs_63',
+            payment_intent: 'pi_63',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f63', invoiceId: 'i63' },
+          },
+        },
+      };
+    }
+    // No round, and no settled-intent record either — the invoice was settled
+    // by a route that never touched Stripe (`markInvoicePaid`, or the
+    // account-credit auto-apply). All that is left to notice is that it owes
+    // nothing.
+    if (sig === 'marked-paid-elsewhere') {
+      return {
+        id: 'evt_64a',
+        type: 'checkout.session.completed',
+        created: 6004,
+        data: {
+          object: {
+            id: 'cs_64',
+            payment_intent: 'pi_64',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f64', invoiceId: 'i64' },
+          },
+        },
+      };
+    }
     throw new Error('bad-sig');
   },
 }));
@@ -1568,5 +1684,210 @@ describe('stripeWebhook', () => {
     expect(invoiceWrite!.data.status).toBe('paid');
     expect(invoiceWrite!.data.pendingCheckoutSessionId).toEqual(FieldValue.delete());
     expect(invoiceWrite!.data.pendingAt).toEqual(FieldValue.delete());
+  });
+
+  // ── TWO SESSIONS, ONE INVOICE (issue #826) ───────────────────────────────
+  //
+  // THE DELIVERABLE. Until these existed, the only thing stopping a household
+  // being charged twice for one bill was the web portal's success path being a
+  // `window.location.href` that unloads the page before a second session can be
+  // opened. That is one line of navigation code, and the KMP portal — which
+  // opens Checkout in an external browser and keeps its own screen alive —
+  // never had even that.
+  //
+  // WHAT THESE TESTS DO NOT MODEL, said out loud so green is not read as more
+  // than it is: the `runTransaction` mock is a passthrough, so deliveries here
+  // run STRICTLY SEQUENTIALLY. Two webhook invocations genuinely interleaving
+  // is Firestore's own serialization to guarantee (both transactions read and
+  // write `invoices/{id}`), and no in-memory mock can prove it.
+
+  /** An invoice with a balance, nothing paid on it yet. */
+  function unpaidInvoice(id: string, kinfolkId: string) {
+    docState[`invoices/${id}`] = {
+      exists: true,
+      data: { kinfolkId, amountDue: 137.5, total: 137.5 },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+  }
+
+  it('REFUSES the second of two sessions minted for one balance', async () => {
+    unpaidInvoice('i60', 'f60');
+
+    // Session A settles. Ordinary path: the invoice is paid, the round closes,
+    // and the intent that closed it is named.
+    expect(await deliver('race-a')).toEqual([200]);
+    expect(docState['invoices/i60'].data).toMatchObject({
+      status: 'paid',
+      amountDue: 0,
+      stripeCheckoutRound: 1,
+      stripeSettledPaymentIntentId: 'pi_60',
+    });
+
+    // Session B settles. A DIFFERENT PaymentIntent, a DIFFERENT event id, so
+    // both existing ledgers wave it through.
+    expect(await deliver('race-b')).toEqual([200]);
+
+    // It did not pay the invoice a second time.
+    expect(docState['stripeEvents/evt_61a'].data!.appliedOutcome).toBe('SKIPPED_DUPLICATE_INVOICE');
+    expect(docState['invoices/i60'].data!.stripeCheckoutRound).toBe(1);
+    expect(docState['invoices/i60'].data!.stripeSettledPaymentIntentId).toBe('pi_60');
+    // One BILLING_INVOICE_PAID (session A's), and the duplicate's own critical
+    // entry. A second "paid" audit would be the double charge wearing a receipt.
+    const paidAudits = auditMock.writeAuditEntry.mock.calls.filter(
+      (c) => c[0]?.event === 'BILLING_INVOICE_PAID',
+    );
+    expect(paidAudits).toHaveLength(1);
+    expect(auditMock.writeAuditEntry.mock.calls.at(-1)![0]).toMatchObject({
+      event: 'BILLING_PAYMENT_DUPLICATE_CREDITED',
+      severity: 'critical',
+      status: 'FAILURE',
+      familyId: 'f60',
+    });
+    // And the household was told once, about the payment that was real.
+    const applied = notifyMock.enqueueNotification.mock.calls.filter(
+      (c) => c[0]?.key === 'invoice.payment.applied',
+    );
+    expect(applied).toHaveLength(1);
+  });
+
+  it('routes the duplicate charge to account balance, the only destination there is', async () => {
+    unpaidInvoice('i60', 'f60');
+    expect(await deliver('race-a')).toEqual([200]);
+    expect(await deliver('race-b')).toEqual([200]);
+
+    // No refunds, ever (operator ruling). The money is already off the card by
+    // the time this event arrives, so the credit IS the remedy.
+    const family = writes.find((w) => w.path === 'families/f60');
+    expect(family!.data.accountBalanceCents).toEqual(FieldValue.increment(13750));
+
+    // The display ledger carries the row, labelled. The root `payments`
+    // collection is counted in no settlement arithmetic, so naming the invoice
+    // cannot double-count it — but an unlabelled row would read as a second
+    // payment against a settled bill with no explanation.
+    const dupRow = docState['payments/evt_61a'].data!;
+    expect(dupRow).toMatchObject({
+      invoiceId: 'i60',
+      kinfolkId: 'f60',
+      amountCents: 13750,
+      appliedToInvoice: false,
+      appliedTo: 'accountCredit',
+      duplicateCheckoutReason: 'stale-round',
+      duplicateOfPaymentIntentId: 'pi_60',
+    });
+    // Visible from the invoice too, without money fields being touched.
+    expect(docState['invoices/i60'].data!.duplicateCheckoutPaymentIntentIds).toEqual(
+      FieldValue.arrayUnion('pi_61'),
+    );
+    // Loud, at error: this is a household charged twice, not a dedupe going
+    // about its business.
+    const loud = logMock.logEvent.mock.calls.find(
+      (c) => c[0]?.event === 'stripe.invoice.duplicateCheckout',
+    );
+    expect(loud![0].severity).toBe('error');
+    expect(loud![0].extra).toMatchObject({ creditedCents: 13750, duplicateReason: 'stale-round' });
+  });
+
+  it('credits the duplicate ONCE, not once per event the second payment delivers', async () => {
+    unpaidInvoice('i60', 'f60');
+    expect(await deliver('race-a')).toEqual([200]);
+    expect(await deliver('race-b')).toEqual([200]);
+    // Session B's sibling `payment_intent.succeeded`, same intent.
+    expect(await deliver('race-b-pi')).toEqual([200]);
+
+    // Caught by the PaymentIntent claim the duplicate branch also writes.
+    // Without it the sibling reaches the duplicate branch too and the household
+    // is credited twice for one extra charge: the original bug, one level along.
+    expect(docState['stripeEvents/evt_61b'].data!.appliedOutcome).toBe('SKIPPED_DUPLICATE_PAYMENT');
+    expect(writes.filter((w) => w.path === 'families/f60')).toHaveLength(1);
+    expect(writes.filter((w) => w.path.startsWith('payments/'))).toHaveLength(2);
+  });
+
+  it('APPLIES a second payment minted after the first settled: the balance came back', async () => {
+    // The case a key of `invoiceId` alone would get wrong. The invoice took a
+    // Stripe payment, the operator then added a line item, and the household
+    // paid the new balance. Two intended payments; both are owed.
+    docState['invoices/i62'] = {
+      exists: true,
+      data: {
+        kinfolkId: 'f62',
+        amountDue: 50,
+        total: 187.5,
+        stripeCheckoutRound: 1,
+        stripeSettledPaymentIntentId: 'pi_60',
+      },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 175 } },
+    });
+
+    expect(await deliver('second-round')).toEqual([200]);
+
+    expect(docState['stripeEvents/evt_62a'].data!.appliedOutcome).toBe('PAID');
+    expect(docState['invoices/i62'].data).toMatchObject({
+      status: 'paid',
+      amountDue: 0,
+      stripeCheckoutRound: 2,
+      stripeSettledPaymentIntentId: 'pi_62',
+    });
+    expect(docState['payments/evt_62a'].data).toMatchObject({ amountCents: 5000 });
+    // An ordinary applied row: none of the duplicate labelling.
+    expect(docState['payments/evt_62a'].data!.appliedToInvoice).toBeUndefined();
+    expect(docState['payments/evt_62a'].data!.duplicateCheckoutReason).toBeUndefined();
+    expect(writes.find((w) => w.path === 'families/f62')).toBeUndefined();
+  });
+
+  it('catches a duplicate from a session minted before the round stamp shipped', async () => {
+    // No `checkoutRound` in the metadata at all. The settled-intent record is
+    // what notices, which is why the fix does not rest on the stamp alone.
+    docState['invoices/i63'] = {
+      exists: true,
+      data: {
+        kinfolkId: 'f63',
+        amountDue: 0,
+        status: 'paid',
+        total: 137.5,
+        stripeSettledPaymentIntentId: 'pi_59',
+      },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+
+    expect(await deliver('legacy-second')).toEqual([200]);
+
+    expect(docState['stripeEvents/evt_63a'].data).toMatchObject({
+      appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+      duplicateReason: 'settled-by-other-intent',
+    });
+    expect(docState['invoices/i63'].data!.stripeSettledPaymentIntentId).toBe('pi_59');
+    expect(writes.find((w) => w.path === 'families/f63')!.data.accountBalanceCents).toEqual(
+      FieldValue.increment(13750),
+    );
+  });
+
+  it('catches a duplicate on an invoice settled by a route that never touched Stripe', async () => {
+    // `markInvoicePaid`, or the account-credit auto-apply: neither moves the
+    // round and neither leaves a settled intent, so the only signal left is
+    // that the invoice owes nothing.
+    docState['invoices/i64'] = {
+      exists: true,
+      data: { kinfolkId: 'f64', amountDue: 0, amountDueCents: 0, status: 'paid', total: 137.5 },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+
+    expect(await deliver('marked-paid-elsewhere')).toEqual([200]);
+
+    expect(docState['stripeEvents/evt_64a'].data).toMatchObject({
+      appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+      duplicateReason: 'invoice-not-owed',
+    });
+    expect(docState['payments/evt_64a'].data).toMatchObject({
+      appliedTo: 'accountCredit',
+      duplicateOfPaymentIntentId: null,
+    });
   });
 });
