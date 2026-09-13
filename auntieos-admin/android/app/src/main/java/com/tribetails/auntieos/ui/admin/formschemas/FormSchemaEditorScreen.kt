@@ -611,12 +611,10 @@ private fun FieldCard(
             // splits on commas as well as newlines, so the label and the value agree.
             if (FormSchemaFieldType.requiresOptions(field.type)) {
                 FieldGroup(label = "Options (comma-separated)", required = true) {
-                    BottomBorderField(
-                        value = field.options.orEmpty().joinToString(", "),
-                        onValueChange = { viewModel.updateFieldOptions(sectionIndex, fieldIndex, it) },
-                        label = "",
-                        placeholder = "Small, Medium, Large",
-                        modifier = Modifier.fillMaxWidth(),
+                    OptionsField(
+                        options = field.options,
+                        onCommit = { viewModel.updateFieldOptions(sectionIndex, fieldIndex, it) },
+                        modifier = Modifier.testTag("field-options-$sectionIndex-$fieldIndex"),
                     )
                 }
             }
@@ -693,6 +691,58 @@ private fun FieldTypeChipRow(
         label = { it.displayLabel },
         singleSelect = true,
         modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/**
+ * The comma-separated options field. Bug #801: binding the input's [value]
+ * straight to `field.options.joinToString(", ")` and re-parsing it on every
+ * [BottomBorderField.onValueChange] meant a typed comma was consumed by
+ * [FormSchemaEditorViewModel.updateFieldOptions] (which drops blank segments)
+ * before the next keystroke arrived, so a second option could never be typed,
+ * only pasted.
+ *
+ * Fix: the raw text lives in this composable's own state and is the only
+ * thing the field is bound to while the operator is editing. It commits via
+ * [onCommit] - which routes to [FormSchemaEditorViewModel.updateFieldOptions],
+ * so parsing and the persisted shape are unchanged - on [BottomBorderField]'s
+ * `onFocusLost` blur hook, mirroring web's `OptionsInput` (`FormSchemaEditor.tsx`)
+ * so both platforms commit at the same moment and produce the same array for
+ * the same keystrokes.
+ */
+@Composable
+private fun OptionsField(
+    options: List<String>?,
+    onCommit: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember { mutableStateOf(options.orEmpty().joinToString(", ")) }
+    var dirty by remember { mutableStateOf(false) }
+
+    // Re-sync from the committed options when they change from elsewhere
+    // (e.g. switching a field's type resets `options`) but never while the
+    // operator is mid-edit, or a comma they just typed would be clobbered.
+    LaunchedEffect(options) {
+        if (!dirty) text = options.orEmpty().joinToString(", ")
+    }
+
+    BottomBorderField(
+        value = text,
+        onValueChange = {
+            text = it
+            dirty = true
+        },
+        onFocusLost = {
+            onCommit(text)
+            dirty = false
+        },
+        label = "",
+        placeholder = "Small, Medium, Large",
+        modifier = Modifier.fillMaxWidth(),
+        // Not the outer `modifier`: that lands on BottomBorderField's label
+        // Column, not the focusable input, and a test targeting the field by
+        // tag (to type into it / request focus on it) needs the real input.
+        fieldModifier = modifier,
     )
 }
 
