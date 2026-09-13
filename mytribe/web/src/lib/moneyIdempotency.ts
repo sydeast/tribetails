@@ -31,8 +31,15 @@
  * REMAINING balance, so if that balance moves between two taps, the second tap
  * must carry a new key. The screen therefore mints one per mount and drops it
  * the moment a checkout is handed back, rather than keeping one for the life of
- * an invoice. Where the two rules disagree, Stripe errors rather than charging
- * twice, which is the safe direction to be wrong in.
+ * an invoice.
+ *
+ * The server closes the rest of that gap rather than leaving it to this rule.
+ * It derives the key it actually hands Stripe from this value PLUS the
+ * invoice's settlement round and its current balance, which are the two facts
+ * #826 treats as making an open session unusable. So a balance that moved
+ * between two taps mints a fresh session rather than earning a Stripe error,
+ * and the two rules cannot disagree. Dropping the key here is the belt to that
+ * braces.
  *
  * See `mytribe/functions/src/lib/moneyIdempotency.ts` for the server half.
  */
