@@ -192,10 +192,16 @@ async function sweepCollection(
             deadlineMs,
           });
 
-    if (result.processed === 0 && !result.complete && !result.cancelled) {
-      // Nothing moved: either another worker holds the lease or the row stopped
-      // being resumable between the query and the claim. Try the next row rather
-      // than burning the tick on it.
+    if (!result.ran) {
+      // This worker never got the lease: another one holds it, or the row
+      // stopped being resumable between the query and the claim. Try the next
+      // row rather than burning the tick — and specifically rather than
+      // reporting work done, which would skip the other collection entirely.
+      //
+      // `processed` cannot be used for this test. A refused lease hands back the
+      // row's STORED counts, so a blast that is half sent and held by somebody
+      // else reports a healthy non-zero `processed` while having done nothing
+      // here.
       continue;
     }
 

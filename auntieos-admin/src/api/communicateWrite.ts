@@ -185,8 +185,97 @@ export interface SendBroadcastResult {
    * when it is really "unknown". `=== true` is the only truthy test used.
    */
   deduped?: boolean;
-  /** #814. That earlier attempt's fan-out has not finished, so the counts are a snapshot. */
+  /**
+   * #814. The fan-out has not finished, so the counts are a snapshot.
+   *
+   * #823 made this the ORDINARY reply for any audience past about sixty
+   * households, rather than only something a racing retry could see. The
+   * callable now sends for fifteen seconds and hands the rest to a cron sweep,
+   * because five thousand households at five to six Firestore round trips each
+   * cannot finish inside a function's 540-second ceiling. So a screen that reads
+   * this as "unusual" will be wrong most of the time it matters.
+   */
   pending?: boolean;
+  /** #823. Households the send has reached a verdict on, out of `audienceSize`. */
+  sent?: number;
+  /** #823. The frozen roster's size. */
+  audienceSize?: number;
+}
+/** #823. How a broadcast's fan-out is doing, from `getBroadcastProgress`. */
+export type BroadcastFanoutState = 'running' | 'stalled' | 'complete' | 'failed' | 'cancelled';
+export interface BroadcastProgress {
+  broadcastId: string;
+  /** `stalled` is running with a long-dead lease: a send that stopped moving. */
+  fanoutState: BroadcastFanoutState;
+  /** Households the send has reached a verdict on. */
+  sent: number;
+  /** The frozen roster's size. */
+  audienceSize: number;
+  /** Households that received it on at least one channel. */
+  reached: number;
+  /** Households whose channels all resolved OFF, so nothing was attempted. */
+  suppressedByPrefs: number;
+  /** True when a stop has been asked for and the fan-out has not confirmed it. */
+  stopRequested: boolean;
+}
+/** Defensive number read: an absent field must not become NaN in a progress bar. */
+function progressNum(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+const BROADCAST_FANOUT_STATES: readonly BroadcastFanoutState[] = [
+  'running',
+  'stalled',
+  'complete',
+  'failed',
+  'cancelled',
+];
+/**
+ * How far a broadcast has got (#823).
+ *
+ * Deliberately takes ONE id rather than listing broadcasts: Communicate composes
+ * and sends, and what it lacked was a way to watch the send it just started,
+ * which is one id it already holds. A history list would be a new surface with
+ * no mock behind it.
+ */
+export async function getBroadcastProgress(broadcastId: string): Promise<BroadcastProgress> {
+  const res = await call<{ broadcastId: string }, Record<string, unknown>>('getBroadcastProgress', {
+    broadcastId,
+  });
+  const state = res.fanoutState;
+  return {
+    broadcastId,
+    // An unknown or absent state reads as 'complete': a send from a backend that
+    // does not report progress is not in flight, and a progress bar that could
+    // never move would be worse than none.
+    fanoutState: BROADCAST_FANOUT_STATES.includes(state as BroadcastFanoutState)
+      ? (state as BroadcastFanoutState)
+      : 'complete',
+    sent: progressNum(res.sent),
+    audienceSize: progressNum(res.audienceSize),
+    reached: progressNum(res.reached),
+    suppressedByPrefs: progressNum(res.suppressedByPrefs),
+    stopRequested: res.stopRequested === true,
+  };
+}
+export interface StopBroadcastResult {
+  /** Households already contacted. Nothing here can be recalled. */
+  sent: number;
+  /** Households the roster still held. These will not be contacted. */
+  neverSent: number;
+}
+/**
+ * Stops the REMAINDER of a broadcast that is still going (#823).
+ *
+ * It stops nothing that has already left: email and SMS cannot be recalled, and
+ * this does not pretend they can. That is the difference from a marketing
+ * blast's cancel, which really can take a campaign back because its copies sit
+ * in `scheduledNotifications` until their fire time.
+ */
+export async function stopBroadcast(broadcastId: string): Promise<StopBroadcastResult> {
+  const res = await call<{ broadcastId: string }, Record<string, unknown>>('stopBroadcast', {
+    broadcastId,
+  });
+  return { sent: progressNum(res.sent), neverSent: progressNum(res.neverSent) };
 }
 
 /** Recipient-level outcome of a broadcast. Mirrors the backend's `BroadcastReach`. */

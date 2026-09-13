@@ -116,13 +116,17 @@ const ListArgs = z.object({ limit: z.number().int().min(1).max(200).optional() }
  *   cancelling  a cancel was asked for while the fan-out was running, and the
  *               sweep has not yet confirmed the worker stopped. See
  *               `cancelMarketingBlastHandler` for why that is two steps.
+ *   failed      the fan-out never armed, so nothing was queued and nothing ever
+ *               will be. Its own word rather than 'scheduled', which is what it
+ *               read as before and which came with a Cancel button for a
+ *               campaign there was nothing to cancel.
  *
- * A `stalled` fan-out is NOT a fifth status. It is the same 'sending' campaign
+ * A `stalled` fan-out is NOT another status. It is the same 'sending' campaign
  * with `fanoutState: 'stalled'` beside it, because "the queueing has stopped
  * moving" is a fact about the fan-out, not about the campaign's place in the
  * list, and an operator sorting by status should still find it under Sending.
  */
-export type BlastStatus = 'scheduled' | 'sending' | 'sent' | 'cancelling' | 'cancelled';
+export type BlastStatus = 'scheduled' | 'sending' | 'sent' | 'cancelling' | 'cancelled' | 'failed';
 
 export function blastStatus(
   fireAtMs: number,
@@ -132,6 +136,7 @@ export function blastStatus(
   cancelRequested?: boolean,
 ): BlastStatus {
   if (cancelledAtMs !== null) return 'cancelled';
+  if (fanout === 'failed') return 'failed';
   if (cancelRequested === true) return 'cancelling';
   if (fanout === 'running' || fanout === 'stalled') return 'sending';
   return fireAtMs > nowMs ? 'scheduled' : 'sent';

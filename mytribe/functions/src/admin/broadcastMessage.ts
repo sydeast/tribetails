@@ -591,7 +591,7 @@ export async function resumeBroadcastFanout(opts: {
   row: Record<string, unknown>;
   workerId: string;
   deadlineMs: number;
-}): Promise<{ complete: boolean; processed: number; total: number; cancelled: boolean }> {
+}): Promise<{ ran: boolean; complete: boolean; processed: number; total: number; cancelled: boolean }> {
   const { broadcastId, row, workerId, deadlineMs } = opts;
   const ref = db().collection(BROADCASTS_COLLECTION).doc(broadcastId);
   const channels = (Array.isArray(row['channels']) ? row['channels'] : []).filter(
@@ -626,6 +626,7 @@ export async function resumeBroadcastFanout(opts: {
     });
   }
   return {
+    ran: run.ran,
     complete: run.complete,
     processed: run.processed,
     total: run.total,
@@ -637,6 +638,12 @@ export async function broadcastMessageHandler(
   req: CallableRequest<unknown>,
 ): Promise<BroadcastMessageResult> {
   initSentry();
+  // #823. The fan-out's deadline is measured from the REQUEST's start, not from
+  // the moment the roster is armed: the audience resolve ahead of it scans the
+  // whole kinfolk collection, and a budget started after that would let the
+  // reply land past the client's own 20-second ceiling. Same reasoning, and the
+  // same field name, as `scheduleMarketingBlast`.
+  const enteredAtMs = Date.now();
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
@@ -788,11 +795,9 @@ export async function broadcastMessageHandler(
   const run = await runFanout({
     ref,
     workerId,
-    // The same 15-second inline budget the blast takes, for the same reason:
-    // both admin clients give a callable 20 seconds, so a reply inside 15 is one
-    // the operator reads rather than one they reach by timing out. A broadcast
-    // to a handful of households still finishes here exactly as it did before.
-    deadlineMs: startedAtMs + INLINE_FANOUT_BUDGET_MS,
+    // The same 15-second inline budget the blast takes, from the same point and
+    // for the same reason. See `enteredAtMs`.
+    deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
     fnName: 'broadcastMessage',
     leaseHeld: true,
     armed: { row: { ...row, ...roster.fields, fanoutAttempt: attempt }, chunks: roster.chunks },

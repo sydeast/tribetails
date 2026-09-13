@@ -264,7 +264,7 @@ export async function resumeBlastFanout(opts: {
   row: Record<string, unknown>;
   workerId: string;
   deadlineMs: number;
-}): Promise<{ complete: boolean; processed: number; total: number; cancelled: boolean }> {
+}): Promise<{ ran: boolean; complete: boolean; processed: number; total: number; cancelled: boolean }> {
   const { blastId, row, workerId, deadlineMs } = opts;
   const ref = db().collection(BLASTS_COLLECTION).doc(blastId);
   const key = row['key'];
@@ -293,6 +293,7 @@ export async function resumeBlastFanout(opts: {
     });
   }
   return {
+    ran: run.ran,
     complete: run.complete,
     processed: run.processed,
     total: run.total,
@@ -304,6 +305,19 @@ export async function scheduleMarketingBlastHandler(
   req: CallableRequest<unknown>,
 ): Promise<ScheduleMarketingBlastResult> {
   initSentry();
+  /**
+   * #823. The fan-out's deadline is measured from HERE, not from the moment the
+   * roster is armed.
+   *
+   * What the operator's client is waiting on is the whole request, and the
+   * audience resolve ahead of the fan-out is a scan of the entire kinfolk
+   * collection, which is seconds at five thousand rows. A budget started after
+   * it would let the reply land at resolve + 15s + release + audit, which is
+   * within a whisker of the client's own 20-second ceiling — and blowing that
+   * puts the operator back on the timeout / retry / dedupe-replay path this
+   * whole change exists to keep them off.
+   */
+  const enteredAtMs = Date.now();
   const actorUid = req.auth?.uid;
   if (!actorUid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
@@ -423,13 +437,9 @@ export async function scheduleMarketingBlastHandler(
     ref,
     workerId,
     armed: { row: { ...row, ...roster.fields }, chunks: roster.chunks },
-    // THE INLINE BUDGET, measured against the CLIENT's, not the platform's.
-    // `auntieos-admin/src/lib/fns.ts#CALLABLE_TIMEOUT_MS` is 20 seconds, so a
-    // reply that lands inside 15 makes `pending: true` a NORMAL answer the
-    // operator reads, instead of something they only ever reach by timing out,
-    // retrying, and being handed a dedupe replay. A small blast still finishes
-    // here exactly as it did before; a large one hands off to the sweep.
-    deadlineMs: startedAtMs + INLINE_FANOUT_BUDGET_MS,
+    // THE INLINE BUDGET, measured against the CLIENT's, not the platform's, and
+    // from the REQUEST's start rather than the fan-out's. See `enteredAtMs`.
+    deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
     sendOne: blastSender({ blastId: ref.id, key: args.key, data: args.data, fireAtMs: args.fireAtMs, actorUid }),
     fnName: 'scheduleMarketingBlast',
     leaseHeld: true,

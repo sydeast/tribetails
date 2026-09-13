@@ -308,6 +308,41 @@ describe('per-recipient idempotency on resume (#823)', () => {
 });
 
 describe('cancelling a blast that is mid fan-out (#823)', () => {
+  /**
+   * The heartbeat, not the sweep.
+   *
+   * A cancel that only stopped the NEXT invocation would leave a live worker
+   * queueing for the rest of its budget behind the operator's back, which is the
+   * exact dishonesty this change removed. `sendOne` here stamps the request
+   * mid-roster, so the run has to notice it on its own.
+   */
+  it('a live worker stops on the cancel it reads at its next heartbeat', async () => {
+    const ctx = freshDb(0);
+    const ref = ctx.db.collection(BLASTS_COLLECTION).doc('bc');
+    const ids = Array.from({ length: FANOUT_CHUNK, }, (_, i) => `u${i}`);
+    const roster = await writeFanoutRoster({ ref, attempt: 0, recipientIds: ids, nowMs: clock });
+    await ref.set({ fanoutState: 'running', scheduledByUid: 'admin1', ...roster.fields });
+    const sent: string[] = [];
+    const run = await runFanout({
+      ref,
+      workerId: 'w1',
+      deadlineMs: clock + 600_000,
+      fnName: 't',
+      leaseHeld: true,
+      sendOne: async (id: string): Promise<RecipientOutcome> => {
+        sent.push(id);
+        if (sent.length === 10) await ref.set({ cancelRequestedAtMs: clock }, { merge: true });
+        return 'sent';
+      },
+    });
+    expect(run.cancelled).toBe(true);
+    expect(run.complete).toBe(false);
+    // Noticed within one heartbeat window of the stamp, not at the end of the
+    // chunk and not at the end of the budget.
+    expect(sent.length).toBeGreaterThanOrEqual(10);
+    expect(sent.length).toBeLessThan(10 + 2 * 25);
+    expect(sent.length).toBeLessThan(FANOUT_CHUNK);
+  });
   it('stops the fan-out instead of letting it queue more behind the delete', async () => {
     freshDb(250);
     const res = await scheduleMarketingBlastHandler(req(blastArgs()));

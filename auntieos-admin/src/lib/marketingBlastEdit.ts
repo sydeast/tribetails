@@ -93,9 +93,9 @@ export function blastBlocker(
   return null;
 }
 /**
- * What the operator is told after pressing Schedule (#814).
+ * What the operator is told after pressing Schedule (#814, extended by #823).
  *
- * Three outcomes, and they are three different facts:
+ * Four outcomes, and they are four different facts:
  *
  *   a fresh blast    the counts, as before.
  *   a deduped reply  this press landed on a blast an earlier attempt already
@@ -106,9 +106,23 @@ export function blastBlocker(
  *                    a snapshot. Reporting them as a total would be a confident
  *                    wrong number, so the counts are left out and the campaign
  *                    list is where the final ones show up.
+ *   handed off       #823, and this is now the ORDINARY outcome for any audience
+ *                    past about sixty households. The fan-out left this request
+ *                    unfinished and a cron sweep is carrying it. "Scheduled. 61
+ *                    queued." would be true of this second and wrong of the
+ *                    next, so this says where it reached, out of how many, and
+ *                    that it is still going.
  */
 export function scheduleNotice(
-  res: { dispatched: number; suppressed: number; failed: number; deduped: boolean; pending: boolean },
+  res: {
+    dispatched: number;
+    suppressed: number;
+    failed: number;
+    deduped: boolean;
+    pending: boolean;
+    queued: number;
+    audienceSize: number;
+  },
   whenLabel: string,
 ): string {
   const counts =
@@ -121,5 +135,36 @@ export function scheduleNotice(
   if (res.deduped) {
     return `You already scheduled this campaign for ${whenLabel}. Nothing went out twice. ${counts}`;
   }
+  if (res.pending) {
+    return `Scheduled for ${whenLabel}. Still queueing: ${res.queued} of ${res.audienceSize} so far. It carries on in the background.`;
+  }
   return `Scheduled for ${whenLabel}. ${counts}`;
+}
+
+/**
+ * The progress line on a campaign that is still being queued: the mock's "256
+ * of 410 dispatched", drawn from numbers the row can back.
+ *
+ * A STALLED fan-out is named rather than dressed up as a slow one. Its lease has
+ * been gone for two sweep ticks with nothing moving, and an operator told "still
+ * sending" about a campaign that stopped twenty minutes ago has been misled by a
+ * progress bar.
+ */
+export function sendingLabel(queued: number, audienceSize: number, stalled: boolean): string {
+  const of = audienceSize > 0 ? `${queued} of ${audienceSize}` : `${queued}`;
+  return stalled ? `Stopped at ${of} queued. It picks up again shortly.` : `${of} queued`;
+}
+
+/**
+ * What a cancel actually achieved, in the operator's terms.
+ *
+ * A cancel that lands MID fan-out cannot prove the worker stopped (see
+ * `cancelMarketingBlastHandler`), so it does not claim to have. The campaign
+ * reads Cancelling until the sweep confirms it, and this sentence says the same
+ * thing rather than announcing a finality the server refused to write down.
+ */
+export function cancelNotice(res: { cancelled: number; stopped: boolean; neverQueued: number }): string {
+  const removed = `${res.cancelled} queued ${res.cancelled === 1 ? 'notification' : 'notifications'} removed`;
+  if (res.stopped) return `Cancelled. ${removed}.`;
+  return `Stopping. ${removed}, and ${res.neverQueued} were never queued. It finishes stopping within a minute.`;
 }

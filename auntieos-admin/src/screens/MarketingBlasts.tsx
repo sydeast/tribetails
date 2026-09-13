@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   MARKETING_KEYS,
   MARKETING_KEY_LABEL,
@@ -15,10 +15,12 @@ import { listAudienceSegments, type AudienceSegment } from '../api/audienceSegme
 import { describeAudience, type BroadcastCriteria } from '../api/communicateWrite';
 import {
   blastBlocker,
+  cancelNotice,
   fireAtMsFrom,
   mergeFieldsToData,
   parseUidList,
   scheduleNotice,
+  sendingLabel,
   type MergeFieldRow,
 } from '../lib/marketingBlastEdit';
 import { mintBlastIdempotencyKey } from '../lib/sendIdempotency';
@@ -28,6 +30,10 @@ import { DenScreenHeading, DenPanel, StatusPill, EmptyHint, ErrorHint } from '..
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
+// The campaign list borrows the wait treatment's classes for the manual re-read
+// it offers while a fan-out is still running. Imported here rather than copied
+// into MarketingBlasts.css so the two cannot drift apart.
+import '../components/SlowWaitNotice.css';
 import './MarketingBlasts.css';
 
 /**
@@ -56,10 +62,15 @@ import './MarketingBlasts.css';
  *     resolves to. Who is opted IN is not knowable from the criteria; it is what
  *     the audience preview measures, and it is shown there as a real number
  *     rather than promised in a label.
- *   - The "Sending" progress bar and the per-campaign open rate are not here.
- *     A blast is promoted by a 5-minute cron, so there is no in-flight state to
- *     report, and nothing in this codebase records an email open. Drawing either
- *     would mean inventing the number.
+ *   - The per-campaign open rate is not here. Nothing in this codebase records
+ *     an email open, so drawing one would mean inventing the number.
+ *   - The mock's "Sending" group and its progress bar ARE here as of #823, and
+ *     they were not before. The reason given for leaving them out — "a blast is
+ *     promoted by a 5-minute cron, so there is no in-flight state to report" —
+ *     was true of the PROMOTION and never true of the fan-out. Since #823 the
+ *     fan-out is an interruptible walk over a frozen roster that can span
+ *     several invocations and several minutes, and the row carries exactly the
+ *     mock's "256 of 410 dispatched".
  *
  * ── WHERE THE COPY COMES FROM ───────────────────────────────────────────────
  * Not from this screen. A blast names a catalog key and the pipeline renders the
@@ -101,10 +112,72 @@ export function buildBlastCriteria(
   return tags.length > 0 ? { kind: 'tags', tags, tagMatch } : null;
 }
 
-function statusTone(status: MarketingBlast['status']): 'teal' | 'purple' | 'muted' {
+/**
+ * The mock gives each group its own accent: teal for Scheduled, orange for
+ * Sending, purple for Sent. #823 made the orange one real, and it comes from the
+ * token the mock's `--orange` maps to rather than being re-picked by eye.
+ */
+function statusTone(
+  status: MarketingBlast['status'],
+): 'teal' | 'orange' | 'purple' | 'error' | 'muted' {
   if (status === 'scheduled') return 'teal';
+  if (status === 'sending' || status === 'cancelling') return 'orange';
   if (status === 'sent') return 'purple';
+  if (status === 'failed') return 'error';
   return 'muted';
+}
+
+const STATUS_LABEL: Record<MarketingBlast['status'], string> = {
+  scheduled: 'Scheduled',
+  sending: 'Sending',
+  sent: 'Sent',
+  cancelling: 'Cancelling',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+};
+
+/**
+ * One campaign row.
+ *
+ * Extracted when #823 added a third group. Scheduled and Sent were already the
+ * same markup written twice, and a third copy is where the differences between
+ * them start being accidental rather than meant.
+ */
+function CampaignRow({
+  blast,
+  detail,
+  action,
+  progress,
+}: {
+  blast: MarketingBlast;
+  detail?: ReactNode;
+  action?: ReactNode;
+  /** 0..1 while the fan-out is walking the roster, or null for a campaign at rest. */
+  progress?: number | null;
+}) {
+  return (
+    <li className="blasts__row">
+      <div className="blasts__row-main">
+        <span className="blasts__row-name">{blast.title === '' ? blast.key : blast.title}</span>
+        <span className="blasts__row-meta">
+          <code className="blasts__code">{blast.key}</code> {blast.audienceDescription} &middot;{' '}
+          <time dateTime={machineWhen(sendTimeOf(blast.fireAtMs))}>{fireLabel(blast.fireAtMs)}</time>
+          {detail}
+        </span>
+        {progress !== null && progress !== undefined && (
+          // A real `<progress>` rather than a painted div: it carries its value
+          // to a screen reader without a second aria-label restating the
+          // sentence beside it, and the viewer's reduced-motion setting is the
+          // browser's business rather than this stylesheet's.
+          <progress className="blasts__progress" max={1} value={progress} aria-label="Queued so far" />
+        )}
+      </div>
+      <div className="blasts__row-side">
+        <StatusPill label={STATUS_LABEL[blast.status]} tone={statusTone(blast.status)} size="compact" />
+        {action}
+      </div>
+    </li>
+  );
 }
 
 function fireLabel(ms: number): string {
@@ -149,6 +222,15 @@ export function MarketingBlasts() {
   const [blasts, setBlasts] = useState<MarketingBlast[] | null>(null);
   const [blastsError, setBlastsError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  /**
+   * How many times the operator has pressed the campaign list's manual re-read
+   * while something was still queueing (#823).
+   *
+   * It changes the copy, and that is its whole job: #819's ruling is that a tap
+   * with no visible consequence reads as a dead button, and the list may well
+   * come back with the same numbers because the sweep runs once a minute.
+   */
+  const [refreshes, setRefreshes] = useState(0);
 
   const adhocCriteria = buildBlastCriteria(criteriaKind, statusesRaw, tagsRaw, tagMatch);
   const explicitUids = parseUidList(uidsRaw);
@@ -279,8 +361,7 @@ export function MarketingBlasts() {
     setBlastsError(null);
     setNotice(null);
     try {
-      const removed = await cancelMarketingBlast(blast.id);
-      setNotice(`Cancelled. ${removed} queued ${removed === 1 ? 'notification' : 'notifications'} removed.`);
+      setNotice(cancelNotice(await cancelMarketingBlast(blast.id)));
       loadBlasts();
     } catch (err) {
       setBlastsError(`cancelMarketingBlast failed: ${errText(err, 'Cancel failed')}`);
@@ -293,8 +374,17 @@ export function MarketingBlasts() {
     setMergeFields((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
   }
 
+  /**
+   * The mock's three groups, and #823 is what made the middle one real: a
+   * campaign whose fan-out is still walking its roster is neither scheduled nor
+   * sent, and filing it under either would put a Cancel button beside something
+   * half-delivered or a "Sent" pill on something still going.
+   */
+  const sending = blasts?.filter((b) => b.status === 'sending' || b.status === 'cancelling') ?? [];
   const scheduled = blasts?.filter((b) => b.status === 'scheduled') ?? [];
-  const history = blasts?.filter((b) => b.status !== 'scheduled') ?? [];
+  const history = blasts?.filter(
+    (b) => b.status === 'sent' || b.status === 'cancelled' || b.status === 'failed',
+  ) ?? [];
 
   return (
     <div className="blasts">
@@ -645,29 +735,80 @@ export function MarketingBlasts() {
             {blastsError === null && blasts === null && <EmptyHint>Loading campaigns...</EmptyHint>}
             {blasts !== null && (
               <>
+                {sending.length > 0 && (
+                  <>
+                    <h3 className="blasts__listhead">Sending</h3>
+                    <ul className="blasts__list">
+                      {sending.map((b) => (
+                        <CampaignRow
+                          key={b.id}
+                          blast={b}
+                          progress={b.audienceSize > 0 ? b.queued / b.audienceSize : 0}
+                          detail={
+                            <>
+                              {' '}
+                              &middot; {sendingLabel(b.queued, b.audienceSize, b.fanoutState === 'stalled')}
+                            </>
+                          }
+                          action={
+                            // Cancel stays available MID fan-out, which is the
+                            // whole point: the un-queued remainder is real and
+                            // stoppable. A campaign already stopping has nothing
+                            // left to offer, so it gets no button rather than a
+                            // disabled one.
+                            b.status === 'cancelling' ? undefined : (
+                              <GhostButton
+                                label={cancellingId === b.id ? 'Stopping...' : 'Stop sending'}
+                                disabled={cancellingId !== null}
+                                onClick={() => void handleCancel(b)}
+                              />
+                            )
+                          }
+                        />
+                      ))}
+                    </ul>
+                    {/* Borrows the wait treatment #819 built rather than
+                        inventing a second progress language: a long wait with a
+                        number that only moves when the server says so is exactly
+                        the shape that ruling is about, and the offer is a manual
+                        re-read. Safe to press repeatedly: it points at a READ. */}
+                    <div className="slowWait" role="group" aria-label="A campaign is still being queued">
+                      <p className="slowWait__line">
+                        {refreshes === 0
+                          ? 'This carries on in the background.'
+                          : 'Asked again. Still queueing.'}
+                      </p>
+                      <button
+                        type="button"
+                        className="slowWait__sync"
+                        onClick={() => {
+                          setRefreshes((n) => n + 1);
+                          loadBlasts();
+                        }}
+                      >
+                        {refreshes === 0 ? 'Check again' : 'Ask again'}
+                      </button>
+                    </div>
+                  </>
+                )}
+
                 <h3 className="blasts__listhead">Scheduled</h3>
                 {scheduled.length === 0 ? (
                   <EmptyHint>Nothing scheduled.</EmptyHint>
                 ) : (
                   <ul className="blasts__list">
                     {scheduled.map((b) => (
-                      <li key={b.id} className="blasts__row">
-                        <div className="blasts__row-main">
-                          <span className="blasts__row-name">{b.title === '' ? b.key : b.title}</span>
-                          <span className="blasts__row-meta">
-                            <code className="blasts__code">{b.key}</code> {b.audienceDescription} &middot;{' '}
-                            <time dateTime={machineWhen(sendTimeOf(b.fireAtMs))}>{fireLabel(b.fireAtMs)}</time>
-                          </span>
-                        </div>
-                        <div className="blasts__row-side">
-                          <StatusPill label="Scheduled" tone={statusTone(b.status)} size="compact" />
+                      <CampaignRow
+                        key={b.id}
+                        blast={b}
+                        action={
                           <GhostButton
                             label={cancellingId === b.id ? 'Cancelling...' : 'Cancel'}
                             disabled={cancellingId !== null}
                             onClick={() => void handleCancel(b)}
                           />
-                        </div>
-                      </li>
+                        }
+                      />
                     ))}
                   </ul>
                 )}
@@ -678,23 +819,24 @@ export function MarketingBlasts() {
                 ) : (
                   <ul className="blasts__list">
                     {history.map((b) => (
-                      <li key={b.id} className="blasts__row">
-                        <div className="blasts__row-main">
-                          <span className="blasts__row-name">{b.title === '' ? b.key : b.title}</span>
-                          <span className="blasts__row-meta">
-                            <code className="blasts__code">{b.key}</code> {b.audienceDescription} &middot;{' '}
-                            <time dateTime={machineWhen(sendTimeOf(b.fireAtMs))}>{fireLabel(b.fireAtMs)}</time>{' '}
-                            &middot; {b.dispatched} sent, {b.suppressed} suppressed
-                          </span>
-                        </div>
-                        <div className="blasts__row-side">
-                          <StatusPill
-                            label={b.status === 'sent' ? 'Sent' : 'Cancelled'}
-                            tone={statusTone(b.status)}
-                            size="compact"
-                          />
-                        </div>
-                      </li>
+                      <CampaignRow
+                        key={b.id}
+                        blast={b}
+                        detail={
+                          b.status === 'failed' ? (
+                            // Not a count: a campaign whose fan-out never armed
+                            // queued nothing, and "0 sent, 0 suppressed" would
+                            // read as a send that reached nobody rather than as
+                            // one that never started.
+                            <> &middot; never queued</>
+                          ) : (
+                            <>
+                              {' '}
+                              &middot; {b.dispatched} sent, {b.suppressed} suppressed
+                            </>
+                          )
+                        }
+                      />
                     ))}
                   </ul>
                 )}

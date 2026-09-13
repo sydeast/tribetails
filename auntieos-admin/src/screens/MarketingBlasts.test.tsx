@@ -334,7 +334,7 @@ describe('MarketingBlasts', () => {
         cancelledAtMs: null,
       },
     ]);
-    cancelMarketingBlast.mockResolvedValue(9);
+    cancelMarketingBlast.mockResolvedValue({ cancelled: 9, stopped: true, neverQueued: 0 });
 
     render(<MarketingBlasts />);
     expect(await screen.findByText('Next week')).toBeInTheDocument();
@@ -373,6 +373,116 @@ describe('MarketingBlasts', () => {
     expect(screen.getByText('Too late')).toBeInTheDocument();
   });
 
+  /**
+   * #823. A campaign whose fan-out is still walking its roster is its own group.
+   *
+   * Before this it had nowhere to be: the list split on `status === 'scheduled'`
+   * and everything else was history, so a half-queued campaign landed under
+   * "Sent and cancelled" wearing a Sent pill. It is the state the issue objects
+   * to — one the operator can reach and cannot act on — and the fix is the
+   * mock's own third group, with the mock's own progress bar.
+   */
+  it('files a campaign that is still queueing under Sending, with its progress and a way to stop it', async () => {
+    listMarketingBlasts.mockResolvedValue([
+      {
+        id: 'b1',
+        key: 'newsletter.announcement',
+        title: 'June newsletter',
+        fireAtMs: Date.now() + HOUR,
+        status: 'sending',
+        audienceDescription: 'All active kinfolk',
+        matched: 410,
+        noLinkedAccount: 0,
+        dispatched: 256,
+        suppressed: 0,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'running',
+        queued: 256,
+        audienceSize: 410,
+      },
+    ]);
+    render(<MarketingBlasts />);
+    // By role: "Sending" is both the group heading and the row's status pill,
+    // and a bare text query cannot tell a reviewer which one it found.
+    expect(await screen.findByRole('heading', { name: 'Sending' })).toBeInTheDocument();
+    expect(screen.getByText('Sending', { selector: '.den-statuspill' })).toBeInTheDocument();
+    expect(screen.getByText(/256 of 410 queued/)).toBeInTheDocument();
+    // The mock's bar, and a real one: asserted on the element's own value rather
+    // than on a painted width, which jsdom cannot honestly answer.
+    const bar = screen.getByRole('progressbar', { name: 'Queued so far' });
+    expect(bar).toHaveValue(256 / 410);
+    // Stoppable mid fan-out. The un-queued remainder is real.
+    expect(screen.getByRole('button', { name: 'Stop sending' })).toBeInTheDocument();
+    // And NOT filed under history wearing a Sent pill, which is where it landed
+    // before this group existed.
+    expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  });
+  it('says a stalled fan-out has stopped moving rather than calling it slow', async () => {
+    listMarketingBlasts.mockResolvedValue([
+      {
+        id: 'b1',
+        key: 'newsletter.announcement',
+        title: 'Stuck',
+        fireAtMs: Date.now() + HOUR,
+        status: 'sending',
+        audienceDescription: 'All active kinfolk',
+        matched: 410,
+        noLinkedAccount: 0,
+        dispatched: 40,
+        suppressed: 0,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'stalled',
+        queued: 40,
+        audienceSize: 410,
+      },
+    ]);
+    render(<MarketingBlasts />);
+    expect(await screen.findByText(/Stopped at 40 of 410 queued/)).toBeInTheDocument();
+  });
+  /**
+   * The manual re-read #819's ruling asks for, on the one wait this screen has
+   * that no request is holding open: the fan-out is on the server and the list
+   * only moves when it is asked again.
+   */
+  it('offers a manual re-read while something is queueing, and says a second press did something', async () => {
+    listMarketingBlasts.mockResolvedValue([
+      {
+        id: 'b1',
+        key: 'newsletter.announcement',
+        title: 'June newsletter',
+        fireAtMs: Date.now() + HOUR,
+        status: 'sending',
+        audienceDescription: 'All active kinfolk',
+        matched: 410,
+        noLinkedAccount: 0,
+        dispatched: 256,
+        suppressed: 0,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'running',
+        queued: 256,
+        audienceSize: 410,
+      },
+    ]);
+    render(<MarketingBlasts />);
+    const check = await screen.findByRole('button', { name: 'Check again' });
+    listMarketingBlasts.mockClear();
+    await userEvent.click(check);
+    await waitFor(() => expect(listMarketingBlasts).toHaveBeenCalled());
+    // The copy changes, because a tap with no visible consequence reads as a
+    // dead button and the sweep runs once a minute, so the numbers may well not
+    // have moved.
+    expect(await screen.findByRole('button', { name: 'Ask again' })).toBeInTheDocument();
+    expect(screen.getByText('Asked again. Still queueing.')).toBeInTheDocument();
+  });
+  it('does not offer the re-read when nothing is queueing', async () => {
+    listMarketingBlasts.mockResolvedValue([]);
+    render(<MarketingBlasts />);
+    expect(await screen.findByText('Nothing scheduled.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
+  });
   it('keeps building an audience possible when the saved segments fail to load', async () => {
     listAudienceSegments.mockRejectedValue(new Error('offline'));
     render(<MarketingBlasts />);

@@ -180,3 +180,46 @@
    (`.compose__layout` / `.compose__preview`). The mock puts it in the SCREEN's
    right column, above Recent, so `Communicate.css` owns that placement now and
    this file styles only the form. */
+
+/* The still-sending block on a broadcast whose fan-out outlived its call (#823).
+   Sits above the per-channel table, because "this is not finished" has to be
+   read before the numbers under it are. Every colour is a token. */
+.compose__sending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.compose__sending-line {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
+/* A real `<progress>` rather than a painted div: its value reaches a screen
+   reader without a second aria-label restating the sentence above it, and the
+   viewer's reduced-motion setting is the browser's business, not this file's.
+   `--color-primary` is the same orange the Marketing blasts screen's Sending
+   accent resolves to, so one in-flight send looks like another. */
+.compose__sending-bar {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: 4px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-soft);
+}
+.compose__sending-bar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--color-border-soft);
+}
+.compose__sending-bar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
+.compose__sending-bar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
