@@ -75,8 +75,16 @@ export const BroadcastIdempotencyKeyArg = idempotencyKeyArg(
   'bcast_<millis>_<suffix>',
 );
 
-/** The fan-out's own state, stored on the anchor row. */
-export type FanoutState = 'running' | 'complete' | 'failed';
+/**
+ * The fan-out's own state, stored on the anchor row.
+ *
+ * Re-exported rather than redeclared as of #823: the fan-out itself moved into
+ * `lib/fanoutResume.ts` when it stopped fitting inside one invocation, and the
+ * value gained a fourth member (`cancelled`) there. Two declarations of one
+ * field's domain is how a `satisfies` check goes quietly green against the
+ * wrong list.
+ */
+export type { FanoutState } from './fanoutResume';
 
 /**
  * A row this attempt did not create, handed back so the handler can answer the

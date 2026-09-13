@@ -357,6 +357,13 @@ export const AUDIT_EVENTS = {
   AUDIENCE_SEGMENT_SAVED: 'AUDIENCE_SEGMENT_SAVED',
   AUDIENCE_SEGMENT_DELETED: 'AUDIENCE_SEGMENT_DELETED',
   BROADCAST_SENT: 'BROADCAST_SENT',
+  // #823. A broadcast whose fan-out was stopped part-way by the operator. Its own
+  // event rather than a SENT with a different sentence, because "we contacted 900
+  // households and deliberately did not contact the other 4,100" is the kind of
+  // fact somebody reads the audit trail to find, and a SENT row would bury it.
+  // Nothing already sent is recalled; the payload's `sent` / `neverSent` split is
+  // the whole record.
+  BROADCAST_STOPPED: 'BROADCAST_STOPPED',
 
   // Marketing blasts: a SCHEDULED campaign, as against the broadcast above,
   // which sends now. The payload carries the blast id, the catalog key, the

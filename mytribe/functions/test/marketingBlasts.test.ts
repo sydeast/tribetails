@@ -70,7 +70,7 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
  * `matchesCriteria`'s own rule).
  */
 function kinfolkDb(extra: Parameters<typeof buildDbMock>[0] = {}) {
-  return buildDbMock({
+  return buildDbMock({ writeThrough: true,
     queryDocs: {
       kinfolk: [
         { id: 'k1', data: { status: 'active', tags: ['vip'], uid: 'u1' } },
@@ -167,7 +167,7 @@ describe('scheduleMarketingBlast audience criteria', () => {
   });
 
   it('refuses a criteria that resolves to nobody', async () => {
-    const ctx = buildDbMock({ queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'archived', uid: 'u1' } }] } });
+    const ctx = buildDbMock({ writeThrough: true, queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'archived', uid: 'u1' } }] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } }))),
@@ -269,7 +269,7 @@ describe('previewMarketingBlastAudience', () => {
   });
 
   it('returns zero rather than throwing when the selection reaches nobody', async () => {
-    const ctx = buildDbMock({ queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'archived', uid: 'u1' } }] } });
+    const ctx = buildDbMock({ writeThrough: true, queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'archived', uid: 'u1' } }] } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const res = await previewMarketingBlastAudienceHandler(
@@ -309,7 +309,7 @@ describe('blastStatus', () => {
 
 describe('listMarketingBlasts', () => {
   it('returns rows newest fire time first with a derived status', async () => {
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       queryDocs: {
         marketingBlasts: [
           {
@@ -333,7 +333,7 @@ describe('listMarketingBlasts', () => {
   });
 
   it('reads a pre-change row through its old audienceCount field rather than reporting zero', async () => {
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       queryDocs: {
         marketingBlasts: [
           { id: 'old', data: { key: 'marketing.optin', fireAtMs: 10, audienceCount: 7, dispatched: 7 } },
@@ -355,7 +355,7 @@ describe('listMarketingBlasts', () => {
 
 describe('cancelMarketingBlast', () => {
   function cancelDb(blast: Record<string, unknown>, queued: string[]) {
-    return buildDbMock({
+    return buildDbMock({ writeThrough: true,
       docs: { 'marketingBlasts/b1': blast },
       queryDocs: {
         scheduledNotifications: queued.map((id) => ({ id, data: { data: { blastId: 'b1' } } })),
@@ -390,7 +390,7 @@ describe('cancelMarketingBlast', () => {
   });
 
   it('refuses an unknown blast id', async () => {
-    const ctx = buildDbMock({ docs: {} });
+    const ctx = buildDbMock({ writeThrough: true, docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(cancelMarketingBlastHandler(req({ blastId: 'ghost' }))).rejects.toThrow(/does not exist/);
   });

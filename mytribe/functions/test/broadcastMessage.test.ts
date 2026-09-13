@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -24,6 +24,8 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 
 import { broadcastMessageHandler } from '../src/admin/broadcastMessage';
+import { getBroadcastProgressHandler, stopBroadcastHandler } from '../src/admin/broadcastProgress';
+import { outboundFanoutSweepCore } from '../src/scheduled/outboundFanoutSweep';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 
 beforeEach(() => {
@@ -57,9 +59,22 @@ function prefsDoc(channels: { email?: boolean; sms?: boolean; push?: boolean }) 
   return { notificationPrefs: { byKey: { 'broadcast.message': channels } } };
 }
 
+/**
+ * Writes to the broadcast ROW itself, excluding its subcollections (#823).
+ *
+ * `broadcasts/{id}` now has children — `fanoutChunks` holds the frozen roster
+ * and `fanoutRecipients` holds one claim marker per household — so a bare
+ * `path.startsWith('broadcasts/')` matches those too. Three digits of path is
+ * the difference between "the handler wrote the row twice" and "the handler
+ * wrote the row twice and a hundred markers".
+ */
+function rowWrites(ctx: { writes: Array<{ path: string; data: any; merge: boolean }> }) {
+  return ctx.writes.filter((w) => w.path.split('/').length === 2 && w.path.startsWith('broadcasts/'));
+}
+
 /** Two active kinfolk: full contact, plus one missing email + uid. */
 function kinfolkDb(extra: Record<string, any> = {}, docs: Record<string, any> = {}) {
-  return buildDbMock({
+  return buildDbMock({ writeThrough: true,
     // u1 opts into every channel, so this fixture exercises a full fan-out; the
     // uid-less k2 has no prefs document at all and rides the catalog defaults.
     docs: { 'clients/u1': prefsDoc({ email: true, sms: true, push: true }), ...docs },
@@ -99,7 +114,11 @@ describe('broadcastMessage happy path', () => {
     // records a broadcasts doc + audit. #814: the row is a doc().set() written
     // BEFORE the fan-out and merged with the counts afterwards, rather than the
     // single add() it used to be once the sending was over.
-    expect(ctx.writes.filter((w) => w.path.startsWith('broadcasts/'))).toHaveLength(2);
+    // #823 made it four, and naming them is the point: the CLAIM, the roster
+    // arming, the counts merged in when the fan-out's one chunk closed, and the
+    // lease release that marks it complete. The claim is still first and still
+    // happens before anything is sent, which is the property this asserts.
+    expect(rowWrites(ctx)).toHaveLength(4);
     expect(writeAuditEntry).toHaveBeenCalledWith(expect.objectContaining({ event: 'BROADCAST_SENT' }));
   });
 
@@ -146,7 +165,7 @@ describe('broadcastMessage happy path', () => {
 describe('broadcastMessage suppression', () => {
   it('skips an opted-out email recipient', async () => {
     const id = encodeURIComponent('a@x.com');
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       docs: { [`message_suppressions/${id}`]: { channel: 'email' } },
       queryDocs: {
         kinfolk: [{ id: 'k1', data: { status: 'active', email: 'a@x.com', phoneNumber: '', uid: '' } }],
@@ -170,7 +189,7 @@ describe('broadcastMessage suppression', () => {
 describe('broadcastMessage notification preferences', () => {
   /** One kinfolk with every contact detail and a linked account. */
   function oneKinfolkDb(docs: Record<string, any>) {
-    return buildDbMock({
+    return buildDbMock({ writeThrough: true,
       docs,
       queryDocs: {
         kinfolk: [
@@ -247,7 +266,7 @@ describe('broadcastMessage notification preferences', () => {
   });
 
   it('checks message_suppressions ON TOP of preferences, not instead of them', async () => {
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       docs: {
         'clients/u1': prefsDoc({ email: true }),
         [`message_suppressions/${encodeURIComponent('a@x.com')}`]: { channel: 'email' },
@@ -268,8 +287,10 @@ describe('broadcastMessage notification preferences', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }));
     // The counts land on the row the handler claimed before sending (#814), so
-    // the reach is in the MERGE write rather than in a single add().
-    const stored = ctx.writes.filter((w) => w.path.startsWith('broadcasts/')).at(-1);
+    // the reach is in a MERGE write rather than in a single add().
+    const stored = rowWrites(ctx)
+      .filter((w) => w.data.reach !== undefined)
+      .at(-1);
     expect(stored?.merge).toBe(true);
     expect(stored?.data.reach).toEqual({ targeted: 1, reached: 0, suppressedByPrefs: 1 });
     const audit = (writeAuditEntry as any).mock.calls[0][0];
@@ -280,7 +301,7 @@ describe('broadcastMessage notification preferences', () => {
 
 describe('broadcastMessage segment load', () => {
   it('resolves criteria from a saved segment doc', async () => {
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       docs: { 'audience_segments/seg1': { criteria: { kind: 'status', statuses: ['active'] } } },
       queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671' } }] },
     });
@@ -290,7 +311,7 @@ describe('broadcastMessage segment load', () => {
   });
 
   it('throws not-found for a missing segment', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kinfolk: [] } });
+    const ctx = buildDbMock({ writeThrough: true, docs: {}, queryDocs: { kinfolk: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       broadcastMessageHandler(req({ segmentId: 'missing', channels: ['sms'], body: 'B' })),
@@ -300,7 +321,7 @@ describe('broadcastMessage segment load', () => {
 
 describe('broadcastMessage guards', () => {
   it('throws failed-precondition no_recipients when the segment is empty', async () => {
-    const ctx = buildDbMock({ queryDocs: { kinfolk: [] } });
+    const ctx = buildDbMock({ writeThrough: true, queryDocs: { kinfolk: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'B' })),
@@ -310,7 +331,7 @@ describe('broadcastMessage guards', () => {
   it('throws unavailable when every send failed and nothing skipped', async () => {
     // The recipient must have SMS switched ON, or the send is never attempted
     // and the failure this asserts cannot happen (#386).
-    const ctx = buildDbMock({
+    const ctx = buildDbMock({ writeThrough: true,
       docs: { 'clients/u1': prefsDoc({ sms: true }) },
       queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: 'u1' } }] },
     });
@@ -368,7 +389,7 @@ describe('broadcastMessage idempotency (#814)', () => {
   const KEY_B = 'bcast_1757700000001_ef34gh';
   /** One household with an email and every channel opted in. */
   function liveDb(docs: Record<string, any> = {}) {
-    return buildDbMock({
+    return buildDbMock({ writeThrough: true,
       writeThrough: true,
       docs: { 'clients/u1': prefsDoc({ email: true, sms: true, push: true }), ...docs },
       queryDocs: {
@@ -466,5 +487,136 @@ describe('broadcastMessage idempotency (#814)', () => {
       broadcastMessageHandler(req(send({ idempotencyKey: 'blast_1757700000000_ab12cd' }))),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
+  });
+});
+/**
+ * #823: a broadcast too large to finish in one invocation.
+ *
+ * `broadcastMessage` carries the same 540-second ceiling and the same
+ * per-recipient cost as a marketing blast, so the same wall applies — and here
+ * the fan-out is real email and SMS rather than queued copies, which makes
+ * "reached exactly once" the load-bearing property rather than a nicety.
+ *
+ * The clock is stubbed and each send advances it, so "the budget ran out
+ * half-way through the roster" is stated rather than approximated.
+ */
+describe('broadcastMessage fan-out that outlives its invocation (#823)', () => {
+  const START = 1_760_000_000_000;
+  let clock = START;
+  beforeEach(() => {
+    clock = START;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    // 400ms a household: the email send plus the prefs and suppression reads.
+    mocks.sendTemplatedEmail.mockImplementation(async () => {
+      clock += 400;
+      return 'sg-1';
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  /**
+   * `n` active households, each with an email on file.
+   *
+   * The households are in BOTH `queryDocs` (so the audience resolver's
+   * collection scan finds them) and `docs` (so the resumed leg can read one back
+   * by id). That is not fixture duplication, it is the resume path: the roster
+   * holds kinfolk IDS and never their contact details, because this callable's
+   * contract is that no plaintext recipient is stored. A sweep tick has to go
+   * and fetch the address, and a fixture that only answered the scan would make
+   * the resumed leg silently reach nobody.
+   */
+  function bigDb(n: number) {
+    const docs: Record<string, any> = {};
+    for (let i = 0; i < n; i += 1) {
+      docs[`clients/u${i}`] = prefsDoc({ email: true, sms: false, push: false });
+      docs[`kinfolk/k${i}`] = {
+        status: 'active',
+        tags: [],
+        email: `k${i}@x.com`,
+        phoneNumber: '',
+        uid: `u${i}`,
+      };
+    }
+    return buildDbMock({
+      writeThrough: true,
+      docs,
+      queryDocs: {
+        kinfolk: Array.from({ length: n }, (_, i) => ({
+          id: `k${i}`,
+          data: { status: 'active', tags: [], email: `k${i}@x.com`, phoneNumber: '', uid: `u${i}` },
+        })),
+      },
+    });
+  }
+  function addressed(): string[] {
+    return mocks.sendTemplatedEmail.mock.calls.map((c: any[]) => c[0].to);
+  }
+  it('hands off part-way and the sweep emails every household exactly once', async () => {
+    const ctx = bigDb(120);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }),
+    );
+    // 15 seconds of budget at 400ms a household is ~37, well short of 120.
+    expect(res.pending).toBe(true);
+    expect(res.audienceSize).toBe(120);
+    expect(res.sent).toBeLessThan(120);
+    expect(addressed().length).toBeLessThan(120);
+    for (let i = 0; i < 20; i += 1) {
+      const row = await ctx.db.collection('broadcasts').doc(res.broadcastId).get();
+      if (row.data()?.fanoutState === 'complete') break;
+      clock += 1_000;
+      await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+    }
+    const finished = (await ctx.db.collection('broadcasts').doc(res.broadcastId).get()).data();
+    expect(finished.fanoutState).toBe('complete');
+    expect(finished.fanoutProcessed).toBe(120);
+    // THE PROPERTY: 120 households, 120 emails, no address twice, across a
+    // callable and several sweep ticks.
+    const to = addressed();
+    expect(to).toHaveLength(120);
+    expect(new Set(to).size).toBe(120);
+    // And the per-channel tally survived the hand-off, because it is derived
+    // from the markers at each chunk close rather than kept in a worker's
+    // memory. A resumed leg has no memory of the one before it.
+    expect(finished.perChannel.email).toEqual({ sent: 120, skipped: 0, failed: 0 });
+    expect(finished.reach).toEqual({ targeted: 120, reached: 120, suppressedByPrefs: 0 });
+  });
+  it('stops the remainder when the operator asks, and says what already went', async () => {
+    const ctx = bigDb(120);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'S', body: 'B' }),
+    );
+    expect(res.pending).toBe(true);
+    const sentBefore = addressed().length;
+    const stop = await stopBroadcastHandler(req({ broadcastId: res.broadcastId }));
+    expect(stop.sent + stop.neverSent).toBe(120);
+    expect(stop.neverSent).toBeGreaterThan(0);
+    // The sweep refuses to resume a send the operator stopped, however many
+    // ticks go by.
+    for (let i = 0; i < 5; i += 1) {
+      clock += 1_000;
+      await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 30_000 });
+    }
+    expect(addressed().length).toBe(sentBefore);
+    // Asked twice is refused rather than answered with a second cheerful count.
+    await expect(stopBroadcastHandler(req({ broadcastId: res.broadcastId }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+  });
+  it('reports progress for a send that is still going', async () => {
+    const ctx = bigDb(120);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['email'], subject: 'Spring', body: 'B' }),
+    );
+    const progress = await getBroadcastProgressHandler(req({ broadcastId: res.broadcastId }));
+    expect(progress.fanoutState).toBe('running');
+    expect(progress.audienceSize).toBe(120);
+    expect(progress.subject).toBe('Spring');
+    expect(progress.stopRequested).toBe(false);
+    expect(progress.sent).toBeLessThan(120);
   });
 });
