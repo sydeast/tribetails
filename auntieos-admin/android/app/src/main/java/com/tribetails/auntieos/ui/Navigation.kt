@@ -84,6 +84,10 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object Home           : Screen("home",           "Home",        Lucide.House)
     object Directory      : Screen("directory",      "Kinfolk",     Lucide.Users)
     object Communicate    : Screen("communicate",    "Comms",       Lucide.MessageCircle)
+    // Communicate's sibling: the same act at a later time. Reached from
+    // Communicate rather than pinned in the bottom bar, which is already eight
+    // wide; the web rail pins it because a rail has room and a bottom bar does not.
+    object MarketingBlasts : Screen("marketing_blasts", "Blasts",   Lucide.Megaphone)
     object Inbox          : Screen("inbox",          "Inbox",       Lucide.Inbox)
     object Calls          : Screen("calls",          "Calls",       Lucide.Phone)
     object Calendar       : Screen("calendar",       "Bookings",    Lucide.CalendarDays)
@@ -597,6 +601,7 @@ private fun AuthenticatedNavHost(
 
     val homeVm              = remember { HomeViewModel(app.repository, app.invoiceRepository, app.kinCareRepository) }
     val commVm              = remember { CommunicateViewModel(app.repository) }
+    val marketingVm         = remember { com.tribetails.auntieos.ui.marketing.MarketingBlastsViewModel(app.repository) }
     val callsVm             = remember { CallsViewModel(context, app.repository) }
     val settingsVm          = remember { SettingsViewModel(context) }
     val msgVm               = remember { MessagingViewModel(app.repository) }
@@ -763,6 +768,14 @@ private fun AuthenticatedNavHost(
             composable(Screen.Communicate.route) {
                 CommunicateScreen(viewModel = commVm)
             }
+            // Admin-gated like every other operator write surface: the callables
+            // behind it are wrapAdminCallable, and the gate here is what stops a
+            // non-admin reaching a screen whose every button would be refused.
+            composable(Screen.MarketingBlasts.route) {
+                AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
+                    com.tribetails.auntieos.ui.marketing.MarketingBlastsScreen(viewModel = marketingVm)
+                }
+            }
             composable(Screen.Inbox.route) {
                 com.tribetails.auntieos.ui.inbox.InboxScreen()
             }
@@ -814,6 +827,7 @@ private fun AuthenticatedNavHost(
                         onNavigateToFormSchemas = { navController.navigate(Screen.FormSchemas.route) },
                         onNavigateToKinTaleTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                         onNavigateToTemplates = { navController.navigate(Screen.Templates.route) },
+                        onNavigateToMarketingBlasts = { navController.navigate(Screen.MarketingBlasts.route) },
                         onNavigateToFeatureFlags = { navController.navigate(Screen.AdminFeatureFlags.route) },
                         onNavigateToCoveragePackages = { navController.navigate(Screen.CoveragePackage.route) },
                         onNavigateToInvites = { navController.navigate(Screen.Invites.route) },

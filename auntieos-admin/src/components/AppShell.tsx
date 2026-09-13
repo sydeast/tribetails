@@ -97,6 +97,7 @@ const LIVE_LINKS = {
   inbox: linkOptions({ to: '/inbox' }),
   settings: linkOptions({ to: '/settings' }),
   communicate: linkOptions({ to: '/communicate' }),
+  'marketing-blasts': linkOptions({ to: '/marketing-blasts' }),
 } as const;
 
 /** Typed lookup: preserves each entry's literal `to` (a lossy Record cast would

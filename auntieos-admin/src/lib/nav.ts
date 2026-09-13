@@ -24,6 +24,7 @@ export type Destination =
   | 'sessions'
   | 'invoices'
   | 'communicate'
+  | 'marketingBlasts'
   | 'inbox'
   | 'notifications'
   | 'activity'
@@ -80,6 +81,11 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'sessions', title: 'Auntie Time', group: 'careOps', slug: 'sessions' },
   { dest: 'invoices', title: 'Invoices', group: 'careOps', slug: 'invoices' },
   { dest: 'communicate', title: 'Communicate', group: 'careOps', slug: 'communicate' },
+  // Beside Communicate because the two are the same act at two times:
+  // Communicate sends now, this schedules. Pinned rather than contextual, since
+  // "what goes out next week" is a question asked cold, with no screen to
+  // arrive from.
+  { dest: 'marketingBlasts', title: 'Marketing blasts', group: 'careOps', slug: 'marketing-blasts' },
 
   { dest: 'inbox', title: 'Inbox', group: 'more', slug: 'inbox' },
   { dest: 'notifications', title: 'Notifications', group: 'more', slug: 'notifications' },

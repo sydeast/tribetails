@@ -2321,3 +2321,78 @@ Mirrored by `auntieos-admin/src/api/externalSend.ts` and android's
   added in `mytribe/firestore.indexes.json`. Without it deployed, the existing
   thread lookup fails and every mirror reports `write_failed` while the texts
   still send.
+
+## Marketing blasts (admin-gated)
+
+Scheduled campaigns to kinfolk, as against `broadcastMessage`, which sends now.
+Two hand-built clients mirror these shapes: the React admin
+(`auntieos-admin/src/api/marketingBlasts.ts`) and AuntieOS Android
+(`android/.../ui/marketing/MarketingBlast.kt`). `scheduleMarketingBlast`'s
+request is frozen by recursive signature in `test/callableContract.test.ts`.
+
+The audience is ONE shape across this whole codebase: `audienceCriteria.ts`'s
+`CriteriaSchema`, already shared by `broadcastMessage` and `saveAudienceSegment`.
+A blast adds a third path, an explicit `audienceUids` list, which is the shape
+the callable originally took.
+
+### scheduleMarketingBlast (shape changed 2026-09-12)
+- req `{ key: 'newsletter.announcement'|'survey.event'|'marketing.optin', fireAtMs: number /* epoch ms, not >60s in the past */, segmentId?: string | criteria?: Criteria | audienceUids?: string[] /* EXACTLY ONE */, data: Record<string, unknown>, title?: string }`
+- res `{ ok: true, blastId: string, key: string, matched: number, noLinkedAccount: number, dispatched: number, suppressed: number, failed: number }`
+- **The shape change.** It used to take ONLY `audienceUids`, which is why nothing
+  ever called it: a screen would have had to enumerate up to 5000 auth uids
+  client-side, and no client can read the `kinfolk` collection's uid column that
+  way. `segmentId` / `criteria` are resolved server-side by
+  `admin/marketingAudience.ts` against the same `CriteriaSchema` a broadcast uses.
+  Exactly one of the three; two is refused rather than resolved by handler
+  precedence, and zero is refused rather than defaulted to everyone.
+- `data` is the MERGE CONTEXT for the operator's own template for `key`
+  (`emailTemplates/{key}`, authored in Template Bank), not the message copy. The
+  three marketing catalog rows declare no fixed merge tokens, so the field is a
+  free-form record on purpose.
+- Each recipient still passes the marketing opt-in gate inside
+  `enqueueNotification`: a household that never opted in resolves to every
+  channel off and is counted in `suppressed`, never silently dropped. `failed`
+  is kept separate from `suppressed` because they are different facts.
+- `failed-precondition` `no_recipients` when the audience resolves to no linked
+  account, and `audience_too_large` past 5000 resolved recipients.
+- The `marketingBlasts/{id}` row is written BEFORE the fan-out, and its id rides
+  on every scheduled copy as `data.blastId`. That is the whole mechanism behind
+  cancel; writing the row afterwards (as it used to) left every queued copy
+  anonymous and uncancellable.
+
+### previewMarketingBlastAudience (net-new 2026-09-12)
+- req `{ key: <same enum>, segmentId?: string | criteria?: Criteria | audienceUids?: string[] /* EXACTLY ONE */ }`
+- res `{ ok: true, description: string, matched: number, noLinkedAccount: number, suppressedByPrefs: number, reachable: number }`
+- Writes nothing. Deliberately does NOT throw on an empty audience the way
+  scheduling does: "this reaches nobody" is the most useful thing a preview can
+  say, and it can only say it by returning.
+- `suppressedByPrefs` runs the dispatcher's OWN `resolveChannels` per recipient,
+  so the number is a prediction of the send rather than an estimate of it.
+- Four counted facts, none derived from another by subtraction, so a screen
+  rendering them is never showing arithmetic dressed as data.
+
+### listMarketingBlasts (net-new 2026-09-12)
+- req `{ limit?: number /* 1-200, default 100 */ }`
+- res `{ ok: true, blasts: Array<{ id, key, title, fireAtMs, status: 'scheduled'|'sent'|'cancelled', audienceDescription, matched, noLinkedAccount, dispatched, suppressed, failed, cancelledAtMs: number|null, createdAtMs }> }`
+- `status` is DERIVED on read from `fireAtMs` vs now and `cancelledAt`, never
+  stored: a stored status would be wrong from the moment the 5-minute sweep
+  fired, and nothing runs afterwards to correct it.
+- `matched` falls back to a pre-change row's `audienceCount`, so a blast written
+  before this change reports a real number instead of a confident zero.
+- There is deliberately no open rate and no in-flight "sending" count. Nothing in
+  this codebase records an email open, and a blast is promoted by a cron, so
+  neither number exists to return.
+
+### cancelMarketingBlast (net-new 2026-09-12)
+- req `{ blastId: string }`
+- res `{ ok: true, blastId: string, cancelled: number /* queued notifications deleted */ }`
+- Deletes every pending `scheduledNotifications` doc carrying
+  `data.blastId == blastId`, in batches of 400 (a 5000-recipient blast is far
+  past Firestore's 500-write limit), then stamps `cancelledAt`.
+- Equality on a nested field is served by Firestore's automatic single-field
+  index. `mytribe/firestore.indexes.json` has no `fieldOverrides` entry for
+  `scheduledNotifications`, so no index change is needed; adding an exemption on
+  that collection's `data` field later would break this query.
+- `failed-precondition` `already_fired` when the fire time has passed. Refused
+  loudly rather than stamping a row "cancelled" over mail that already went out.
+  `already_cancelled` on a second attempt.

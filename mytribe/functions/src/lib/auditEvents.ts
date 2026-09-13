@@ -358,6 +358,15 @@ export const AUDIT_EVENTS = {
   AUDIENCE_SEGMENT_DELETED: 'AUDIENCE_SEGMENT_DELETED',
   BROADCAST_SENT: 'BROADCAST_SENT',
 
+  // Marketing blasts: a SCHEDULED campaign, as against the broadcast above,
+  // which sends now. The payload carries the blast id, the catalog key, the
+  // fire time and the dispatched/suppressed counts, and never a recipient: the
+  // audience is described by its criteria, exactly as a broadcast's is.
+  // CANCELLED records a queued campaign called back before it fired, with the
+  // number of scheduled copies deleted.
+  MARKETING_BLAST_SCHEDULED: 'MARKETING_BLAST_SCHEDULED',
+  MARKETING_BLAST_CANCELLED: 'MARKETING_BLAST_CANCELLED',
+
   // Stage 2 step 7 (Inbox conversations / Message Auntie 16.4): two-way threads
   // between a kinfolk household and the auntie. SENT = kinfolk -> auntie (portal),
   // REPLIED = auntie -> kinfolk (admin). Body is not stored in the audit payload,

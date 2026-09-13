@@ -735,24 +735,30 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'An admin schedules a marketing blast on the newsletter key.',
       source: 'src/admin/scheduleMarketingBlast.ts',
-      dataKeys: ['audienceUid'],
-      dataNote: 'Plus every field the blast form itself sends, verbatim.',
+      dataKeys: ['audienceUid', 'blastId'],
+      dataNote:
+        'Plus every merge field the blast form sends, verbatim. `blastId` names the ' +
+        'marketingBlasts row this copy belongs to, and is what cancelMarketingBlast queries on.',
     },
   ],
   'survey.event': [
     {
       trigger: 'An admin schedules a marketing blast on the survey key.',
       source: 'src/admin/scheduleMarketingBlast.ts',
-      dataKeys: ['audienceUid'],
-      dataNote: 'Plus every field the blast form itself sends, verbatim.',
+      dataKeys: ['audienceUid', 'blastId'],
+      dataNote:
+        'Plus every merge field the blast form sends, verbatim. `blastId` names the ' +
+        'marketingBlasts row this copy belongs to, and is what cancelMarketingBlast queries on.',
     },
   ],
   'marketing.optin': [
     {
       trigger: 'An admin schedules a marketing blast on the opt-in key.',
       source: 'src/admin/scheduleMarketingBlast.ts',
-      dataKeys: ['audienceUid'],
-      dataNote: 'Plus every field the blast form itself sends, verbatim.',
+      dataKeys: ['audienceUid', 'blastId'],
+      dataNote:
+        'Plus every merge field the blast form sends, verbatim. `blastId` names the ' +
+        'marketingBlasts row this copy belongs to, and is what cancelMarketingBlast queries on.',
     },
   ],
 };
