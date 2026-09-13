@@ -152,7 +152,7 @@ export function scheduleNotice(
  */
 export function sendingLabel(queued: number, audienceSize: number, stalled: boolean): string {
   const of = audienceSize > 0 ? `${queued} of ${audienceSize}` : `${queued}`;
-  return stalled ? `Stopped at ${of} queued. It picks up again shortly.` : `${of} queued`;
+  return stalled ? `Stopped at ${of} queued. It picks up again within a minute.` : `${of} queued`;
 }
 
 /**

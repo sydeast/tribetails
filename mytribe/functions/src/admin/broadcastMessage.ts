@@ -293,7 +293,7 @@ function replayBroadcast(
     // domain and kept 'failed' in it. Neither is pending: nothing more is going
     // to happen, and telling the operator to keep waiting would be wrong in both
     // cases. (A 'failed' row reaches here only when the retry path above did not
-    // claim it, which is the unkeyed call — it has no key to retry with.)
+    // claim it, which is the unkeyed call, it has no key to retry with.)
     pending: stored['fanoutState'] === 'running',
     sent: storedCount(stored, 'fanoutProcessed'),
     audienceSize: storedCount(stored, 'fanoutTotal'),
@@ -744,7 +744,7 @@ export async function broadcastMessageHandler(
 
   // #823. Which attempt's chunk and marker ids this run owns. Bumped only on the
   // retry-after-failure path below, so that path is not silently no-opped by the
-  // first attempt's markers — which is exactly what would have happened with one
+  // first attempt's markers, which is exactly what would have happened with one
   // id space, and would have turned #822's deliberate "a failed send may be
   // re-run" into a reply that claimed success and sent nothing.
   let attempt = 0;
@@ -873,7 +873,7 @@ export async function broadcastMessageHandler(
       // trail, which is the one place the counts are quoted later.
       (run.complete
         ? ''
-        : ` — still sending at ${run.processed} of ${run.total}, handed to outboundFanoutSweep`),
+        : `. Still sending at ${run.processed} of ${run.total}, handed to outboundFanoutSweep`),
     payload: {
       broadcastId: ref.id,
       channels,

@@ -29,7 +29,7 @@ import { BROADCASTS_COLLECTION } from './broadcastMessage';
  * ── WHAT STOPPING ACTUALLY STOPS, AND WHAT IT CANNOT ────────────────────────
  * Email and SMS that have already left cannot be recalled, and this does not
  * pretend otherwise: there is no refund, no retraction, no deletion of what was
- * sent. `stopBroadcast` stops the REMAINDER — the households the roster still
+ * sent. `stopBroadcast` stops the REMAINDER, the households the roster still
  * holds and the fan-out has not reached. The reply says so in numbers rather
  * than in a word: `sent` is what went out, `neverSent` is what will not.
  *

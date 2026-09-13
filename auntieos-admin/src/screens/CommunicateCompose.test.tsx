@@ -217,7 +217,7 @@ describe('CommunicateCompose screen', () => {
    * callable: it sends for fifteen seconds and a cron sweep carries the rest.
    *
    * Before this, the screen printed "Broadcast sent" and a per-channel table
-   * over one leg of a send that was a tenth done — the confident wrong number
+   * over one leg of a send that was a tenth done, the confident wrong number
    * this screen's own docs warn about, on the one number that matters most.
    */
   it('says a broadcast is still sending, and shows how far it has got', async () => {

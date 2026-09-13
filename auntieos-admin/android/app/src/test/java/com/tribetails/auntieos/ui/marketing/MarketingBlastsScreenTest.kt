@@ -56,7 +56,14 @@ class MarketingBlastsScreenTest {
         Dispatchers.resetMain()
     }
 
-    private fun row(id: String, title: String, status: BlastStatus) = MarketingBlastRow(
+    private fun row(
+        id: String,
+        title: String,
+        status: BlastStatus,
+        fanoutState: BlastFanoutState = BlastFanoutState.Complete,
+        queued: Int = 0,
+        audienceSize: Int = 0,
+    ) = MarketingBlastRow(
         id = id,
         key = "newsletter.announcement",
         title = title,
@@ -68,7 +75,75 @@ class MarketingBlastsScreenTest {
         dispatched = 9,
         suppressed = 0,
         failed = 0,
+        fanoutState = fanoutState,
+        queued = queued,
+        audienceSize = audienceSize,
     )
+
+    /**
+     * #823. A campaign whose fan-out is still walking its roster is its own
+     * group.
+     *
+     * Before this it had nowhere to be: the list split on Scheduled and filed
+     * everything else as history, so a half-queued campaign landed under "Sent
+     * and cancelled" wearing a Sent pill. It is the state the issue objects to ,
+     * one the operator can reach and cannot act on, and the fix is the mock's
+     * own third group.
+     */
+    @Test
+    fun `a campaign still queueing is filed under Sending with its progress and a way to stop it`() {
+        coEvery { repo.listMarketingBlasts() } returns Result.success(
+            listOf(
+                row(
+                    "b1",
+                    "June newsletter",
+                    BlastStatus.Sending,
+                    fanoutState = BlastFanoutState.Running,
+                    queued = 256,
+                    audienceSize = 410,
+                ),
+            ),
+        )
+
+        render()
+
+        rule.onNodeWithText("Sending").assertExists()
+        rule.onNodeWithText("256 of 410 queued", substring = true).assertExists()
+        // Stoppable mid fan-out: the un-queued remainder is real. And the label
+        // says what it would do, which is not the same as cancelling a campaign
+        // that has not started.
+        rule.onNodeWithText("Stop sending").assertExists()
+        rule.onNodeWithText("Cancel").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a stalled fan-out says it stopped moving rather than being called slow`() {
+        coEvery { repo.listMarketingBlasts() } returns Result.success(
+            listOf(
+                row(
+                    "b1",
+                    "Stuck",
+                    BlastStatus.Sending,
+                    fanoutState = BlastFanoutState.Stalled,
+                    queued = 40,
+                    audienceSize = 410,
+                ),
+            ),
+        )
+
+        render()
+
+        rule.onNodeWithText("Stopped at 40 of 410 queued", substring = true).assertExists()
+    }
+
+    @Test
+    fun `the manual re-read is offered only while something is queueing`() {
+        coEvery { repo.listMarketingBlasts() } returns Result.success(
+            listOf(row("b1", "Next week", BlastStatus.Scheduled)),
+        )
+        render()
+        rule.onNodeWithText("Check again").assertDoesNotExist()
+    }
 
     private fun render() {
         val vm = MarketingBlastsViewModel(repo)
@@ -114,7 +189,7 @@ class MarketingBlastsScreenTest {
         coEvery { repo.listMarketingBlasts() } returns Result.success(
             listOf(row("b1", "Next week", BlastStatus.Scheduled), row("b2", "Last month", BlastStatus.Sent)),
         )
-        coEvery { repo.cancelMarketingBlast("b1") } returns Result.success(9)
+        coEvery { repo.cancelMarketingBlast("b1") } returns Result.success(CancelBlastResult(cancelled = 9))
 
         render()
 

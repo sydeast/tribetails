@@ -126,7 +126,7 @@ function reached(): string[] {
 
 /**
  * The mock's backing document map. `writeThrough` mutates the very object it was
- * handed, so holding a reference to it is how a test reads stored state back —
+ * handed, so holding a reference to it is how a test reads stored state back ,
  * which is exactly what this suite is about, since the fan-out's memory IS that
  * stored state.
  */

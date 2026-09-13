@@ -50,7 +50,7 @@ import { finishBlastCancellation } from '../admin/marketingBlasts';
  * Resuming a broadcast means sending real email and SMS, so this function
  * declares the same secrets `broadcastMessage` does. `lib/declaredSecrets.ts`
  * reads `__endpoint.secretEnvironmentVariables`, so leaving one out here does
- * not fail the deploy — it fails the first resumed broadcast, at the provider,
+ * not fail the deploy, it fails the first resumed broadcast, at the provider,
  * for every remaining recipient.
  */
 
@@ -119,8 +119,8 @@ async function failUnarmedRow(collection: string, id: string, workerId: string):
  * have queued after the callable's delete are removed and the row is stamped
  * cancelled for good.
  *
- * Only blasts. A broadcast has nothing queued to delete — its email and SMS have
- * already left the building — so stopping its fan-out IS the whole cancel, and
+ * Only blasts. A broadcast has nothing queued to delete, its email and SMS have
+ * already left the building, so stopping its fan-out IS the whole cancel, and
  * `runFanout` does that itself when it reads `cancelRequestedAtMs`.
  */
 async function finishCancellation(
@@ -195,7 +195,7 @@ async function sweepCollection(
     if (!result.ran) {
       // This worker never got the lease: another one holds it, or the row
       // stopped being resumable between the query and the claim. Try the next
-      // row rather than burning the tick — and specifically rather than
+      // row rather than burning the tick, and specifically rather than
       // reporting work done, which would skip the other collection entirely.
       //
       // `processed` cannot be used for this test. A refused lease hands back the
@@ -228,7 +228,7 @@ async function sweepCollection(
  *
  * `cleanupExpiredShareLinks` is the precedent and its docstring is the reason:
  * a sweep whose whole body is welded into the wrapper has nothing to test, and
- * this one has more to get wrong than a query — a lease, a roster cursor and a
+ * this one has more to get wrong than a query, a lease, a roster cursor and a
  * cancel hand-off.
  */
 export async function outboundFanoutSweepCore(opts: { nowMs?: number; budgetMs?: number } = {}): Promise<void> {
@@ -254,7 +254,7 @@ export const outboundFanoutSweep = onSchedule(
     timeoutSeconds: 540,
     // One vCPU so the walk is not starved, and a 2-instance cap so an
     // overlapping tick is absorbed rather than shed. Two copies cannot double
-    // a send in any case — the per-recipient `create()` referees that — but two
+    // a send in any case, the per-recipient `create()` referees that, but two
     // copies on one roster is twice the Firestore traffic for the same work,
     // and the lease is what stops it.
     ...FULL_CPU_SERIAL,

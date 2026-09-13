@@ -1068,14 +1068,54 @@ class AuntieRepository(
         com.tribetails.auntieos.ui.marketing.decodeBlasts(raw)
     }.onFailure { AuntieLog.e("listMarketingBlasts failed", it) }
 
-    /** Calls a queued campaign back. Returns how many scheduled copies were deleted. */
-    suspend fun cancelMarketingBlast(blastId: String): Result<Int> = runCatching {
+    /**
+     * Calls a queued campaign back.
+     *
+     * #823: the reply says whether the fan-out was PROVEN to have stopped. A
+     * cancel that lands while the campaign is still being queued can only ask,
+     * and the sweep confirms it within a minute, so this carries that through
+     * rather than flattening it to a count the screen would announce as final.
+     */
+    suspend fun cancelMarketingBlast(
+        blastId: String,
+    ): Result<com.tribetails.auntieos.ui.marketing.CancelBlastResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("cancelMarketingBlast")
             .call(mapOf("blastId" to blastId)).awaitCallable().data as? Map<String, Any?>
-        com.tribetails.auntieos.ui.marketing.decodeCancelledCount(raw)
+        com.tribetails.auntieos.ui.marketing.decodeCancelResult(raw)
     }.onFailure { AuntieLog.e("cancelMarketingBlast failed", it) }
+    // ── #823: watching and stopping a broadcast whose fan-out outlived its call
+    // `broadcastMessage` sends for fifteen seconds and a cron sweep carries the
+    // rest, so a send to a large segment keeps going after the reply. These two
+    // are what make that a state the operator can act on rather than only reach.
+    /** How far a broadcast has got. One id, not a list: there is no history screen. */
+    suspend fun getBroadcastProgress(
+        broadcastId: String,
+    ): Result<com.tribetails.auntieos.ui.communicate.BroadcastProgress> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getBroadcastProgress")
+            .call(mapOf("broadcastId" to broadcastId)).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.communicate.decodeBroadcastProgress(broadcastId, raw)
+    }.onFailure { AuntieLog.e("getBroadcastProgress failed", it) }
+    /**
+     * Stops the REMAINDER of a broadcast that is still going.
+     *
+     * It stops nothing already sent: email and SMS cannot be recalled, and this
+     * does not pretend they can. That is the difference from a blast's cancel,
+     * which really can take a campaign back because its copies sit in
+     * `scheduledNotifications` until their fire time.
+     */
+    suspend fun stopBroadcast(
+        broadcastId: String,
+    ): Result<com.tribetails.auntieos.ui.communicate.StopBroadcastResult> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("stopBroadcast")
+            .call(mapOf("broadcastId" to broadcastId)).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.communicate.decodeStopBroadcastResult(raw)
+    }.onFailure { AuntieLog.e("stopBroadcast failed", it) }
 
     // ── Stage 2 step 7 (Inbox conversations / Message Auntie 16.4) ────────────
     // Two-way kinfolk<->auntie threads via admin-gated callables. Fail-loud:

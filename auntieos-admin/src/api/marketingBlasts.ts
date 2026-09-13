@@ -338,7 +338,7 @@ export interface CancelBlastResult {
  * Cancels a scheduled blast.
  *
  * Throws `failed-precondition` "already_fired" when there is nothing left to
- * stop — the fire time has passed AND the fan-out is finished — which the screen
+ * stop, the fire time has passed AND the fan-out is finished, which the screen
  * surfaces rather than hiding: a cancel that came too late is something the
  * operator needs to know. A blast still being queued past its own fire time is
  * NOT that case and is cancellable, because its un-queued remainder is real.

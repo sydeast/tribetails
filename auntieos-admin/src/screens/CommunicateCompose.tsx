@@ -704,8 +704,8 @@ function BroadcastResultPanel({ result, channels, onSendAnother }: BroadcastResu
  * server, the sweep runs once a minute, and the count moves about once every
  * twenty-five seconds, so a screen that re-read every second would spend a
  * callable a second to watch a number that is standing still. This borrows the
- * treatment #819 built instead — say what is being waited on, offer a manual
- * sync — which is that ruling's own shape for a wait past ten seconds. The
+ * treatment #819 built instead, say what is being waited on, offer a manual
+ * sync, which is that ruling's own shape for a wait past ten seconds. The
  * re-read is safe to press repeatedly because it is a READ.
  *
  * STOPPING IS HONEST ABOUT WHAT IT CANNOT DO. Email and SMS already sent cannot
@@ -767,7 +767,7 @@ function StillSending({ broadcastId }: { broadcastId: string }) {
             {!running
               ? `Finished. ${progress.sent} of ${progress.audienceSize} households.`
               : stalled
-                ? `Stopped at ${progress.sent} of ${progress.audienceSize} households. It picks up again shortly.`
+                ? `Stopped at ${progress.sent} of ${progress.audienceSize} households. It picks up again within a minute.`
                 : `${progress.sent} of ${progress.audienceSize} households so far.`}
           </p>
           <progress

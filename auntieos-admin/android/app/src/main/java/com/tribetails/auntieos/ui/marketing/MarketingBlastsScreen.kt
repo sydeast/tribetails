@@ -5,11 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
@@ -20,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -381,6 +385,37 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
                         state.blastsError != null -> EmptyHint(state.blastsError ?: "", error = true)
                         blasts == null -> EmptyHint("Loading campaigns...")
                         else -> {
+                            // #823. The mock's third group, and it is the one
+                            // that had nowhere to be: a campaign whose fan-out
+                            // is still walking its roster is neither scheduled
+                            // nor sent, and filing it under either put a Cancel
+                            // button beside something half-delivered or a Sent
+                            // pill on something still going.
+                            if (state.sending.isNotEmpty()) {
+                                AuntieFieldLabel(text = "Sending")
+                                state.sending.forEach { blast ->
+                                    BlastRow(
+                                        blast = blast,
+                                        cancelling = state.cancellingId == blast.id,
+                                        // Stoppable MID fan-out: the un-queued
+                                        // remainder is real. A campaign already
+                                        // stopping has nothing left to offer, so
+                                        // it gets no button rather than a dead one.
+                                        cancelEnabled = state.cancellingId == null &&
+                                            blast.status != BlastStatus.Cancelling,
+                                        onCancel = { viewModel.cancel(blast.id) },
+                                    )
+                                }
+                                // The manual re-read PR #819's ruling asks for.
+                                // No poll: the fan-out is on the server, the
+                                // sweep runs once a minute, and the count moves
+                                // about once every twenty-five seconds.
+                                SendingSyncOffer(
+                                    attempt = state.refreshes,
+                                    onSync = { viewModel.refreshBlasts() },
+                                )
+                            }
+
                             AuntieFieldLabel(text = "Scheduled")
                             if (state.scheduled.isEmpty()) {
                                 EmptyHint("Nothing scheduled.")
@@ -411,7 +446,35 @@ fun MarketingBlastsScreen(viewModel: MarketingBlastsViewModel) {
     }
 }
 
-/** One campaign row. Cancel appears only on a scheduled blast, because only one of those can be called back. */
+/**
+ * The offer under a campaign list with something still queueing (#823).
+ *
+ * Borrows the wait vocabulary `ui/components/SlowWait.kt` built for the
+ * 2026-09-12 ruling rather than inventing a second progress language: the shape
+ * is the same one, say what is being waited on, offer a manual sync, and the
+ * copy changes on a second press because a tap with no visible consequence reads
+ * as a dead button. Safe to press repeatedly because it points at a READ.
+ */
+@Composable
+private fun SendingSyncOffer(attempt: Int, onSync: () -> Unit) {
+    val c = AuntieTheme.colors
+    val dims = AuntieTheme.dims
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(dims.space2),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (attempt > 0) "Asked again. Still queueing." else "This carries on in the background.",
+            style = AuntieTheme.typography.bodySmall,
+            color = c.textDim,
+            modifier = Modifier.weight(1f),
+        )
+        GhostButton(label = if (attempt > 0) "Ask again" else "Check again", onClick = onSync)
+    }
+}
+
+/** One campaign row. Cancel appears on a scheduled blast and on one still being queued. */
 @Composable
 private fun BlastRow(
     blast: MarketingBlastRow,
@@ -433,11 +496,28 @@ private fun BlastRow(
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
+            // The mock's `.sendprog` bar, drawn only where the row can back it.
+            // `--orange` in the mock, `c.primary` here: the same token the
+            // Sending pill beside it resolves to, rather than picked again.
+            if (blast.status == BlastStatus.Sending) {
+                LinearProgressIndicator(
+                    progress = { blast.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = dims.space1)
+                        .height(4.dp)
+                        .clip(AuntieTheme.shapes.pill),
+                    color = c.primary,
+                    trackColor = c.border,
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
+            }
         }
         AuntieStatusPill(label = blast.status.label, tone = statusTone(blast.status), compact = true)
-        if (blast.status == BlastStatus.Scheduled) {
+        if (blast.status == BlastStatus.Scheduled || blast.status == BlastStatus.Sending) {
             GhostButton(
-                label = if (cancelling) "Cancelling..." else "Cancel",
+                label = cancelLabel(blast.status, cancelling),
                 onClick = onCancel,
                 enabled = cancelEnabled,
             )
@@ -448,16 +528,39 @@ private fun BlastRow(
 /** The second line of a campaign row. Pure; unit-tested. */
 internal fun blastMeta(blast: MarketingBlastRow): String {
     val head = "${blast.key} ${blast.audienceDescription} ${fireLabel(blast.fireAtMs)}".trim()
-    return if (blast.status == BlastStatus.Scheduled) {
-        head
-    } else {
-        "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed"
+    return when (blast.status) {
+        BlastStatus.Scheduled -> head
+        // #823: the mock's "256 of 410 dispatched". A stalled fan-out says it
+        // stopped moving rather than being dressed up as a slow one.
+        BlastStatus.Sending, BlastStatus.Cancelling ->
+            "$head, " + sendingLabel(
+                blast.queued,
+                blast.audienceSize,
+                blast.fanoutState == BlastFanoutState.Stalled,
+            )
+        // A campaign whose fan-out never armed queued nothing, and "0 sent, 0
+        // suppressed" would read as a send that reached nobody rather than as
+        // one that never started.
+        BlastStatus.Failed -> "$head, never queued"
+        else -> "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed"
     }
+}
+
+/** Cancel says what it would actually do, which differs mid fan-out. Pure. */
+internal fun cancelLabel(status: BlastStatus, busy: Boolean): String = when {
+    status == BlastStatus.Sending && busy -> "Stopping..."
+    status == BlastStatus.Sending -> "Stop sending"
+    busy -> "Cancelling..."
+    else -> "Cancel"
 }
 
 internal fun statusTone(status: BlastStatus): AuntieStatusTone = when (status) {
     BlastStatus.Scheduled -> AuntieStatusTone.Teal
+    // The mock's orange Sending accent, resolved through the shared tone map
+    // rather than a colour written here.
+    BlastStatus.Sending, BlastStatus.Cancelling -> AuntieStatusTone.Orange
     BlastStatus.Sent -> AuntieStatusTone.Purple
+    BlastStatus.Failed -> AuntieStatusTone.Error
     BlastStatus.Cancelled -> AuntieStatusTone.Muted
 }
 

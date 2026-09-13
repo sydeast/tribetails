@@ -538,7 +538,7 @@ export function buildDbMock(opts: {
   //
   // Under `writeThrough` the batch also APPLIES its writes, and only on
   // `commit()`. Before #823 it recorded intent and never applied, so a caller
-  // that wrote through a batch and then read the result back saw nothing — which
+  // that wrote through a batch and then read the result back saw nothing, which
   // would have made every roster the fan-out engine writes invisible to the run
   // that walks it, and the whole suite green for the wrong reason. Applying on
   // commit rather than on `set` is also the real semantics: an uncommitted batch

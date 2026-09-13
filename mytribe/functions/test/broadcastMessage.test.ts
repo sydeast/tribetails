@@ -62,8 +62,8 @@ function prefsDoc(channels: { email?: boolean; sms?: boolean; push?: boolean }) 
 /**
  * Writes to the broadcast ROW itself, excluding its subcollections (#823).
  *
- * `broadcasts/{id}` now has children — `fanoutChunks` holds the frozen roster
- * and `fanoutRecipients` holds one claim marker per household — so a bare
+ * `broadcasts/{id}` now has children, `fanoutChunks` holds the frozen roster
+ * and `fanoutRecipients` holds one claim marker per household, so a bare
  * `path.startsWith('broadcasts/')` matches those too. Three digits of path is
  * the difference between "the handler wrote the row twice" and "the handler
  * wrote the row twice and a hundred markers".
@@ -389,7 +389,7 @@ describe('broadcastMessage idempotency (#814)', () => {
   const KEY_B = 'bcast_1757700000001_ef34gh';
   /** One household with an email and every channel opted in. */
   function liveDb(docs: Record<string, any> = {}) {
-    return buildDbMock({ writeThrough: true,
+    return buildDbMock({
       writeThrough: true,
       docs: { 'clients/u1': prefsDoc({ email: true, sms: true, push: true }), ...docs },
       queryDocs: {
@@ -493,7 +493,7 @@ describe('broadcastMessage idempotency (#814)', () => {
  * #823: a broadcast too large to finish in one invocation.
  *
  * `broadcastMessage` carries the same 540-second ceiling and the same
- * per-recipient cost as a marketing blast, so the same wall applies — and here
+ * per-recipient cost as a marketing blast, so the same wall applies, and here
  * the fan-out is real email and SMS rather than queued copies, which makes
  * "reached exactly once" the load-bearing property rather than a nicety.
  *

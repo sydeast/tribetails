@@ -65,8 +65,8 @@ import './MarketingBlasts.css';
  *   - The per-campaign open rate is not here. Nothing in this codebase records
  *     an email open, so drawing one would mean inventing the number.
  *   - The mock's "Sending" group and its progress bar ARE here as of #823, and
- *     they were not before. The reason given for leaving them out — "a blast is
- *     promoted by a 5-minute cron, so there is no in-flight state to report" —
+ *     they were not before. The reason given for leaving them out, "a blast is
+ *     promoted by a 5-minute cron, so there is no in-flight state to report" ,
  *     was true of the PROMOTION and never true of the fan-out. Since #823 the
  *     fan-out is an interruptible walk over a frozen roster that can span
  *     several invocations and several minutes, and the row carries exactly the

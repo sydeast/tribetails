@@ -99,7 +99,7 @@ export type MarketingKey = (typeof MARKETING_KEYS)[number];
  * queued, this invocation walks it for [INLINE_FANOUT_BUDGET_MS], and
  * `scheduled/outboundFanoutSweep.ts` finishes whatever is left. One recipient
  * is reached exactly once across every worker that ever touches the blast,
- * because each is claimed with a `create()` on `{blast}/fanoutRecipients/{id}` —
+ * because each is claimed with a `create()` on `{blast}/fanoutRecipients/{id}` ,
  * the same server-refereed write this file's own idempotency key uses, one
  * level down. `lib/fanoutResume.ts` has the whole argument, including why a
  * cron sweep rather than Cloud Tasks and what that costs in vCPU.
@@ -155,7 +155,7 @@ export interface ScheduleMarketingBlastResult {
   pending: boolean;
   /**
    * #823. Recipients accounted for so far, out of [audienceSize]. Equal when the
-   * fan-out is finished. These are what the "Sending — N of M" line on both
+   * fan-out is finished. These are what the "Sending, N of M" line on both
    * screens is drawn from.
    */
   queued: number;
@@ -313,7 +313,7 @@ export async function scheduleMarketingBlastHandler(
    * audience resolve ahead of the fan-out is a scan of the entire kinfolk
    * collection, which is seconds at five thousand rows. A budget started after
    * it would let the reply land at resolve + 15s + release + audit, which is
-   * within a whisker of the client's own 20-second ceiling — and blowing that
+   * within a whisker of the client's own 20-second ceiling, and blowing that
    * puts the operator back on the timeout / retry / dedupe-replay path this
    * whole change exists to keep them off.
    */
@@ -469,7 +469,7 @@ export async function scheduleMarketingBlastHandler(
     // second (#823).
     description: run.complete
       ? `Marketing blast scheduled: ${args.key} to ${audience.description} (${dispatched} scheduled, ${suppressed} suppressed)`
-      : `Marketing blast scheduled: ${args.key} to ${audience.description} — fan-out handed to outboundFanoutSweep at ${run.processed} of ${run.total} (${dispatched} scheduled, ${suppressed} suppressed so far)`,
+      : `Marketing blast scheduled: ${args.key} to ${audience.description}, fan-out handed to outboundFanoutSweep at ${run.processed} of ${run.total} (${dispatched} scheduled, ${suppressed} suppressed so far)`,
     payload: {
       blastId: ref.id,
       key: args.key,
@@ -529,7 +529,7 @@ export const scheduleMarketingBlast = onCall(
   //
   // #823 IS THAT "past it". The handler now stops fanning out after 15 seconds
   // and hands the remainder to `outboundFanoutSweep`, so 540 is no longer the
-  // budget it spends — it is headroom for the audience resolve, the roster
+  // budget it spends, it is headroom for the audience resolve, the roster
   // commit and an unlucky burst of slow round trips. It is kept rather than
   // lowered because a timeout is a hard kill and there is nothing to gain from
   // making one more likely.

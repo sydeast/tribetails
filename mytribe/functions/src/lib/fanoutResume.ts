@@ -6,7 +6,7 @@ import { logEvent } from './logger';
  *
  * ── THE WALL, MEASURED ──────────────────────────────────────────────────────
  * `scheduleMarketingBlast` and `broadcastMessage` both fanned out inline, and
- * both carry `timeoutSeconds: 540` — the ceiling a 2nd-gen function is allowed
+ * both carry `timeoutSeconds: 540`, the ceiling a 2nd-gen function is allowed
  * to ask for, so the wall is the same wherever the loop lives. `MAX_AUDIENCE`
  * is 5000 and each recipient costs five to six sequential Firestore round
  * trips, which is on the order of twenty minutes at the cap. A blast to a large
@@ -28,7 +28,7 @@ import { logEvent } from './logger';
  * Run reading: 200 vCPU per project per region in `us-central1`, against a
  * measured 16,000 of 400,000 milli vCPU in use. A Cloud Tasks design sized to
  * drain 5000 recipients in a minute needs ~25 concurrent workers, which is
- * 25 vCPU — an eighth of the regional ceiling for one feature — plus a queue,
+ * 25 vCPU, an eighth of the regional ceiling for one feature, plus a queue,
  * its IAM, a dispatch-rate dial and a second retry semantics to reason about.
  *
  * This design adds ONE `onSchedule` function at `FULL_CPU_SERIAL`
@@ -37,7 +37,7 @@ import { logEvent } from './logger';
  * matches nothing. Two instances rather than one so a tick that overlaps the
  * previous one is absorbed; the second finds the lease held and returns in a
  * single round trip. A 5000-recipient blast finishes in roughly four legs of
- * eight minutes, so about 35 minutes wall clock — and a blast's fan-out runs at
+ * eight minutes, so about 35 minutes wall clock, and a blast's fan-out runs at
  * SCHEDULE time, hours or days before `fireAtMs`, so those 35 minutes are
  * almost always invisible. Cloud Tasks buys latency this product does not need
  * at a cost in quota and moving parts it has already paid once.
@@ -137,7 +137,7 @@ export const LEASE_MS = 600_000;
  * (`auntieos-admin/src/lib/fns.ts#CALLABLE_TIMEOUT_MS`), so a reply inside 15 is
  * one the operator actually reads. Letting the handler run to its 540s ceiling
  * instead would mean every large send reached the operator as a client timeout,
- * an automatic retry and a dedupe replay — the failure #822 made SAFE but never
+ * an automatic retry and a dedupe replay, the failure #822 made SAFE but never
  * made pleasant.
  *
  * A small send is unaffected: at roughly 250ms a recipient, up to ~50 recipients
@@ -261,7 +261,7 @@ export async function writeFanoutRoster(opts: {
   const inMemory: string[][] = [];
   // BATCHED, and the reason is the inline budget. At MAX_AUDIENCE the roster is
   // 50 documents, and 50 sequential `set()` calls is ~12 seconds of round trips
-  // — the entire budget the callable has before the client's 20-second deadline,
+  //, the entire budget the callable has before the client's 20-second deadline,
   // spent before a single recipient is reached. One batch commit per 100 chunks
   // is one round trip for the whole roster.
   const PER_BATCH = 100;
@@ -418,8 +418,8 @@ export interface FanoutRunResult {
   /**
    * The row as this run last wrote it (or read it, when it closed no chunk).
    *
-   * Handed back so a caller can report its own shaped fields — the broadcast's
-   * `perChannel` and `reach` — without a read-back round trip against a document
+   * Handed back so a caller can report its own shaped fields, the broadcast's
+   * `perChannel` and `reach`, without a read-back round trip against a document
    * this process just wrote.
    */
   rowFields: Record<string, unknown>;
@@ -729,7 +729,7 @@ export async function runFanout(opts: {
           // Somebody took the lease over. Stop rather than race: the markers
           // make a race harmless, but two workers on one roster is still twice
           // the Firestore traffic for the same work. The labelled break leaves
-          // the chunk OPEN — it is not this worker's to close any more — which
+          // the chunk OPEN, it is not this worker's to close any more, which
           // is why `finishedChunk` is not set here.
           break chunkLoop;
         }
@@ -827,7 +827,7 @@ export async function runFanout(opts: {
  * `stalled` is the state #823 asks for by name: a row still saying `running`
  * whose lease expired and whose worker never came back. It is not a fourth
  * stored value, because a stored one would be wrong from the moment the sweep
- * picked the blast up again and nothing would be there to correct it — the same
+ * picked the blast up again and nothing would be there to correct it, the same
  * reasoning `blastStatus` already uses for scheduled/sent/cancelled.
  */
 export type FanoutProgressState = 'running' | 'stalled' | 'complete' | 'failed' | 'cancelled';

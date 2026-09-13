@@ -69,6 +69,24 @@ class MarketingBlastsViewModelTest {
         failed = 0,
     )
 
+    /** A campaign mid fan-out: the state #823 gave the list somewhere to put. */
+    private fun sendingRow(id: String, queued: Int, audienceSize: Int) = MarketingBlastRow(
+        id = id,
+        key = "newsletter.announcement",
+        title = "June newsletter",
+        fireAtMs = 1L,
+        status = BlastStatus.Sending,
+        audienceDescription = "All active kinfolk",
+        matched = audienceSize,
+        noLinkedAccount = 0,
+        dispatched = queued,
+        suppressed = 0,
+        failed = 0,
+        fanoutState = BlastFanoutState.Running,
+        queued = queued,
+        audienceSize = audienceSize,
+    )
+
     @Test
     fun `init loads the segments and the campaign list`() = runTest(testDispatcher) {
         val v = vm()
@@ -317,10 +335,65 @@ class MarketingBlastsViewModelTest {
         coVerify { repo.previewMarketingBlastAudience(MarketingKey.Newsletter, BlastAudience.Segment("seg1")) }
     }
 
+    /**
+     * #823. A cancel that lands mid fan-out is asked for, not proven, so the
+     * notice must not announce a finality the server refused to write down.
+     */
+    @Test
+    fun `cancel mid fan-out says it is stopping rather than that it stopped`() = runTest(testDispatcher) {
+        coEvery { repo.listMarketingBlasts() } returns Result.success(listOf(sendingRow("b1", 120, 900)))
+        coEvery { repo.cancelMarketingBlast("b1") } returns
+            Result.success(CancelBlastResult(cancelled = 120, stopped = false, neverQueued = 780))
+        val v = vm()
+        advanceUntilIdle()
+
+        v.cancel("b1")
+        advanceUntilIdle()
+
+        val notice = v.uiState.value.notice.orEmpty()
+        assertEquals(true, notice.startsWith("Stopping."))
+        assertEquals(true, notice.contains("780 were never queued"))
+        assertEquals(false, notice.contains("Cancelled."))
+    }
+
+    @Test
+    fun `a campaign mid fan-out is grouped as sending, not as scheduled or as history`() =
+        runTest(testDispatcher) {
+            coEvery { repo.listMarketingBlasts() } returns Result.success(
+                listOf(sendingRow("b1", 256, 410), row("b2", BlastStatus.Scheduled), row("b3", BlastStatus.Sent)),
+            )
+            val v = vm()
+            advanceUntilIdle()
+
+            val s = v.uiState.value
+            assertEquals(listOf("b1"), s.sending.map { it.id })
+            assertEquals(listOf("b2"), s.scheduled.map { it.id })
+            assertEquals(listOf("b3"), s.history.map { it.id })
+        }
+
+    /**
+     * The manual re-read PR #819's ruling asks for. It re-reads and it says so:
+     * a tap with no visible consequence reads as a dead button, and the sweep
+     * runs once a minute so the numbers may not have moved.
+     */
+    @Test
+    fun `refreshBlasts re-reads the list and counts the press`() = runTest(testDispatcher) {
+        coEvery { repo.listMarketingBlasts() } returns Result.success(listOf(sendingRow("b1", 256, 410)))
+        val v = vm()
+        advanceUntilIdle()
+        assertEquals(0, v.uiState.value.refreshes)
+
+        v.refreshBlasts()
+        advanceUntilIdle()
+
+        assertEquals(1, v.uiState.value.refreshes)
+        coVerify(exactly = 2) { repo.listMarketingBlasts() }
+    }
+
     @Test
     fun `cancel removes the queued copies and reloads the list`() = runTest(testDispatcher) {
         coEvery { repo.listMarketingBlasts() } returns Result.success(listOf(row("b1", BlastStatus.Scheduled)))
-        coEvery { repo.cancelMarketingBlast("b1") } returns Result.success(9)
+        coEvery { repo.cancelMarketingBlast("b1") } returns Result.success(CancelBlastResult(cancelled = 9))
         val v = vm()
         advanceUntilIdle()
 

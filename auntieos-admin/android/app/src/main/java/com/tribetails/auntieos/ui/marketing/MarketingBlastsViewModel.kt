@@ -19,8 +19,14 @@ import kotlinx.coroutines.launch
  *
  * Parity with the React admin's `screens/MarketingBlasts.tsx`: the same four
  * callables, the same three audience modes, the same four-way reach breakdown,
- * and the same refusal to draw a number the backend does not have (no "sending"
- * progress, no open rate).
+ * and the same refusal to draw a number the backend does not have (no open
+ * rate: nothing in this codebase records an email open).
+ *
+ * The "sending" progress the mock draws IS backed as of #823, and this used to
+ * say it was not. The reason given, a blast is promoted by a 5-minute cron, so
+ * there is no in-flight state, was true of the PROMOTION and never true of the
+ * fan-out, which is now an interruptible walk over a frozen roster that can span
+ * several invocations and several minutes.
  *
  * Every decision this screen makes lives in `MarketingBlast.kt` as a pure
  * function, so it is unit-tested rather than driven through Compose.
@@ -62,14 +68,34 @@ data class MarketingBlastsUiState(
     val blasts: List<MarketingBlastRow>? = null,
     val blastsError: String? = null,
     val cancellingId: String? = null,
+    /** #823. Manual re-read presses while a campaign was still queueing. See [refreshes]. */
+    val listRefreshes: Int = 0,
 ) {
     val explicitUids: List<String> get() = parseUidList(uidsText)
     val fireAtMs: Long? get() = fireAtMsFrom(sendDate, sendTime)
     val audience: BlastAudience? get() = blastAudience(mode, selectedSegmentId, criteria, explicitUids)
 
-    /** The scheduled rows, and everything else, split the way the screen renders them. */
+    /**
+     * The mock's three groups, and #823 is what made the middle one real: a
+     * campaign whose fan-out is still walking its roster is neither scheduled
+     * nor sent, and filing it under either would put a Cancel button beside
+     * something half-delivered or a Sent pill on something still going.
+     */
+    val sending: List<MarketingBlastRow>
+        get() = blasts.orEmpty().filter { it.status == BlastStatus.Sending || it.status == BlastStatus.Cancelling }
     val scheduled: List<MarketingBlastRow> get() = blasts.orEmpty().filter { it.status == BlastStatus.Scheduled }
-    val history: List<MarketingBlastRow> get() = blasts.orEmpty().filter { it.status != BlastStatus.Scheduled }
+    val history: List<MarketingBlastRow> get() = blasts.orEmpty().filter {
+        it.status == BlastStatus.Sent || it.status == BlastStatus.Cancelled || it.status == BlastStatus.Failed
+    }
+    /**
+     * How many times the operator has pressed the campaign list's manual re-read
+     * while something was still queueing (#823).
+     *
+     * It changes the copy, and that is its whole job: PR #819's ruling is that a
+     * tap with no visible consequence reads as a dead button, and the list may
+     * well come back with the same numbers because the sweep runs once a minute.
+     */
+    val refreshes: Int get() = listRefreshes
 
     fun blocker(nowMs: Long): String? = blastBlocker(audience, fireAtMs, nowMs, reach?.reachable)
 }
@@ -200,6 +226,17 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         }
     }
 
+    /**
+     * The manual re-read PR #819's ruling asks for, on the one wait this screen
+     * has that no request is holding open: the fan-out is on the server, the
+     * sweep runs once a minute, and the list only moves when it is asked again.
+     *
+     * Safe to press repeatedly because it points at a READ.
+     */
+    fun refreshBlasts() {
+        update { it.copy(listRefreshes = it.listRefreshes + 1) }
+        loadBlasts()
+    }
     fun loadBlasts() {
         viewModelScope.launch {
             repo.listMarketingBlasts().fold(
@@ -292,9 +329,11 @@ class MarketingBlastsViewModel(private val repo: AuntieRepository) : ViewModel()
         update { it.copy(cancellingId = blastId, blastsError = null, notice = null) }
         viewModelScope.launch {
             repo.cancelMarketingBlast(blastId).fold(
-                onSuccess = { removed ->
-                    val word = if (removed == 1) "notification" else "notifications"
-                    update { it.copy(cancellingId = null, notice = "Cancelled. $removed queued $word removed.") }
+                onSuccess = { result ->
+                    // #823: `cancelNotice` refuses to say "Cancelled" for a stop
+                    // the server could only ask for, which is the same honesty
+                    // the row's own Cancelling status carries.
+                    update { it.copy(cancellingId = null, notice = cancelNotice(result)) }
                     loadBlasts()
                 },
                 onFailure = { e ->

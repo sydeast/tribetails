@@ -379,7 +379,7 @@ describe('MarketingBlasts', () => {
    * Before this it had nowhere to be: the list split on `status === 'scheduled'`
    * and everything else was history, so a half-queued campaign landed under
    * "Sent and cancelled" wearing a Sent pill. It is the state the issue objects
-   * to — one the operator can reach and cannot act on — and the fix is the
+   * to, one the operator can reach and cannot act on, and the fix is the
    * mock's own third group, with the mock's own progress bar.
    */
   it('files a campaign that is still queueing under Sending, with its progress and a way to stop it', async () => {
