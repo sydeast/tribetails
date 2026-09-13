@@ -346,6 +346,164 @@ export function addSecondaryContact(req: AddSecondaryContactRequest): Promise<Ad
   return call<AddSecondaryContactRequest, AddSecondaryContactResult>('addSecondaryContact', req);
 }
 
+// ── household contacts (functions/src/portal/householdContacts.ts) ──────────
+
+/**
+ * A person the household can be reached through who holds no portal account.
+ *
+ * OPERATOR RULING (2026-09-12): "a secondary contact does not have to be a
+ * portal user. primary kinfolk user will invite a second kinfolk to the
+ * household to manage and receive notifications." Two gestures, two outcomes.
+ * `addSecondaryContact` above is the second one — it mints an invite and hands
+ * somebody a sign-in. This block is the first, and it mints nothing: no
+ * `inviteRequests` row, no account, no `MemberPermissions`.
+ *
+ * THE REQUEST SHAPE IS THE WALL, on this side as well as the server's. The
+ * payload built below carries exactly `name`, `label`, `phone`, `email` and the
+ * optional `contactId`/`kinfolkId`. It has no `permissions` field to fill and
+ * no `role`, so a screen cannot reach the invite through the contact door by
+ * passing one — and if it somehow did, every schema in
+ * `functions/src/portal/householdContacts.ts` is `.strict()` and answers
+ * `invalid-argument` naming the key rather than stripping it.
+ *
+ * `kinfolkId` is OPTIONAL here and required in the admin's twin
+ * (`auntieos-admin/src/api/householdContacts.ts`). The admin always targets a
+ * household it picked from a list; a household targets itself, and the server
+ * resolves that from `clients/{uid}.kinfolkIds` when the key is absent — the
+ * same asymmetry `listMembers` already has.
+ */
+
+/** `CONTACT_NAME_MAX` in `mytribe/functions/src/portal/householdContacts.ts`. */
+export const CONTACT_NAME_MAX = 80;
+/** `CONTACT_PHONE_MAX`, same file. */
+export const CONTACT_PHONE_MAX = 32;
+/** `SECONDARY_LABEL_MAX` in `mytribe/functions/src/lib/schema.ts`. */
+export const CONTACT_LABEL_MAX = 24;
+/** `DEFAULT_CONTACT_LABEL`. What a contact is called when nobody says. */
+export const DEFAULT_CONTACT_LABEL = 'Folk';
+
+export interface HouseholdContactDto {
+  contactId: string;
+  name: string;
+  label: string;
+  /** Null means there is none, never "unknown". */
+  phone: string | null;
+  /**
+   * Somewhere to reach this person, and nothing more. It grants no account and
+   * sends no invite; the server writes no `inviteRequests` row for a contact.
+   */
+  email: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface HouseholdContactInput {
+  /** Absent creates. Present edits that contact in place. */
+  contactId?: string;
+  name: string;
+  label: string;
+  phone: string;
+  email: string;
+}
+
+function contactText(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+function asContact(raw: unknown): HouseholdContactDto | null {
+  const c = (raw ?? {}) as Record<string, unknown>;
+  const contactId = contactText(c['contactId']);
+  // No id means no row the household could edit or delete, so it is dropped
+  // rather than drawn as a line with two dead buttons on it.
+  if (contactId === null) return null;
+  return {
+    contactId,
+    name: contactText(c['name']) ?? '(unnamed contact)',
+    label: contactText(c['label']) ?? DEFAULT_CONTACT_LABEL,
+    phone: contactText(c['phone']),
+    email: contactText(c['email']),
+    createdAt: contactText(c['createdAt']),
+    updatedAt: contactText(c['updatedAt']),
+  };
+}
+
+/** PRIMARY-only (operator bypasses). Order is the server's: by name. */
+export async function listHouseholdContacts(kinfolkId?: string): Promise<HouseholdContactDto[]> {
+  const payload = kinfolkId !== undefined ? { kinfolkId } : {};
+  const res = await call<{ kinfolkId?: string }, { contacts?: unknown }>('listHouseholdContacts', payload);
+  const rows = res?.contacts;
+  // A shape we cannot read is not an empty household. Answering "no contacts"
+  // off an unreadable payload is the fabricated-success failure the repo
+  // forbids, and `queryState` can only tell a proven-empty list from an unknown
+  // one if the unknown one throws.
+  if (!Array.isArray(rows)) throw new Error('listHouseholdContacts returned no contacts array.');
+  return rows.map(asContact).filter((c): c is HouseholdContactDto => c !== null);
+}
+
+/**
+ * The exact request `saveHouseholdContact` is called with.
+ *
+ * Split out of the call so a test can assert the KEY SET rather than only the
+ * values: the claim that matters is that this client sends no `permissions` and
+ * no `role`, and a test that only checks the four fields it does send would
+ * still pass with a fifth one smuggled in beside them.
+ */
+export function buildSaveContactPayload(
+  input: HouseholdContactInput,
+  kinfolkId?: string,
+): { kinfolkId?: string; contactId?: string; name: string; label: string; phone: string; email: string } {
+  const name = input.name.trim();
+  if (name === '') throw new Error('A contact needs a name.');
+  // EVERY EDITABLE FIELD IS SENT, including the empty ones: the server persists
+  // `''` as `null`, so a cleared phone number actually goes away. Omitting a
+  // blank field would leave the stale value on the document forever.
+  const payload: { kinfolkId?: string; contactId?: string; name: string; label: string; phone: string; email: string } = {
+    name,
+    label: input.label.trim(),
+    phone: input.phone.trim(),
+    email: input.email.trim(),
+  };
+  if (kinfolkId !== undefined) payload.kinfolkId = kinfolkId;
+  const contactId = input.contactId?.trim();
+  if (contactId !== undefined && contactId !== '') payload.contactId = contactId;
+  return payload;
+}
+
+/**
+ * Creates or edits one contact. No portal account is created either way.
+ *
+ * `createdAt` / `createdBy` are the server's and are never sent from here, so
+ * an edit cannot rewrite a record's provenance.
+ */
+export async function saveHouseholdContact(
+  input: HouseholdContactInput,
+  kinfolkId?: string,
+): Promise<{ contactId: string; created: boolean }> {
+  const payload = buildSaveContactPayload(input, kinfolkId);
+  const res = await call<typeof payload, { contactId?: unknown; created?: unknown }>('saveHouseholdContact', payload);
+  const savedId = contactText(res?.contactId);
+  if (savedId === null) throw new Error('saveHouseholdContact returned no contact id.');
+  return { contactId: savedId, created: res?.created === true };
+}
+
+/**
+ * Deletes one contact. HARD, unlike removing a member: there is no account to
+ * suspend and no sign-in history to keep, so the row is gone.
+ */
+export async function removeHouseholdContact(contactId: string, kinfolkId?: string): Promise<void> {
+  const cid = contactId.trim();
+  if (cid === '') throw new Error('removeHouseholdContact requires a contact id');
+  const payload = kinfolkId !== undefined ? { kinfolkId, contactId: cid } : { contactId: cid };
+  await call<{ kinfolkId?: string; contactId: string }, { ok: true }>('removeHouseholdContact', payload);
+}
+
+/** "Sister · 805 555 0143 · ada@example.com", skipping what is absent. */
+export function contactMetaLine(contact: HouseholdContactDto): string {
+  return [contact.label, contact.phone, contact.email]
+    .filter((part): part is string => part !== null && part.trim() !== '')
+    .join(' · ');
+}
+
 /** Friendly label for a member status string, mirrors Kotlin's `statusLabel`. */
 export function memberStatusLabel(status: MemberStatus): string {
   switch (status) {

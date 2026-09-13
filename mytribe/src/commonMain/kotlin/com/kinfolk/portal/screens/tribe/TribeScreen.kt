@@ -54,18 +54,26 @@ import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinChip
 import com.kinfolk.portal.components.KinField
+import com.kinfolk.portal.components.KinGhostButton
 import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.SchemaFormRenderer
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.config.BusinessContact
 import com.kinfolk.portal.nav.isWideShell
+import com.kinfolk.portal.portal.CONTACT_LABEL_MAX
+import com.kinfolk.portal.portal.CONTACT_NAME_MAX
+import com.kinfolk.portal.portal.CONTACT_PHONE_MAX
 import com.kinfolk.portal.portal.CustomField
+import com.kinfolk.portal.portal.DEFAULT_CONTACT_LABEL
 import com.kinfolk.portal.portal.FormSchema
+import com.kinfolk.portal.portal.HouseholdContact
 import com.kinfolk.portal.portal.MapboxSuggestion
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.portal.TribeProfileResult
 import com.kinfolk.portal.portal.VetClinic
+import com.kinfolk.portal.portal.metaLine
 import com.kinfolk.portal.portal.newMapboxSessionToken
+import com.kinfolk.portal.screens.gallery.isPermissionDenied
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -369,6 +377,11 @@ fun TribeScreen(
             // Secondary Kinfolk invite — moved here from Account settings.
             SecondaryInviteCard(kinfolkId = kinfolkId, portalApi = portalApi)
 
+            // Contacts with no account, directly under the invite, because the
+            // difference between the two is the point and it reads fastest side
+            // by side (#818).
+            HouseholdContactsCard(kinfolkId = kinfolkId, portalApi = portalApi)
+
             if (status != null) {
                 val ok = status!!.startsWith("Saved")
                 val statusColor = if (ok) KinfolkBrand.KinTeal else KinfolkBrand.SnuggleCoral
@@ -483,13 +496,21 @@ fun TribeScreen(
 
 // ---- Brand building blocks (per mockup .cardhead / .grid2 / .addfield) ----
 
-/** Icon-in-tinted-tile card header with serif title + muted sub line. */
+/**
+ * Icon-in-tinted-tile card header with a serif title and an optional muted sub
+ * line.
+ *
+ * [sub] DEFAULTS TO NOTHING and renders nothing when blank, per the 2026-09-11
+ * ruling: "at most they can be tool tips, otherwise they are making the ui too
+ * busy with unnecessary text". The existing callers keep the sentence they were
+ * written with; a new card is a title and an icon.
+ */
 @Composable
 private fun CardHead(
     icon: ImageVector,
     tint: Color,
     title: String,
-    sub: String,
+    sub: String = "",
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val type = LocalKinfolkTypography.current
@@ -509,7 +530,9 @@ private fun CardHead(
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = type.heritageSection)
-            Text(sub, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+            if (sub.isNotBlank()) {
+                Text(sub, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+            }
         }
         actions()
     }
@@ -1116,6 +1139,284 @@ private fun SecondaryInviteCard(kinfolkId: String, portalApi: PortalApi) {
                 modifier = Modifier.fillMaxWidth(),
             )
             msg?.let { Text(it, style = type.sansLabel.copy(color = KinfolkBrand.KinTeal)) }
+        }
+    }
+}
+
+/**
+ * The household's own contacts: people it can be reached through who hold no
+ * portal account at all (#818).
+ *
+ * WHY THIS SITS UNDER THE INVITE. PR #817 settled the ruling — "a secondary
+ * contact does not have to be a portal user. primary kinfolk user will invite a
+ * second kinfolk to the household to manage and receive notifications" — and
+ * built the three callables for it, then wired only the admin app. The card
+ * above is an invite and is right to be: it hands somebody a sign-in. The other
+ * pet parent who does not use apps, the neighbour with the key, the daughter who
+ * answers the phone had nowhere in the portal to be written down, so the office
+ * was told by phone and typed it in.
+ *
+ * THE TITLE CARRIES THE DISTINCTION. There is no `sub` on the [CardHead] here,
+ * per the 2026-09-11 ruling, so the heading says what these people are and the
+ * rest of the difference lives where the household is actually deciding
+ * something: the hint under the email field, the empty line, and what comes back
+ * after a save.
+ *
+ * DIFF, NOT REBUILD. The form holds a control for every field
+ * `saveHouseholdContact` persists (name, label, phone, email) and for nothing
+ * else; `createdAt` / `createdBy` are the server's and are never sent. So there
+ * is no field this save can write at a Kotlin default, which is the failure
+ * `buildKinfolkFromEditState` shipped: a rebuild that drops what the form does
+ * not show. An edit seeds all four from the loaded row before anything is typed.
+ *
+ * NO OFFLINE VOCABULARY HERE, deliberately. #805 / #819 / #824 built the
+ * queued/blocked/unknown language on the WEB portal, where React Query pauses a
+ * mutation and a button can wear "Saving…" forever. This client calls straight
+ * through a coroutine and a dropped request throws, which the catch below states
+ * as an error. Inventing a fifth vocabulary for one card would be worse than
+ * matching the six cards above it.
+ */
+@Composable
+private fun HouseholdContactsCard(kinfolkId: String, portalApi: PortalApi) {
+    val type = LocalKinfolkTypography.current
+    val scope = rememberCoroutineScope()
+    var contacts by remember { mutableStateOf<List<HouseholdContact>?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    /** True once the server has said this caller may not keep the list. */
+    var denied by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableStateOf(0) }
+
+    // The open editor: null closed, "" adding, a contactId editing that row.
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var name by remember { mutableStateOf("") }
+    var label by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var statusIsError by remember { mutableStateOf(false) }
+    /** The row a removal has been asked about but not yet confirmed. */
+    var removeTarget by remember { mutableStateOf<HouseholdContact?>(null) }
+    var removing by remember { mutableStateOf(false) }
+
+    fun openEditor(contact: HouseholdContact?) {
+        editingId = contact?.contactId ?: ""
+        name = contact?.name ?: ""
+        label = contact?.label ?: ""
+        phone = contact?.phone ?: ""
+        email = contact?.email ?: ""
+        status = null
+        statusIsError = false
+    }
+
+    fun closeEditor() {
+        editingId = null
+        name = ""
+        label = ""
+        phone = ""
+        email = ""
+    }
+
+    LaunchedEffect(kinfolkId, reloadKey) {
+        try {
+            contacts = portalApi.listHouseholdContacts(kinfolkId)
+            loadError = null
+            denied = false
+        } catch (t: Throwable) {
+            // A refusal is a fact to state, not a failure to report as one.
+            denied = isPermissionDenied(t.message)
+            loadError = if (denied) null else (t.message ?: "Could not load your contacts")
+            contacts = null
+        }
+    }
+
+    GlassCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+        contentPadding = PaddingValues(KinfolkSpacing.l),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            CardHead(
+                icon = Icons.Filled.Phone,
+                tint = KinfolkBrand.KinfolkOrange,
+                title = "Contacts Without an Account",
+            )
+
+            val list = contacts
+            when {
+                denied -> Text(
+                    "Your primary kinfolk keeps this list. Ask them to add or change a contact.",
+                    style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                )
+
+                loadError != null -> Text(
+                    loadError!!,
+                    style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral),
+                )
+
+                list == null -> Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = KinfolkSpacing.s),
+                    contentAlignment = Alignment.Center,
+                ) { KinSpinner() }
+
+                else -> {
+                    if (list.isEmpty()) {
+                        Text(
+                            "Nobody is written down yet. A contact is somebody we can phone when we can't reach " +
+                                "you. They get no sign-in and see nothing.",
+                            style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                        )
+                    } else {
+                        list.forEachIndexed { index, contact ->
+                            if (index > 0) CardDivider()
+                            Text(contact.name, style = type.sansLabel.copy(color = KinfolkBrand.Navy))
+                            Text(contact.metaLine(), style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+                            if (removeTarget?.contactId == contact.contactId) {
+                                Text(
+                                    "Remove ${contact.name}? There is no account to suspend, so the row is gone.",
+                                    style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted),
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                                    KinGhostButton(
+                                        label = if (removing) "Removing…" else "Remove",
+                                        enabled = !removing,
+                                        onClick = {
+                                            removing = true
+                                            status = null
+                                            statusIsError = false
+                                            scope.launch {
+                                                try {
+                                                    portalApi.removeHouseholdContact(contact.contactId, kinfolkId)
+                                                    removeTarget = null
+                                                    reloadKey += 1
+                                                } catch (t: Throwable) {
+                                                    statusIsError = true
+                                                    status = t.message ?: "That did not work."
+                                                } finally {
+                                                    removing = false
+                                                }
+                                            }
+                                        },
+                                    )
+                                    KinGhostButton(
+                                        label = "Keep",
+                                        enabled = !removing,
+                                        onClick = { removeTarget = null },
+                                    )
+                                }
+                            } else {
+                                // Dead while ANY removal is in flight: one
+                                // `removeTarget` is shared by every row, so
+                                // switching rows mid-delete would leave the
+                                // household watching the wrong one.
+                                Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                                    KinGhostButton(
+                                        label = "Edit",
+                                        enabled = !removing,
+                                        onClick = { openEditor(contact) },
+                                    )
+                                    KinGhostButton(
+                                        label = "Remove",
+                                        enabled = !removing,
+                                        onClick = { removeTarget = contact },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (editingId == null) {
+                        KinGhostButton(
+                            label = "Add a contact",
+                            onClick = { openEditor(null) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        CardDivider()
+                        KinField(
+                            value = name,
+                            onValueChange = { name = it.take(CONTACT_NAME_MAX) },
+                            label = "Name",
+                            fieldTestTag = "contact-name",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        KinField(
+                            value = label,
+                            onValueChange = { label = it.take(CONTACT_LABEL_MAX) },
+                            label = "What they are to your Tribe",
+                            fieldTestTag = "contact-label",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Sister, Co-parent, Neighbour. Left empty it reads $DEFAULT_CONTACT_LABEL.",
+                            style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                        )
+                        KinField(
+                            value = phone,
+                            onValueChange = { phone = it.take(CONTACT_PHONE_MAX) },
+                            label = "Phone",
+                            fieldTestTag = "contact-phone",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        KinField(
+                            value = email,
+                            onValueChange = { email = it },
+                            label = "Email",
+                            fieldTestTag = "contact-email",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Optional, and it invites nobody. An address here is somewhere to reach this person.",
+                            style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+                            KinButton(
+                                label = if (saving) "Saving…" else "Save contact",
+                                enabled = !saving && name.isNotBlank(),
+                                onClick = {
+                                    saving = true
+                                    status = null
+                                    statusIsError = false
+                                    val typedName = name.trim()
+                                    scope.launch {
+                                        try {
+                                            val saved = portalApi.saveHouseholdContact(
+                                                kinfolkId = kinfolkId,
+                                                contactId = editingId?.takeIf { it.isNotBlank() },
+                                                name = name,
+                                                label = label,
+                                                phone = phone,
+                                                email = email,
+                                            )
+                                            status = if (saved.created) {
+                                                "$typedName is a contact on your Tribe. No portal account was created."
+                                            } else {
+                                                "Saved $typedName."
+                                            }
+                                            closeEditor()
+                                            reloadKey += 1
+                                        } catch (t: Throwable) {
+                                            statusIsError = true
+                                            status = t.message ?: "The contact was not saved."
+                                        } finally {
+                                            saving = false
+                                        }
+                                    }
+                                },
+                            )
+                            KinGhostButton(
+                                label = "Cancel",
+                                enabled = !saving,
+                                onClick = { closeEditor() },
+                            )
+                        }
+                    }
+                }
+            }
+
+            status?.let {
+                val tone = if (statusIsError) KinfolkBrand.SnuggleCoral else KinfolkBrand.KinTeal
+                Text(it, style = type.sansLabel.copy(color = tone))
+            }
         }
     }
 }
