@@ -1,0 +1,24 @@
+/* The router's error screen. Same centred-column geometry as signin.css, on a
+   narrower stage, because this one holds a single banner rather than a form.
+
+   It paints no ground: RootLayout's orbs and grain are already behind it, and
+   this component also renders inside the shell's content column, where a ground
+   of its own would cut a rectangle out of the page. */
+
+.routeerr {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: var(--space-10) var(--space-5);
+}
+
+.routeerr__stage {
+  width: 100%;
+  max-width: 520px;
+}
+
+/* The banner brings its own rim and wash, so the card is only the glass around
+   it: padding, no second border competing with the banner's tone rail. */
+.routeerr__card {
+  padding: var(--space-5);
+}

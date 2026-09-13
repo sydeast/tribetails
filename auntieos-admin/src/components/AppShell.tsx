@@ -10,7 +10,7 @@ import {
   type NavEntry,
   type NavGroup,
 } from '../lib/nav';
-import { profileDisplayName, profileInitials } from '../lib/accountFormat';
+import { OFFLINE_ROLE_LABEL, profileDisplayName, profileInitials } from '../lib/accountFormat';
 import { NavGlyph } from './NavGlyphs';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
@@ -203,7 +203,18 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
     user?.displayName ?? null,
     user?.email ?? null,
   );
-  const roleText = access.status === 'testAdmin' ? 'Test admin, sandbox' : 'Operator';
+  // Null access is the #812 degraded entry: the gate admitted this session
+  // without reading its claims, because the token could not be refreshed. The
+  // chip says so rather than guessing. "Operator" would be a claim about
+  // permissions nobody checked, and it is the wrong claim for the one account
+  // it would misdescribe: a test admin, who would lose the sandbox warning and
+  // be told they are the operator.
+  const roleText =
+    access === null
+      ? OFFLINE_ROLE_LABEL
+      : access.status === 'testAdmin'
+        ? 'Test admin, sandbox'
+        : 'Operator';
 
   // The rail's one real number: unread client threads, live. See
   // lib/useUnreadInbox.ts for why the shell owns this listener and what a
@@ -422,7 +433,17 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
               <span className="shell__account-role">{roleText}</span>
             </span>
           </Link>
-          <GhostButton label="Sign out" onClick={() => void signOut()} />
+          {/* WITHHELD WHILE OFFLINE (#812). Null access means the gate admitted
+              this session without being able to refresh its token, which only
+              happens with no network. Signing out there is a one-way door:
+              it clears the cached session, and signing back in needs the very
+              connection that is missing, so the operator would be left with an
+              app that can show them nothing at all. #805 refused the same
+              button on the portal's offline screen for the same reason. It
+              comes back by itself on the gate pass after the signal does. */}
+          {access === null ? null : (
+            <GhostButton label="Sign out" onClick={() => void signOut()} />
+          )}
         </header>
 
         {/* Above the sandbox notice: a session that cannot renew its sign-in
@@ -430,7 +451,7 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
             about which account is in use. See lib/sessionHealth.ts (#454). */}
         <SessionBanner />
 
-        {access.status === 'testAdmin' ? (
+        {access?.status === 'testAdmin' ? (
           <Banner tone="warning" title="Sandbox account">
             You are signed in as a Stage 0I test admin (scoped to{' '}
             <code>{access.testTribeId}</code>). Admin callables reject this account by

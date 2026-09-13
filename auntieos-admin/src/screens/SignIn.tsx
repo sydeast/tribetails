@@ -143,14 +143,26 @@ export function SignIn() {
   useEffect(() => {
     if (authState.status !== 'signedIn') return;
     let live = true;
-    void resolveAccess(authState.user).then((access) => {
-      if (!live) return;
-      if (access.status === 'denied') {
-        void denyEntry();
-      } else {
-        void navigate({ to: '/home' });
-      }
-    });
+    void resolveAccess(authState.user)
+      .then((access) => {
+        if (!live) return;
+        if (access.status === 'denied') {
+          void denyEntry();
+        } else {
+          void navigate({ to: '/home' });
+        }
+      })
+      .catch((err: unknown) => {
+        // #812: `resolveAccess` mints a token, so this rejects whenever the
+        // refresh cannot be had, which is exactly the state that sends an
+        // operator here in the first place. It was an unhandled rejection,
+        // and the operator was left staring at a form with no account of why
+        // nothing happened. The form stays up and usable (that is the right
+        // answer: a re-auth IS the remedy for the `expired` case that routes
+        // here) and the reason is now on screen above it.
+        if (!live) return;
+        setError(authMessage(err));
+      });
     return () => {
       live = false;
     };

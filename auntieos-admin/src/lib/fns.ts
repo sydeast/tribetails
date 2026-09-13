@@ -1,6 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, functions } from './firebase';
+import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
 import { noteSessionAlive, reactToCallableError } from './revokedSession';
 
 /**
@@ -86,6 +87,12 @@ export async function call<TReq, TRes>(
   payload: TReq,
   options: CallOptions = {},
 ): Promise<TRes> {
+  // #812: the first of the two seams that make the degraded entry read-only.
+  // While the gate is running on a token it could not refresh, a callable is
+  // refused here rather than dialled. Otherwise every screen spends the
+  // twenty seconds above discovering the same thing, and reports it as a
+  // deadline rather than as the offline session it is.
+  if (isReadOnlySession()) throw new OfflineSessionError(name);
   const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
   let retriedInternal = false;
   for (;;) {

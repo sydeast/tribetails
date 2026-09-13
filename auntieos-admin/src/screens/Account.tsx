@@ -402,7 +402,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
                     meta={
                       <dl className="account__meta">
                         <MetaFact label="Role" value={roleLabel(access)} />
-                        {access.status === 'testAdmin' && (
+                        {access?.status === 'testAdmin' && (
                           <MetaFact label="Sandbox tribe" value={access.testTribeId} mono />
                         )}
                         <MetaFact label="Sign-in method" value={providerLabel(provider)} />
