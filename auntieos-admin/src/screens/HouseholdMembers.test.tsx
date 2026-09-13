@@ -41,6 +41,9 @@ const api = vi.hoisted(() => ({
   inviteKinfolkToPortal: vi.fn(),
   listRecoveryCandidates: vi.fn(),
   executePrimaryRecovery: vi.fn(),
+  listHouseholdContacts: vi.fn(),
+  saveHouseholdContact: vi.fn(),
+  removeHouseholdContact: vi.fn(),
 }));
 
 vi.mock('../api/members', async (orig) => ({
@@ -57,10 +60,17 @@ vi.mock('../api/membersWrite', async (orig) => ({
   inviteKinfolkToPortal: api.inviteKinfolkToPortal,
   executePrimaryRecovery: api.executePrimaryRecovery,
 }));
+vi.mock('../api/householdContacts', async (orig) => ({
+  ...(await orig<typeof import('../api/householdContacts')>()),
+  listHouseholdContacts: api.listHouseholdContacts,
+  saveHouseholdContact: api.saveHouseholdContact,
+  removeHouseholdContact: api.removeHouseholdContact,
+}));
 
 import { ToastProvider } from '../components/Toast';
 import { HouseholdMembers, householdInitial, inviteMetaLine, whereLine } from './HouseholdMembers';
 import type { HouseholdInvite, HouseholdMember, RecoveryCandidate } from '../api/members';
+import type { HouseholdContact } from '../api/householdContacts';
 
 function render(ui: ReactElement) {
   return rtlRender(<ToastProvider>{ui}</ToastProvider>);
@@ -123,9 +133,28 @@ function candidate(over: Partial<RecoveryCandidate> = {}): RecoveryCandidate {
   };
 }
 
-function mount(over: { members?: HouseholdMember[]; invites?: HouseholdInvite[] } = {}) {
+function contact(over: Partial<HouseholdContact> = {}): HouseholdContact {
+  return {
+    contactId: 'c1',
+    name: 'Ada Rivera',
+    label: 'Sister',
+    phone: '805 555 0143',
+    email: null,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    ...over,
+  };
+}
+function mount(
+  over: {
+    members?: HouseholdMember[];
+    invites?: HouseholdInvite[];
+    contacts?: HouseholdContact[];
+  } = {},
+) {
   api.listHouseholdMembers.mockResolvedValue(over.members ?? [member()]);
   api.listHouseholdInvites.mockResolvedValue(over.invites ?? [invite()]);
+  api.listHouseholdContacts.mockResolvedValue(over.contacts ?? []);
   return render(
     <HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />,
   );
@@ -133,6 +162,10 @@ function mount(over: { members?: HouseholdMember[]; invites?: HouseholdInvite[] 
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
+  // The screen reads three lists on first paint. The suites that call render()
+  // directly only care about two of them, so the third gets a default here
+  // rather than a stub in every one of them.
+  api.listHouseholdContacts.mockResolvedValue([]);
   routerHistory.canGoBack.mockReset();
   routerHistory.canGoBack.mockReturnValue(false);
   routerHistory.back.mockReset();
@@ -215,16 +248,23 @@ describe('HouseholdMembers HAPPY', () => {
  * screen.
  */
 describe('HouseholdMembers invite by email is gone', () => {
-  it('renders no typed-email invite form, only the portal invite button', async () => {
+  it('renders no typed-email invite form, and carries no input at rest', async () => {
     mount();
 
     await screen.findByText('marcus@example.com');
     expect(screen.queryByRole('button', { name: 'Send primary invite' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument();
     expect(screen.queryByText('Invite a primary by email')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Invite to portal' }),
-    ).toBeInTheDocument();
+    // The contact form the 2026-09-12 ruling restores is a DIALOG, so the
+    // screen at rest still carries no text box at all. #684 was about a form
+    // sitting on the page offering to mail a claim link to a typed address, and
+    // nothing here does that.
+    expect(document.querySelectorAll('input[type="email"]')).toHaveLength(0);
+    expect(document.querySelectorAll('input[type="text"]')).toHaveLength(0);
+    // Both hero actions are present, and they are different gestures.
+    const hero = document.querySelector('.hmembers__actions') as HTMLElement;
+    expect(within(hero).getByRole('button', { name: 'Invite to portal' })).toBeInTheDocument();
+    expect(within(hero).getByRole('button', { name: 'Add secondary contact' })).toBeInTheDocument();
   });
 });
 
@@ -688,13 +728,21 @@ describe('HouseholdMembers mock structure', () => {
       within(hero).getByText('familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY'),
     ).toHaveClass('hmembers__where');
     // The actions live in the band, in the mock's order: Back, Swap primary,
-    // then the admin's one invite where the mock's primary action sat.
+    // the portal invite, and the mock's own primary action last, in the primary
+    // slot it draws it in (ruling, 2026-09-12).
     const actions = hero.querySelector('.hmembers__actions') as HTMLElement;
     expect(within(actions).getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Back to the Walls',
       'Swap primary',
       'Invite to portal',
+      'Add secondary contact',
     ]);
+    expect(within(actions).getByRole('button', { name: 'Add secondary contact' })).toHaveClass(
+      'auntie-btn--primary',
+    );
+    expect(within(actions).getByRole('button', { name: 'Invite to portal' })).toHaveClass(
+      'auntie-btn--ghost',
+    );
   });
 
   it('writes the id alone while the roster is unread, never a zero count', () => {
@@ -721,7 +769,12 @@ describe('HouseholdMembers mock structure', () => {
     const metas = Array.from(document.querySelectorAll('.den-panel-meta')).map(
       (el) => el.textContent,
     );
-    expect(metas).toEqual(['role: PRIMARY', '1 of role: SECONDARY', '1 total']);
+    expect(metas).toEqual([
+      'role: PRIMARY',
+      // Both halves of the panel, each counted from its own read.
+      '1 of role: SECONDARY · 0 contacts, no portal account',
+      '1 total',
+    ]);
     const panels = document.querySelectorAll('.den-panel');
     expect(within(panels[0] as HTMLElement).getByText('lost@example.com')).toBeInTheDocument();
     expect(within(panels[0] as HTMLElement).queryByText('marcus@example.com')).toBeNull();
@@ -780,11 +833,14 @@ describe('HouseholdMembers mock structure', () => {
   it('offers none of the mock controls the admin cannot use', async () => {
     mount();
     await screen.findByText('marcus@example.com');
-    // Add secondary contact: the admin does not invite the secondary.
-    expect(screen.queryByRole('button', { name: /add secondary/i })).toBeNull();
     // Save label and Swap contact info: PRIMARY-only callables.
     expect(screen.queryByRole('button', { name: /save label/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /swap contact/i })).toBeNull();
+    // What the admin still cannot do is mint a SECONDARY invite (the standing
+    // 2026-08-04 ruling). The contact form is not one: it sends no address to
+    // any invite callable.
+    expect(screen.queryByRole('button', { name: /invite a secondary/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /send .*invite/i })).toBeNull();
   });
 
   it('draws an invite as the invites mock row: stripe, circle, address, provenance, compact pills', async () => {
@@ -864,5 +920,152 @@ describe('HouseholdMembers Back', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Back' }));
     expect(routerHistory.back).toHaveBeenCalledTimes(1);
     expect(onBack).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * RULING (2026-09-12): "a secondary contact does not have to be a portal user.
+ * primary kinfolk user will invite a second kinfolk to the household to manage
+ * and receive notifications."
+ *
+ * Two actions with two outcomes. The #755 Members sweep collapsed them into
+ * one, giving the mock's "Add secondary contact" slot to the portal invite and
+ * leaving no way at all to record somebody who will never hold an account.
+ * These are the cases that keep them apart.
+ */
+describe('HouseholdMembers secondary contacts are not invites', () => {
+  it('lists a contact with no uid, no role capsule and no permission list', async () => {
+    mount({ contacts: [contact()] });
+
+    const row = (await screen.findByText('Ada Rivera')).closest('li') as HTMLElement;
+    expect(within(row).getByText('No portal account')).toHaveAttribute('data-tone', 'muted');
+    expect(within(row).getByText('Sister · 805 555 0143')).toBeInTheDocument();
+    // A person with nothing to sign in to has no entitlements to draw.
+    expect(within(row).queryAllByRole('switch')).toHaveLength(0);
+    expect(within(row).queryByText('Secondary')).toBeNull();
+    expect(within(row).queryByText('permissions')).toBeNull();
+  });
+
+  it('counts contacts beside the members in the panel note, each half only once read', async () => {
+    mount({
+      members: [member({ uid: 'p1', role: 'PRIMARY', invitedEmail: 'lost@example.com' }), member()],
+      contacts: [contact(), contact({ contactId: 'c2', name: 'Bo' })],
+    });
+
+    await screen.findByText('Ada Rivera');
+    expect(
+      screen.getByText('1 of role: SECONDARY · 2 contacts, no portal account'),
+    ).toBeInTheDocument();
+  });
+
+  it('saves a contact through saveHouseholdContact and mints nothing', async () => {
+    const user = userEvent.setup();
+    api.saveHouseholdContact.mockResolvedValue({ contactId: 'c9', created: true });
+    mount();
+    await screen.findByText('marcus@example.com');
+
+    const hero = document.querySelector('.hmembers__actions') as HTMLElement;
+    await user.click(within(hero).getByRole('button', { name: 'Add secondary contact' }));
+    await user.type(screen.getByLabelText('Name'), 'Ada Rivera');
+    await user.type(screen.getByLabelText('What they are to the household'), 'Sister');
+    await user.type(screen.getByLabelText('Phone'), '805 555 0143');
+    await user.click(screen.getByRole('button', { name: 'Save contact' }));
+
+    await waitFor(() => {
+      expect(api.saveHouseholdContact).toHaveBeenCalledWith('fam1', {
+        name: 'Ada Rivera',
+        label: 'Sister',
+        phone: '805 555 0143',
+        email: '',
+      });
+    });
+    // The two gestures stay apart: recording a contact sends no invite.
+    expect(api.inviteKinfolkToPortal).not.toHaveBeenCalled();
+  });
+
+  it('EDIT IS A DIFF: every editable field is sent, cleared ones included, and no id is invented', async () => {
+    const user = userEvent.setup();
+    api.saveHouseholdContact.mockResolvedValue({ contactId: 'c1', created: false });
+    mount({ contacts: [contact({ email: 'ada@example.com' })] });
+    await screen.findByText('Ada Rivera');
+
+    const row = (await screen.findByText('Ada Rivera')).closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Edit' }));
+    // The form opens on the stored values, so an edit starts from what is
+    // there rather than from blanks that would wipe the rest on save.
+    expect(screen.getByLabelText('Name')).toHaveValue('Ada Rivera');
+    expect(screen.getByLabelText('Email')).toHaveValue('ada@example.com');
+    await user.clear(screen.getByLabelText('Phone'));
+    await user.click(screen.getByRole('button', { name: 'Save contact' }));
+
+    await waitFor(() => {
+      expect(api.saveHouseholdContact).toHaveBeenCalledWith('fam1', {
+        contactId: 'c1',
+        name: 'Ada Rivera',
+        label: 'Sister',
+        // Sent empty, not omitted: a field that cannot be cleared is not
+        // editable, and the server writes null for this.
+        phone: '',
+        email: 'ada@example.com',
+      });
+    });
+  });
+
+  it('names a failed save and leaves the form open', async () => {
+    const user = userEvent.setup();
+    api.saveHouseholdContact.mockRejectedValue(new Error('permission-denied'));
+    mount();
+    await screen.findByText('marcus@example.com');
+
+    const hero = document.querySelector('.hmembers__actions') as HTMLElement;
+    await user.click(within(hero).getByRole('button', { name: 'Add secondary contact' }));
+    await user.type(screen.getByLabelText('Name'), 'Ada');
+    await user.click(screen.getByRole('button', { name: 'Save contact' }));
+
+    expect(await screen.findByText(/saveHouseholdContact failed: permission-denied/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('Ada');
+  });
+
+  it('removes a contact only after the confirm, and says it leaves no row behind', async () => {
+    const user = userEvent.setup();
+    api.removeHouseholdContact.mockResolvedValue(undefined);
+    mount({ contacts: [contact()] });
+    await screen.findByText('Ada Rivera');
+
+    const row = (await screen.findByText('Ada Rivera')).closest('li') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Remove' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/no account to suspend/)).toBeInTheDocument();
+    expect(api.removeHouseholdContact).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => {
+      expect(api.removeHouseholdContact).toHaveBeenCalledWith('fam1', 'c1');
+    });
+  });
+
+  it('an unreadable contact list is named, and never drawn as an empty household', async () => {
+    api.listHouseholdMembers.mockResolvedValue([member()]);
+    api.listHouseholdInvites.mockResolvedValue([invite()]);
+    api.listHouseholdContacts.mockRejectedValue(new Error('backend down'));
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
+
+    expect(await screen.findByText(/listHouseholdContacts failed: backend down/)).toBeInTheDocument();
+    expect(screen.queryByText(/No contact has been recorded/)).toBeNull();
+    // The roster read is separate and still landed.
+    expect(await screen.findByText('marcus@example.com')).toBeInTheDocument();
+  });
+
+  it('the dashed row under the list opens the same form as the hero action', async () => {
+    const user = userEvent.setup();
+    mount({ contacts: [contact()] });
+    await screen.findByText('Ada Rivera');
+
+    const addRow = document.querySelector('.hmembers__addrow') as HTMLElement;
+    expect(addRow).toHaveTextContent('Add secondary contact');
+    await user.click(addRow);
+    expect(screen.getByRole('heading', { name: 'Add a secondary contact' })).toBeInTheDocument();
+    // Adding, not editing: the form is empty.
+    expect(screen.getByLabelText('Name')).toHaveValue('');
   });
 });

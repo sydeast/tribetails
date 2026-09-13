@@ -21,10 +21,25 @@ import com.tribetails.auntieos.util.AuntieLog
  * PRIMARY-only per the 2026-08-04 invite ruling, and the server side of it is
  * not dead code just because the client-side form is gone.
  *
- * NOT HERE, ON PURPOSE: `inviteKinfolkToPortal`. It already ships on this
+ * A CONTACT IS NOT AN INVITE (operator ruling, 2026-09-12): "a secondary
+ * contact does not have to be a portal user. primary kinfolk user will invite a
+ * second kinfolk to the household to manage and receive notifications." Two
+ * actions with two outcomes, so three more callables:
+ * `listHouseholdContacts`, `saveHouseholdContact` and `removeHouseholdContact`.
+ * A contact is a name, a label, a phone and sometimes an email for somebody who
+ * holds no portal account: no uid, no role, no `MemberPermissions`, and no
+ * `inviteRequests` row anywhere. The server's argument schema is `.strict()`
+ * and refuses `permissions`, `invitedEmail` and `role`, so the separation is
+ * enforced on the wire rather than only in a screen.
+ *
+ * `inviteKinfolkToPortal` IS HERE NOW, and was not. It already ships on this
  * client as [AuntieRepository.inviteKinfolkToPortal], driven by the button on
- * the household profile that this screen is opened from. A second identical
- * button one tap away would be duplication, not coverage.
+ * the household profile, and this file used to leave it out on the grounds
+ * that a second button one tap away would be duplication. The same 2026-09-12
+ * ruling settles that: the members screen carries BOTH gestures on BOTH
+ * clients, or the two read as one on whichever client is missing half. This is
+ * the same callable, not a second invite path; [portalInviteMessage] is shared
+ * with the Directory so the two say the same thing about the same answer.
  *
  * THE DECODE IS FAIL-SOFT PER FIELD, NOT PER RESPONSE, matching
  * [IntegrationsRepository]: a non-map payload or a missing top-level array is
@@ -87,6 +102,43 @@ class MembersRepository(
         val label: String
             get() = invitedEmail?.ifBlank { null } ?: secondaryLabel?.ifBlank { null } ?: uid
     }
+
+    /**
+     * Somebody a household can be reached through who holds NO portal account.
+     *
+     * Deliberately not a [Member] with null fields: a member has a uid, a role,
+     * a status and a permission set because there is an account to authorise,
+     * and a contact has none of those because there is nothing to sign in to.
+     * Modelling them as one type is exactly the conflation the 2026-09-12
+     * ruling separates.
+     */
+    data class Contact(
+        val contactId: String,
+        val name: String,
+        /** What they are to the household: Sister, Co-parent, Neighbour. */
+        val label: String,
+        val phone: String?,
+        /** Somewhere to reach them. It grants nothing and invites nobody. */
+        val email: String?,
+        val createdAt: String?,
+        val updatedAt: String?,
+    ) {
+        /** "Sister · 805 555 0143 · ada@example.com", skipping what is absent. */
+        val meta: String
+            get() = listOfNotNull(label, phone, email)
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+    }
+
+    /** What [saveHouseholdContact] is given. Every editable field, always. */
+    data class ContactDraft(
+        /** Null creates. Set edits that contact in place. */
+        val contactId: String? = null,
+        val name: String,
+        val label: String,
+        val phone: String,
+        val email: String,
+    )
 
     data class Invite(
         val inviteId: String,
@@ -156,6 +208,23 @@ class MembersRepository(
             ?: error("listMembers: non-map payload")
         decodeMembers(raw)
     }.onFailure { AuntieLog.e("MembersRepository.listMembers failed", it) }
+
+    /**
+     * Every contact on this household, by name, as the server sorts them.
+     *
+     * A missing top-level array is an ERROR, not an empty list, matching
+     * [listMembers]: "this household has nobody to call" is the one claim this
+     * screen must never make off a payload it could not read.
+     */
+    suspend fun listHouseholdContacts(kinfolkId: String): Result<List<Contact>> = runCatching {
+        require(kinfolkId.isNotBlank()) { "listHouseholdContacts requires a household id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listHouseholdContacts")
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("listHouseholdContacts: non-map payload")
+        decodeContacts(raw)
+    }.onFailure { AuntieLog.e("MembersRepository.listHouseholdContacts failed", it) }
 
     suspend fun listInvites(familyId: String): Result<List<Invite>> = runCatching {
         require(familyId.isNotBlank()) { "listInvites requires a household id" }
@@ -228,6 +297,72 @@ class MembersRepository(
         raw["inviteId"] as? String ?: error("mintInvite: response carried no inviteId")
     }.onFailure { AuntieLog.e("MembersRepository.mintInvite failed", it) }
 
+    /**
+     * Creates or edits one contact. Creates NO account and sends NO invite.
+     *
+     * A DIFF, NOT A REBUILD. The payload carries the four editable fields and
+     * nothing else: `createdAt` / `createdBy` are the server's own and are never
+     * sent from a client, so an edit cannot rewrite a record's provenance. Every
+     * editable field is sent INCLUDING the blank ones, because the server writes
+     * null for a cleared phone rather than leaving the old value behind, and a
+     * field that cannot be emptied is not editable.
+     */
+    suspend fun saveHouseholdContact(
+        kinfolkId: String,
+        draft: ContactDraft,
+    ): Result<String> = runCatching {
+        require(kinfolkId.isNotBlank()) { "saveHouseholdContact requires a household id" }
+        val name = draft.name.trim()
+        require(name.isNotBlank()) { "A contact needs a name." }
+        authGate.ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            put("kinfolkId", kinfolkId)
+            put("name", name)
+            put("label", draft.label.trim())
+            put("phone", draft.phone.trim())
+            put("email", draft.email.trim())
+            draft.contactId?.takeIf { it.isNotBlank() }?.let { put("contactId", it) }
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveHouseholdContact").call(payload).awaitCallable().data
+            as? Map<String, Any?> ?: error("saveHouseholdContact: non-map payload")
+        raw["contactId"] as? String ?: error("saveHouseholdContact: response carried no contactId")
+    }.onFailure { AuntieLog.e("MembersRepository.saveHouseholdContact failed", it) }
+
+    /**
+     * Deletes one contact. HARD, unlike [removeMember]: there is no account to
+     * suspend and no sign-in to revoke, so no row is left behind.
+     */
+    suspend fun removeHouseholdContact(kinfolkId: String, contactId: String): Result<Unit> = runCatching {
+        require(kinfolkId.isNotBlank()) { "removeHouseholdContact requires a household id" }
+        require(contactId.isNotBlank()) { "removeHouseholdContact requires a contact id" }
+        authGate.ensureAuthenticated()
+        functions.getHttpsCallable("removeHouseholdContact")
+            .call(mapOf("kinfolkId" to kinfolkId, "contactId" to contactId)).awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("MembersRepository.removeHouseholdContact failed", it) }
+
+    /**
+     * Invites this household to the portal as its PRIMARY, and returns the
+     * server's three-way answer verbatim: "sent", "already_active", "no_email".
+     *
+     * The SAME callable [AuntieRepository.inviteKinfolkToPortal] calls, reached
+     * from the members screen as well as the household profile, because the
+     * 2026-09-12 ruling puts both gestures on both clients' members screen. Two
+     * of the three answers emailed nobody, so the status is handed back rather
+     * than flattened into a boolean; [portalInviteMessage] turns it into the one
+     * sentence both screens say.
+     */
+    suspend fun inviteKinfolkToPortal(kinfolkId: String): Result<String> = runCatching {
+        require(kinfolkId.isNotBlank()) { "inviteKinfolkToPortal requires a household id" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("inviteKinfolkToPortal")
+            .call(mapOf("kinfolkId" to kinfolkId)).awaitCallable().data as? Map<String, Any?>
+            ?: error("inviteKinfolkToPortal: non-map payload")
+        raw["status"] as? String ?: error("inviteKinfolkToPortal: missing status")
+    }.onFailure { AuntieLog.e("MembersRepository.inviteKinfolkToPortal failed", it) }
+
     suspend fun revokeInvite(inviteId: String): Result<Unit> = runCatching {
         require(inviteId.isNotBlank()) { "revokeInvite requires an invite id" }
         authGate.ensureAuthenticated()
@@ -288,6 +423,18 @@ class MembersRepository(
     companion object {
         /** `INVITE_TTL_DAYS` in `mytribe/functions/src/lib/schema.ts`. */
         const val INVITE_TTL_DAYS = 14
+
+        /** `CONTACT_NAME_MAX` in `functions/src/portal/householdContacts.ts`. */
+        const val CONTACT_NAME_MAX = 80
+
+        /** `CONTACT_PHONE_MAX`, same file. */
+        const val CONTACT_PHONE_MAX = 32
+
+        /** `SECONDARY_LABEL_MAX` in `functions/src/lib/schema.ts`. */
+        const val CONTACT_LABEL_MAX = 24
+
+        /** `DEFAULT_CONTACT_LABEL`: what a contact is called when nobody says. */
+        const val DEFAULT_CONTACT_LABEL = "Folk"
 
         // SECONDARY_LABEL_MAX and DEFAULT_SECONDARY_LABEL lived here for the
         // admin invite form's label field. Both went with it: a label names a
@@ -413,6 +560,55 @@ internal fun decodePermissions(v: Any?): MembersRepository.MemberPermissions {
         homeAccess = flag("home_access"),
     )
 }
+
+/**
+ * One household contact, or null when it carries no id and nothing could act on
+ * it. A row missing its NAME is kept and labelled, not dropped: the operator has
+ * to be able to see a half-written record in order to fix or delete it.
+ */
+internal fun decodeContacts(raw: Map<*, *>?): List<MembersRepository.Contact> {
+    val rows = (raw?.get("contacts") as? List<*>)
+        ?: error("listHouseholdContacts: response carried no contacts")
+    return rows.mapNotNull { item ->
+        val m = item as? Map<*, *> ?: return@mapNotNull null
+        val id = (m["contactId"] as? String)?.ifBlank { null } ?: return@mapNotNull null
+        MembersRepository.Contact(
+            contactId = id,
+            name = (m["name"] as? String)?.ifBlank { null } ?: "(unnamed contact)",
+            label = (m["label"] as? String)?.ifBlank { null }
+                ?: MembersRepository.DEFAULT_CONTACT_LABEL,
+            phone = (m["phone"] as? String)?.ifBlank { null },
+            email = (m["email"] as? String)?.ifBlank { null },
+            createdAt = (m["createdAt"] as? String)?.ifBlank { null },
+            updatedAt = (m["updatedAt"] as? String)?.ifBlank { null },
+        )
+    }
+}
+
+/**
+ * The one sentence a portal-invite answer becomes, shared by the members screen
+ * and the Directory.
+ *
+ * TWO OF THE THREE ANSWERS EMAILED NOBODY. `already_active` and `no_email` are
+ * HTTP successes that sent nothing, so each has to say so out loud; reporting
+ * all three as "invite sent" is the fabricated success the repo forbids. Pure,
+ * so both callers are tested against the same wording without a Firebase.
+ */
+internal fun portalInviteMessage(status: String, householdName: String): String {
+    val who = householdName.trim().ifBlank { "This household" }
+    return when (status) {
+        "sent" -> "Portal invite emailed to $who. It expires in " +
+            "${MembersRepository.INVITE_TTL_DAYS} days, and whoever opens it manages the " +
+            "household and receives its notifications."
+        "already_active" -> "No invite sent: $who already has an active portal account."
+        "no_email" -> "No invite sent: $who has no email address on file. Add one on the " +
+            "household profile, then try again."
+        else -> "No invite sent: the server answered \"$status\", which this screen does not know."
+    }
+}
+
+/** True only for the answer that actually emailed somebody. */
+internal fun portalInviteSent(status: String): Boolean = status == "sent"
 
 /** `2026-05-20` from an ISO-8601 string; null in, null out, never today. */
 internal fun inviteDate(iso: String?): String? =

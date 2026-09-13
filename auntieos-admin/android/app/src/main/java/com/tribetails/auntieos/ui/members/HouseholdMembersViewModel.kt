@@ -3,6 +3,8 @@ package com.tribetails.auntieos.ui.members
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.data.repository.MembersRepository
+import com.tribetails.auntieos.data.repository.portalInviteMessage
+import com.tribetails.auntieos.data.repository.portalInviteSent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,7 +16,11 @@ import kotlinx.coroutines.launch
  * The flat data-class UiState + Kotlin `Result` idiom used by
  * `CoveragePackageViewModel` and `AdminSettingsViewModel`. The React mirror is
  * `auntieos-admin/src/screens/HouseholdMembers.tsx`; the two screens call the
- * same callables and have to move together. `mintInvite` is no longer one of
+ * same callables and have to move together, including, since the 2026-09-12
+ * ruling, `listHouseholdContacts` / `saveHouseholdContact` /
+ * `removeHouseholdContact` (a person with no portal account) and
+ * `inviteKinfolkToPortal` (the claim link that hands somebody the household).
+ * Two actions, two outcomes, and both clients offer both. `mintInvite` is no longer one of
  * them: the typed-address "Invite a primary by email" dialog is gone (issue
  * #684), so this ViewModel has no mint state and no mint handler any more.
  *
@@ -32,13 +38,18 @@ import kotlinx.coroutines.launch
 data class HouseholdMembersUiState(
     val members: List<MembersRepository.Member> = emptyList(),
     val invites: List<MembersRepository.Invite> = emptyList(),
+    /** People with no portal account. Read, failed and counted on their own. */
+    val contacts: List<MembersRepository.Contact> = emptyList(),
     val membersLoading: Boolean = false,
     val invitesLoading: Boolean = false,
+    val contactsLoading: Boolean = false,
     /** True only after a load that actually succeeded. Gates the empty state. */
     val membersLoaded: Boolean = false,
     val invitesLoaded: Boolean = false,
+    val contactsLoaded: Boolean = false,
     val membersError: String? = null,
     val invitesError: String? = null,
+    val contactsError: String? = null,
     /** "<uid>:<PermissionKey>" while that one toggle is in flight. */
     val savingPermission: String? = null,
     val permissionError: String? = null,
@@ -46,6 +57,18 @@ data class HouseholdMembersUiState(
     val revokeError: String? = null,
     val removingUid: String? = null,
     val removeError: String? = null,
+    val savingContact: Boolean = false,
+    val contactSaveError: String? = null,
+    val removingContactId: String? = null,
+    val contactRemoveError: String? = null,
+    val portalInviteBusy: Boolean = false,
+    val portalInviteError: String? = null,
+    /**
+     * A portal-invite answer that emailed NOBODY. `already_active` and
+     * `no_email` are successes that sent nothing, so they get a banner the
+     * operator has to dismiss rather than a toast that congratulates them.
+     */
+    val portalInviteNotice: String? = null,
     /** One-shot confirmation text for a write that landed. */
     val toast: String? = null,
 )
@@ -62,6 +85,7 @@ class HouseholdMembersViewModel(
     fun load() {
         loadMembers()
         loadInvites()
+        loadContacts()
     }
 
     fun loadMembers() {
@@ -102,6 +126,137 @@ class HouseholdMembersViewModel(
                     _uiState.value = _uiState.value.copy(
                         invitesLoading = false,
                         invitesError = "listInvites failed: ${err.message ?: "Load failed"}",
+                    )
+                },
+            )
+        }
+    }
+
+    fun loadContacts() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(contactsLoading = true, contactsError = null)
+            repository.listHouseholdContacts(kinfolkId).fold(
+                onSuccess = { rows ->
+                    _uiState.value = _uiState.value.copy(
+                        contacts = rows,
+                        contactsLoading = false,
+                        contactsLoaded = true,
+                    )
+                },
+                onFailure = { err ->
+                    // contactsLoaded stays as it was: a failed reload must not
+                    // promote an unknown list into a proven-empty one.
+                    _uiState.value = _uiState.value.copy(
+                        contactsLoading = false,
+                        contactsError = "listHouseholdContacts failed: ${err.message ?: "Load failed"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Records or edits a contact. Creates no account and sends no invite.
+     *
+     * A DIFF, NOT A REBUILD. [MembersRepository.ContactDraft] carries the four
+     * editable fields and nothing else, so a save cannot resend `createdAt` or
+     * invent a field the form has no control for; the blank ones are sent too,
+     * so clearing a phone number sticks.
+     */
+    fun saveContact(draft: MembersRepository.ContactDraft, onSaved: () -> Unit) {
+        if (_uiState.value.savingContact) return
+        if (draft.name.isBlank()) {
+            _uiState.value = _uiState.value.copy(contactSaveError = "A contact needs a name.")
+            return
+        }
+        _uiState.value = _uiState.value.copy(savingContact = true, contactSaveError = null)
+        viewModelScope.launch {
+            repository.saveHouseholdContact(kinfolkId, draft).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(
+                        savingContact = false,
+                        toast = if (draft.contactId == null) {
+                            "${draft.name.trim()} is a contact on $householdName. " +
+                                "No portal account was created."
+                        } else {
+                            "Saved ${draft.name.trim()}."
+                        },
+                    )
+                    onSaved()
+                    loadContacts()
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        savingContact = false,
+                        contactSaveError =
+                            "saveHouseholdContact failed: ${err.message ?: "The contact was not saved."}",
+                    )
+                },
+            )
+        }
+    }
+
+    fun removeContact(contact: MembersRepository.Contact, onRemoved: () -> Unit) {
+        if (_uiState.value.removingContactId != null) return
+        _uiState.value = _uiState.value.copy(
+            removingContactId = contact.contactId,
+            contactRemoveError = null,
+        )
+        viewModelScope.launch {
+            repository.removeHouseholdContact(kinfolkId, contact.contactId).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(
+                        removingContactId = null,
+                        toast = "${contact.name} is off $householdName.",
+                    )
+                    onRemoved()
+                    loadContacts()
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        removingContactId = null,
+                        contactRemoveError =
+                            "removeHouseholdContact failed: ${err.message ?: "The contact was not removed."}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * The household's primary claim link. The OTHER gesture the 2026-09-12
+     * ruling names, and the one that hands somebody the household: whoever
+     * opens the mail manages it and receives its notifications.
+     *
+     * Two of the server's three answers emailed nobody, and they surface as a
+     * notice rather than a toast for exactly that reason.
+     */
+    fun invitePortal() {
+        if (_uiState.value.portalInviteBusy) return
+        _uiState.value = _uiState.value.copy(
+            portalInviteBusy = true,
+            portalInviteError = null,
+            portalInviteNotice = null,
+        )
+        viewModelScope.launch {
+            repository.inviteKinfolkToPortal(kinfolkId).fold(
+                onSuccess = { status ->
+                    val message = portalInviteMessage(status, householdName)
+                    _uiState.value = if (portalInviteSent(status)) {
+                        _uiState.value.copy(portalInviteBusy = false, toast = message)
+                    } else {
+                        _uiState.value.copy(portalInviteBusy = false, portalInviteNotice = message)
+                    }
+                    if (portalInviteSent(status)) {
+                        loadInvites()
+                        loadMembers()
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.value = _uiState.value.copy(
+                        portalInviteBusy = false,
+                        portalInviteError =
+                            "inviteKinfolkToPortal failed: ${err.message ?: "The portal invite was not sent."}",
                     )
                 },
             )
@@ -207,9 +362,14 @@ class HouseholdMembersViewModel(
         _uiState.value = _uiState.value.copy(
             membersError = null,
             invitesError = null,
+            contactsError = null,
             permissionError = null,
             revokeError = null,
             removeError = null,
+            contactSaveError = null,
+            contactRemoveError = null,
+            portalInviteError = null,
+            portalInviteNotice = null,
         )
     }
 }

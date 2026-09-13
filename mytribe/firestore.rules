@@ -622,6 +622,23 @@ service cloud.firestore {
               || request.resource.data.permissions.kintales_only == resource.data.permissions.kintales_only);
       }
 
+ // Secondary CONTACTS: people a household can be reached through who hold no
+ // portal account (operator ruling, 2026-09-12). Closed to every client in both
+ // directions, on purpose, and deliberately NOT modelled on /members above:
+ //
+ //   * A contact has no uid, so `activeMember(fid)` cannot answer "is this row
+ //     about me" and there is no self-service branch to write. Every read and
+ //     write goes through listHouseholdContacts / saveHouseholdContact /
+ //     removeHouseholdContact, which gate on PRIMARY-or-staff exactly as the
+ //     roster callables do; the Admin SDK bypasses these rules.
+ //   * A contact row carries a name, a phone and sometimes an email for someone
+ //     who never agreed to a portal account. Serving that to every active member
+ //     by direct SDK read would be a wider audience than the callable grants,
+ //     for no screen that asks for it.
+      match /contacts/{contactId} {
+        allow read, write: if false;
+      }
+
       match /kin/{kinId} {
         allow read: if activeMember(fid) || isAuntie();
         allow create, delete: if hasPerm(fid, 'kin_edit');

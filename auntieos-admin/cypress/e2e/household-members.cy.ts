@@ -10,12 +10,19 @@ import { usingFixtureAdmin } from '../support/commands';
  * in the hero band, where the mock puts the household's actions; the Portal
  * access panel it used to sit in is gone.
  *
- * `listMembers` and `listInvites` (`api/members.ts`) are both callables, and
- * this harness pins callables at a dead port by design (docs/runbooks/e2e.md),
- * so both are stubbed here, the `my-notifications.cy.ts` pattern. #684 is a
- * structural claim about the screen (one form gone, one button still there)
- * and does not depend on what either callable returns, so an empty roster and
- * an empty invite list are enough to get the screen past its loading state.
+ * `listMembers`, `listInvites` and `listHouseholdContacts` are all callables,
+ * and this harness pins callables at a dead port by design
+ * (docs/runbooks/e2e.md), so all three are stubbed here, the
+ * `my-notifications.cy.ts` pattern. #684 is a structural claim about the screen
+ * (one form gone, the buttons still there) and does not depend on what any of
+ * them returns, so empty lists are enough to get the screen past its loading
+ * state.
+ *
+ * The 2026-09-12 ruling adds the second case below: "Add secondary contact" is
+ * back beside the invite, because a secondary contact does not have to be a
+ * portal user. It is a DIALOG, so #684's "no email input" assertion still holds
+ * on the screen at rest, which is what that ruling was about: a form sitting
+ * on the page offering to mail a claim link to a typed address.
  */
 
 const CALLABLE = (name: string) => `**/us-central1/${name}`;
@@ -23,6 +30,10 @@ const CALLABLE = (name: string) => `**/us-central1/${name}`;
 function stubMembersCallables() {
   cy.intercept('POST', CALLABLE('listMembers'), { statusCode: 200, body: { result: { members: [] } } });
   cy.intercept('POST', CALLABLE('listInvites'), { statusCode: 200, body: { result: { invites: [] } } });
+  cy.intercept('POST', CALLABLE('listHouseholdContacts'), {
+    statusCode: 200,
+    body: { result: { contacts: [] } },
+  });
 }
 
 describe('household members', () => {
@@ -42,5 +53,29 @@ describe('household members', () => {
 
     cy.contains('Invite a primary by email').should('not.exist');
     cy.get('input[type="email"]').should('not.exist');
+    cy.get('input[type="text"]').should('not.exist');
+  });
+
+  it('offers the contact and the invite as two separate actions, and the contact form is a dialog', () => {
+    stubMembersCallables();
+    cy.signIn();
+    cy.visit('/household-members/e2e-kf-1');
+
+    cy.contains('.den-panel-title', 'Primary contact', { timeout: 8_000 }).should('exist');
+    // Two gestures in the band, and the mock's own primary slot is the contact.
+    cy.contains('.den-heading button', 'Add secondary contact')
+      .should('have.class', 'auntie-btn--primary');
+    cy.contains('.den-heading button', 'Invite to portal')
+      .should('have.class', 'auntie-btn--ghost');
+
+    // Nothing is typed into until it is opened, which is what keeps #684 true.
+    cy.get('#hmcontact-name').should('not.exist');
+    cy.contains('.den-heading button', 'Add secondary contact').click();
+    cy.get('#hmcontact-name').should('be.visible');
+    cy.contains('Saving this creates no portal account').should('exist');
+    // The email field is here, and it invites nobody.
+    cy.get('#hmcontact-email').should('exist');
+    cy.contains('button', 'Cancel').click();
+    cy.get('#hmcontact-name').should('not.exist');
   });
 });
