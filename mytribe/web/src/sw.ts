@@ -11,9 +11,21 @@
  * (src/jsMain/kotlin/com/kinfolk/portal/push/PushToken.js.kt).
  */
 
-import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
-import { registerRoute } from 'workbox-routing';
+import {
+  precacheAndRoute,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+} from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst, NetworkOnly } from 'workbox-strategies';
+import {
+  NAVIGATION_CACHE_NAME,
+  NAVIGATION_FALLBACK_DENYLIST,
+  NAVIGATION_FALLBACK_URL,
+  NAVIGATION_NETWORK_TIMEOUT_SECONDS,
+  isNeverCachedHost,
+  navigationHandler,
+} from './lib/swPolicy';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
@@ -24,21 +36,51 @@ declare const self: ServiceWorkerGlobalScope & {
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-// Navigations: network-first (repo gotcha — stale-while-revalidate served
-// old bundles one load behind every release).
-registerRoute(
-  ({ request }) => request.mode === 'navigate',
-  new NetworkFirst({ cacheName: 'mytribe-pages', networkTimeoutSeconds: 5 }),
-);
+// Navigations: network-first, falling back to the cached shell once the
+// network has had its short turn.
+//
+// TWO SECONDS, DOWN FROM FIVE (operator ruling 2026-09-12). Mobile web is the
+// FIELD FALLBACK, and for iOS households the only client there is, so the case
+// that matters is a weak-but-alive signal. Five seconds of that was five
+// seconds of blank screen before the shell this worker already had.
+//
+// STILL NetworkFirst, NOT StaleWhileRevalidate, which would paint instantly.
+// SWR is the repo gotcha recorded in vite.config.ts: it kept serving old
+// bundles one load behind every release. `registerType: 'autoUpdate'` does not
+// rescue that. The new worker does take control as soon as it installs, but an
+// SWR navigation is answered FROM THE CACHE before its revalidation lands, so
+// the first visit after a deploy still paints the previous shell and only the
+// second one is current. The trade accepted here is the other way round: an
+// ordinary load waits up to two seconds and gets fresh HTML, and only a
+// genuinely stalled network sees the cache. lib/swPolicy.ts has the long form,
+// including why the deadline is not one second or zero.
+//
+// AND WHEN THE NETWORK LOSES, THE PRECACHED SHELL ANSWERS, whatever route was
+// asked for. NetworkFirst on its own can only fall back to a page it has
+// already seen, keyed by that exact URL, so a household opening a link to one
+// visit with no signal got nothing: the one journey this whole ruling is about.
+// Every route in this app resolves to the same shell, and firebase.json
+// rewrites `**` to /index.html, so answering any navigation with the precached
+// index.html is what the server does online, not a compromise. swPolicy.ts
+// carries the denylist and why a 404 never reaches this path.
 
-// Functions / Firestore / Auth traffic: never cached, must be live — breaking
-// this rule blocks the auth SDK (same rule the Kotlin app's worker had).
+// FIRST, so it wins by registration order: nothing below may cache these.
+registerRoute(({ url }) => isNeverCachedHost(url), new NetworkOnly());
+
+const networkFirstPage = new NetworkFirst({
+  cacheName: NAVIGATION_CACHE_NAME,
+  networkTimeoutSeconds: NAVIGATION_NETWORK_TIMEOUT_SECONDS,
+});
+const precachedShell = createHandlerBoundToURL(NAVIGATION_FALLBACK_URL);
+
 registerRoute(
-  ({ url }) =>
-    url.hostname.endsWith('cloudfunctions.net') ||
-    url.hostname.endsWith('googleapis.com') ||
-    url.hostname.endsWith('firebaseio.com'),
-  new NetworkOnly(),
+  new NavigationRoute(
+    navigationHandler({
+      fromNetwork: (options) => networkFirstPage.handle(options),
+      fromPrecachedShell: (options) => precachedShell(options),
+    }),
+    { denylist: NAVIGATION_FALLBACK_DENYLIST },
+  ),
 );
 
 // registerType: 'autoUpdate' expects the worker to activate itself immediately

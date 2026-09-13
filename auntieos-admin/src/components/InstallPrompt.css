@@ -1,0 +1,30 @@
+/**
+ * The install offer borrows Banner wholesale, so this file is only the two
+ * things Banner has no opinion about: the gap between its paragraphs, and the
+ * numbered list iOS needs because Safari has no install prompt to press.
+ *
+ * Every value is a token. Nothing here introduces a colour, a radius or a type
+ * ramp of its own.
+ */
+
+.install-prompt .banner-body > p {
+  margin: 0;
+}
+
+.install-prompt .banner-body > * + * {
+  margin-top: 10px;
+}
+
+.install-prompt__steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-dim);
+}
+
+.install-prompt__steps b {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}

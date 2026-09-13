@@ -5,8 +5,7 @@ import { getMyBookings, getMyHome, getMyKin, getMyKinTales } from '../api/portal
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { LaunchError } from './LaunchError';
-import { AddToHomeScreen } from '../components/AddToHomeScreen';
-import { PushPrompt } from '../components/PushPrompt';
+import { InstallAndAlerts } from '../components/InstallAndAlerts';
 import { PortalNav } from '../components/PortalNav';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
@@ -321,8 +320,9 @@ export function Home() {
           );
         })()}
 
-        <PushPrompt />
-        <AddToHomeScreen />
+        {/* Which of the two banners shows, and in what order, is a decision
+            of its own on iOS. See components/InstallAndAlerts.tsx. */}
+        <InstallAndAlerts />
 
         <p className="footnote">
           Cared for by <b>{home.data?.businessName || 'Tribe Tails Pet Care'}</b>
