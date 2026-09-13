@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronUp
 import com.composables.icons.lucide.Lucide
@@ -58,6 +59,7 @@ import com.tribetails.auntieos.ui.components.MergePreview
 import com.tribetails.auntieos.ui.components.AuntieEntityRow
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
+import com.tribetails.auntieos.ui.components.AuntieIconBtn
 import com.tribetails.auntieos.ui.components.AuntieIconTile
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AuntieSearchField
@@ -171,14 +173,36 @@ private val lengthOptions = listOf("short", "medium", "long")
 private fun titleCase(raw: String): String = raw.replaceFirstChar { it.uppercase() }
 
 @Composable
-fun CommunicateScreen(viewModel: CommunicateViewModel) {
+fun CommunicateScreen(
+    viewModel: CommunicateViewModel,
+    onNavigateToMarketingBlasts: () -> Unit = {},
+) {
     val state by viewModel.uiState.collectAsState()
     val dims = AuntieTheme.dims
     LaunchedEffect(Unit) { viewModel.loadRecentSends() }
 
     var mode by remember { mutableStateOf(ComposeMode.Personalize) }
 
-    AuntieScreenScaffold(title = "Communicate", imePaddingEnabled = true) {
+    AuntieScreenScaffold(
+        title = "Communicate",
+        imePaddingEnabled = true,
+        actions = {
+            // Marketing blasts (scheduled campaigns) is Communicate's sibling: the
+            // same act at a later time. Operator ruling 2026-09-12: it stays with
+            // communication rather than the admin dashboard's catch-all, so it is
+            // reached from here, the way Calendar reaches Scheduling Options
+            // (ScheduleViewScreen's `actions` icon) — not a new pattern. Not the
+            // Megaphone glyph: that already means "send now" on this screen (the
+            // Broadcast mode above), and a scheduled send is a different act.
+            AuntieIconBtn(onClick = onNavigateToMarketingBlasts) {
+                Icon(
+                    imageVector = Lucide.CalendarClock,
+                    contentDescription = "Marketing blasts",
+                    tint = AuntieTheme.colors.textDim,
+                )
+            }
+        },
+    ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
