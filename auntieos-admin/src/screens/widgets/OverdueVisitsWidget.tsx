@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint, ServicePill } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { overdueVisits } from '../../lib/dashboardInsights';
 import { humanizeDate } from '../../lib/invoiceFormat';
@@ -30,7 +31,7 @@ export function OverdueVisitsWidget() {
         state={sessions}
         what="visits"
         isEmpty={(rows) => overdueVisits(rows, todayIso).length === 0}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>Every visit is closed out.</EmptyHint>}
       >
         {(rows) => {

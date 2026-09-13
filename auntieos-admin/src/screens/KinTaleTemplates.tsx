@@ -57,6 +57,7 @@ import {
 } from '../lib/kinTaleTemplateEdit';
 import { ConditionOp } from '../lib/kinTale/model';
 import { DenScreenHeading, DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { WizardModal, type WizardStep } from '../components/WizardModal';
 import { GhostButton, IconButton } from '../components/Buttons';
@@ -259,7 +260,7 @@ export function KinTaleTemplates() {
         what="KinTale templates"
         isEmpty={() => false}
         empty={null}
-        loading={<p className="ktt__hint">Loading templates…</p>}
+        loading={<LoadingRow label="Loading templates…" className="ktt__hint" />}
       >
         {() => (
           <TemplatePicker

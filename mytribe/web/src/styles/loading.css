@@ -58,6 +58,15 @@
 /* For a wait that has to sit inside running text -- the Home hero's <h1>, where
    a block-level live region is not valid markup. Sized from the current font
    rather than fixed, so it reads as part of the line it is in. */
+/* For a ring drawn on a coloured ground: the gradient and navy `.btn` faces,
+   where the dark `--hairline` track and orange head would both disappear.
+   Inherits the label's own colour, so it is correct on every button variant
+   without knowing which one it is on. */
+.loading-spinner--oncolor {
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+}
+
 .loading-spinner--inline {
   display: inline-block;
   width: 0.62em;

@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { holidayRunway } from '../../lib/dashboardInsights';
 import { humanizeDate } from '../../lib/invoiceFormat';
@@ -32,7 +33,7 @@ export function HolidayRunwayWidget() {
         state={sessions}
         what="visits"
         isEmpty={(rows) => holidayRunway(rows, todayIso).length === 0}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>Couldn&rsquo;t read today&rsquo;s date, so no holidays can be placed.</EmptyHint>}
       >
         {(rows) => (

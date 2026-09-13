@@ -8,7 +8,7 @@ import { PortalNav } from '../components/PortalNav';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/gallery.css';
 
@@ -139,7 +139,7 @@ export function Gallery() {
                 onClick={() => void photos.fetchNextPage()}
                 disabled={photos.isFetchingNextPage}
               >
-                {photos.isFetchingNextPage ? 'Loading…' : 'Show older photos'}
+                {photos.isFetchingNextPage ? <BusyLabel>Loading…</BusyLabel> : 'Show older photos'}
               </button>
             )}
           </section>

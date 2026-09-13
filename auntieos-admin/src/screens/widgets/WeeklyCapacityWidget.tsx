@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { weeklyCapacity } from '../../lib/dashboardInsights';
 import { useSessionsStream, useTodayIso } from './homeData';
@@ -32,7 +33,7 @@ export function WeeklyCapacityWidget() {
         // state is "the day itself would not parse", which cannot happen from
         // `useTodayIso` and is handled rather than assumed away.
         isEmpty={(rows) => weeklyCapacity(rows, todayIso) === null}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>Couldn&rsquo;t read today&rsquo;s date, so this week can&rsquo;t be measured.</EmptyHint>}
       >
         {(rows) => {

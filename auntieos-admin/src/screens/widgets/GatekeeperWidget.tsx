@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { householdVisitGaps, type HouseholdGap } from '../../lib/dashboardInsights';
 import { useSessionsStream, useTodayIso } from './homeData';
@@ -34,7 +35,7 @@ export function GatekeeperWidget() {
         state={sessions}
         what="visits"
         isEmpty={(rows) => householdVisitGaps(rows, todayIso).length === 0}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>No completed visits yet to measure gaps against.</EmptyHint>}
       >
         {(rows) => {

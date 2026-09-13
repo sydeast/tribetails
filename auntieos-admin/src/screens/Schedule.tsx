@@ -57,6 +57,7 @@ import {
   type DenTone,
 } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { BookingDetailModal } from '../components/BookingDetailModal';
@@ -453,7 +454,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
         // (loading/error) does not count as "proven non-empty" here, its
         // own inline error/loading note still surfaces separately below.
         isEmpty={(data) => data.length === 0 && !(busyState.status === 'ready' && busyState.data.length > 0)}
-        loading={<p className="schedule__hint">Loading the schedule…</p>}
+        loading={<LoadingRow label="Loading the schedule…" className="schedule__hint" />}
         empty={<EmptyHint>Nothing on the schedule yet.</EmptyHint>}
       >
         {(sessions) => {

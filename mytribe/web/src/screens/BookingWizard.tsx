@@ -14,7 +14,7 @@ import { PortalNav } from '../components/PortalNav';
 import { BookingMonthPicker } from '../components/BookingMonthPicker';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_HORIZON_DAYS,
@@ -599,7 +599,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   disabled={submit.isPending || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
                   onClick={() => submit.mutate()}
                 >
-                  {submit.isPending ? 'Creating…' : 'Create Booking'}
+                  {submit.isPending ? <BusyLabel>Creating…</BusyLabel> : 'Create Booking'}
                 </button>
               )}
             </div>

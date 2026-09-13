@@ -21,7 +21,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav, type PortalNavTab } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/messages.css';
 
@@ -414,7 +414,7 @@ export function Messages() {
                 disabled={!editor || !editorState || editorState.isEmpty || assistBusy}
                 onClick={() => handleAssist('polish')}
               >
-                {assistPendingMode === 'polish' ? 'Polishing…' : 'Polish'}
+                {assistPendingMode === 'polish' ? <BusyLabel>Polishing…</BusyLabel> : 'Polish'}
               </button>
               <button
                 type="button"
@@ -422,7 +422,7 @@ export function Messages() {
                 disabled={!editor || assistBusy || messages.length === 0}
                 onClick={() => handleAssist('suggest_reply')}
               >
-                {assistPendingMode === 'suggest_reply' ? 'Thinking…' : 'Suggest reply'}
+                {assistPendingMode === 'suggest_reply' ? <BusyLabel>Thinking…</BusyLabel> : 'Suggest reply'}
               </button>
               <button
                 type="button"
@@ -430,7 +430,7 @@ export function Messages() {
                 disabled={!editor || !editorState || editorState.isEmpty || sendMutation.isPending}
                 onClick={handleSend}
               >
-                {sendMutation.isPending ? 'Sending…' : 'Send'}
+                {sendMutation.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send'}
               </button>
             </div>
           </div>

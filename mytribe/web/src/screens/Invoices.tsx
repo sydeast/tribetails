@@ -17,7 +17,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
@@ -263,7 +263,7 @@ function OpenRow(props: { invoice: InvoiceDto; divider: boolean; paying: boolean
               }}
               disabled={paying}
             >
-              {paying ? 'Opening…' : 'Pay now'}
+              {paying ? <BusyLabel>Opening…</BusyLabel> : 'Pay now'}
             </button>
           ) : (
             <span className="btn ghost sm">View</span>
@@ -327,7 +327,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeeming: bo
         {!redeemed && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
             <button className="btn grad block" onClick={() => onRedeem()} disabled={redeeming}>
-              {redeeming ? 'Working…' : 'Save to Account Balance'}
+              {redeeming ? <BusyLabel>Working…</BusyLabel> : 'Save to Account Balance'}
             </button>
             {redeemError && <p style={{ color: 'var(--red)', marginTop: 8 }}>{redeemError}</p>}
           </div>

@@ -23,6 +23,7 @@ import { type Async } from '../lib/async';
 import { useCollection } from '../lib/firestore';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
 import { ConversationThread } from './ConversationThread';
@@ -400,7 +401,7 @@ export function Inbox({ onSelectThread }: InboxProps) {
           state={threads}
           what="messages"
           isEmpty={(data) => data.length === 0}
-          loading={<p className="inbox__hint">Loading messages…</p>}
+          loading={<LoadingRow label="Loading messages…" className="inbox__hint" />}
           empty={
             <EmptyHint>
               No messages yet. When a kinfolk messages you from MyTribe, the thread shows up here.

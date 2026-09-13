@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { DenPanel, EmptyHint, ServicePill } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { GhostButton } from '../../components/Buttons';
 import { sessionClock, sessionHousehold, sessionState, sessionStateInfo } from '../../lib/sessionFormat';
@@ -48,7 +49,7 @@ export function TodaysPackWidget({ onOpenSessions }: TodaysPackWidgetProps) {
         state={sessions}
         what="today's visits"
         isEmpty={() => pack !== null && pack.visits.length === 0}
-        loading={<EmptyHint>Loading today&rsquo;s visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading today&rsquo;s visits…" className="den-hint" />}
         empty={
           <>
             <EmptyHint>Nothing on the books today. Enjoy the quiet.</EmptyHint>

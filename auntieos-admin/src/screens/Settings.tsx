@@ -3,6 +3,7 @@ import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import { saveBusinessSettings } from '../api/settingsWrite';
 import { type Async } from '../lib/async';
 import { DenScreenHeading } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { lastSavedLabel } from '../lib/settingsFormat';
 import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from './settings/SectionNav';
@@ -286,7 +287,7 @@ function renderSection(
       state={settings}
       what="business settings"
       isEmpty={() => false}
-      loading={<p className="settings__hint">Loading business settings…</p>}
+      loading={<LoadingRow label="Loading business settings…" className="settings__hint" />}
       empty={<p className="settings__hint">No settings found.</p>}
     >
       {(data) => renderDataSection(id, data, persist, applyServerChange)}

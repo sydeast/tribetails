@@ -4,6 +4,7 @@ import { listExpirations } from '../../api/expirations';
 import { localDateIso, humanizeDate } from '../../lib/invoiceFormat';
 import { upcomingExpirations } from '../../lib/dashboardInsights';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import './widgets.css';
 
@@ -41,7 +42,7 @@ export function ExpirationCountdownWidget({ withinDays = 60 }: ExpirationCountdo
         state={rows}
         what="expirations"
         isEmpty={(data) => upcomingExpirations(data, todayIso, withinDays).length === 0}
-        loading={<EmptyHint>Loading expirations…</EmptyHint>}
+        loading={<LoadingRow label="Loading expirations…" className="den-hint" />}
         empty={<EmptyHint>Nothing lapses in the next {withinDays} days.</EmptyHint>}
       >
         {(data) => {

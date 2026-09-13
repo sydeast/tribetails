@@ -10,6 +10,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { relativeDay, speciesEmoji } from '../lib/portalFormat';
+import { BusyLabel } from '../components/Loading';
 
 const KIN_VARIANTS = ['k1', 'k2', 'k3', 'k4'] as const;
 
@@ -77,7 +78,7 @@ export function TribeHub() {
             {profileView.kind === 'offline'
               ? 'We can\u2019t reach your tribe right now.'
               : profileView.kind !== 'data'
-                ? 'Loading your tribe…'
+                ? <BusyLabel>Loading your tribe…</BusyLabel>
                 : displayName || 'Your Tribe'}
           </h1>
         </header>

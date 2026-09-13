@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { speciesBreakdown } from '../../lib/dashboardInsights';
 import { useKinStream } from './homeData';
@@ -26,7 +27,7 @@ export function PetBreakdownWidget() {
         state={kin}
         what="the pack"
         isEmpty={(rows) => speciesBreakdown(rows).length === 0}
-        loading={<EmptyHint>Loading the pack…</EmptyHint>}
+        loading={<LoadingRow label="Loading the pack…" className="den-hint" />}
         empty={<EmptyHint>No kin on the roster yet.</EmptyHint>}
       >
         {(rows) => {

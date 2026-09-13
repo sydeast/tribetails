@@ -12,6 +12,7 @@ import {
 import { listTemplates, type TemplateSummary } from '../api/templates';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -435,7 +436,7 @@ export function TemplateAssignments({ onClose }: TemplateAssignmentsProps) {
           state={catalog}
           what="the routing table"
           isEmpty={(rows) => rows.length === 0}
-          loading={<p className="tassign__hint">Loading the routing table…</p>}
+          loading={<LoadingRow label="Loading the routing table…" className="tassign__hint" />}
           empty={
             <EmptyHint>
               listCatalogKeys returned no keys. The catalog is compiled into the backend, so this

@@ -53,6 +53,29 @@ export interface VisitLifecycleController {
   write: LifecycleWriteState;
   /** True while a write is in flight; every clock control should be disabled. */
   saving: boolean;
+  /**
+   * Re-run the write that is in flight, for the "Sync now" offer a clock
+   * control shows once the wait passes `lib/slowWait.ts#SLOW_WAIT_MS` (operator
+   * ruling, 2026-09-12). `null` when nothing is in flight.
+   *
+   * SAFE TO PRESS TWICE, and that is a property of the write rather than a
+   * hope. `patchVisitLifecycle` decides against the row the screen is already
+   * holding and returns `changed: false` WITHOUT writing when the action is
+   * already true -- the same guard that stops a double clock-in from moving the
+   * arrival time. So a re-attempt that races a first attempt which did land
+   * reports "Already ARRIVED. Nothing was changed", never a second arrival.
+   *
+   * This is the only WRITE in either app that a sync offer is pointed at.
+   * Writes that CREATE are not idempotent, because nothing client-side can
+   * abort a request already away, so those offer a re-READ instead. See the
+   * rule on `components/SlowWaitNotice.tsx`.
+   *
+   * It deliberately does NOT re-run the location side effects that `confirm`
+   * fires (`beginVisitTracking` and friends). Those are tied to the browser's
+   * gesture-scoped location prompt and to a watch that is already running; a
+   * sync is a re-send of the Firestore write, not a second clock-in.
+   */
+  retry: (() => void) | null;
   /** Open the confirm gate on one action, clearing whatever the last one said. */
   ask: (action: LifecycleActionDef) => void;
   /** Close the confirm gate without writing. */
@@ -85,6 +108,13 @@ export function useVisitLifecycle(
   const [pending, setPending] = useState<LifecycleActionDef | null>(null);
   const [write, setWrite] = useState<LifecycleWriteState>({ status: 'idle' });
   const sessionId = session?._id ?? null;
+  /**
+   * The action whose write is currently in flight, so "Sync now" knows what to
+   * re-send. A ref rather than state: it is read inside an event handler, never
+   * rendered, and putting it in state would re-render every clock control on
+   * the board for a value none of them draw.
+   */
+  const inFlight = useRef<VisitLifecycleAction | null>(null);
 
   /**
    * Which write the notification sentence is still allowed to finish.
@@ -110,6 +140,7 @@ export function useVisitLifecycle(
   async function run(action: VisitLifecycleAction): Promise<boolean> {
     if (session === null) return false;
     const seq = (writeSeq.current += 1);
+    inFlight.current = action;
     setWrite({ status: 'saving' });
     try {
       const res = await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
@@ -154,6 +185,15 @@ export function useVisitLifecycle(
     pending,
     write,
     saving: write.status === 'saving',
+    // Offered only while a write is actually in flight: a sync button on a
+    // settled clock would re-send a transition the operator did not ask for.
+    retry:
+      write.status === 'saving' && inFlight.current !== null
+        ? () => {
+            const action = inFlight.current;
+            if (action !== null) void run(action);
+          }
+        : null,
     ask: (action) => {
       setWrite({ status: 'idle' });
       setPending(action);

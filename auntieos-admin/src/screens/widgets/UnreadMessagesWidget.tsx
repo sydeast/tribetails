@@ -3,6 +3,7 @@ import { listConversations } from '../../api/inbox';
 import { unreadClientMessages, unreadClientMessageCount } from '../../lib/dashboardInsights';
 import { threadClock, threadMachineTime } from '../../lib/inboxFormat';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { GhostButton } from '../../components/Buttons';
 import './widgets.css';
@@ -36,7 +37,7 @@ export function UnreadMessagesWidget({ onOpenInbox, limit = 5 }: UnreadMessagesW
         state={rows}
         what="conversations"
         isEmpty={(data) => unreadClientMessageCount(data) === 0}
-        loading={<EmptyHint>Loading messages…</EmptyHint>}
+        loading={<LoadingRow label="Loading messages…" className="den-hint" />}
         empty={<EmptyHint>Inbox is all caught up.</EmptyHint>}
       >
         {(data) => {

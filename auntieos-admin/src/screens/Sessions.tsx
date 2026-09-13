@@ -27,6 +27,8 @@ import { useCollection } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
 import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../components/DenScreenKit';
+import { AsyncLoading } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
@@ -249,7 +251,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
         // the books" line rides UNDER the groups instead of replacing them. The
         // Archive is a plain list and keeps the ordinary empty state.
         isEmpty={(data) => mode === 'archive' && data.length === 0}
-        loading={<p className="sessions__hint">Loading Kin Care sessions…</p>}
+        loading={<LoadingRow label="Loading Kin Care sessions…" className="sessions__hint" />}
         empty={<EmptyHint>No Kin Cares in this range.</EmptyHint>}
       >
         {(data) => (
@@ -583,6 +585,20 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
         </div>
       )}
 
+      {/* THE STATUS TAP STAYS PESSIMISTIC AND NOW SAYS SO (ruling, 2026-09-12).
+          The buttons above already disable while the write is away, which was
+          the whole of the feedback: a greyed GhostButton and nothing else, so a
+          wedged `updateDoc` left the operator looking at a dead row with no way
+          forward. This adds the moving cue, and at 10s the "Sync now" offer.
+          It does NOT paint the new status; that still arrives from the server,
+          as `clock.write` below. `clock.retry` re-sends the same transition,
+          which is safe because `patchVisitLifecycle` answers `changed: false`
+          rather than writing twice. */}
+      {clock.saving && (
+        <AsyncLoading what="the visit clock" retry={clock.retry ?? undefined}>
+          <LoadingRow label="Updating the visit clock…" className="sessions__hint" />
+        </AsyncLoading>
+      )}
       {clock.write.status === 'error' && (
         <ErrorHint>Couldn&rsquo;t update the visit clock. {clock.write.message}</ErrorHint>
       )}

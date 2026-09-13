@@ -39,6 +39,8 @@ import {
   ErrorHint,
 } from '../components/DenScreenKit';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { LoadingRow } from '../components/LoadingRow';
+import { AsyncLoading } from '../components/AsyncRegion';
 import { Dialog } from '../components/Dialog';
 import { RouteMap } from '../components/RouteMap';
 import './SessionDetail.css';
@@ -580,6 +582,15 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                 )}
                 {state === 'arrived' && sessionId !== null && (
                   <VisitTrackingIndicator sessionId={sessionId} />
+                )}
+                {/* Same as the board's card (Sessions.tsx): the tap waits for
+                    the server, and now shows that it is waiting. Nothing is
+                    painted optimistically; `clock.write` below is still what
+                    reports the new status once Firestore acks it. */}
+                {clock.saving && (
+                  <AsyncLoading what="the visit clock" retry={clock.retry ?? undefined}>
+                    <LoadingRow label="Updating the visit clock…" className="den-hint" />
+                  </AsyncLoading>
                 )}
                 {clock.write.status === 'error' && (
                   <ErrorHint>

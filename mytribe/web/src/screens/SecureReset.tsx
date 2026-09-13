@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { confirmSecureReset } from '../api/portal';
 import { validateNewPassword } from '../api/claimFlow';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Secure-account flow after a kinfolk flags a password reset they did not
@@ -135,7 +136,7 @@ export function SecureReset() {
 
               <div className="secactions">
                 <button type="submit" className="btn grad block" disabled={busy}>
-                  {busy ? 'Securing…' : '\u{1F512} Secure my account and notify Tribe Tails'}
+                  {busy ? <BusyLabel>Securing…</BusyLabel> : '\u{1F512} Secure my account and notify Tribe Tails'}
                 </button>
               </div>
             </form>

@@ -14,6 +14,7 @@ import {
 import { isEmailAlreadyInUse, isEmailUnverified, mapAuthError } from '../lib/authErrors';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Invite-claim funnel, reached from the welcome email
@@ -213,7 +214,7 @@ export function ClaimInvite() {
           </p>
           <div style={{ marginTop: 18 }}>
             <button className="btn grad block" onClick={signOut} disabled={signingOut}>
-              {signingOut ? 'Signing out…' : 'Sign out and continue'}
+              {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out and continue'}
             </button>
           </div>
         </section>
@@ -243,13 +244,14 @@ export function ClaimInvite() {
               })
               .finally(() => setInFlight(false));
           }}
+          // A plain string, not a BusyLabel: `retryLabel` is typed `string`.
           retryLabel={inFlight ? 'Trying…' : 'Try Again'}
           onSkip={() => void navigate({ to: '/signin' })}
         />
       ) : (
         <section className="glass card d1" style={{ textAlign: 'center' }}>
           <h3 className="title" style={{ justifyContent: 'center' }}>
-            {step?.kind === 'autoAccept' ? 'Accepting your invite…' : 'Opening your invite…'}
+            {step?.kind === 'autoAccept' ? <BusyLabel>Accepting your invite…</BusyLabel> : 'Opening your invite…'}
           </h3>
         </section>
       )}
@@ -358,12 +360,12 @@ function VerifyEmailCard(props: { invitedEmail: string; onVerified: () => void }
       )}
       <div style={{ marginTop: 18 }}>
         <button className="btn grad block" onClick={check} disabled={checking || resending}>
-          {checking ? 'Checking…' : "I've confirmed it"}
+          {checking ? <BusyLabel>Checking…</BusyLabel> : "I've confirmed it"}
         </button>
       </div>
       <div className="forgotrow">
         <a onClick={resending ? undefined : resend}>
-          {resending ? 'Sending…' : 'Send the email again'}
+          {resending ? <BusyLabel>Sending…</BusyLabel> : 'Send the email again'}
         </a>
       </div>
     </section>
@@ -512,7 +514,7 @@ function CreateAccountCard(props: {
         )}
 
         <button type="submit" className="btn grad block" disabled={props.inFlight || !password}>
-          {props.inFlight ? 'Working…' : props.signInMode ? 'Sign in & join' : 'Create account & join'}
+          {props.inFlight ? <BusyLabel>Working…</BusyLabel> : props.signInMode ? 'Sign in & join' : 'Create account & join'}
         </button>
       </form>
 

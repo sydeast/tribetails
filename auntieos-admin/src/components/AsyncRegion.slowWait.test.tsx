@@ -99,6 +99,37 @@ describe('AsyncRegion: loading indicator and slow-wait escalation', () => {
   });
 
   /**
+   * THE HOLE THIS CAUGHT. `AsyncLoading` only draws the Spinner in its DEFAULT
+   * branch, so the ~46 regions that passed their own bare sentence through
+   * `loading=` kept a motionless line while every region that did not gained
+   * one. The sweep's answer is that a `loading=` override must itself carry a
+   * cue: `LoadingRow` is the idiom, and this is the test that says so.
+   *
+   * The escalation is unaffected either way, because the notice is a SIBLING of
+   * the override rather than a replacement for it -- which is what lets a
+   * screen keep a real skeleton and still gain a way forward at 10s.
+   */
+  it('a caller override still escalates, and is responsible for its own cue', () => {
+    render(
+      <AsyncRegion
+        state={{ status: 'loading', retry: () => {} }}
+        what="bookings"
+        isEmpty={(d: string[]) => d.length === 0}
+        empty={<p>No bookings.</p>}
+        loading={<p className="bare">Loading bookings…</p>}
+      >
+        {(d) => <p>{d.join(',')}</p>}
+      </AsyncRegion>,
+    );
+    // The override replaced the default, so the default's spinner is gone: a
+    // bare-text override is exactly the motionless wait the ruling is about.
+    expect(screen.queryByRole('img', { name: 'Loading bookings' })).toBeNull();
+    // But the escalation still arrives, because it is a sibling.
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeTruthy();
+  });
+
+  /**
    * An offline pause is not a slow server. The admin's offline treatment is
    * its own (RouteError), and a Sync button on a device with no signal fails
    * the moment it is pressed.

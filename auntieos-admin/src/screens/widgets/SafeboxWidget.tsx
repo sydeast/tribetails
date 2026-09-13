@@ -6,6 +6,7 @@ import { useOneShot } from '../../lib/useOneShot';
 import { nextUpcomingSession, safeboxAccessLines } from '../../lib/dashboardInsights';
 import { sessionHousehold, sessionWindow } from '../../lib/sessionFormat';
 import { DenPanel, ServicePill, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { MaskedValue } from '../../components/MaskedValue';
 import './widgets.css';
@@ -36,7 +37,7 @@ export function SafeboxWidget() {
         state={rows}
         what="visits"
         isEmpty={(data) => nextUpcomingSession(data, nowIso) === null}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>No upcoming visits on the books.</EmptyHint>}
       >
         {(data) => {
@@ -76,7 +77,7 @@ function SafeboxAccess({ kinfolkId }: SafeboxAccessProps) {
       state={profile}
       what="household access"
       isEmpty={() => false}
-      loading={<EmptyHint>Loading access notes…</EmptyHint>}
+      loading={<LoadingRow label="Loading access notes…" className="den-hint" />}
       empty={<EmptyHint>Nothing to show.</EmptyHint>}
     >
       {(p) => {

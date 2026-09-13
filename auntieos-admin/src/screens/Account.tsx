@@ -26,6 +26,7 @@ import {
 } from '../lib/myNotificationsEdit';
 import { type Async } from '../lib/async';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { LoadingRow } from '../components/LoadingRow';
 import { DenScreenHeading, DenPanel, StatusPill } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
@@ -295,7 +296,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
         state={profile}
         what="profile"
         isEmpty={() => false}
-        loading={<p className="account__hint">Loading your profile…</p>}
+        loading={<LoadingRow label="Loading your profile…" className="account__hint" />}
         empty={null}
       >
         {(p) => {
@@ -684,7 +685,7 @@ function BusinessProfilePanel() {
       state={state}
       what="business settings"
       isEmpty={() => false}
-      loading={<p className="account__hint">Loading business settings…</p>}
+      loading={<LoadingRow label="Loading business settings…" className="account__hint" />}
       empty={null}
     >
       {(data) => (
@@ -803,7 +804,7 @@ function NotificationChannelsPanel({ onOpenNotifications }: AccountProps) {
         state={state}
         what="notification settings"
         isEmpty={() => false}
-        loading={<p className="account__hint">Loading notification settings…</p>}
+        loading={<LoadingRow label="Loading notification settings…" className="account__hint" />}
         empty={null}
       >
         {(data) => (

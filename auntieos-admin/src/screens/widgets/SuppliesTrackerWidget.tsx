@@ -3,6 +3,7 @@ import { useOneShot } from '../../lib/useOneShot';
 import { listSupplies, adjustSupply, type SupplyRow } from '../../api/supplies';
 import { lowSupplies } from '../../lib/dashboardInsights';
 import { DenPanel, EmptyHint, ErrorHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { GhostButton } from '../../components/Buttons';
 import './widgets.css';
@@ -32,7 +33,7 @@ export function SuppliesTrackerWidget() {
         state={list}
         what="supplies"
         isEmpty={(data) => data.lowCount === 0}
-        loading={<EmptyHint>Loading supplies…</EmptyHint>}
+        loading={<LoadingRow label="Loading supplies…" className="den-hint" />}
         empty={<EmptyHint>Everything is stocked above par.</EmptyHint>}
       >
         {(data) => {

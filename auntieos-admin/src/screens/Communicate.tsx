@@ -19,6 +19,7 @@ import {
 import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
 import { CommunicateCompose } from './CommunicateCompose';
@@ -220,7 +221,7 @@ function RecentSends() {
         state={sends}
         what="recent sends"
         isEmpty={(data) => data.length === 0}
-        loading={<p className="communicate__hint">Loading recent sends…</p>}
+        loading={<LoadingRow label="Loading recent sends…" className="communicate__hint" />}
         empty={
           <EmptyHint>
             No external sends yet. Sends from Communicate show here with delivery and open counts.

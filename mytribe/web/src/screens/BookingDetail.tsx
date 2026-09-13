@@ -8,7 +8,7 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_TIMELINE_STEPS,
@@ -317,7 +317,7 @@ export function BookingDetail() {
                       onClick={submitNote}
                       disabled={addNote.isPending || noteBody.trim().length === 0}
                     >
-                      {'\u{1F4DD}'} {addNote.isPending ? 'Saving…' : 'Save Note'}
+                      {'\u{1F4DD}'} {addNote.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Note'}
                     </button>
                     {noteSaved && !addNote.isError ? (
                       <span className="note-ok">{'✓'} Note saved</span>
@@ -408,7 +408,7 @@ export function BookingDetail() {
                             onClick={() => submitReschedule()}
                             disabled={reschedule.isPending || proposedAt.trim().length === 0}
                           >
-                            {reschedule.isPending ? 'Sending…' : 'Send this time to Tribe Tails'}
+                            {reschedule.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send this time to Tribe Tails'}
                           </button>
                           <button
                             className="btn ghost block"
@@ -475,7 +475,7 @@ export function BookingDetail() {
                         onClick={() => cancelVisit.mutate(cancelReason)}
                         disabled={cancelVisit.isPending}
                       >
-                        {cancelVisit.isPending ? 'Sending…' : 'Yes, request cancellation'}
+                        {cancelVisit.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Yes, request cancellation'}
                       </button>
                       <button
                         className="btn ghost block"

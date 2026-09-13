@@ -1,4 +1,5 @@
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { frequentFlyers } from '../../lib/dashboardInsights';
 import { useSessionsStream, useTodayIso } from './homeData';
@@ -34,7 +35,7 @@ export function FrequentFlyersWidget() {
         state={sessions}
         what="visits"
         isEmpty={(rows) => frequentFlyers(rows, todayIso, WINDOW_DAYS).length === 0}
-        loading={<EmptyHint>Loading visits…</EmptyHint>}
+        loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>No completed visits in the last 90 days.</EmptyHint>}
       >
         {(rows) => {

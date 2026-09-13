@@ -31,6 +31,7 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { RouteMap } from '../components/RouteMap';
+import { BusyLabel } from '../components/Loading';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -176,7 +177,7 @@ export function KinTales() {
               disabled={loadMore.isPending || cursor === undefined}
               onClick={() => cursor !== undefined && loadMore.mutate(cursor)}
             >
-              {loadMore.isPending ? 'Loading…' : 'Load More'}
+              {loadMore.isPending ? <BusyLabel>Loading…</BusyLabel> : 'Load More'}
             </button>
             {loadMore.isError && <p className="sub">Couldn&rsquo;t load more. Try again.</p>}
           </div>
@@ -627,7 +628,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
                   />
                   <div className="frow">
                     <button className="btn grad" disabled={post.isPending} onClick={() => submitReply(c.id)}>
-                      {post.isPending ? 'Posting…' : 'Reply'}
+                      {post.isPending ? <BusyLabel>Posting…</BusyLabel> : 'Reply'}
                     </button>
                     <button
                       type="button"
@@ -662,7 +663,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
           />
           <div className="frow">
             <button className="btn grad" disabled={post.isPending} onClick={submitTop}>
-              {post.isPending ? 'Posting…' : 'Post Comment'}
+              {post.isPending ? <BusyLabel>Posting…</BusyLabel> : 'Post Comment'}
             </button>
             {topError ? <span className="hint err">{topError}</span> : <span className="hint ok">Be kind, your Aunties read these.</span>}
           </div>

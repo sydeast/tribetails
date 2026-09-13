@@ -143,12 +143,18 @@ fun rememberSlowWait(
         elapsed = true
     }
 
-    val phase = when {
-        !active -> WaitPhase.Idle
-        !online -> WaitPhase.Waiting
-        elapsed -> WaitPhase.Slow
-        else -> WaitPhase.Waiting
-    }
+    // Delegates to the pure rule rather than restating it. An earlier version
+    // re-implemented the offline branch here, which meant a broken `waitPhase`
+    // could still pass this composable's tests: the mutation check caught
+    // exactly that. `startedAtMs` is 0/null rather than a real clock because
+    // the deadline is owned by the `delay` above; `waitPhase` is consulted for
+    // the DECISION, not the timing.
+    val phase = waitPhase(
+        startedAtMs = if (active) 0L else null,
+        nowMs = if (elapsed) thresholdMs else 0L,
+        online = online,
+        thresholdMs = thresholdMs,
+    )
 
     return SlowWaitState(
         phase = phase,

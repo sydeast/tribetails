@@ -25,7 +25,7 @@ import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { LoadingLine } from '../components/Loading';
+import { BusyLabel, LoadingLine } from '../components/Loading';
 import { viewOfQuery } from '../lib/queryState';
 import '../styles/invoices.css';
 
@@ -380,7 +380,7 @@ export function InvoiceDetail() {
                     />
                   )}
                   <button className="btn ghost" onClick={() => downloadPdf.mutate()} disabled={downloadPdf.isPending}>
-                    {'⬇'} {downloadPdf.isPending ? 'Preparing PDF…' : 'Download PDF'}
+                    {'⬇'} {downloadPdf.isPending ? <BusyLabel>Preparing PDF…</BusyLabel> : 'Download PDF'}
                   </button>
                   {pay.isError && (
                     <p className="doc-err">
@@ -425,7 +425,7 @@ export function InvoiceDetail() {
                     onClick={() => decideQuote.mutate('accept')}
                     disabled={decideQuote.isPending}
                   >
-                    {decideQuote.isPending && decideQuote.variables === 'accept' ? 'Working…' : 'Accept quote'}
+                    {decideQuote.isPending && decideQuote.variables === 'accept' ? <BusyLabel>Working…</BusyLabel> : 'Accept quote'}
                   </button>
                   <button
                     type="button"
@@ -433,7 +433,7 @@ export function InvoiceDetail() {
                     onClick={() => decideQuote.mutate('decline')}
                     disabled={decideQuote.isPending}
                   >
-                    {decideQuote.isPending && decideQuote.variables === 'decline' ? 'Working…' : 'Decline'}
+                    {decideQuote.isPending && decideQuote.variables === 'decline' ? <BusyLabel>Working…</BusyLabel> : 'Decline'}
                   </button>
                 </div>
                 {decideQuote.isError && (
@@ -475,7 +475,7 @@ export function InvoiceDetail() {
                 </div>
 
                 <button type="button" className="btn credit-btn" onClick={() => redeem.mutate()} disabled={redeem.isPending}>
-                  {redeem.isPending ? 'Working…' : 'Save to Account Balance'}
+                  {redeem.isPending ? <BusyLabel>Working…</BusyLabel> : 'Save to Account Balance'}
                 </button>
                 {redeem.isError && (
                   <p className="cnote" style={{ marginTop: 10 }}>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { currentPushPermission, isPushSupported, registerForPush } from '../lib/push';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * "Enable notifications" banner, same card shape as AddToHomeScreen (see
@@ -61,7 +62,7 @@ export function PushPrompt() {
       </div>
 
       <button className="btn grad block" onClick={() => void enable()} disabled={busy}>
-        {busy ? 'Enabling…' : 'Enable notifications'}
+        {busy ? <BusyLabel>Enabling…</BusyLabel> : 'Enable notifications'}
       </button>
       {error && <p className="err">{error}</p>}
 

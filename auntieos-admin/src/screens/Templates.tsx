@@ -14,6 +14,7 @@ import {
 import { type Async } from '../lib/async';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { EntityCardGrid } from '../components/EntityCardGrid';
 import { Banner } from '../components/Banner';
@@ -508,7 +509,7 @@ export function Templates({ onSelect, onNew }: TemplatesProps) {
         state={templates}
         what="templates"
         isEmpty={(rows) => rows.length === 0}
-        loading={<p className="templates__hint">Loading templates…</p>}
+        loading={<LoadingRow label="Loading templates…" className="templates__hint" />}
         empty={<EmptyHint>{TEMPLATE_BANK_EMPTY_COPY}</EmptyHint>}
       >
         {(rows) => {

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
+import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { PrimaryButton } from '../../components/Buttons';
 import { pendingTaleRows } from '../../lib/dashboardInsights';
@@ -43,7 +44,7 @@ export function KinTalesPendingWidget({ onReviewTales }: KinTalesPendingWidgetPr
         state={drafts}
         what="drafts"
         isEmpty={() => rows.length === 0}
-        loading={<EmptyHint>Loading drafts…</EmptyHint>}
+        loading={<LoadingRow label="Loading drafts…" className="den-hint" />}
         empty={
           <>
             <EmptyHint>All caught up, no drafts waiting.</EmptyHint>

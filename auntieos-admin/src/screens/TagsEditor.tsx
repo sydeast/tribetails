@@ -14,6 +14,7 @@ import {
 } from '../lib/tags/model';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Dialog } from '../components/Dialog';
@@ -396,7 +397,7 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
         state={loaded}
         what="tags"
         isEmpty={() => false}
-        loading={<p className="tagsEditor__hint">Loading tags…</p>}
+        loading={<LoadingRow label="Loading tags…" className="tagsEditor__hint" />}
         empty={<p className="tagsEditor__hint">No tags found.</p>}
       >
         {() => (

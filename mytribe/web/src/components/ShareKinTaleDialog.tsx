@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { createShareLink, revokeShareLink, type CreateShareLinkResult } from '../api/kinTalesApi';
 import '../styles/shareKinTaleDialog.css';
+import { BusyLabel } from '../components/Loading';
 
 const MIN_EXPIRES_DAYS = 1;
 const MAX_EXPIRES_DAYS = 90;
@@ -178,7 +179,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
             {formErrorMessage && <p className="skd-error">{formErrorMessage}</p>}
 
             <button type="button" className="btn block skd-submit" onClick={handleSubmit} disabled={busy}>
-              {create.isPending ? 'Creating…' : 'Generate Link'}
+              {create.isPending ? <BusyLabel>Creating…</BusyLabel> : 'Generate Link'}
             </button>
           </div>
         ) : (
@@ -219,7 +220,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
                     <p className="sub">Revoking makes this link stop working right away. This can&rsquo;t be undone.</p>
                     {revokeErrorMessage && <p className="skd-error">{revokeErrorMessage}</p>}
                     <button type="button" className="btn skd-revokeconfirmbtn" onClick={() => revoke.mutate()} disabled={busy}>
-                      {revoke.isPending ? 'Revoking…' : 'Yes, revoke'}
+                      {revoke.isPending ? <BusyLabel>Revoking…</BusyLabel> : 'Yes, revoke'}
                     </button>
                     <button type="button" className="btn ghost" onClick={() => setConfirmingRevoke(false)} disabled={busy}>
                       Keep link

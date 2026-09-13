@@ -29,6 +29,7 @@ import {
 } from '../lib/coveragePackage';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
@@ -91,7 +92,7 @@ export function CoveragePackageBuilder() {
         state={settings}
         what="KinCare rates"
         isEmpty={() => false}
-        loading={<p className="cpb__hint">Loading your KinCare rates…</p>}
+        loading={<LoadingRow label="Loading your KinCare rates…" className="cpb__hint" />}
         empty={<p className="cpb__hint">No settings found.</p>}
       >
         {(data) => <Builder settings={data} />}

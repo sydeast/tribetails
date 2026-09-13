@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { viewOfQuery } from '../lib/queryState';
+import { BusyLabel } from '../components/Loading';
 
 /**
  * Shown when getMyAccess returns zero kinfolkIds — signed in but not yet
@@ -55,7 +56,7 @@ export function NoTribes() {
         {/* An anchor ignores `disabled`; useSignOut's ref guard is the real
             double-tap defence, aria-disabled just tells AT the same story. */}
         <a onClick={signOut} aria-disabled={signingOut} style={signingOut ? { opacity: 0.5 } : undefined}>
-          {signingOut ? 'Signing out…' : 'Sign Out'}
+          {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign Out'}
         </a>
       </div>
     </main>

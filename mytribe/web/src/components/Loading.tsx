@@ -82,6 +82,36 @@ export function LoadingLine({ children, retry, what, variant = 'line' }: LinePro
   );
 }
 
+/**
+ * The in-flight label on a button that is mid-mutation.
+ *
+ * The portal's buttons swapped their text and nothing else: "Save Changes"
+ * became "Saving…" on a control that looked otherwise identical, so on a slow
+ * connection the only evidence anything was happening was one word. (The
+ * admin's buttons already grow a ring through `busy=` on its kit button; this
+ * is the portal catching up.) The ruling asks for a cue on any wait, and a
+ * mutation in flight is a wait.
+ *
+ * NO ESCALATION HERE, deliberately, and that is the idempotency rule showing up
+ * in the design rather than only in a comment. Most of these buttons submit
+ * something that CREATES: a booking, a payment, a KinTale, an invite. Nothing
+ * client-side can abort a request already away, so a "send it again" button
+ * beside one of them invites exactly the duplicate it appears to prevent. A
+ * wait on a READ gets the offer; a wait on a CREATE gets the cue and the
+ * disabled button, and the screen's own refetch is what reconciles it.
+ */
+export function BusyLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <span
+        className="loading-spinner loading-spinner--inline loading-spinner--oncolor"
+        aria-hidden="true"
+      />
+      {children}
+    </>
+  );
+}
+
 interface NoticeProps {
   what: string;
   attempt: number;

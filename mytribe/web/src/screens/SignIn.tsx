@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { sendReset, signIn } from '../lib/auth';
 import { mapAuthError } from '../lib/authErrors';
 import { readAndClearSessionEndedNotice } from '../lib/revokedSession';
+import { BusyLabel } from '../components/Loading';
 
 type ResetToast =
   | { tone: 'ok'; title: string; sub: string }
@@ -150,7 +151,7 @@ export function SignIn() {
             )}
 
             <button type="submit" className="btn grad block" disabled={busy}>
-              {busy ? 'Signing in…' : 'Sign In'}
+              {busy ? <BusyLabel>Signing in…</BusyLabel> : 'Sign In'}
             </button>
           </form>
 

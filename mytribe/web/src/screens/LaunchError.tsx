@@ -3,6 +3,8 @@
  * ui-ideas/mytribe-launch-error-2026-05-31.html. Shown when the home
  * payload cannot be loaded (network down, backend error).
  */
+import { BusyLabel } from '../components/Loading';
+
 export function LaunchError(props: { onRetry: () => void; onSignOut: () => void; retrying?: boolean; signingOut?: boolean }) {
   return (
     <main className="errshell">
@@ -29,10 +31,10 @@ export function LaunchError(props: { onRetry: () => void; onSignOut: () => void;
 
         <div className="erractions">
           <button className="btn grad block" onClick={props.onRetry} disabled={props.retrying ?? false}>
-            {props.retrying ? 'Trying…' : '↻ Try again'}
+            {props.retrying ? <BusyLabel>Trying…</BusyLabel> : '↻ Try again'}
           </button>
           <button className="btn ghost block" onClick={props.onSignOut} disabled={props.signingOut ?? false}>
-            {props.signingOut ? 'Signing out…' : 'Sign out'}
+            {props.signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out'}
           </button>
         </div>
       </section>
