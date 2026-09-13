@@ -537,15 +537,33 @@ export function buildDbMock(opts: {
     getAll: vi.fn(async (...refs: any[]) => Promise.all(refs.map((r) => r.get()))),
     batch: () => makeBatch(),
     runTransaction: vi.fn(async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
+      // A real `Transaction`'s write methods are SYNCHRONOUS: they stage, and
+      // the outcome surfaces when the transaction commits. The shims below are
+      // async, so a rejected one used to escape as an unhandled rejection and
+      // the handler carried on as though the write had succeeded. Staged
+      // promises are collected and settled before `runTransaction` resolves,
+      // which puts the failure back where Firestore puts it — on the commit.
+      const staged: Array<Promise<unknown>> = [];
+      const stage = (p: unknown) => {
+        if (p instanceof Promise) staged.push(p);
+      };
       const tx = {
         get: (ref: any) => ref.get(),
         set: (ref: any, data: any, options?: SetOptionsLike) =>
-          ref.set(data, options),
-        update: (ref: any, data: any) => ref.update(data),
-        delete: (ref: any) => ref.delete(),
-        create: (ref: any, data: any) => ref.set(data),
+          stage(ref.set(data, options)),
+        update: (ref: any, data: any) => stage(ref.update(data)),
+        delete: (ref: any) => stage(ref.delete()),
+        // `ref.create`, NOT `ref.set` (#825). `create` is the one write whose
+        // outcome depends on what is already stored, and inside a transaction
+        // it is the race backstop the money callables rely on. A shim that
+        // quietly downgraded it to `set` would let every "two attempts, one
+        // key" test pass without the guard being there at all. The doc-ref
+        // `create` above rejects with gRPC status 6, the real code.
+        create: (ref: any, data: any) => stage(ref.create(data)),
       };
-      return fn(tx);
+      const result = await fn(tx);
+      await Promise.all(staged);
+      return result;
     }),
   };
 

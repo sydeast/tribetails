@@ -896,17 +896,29 @@ class PortalApi(private val fns: FunctionsClient) {
     }
 
     // -- Pay Invoice (Stripe Checkout) --
+    /**
+     * #825: [idempotencyKey] is handed straight to STRIPE by the callable, not
+     * checked against anything of ours. A replay opens a SECOND Checkout
+     * Session and both stay payable. #826 stops the second one paying the bill
+     * twice, but it cannot un-charge a card and there are no refunds here, so
+     * the second session is still worth preventing. `CheckoutIdempotency.kt`
+     * carries the reasoning and the 24-hour Stripe window the caller has to
+     * respect. Null is omitted rather than sent, because the server's zod arg
+     * is `.optional()` and not `.nullable()`.
+     */
     suspend fun payInvoice(
         invoiceId: String,
         kinfolkId: String? = null,
         successUrl: String,
         cancelUrl: String,
+        idempotencyKey: String? = null,
     ): PayInvoiceResult {
         val raw = fns.call("payInvoice", buildJsonObject {
             put("invoiceId", invoiceId)
             kinfolkId?.let { put("kinfolkId", it) }
             put("successUrl", successUrl)
             put("cancelUrl", cancelUrl)
+            idempotencyKey?.let { put("idempotencyKey", it) }
         })
         return PayInvoiceResult(
             checkoutUrl = raw["checkoutUrl"]?.jsonPrimitive?.contentOrNull.orEmpty(),

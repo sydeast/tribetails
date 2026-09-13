@@ -58,7 +58,9 @@
  * a bill into an overpayment the household did not choose to make.
  */
 import { FieldValue } from 'firebase-admin/firestore';
-import type { Firestore, WriteBatch } from 'firebase-admin/firestore';
+import type { Firestore } from 'firebase-admin/firestore';
+
+import type { StagedWriter } from './moneyIdempotency';
 
 import {
   isDraftOrQuote,
@@ -101,12 +103,21 @@ export function readAccountBalanceCents(raw: unknown): number {
  * `increment` rather than read-then-write. Two payments recorded in the same
  * second would otherwise each write the balance they had read, and one of the
  * two credits would vanish. `redeemCredit` gets away with read-then-write
- * because it runs inside a transaction; this runs inside a batch alongside the
- * payment it belongs to, and the two must land together.
+ * because it runs inside a transaction; this runs alongside the payment it
+ * belongs to, and the two must land together.
+ *
+ * #825 widened `batch` to `StagedWriter`, the one `set` a `WriteBatch` and a
+ * `Transaction` both carry. `recordPayment` now stages this inside a
+ * transaction, so the increment is authorised by the same snapshot that found
+ * no existing payment row for the caller's key: a replay increments nothing,
+ * because it never reaches this call at all. The `increment` stays an
+ * increment — the dedupe is what stops the second one, not a re-read of the
+ * balance, and re-reading it would reintroduce the lost-update this comment
+ * has always been about.
  */
 export function creditAccount(
   firestore: Firestore,
-  batch: WriteBatch,
+  batch: StagedWriter,
   input: { kinfolkId: string; cents: number },
 ): void {
   if (input.kinfolkId === '' || input.cents <= 0) return;

@@ -48,6 +48,7 @@ import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.mintPaymentIdempotencyKey
 import com.tribetails.auntieos.web.util.openUrl
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -187,9 +188,43 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
     val clientPayments = paymentsForKinfolk(allPayments, invoice.kinfolkId)
 
     // Record-payment dialog (spec 17 item 6): prefilled from the invoice, stamps
-    // invoiceId so the join above is populated. Uses the existing recordPayment callable.
+    // invoiceId so the join above is populated.
+    //
+    // This line used to say "uses the existing recordPayment callable". It does
+    // not, and never did: `FirestoreClient.recordPayment` writes the `payments`
+    // row directly over REST on this surface. Corrected in #825 rather than left
+    // standing, because #825 is precisely about what that write does with its
+    // document id, and a comment pointing at the wrong mechanism is where the
+    // next reader's reasoning would go wrong.
     var showRecordPayment by remember { mutableStateOf(false) }
     var recordingPayment  by remember { mutableStateOf(false) }
+
+    /**
+     * #825: the submission this key was minted for, and the key. ONE KEY PER
+     * SUBMISSION, NOT PER PRESS.
+     *
+     * This dialog is where the re-press is not hypothetical: a failed attempt
+     * leaves it OPEN with every field still filled in, so the natural next move
+     * is to press Record payment again -- and until #825 that second press
+     * wrote a second `payments` row for money that arrived once.
+     *
+     * The signature is the [Payment] itself. A data class's `toString` names
+     * every field it has, so a field added to `Payment` later cannot quietly
+     * fall out of the comparison the way a hand-listed set of fields would; and
+     * `buildInvoicePayment` is pure, with no clock and no counter in it, so
+     * reopening the dialog on the same invoice with the same entries rebuilds an
+     * equal Payment and the held key survives. Change any entry and the
+     * signature changes, which mints a new key -- a held key would otherwise
+     * replay the OLD payment and report it as the new one.
+     */
+    var paymentSubmission by remember(invoice._id) { mutableStateOf<Pair<String, String>?>(null) }
+
+    fun paymentKeyFor(signature: String): String {
+        paymentSubmission?.let { (held, key) -> if (held == signature) return key }
+        val minted = mintPaymentIdempotencyKey()
+        paymentSubmission = signature to minted
+        return minted
+    }
 
     // Edit-mode state
     var editMode     by remember { mutableStateOf(false) }
@@ -263,11 +298,17 @@ private fun InvoiceDetailBody(invoice: Invoice, client: FirestoreClient) {
         onDismiss  = { showRecordPayment = false },
         onSubmit   = { payment ->
             recordingPayment = true
+            val key = paymentKeyFor(payment.toString())
             scope.launch {
-                when (val r = client.recordPayment(payment)) {
+                when (val r = client.recordPayment(payment, idempotencyKey = key)) {
                     is WriteResult.Ok  -> {
                         recordingPayment = false
                         showRecordPayment = false
+                        // #825: drop the held key once the row exists. Two cash
+                        // instalments of the same amount on the same day is an
+                        // ordinary thing; holding the key would write the second
+                        // one over the first and report success.
+                        paymentSubmission = null
                         showToast("Payment recorded.", false)
                     }
                     is WriteResult.Err -> {

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,6 +30,7 @@ import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
 import '../styles/invoices.css';
 
 /**
@@ -67,23 +69,55 @@ export function InvoiceDetail() {
   // answers here, and this screen must keep working across that window.
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
-  // ABANDON. See lib/mutationState.ts for what was established from the
-  // callable: holding this one would walk a pocketed phone to Stripe on
-  // reconnect, minutes after the household put the phone away.
+  /**
+   * #825: ONE CHECKOUT KEY PER SUBMISSION, held across a re-tap.
+   *
+   * Minted lazily on the first tap and dropped the moment a checkout URL comes
+   * back, so the only tap that reuses it is a tap after a visible failure.
+   *
+   * IT COVERS A DIFFERENT TAP FROM #826's SESSION REUSE. That reuse hands back
+   * the session stored on the invoice, so it needs the previous call to have
+   * finished and written one. This key covers the call that did NOT finish:
+   * Stripe made the session, and the reply was lost on the way back. Nothing
+   * was stored, so the server has nothing to hand back, and without the key the
+   * retry opens a second live session. `lib/moneyIdempotency.ts` has the
+   * reasoning and the 24-hour Stripe window it has to respect.
+   */
+  const checkoutKey = useRef<string | null>(null);
+  // ABANDON, AND STILL ABANDON. See lib/mutationState.ts for what was
+  // established from the callable: holding this one would walk a pocketed phone
+  // to Stripe on reconnect, minutes after the household put the phone away.
+  // The key makes a household's own second TAP safe; it says nothing about a
+  // redirect nobody asked for at a moment nobody chose. Two different claims,
+  // and only the first one changed.
   const pay = usePortalMutation({
-    mutationFn: () =>
-      payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
+    mutationFn: () => {
+      checkoutKey.current ??= mintCheckoutIdempotencyKey();
+      return payInvoice(
+        invoiceId,
+        `${window.location.origin}/invoices/${invoiceId}`,
+        `${window.location.origin}/invoices/${invoiceId}`,
+        kinfolkId,
+        checkoutKey.current,
+      );
+    },
     onSuccess: (res) => {
+      // Dropped BEFORE the redirect. A household that comes back to pay a
+      // different balance later must not reuse a key Stripe still holds.
+      // (The server now folds the round and the amount into the key it hands
+      // Stripe, so a changed balance mints a fresh session rather than earning
+      // an error; dropping it here is the belt to that braces.)
+      checkoutKey.current = null;
       // WHAT THIS REDIRECT GUARANTEES, AND WHAT IT NO LONGER HAS TO (#826).
       //
       // `window.location.href` UNLOADS THE PAGE. That is why this screen cannot
       // hold two live Checkout Sessions at once, and for a while it was the
       // only thing standing between a household and two real charges for one
-      // bill: `payInvoice` mints a new session, and a new PaymentIntent, on
+      // bill: `payInvoice` minted a new session, and a new PaymentIntent, on
       // every call, and the webhook's per-event and per-intent ledgers cannot
       // see two intents as one invoice.
       //
-      // The server now refuses that itself — a second completed session for one
+      // The server now refuses that itself: a second completed session for one
       // balance goes to account credit instead of paying the bill twice
       // (functions/src/lib/invoiceCheckoutDedupe.ts). So turning this into an
       // in-page transition, a modal checkout or a router navigation is no

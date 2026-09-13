@@ -17,6 +17,7 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { InvoicePaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { validateResponse } from '../lib/callableResponse';
 import {
   CentsSchema,
@@ -95,6 +96,22 @@ export const Args = z.object({
   reference: z.string().trim().min(1).max(200).optional(),
   /** ISO-8601 timestamp for when the payment was actually received (for recording a past payment). Defaults to now. */
   paidAt: z.string().optional(),
+  /**
+   * #825: mint one per SUBMISSION, not per press, and this call becomes safe to
+   * retry. It becomes the id of the `invoices/{invoiceId}/payments/{key}` row —
+   * the money authority's own row, so the idempotency record and the payment
+   * record are the same document and cannot drift apart.
+   *
+   * IT MATTERS MOST ON A PARTIAL. A retried full payment is caught by
+   * `alreadySettledRefusal` — badly, with a `failed-precondition` for a payment
+   * that worked, but caught. A retried PARTIAL is not caught by anything: the
+   * invoice still has a balance, so the second attempt is a perfectly valid
+   * second payment, and the household is recorded as having paid twice.
+   *
+   * OPTIONAL. Omitted, the row gets a server-minted auto id and there is no
+   * dedupe, exactly as before.
+   */
+  idempotencyKey: InvoicePaymentIdempotencyKeyArg,
 });
 
 /**
@@ -247,6 +264,43 @@ export const Result = z
   .strict();
 export type MarkInvoicePaidResult = z.infer<typeof Result>;
 
+/** A stored number, or 0. Absent reads as zero, never as a guess. */
+function storedCents(stored: Record<string, unknown>, field: string): number {
+  const v = stored[field];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0;
+}
+
+/**
+ * THE ANSWER A RETRY GETS: where the invoice stood after the FIRST attempt's
+ * payment, read off the row that attempt wrote.
+ *
+ * `settlement` is written by every payment row this callable creates, so the
+ * only rows without one are rows written before #825 — and those cannot be
+ * reached by a key, because a key-shaped id never collides with an auto id.
+ * An absent map is still handled rather than assumed away: it reads as the
+ * settlement of an invoice with this payment on it and nothing else, which is
+ * the most this function can honestly say from the row alone.
+ */
+function replayResult(
+  invoiceId: string,
+  paymentId: string,
+  stored: Record<string, unknown>,
+): z.infer<typeof Result> {
+  const raw = stored['settlement'];
+  const s = (raw !== null && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const state = s['state'];
+  return validateResponse('markInvoicePaid', Result, {
+    ok: true,
+    invoiceId,
+    paymentId,
+    state: (typeof state === 'string' ? state : 'partial') as InvoiceSettlementState,
+    totalCents: storedCents(s, 'totalCents'),
+    paidCents: storedCents(s, 'paidCents'),
+    amountDueCents: storedCents(s, 'amountDueCents'),
+    overpaidCents: storedCents(s, 'overpaidCents'),
+  });
+}
+
 export async function markInvoicePaidHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -267,6 +321,35 @@ export async function markInvoicePaidHandler(
   }
 
   const ref = db().collection('invoices').doc(args.invoiceId);
+  const paymentRef =
+    args.idempotencyKey !== undefined
+      ? ref.collection('payments').doc(args.idempotencyKey)
+      : ref.collection('payments').doc();
+
+  // ── THE FAST PATH (#825), BEFORE EVERY GUARD BELOW ──────────────────────
+  //
+  // A key whose row already exists is answered from that row. It has to run
+  // here, ahead of the guards, because the guards are what a retry trips: the
+  // first attempt settles the invoice, and the second is refused by
+  // `alreadySettledRefusal` — `failed-precondition` reported for a payment that
+  // is recorded and correct. The whole point of a key is that a retry cannot
+  // turn a success into an error message.
+  if (args.idempotencyKey !== undefined) {
+    const existing = await paymentRef.get();
+    if (existing.exists) {
+      const stored = (existing.data() ?? {}) as Record<string, unknown>;
+      assertSameCaller(stored, uid, 'recordedBy');
+      logEvent({
+        severity: 'info',
+        function: 'markInvoicePaid',
+        event: 'admin.invoice.payment.replay',
+        uid,
+        extra: { invoiceId: args.invoiceId, paymentId: paymentRef.id },
+      });
+      return replayResult(args.invoiceId, paymentRef.id, stored);
+    }
+  }
+
   const snap = await ref.get();
   if (!snap.exists) {
     throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
@@ -309,9 +392,7 @@ export async function markInvoicePaidHandler(
   const after = settleInvoice(totalCents, existingPaidCents + paidCents);
   const settling = after.state === 'settled' || after.state === 'overpaid';
 
-  const paymentRef = ref.collection('payments').doc();
-  const batch = db().batch();
-  batch.set(paymentRef, {
+  const paymentRow = {
     // Both denominations. `amountCents` is what the settlement was computed
     // from and what future sums prefer; `amount` stays because every payment
     // recorded before this change carries only it, and the PDF and the Android
@@ -323,7 +404,21 @@ export async function markInvoicePaidHandler(
     paidAt: paidAtIso,
     recordedBy: uid,
     createdAt: FieldValue.serverTimestamp(),
-  });
+    // #825, DENORMALIZED SO A REPLAY CAN BE ANSWERED FROM ONE READ. This is
+    // where the invoice stood after THIS payment, which is what this call
+    // reported and therefore what a retry of it must report. Recomputing on a
+    // retry would answer with today's settlement instead, so the same call
+    // would return different figures depending on how often it was retried.
+    // `paidCentsFromPayments` reads only `amount`/`amountCents`, so an extra
+    // map on the row changes no sum anywhere.
+    settlement: {
+      state: after.state,
+      totalCents: after.totalCents,
+      paidCents: after.paidCents,
+      amountDueCents: after.amountDueCents,
+      overpaidCents: after.overpaidCents,
+    },
+  };
   const invoiceUpdate = {
     // A PARTIAL PAYMENT LEAVES THE INVOICE OPEN with a real balance, so it
     // stays in Outstanding and someone chases the rest. Only a settling
@@ -356,20 +451,57 @@ export async function markInvoicePaidHandler(
     lastPaymentBy: uid,
     updatedAt: FieldValue.serverTimestamp(),
   };
-  batch.set(
-    ref,
-    {
-      ...invoiceUpdate,
-      // The state stamp (ADR-0002), in the SAME batch as the money it
-      // describes. Derived from the doc as this write leaves it, with the new
-      // payment included in paidCents: a settling payment stamps paid/none, a
-      // partial stamps open/all (part-paid stays fully editable), and an
-      // overpayment stamps paid off the CLAMPED zero balance, never credit.
-      ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.paidCents),
-    },
-    { merge: true },
-  );
-  await batch.commit();
+  // ── ONE TRANSACTION: THE DEDUPE, THE PAYMENT ROW, THE INVOICE ───────────
+  //
+  // This was a batch, which was already atomic. What a batch cannot do is make
+  // the writes conditional on what is stored, and a retried PARTIAL payment
+  // passes every guard above on its second pass — the invoice still owes a
+  // balance, so the second attempt looks exactly like a genuine second payment.
+  // The read that finds the key's row and the writes it cancels now share one
+  // snapshot, and the lock Firestore takes on that row serialises two attempts
+  // that overlap.
+  const replayed = await db().runTransaction(async (tx) => {
+    // Every read before every write, which Firestore requires and the guard
+    // wants anyway.
+    if (args.idempotencyKey !== undefined) {
+      const existing = await tx.get(paymentRef);
+      if (existing.exists) {
+        const stored = (existing.data() ?? {}) as Record<string, unknown>;
+        assertSameCaller(stored, uid, 'recordedBy');
+        return stored;
+      }
+    }
+    // `create` when there is a key, so two attempts reaching the write together
+    // are refereed by the server. A keyless call keeps `set`: its id is
+    // server-minted and cannot collide.
+    if (args.idempotencyKey !== undefined) tx.create(paymentRef, paymentRow);
+    else tx.set(paymentRef, paymentRow);
+    tx.set(
+      ref,
+      {
+        ...invoiceUpdate,
+        // The state stamp (ADR-0002), in the SAME commit as the money it
+        // describes. Derived from the doc as this write leaves it, with the new
+        // payment included in paidCents: a settling payment stamps paid/none, a
+        // partial stamps open/all (part-paid stays fully editable), and an
+        // overpayment stamps paid off the CLAMPED zero balance, never credit.
+        ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.paidCents),
+      },
+      { merge: true },
+    );
+    return null;
+  });
+
+  if (replayed !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'markInvoicePaid',
+      event: 'admin.invoice.payment.replay',
+      uid,
+      extra: { invoiceId: args.invoiceId, paymentId: paymentRef.id, raced: true },
+    });
+    return replayResult(args.invoiceId, paymentRef.id, replayed);
+  }
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -399,6 +531,10 @@ export async function markInvoicePaidHandler(
       paidCents: after.paidCents,
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
+      // Which submission this row belongs to. An audit trail that cannot tell a
+      // second payment from a second attempt at one payment is the trail that
+      // would have had to answer #825 after the fact.
+      idempotencyKey: args.idempotencyKey ?? null,
     },
   }).catch((err) => {
     logEvent({

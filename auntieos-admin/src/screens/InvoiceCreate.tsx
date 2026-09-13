@@ -1,6 +1,10 @@
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { createInvoice, createQuote } from '../api/invoicesWrite';
+import {
+  mintInvoiceIdempotencyKey,
+  mintQuoteIdempotencyKey,
+} from '../lib/moneyIdempotency';
 import type {
   CreateInvoiceArgs,
   ListUninvoicedSessionsResultSession,
@@ -229,11 +233,49 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /**
+   * #825: ONE KEY PER SUBMISSION, held across a re-press.
+   *
+   * A replayed create costs the household a second bill AND spends a second
+   * value from the shared `counters/invoiceNumber` sequence — and a consumed
+   * number cannot be given back, so even deleting the duplicate leaves the
+   * numbering claiming an invoice was issued that nobody can produce. The key
+   * becomes the `invoices/{key}` document id, so a second press lands on the
+   * document the first press may already have written, and never reaches the
+   * counter at all.
+   *
+   * Minted lazily on the first press and cleared by the effect below whenever
+   * anything about the invoice changes, because an edited invoice is a
+   * different invoice and a held key would report the first one's id back for
+   * money that was never billed. The composer closes on success, so the only
+   * press that reuses a key is a press after a visible failure — which is
+   * precisely the one that used to duplicate.
+   */
+  const submissionKey = useRef<string | null>(null);
 
   // The work half: what the picker loaded, and what is ticked.
   const [sessions, setSessions] = useState<readonly ListUninvoicedSessionsResultSession[]>([]);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [prices, setPrices] = useState<Record<string, string>>({});
+  // #825: an edited invoice is a DIFFERENT invoice, so the held submission key
+  // is dropped the moment any of its inputs move. Declared here rather than
+  // beside the ref, because it reads state that is declared below it.
+  useEffect(() => {
+    submissionKey.current = null;
+  }, [
+    kind,
+    kinfolkId,
+    path,
+    date,
+    termsCode,
+    customDueDate,
+    totalText,
+    invoiceDiscountText,
+    extraLines,
+    sendToKinfolk,
+    selected,
+    prices,
+  ]);
 
   const isQuote = kind === 'quote';
   const selectedHousehold = households.find((h) => h._id === kinfolkId);
@@ -368,7 +410,23 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     };
 
     try {
-      const result = isQuote ? await createQuote({ ...base, sendToKinfolk }) : await createInvoice(base);
+      // A quote and an invoice take DIFFERENTLY PREFIXED keys even though both
+      // write the `invoices` collection: that is what stops a key minted while
+      // the composer was in quote mode from answering at `createInvoice` after
+      // the operator flipped the toggle. The effect above clears the key on
+      // that flip anyway; the prefixes mean it would be refused rather than
+      // silently honoured if it ever did not.
+      const result = isQuote
+        ? await createQuote({
+            ...base,
+            sendToKinfolk,
+            idempotencyKey: (submissionKey.current ??= mintQuoteIdempotencyKey()),
+          })
+        : await createInvoice({
+            ...base,
+            idempotencyKey: (submissionKey.current ??= mintInvoiceIdempotencyKey()),
+          });
+      submissionKey.current = null;
       setSubmitting(false);
       onCreated?.(result.invoiceId);
       onClose();

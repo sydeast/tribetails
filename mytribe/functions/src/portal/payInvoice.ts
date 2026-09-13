@@ -16,12 +16,34 @@ import {
   CHECKOUT_ROUND_METADATA_KEY,
   checkoutRoundOf,
 } from '../lib/invoiceCheckoutDedupe';
+import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
   kinfolkId: z.string().optional(),
   successUrl: z.string().url(),
   cancelUrl: z.string().url(),
+  /**
+   * #825: mint one per SUBMISSION, not per tap, and Stripe answers a retry with
+   * the session the first attempt created instead of opening a second one.
+   *
+   * THIS KEY IS HANDED TO STRIPE, NOT CHECKED HERE, and that is the only place
+   * it can work: the duplicate a replay makes is a second Checkout Session in
+   * STRIPE's database, and both sessions stay payable. Nothing this server
+   * writes can stop that session being created. Only Stripe can, and this is
+   * how it is asked to.
+   *
+   * IT SITS IN FRONT OF TWO OTHER LAYERS, not instead of them. The reuse below
+   * hands back a session this invoice already has open, which needs a previous
+   * call to have finished and stored one; this key covers the call that did
+   * not, where Stripe made the session and the reply was lost coming back.
+   * `stripeWebhook`'s #826 refusal is the last layer and the only one still
+   * available once a card has been charged, and it RECONCILES rather than
+   * rejects, because a charge that happened cannot be refused.
+   *
+   * OPTIONAL, so the portal and the desktop console adopt it separately.
+   */
+  idempotencyKey: CheckoutIdempotencyKeyArg,
 });
 
 /**
@@ -148,7 +170,71 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const methodTypes = stripeCheckoutMethodTypes(settingsForInvoice(inv, liveSettings));
 
   const stripe = await getStripe();
-  const createSession = (paymentMethodTypes: string[]) =>
+  /**
+   * #825: the key rides as a REQUEST OPTION, Stripe's second argument, which is
+   * where Stripe's own idempotency lives. Given one, Stripe replays the stored
+   * response for 24 hours rather than creating a second session.
+   *
+   * ── WHAT THIS CATCHES THAT THE SESSION REUSE ABOVE CANNOT (#826 / #825) ──
+   *
+   * They are not two spellings of one fix. The reuse can only hand back a
+   * session it can FIND, and it finds it through `pendingCheckoutSessionId`,
+   * which is written AFTER `sessions.create` returns. So the reuse covers the
+   * case where the first call finished: two taps, a reload, a second device.
+   *
+   * It is blind to the case where the first call did NOT finish. Stripe creates
+   * the session, and then the container is killed, or the Firestore write
+   * fails, or the reply is dropped on the way back and the client sees
+   * `functions/internal`. Nothing was stored, so the retry's lookup finds
+   * nothing, mints a second session, and the household now has two live
+   * checkouts for one bill. That is exactly the window #825 exists to close,
+   * and the key closes it inside Stripe, before a second session exists at all.
+   *
+   * `stripeWebhook`'s refusal is the third and last layer, and the only one
+   * that still applies once a card has actually been charged. It reconciles
+   * rather than rejects, because a charge that happened cannot be refused.
+   *
+   * ── WHY THE ROUND AND THE AMOUNT ARE IN THE KEY ─────────────────────────
+   *
+   * Because Stripe REFUSES a key reused with a different body, and #826's reuse
+   * deliberately mints a FRESH session when the amount or the round has moved.
+   * Left alone, those two rules would collide in a case that really happens: a
+   * household taps Pay, the reply is lost, the operator records a partial Venmo
+   * payment, and the household taps again holding the same key. The body now
+   * carries a smaller `unit_amount`, and a bare caller key would earn a Stripe
+   * error on a bill somebody is trying to settle.
+   *
+   * So the Stripe-facing key is derived from the caller's key plus the two
+   * things `findReusableSession` treats as making a session unusable. Same
+   * submission, unchanged balance: same derived key, and Stripe replays the
+   * first session. Balance moved: a different derived key, a fresh session,
+   * which is what #826 wanted anyway. The two rules can no longer disagree,
+   * because they now turn on the same facts.
+   *
+   * THE RETURN URLS ARE NOT IN THE KEY, and that is the one reuse condition
+   * left out. They are constant per client (the web portal sends
+   * `/invoices/{id}`, the KMP portal sends `/portal/payment-success`) and the
+   * key is minted client-side per submission, so one key cannot arrive with two
+   * different url pairs. Folding two full URLs into a 255-character key to
+   * restate something the key's own provenance already guarantees would buy
+   * nothing.
+   *
+   * `suffix` IS FOR THE FALLBACK, which sends a different body for a different
+   * reason: the card-only retry below drops the method types Stripe just
+   * rejected. It carries its own derived key so that graceful fallback does not
+   * become a hard error either.
+   */
+  // Deliberately un-annotated. `Stripe.RequestOptions` resolves to two
+  // incompatible declarations in this package (a cjs copy and an esm copy, each
+  // with its own private `StripeContext`), so naming the type makes the call
+  // below unassignable to itself. An object literal is checked against
+  // whichever declaration the call site actually uses, which is the one that
+  // matters.
+  const requestOptions = (suffix: string) =>
+    args.idempotencyKey === undefined
+      ? undefined
+      : { idempotencyKey: `${args.idempotencyKey}_r${checkoutRound}_${amountCents}${suffix}` };
+  const createSession = (paymentMethodTypes: string[], keySuffix: string) =>
     stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
@@ -177,7 +263,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       // resolve the household, and a household that really was charged keeps an
       // invoice reading outstanding and keeps getting reminder emails.
       payment_intent_data: { metadata: checkoutMetadata },
-    });
+    }, requestOptions(keySuffix));
 
   // WHEN STRIPE REFUSES A METHOD TYPE, THE HOUSEHOLD STILL GETS TO PAY.
   //
@@ -249,7 +335,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
 
   let session;
   try {
-    session = await createSession(methodTypes);
+    session = await createSession(methodTypes, '');
   } catch (err) {
     const extraTypes = methodTypes.filter((t) => t !== 'card');
     if (extraTypes.length === 0 || !isUnsupportedMethodTypeError(err)) throw err;
@@ -261,7 +347,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       errorMessage: (err as Error)?.message,
       extra: { invoiceId: args.invoiceId, rejectedTypes: extraTypes, retriedWith: ['card'] },
     });
-    session = await createSession(['card']);
+    session = await createSession(['card'], '_card');
   }
 
   await firestore.collection('invoices').doc(args.invoiceId).set({

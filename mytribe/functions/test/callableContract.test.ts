@@ -221,7 +221,14 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // `lineItems` array of objects, and a top-level key freeze would have gone on
   // passing while `lineItems[].unitCents` was renamed underneath it. That is
   // the exact drift this guard exists to catch, so the freeze followed the shape.
-  markInvoicePaid: { schema: MarkInvoicePaidArgs, keys: ['amount', 'invoiceId', 'method', 'paidAt', 'reference'] },
+  // `idempotencyKey` added by #825: optional, so the freeze stays a SUPERSET
+  // and every caller that omits it still validates. It is what makes a retried
+  // PARTIAL payment land once instead of twice — a retried FULL payment was
+  // already refused by `alreadySettledRefusal`, a partial by nothing at all.
+  markInvoicePaid: {
+    schema: MarkInvoicePaidArgs,
+    keys: ['amount', 'idempotencyKey', 'invoiceId', 'method', 'paidAt', 'reference'],
+  },
   // `mode` defaults to the read-only 'detect'; the destructive mode is always
   // named by the caller, so a shape change here is a change to how a billing
   // mass-write is triggered.
@@ -249,10 +256,15 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
     // admin sets it on a row it writes AFTER markInvoicePaid has already
     // settled the invoice. `apply` is a single object, NOT a list: one payment
     // applies to one invoice (operator ruling, 2026-08-04).
+    //
+    // `idempotencyKey` (#825) is the same kind of addition and the one that
+    // makes this callable safe to retry: it becomes the id of the
+    // `payments/{key}` row, so a second attempt at one payment finds the first
+    // attempt's row instead of recording a second payment AND a second credit.
     keys: [
       'address', 'amount', 'apply', 'autoApply', 'client', 'date', 'email', 'fee',
-      'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes', 'paymentMethod',
-      'referenceNumber', 'sendConfirmationEmail', 'tip',
+      'idempotencyKey', 'invoiceId', 'invoiceNumber', 'kinfolkId', 'kinfolkName', 'notes',
+      'paymentMethod', 'referenceNumber', 'sendConfirmationEmail', 'tip',
     ],
   },
   assignTemplate: { schema: AssignTemplateArgs, keys: ['active', 'audience', 'catalogKey', 'templateId', 'triggerKey'] },
@@ -425,6 +437,11 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
     schema: CreateInvoiceArgs,
     signature: [
       'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
+      // #825: optional, so the freeze stays a superset. It becomes the id of
+      // the `invoices/{key}` document, and it is also what stops a replay
+      // spending a second value from the shared invoice-number counter on an
+      // invoice it is not going to write.
+      'idempotencyKey',
       'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
       'lineItems[].description', 'lineItems[].discountCents',
       // #408: the binding from a line to the visit it bills for. Optional, so
@@ -445,6 +462,10 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
     schema: CreateQuoteArgs,
     signature: [
       'address', 'amountDue', 'client', 'date', 'discount', 'dueDate', 'familyId',
+      // #825. A `quot_`-prefixed key, distinct from createInvoice's `inv_`,
+      // because both callables write the same `invoices` collection and a key
+      // minted for one must never answer at the other.
+      'idempotencyKey',
       'invoiceDiscountCents', 'invoiceNumber', 'kinfolkName',
       'lineItems[].description', 'lineItems[].discountCents',
       'lineItems[].sessionId',

@@ -15,6 +15,15 @@ class FirestoreAuntieDataSource(
     override fun sessionsStream(): Flow<FirestoreResult<List<KinCareSession>>> = client.sessionsStream()
     override fun sessionForIdStream(sessionId: String): Flow<FirestoreResult<KinCareSession?>> = client.sessionForIdStream(sessionId)
     override fun paymentsStream(): Flow<FirestoreResult<List<Payment>>> = client.paymentsStream()
+    // #825: UNKEYED on purpose, and worth knowing before wiring a screen through
+    // here. `AuntieDataSource.recordPayment` takes no idempotency key, because no
+    // screen records a payment through this interface -- the one live caller,
+    // `InvoiceDetailScreen`, holds a `FirestoreClient` directly and passes its own
+    // key. Widening the interface for callers that do not exist would mean
+    // touching its five screen-local implementations for nothing. A screen that
+    // later DOES record a payment through this interface must widen it then
+    // rather than settle for the unkeyed write; MoneyIdempotency.kt says what the
+    // key is protecting.
     override suspend fun recordPayment(payment: Payment): WriteResult<String> = client.recordPayment(payment)
     override fun businessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> = client.businessSettingsStream()
     override suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = client.saveBusinessSettings(settings)

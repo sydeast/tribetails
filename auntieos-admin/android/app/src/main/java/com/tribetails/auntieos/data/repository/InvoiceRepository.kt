@@ -129,12 +129,24 @@ class InvoiceRepository(
      * Fail-loud on a response that carries no id: the caller's whole reason for
      * calling is to learn the new invoice's id, so returning "" as a success
      * would hand the ViewModel a doc reference that resolves to nothing.
+     *
+     * [idempotencyKey] (#825) BECOMES THE NEW INVOICE'S DOCUMENT ID, so a second
+     * attempt at one composed invoice is answered with the invoice the first
+     * attempt wrote instead of minting a second one — and, more to the point,
+     * instead of burning a second value out of the shared
+     * `counters/invoiceNumber` sequence on a document nobody asked for. A
+     * consumed sequence value cannot be given back. Null keeps the behaviour
+     * this call has always had (server-minted id, no dedupe), which is why the
+     * callers that have not adopted a key still compile and still work. Mint it
+     * with [mintInvoiceIdempotencyKey] and HOLD IT ACROSS THE RETRY; the
+     * one-key-per-submission discipline lives in `AdminDataViewModel`, not here.
      */
     suspend fun createInvoice(
         invoice: Invoice,
         termsCode: String? = null,
         lineItems: List<CreateInvoiceArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
+        idempotencyKey: String? = null,
     ): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
@@ -146,6 +158,7 @@ class InvoiceRepository(
             termsCode = termsCode,
             lineItems = lineItems,
             invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
         )
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createInvoice").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
@@ -159,6 +172,18 @@ class InvoiceRepository(
      * createInvoice's args exactly but forces QUOTE status server-side and, when
      * [sendToKinfolk] is true, dispatches the issued-quote notification (catalog key
      * invoice.new) targeting the new invoice doc. Returns the new invoiceId.
+     *
+     * [idempotencyKey] (#825) is [createInvoice]'s, with one difference that is
+     * not cosmetic: the prefix is `quot`, not `inv`. Both callables write into
+     * the SAME `invoices` collection, so a shared prefix would let a key minted
+     * for a quote be replayed at `createInvoice` and answer with a document
+     * that is not the one being asked about. The server's zod guard refuses the
+     * wrong prefix outright. Mint it with [mintQuoteIdempotencyKey]; null keeps
+     * the old server-minted-id behaviour.
+     *
+     * SENDING IS PART OF WHAT THE KEY PROTECTS HERE. With [sendToKinfolk] a
+     * replay would also dispatch the issued-quote notification a second time,
+     * so the household gets two quotes for one piece of work.
      */
     suspend fun createQuote(
         invoice: Invoice,
@@ -166,6 +191,7 @@ class InvoiceRepository(
         termsCode: String? = null,
         lineItems: List<CreateQuoteArgsLineItem>? = null,
         invoiceDiscountCents: Long? = null,
+        idempotencyKey: String? = null,
     ): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         val mode = authGate.requireTestMode()
@@ -176,6 +202,7 @@ class InvoiceRepository(
             termsCode = termsCode,
             lineItems = lineItems,
             invoiceDiscountCents = invoiceDiscountCents,
+            idempotencyKey = idempotencyKey,
         )
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
@@ -352,17 +379,34 @@ class InvoiceRepository(
      *
      * Fail-loud: the server's precondition messages (already settled, draft or
      * quote, cancelled, credit) surface verbatim.
+     *
+     * [idempotencyKey] (#825) BECOMES THE ID OF THE ROW IN THE INVOICE'S
+     * `payments` SUBCOLLECTION, which is the collection the server sums to
+     * decide where the invoice stands. Without it a replay of one $200 payment
+     * puts $400 against the bill and reports it settled, or overpaid, on money
+     * that was never collected. With it the server answers the second attempt
+     * from the row the first attempt wrote — including the settlement it
+     * derived then, not a recomputation, so two attempts at one payment cannot
+     * come back with different figures because another payment landed in
+     * between.
+     *
+     * AND IT IS WHAT STOPS A RETRY TURNING A SUCCESS INTO AN ERROR. Attempt 1
+     * settles the invoice; attempt 2 without a key re-runs the guards, finds
+     * the invoice already settled and reports `failed-precondition` for a
+     * payment that is stored and perfectly fine. Mint it with
+     * [mintInvoicePaymentIdempotencyKey]; null keeps the old behaviour.
      */
     suspend fun markInvoicePaid(
         invoiceId: String,
         amount: Double?,
         method: String,
         reference: String,
+        idempotencyKey: String? = null,
     ): Result<MarkInvoicePaidResult> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("markInvoicePaid")
-            .call(markInvoicePaidArgs(invoiceId, amount, method, reference).toPayload())
+            .call(markInvoicePaidArgs(invoiceId, amount, method, reference, idempotencyKey).toPayload())
             .awaitCallable().data as? Map<String, Any?>
         decodeMarkInvoicePaidResult(raw)
     }.onFailure { AuntieLog.e("markInvoicePaid failed for $invoiceId", it) }
@@ -599,12 +643,23 @@ class InvoiceRepository(
      * authority (invoice subcollection + settlement); this one writes the
      * display row only and can record a standalone payment with no invoice at
      * all. Returns the new payment doc id.
+     *
+     * [idempotencyKey] (#825) BECOMES THE ID OF THE `payments/{key}` ROW, and
+     * this is the callable the whole issue is named after. It wrote an auto-id
+     * row with no dedupe of any kind, and with `autoApply` it ALSO incremented
+     * the household's `accountBalanceCents`. A replay therefore recorded the
+     * payment twice and credited the household twice — and by standing ruling
+     * this business has no refunds, so account balance is the only destination
+     * it has for money owed back and that second credit is spendable money made
+     * from nothing. Mint it with [mintPaymentIdempotencyKey]; null keeps the
+     * old server-minted-id behaviour, which is what the callers that have not
+     * adopted a key still get.
      */
-    suspend fun createPayment(payment: Payment): Result<String> = runCatching {
+    suspend fun createPayment(payment: Payment, idempotencyKey: String? = null): Result<String> = runCatching {
         authGate.ensureAuthenticated()
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("recordPayment")
-            .call(recordPaymentArgs(payment).toPayload())
+            .call(recordPaymentArgs(payment, idempotencyKey).toPayload())
             .awaitCallable().data as? Map<String, Any?>
             ?: error("recordPayment: non-map payload")
         decodeRecordPaymentResult(raw).paymentId.ifBlank { error("recordPayment: missing paymentId") }
@@ -651,6 +706,7 @@ internal fun createInvoiceArgs(
     termsCode: String? = null,
     lineItems: List<CreateInvoiceArgsLineItem>? = null,
     invoiceDiscountCents: Long? = null,
+    idempotencyKey: String? = null,
 ): CreateInvoiceArgs = CreateInvoiceArgs(
     familyId = familyId,
     kinfolkName = invoice.kinfolkName,
@@ -668,6 +724,12 @@ internal fun createInvoiceArgs(
     sessionIds = invoice.sessionIds,
     lineItems = lineItems,
     invoiceDiscountCents = invoiceDiscountCents,
+    // #825. A NULL IS OMITTED FROM THE PAYLOAD by the generated class, which is
+    // the whole reason the server typed this `.optional()` rather than
+    // `.nullable().optional()`: an absent key means "no dedupe, mint me an id",
+    // and there is no second meaning for a key sent as null that Kotlin's one
+    // `T?` could express anyway.
+    idempotencyKey = idempotencyKey,
 )
 
 /**
@@ -686,6 +748,7 @@ internal fun createQuoteArgs(
     termsCode: String? = null,
     lineItems: List<CreateQuoteArgsLineItem>? = null,
     invoiceDiscountCents: Long? = null,
+    idempotencyKey: String? = null,
 ): CreateQuoteArgs = CreateQuoteArgs(
     familyId = familyId,
     kinfolkName = invoice.kinfolkName,
@@ -703,6 +766,10 @@ internal fun createQuoteArgs(
     lineItems = lineItems,
     invoiceDiscountCents = invoiceDiscountCents,
     sendToKinfolk = sendToKinfolk,
+    // #825, and `quot_`-prefixed rather than `inv_`. Both callables write into
+    // the `invoices` collection, so the prefix is what keeps a quote's key from
+    // answering at `createInvoice`.
+    idempotencyKey = idempotencyKey,
 )
 
 /**
@@ -720,11 +787,22 @@ internal fun markInvoicePaidArgs(
     amount: Double?,
     method: String,
     reference: String,
+    idempotencyKey: String? = null,
 ): MarkInvoicePaidArgs = MarkInvoicePaidArgs(
     invoiceId = invoiceId,
     amount = amount,
     method = method.takeIf { it.isNotBlank() },
     reference = reference.takeIf { it.isNotBlank() },
+    // #825. NOT `takeIf { it.isNotBlank() }` like the two fields above it: a
+    // blank key is not a thing a caller can produce here. `method` and
+    // `reference` come from a dialog the operator may leave empty, whereas this
+    // value is either minted by `mintInvoicePaymentIdempotencyKey` or absent
+    // because the caller has not adopted a key. Quietly rewriting a malformed
+    // key to "no key at all" would turn a client bug into a silent loss of the
+    // dedupe, which is the one failure this whole change exists to prevent; the
+    // server's zod guard refusing the malformed value out loud is the outcome
+    // we want.
+    idempotencyKey = idempotencyKey,
 )
 
 /**
@@ -743,7 +821,7 @@ internal fun archiveInvoiceArgs(invoiceId: String, force: Boolean): ArchiveInvoi
  * collection. No TestMode anywhere: the sandbox kinfolkId stamp is the server's
  * job now.
  */
-internal fun recordPaymentArgs(payment: Payment): RecordPaymentArgs = RecordPaymentArgs(
+internal fun recordPaymentArgs(payment: Payment, idempotencyKey: String? = null): RecordPaymentArgs = RecordPaymentArgs(
     kinfolkId = payment.kinfolkId,
     kinfolkName = payment.kinfolkName,
     client = payment.client,
@@ -760,6 +838,13 @@ internal fun recordPaymentArgs(payment: Payment): RecordPaymentArgs = RecordPaym
     invoiceNumber = payment.invoiceNumber,
     autoApply = payment.autoApply,
     sendConfirmationEmail = payment.sendConfirmationEmail,
+    // #825. THE ID OF THE ROW, so a replay is answered with the payment the
+    // first attempt recorded rather than recording a second one and crediting
+    // `accountBalanceCents` a second time. It also settles what a retry does
+    // about `sendConfirmationEmail`: the server stamps that on the row and a
+    // replay sends nothing, so the household does not get a second receipt for
+    // one payment.
+    idempotencyKey = idempotencyKey,
     // NO `apply`, DELIBERATELY. `InvoiceDetailViewModel.recordPayment` calls
     // `markInvoicePaid` FIRST, which has already settled the invoice by the time
     // this row is written; sending an apply here would put the same money

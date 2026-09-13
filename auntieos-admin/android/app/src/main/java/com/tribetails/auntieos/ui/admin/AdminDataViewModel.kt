@@ -11,6 +11,9 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.data.repository.mintInvoiceIdempotencyKey
+import com.tribetails.auntieos.data.repository.mintPaymentIdempotencyKey
+import com.tribetails.auntieos.data.repository.mintQuoteIdempotencyKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,6 +76,143 @@ class AdminDataViewModel(
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    /**
+     * #825: the keys that make pressing Create, or Record, twice safe.
+     *
+     * Minted on the first attempt at a submission and held for every retry of
+     * it, which on this ViewModel means the operator pressing the button again
+     * after seeing an error. That press is the dangerous one. The Firebase SDK
+     * reports `INTERNAL` for a request that never arrived AND for a write that
+     * committed with a lost reply, so the retry that repairs the first case is
+     * the retry that, without a key, creates a SECOND invoice (burning a second
+     * value out of the shared `counters/invoiceNumber` sequence, which cannot be
+     * given back) or records a SECOND payment and credits the household's
+     * `accountBalanceCents` a second time — money this business has no refund
+     * mechanism to take back.
+     *
+     * Re-minted the moment what is being submitted changes, compared at submit
+     * time via [invoiceCreateSignature] / [standalonePaymentSignature] rather
+     * than cleared from wherever the form is edited. Everything that composes an
+     * invoice here lives in the dialog's own state, which this ViewModel never
+     * sees until the submit arrives, so comparing the submission itself is the
+     * only reading that cannot be broken by a field the dialog grows later.
+     *
+     * TWO HOLDERS, NOT ONE, because these are two different submissions that can
+     * legitimately be in flight at the same time on the same screen: the
+     * composer creating an invoice, and the standalone payment ledger recording
+     * money. A shared holder would have each one's key re-minted by the other's
+     * first press.
+     *
+     * ONE HOLDER FOR ALL THREE INVOICE-CREATION ENTRY POINTS, on the other hand
+     * ([createInvoice], [createQuote] and [composeInvoice]), because they are
+     * three doors onto one submission: "make a bill for this household". The
+     * signature carries which door it came through and whether it is an invoice
+     * or a quote, so switching door or kind re-mints rather than replaying — and
+     * it has to, since a `quot_` key sent to `createInvoice` is a key the server
+     * refuses outright.
+     */
+    private var invoiceCreateKey: String? = null
+    private var invoiceCreateSignature: String? = null
+    private var standalonePaymentKey: String? = null
+    private var standalonePaymentSignature: String? = null
+
+    /**
+     * Everything that decides WHAT bill is being created (#825). Deliberately
+     * excludes [_isLoading] and [_error], which change while a create is in
+     * flight: treating that as an edit would mint a new key for the retry and
+     * re-arm the duplicate.
+     *
+     * The invoice, the lines and the discount go in via their `toString()`,
+     * which is honest here because every one of them is a `data class` (see
+     * `Models.kt` and `NewInvoiceDialog.kt`) and so has a value-based
+     * `toString`. A plain class would give an identity string, a fresh value on
+     * every press, and a re-mint every press — the exact defect that would leave
+     * this feature looking wired while defending nothing.
+     */
+    private fun invoiceCreateSignature(
+        entryPoint: String,
+        kind: InvoiceCreateKind,
+        invoice: Invoice,
+        sendToKinfolk: Boolean,
+        termsCode: String?,
+        lineItems: List<InvoiceLineItem>?,
+        invoiceDiscountCents: Long?,
+    ): String = listOf(
+        entryPoint,
+        kind.name,
+        invoice.toString(),
+        sendToKinfolk.toString(),
+        termsCode.orEmpty(),
+        lineItems?.toString().orEmpty(),
+        invoiceDiscountCents?.toString().orEmpty(),
+    ).joinToString("\u001F") // a separator no typed field can contain
+
+    /**
+     * The key for whichever of the two invoice-creating callables this
+     * submission is for, minted fresh only when the submission has changed since
+     * the held one was minted.
+     *
+     * THE PREFIX FOLLOWS THE KIND, and [kind] is part of the signature above, so
+     * an operator who flips the composer from Invoice to Quote and presses again
+     * gets a `quot_` key rather than replaying an `inv_` one at a callable that
+     * would refuse it.
+     */
+    private fun heldInvoiceCreateKey(
+        entryPoint: String,
+        kind: InvoiceCreateKind,
+        invoice: Invoice,
+        sendToKinfolk: Boolean = false,
+        termsCode: String? = null,
+        lineItems: List<InvoiceLineItem>? = null,
+        invoiceDiscountCents: Long? = null,
+    ): String? {
+        val signature = invoiceCreateSignature(
+            entryPoint, kind, invoice, sendToKinfolk, termsCode, lineItems, invoiceDiscountCents,
+        )
+        if (invoiceCreateKey == null || invoiceCreateSignature != signature) {
+            invoiceCreateKey = when (kind) {
+                InvoiceCreateKind.QUOTE -> mintQuoteIdempotencyKey()
+                InvoiceCreateKind.INVOICE -> mintInvoiceIdempotencyKey()
+            }
+            invoiceCreateSignature = signature
+        }
+        return invoiceCreateKey
+    }
+
+    /**
+     * Released on success: the NEXT press is a second bill the operator meant to
+     * create, not a retry of this one, and a held key would have the server hand
+     * back the first invoice and report it as though the second had been made.
+     */
+    private fun releaseInvoiceCreateKey() {
+        invoiceCreateKey = null
+        invoiceCreateSignature = null
+    }
+
+    /**
+     * Everything that decides WHAT payment is being recorded (#825).
+     *
+     * The fields are listed one by one rather than taken from [Payment]'s own
+     * `toString()`, and the omission is the reason: `id` is `@DocumentId`, never
+     * serialized, and never sent — so folding it in would let a value the server
+     * never sees decide whether two presses are the same payment.
+     */
+    private fun standalonePaymentSignature(payment: Payment): String = listOf(
+        payment.kinfolkId,
+        payment.invoiceId,
+        payment.invoiceNumber,
+        payment.amount.toString(),
+        payment.tip.toString(),
+        payment.fee.toString(),
+        payment.date,
+        payment.paymentMethod,
+        payment.referenceNumber,
+        payment.email,
+        payment.notes.orEmpty(),
+        payment.autoApply.toString(),
+        payment.sendConfirmationEmail.toString(),
+    ).joinToString("\u001F") // a separator no typed field can contain
 
     // Invoice Management
     private val _invoices = MutableStateFlow<List<Invoice>>(emptyList())
@@ -464,9 +604,16 @@ class AdminDataViewModel(
 
     // Create new records
     fun createInvoice(invoice: Invoice) {
+        // #825: one key per invoice, re-minted only when the invoice itself has
+        // changed since the key was minted. Taken HERE rather than inside the
+        // coroutine so a second press while the first attempt is still in flight
+        // reads the same held key; a cold start is long enough for that to
+        // happen, and it is the case a per-press key gets wrong.
+        val key = heldInvoiceCreateKey("createInvoice", InvoiceCreateKind.INVOICE, invoice)
         viewModelScope.launch {
             _isLoading.value = true
-            invoiceRepository.createInvoice(invoice).onSuccess {
+            invoiceRepository.createInvoice(invoice, idempotencyKey = key).onSuccess {
+                releaseInvoiceCreateKey()
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
                 _error.value = throwable.message ?: "Failed to create invoice"
@@ -482,9 +629,20 @@ class AdminDataViewModel(
      * confirms via [_invoiceActionMessage] and refreshes the list.
      */
     fun createQuote(invoice: Invoice, sendToKinfolk: Boolean) {
+        // #825, and with [sendToKinfolk] the key is protecting the household's
+        // inbox as well as the `invoices` collection: a replay would dispatch
+        // the issued-quote notification a second time, so one piece of work
+        // arrives as two quotes.
+        val key = heldInvoiceCreateKey(
+            entryPoint = "createQuote",
+            kind = InvoiceCreateKind.QUOTE,
+            invoice = invoice,
+            sendToKinfolk = sendToKinfolk,
+        )
         viewModelScope.launch {
             _isLoading.value = true
-            invoiceRepository.createQuote(invoice, sendToKinfolk).onSuccess {
+            invoiceRepository.createQuote(invoice, sendToKinfolk, idempotencyKey = key).onSuccess {
+                releaseInvoiceCreateKey()
                 _invoiceActionMessage.value = if (sendToKinfolk) "Quote created and sent." else "Quote created."
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
@@ -509,6 +667,24 @@ class AdminDataViewModel(
      * how every other write on this ViewModel reports.
      */
     fun composeInvoice(request: NewInvoiceRequest, onResult: (Result<String>) -> Unit = {}) {
+        // #825: one key per composed request, and this is the entry point that
+        // needs it most. A failure here deliberately leaves the dialog OPEN with
+        // the form intact so the operator can press Create again — which is
+        // precisely the retry that used to make a second invoice and spend a
+        // second invoice number. The key is what turns that press into a replay
+        // of the first attempt. It is re-minted only when the request itself
+        // changes, so an edit made in that still-open dialog is a new bill
+        // rather than a replay that would report the OLD one back as though the
+        // edit had landed.
+        val key = heldInvoiceCreateKey(
+            entryPoint = "composeInvoice",
+            kind = request.kind,
+            invoice = request.invoice,
+            sendToKinfolk = request.sendToKinfolk,
+            termsCode = request.termsCode,
+            lineItems = request.lineItems,
+            invoiceDiscountCents = request.invoiceDiscountCents,
+        )
         viewModelScope.launch {
             _isLoading.value = true
             val result = when (request.kind) {
@@ -518,15 +694,18 @@ class AdminDataViewModel(
                     termsCode = request.termsCode,
                     lineItems = request.lineItems?.map { it.toCreateQuoteLine() },
                     invoiceDiscountCents = request.invoiceDiscountCents,
+                    idempotencyKey = key,
                 )
                 InvoiceCreateKind.INVOICE -> invoiceRepository.createInvoice(
                     invoice = request.invoice,
                     termsCode = request.termsCode,
                     lineItems = request.lineItems?.map { it.toCreateInvoiceLine() },
                     invoiceDiscountCents = request.invoiceDiscountCents,
+                    idempotencyKey = key,
                 )
             }
             result.onSuccess {
+                releaseInvoiceCreateKey()
                 _invoiceActionMessage.value = when {
                     request.kind == InvoiceCreateKind.QUOTE && request.sendToKinfolk -> "Quote created and sent."
                     request.kind == InvoiceCreateKind.QUOTE -> "Quote created."
@@ -642,10 +821,30 @@ class AdminDataViewModel(
         }
     }
 
+    /**
+     * A standalone payment into the root `payments` ledger.
+     *
+     * #825: one key per payment, held across the operator's retry and re-minted
+     * only when the payment itself changes. This is the callable the issue is
+     * named after — without a key a replay records the payment twice AND, with
+     * `autoApply`, credits the household's `accountBalanceCents` twice, and
+     * account balance is the only destination this business has for money owed
+     * back, so the second credit is spendable money made from nothing.
+     */
     fun createPayment(payment: Payment) {
+        val signature = standalonePaymentSignature(payment)
+        if (standalonePaymentKey == null || standalonePaymentSignature != signature) {
+            standalonePaymentKey = mintPaymentIdempotencyKey()
+            standalonePaymentSignature = signature
+        }
+        val key = standalonePaymentKey
         viewModelScope.launch {
             _isLoading.value = true
-            invoiceRepository.createPayment(payment).onSuccess {
+            invoiceRepository.createPayment(payment, idempotencyKey = key).onSuccess {
+                // The next press is a second payment the operator meant to
+                // record, not a retry of this one.
+                standalonePaymentKey = null
+                standalonePaymentSignature = null
                 // Refreshes page 1, which is NOT a recency query and may not
                 // contain the row just written. listPayments orders by document
                 // id because the collection has no field that can order it

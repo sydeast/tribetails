@@ -39,6 +39,8 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.mintInvoiceIdempotencyKey
+import com.tribetails.auntieos.web.data.mintQuoteIdempotencyKey
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -167,6 +169,44 @@ fun InvoicesScreen(
     var actionError by remember { mutableStateOf<String?>(null) }
 
     var actionNotice by remember { mutableStateOf<String?>(null) }
+
+    /**
+     * #825: the submission each key was minted for, and the key. ONE KEY PER
+     * SUBMISSION, NOT PER PRESS.
+     *
+     * Both composers CLOSE on confirm, so a retry here is not a second press on
+     * a still-open dialog -- it is the operator reopening "New invoice" and
+     * typing the same invoice again, because the first attempt reported an error
+     * this console cannot classify (see MoneyIdempotency.kt). Holding the key
+     * against the submission rather than against the dialog is what makes that
+     * second attempt land on the first attempt's invoice. It also stops the
+     * retry spending a second value from `counters/invoiceNumber`, which is the
+     * half of #825 that cannot be repaired afterwards: a consumed sequence value
+     * cannot be handed back.
+     *
+     * The signature is the draft `Invoice` itself (plus `sendToKinfolk` for a
+     * quote, which is part of the submission, not a modifier on it: a replay
+     * answers with what the FIRST attempt did, and the first attempt is what
+     * decided whether the household was notified). `NewInvoiceDialog` builds the
+     * draft purely from what was typed -- no clock, no counter -- so re-entering
+     * the same invoice rebuilds an equal one and the held key survives.
+     */
+    var invoiceSubmission by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var quoteSubmission by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    fun invoiceKeyFor(signature: String): String {
+        invoiceSubmission?.let { (held, key) -> if (held == signature) return key }
+        val minted = mintInvoiceIdempotencyKey()
+        invoiceSubmission = signature to minted
+        return minted
+    }
+
+    fun quoteKeyFor(signature: String): String {
+        quoteSubmission?.let { (held, key) -> if (held == signature) return key }
+        val minted = mintQuoteIdempotencyKey()
+        quoteSubmission = signature to minted
+        return minted
+    }
 
     val onReceipt: (String) -> Unit = { invoiceId ->
         scope.launch {
@@ -321,10 +361,18 @@ fun InvoicesScreen(
             onDismiss = { showComposer = false },
             onConfirm = { invoice ->
                 showComposer = false
+                val key = invoiceKeyFor(invoice.toString())
                 scope.launch {
-                    when (val r = client.createInvoice(invoice)) {
+                    when (val r = client.createInvoice(invoice, idempotencyKey = key)) {
                         is WriteResult.Err -> actionError = r.message
-                        is WriteResult.Ok -> { actionError = null; actionNotice = "Invoice created." }
+                        is WriteResult.Ok -> {
+                            actionError = null
+                            // #825: the held key goes once the invoice exists.
+                            // Keeping it would mean a deliberate second invoice
+                            // with identical fields silently replayed the first.
+                            invoiceSubmission = null
+                            actionNotice = "Invoice created."
+                        }
                     }
                 }
             },
@@ -342,11 +390,13 @@ fun InvoicesScreen(
             onConfirm = { showQuoteComposer = false },
             onConfirmQuote = { invoice, sendToKinfolk ->
                 showQuoteComposer = false
+                val key = quoteKeyFor(listOf(invoice, sendToKinfolk).toString())
                 scope.launch {
-                    when (val r = client.createQuote(invoice, sendToKinfolk)) {
+                    when (val r = client.createQuote(invoice, sendToKinfolk, idempotencyKey = key)) {
                         is WriteResult.Err -> actionError = r.message
                         is WriteResult.Ok -> {
                             actionError = null
+                            quoteSubmission = null
                             actionNotice = if (sendToKinfolk) "Quote created and sent." else "Quote created."
                         }
                     }
