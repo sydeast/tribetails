@@ -1219,9 +1219,20 @@ every client in both directions: these callables are the only door.
 - NEVER LOGGED: a contact's name, phone or email. `logEvent` carries the
   household id, the contact id and counts, matching `listMembers`' refusal to
   surface `displayName`.
-- Clients: `auntieos-admin/src/api/householdContacts.ts` (web) and
+- Clients, ADMIN: `auntieos-admin/src/api/householdContacts.ts` (web) and
   `MembersRepository.listHouseholdContacts / saveHouseholdContact /
   removeHouseholdContact` (Android). Both drive the household members screen.
+- Clients, PORTAL (#818, the household keeping its own list):
+  `mytribe/web/src/api/tribeApi.ts` and `PortalApi.listHouseholdContacts /
+  saveHouseholdContact / removeHouseholdContact` (Android). Both drive the
+  "Contacts Without an Account" card on the Tribe Profile screen, directly under
+  "Invite a Kinfolk" so the two gestures read apart. `kinfolkId` is OPTIONAL from
+  the portal and required from the admin: the admin always targets a household it
+  picked off a list, while a household targets itself and the server resolves it
+  from `clients/{uid}.kinfolkIds`. THE GATE WAS NOT WIDENED for the portal: an
+  ACTIVE SECONDARY is still denied on all three. The portal card therefore reads
+  `permission-denied` for what it is and says the primary keeps the list, rather
+  than drawing a broken panel over a working server.
 
 ### expireStaleInvites (scheduled, NOT a callable)
 - `onSchedule('every day 02:00', 'America/New_York')`. There is no client trigger,

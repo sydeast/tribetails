@@ -138,12 +138,16 @@ describe('InvoiceDetail — mutation error surfacing', () => {
    * #825: one tap on Pay must not be able to become two live Checkout Sessions.
    *
    * `payInvoice` creates the session at STRIPE, and a second one stays payable
-   * alongside the first: two sessions become two PaymentIntents, `stripeWebhook`
-   * claims on the PaymentIntent id, so both settle and the household is charged
-   * twice for one bill — with no refund available to put it back. The key is
-   * handed through to Stripe, which answers the second attempt with the first
-   * session, so what this asserts is that a re-tap after a visible failure
-   * carries the SAME key.
+   * alongside the first. Since #826 a second completed session no longer pays
+   * the bill twice: the webhook recognises it and routes the money to account
+   * credit. That net cannot un-charge the card, though, and there are no
+   * refunds here, so the second SESSION is still the thing worth preventing.
+   *
+   * The key is handed through to Stripe, which answers the second attempt with
+   * the first session. What this asserts is that a re-tap after a visible
+   * failure carries the SAME key, which is the case #826's own session reuse
+   * cannot cover: that reuse needs the previous call to have stored a session
+   * id, and a call whose reply was lost stored nothing.
    */
   it('holds one checkout key across a re-tap after a failure', async () => {
     const invoicesApi = await import('../api/invoicesApi');

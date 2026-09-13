@@ -16,13 +16,14 @@ import kotlin.test.assertTrue
  * #825, the portal app's half.
  *
  * `payInvoice` asks STRIPE to open a Checkout Session, and a replay opens a
- * SECOND one that stays payable alongside the first. Two sessions become two
- * PaymentIntents, `stripeWebhook` claims on the PaymentIntent id, so both
- * settle and the household is charged twice for one bill — with no refund
- * available to put it back, by standing ruling. The key is the only thing that
- * stops it, and it works by being handed on to Stripe, so what this client has
- * to get right is putting it on the wire when it has one and leaving the
- * payload untouched when it does not.
+ * SECOND one that stays payable alongside the first. Since #826 a second
+ * completed session no longer pays the bill twice: the webhook recognises it
+ * and routes the money to the household's account balance. That net cannot
+ * un-charge the card, and by standing ruling there is no refund, so the second
+ * SESSION is still the thing worth preventing, and the key is what prevents it.
+ * It works by being handed on to Stripe, so what this client has to get right
+ * is putting it on the wire when it has one and leaving the payload untouched
+ * when it does not.
  *
  * This client does not retry on its own: `FunctionsClient.call` throws a plain
  * `Throwable` with no code, so it cannot tell a dropped request from a refusal.

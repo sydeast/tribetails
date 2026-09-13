@@ -15,6 +15,16 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { handleStripeDisputeEvent, isDisputeEvent } from './stripeDispute';
 import { handleSetupSessionCompleted, isSetupSessionEvent } from './stripeSetupSession';
+import {
+  ACCOUNT_BALANCE_FIELD,
+  CHECKOUT_ROUND_FIELD,
+  CHECKOUT_ROUND_METADATA_KEY,
+  SETTLED_INTENT_FIELD,
+  checkoutRoundOf,
+  duplicateCheckoutReason,
+  roundFromMetadata,
+  type DuplicateCheckoutReason,
+} from '../lib/invoiceCheckoutDedupe';
 
 /**
  * Refund events, ignored BY POLICY rather than by omission. See the branch
@@ -267,6 +277,27 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     });
   }
 
+  // WHICH SETTLEMENT ROUND THE SESSION BEHIND THIS EVENT WAS MINTED IN
+  // (issue #826). `payInvoice` stamps it on the Session AND the PaymentIntent,
+  // so it reaches here on either of the two events one card payment produces.
+  // `null` when the session predates the stamp, which is a different state from
+  // round 0 — see `roundFromMetadata`.
+  const eventRound = roundFromMetadata(metadata?.[CHECKOUT_ROUND_METADATA_KEY]);
+
+  // THE AUTHORITATIVE AMOUNT, off the event itself (NOTE-57). Hoisted out of
+  // the transaction because BOTH outcomes need it now: the apply below records
+  // it against the invoice, and the duplicate branch credits it to the
+  // household's account balance. Deriving it twice is how the two would come to
+  // disagree about how much money arrived.
+  const eventAmountCents =
+    typeof eventObject.amount_paid === 'number' && eventObject.amount_paid > 0
+      ? eventObject.amount_paid
+      : typeof eventObject.amount_received === 'number' && eventObject.amount_received > 0
+        ? eventObject.amount_received
+        : typeof eventObject.amount_total === 'number' && eventObject.amount_total > 0
+          ? eventObject.amount_total
+          : null;
+
   // U6: the Stripe processor fee. The event carries no fee — it lives on the
   // charge's balance transaction, one hop past what the webhook payload ever
   // includes — so this takes one Stripe retrieve: the PaymentIntent, with a
@@ -310,8 +341,16 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // can warn AFTER the txn commits (NOTE-57). Declared here so a txn retry resets
   // it on each attempt's write path.
   let unresolvedAmount = false;
+  // What the invoice-level dedupe decided, read back after the txn commits so
+  // the loud log and the audit entry sit outside it. Same pattern and same
+  // reason as `unresolvedAmount`: reset on every attempt's write path, because
+  // a Firestore transaction re-runs its callback on contention.
+  let duplicateReason: DuplicateCheckoutReason = null;
+  let duplicateCreditedCents = 0;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
+    duplicateReason = null;
+    duplicateCreditedCents = 0;
     const dedupeSnap = await tx.get(dedupeRef);
     if (dedupeSnap.exists) {
       return { proceed: false, reason: 'replay' as const };
@@ -320,7 +359,15 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // after writes, so this sits with the other gets, not with its branch.
     const claimSnap = paymentClaimRef ? await tx.get(paymentClaimRef) : null;
     const invoiceSnap = await tx.get(ref);
-    const invoice = invoiceSnap.data() as { lastStripeEventAtMs?: number } | undefined;
+    const invoice = invoiceSnap.data() as
+      | {
+          lastStripeEventAtMs?: number;
+          amountDue?: unknown;
+          amountDueCents?: unknown;
+          [CHECKOUT_ROUND_FIELD]?: unknown;
+          [SETTLED_INTENT_FIELD]?: unknown;
+        }
+      | undefined;
     // The state stamp's payment standing reads the `payments` SUBCOLLECTION
     // (Stripe's own mirror docs live in the ROOT `payments` collection, so on
     // a card-only invoice this sums to zero; a manually-recorded partial shows
@@ -342,6 +389,137 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       });
       return { proceed: false, reason: 'duplicate-payment' as const };
     }
+
+    // ── EXACTLY-ONCE PER INVOICE SETTLEMENT (issue #826) ──────────────────
+    //
+    // The third ledger, and the only one that looks at the INVOICE. The two
+    // above are per event and per PaymentIntent, and `payInvoice` mints a new
+    // Checkout Session — hence a new PaymentIntent, hence new event ids — on
+    // every call, so two completed sessions for one bill sail past both. Two
+    // real charges, and until this branch the server stopped neither.
+    //
+    // IT RUNS AFTER THE PAYMENT CLAIM, AND THE ORDER IS NOT COSMETIC. One card
+    // payment delivers TWO paid events (`checkout.session.completed` and
+    // `payment_intent.succeeded`). Ahead of the claim check, the second of them
+    // would read as a cross-session duplicate and this branch would credit an
+    // account for money that had just been applied correctly — a worse bug than
+    // the one being fixed. The claim answers "is this the same payment?" first;
+    // only then does this ask "is this a second payment for a settled bill?".
+    //
+    // `lib/invoiceCheckoutDedupe.ts` holds the decision and the reasoning,
+    // including why a key of `invoiceId` alone would refuse a household's real
+    // second payment.
+    duplicateReason = isPaidEvent
+      ? duplicateCheckoutReason({
+          invoice: {
+            round: invoice?.[CHECKOUT_ROUND_FIELD],
+            settledPaymentIntentId: invoice?.[SETTLED_INTENT_FIELD],
+            amountDueCents: invoice?.amountDueCents,
+            amountDue: invoice?.amountDue,
+          },
+          paymentIntentId,
+          eventRound,
+        })
+      : null;
+    if (duplicateReason !== null) {
+      // THE MONEY IS ALREADY GONE FROM THE CARD. Stripe collected it before it
+      // told us, so "refuse" cannot mean "reverse" — and there are no refunds,
+      // ever (operator ruling, 2026-08-06). What this branch can do is keep the
+      // duplicate off the invoice and put it somewhere the household can
+      // actually spend: `families/{id}.accountBalanceCents`, the same balance
+      // `redeemCredit` fills and `getMyInvoices` already shows them.
+      //
+      // NOT DONE HERE, all deliberate: no second `status: 'paid'` stamp, no
+      // second BILLING_INVOICE_PAID audit, and no `invoice.payment.applied`
+      // notification. The invoice was not paid again; telling a household it
+      // was would be the double charge wearing a receipt.
+      tx.create(dedupeRef, {
+        type: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        eventCreatedMs,
+        familyId,
+        invoiceId,
+        appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+        duplicateReason,
+      });
+      if (paymentClaimRef) {
+        // Claim the PaymentIntent even though nothing was applied. This
+        // duplicate payment has its OWN sibling event coming, and without the
+        // claim that sibling would arrive at this same branch and credit the
+        // account a second time — the original bug, one level along.
+        tx.create(paymentClaimRef, {
+          appliedEventId: event.id,
+          appliedEventType: event.type,
+          receivedAt: FieldValue.serverTimestamp(),
+          familyId,
+          invoiceId,
+          appliedOutcome: 'DUPLICATE_INVOICE_CHECKOUT',
+        });
+      }
+      // ONLY the amount Stripe itself reports. The local-invoice fallback the
+      // apply path uses is meaningless here: this invoice's balance is zero,
+      // which is why we are in this branch, and crediting zero-or-total would
+      // either lose the household's money or invent some. No amount means no
+      // credit and a flagged row for an operator, never a guess.
+      const creditCents = eventAmountCents ?? 0;
+      duplicateCreditedCents = creditCents;
+      tx.set(db().collection('payments').doc(event.id), {
+        kinfolkId: familyId,
+        invoiceId,
+        amount: creditCents > 0 ? creditCents / 100 : null,
+        amountCents: creditCents > 0 ? creditCents : null,
+        amountResolved: creditCents > 0,
+        amountSource: creditCents > 0 ? 'stripe-event' : 'unresolved',
+        paymentMethod: 'stripe',
+        referenceNumber,
+        date: FieldValue.serverTimestamp(),
+        stripeEventId: event.id,
+        ...(feeResolved ? { feeCents } : {}),
+        feeResolved,
+        // What makes this row readable as what it is. The root `payments`
+        // collection is a DISPLAY ledger counted in no settlement arithmetic
+        // (`getInvoiceLedger` says so in as many words), so the row naming this
+        // invoice cannot double-count it — but a row with no explanation would
+        // have an operator reading a second payment against a settled bill and
+        // finding no reason for it.
+        appliedToInvoice: false,
+        appliedTo: 'accountCredit',
+        duplicateCheckoutReason: duplicateReason,
+        duplicateOfPaymentIntentId:
+          typeof invoice?.[SETTLED_INTENT_FIELD] === 'string' ? invoice[SETTLED_INTENT_FIELD] : null,
+      });
+      if (creditCents > 0 && familyId) {
+        // `increment`, not read-then-write, for the reason `creditAccount` in
+        // `lib/accountCredit.ts` gives: two credits landing together must not
+        // each write the balance they read. That helper takes a WriteBatch and
+        // this is a Transaction, so the one line is inlined rather than widening
+        // a helper `recordPayment` also depends on.
+        tx.set(
+          db().collection('families').doc(familyId),
+          {
+            [ACCOUNT_BALANCE_FIELD]: FieldValue.increment(creditCents),
+            accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      // The invoice records that it happened and nothing else: no money field,
+      // no status, no state stamp. An operator looking at the bill should be
+      // able to see the second charge from here rather than having to find it
+      // in a collection.
+      tx.set(
+        ref,
+        {
+          duplicateCheckoutPaymentIntentIds: paymentIntentId
+            ? FieldValue.arrayUnion(paymentIntentId)
+            : FieldValue.arrayUnion(event.id),
+          lastDuplicateCheckoutAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return { proceed: false, reason: 'duplicate-invoice-checkout' as const };
+    }
+
     if (eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
       // Out-of-order retry arriving after a newer event has already been
       // applied. Reserve the id to prevent future replays but don't mutate.
@@ -385,6 +563,22 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     if (isPaidEvent) {
       patch.status = 'paid';
       patch.amountDue = 0;
+      // THE INTEGER FIELD TOO, AND IT WAS MISSING (found while building #826).
+      //
+      // `amountDue` is the legacy dollar float; `amountDueCents` is the integer
+      // the settlement pass writes (`lib/invoiceMath.ts`) and the field every
+      // reader that knows about it PREFERS: `payInvoice`'s "Invoice is fully
+      // paid" refusal reads it first, `getMyInvoices` reads it first, and so
+      // does the owes-nothing test the new invoice-level dedupe rests on.
+      // `createInvoice` puts it on every invoice it writes, and this flip zeroed
+      // only the dollar beside it — leaving the PREFERRED figure reading the
+      // full balance on an invoice Stripe had just paid.
+      //
+      // That is not a display nit. It let `payInvoice` mint a fresh full-amount
+      // checkout for an already-paid invoice, at the CURRENT round, which
+      // nothing downstream can tell from a legitimate second payment: #826
+      // reachable through the callable with no client change at all.
+      patch.amountDueCents = 0;
       patch.paidAt = FieldValue.serverTimestamp();
       // The state stamp (ADR-0002), in the same transactional write as the
       // flip it describes. A failed event changes nothing the classifier
@@ -404,6 +598,24 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // the Checkout Session, and the household may still complete it.
       patch.pendingCheckoutSessionId = FieldValue.delete();
       patch.pendingAt = FieldValue.delete();
+      // CLOSE THIS SETTLEMENT ROUND (issue #826). Both fields are written in the
+      // same transactional write as the flip they describe, because either one
+      // landing without the other is a window of exactly the size this fix
+      // exists to shut.
+      //
+      //   the round     moves past every Checkout Session already minted for
+      //                 this balance, so any of them that settles later arrives
+      //                 STALE. `payInvoice` reads it back when it mints the
+      //                 next one, so a bill whose balance genuinely comes back
+      //                 (a line item added, a partial recorded elsewhere) can
+      //                 still be paid a second time.
+      //   the intent    names WHICH payment settled it, which is what lets the
+      //                 next paid event tell "the other half of my own charge"
+      //                 from "somebody else's charge on my bill" — and is the
+      //                 only one of the two that works on a session minted
+      //                 before this stamp existed.
+      patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
+      if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
     }
     tx.set(ref, patch, { merge: true });
     if (isPaidEvent) {
@@ -423,14 +635,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // it wins the race. Without it a Session-first delivery would fall back
       // to the local invoice doc, which is the weaker source NOTE-57 exists to
       // avoid. Integer minor units, exactly like its two siblings.
-      const eventAmount =
-        typeof eventObject.amount_paid === 'number' && eventObject.amount_paid > 0
-          ? eventObject.amount_paid
-          : typeof eventObject.amount_received === 'number' && eventObject.amount_received > 0
-            ? eventObject.amount_received
-            : typeof eventObject.amount_total === 'number' && eventObject.amount_total > 0
-              ? eventObject.amount_total
-              : null;
+      //
+      // Computed once, above the transaction, because the duplicate-checkout
+      // branch credits the same figure to the household's account balance.
+      const eventAmount = eventAmountCents;
       const localAmount =
         typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
           ? invoiceForAmount.amountDue
@@ -492,6 +700,48 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       event: 'stripe.fee.unresolved',
       extra: { invoiceId, familyId, eventId: event.id, type: event.type },
     });
+  }
+
+  if (decision.reason === 'duplicate-invoice-checkout') {
+    // A HOUSEHOLD WAS CHARGED TWICE FOR ONE BILL. Loud, and at `error`, because
+    // this is not a dedupe going about its business: real money arrived that
+    // nobody meant to send, no refund is possible (operator ruling), and the
+    // account-balance credit above is the entire remedy. Somebody has to be
+    // able to find it.
+    logEvent({
+      severity: 'error',
+      function: 'stripeWebhook',
+      event: 'stripe.invoice.duplicateCheckout',
+      extra: {
+        invoiceId,
+        familyId,
+        eventId: event.id,
+        type: event.type,
+        paymentIntentId,
+        duplicateReason,
+        eventRound,
+        creditedCents: duplicateCreditedCents,
+      },
+    });
+    await writeAuditEntry({
+      status: 'FAILURE',
+      event: AUDIT_EVENTS.BILLING_PAYMENT_DUPLICATE_CREDITED,
+      severity: 'critical',
+      actorRole: 'SYSTEM',
+      familyId,
+      payload: {
+        invoiceId,
+        stripeEventId: event.id,
+        paymentIntentId,
+        duplicateReason,
+        creditedCents: duplicateCreditedCents,
+      },
+    });
+    // 200, not a retry-provoking error: the credit and the ledger row committed,
+    // and asking Stripe to redeliver would only re-run a transaction that now
+    // short-circuits at the replay branch.
+    res.status(200).json({ ok: true, dedup: true, reason: decision.reason });
+    return;
   }
 
   if (!decision.proceed) {

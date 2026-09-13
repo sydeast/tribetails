@@ -45,25 +45,31 @@ import type { UseMutationOptions, UseMutationResult } from '@tanstack/react-quer
  *     Invoices, InvoiceDetail     to establish rather than assume. Both halves
  *                                 of the answer, because they differ:
  *
- *                                 THE SERVER OFFERS NO BACKSTOP. The callable
- *                                 charges nothing itself — it creates a Stripe
- *                                 Checkout Session, one per call, each with
- *                                 its own PaymentIntent, and overwrites
- *                                 `pendingCheckoutSessionId`. `stripeWebhook`
- *                                 dedupes per `stripeEvents/{event.id}` and
- *                                 per `stripePayments/{paymentIntentId}`, and
- *                                 a second session sails past both because it
- *                                 is a different intent. Nothing compares two
- *                                 sessions against one invoice. Two completed
- *                                 checkouts are two real charges, applied.
+ *                                 THE SERVER NOW HAS A BACKSTOP (issue #826;
+ *                                 this paragraph used to say it had none, and
+ *                                 that is what #826 was filed on). The callable
+ *                                 still charges nothing itself and still
+ *                                 creates a Checkout Session per call, each
+ *                                 with its own PaymentIntent, so a second
+ *                                 session still sails past both
+ *                                 `stripeEvents/{event.id}` and
+ *                                 `stripePayments/{paymentIntentId}`. What
+ *                                 changed is a THIRD ledger in `stripeWebhook`
+ *                                 that compares a settling session against the
+ *                                 invoice's own settlement round: two completed
+ *                                 checkouts for one balance no longer pay the
+ *                                 bill twice — the second lands in the
+ *                                 household's account balance and raises a
+ *                                 critical audit. `payInvoice` also hands back
+ *                                 an open session rather than minting a second.
+ *                                 See functions/src/lib/invoiceCheckoutDedupe.ts.
  *
- *                                 THE CLIENT CANNOT REACH THAT TODAY. Success
- *                                 is `window.location.href = checkoutUrl`,
- *                                 which unloads the page, so a second session
- *                                 cannot be opened from the same page life.
- *                                 The exposure is one refactor away, not
- *                                 present — which is a reason to be careful
- *                                 here, not a reason to relax.
+ *                                 THE CLIENT STILL CANNOT REACH IT. Success is
+ *                                 `window.location.href = checkoutUrl`, which
+ *                                 unloads the page, so a second session cannot
+ *                                 be opened from one page life. That is no
+ *                                 longer the ONLY thing holding it shut, which
+ *                                 is the whole point of the change.
  *
  *                                 ABANDON is chosen for the redirect, which is
  *                                 live today: a held mutation resumes minutes

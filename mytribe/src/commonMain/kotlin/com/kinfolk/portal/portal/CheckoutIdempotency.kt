@@ -19,12 +19,21 @@ import kotlin.time.ExperimentalTime
  * by our own server against a Firestore document. There is nothing of ours to
  * check for a checkout: `payInvoice` asks STRIPE to create a Checkout Session,
  * and a replay creates a SECOND session in Stripe's database. Both stay
- * payable. Two sessions become two PaymentIntents, and `stripeWebhook` claims
- * on the PaymentIntent id, so both settle and the household is charged twice
- * for one bill — with no refund available to put it back, by standing ruling.
- * Nothing our server writes can prevent that, so the callable passes this value
- * through to Stripe as a request option and Stripe answers the retry with the
- * first session.
+ * payable. Nothing our server writes can stop that session being created, so
+ * the callable passes this value through to Stripe as a request option and
+ * Stripe answers the retry with the first session.
+ *
+ * #826 ALREADY COVERS THE CHARGE ITSELF: a second completed session is
+ * recognised by `stripeWebhook` and its money goes to the household's account
+ * balance rather than paying the bill twice. That net holds. It cannot
+ * un-charge the card, because there are no refunds here and it acts after the
+ * money has moved, so a household debited twice is still debited twice. This
+ * key is what stops the second debit happening.
+ *
+ * IT ALSO COVERS A TAP #826 CANNOT SEE. The server's session reuse needs the
+ * PREVIOUS call to have finished and stored `pendingCheckoutSessionId`. A call
+ * that made the session and then lost its reply stored nothing, so the retry
+ * finds nothing to reuse and opens a second session. That is this key's case.
  *
  * ONE KEY PER SUBMISSION, NOT PER TAP, and here that rule has a hard outer
  * bound: Stripe holds a key for 24 hours and REFUSES one reused with a

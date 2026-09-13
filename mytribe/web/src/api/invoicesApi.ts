@@ -87,10 +87,11 @@ export function payInvoice(
     ...(kinfolkId !== undefined ? { kinfolkId } : {}),
     // #825. Handed straight to Stripe as a request option by the callable, not
     // checked here or in Firestore: the duplicate a replay makes is a second
-    // Checkout Session in STRIPE's database, and both stay payable, so Stripe
-    // is the only party that can refuse the second one. `lib/moneyIdempotency.ts`
-    // has the full reasoning, including why a key is held per submission rather
-    // than per invoice.
+    // Checkout Session in STRIPE's database, so Stripe is the only party that
+    // can decline to make it. #826's webhook stops a second charge PAYING the
+    // bill twice, but it cannot un-charge a card; this stops the second session
+    // existing. `lib/moneyIdempotency.ts` has the full reasoning, including why
+    // a key is held per submission rather than per invoice.
     ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
   };
   // NO `{ idempotent: true }` HERE. `CallOptions.idempotent` retries on

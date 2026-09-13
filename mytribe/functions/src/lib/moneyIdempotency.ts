@@ -128,11 +128,25 @@ export const QuoteIdempotencyKeyArg = idempotencyKeyArg(
  *
  * A DIFFERENT MECHANISM ON PURPOSE, because the duplicate is not in Firestore.
  * A replayed `payInvoice` creates a second Checkout Session at Stripe, and both
- * sessions stay payable: the household can be charged twice, and by standing
- * ruling there is no refund to undo it with. Nothing this server writes can
- * prevent that, because the second object is created in Stripe's database, so
- * the key is handed to Stripe as a request option and Stripe returns the FIRST
- * session rather than making a second one.
+ * sessions stay payable. The second object is created in Stripe's database, so
+ * nothing this server writes can stop it being created; the key is handed to
+ * Stripe as a request option and Stripe returns the FIRST session instead.
+ *
+ * WHAT #826 ALREADY DOES, AND WHY THIS IS STILL WORTH HAVING. Since that issue
+ * a second completed session no longer pays the bill twice: `stripeWebhook`
+ * recognises it and routes the money to the household's account balance
+ * (`lib/invoiceCheckoutDedupe.ts`). The money is not lost. But THE CARD IS
+ * STILL CHARGED. Reconciliation is what you do after money has moved, and by
+ * standing ruling there is no refund to undo it with, so a household debited
+ * twice and handed a credit has still been debited twice. Preventing the second
+ * session is the only thing that stops the charge happening at all.
+ *
+ * IT ALSO COVERS A CALL #826's SESSION REUSE CANNOT SEE. That reuse hands back
+ * the session stored on the invoice in `pendingCheckoutSessionId`, which is
+ * written AFTER Stripe returns, so it needs the previous call to have finished.
+ * A call that created the session and then lost its reply stored nothing: the
+ * retry finds nothing to reuse and mints a second session. That is this key's
+ * case, and it is the ordinary shape of a #825 replay.
  *
  * The shape matches the rest of this file so all five keys are minted by one
  * client helper; Stripe accepts any string up to 255 characters.

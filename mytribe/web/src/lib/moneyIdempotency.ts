@@ -8,12 +8,22 @@
  * A booking key is checked by OUR server against a Firestore document. There is
  * no document to check here: `payInvoice` asks STRIPE to create a Checkout
  * Session, and a replay creates a SECOND session in Stripe's database. Both
- * stay payable. Two sessions become two PaymentIntents, and `stripeWebhook`
- * claims on the PaymentIntent id, so both settle and the household is charged
- * twice for one bill — with no refund available to put it back, by standing
- * ruling. Nothing our server writes can prevent that. Only Stripe can, so the
- * key is passed through to Stripe as a request option, and Stripe answers a
- * retry with the session the first attempt created.
+ * stay payable. Nothing our server writes can stop that second session being
+ * created. Only Stripe can, so the key is passed through to Stripe as a request
+ * option, and Stripe answers a retry with the session the first attempt made.
+ *
+ * #826 ALREADY STOPS THE SECOND CHARGE PAYING THE BILL TWICE: the webhook
+ * recognises it and routes the money to the household's account balance instead
+ * of applying it again. That net holds. What it cannot do is un-charge the
+ * card, because there are no refunds here and it acts after the money has
+ * moved. A household debited twice and handed a credit has still been debited
+ * twice, which is why it is worth not opening the second session at all.
+ *
+ * IT ALSO COVERS A TAP #826's SESSION REUSE CANNOT SEE. That reuse hands back
+ * the session stored on the invoice, so it needs the previous call to have
+ * finished and written one. This covers the call that did NOT finish: Stripe
+ * made the session and the reply was lost coming back, so nothing was stored
+ * and the retry has nothing to be handed.
  *
  * ONE KEY PER SUBMISSION, NOT PER TAP. Stripe holds a key for 24 hours, and
  * REFUSES one reused with a different request body. That is a real constraint

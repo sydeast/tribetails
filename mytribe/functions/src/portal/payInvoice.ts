@@ -11,6 +11,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { settingsForInvoice, stripeCheckoutMethodTypes } from '../lib/paymentMethods';
 import { readLivePayMethodSettings } from '../lib/payMethodSnapshot';
+import {
+  CHECKOUT_ROUND_FIELD,
+  CHECKOUT_ROUND_METADATA_KEY,
+  checkoutRoundOf,
+} from '../lib/invoiceCheckoutDedupe';
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 
 export const Args = z.object({
@@ -24,11 +29,17 @@ export const Args = z.object({
    *
    * THIS KEY IS HANDED TO STRIPE, NOT CHECKED HERE, and that is the only place
    * it can work: the duplicate a replay makes is a second Checkout Session in
-   * STRIPE's database, and both sessions stay payable. Two sessions become two
-   * PaymentIntents; `stripeWebhook` claims on the PaymentIntent id, so both
-   * settle, and the household is charged twice for one bill — with no refund
-   * available to put it back, by standing ruling. Nothing this server writes
-   * can prevent that. Only Stripe can, and this is how it is asked to.
+   * STRIPE's database, and both sessions stay payable. Nothing this server
+   * writes can stop that session being created. Only Stripe can, and this is
+   * how it is asked to.
+   *
+   * IT SITS IN FRONT OF TWO OTHER LAYERS, not instead of them. The reuse below
+   * hands back a session this invoice already has open, which needs a previous
+   * call to have finished and stored one; this key covers the call that did
+   * not, where Stripe made the session and the reply was lost coming back.
+   * `stripeWebhook`'s #826 refusal is the last layer and the only one still
+   * available once a card has been charged, and it RECONCILES rather than
+   * rejects, because a charge that happened cannot be refused.
    *
    * OPTIONAL, so the portal and the desktop console adopt it separately.
    */
@@ -106,6 +117,17 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     integerCentsOrNull(inv['amountDueCents']) ?? Math.round(numericFrom(inv['amountDue']) * 100);
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
 
+  // WHICH SETTLEMENT ROUND THIS SESSION BELONGS TO (issue #826).
+  //
+  // The count of Stripe payments that have already settled this invoice. It is
+  // what lets the webhook tell "the household opened checkout twice for one
+  // bill" from "the bill came back and they paid it again": two sessions minted
+  // before either settled carry the SAME round, and the first to land moves the
+  // invoice past it. `lib/invoiceCheckoutDedupe.ts` carries the full argument.
+  //
+  // Stripe metadata values are strings, hence `String(...)`.
+  const checkoutRound = checkoutRoundOf(inv[CHECKOUT_ROUND_FIELD]);
+
   // The identifiers the webhook resolves the household and invoice from.
   // Declared ONCE and passed to both places below, because the two copies
   // drifting apart is the same defect in a subtler form.
@@ -116,6 +138,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     kinfolkId,
     uid,
     source: 'mytribe-portal',
+    [CHECKOUT_ROUND_METADATA_KEY]: String(checkoutRound),
   };
 
   // WHICH RAILS THIS SESSION ACCEPTS (issue #409). Card was hardcoded here.
@@ -152,11 +175,54 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
    * where Stripe's own idempotency lives. Given one, Stripe replays the stored
    * response for 24 hours rather than creating a second session.
    *
-   * `suffix` EXISTS BECAUSE THE FALLBACK SENDS A DIFFERENT BODY. Stripe refuses
-   * a key reused with different parameters, and the card-only retry below is a
-   * deliberately different request, so it carries its own derived key. Reusing
-   * one key across both would turn the graceful fallback into a hard error on
-   * a bill somebody is trying to settle.
+   * ── WHAT THIS CATCHES THAT THE SESSION REUSE ABOVE CANNOT (#826 / #825) ──
+   *
+   * They are not two spellings of one fix. The reuse can only hand back a
+   * session it can FIND, and it finds it through `pendingCheckoutSessionId`,
+   * which is written AFTER `sessions.create` returns. So the reuse covers the
+   * case where the first call finished: two taps, a reload, a second device.
+   *
+   * It is blind to the case where the first call did NOT finish. Stripe creates
+   * the session, and then the container is killed, or the Firestore write
+   * fails, or the reply is dropped on the way back and the client sees
+   * `functions/internal`. Nothing was stored, so the retry's lookup finds
+   * nothing, mints a second session, and the household now has two live
+   * checkouts for one bill. That is exactly the window #825 exists to close,
+   * and the key closes it inside Stripe, before a second session exists at all.
+   *
+   * `stripeWebhook`'s refusal is the third and last layer, and the only one
+   * that still applies once a card has actually been charged. It reconciles
+   * rather than rejects, because a charge that happened cannot be refused.
+   *
+   * ── WHY THE ROUND AND THE AMOUNT ARE IN THE KEY ─────────────────────────
+   *
+   * Because Stripe REFUSES a key reused with a different body, and #826's reuse
+   * deliberately mints a FRESH session when the amount or the round has moved.
+   * Left alone, those two rules would collide in a case that really happens: a
+   * household taps Pay, the reply is lost, the operator records a partial Venmo
+   * payment, and the household taps again holding the same key. The body now
+   * carries a smaller `unit_amount`, and a bare caller key would earn a Stripe
+   * error on a bill somebody is trying to settle.
+   *
+   * So the Stripe-facing key is derived from the caller's key plus the two
+   * things `findReusableSession` treats as making a session unusable. Same
+   * submission, unchanged balance: same derived key, and Stripe replays the
+   * first session. Balance moved: a different derived key, a fresh session,
+   * which is what #826 wanted anyway. The two rules can no longer disagree,
+   * because they now turn on the same facts.
+   *
+   * THE RETURN URLS ARE NOT IN THE KEY, and that is the one reuse condition
+   * left out. They are constant per client (the web portal sends
+   * `/invoices/{id}`, the KMP portal sends `/portal/payment-success`) and the
+   * key is minted client-side per submission, so one key cannot arrive with two
+   * different url pairs. Folding two full URLs into a 255-character key to
+   * restate something the key's own provenance already guarantees would buy
+   * nothing.
+   *
+   * `suffix` IS FOR THE FALLBACK, which sends a different body for a different
+   * reason: the card-only retry below drops the method types Stripe just
+   * rejected. It carries its own derived key so that graceful fallback does not
+   * become a hard error either.
    */
   // Deliberately un-annotated. `Stripe.RequestOptions` resolves to two
   // incompatible declarations in this package (a cjs copy and an esm copy, each
@@ -167,7 +233,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const requestOptions = (suffix: string) =>
     args.idempotencyKey === undefined
       ? undefined
-      : { idempotencyKey: `${args.idempotencyKey}${suffix}` };
+      : { idempotencyKey: `${args.idempotencyKey}_r${checkoutRound}_${amountCents}${suffix}` };
   const createSession = (paymentMethodTypes: string[], keySuffix: string) =>
     stripe.checkout.sessions.create({
       mode: 'payment',
@@ -212,6 +278,61 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // Only that one error is caught. A declined key, a network failure, a bad
   // amount: all of those still surface, because retrying them card-only
   // would fail identically and hide the real cause.
+  // REUSE THE SESSION THIS INVOICE ALREADY HAS OPEN, when there is one and it
+  // still fits (issue #826).
+  //
+  // NOT the fix, and it must not be read as one: a household that already
+  // finished one checkout has no open session left to be handed, so this closes
+  // no window on its own. What it does is stop the window opening in the first
+  // place for the ordinary case — two taps on Pay, a reload, a second device —
+  // by handing back the SAME session and therefore the same PaymentIntent,
+  // which the existing `stripePayments/{intentId}` ledger already dedupes. The
+  // refusal that actually holds the money shut lives in `stripeWebhook`.
+  //
+  // WHAT STRIPE GUARANTEES, since the reuse rests on it. `Session.status` is
+  // `open | complete | expired`, and `Session.url` is documented "only present
+  // when the session is active" — so an already-paid or expired session cannot
+  // be handed out by accident, it comes back without a URL to hand. Stripe
+  // expires a session at `expires_at` (24h after creation by default), and the
+  // `checkout.session.expired` event that clears our stored id can lag that
+  // moment, so the timestamp is checked here rather than trusted to the webhook.
+  //
+  // EVERY OTHER CONDITION IS ABOUT HANDING BACK THE WRONG PAGE. The amount must
+  // still be the balance (a session minted before a partial payment charges the
+  // old, larger figure); the return URLs must be the caller's own (the web
+  // portal sends `/invoices/{id}` and the KMP portal sends
+  // `/portal/payment-success`, so reusing one client's session from the other
+  // would land the household on a screen their app does not have); and the
+  // round must match, or the session belongs to a settlement that has closed.
+  //
+  // Fail-soft throughout: any doubt, including an unreadable session, mints a
+  // fresh one. A household must never be unable to pay a bill because a stale
+  // id could not be inspected.
+  const reusable = await findReusableSession(stripe, {
+    sessionId: typeof inv['pendingCheckoutSessionId'] === 'string' ? (inv['pendingCheckoutSessionId'] as string) : null,
+    invoiceId: args.invoiceId,
+    amountCents,
+    successUrl: args.successUrl,
+    cancelUrl: args.cancelUrl,
+    checkoutRound,
+    uid,
+  });
+  if (reusable) {
+    logEvent({
+      severity: 'info',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.reused',
+      uid,
+      extra: { invoiceId: args.invoiceId, kinfolkId, amountCents, sessionId: reusable.id, checkoutRound },
+    });
+    return validateResponse('payInvoice', Result, {
+      checkoutUrl: reusable.url ?? '',
+      sessionId: reusable.id,
+      amountCents,
+      currency: 'usd',
+    });
+  }
+
   let session;
   try {
     session = await createSession(methodTypes, '');
@@ -244,6 +365,7 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
       kinfolkId,
       amountCents,
       sessionId: session.id,
+      checkoutRound,
       paymentMethodTypes: session.payment_method_types ?? methodTypes,
     },
   });
@@ -254,6 +376,72 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     amountCents,
     currency: 'usd',
   });
+}
+
+/**
+ * How much life an open session must have left before it is worth handing back.
+ *
+ * A session that expires while the household is typing their card number is a
+ * worse outcome than a second session, so the last few minutes of one are
+ * treated as no session at all.
+ */
+const SESSION_REUSE_HEADROOM_MS = 5 * 60 * 1000;
+
+/**
+ * The open Checkout Session this invoice can be paid on, or null to mint a new
+ * one. See the call site for the reasoning behind each condition.
+ *
+ * Typed on the fields it reads rather than on `Stripe.Checkout.Session`, so a
+ * test can hand it a plain object without reconstructing sixty unused fields.
+ */
+async function findReusableSession(
+  stripe: { checkout: { sessions: { retrieve: (id: string) => Promise<unknown> } } },
+  want: {
+    sessionId: string | null;
+    invoiceId: string;
+    amountCents: number;
+    successUrl: string;
+    cancelUrl: string;
+    checkoutRound: number;
+    uid: string;
+  },
+): Promise<{ id: string; url: string } | null> {
+  if (!want.sessionId) return null;
+  let raw: unknown;
+  try {
+    raw = await stripe.checkout.sessions.retrieve(want.sessionId);
+  } catch (err) {
+    // A session Stripe cannot find or will not return is not a reason to refuse
+    // a payment; it is a reason to make a new one.
+    logEvent({
+      severity: 'info',
+      function: 'payInvoice',
+      event: 'portal.invoice.checkout.reuse.unreadable',
+      uid: want.uid,
+      errorMessage: (err as Error)?.message,
+      extra: { invoiceId: want.invoiceId, sessionId: want.sessionId },
+    });
+    return null;
+  }
+  const s = (raw ?? {}) as {
+    id?: unknown;
+    url?: unknown;
+    status?: unknown;
+    expires_at?: unknown;
+    amount_total?: unknown;
+    success_url?: unknown;
+    cancel_url?: unknown;
+    metadata?: Record<string, unknown>;
+  };
+  if (s.status !== 'open') return null;
+  if (typeof s.id !== 'string' || s.id === '') return null;
+  if (typeof s.url !== 'string' || s.url === '') return null;
+  if (typeof s.expires_at !== 'number' || s.expires_at * 1000 <= Date.now() + SESSION_REUSE_HEADROOM_MS) return null;
+  if (s.amount_total !== want.amountCents) return null;
+  if (s.success_url !== want.successUrl || s.cancel_url !== want.cancelUrl) return null;
+  if (s.metadata?.['invoiceId'] !== want.invoiceId) return null;
+  if (s.metadata?.[CHECKOUT_ROUND_METADATA_KEY] !== String(want.checkoutRound)) return null;
+  return { id: s.id, url: s.url };
 }
 
 /**

@@ -899,8 +899,9 @@ class PortalApi(private val fns: FunctionsClient) {
     /**
      * #825: [idempotencyKey] is handed straight to STRIPE by the callable, not
      * checked against anything of ours. A replay opens a SECOND Checkout
-     * Session and both stay payable, so the household can be charged twice for
-     * one bill and there is no refund to put it back. `CheckoutIdempotency.kt`
+     * Session and both stay payable. #826 stops the second one paying the bill
+     * twice, but it cannot un-charge a card and there are no refunds here, so
+     * the second session is still worth preventing. `CheckoutIdempotency.kt`
      * carries the reasoning and the 24-hour Stripe window the caller has to
      * respect. Null is omitted rather than sent, because the server's zod arg
      * is `.optional()` and not `.nullable()`.
@@ -1142,6 +1143,97 @@ class PortalApi(private val fns: FunctionsClient) {
                 put("kin_edit", kinEdit)
                 put("home_access", homeAccess)
             })
+        })
+    }
+
+    // -- Household CONTACTS (people with no portal account at all) --
+    /**
+     * The household's contacts: people it can be reached through who hold no
+     * account. Backed by `listHouseholdContacts` (PRIMARY-only, operator
+     * bypasses), returned in the server's order, which is by name.
+     *
+     * A CONTACT IS NOT A MEMBER AND NOT AN INVITE (ruling, 2026-09-12). Nothing
+     * in these three functions mints an `inviteRequests` row, sends mail or
+     * creates an account; [addSecondaryContact] above is the gesture that does.
+     * The wall is in the payloads: every argument schema in
+     * `functions/src/portal/householdContacts.ts` is `.strict()` and refuses
+     * `permissions`, `role`, `uid` or `invitedEmail` by NAME rather than
+     * stripping them, and none of the three builders below has anywhere to put
+     * one.
+     *
+     * Fail-loud, like every other call here: a denied gate or an answer we
+     * cannot read throws, so the card can say what happened.
+     */
+    suspend fun listHouseholdContacts(kinfolkId: String? = null): List<HouseholdContact> {
+        val raw = fns.call("listHouseholdContacts", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
+        // An unreadable answer is not an empty household. Returning an empty
+        // list here would draw "nobody is written down yet" over a household
+        // that has three contacts.
+        val rows = raw["contacts"] as? JsonArray ?: error("listHouseholdContacts: missing contacts array")
+        return rows.mapNotNull { el ->
+            val o = el.jsonObject
+            fun text(key: String): String? = o[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
+            // No id means no row that could be edited or deleted, so it is
+            // dropped rather than drawn with two dead buttons on it.
+            val id = text("contactId") ?: return@mapNotNull null
+            HouseholdContact(
+                contactId = id,
+                // A half-written row still renders: the household has to be able
+                // to see it in order to fix or remove it.
+                name = text("name") ?: "(unnamed contact)",
+                label = text("label") ?: DEFAULT_CONTACT_LABEL,
+                phone = text("phone"),
+                email = text("email"),
+                createdAt = text("createdAt"),
+                updatedAt = text("updatedAt"),
+            )
+        }
+    }
+
+    /**
+     * Creates or edits one contact. No portal account is created either way.
+     *
+     * [contactId] absent CREATES; present EDITS that row in place, and the
+     * server answers `not-found` when it is not on this household.
+     *
+     * EVERY EDITABLE FIELD IS SENT, including the empty ones. The server reads
+     * `""` and `null` as the same thing and persists both as `null`, so a stale
+     * phone number can actually be cleared — omitting a blank field would leave
+     * it on the document forever. `createdAt` / `createdBy` are the server's and
+     * are never sent from here, so an edit cannot rewrite a row's provenance.
+     */
+    suspend fun saveHouseholdContact(
+        kinfolkId: String? = null,
+        contactId: String? = null,
+        name: String,
+        label: String,
+        phone: String,
+        email: String,
+    ): SavedHouseholdContact {
+        val raw = fns.call("saveHouseholdContact", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            contactId?.takeIf { it.isNotBlank() }?.let { put("contactId", it) }
+            put("name", name.trim())
+            put("label", label.trim())
+            put("phone", phone.trim())
+            put("email", email.trim())
+        })
+        val savedId = raw["contactId"]?.jsonPrimitive?.contentOrNull
+            ?: error("saveHouseholdContact: missing contactId")
+        return SavedHouseholdContact(
+            contactId = savedId,
+            created = raw["created"]?.jsonPrimitive?.booleanOrNull ?: false,
+        )
+    }
+
+    /**
+     * Deletes one contact. HARD, unlike suspending a member: there is no account
+     * to suspend and no sign-in history to keep, so the row is simply gone.
+     */
+    suspend fun removeHouseholdContact(contactId: String, kinfolkId: String? = null) {
+        fns.call("removeHouseholdContact", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("contactId", contactId)
         })
     }
 
