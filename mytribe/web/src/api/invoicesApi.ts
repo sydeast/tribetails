@@ -78,13 +78,28 @@ export function payInvoice(
   successUrl: string,
   cancelUrl: string,
   kinfolkId?: string,
+  idempotencyKey?: string,
 ): Promise<PayInvoiceResult> {
   const payload: PayInvoiceArgs = {
     invoiceId,
     successUrl,
     cancelUrl,
     ...(kinfolkId !== undefined ? { kinfolkId } : {}),
+    // #825. Handed straight to Stripe as a request option by the callable, not
+    // checked here or in Firestore: the duplicate a replay makes is a second
+    // Checkout Session in STRIPE's database, and both stay payable, so Stripe
+    // is the only party that can refuse the second one. `lib/moneyIdempotency.ts`
+    // has the full reasoning, including why a key is held per submission rather
+    // than per invoice.
+    ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
   };
+  // NO `{ idempotent: true }` HERE. `CallOptions.idempotent` retries on
+  // `functions/internal`, and the claim it makes is about the SERVER deduping.
+  // Stripe dedupes the SESSION, but this callable also writes
+  // `pendingCheckoutSessionId` and logs, and more to the point a household
+  // watching a Pay button should be told the tap failed rather than have the
+  // app quietly try again and then redirect them to a payment page. The retry
+  // here is the person, which is exactly what the key protects.
   return call<PayInvoiceArgs, PayInvoiceResult>('payInvoice', payload);
 }
 

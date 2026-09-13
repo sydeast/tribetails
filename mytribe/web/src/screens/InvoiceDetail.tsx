@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,6 +30,7 @@ import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { errorLine, usePortalMutation } from '../lib/mutationState';
+import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
 import '../styles/invoices.css';
 
 /**
@@ -67,14 +69,38 @@ export function InvoiceDetail() {
   // answers here, and this screen must keep working across that window.
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
-  // ABANDON. See lib/mutationState.ts for what was established from the
-  // callable: the server has no invoice-level guard against two checkout
-  // sessions, and holding this one would walk a pocketed phone to Stripe on
-  // reconnect.
+  /**
+   * #825: ONE CHECKOUT KEY PER SUBMISSION, held across a re-tap.
+   *
+   * Minted lazily on the first tap and dropped the moment a checkout URL comes
+   * back, so the only tap that reuses it is a tap after a visible failure —
+   * which is the one that used to open a SECOND live Checkout Session. Both
+   * sessions stayed payable, both would settle through `stripeWebhook`, and
+   * there is no refund to undo the second charge. `lib/moneyIdempotency.ts` has
+   * the reasoning and the 24-hour Stripe window it has to respect.
+   */
+  const checkoutKey = useRef<string | null>(null);
+  // ABANDON, AND STILL ABANDON. The key makes a household's own second TAP
+  // safe; it does not make it right to walk a pocketed phone to Stripe on
+  // reconnect, which is a redirect nobody asked for at a moment nobody chose.
+  // Those are two different claims, and only the first one changed. See
+  // lib/mutationState.ts.
   const pay = usePortalMutation({
-    mutationFn: () =>
-      payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
+    mutationFn: () => {
+      checkoutKey.current ??= mintCheckoutIdempotencyKey();
+      return payInvoice(
+        invoiceId,
+        `${window.location.origin}/invoices/${invoiceId}`,
+        `${window.location.origin}/invoices/${invoiceId}`,
+        kinfolkId,
+        checkoutKey.current,
+      );
+    },
     onSuccess: (res) => {
+      // Dropped BEFORE the redirect. A household that comes back to pay a
+      // different balance later must not reuse a key Stripe still holds: the
+      // body would differ and Stripe would refuse it.
+      checkoutKey.current = null;
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
   }, { policy: 'abandon', what: 'your payment' });

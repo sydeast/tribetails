@@ -9,6 +9,7 @@ import {
   sendInvoiceReminder,
   generateReceipt,
   markInvoicePaid,
+  recordPayment,
   reviewAndSendDraftInvoice,
 } from './invoicesWrite';
 import type { CreateInvoiceArgs } from '../contracts/invoiceContracts.generated';
@@ -51,7 +52,7 @@ describe('createInvoice', () => {
     const input = invoiceInput();
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-1' });
     const result = await createInvoice(input);
-    expect(call).toHaveBeenCalledWith('createInvoice', input);
+    expect(call).toHaveBeenCalledWith('createInvoice', input, { idempotent: false });
     expect(result).toEqual({ invoiceId: 'inv-1' });
   });
 
@@ -68,11 +69,44 @@ describe('createQuote', () => {
     const input = { ...invoiceInput({ status: '' }), sendToKinfolk: true };
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-2' });
     const result = await createQuote(input);
-    expect(call).toHaveBeenCalledWith('createQuote', input);
+    expect(call).toHaveBeenCalledWith('createQuote', input, { idempotent: false });
     expect(result).toEqual({ invoiceId: 'inv-2' });
   });
 });
 
+/**
+ * #825: the automatic retry in `lib/fns.ts` is a claim about the SERVER — "this
+ * callable either changes nothing, or dedupes the second attempt itself" — and
+ * these four dedupe nothing unless the caller supplied a key. So the opt-in has
+ * to track the key, not the callable name. A blanket `{ idempotent: true }`
+ * here would retry a keyless `recordPayment` on `functions/internal`, which is
+ * the exact double-count #825 exists to close.
+ */
+describe('#825 the retry opt-in follows the key, not the callable', () => {
+  it('turns the retry ON for each money callable once a key is sent', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, invoiceId: 'inv-1', paymentId: 'p1' });
+    await createInvoice(invoiceInput({ idempotencyKey: 'inv_1757700000000_ab12cd' }));
+    await createQuote({
+      ...invoiceInput({ status: '' }),
+      sendToKinfolk: false,
+      idempotencyKey: 'quot_1757700000000_ab12cd',
+    });
+    await markInvoicePaid('inv-5', { idempotencyKey: 'ipay_1757700000000_ab12cd' });
+    await recordPayment({ amount: 10, idempotencyKey: 'pay_1757700000000_ab12cd' });
+    for (const name of ['createInvoice', 'createQuote', 'markInvoicePaid', 'recordPayment']) {
+      const invocation = call.mock.calls.find((c: unknown[]) => c[0] === name);
+      expect(invocation, `${name} was not called`).toBeDefined();
+      expect(invocation![2], `${name} should opt into the retry`).toEqual({ idempotent: true });
+    }
+  });
+  it('leaves the retry OFF for a keyless recordPayment, the double-count case', async () => {
+    call.mockReset();
+    call.mockResolvedValue({ ok: true, paymentId: 'p2' });
+    await recordPayment({ amount: 10 });
+    expect(call).toHaveBeenCalledWith('recordPayment', { amount: 10 }, { idempotent: false });
+  });
+});
 describe('sendInvoiceReminder', () => {
   it('sends only { invoiceId }, matching the backend contract', async () => {
     call.mockReset();
@@ -102,20 +136,24 @@ describe('markInvoicePaid', () => {
     call.mockReset();
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-5', paymentId: 'pay-1' });
     await markInvoicePaid('inv-5');
-    expect(call).toHaveBeenCalledWith('markInvoicePaid', { invoiceId: 'inv-5' });
+    expect(call).toHaveBeenCalledWith('markInvoicePaid', { invoiceId: 'inv-5' }, { idempotent: false });
   });
 
   it('passes method/reference/amount/paidAt through to the callable', async () => {
     call.mockReset();
     call.mockResolvedValue({ ok: true, invoiceId: 'inv-5', paymentId: 'pay-2' });
     await markInvoicePaid('inv-5', { amount: 40, method: 'check', reference: 'CK-100', paidAt: '2026-07-01T00:00:00Z' });
-    expect(call).toHaveBeenCalledWith('markInvoicePaid', {
-      invoiceId: 'inv-5',
-      amount: 40,
-      method: 'check',
-      reference: 'CK-100',
-      paidAt: '2026-07-01T00:00:00Z',
-    });
+    expect(call).toHaveBeenCalledWith(
+      'markInvoicePaid',
+      {
+        invoiceId: 'inv-5',
+        amount: 40,
+        method: 'check',
+        reference: 'CK-100',
+        paidAt: '2026-07-01T00:00:00Z',
+      },
+      { idempotent: false },
+    );
   });
 
   // The settlement is handed back AS THE SERVER SENT IT, not rebuilt field by

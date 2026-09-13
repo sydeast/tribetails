@@ -92,16 +92,26 @@ describe('invoiceActionError', () => {
   });
 
   /**
-   * The one that matters. `recordPayment` has no dedupe key of any kind, so an
-   * operator who re-enters a payment whose fate is unknown books it twice —
-   * and with `autoApply` credits the household twice. The sentence has to send
-   * them to look before they do that.
+   * The one that matters, and #825 CHANGED THE RIGHT ANSWER.
+   *
+   * It used to be "go and look": `recordPayment` had no dedupe key of any kind,
+   * so an operator who re-entered a payment whose fate was unknown booked it
+   * twice and, with `autoApply`, credited the household twice. Now the panel
+   * mints one key per submission and holds it across a re-press, so the honest
+   * advice is to press the same button again — and the sentence has to say
+   * WITHOUT CHANGING ANYTHING, because editing a figure mints a new key and
+   * makes it a genuinely different payment.
+   *
+   * The old "check whether it is already there" is asserted ABSENT on purpose:
+   * leaving it beside the new sentence would give two contradictory
+   * instructions for one error.
    */
-  it('tells the operator to CHECK before re-recording an unknown payment', () => {
+  it('tells the operator to re-press UNCHANGED after an unknown payment', () => {
     const line = invoiceActionError(new LostSignalError('recordPayment'), 'recordPayment');
     expect(line).toMatch(/no way to tell/i);
-    expect(line).toMatch(/check whether this payment is already there/i);
-    expect(line).not.toMatch(/try again/i);
+    expect(line).toMatch(/press the same button again without changing anything/i);
+    expect(line).toMatch(/changing a figure first would make it a different payment/i);
+    expect(line).not.toMatch(/check whether this payment is already there/i);
   });
 
   it('lets the server keep its own words when the server answered', () => {

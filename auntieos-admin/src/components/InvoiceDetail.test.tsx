@@ -450,7 +450,14 @@ describe('InvoiceDetail', () => {
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', { amount: 40 }));
+    await waitFor(() =>
+      expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {
+        amount: 40,
+        // #825: the panel mints one key per submission and holds it across a
+        // re-press, so a retry lands on the row the first press wrote.
+        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
+      }),
+    );
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
 
@@ -498,7 +505,12 @@ describe('InvoiceDetail', () => {
     await userEvent.type(amount, '20');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
 
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith('inv7', { amount: 20 }));
+    await waitFor(() =>
+      expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {
+        amount: 20,
+        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
+      }),
+    );
     expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
     expect(screen.queryByText(/paid in full/i)).toBeNull();
   });
@@ -542,6 +554,7 @@ describe('InvoiceDetail', () => {
         amount: 40,
         method: 'check',
         reference: 'CK-100',
+        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
       }),
     );
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
@@ -1003,6 +1016,61 @@ describe('recording a payment writes both the settlement and the ledger row', ()
     await userEvent.type(screen.getByLabelText(/payment reference/i), '#881');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
   }
+  /**
+   * #825: the client half of the fix, and the case that used to collect twice.
+   *
+   * The operator presses Record Payment, the call fails with something that
+   * does not say whether it landed, and she presses again. What decides whether
+   * that is one payment or two is whether the SECOND press carries the SAME
+   * key: the server dedupes on it, so a held key makes the retry land on the
+   * row the first press may already have written, and a fresh key per press
+   * puts the duplicate straight back in the one case an operator produces one.
+   */
+  it('holds ONE key across a re-press, and mints a NEW one when a figure changes', async () => {
+    // Two failures, so the dialog is still open for the third press. That is
+    // the real shape of this defect: the operator only presses again because
+    // the first press reported something.
+    markInvoicePaid.mockRejectedValueOnce(new Error('internal'));
+    markInvoicePaid.mockRejectedValueOnce(new Error('internal'));
+    markInvoicePaid.mockResolvedValue({
+      paymentId: 'pay1',
+      state: 'partial' as const,
+      totalCents: 4000,
+      paidCents: 2000,
+      amountDueCents: 2000,
+      overpaidCents: 0,
+    });
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    // First press: fails in a way that cannot say whether the money moved.
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(1));
+    // Second press, NOTHING TOUCHED in between. Same submission, same key.
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(2));
+    const firstKey = markInvoicePaid.mock.calls[0]![1].idempotencyKey;
+    const secondKey = markInvoicePaid.mock.calls[1]![1].idempotencyKey;
+    expect(firstKey).toMatch(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/);
+    expect(secondKey).toBe(firstKey);
+    // A CHANGED FIGURE IS A DIFFERENT PAYMENT, so the held key is dropped.
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(3));
+    const thirdKey = markInvoicePaid.mock.calls[2]![1].idempotencyKey;
+    expect(thirdKey).toMatch(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/);
+    expect(thirdKey).not.toBe(firstKey);
+    // The ledger row's own key is held by the same rule and shaped for its own
+    // collection, so a flow whose step 1 landed and whose step 2 failed is
+    // finished by pressing again rather than by re-entering the payment.
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0].idempotencyKey).toMatch(
+      /^pay_\d{10,16}_[a-z0-9]{1,16}$/,
+    );
+  });
   it('calls markInvoicePaid FIRST, then recordPayment with this payment amount', async () => {
     markInvoicePaid.mockResolvedValue({
       paymentId: 'pay1',
@@ -1018,6 +1086,7 @@ describe('recording a payment writes both the settlement and the ledger row', ()
       amount: 20,
       method: 'check',
       reference: '#881',
+      idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
     });
     // $20, NOT the $20.00 cumulative figure that happens to match here by
     // coincidence. See the second-payment case below for the one that bites.

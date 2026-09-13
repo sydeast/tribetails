@@ -134,6 +134,37 @@ describe('InvoiceDetail — mutation error surfacing', () => {
     await waitFor(() => expect(screen.getByText('Card declined by Stripe.')).toBeInTheDocument());
   });
 
+  /**
+   * #825: one tap on Pay must not be able to become two live Checkout Sessions.
+   *
+   * `payInvoice` creates the session at STRIPE, and a second one stays payable
+   * alongside the first: two sessions become two PaymentIntents, `stripeWebhook`
+   * claims on the PaymentIntent id, so both settle and the household is charged
+   * twice for one bill — with no refund available to put it back. The key is
+   * handed through to Stripe, which answers the second attempt with the first
+   * session, so what this asserts is that a re-tap after a visible failure
+   * carries the SAME key.
+   */
+  it('holds one checkout key across a re-tap after a failure', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
+    payInvoice.mockRejectedValue(new Error('Card declined by Stripe.'));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+    const payButton = await screen.findByRole('button', { name: 'Pay with Credit Card' });
+    await userEvent.click(payButton);
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole('button', { name: 'Pay with Credit Card' }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(2));
+    // Fifth positional argument: (invoiceId, successUrl, cancelUrl, kinfolkId, key)
+    const firstKey = payInvoice.mock.calls[0]![4];
+    expect(firstKey).toMatch(/^chk_\d{10,16}_[a-z0-9]{1,16}$/);
+    expect(payInvoice.mock.calls[1]![4]).toBe(firstKey);
+  });
   it('PDF download failure shows a distinct error', async () => {
     const invoicesApi = await import('../api/invoicesApi');
     vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
