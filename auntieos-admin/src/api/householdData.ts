@@ -1,4 +1,5 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
+import { addDoc, updateDoc } from '../lib/firestoreWrite';
 import { type CollectionSpec } from '../lib/firestore';
 import { db } from '../lib/firebase';
 import { str } from '../lib/coerce';

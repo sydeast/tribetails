@@ -1,4 +1,5 @@
-import { doc, setDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { setDoc } from '../lib/firestoreWrite';
 import { auth, db } from '../lib/firebase';
 import {
   COVERAGE_PACKAGE_COLLECTION,

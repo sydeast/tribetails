@@ -2,6 +2,7 @@ import { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { E2E_EMULATOR_HOST, E2E_FUNCTIONS_PORT, functions } from './firebase';
 import { OfflineSessionError, isReadOnlySession } from './readOnlySession';
+import { LostSignalError, OfflineCallError, isConnected } from './offlineWrite';
 import { noteSessionAlive, reactToCallableError } from './revokedSession';
 
 /**
@@ -93,6 +94,24 @@ export async function call<TReq, TRes>(
   // twenty seconds above discovering the same thing, and reports it as a
   // deadline rather than as the offline session it is.
   if (isReadOnlySession()) throw new OfflineSessionError(name);
+  // #807: the same refusal, for the far commoner case the #812 flag does not
+  // cover. `enterReadOnlySession` is set only by `requireAdmin`, which runs on
+  // a NAVIGATION — so an operator who was already on a screen when the signal
+  // went has `degraded === false`, dials, and gets `functions/internal`.
+  //
+  // That code is the problem, and `CallOptions`' header above already says
+  // why: it is what the SDK reports for ANY transport failure, so it cannot
+  // tell "the request never arrived" from "the write committed and the reply
+  // was lost". On `recordPayment` that is the difference between re-entering a
+  // payment and double-counting one — and `recordPayment` writes an auto-id
+  // row with no dedupe key and, with `autoApply`, increments the household's
+  // account balance, so a second one is spendable money made from nothing.
+  //
+  // A refusal raised on THIS side of the wire is the only thing in the app
+  // that can honestly say nothing was sent, so it is raised here, for reads
+  // as well as writes — `readOnlySession.ts` gives the reasoning for refusing
+  // reads too, and it is unchanged.
+  if (!isConnected()) throw new OfflineCallError(name);
   const fn = httpsCallable<TReq, TRes>(functions, name, { timeout: CALLABLE_TIMEOUT_MS });
   let retriedInternal = false;
   for (;;) {
@@ -139,6 +158,14 @@ export async function call<TReq, TRes>(
       // under way before the caller's own error handling paints anything, and it
       // rethrows regardless: this reacts to the error, it does not consume it.
       await reactToCallableError(err);
+      // #807: the signal went between the preflight above and this answer, so
+      // the request WAS away and its fate is not knowable from here. Relabel
+      // at the one moment that is true, rather than leaving a screen to ask a
+      // question whose answer changes the instant the connection returns.
+      // `recordPayment` is why the distinction is drawn rather than collapsed:
+      // "nothing was sent" and "we cannot tell" call for different actions,
+      // and only one of them is safe to answer with a re-send.
+      if (!isConnected()) throw new LostSignalError(name, { cause: err });
       throw err;
     }
   }

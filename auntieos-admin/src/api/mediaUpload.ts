@@ -1,4 +1,5 @@
-import { addDoc, collection } from 'firebase/firestore';
+import { collection } from 'firebase/firestore';
+import { addDoc } from '../lib/firestoreWrite';
 import { auth, db } from '../lib/firebase';
 import { adminApiFetch, NotSignedInError } from '../lib/adminApiFetch';
 

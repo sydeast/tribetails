@@ -227,7 +227,14 @@ export function isOfflinePhase(phase: MutationPhase): boolean {
  */
 export function isConnected(): boolean {
   if (!onlineManager.isOnline()) return false;
-  return typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (typeof navigator === 'undefined') return true;
+  // A BOOLEAN, not truthiness: `navigator` exists in more places than
+  // `navigator.onLine` does — Node 21+ defines the global with no `onLine` on
+  // it at all — and `undefined` is falsy, so a bare read reports "offline"
+  // everywhere this runs outside a browser. Absent means unknown, and unknown
+  // has to mean online: the refusal this gates is the one thing in the app
+  // that can PROVE nothing was sent, and it must never fire on a guess.
+  return typeof navigator.onLine === 'boolean' ? navigator.onLine : true;
 }
 
 /**

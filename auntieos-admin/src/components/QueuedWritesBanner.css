@@ -1,0 +1,36 @@
+/* Where the queued-writes banner sits (#807).
+
+   Pinned rather than in the document flow, and that is the point of it: the
+   operator queues a write on one screen and needs to see it is still waiting
+   from whatever screen they are on three minutes later. In the flow it would
+   scroll away with the screen that produced it.
+
+   Bottom rather than top: the top of every admin screen is its own heading and
+   actions, and pushing those down on every navigation for a state that clears
+   itself would be worse than the thing it reports. Width is capped so it reads
+   as a notice rather than a bar, and it clears the rail on wide screens. */
+
+.queuedWrites {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  /* The banner paints its own glass; this only places it, and the shadow is
+     what lifts it off whatever it is covering. There is no elevation token in
+     this app — `Dialog.css` is the one other floating surface and states its
+     shadow literally — so this matches that rather than inventing a token one
+     stylesheet would use. Lighter than the dialog's, because this floats over
+     a screen the operator is still working in rather than blocking it. */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-card-lg);
+}
+
+/* Below the phone breakpoint the rail is a bottom bar, so the notice sits
+   above it rather than under it. */
+@media (max-width: 720px) {
+  .queuedWrites {
+    bottom: 84px;
+  }
+}
