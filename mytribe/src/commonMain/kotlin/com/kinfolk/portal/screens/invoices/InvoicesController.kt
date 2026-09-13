@@ -134,6 +134,29 @@ class InvoicesController internal constructor(
         }
     }
 
+    /**
+     * WHAT THIS SCREEN GUARANTEES ABOUT DOUBLE CHARGES: LESS THAN THE WEB
+     * PORTAL'S DOES (issue #826).
+     *
+     * `payInvoice` mints a NEW Stripe Checkout Session, with its own
+     * PaymentIntent, on every call. The web portal's success path is
+     * `window.location.href`, which unloads the page and so cannot hold two
+     * live sessions at once — for a while that accident was the only thing
+     * stopping two completed checkouts becoming two real charges for one bill.
+     *
+     * THIS SCREEN NEVER HAD EVEN THAT. `openExternalUrl` hands the URL to the
+     * system browser and comes straight back; the screen stays alive, `paying`
+     * is cleared in `finally`, and a second tap starts a second session. The
+     * `paying != null` guard covers the round trip, not the checkout.
+     *
+     * So the refusal has to live on the server, and now does: `stripeWebhook`
+     * compares a settling session against the invoice's own settlement round
+     * and sends a second one to the household's account balance instead of
+     * paying the bill twice
+     * (functions/src/lib/invoiceCheckoutDedupe.ts). `payInvoice` also hands
+     * back the session this invoice already has open rather than minting
+     * another, so the ordinary two-taps case reuses one PaymentIntent.
+     */
     fun startPay(invoice: Invoice) {
         if (paying != null) return
         paying = invoice.id

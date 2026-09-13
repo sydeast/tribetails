@@ -139,6 +139,17 @@ export const AUDIT_EVENTS = {
   // the reinstatement is the good half and is audited at `info`.
   BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN: 'BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN',
   BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED: 'BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED',
+  // A SECOND Stripe payment landed on an invoice that had already taken one
+  // (`stripeWebhook`, issue #826). Its own key rather than a payload flag on
+  // BILLING_INVOICE_PAID, because the invoice was NOT paid again: the money
+  // went to the household's account balance instead, and "which households paid
+  // twice" has to be answerable by querying `event`.
+  //
+  // `critical`, on the same grounds as the dispute keys: money moved in a way
+  // nobody here decided it should, and with no refunds ever (operator ruling,
+  // 2026-08-06) an account-balance credit is the entire remedy. Somebody has to
+  // know it happened.
+  BILLING_PAYMENT_DUPLICATE_CREDITED: 'BILLING_PAYMENT_DUPLICATE_CREDITED',
 
   THEME_BRAND_TOKENS_UPDATED: 'THEME_BRAND_TOKENS_UPDATED',
   THEME_KINFOLK_OVERRIDES_UPDATED: 'THEME_KINFOLK_OVERRIDES_UPDATED',
