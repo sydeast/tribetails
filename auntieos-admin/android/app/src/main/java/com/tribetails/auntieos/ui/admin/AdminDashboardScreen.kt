@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.ui.components.AuntieCard
 import com.tribetails.auntieos.ui.components.AuntieIconBtn
@@ -34,7 +35,6 @@ fun AdminDashboardScreen(
     onNavigateToServices: () -> Unit = {},
     onNavigateToKinTaleTemplates: () -> Unit = {},
     onNavigateToTemplates: () -> Unit = {},
-    onNavigateToMarketingBlasts: () -> Unit = {},
     onNavigateToFeatureFlags: () -> Unit = {},
     onNavigateToCoveragePackages: () -> Unit = {},
     onNavigateToInvites: () -> Unit = {},
@@ -61,7 +61,8 @@ fun AdminDashboardScreen(
         LazyColumn(
             modifier            = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp)
+                .testTag("admin-dashboard-list"),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding      = PaddingValues(top = 8.dp, bottom = 24.dp),
         ) {
@@ -142,15 +143,13 @@ fun AdminDashboardScreen(
                     onClick     = onNavigateToTemplates,
                 )
             }
-            item {
-                AdminDashTile(
-                    icon        = Lucide.Megaphone,
-                    accentColor = AuntieTheme.colors.packPink,
-                    title       = "Marketing Blasts",
-                    description = "Schedule a newsletter, survey or opt-in nudge to an audience, and see what is queued.",
-                    onClick     = onNavigateToMarketingBlasts,
-                )
-            }
+            // Marketing Blasts tile removed (operator ruling 2026-09-12): a blast
+            // is communication, so it is reached from Communicate now, the way
+            // the web rail pins it beside Communicate rather than under a
+            // generic admin group. This dashboard was never a listing of every
+            // admin destination (Settings and Logs are top-bar icons, not tiles;
+            // Household Members and Kin detail are reached from Directory), so
+            // removing this one entry breaks no convention.
 
             // ── Business Data ────────────────────────────────────────────────
             item { DashboardSectionLabel("Business Data") }

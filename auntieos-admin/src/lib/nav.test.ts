@@ -67,6 +67,24 @@ describe('rail composition', () => {
   });
 
   /**
+   * Operator ruling 2026-09-12: a marketing blast is communication, not a
+   * generic admin task, so it is pinned beside Communicate rather than filed
+   * under "More" with the other authoring screens. Android has no room for a
+   * ninth bottom-bar entry, so it reaches the same screen from inside
+   * Communicate instead (`ui/communicate/CommunicateScreen.kt`); this test
+   * pins the web half of that parity.
+   */
+  it('pins marketing blasts in Care Ops, right beside Communicate', () => {
+    const careOps = railGroup('careOps');
+    const communicate = careOps.findIndex((e) => e.dest === 'communicate');
+    const blasts = careOps.findIndex((e) => e.dest === 'marketingBlasts');
+    expect(communicate).toBeGreaterThanOrEqual(0);
+    expect(blasts).toBe(communicate + 1);
+    expect(careOps[blasts]?.contextual).toBeUndefined();
+    expect(careOps[blasts]?.slug).toBe('marketing-blasts');
+  });
+
+  /**
    * The admin-wide invites screen is PINNED, unlike the household-scoped
    * "Members and invites" beside it. That one is contextual because a rail
    * entry would have no household to open; this one is the every-household

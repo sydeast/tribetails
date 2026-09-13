@@ -84,9 +84,13 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object Home           : Screen("home",           "Home",        Lucide.House)
     object Directory      : Screen("directory",      "Kinfolk",     Lucide.Users)
     object Communicate    : Screen("communicate",    "Comms",       Lucide.MessageCircle)
-    // Communicate's sibling: the same act at a later time. Reached from
-    // Communicate rather than pinned in the bottom bar, which is already eight
-    // wide; the web rail pins it because a rail has room and a bottom bar does not.
+    // Communicate's sibling: the same act at a later time. Operator ruling
+    // 2026-09-12: a blast is communication, so it stays with Communicate rather
+    // than living under the admin dashboard (where #813 first wired it, before
+    // this comment existed to say otherwise). Reached from Communicate's top
+    // bar, never pinned in the bottom bar (already eight wide, and the answer to
+    // a ninth entry is no) — matching the web rail, which pins it beside
+    // Communicate in Care Ops rather than lumping it into the generic admin group.
     object MarketingBlasts : Screen("marketing_blasts", "Blasts",   Lucide.Megaphone)
     object Inbox          : Screen("inbox",          "Inbox",       Lucide.Inbox)
     object Calls          : Screen("calls",          "Calls",       Lucide.Phone)
@@ -766,7 +770,12 @@ private fun AuthenticatedNavHost(
                 )
             }
             composable(Screen.Communicate.route) {
-                CommunicateScreen(viewModel = commVm)
+                CommunicateScreen(
+                    viewModel = commVm,
+                    onNavigateToMarketingBlasts = {
+                        navController.navigate(Screen.MarketingBlasts.route) { launchSingleTop = true }
+                    },
+                )
             }
             // Admin-gated like every other operator write surface: the callables
             // behind it are wrapAdminCallable, and the gate here is what stops a
@@ -827,7 +836,6 @@ private fun AuthenticatedNavHost(
                         onNavigateToFormSchemas = { navController.navigate(Screen.FormSchemas.route) },
                         onNavigateToKinTaleTemplates = { navController.navigate(Screen.KinTaleTemplates.route) },
                         onNavigateToTemplates = { navController.navigate(Screen.Templates.route) },
-                        onNavigateToMarketingBlasts = { navController.navigate(Screen.MarketingBlasts.route) },
                         onNavigateToFeatureFlags = { navController.navigate(Screen.AdminFeatureFlags.route) },
                         onNavigateToCoveragePackages = { navController.navigate(Screen.CoveragePackage.route) },
                         onNavigateToInvites = { navController.navigate(Screen.Invites.route) },
