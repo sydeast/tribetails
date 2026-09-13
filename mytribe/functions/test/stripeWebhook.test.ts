@@ -520,6 +520,26 @@ vi.mock('../src/lib/stripe', () => ({
         },
       };
     }
+    // A second session on the same invoice carrying NO round: minted before the
+    // stamp shipped, or by anything that does not stamp one. Only the invoice's
+    // own "owes nothing" state can catch it, which is what makes it the probe
+    // for whether the paid flip left a stale `amountDueCents` behind.
+    if (sig === 'race-b-legacy') {
+      return {
+        id: 'evt_65a',
+        type: 'checkout.session.completed',
+        created: 6005,
+        data: {
+          object: {
+            id: 'cs_65',
+            payment_intent: 'pi_65',
+            payment_status: 'paid',
+            amount_total: 13750,
+            metadata: { familyId: 'f60', invoiceId: 'i60' },
+          },
+        },
+      };
+    }
     // The second session's OWN sibling event. One card payment delivers two,
     // and the duplicate branch must not credit the account once per event.
     if (sig === 'race-b-pi') {
@@ -1836,6 +1856,40 @@ describe('stripeWebhook', () => {
     expect(docState['payments/evt_62a'].data!.appliedToInvoice).toBeUndefined();
     expect(docState['payments/evt_62a'].data!.duplicateCheckoutReason).toBeUndefined();
     expect(writes.find((w) => w.path === 'families/f62')).toBeUndefined();
+  });
+
+  it('ZEROES amountDueCents on the paid flip, not only the dollar field', async () => {
+    // THE INTEGER IS THE ONE EVERY READER PREFERS. `payInvoice`'s "Invoice is
+    // fully paid" refusal reads it first, `getMyInvoices` reads it first, and so
+    // does this fix's own owes-nothing test. `createInvoice` writes it on every
+    // invoice, and until this change the Stripe paid flip zeroed only the dollar
+    // `amountDue` beside it.
+    //
+    // A stale positive integer here is not a display nit. It makes `payInvoice`
+    // mint a fresh full-amount checkout for an invoice Stripe has already paid,
+    // at the CURRENT round, so nothing downstream can tell it from a legitimate
+    // second payment. That is #826 reachable through the callable with no client
+    // change at all.
+    docState['invoices/i60'] = {
+      exists: true,
+      data: { kinfolkId: 'f60', amountDue: 137.5, amountDueCents: 13750, total: 137.5, totalCents: 13750 },
+    };
+    stripeMock.paymentIntentsRetrieve.mockResolvedValue({
+      latest_charge: { balance_transaction: { fee: 429 } },
+    });
+
+    expect(await deliver('race-a')).toEqual([200]);
+
+    expect(docState['invoices/i60'].data!.amountDue).toBe(0);
+    expect(docState['invoices/i60'].data!.amountDueCents).toBe(0);
+
+    // And with the integer honest, a second session carrying NO round is caught
+    // by the invoice owing nothing. With it stale, this payment applies.
+    expect(await deliver('race-b-legacy')).toEqual([200]);
+    expect(docState['stripeEvents/evt_65a'].data).toMatchObject({
+      appliedOutcome: 'SKIPPED_DUPLICATE_INVOICE',
+      duplicateReason: 'settled-by-other-intent',
+    });
   });
 
   it('catches a duplicate from a session minted before the round stamp shipped', async () => {

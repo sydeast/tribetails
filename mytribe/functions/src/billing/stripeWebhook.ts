@@ -563,6 +563,22 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     if (isPaidEvent) {
       patch.status = 'paid';
       patch.amountDue = 0;
+      // THE INTEGER FIELD TOO, AND IT WAS MISSING (found while building #826).
+      //
+      // `amountDue` is the legacy dollar float; `amountDueCents` is the integer
+      // the settlement pass writes (`lib/invoiceMath.ts`) and the field every
+      // reader that knows about it PREFERS: `payInvoice`'s "Invoice is fully
+      // paid" refusal reads it first, `getMyInvoices` reads it first, and so
+      // does the owes-nothing test the new invoice-level dedupe rests on.
+      // `createInvoice` puts it on every invoice it writes, and this flip zeroed
+      // only the dollar beside it — leaving the PREFERRED figure reading the
+      // full balance on an invoice Stripe had just paid.
+      //
+      // That is not a display nit. It let `payInvoice` mint a fresh full-amount
+      // checkout for an already-paid invoice, at the CURRENT round, which
+      // nothing downstream can tell from a legitimate second payment: #826
+      // reachable through the callable with no client change at all.
+      patch.amountDueCents = 0;
       patch.paidAt = FieldValue.serverTimestamp();
       // The state stamp (ADR-0002), in the same transactional write as the
       // flip it describes. A failed event changes nothing the classifier
