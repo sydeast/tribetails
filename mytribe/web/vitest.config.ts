@@ -16,15 +16,6 @@ export default defineConfig({
     // 'node' environment.
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./test-setup.ts'],
-    // Vitest 5 flipped this default from false to true (a mock's call history
-    // is now wiped before every test unless a suite opts out). Specs like
-    // src/lib/sessionHealth.test.ts register a mock (e.g. `onAuthStateChanged`)
-    // once at module import time via `vi.hoisted`/`vi.mock`, then read its
-    // call history from later tests -- exactly the pattern the old default
-    // protected. Pin the behavior this suite was written against explicitly,
-    // rather than letting a dependency bump silently change what every test
-    // file's mocks remember between tests. Mirrors auntieos-admin.
-    clearMocks: false,
     // Bound how much of the machine ONE run takes. See #492, which is #455
     // applied here: the admin suite got this treatment and this one, with the
     // same shape of specs, did not.
