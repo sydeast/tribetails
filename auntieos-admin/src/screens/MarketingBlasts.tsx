@@ -823,7 +823,7 @@ export function MarketingBlasts() {
                         key={b.id}
                         blast={b}
                         detail={
-                          b.status === 'failed' ? (
+                          b.status === 'failed' && b.dispatched === 0 ? (
                             // Not a count: a campaign whose fan-out never armed
                             // queued nothing, and "0 sent, 0 suppressed" would
                             // read as a send that reached nobody rather than as
@@ -833,6 +833,14 @@ export function MarketingBlasts() {
                             <>
                               {' '}
                               &middot; {b.dispatched} sent, {b.suppressed} suppressed
+                              {/* A failed campaign that DID queue copies is a
+                                  send stopped part-way, not one that never
+                                  started, and it is the population #823 was
+                                  filed about: a row the old build left at
+                                  'running' with real counts on it and no roster
+                                  to resume from. "never queued" over sixty sent
+                                  copies would be the confident wrong number. */}
+                              {b.status === 'failed' ? ', stopped part-way' : null}
                             </>
                           )
                         }

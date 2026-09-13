@@ -540,8 +540,17 @@ internal fun blastMeta(blast: MarketingBlastRow): String {
             )
         // A campaign whose fan-out never armed queued nothing, and "0 sent, 0
         // suppressed" would read as a send that reached nobody rather than as
-        // one that never started.
-        BlastStatus.Failed -> "$head, never queued"
+        // one that never started. One that DID queue copies is a send stopped
+        // part-way, and it is the population #823 was filed about: a row the old
+        // build left at 'running' with real counts on it and no roster to resume
+        // from. "never queued" over sixty sent copies would be the confident
+        // wrong number.
+        BlastStatus.Failed ->
+            if (blast.dispatched == 0) {
+                "$head, never queued"
+            } else {
+                "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed, stopped part-way"
+            }
         else -> "$head, ${blast.dispatched} sent, ${blast.suppressed} suppressed"
     }
 }

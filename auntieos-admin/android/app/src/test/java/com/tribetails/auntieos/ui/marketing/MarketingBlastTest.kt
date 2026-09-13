@@ -416,6 +416,34 @@ class MarketingBlastTest {
     }
 
     @Test
+    fun `a failed row that queued nothing says so, and one that queued copies does not`() {
+        // #823. Both rows are Failed, and they are not the same event. The first
+        // is a claim whose roster never armed: nothing left the building. The
+        // second is a row the pre-#823 build stranded mid fan-out, and it is the
+        // population the issue was filed about. Printing "never queued" over 61
+        // sent copies is the confident wrong number.
+        val base = MarketingBlastRow(
+            id = "b3",
+            key = "newsletter.announcement",
+            title = "June",
+            fireAtMs = 1L,
+            status = BlastStatus.Failed,
+            audienceDescription = "All active kinfolk",
+            matched = 900,
+            noLinkedAccount = 0,
+            dispatched = 0,
+            suppressed = 0,
+            failed = 0,
+        )
+        assertTrue(blastMeta(base).contains("never queued"))
+
+        val stranded = base.copy(id = "b4", dispatched = 61, suppressed = 4)
+        val meta = blastMeta(stranded)
+        assertTrue(meta.contains("61 sent, 4 suppressed, stopped part-way"))
+        assertTrue(!meta.contains("never queued"))
+    }
+
+    @Test
     fun `confirmLine names the campaign, the audience and the time`() {
         val state = MarketingBlastsUiState(
             campaignKey = MarketingKey.Survey,

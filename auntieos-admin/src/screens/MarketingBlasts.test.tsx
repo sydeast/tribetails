@@ -477,6 +477,55 @@ describe('MarketingBlasts', () => {
     expect(await screen.findByRole('button', { name: 'Ask again' })).toBeInTheDocument();
     expect(screen.getByText('Asked again. Still queueing.')).toBeInTheDocument();
   });
+  /**
+   * #823's own population. A row the pre-#823 build left at `running` carries
+   * real counts and no roster to resume from, so the sweep fails it. "never
+   * queued" over sixty-one queued copies would be the confident wrong number
+   * this screen refuses everywhere else.
+   */
+  it('separates a failed campaign that queued nothing from one stopped part-way', async () => {
+    listMarketingBlasts.mockResolvedValue([
+      {
+        id: 'b1',
+        key: 'newsletter.announcement',
+        title: 'Never armed',
+        fireAtMs: Date.now() - HOUR,
+        status: 'failed',
+        audienceDescription: 'All active kinfolk',
+        matched: 410,
+        noLinkedAccount: 0,
+        dispatched: 0,
+        suppressed: 0,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'failed',
+        queued: 0,
+        audienceSize: 410,
+      },
+      {
+        id: 'b2',
+        key: 'survey.event',
+        title: 'Stranded',
+        fireAtMs: Date.now() - HOUR,
+        status: 'failed',
+        audienceDescription: 'Tags (any): vip',
+        matched: 410,
+        noLinkedAccount: 0,
+        dispatched: 61,
+        suppressed: 4,
+        failed: 0,
+        cancelledAtMs: null,
+        fanoutState: 'failed',
+        queued: 65,
+        audienceSize: 410,
+      },
+    ]);
+    render(<MarketingBlasts />);
+    expect(await screen.findByText(/never queued/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/61 sent, 4 suppressed, stopped part-way/),
+    ).toBeInTheDocument();
+  });
   it('does not offer the re-read when nothing is queueing', async () => {
     listMarketingBlasts.mockResolvedValue([]);
     render(<MarketingBlasts />);

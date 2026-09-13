@@ -87,21 +87,43 @@ async function runningRows(collection: string): Promise<Array<{ id: string; data
 }
 
 /**
- * A row claimed but never armed: the roster write did not finish.
+ * A row that says `running` and carries no roster this sweep can walk.
  *
- * Nothing was sent (the roster is written before the first claim), so failing it
- * is honest and the operator can schedule again. Left alone it would sit at
- * `running` forever with a `fanoutChunkCount` of zero, which every reader would
- * have to special-case.
+ * TWO POPULATIONS, and they are not the same fact, which is why the stamped
+ * reason distinguishes them:
+ *
+ *   roster_incomplete   a #823-era claim whose roster write did not finish.
+ *                       Nothing was sent, because the roster is committed before
+ *                       the first claim, so failing it is honest and the
+ *                       operator can schedule again.
+ *   stranded_pre_823    a row left behind by the build #823 was filed about: its
+ *                       fan-out died inside one invocation with real counts on
+ *                       it, and there was never a roster to resume from. It is
+ *                       the population the issue exists for, and it is told
+ *                       apart by having no `fanoutTotal` at all.
+ *
+ * The distinction reaches the screens: a stranded row queued copies and both
+ * lists say how many, rather than printing "never queued" over a send that
+ * reached sixty households.
  */
-async function failUnarmedRow(collection: string, id: string, workerId: string): Promise<void> {
+async function failUnarmedRow(
+  collection: string,
+  id: string,
+  row: Record<string, unknown>,
+  workerId: string,
+): Promise<void> {
   const ref = db().collection(collection).doc(id);
+  // A row this build armed always has `fanoutTotal`, because it is written in
+  // the same object as `fanoutState: 'running'`. Its absence is the only
+  // evidence that an older build wrote the row, and it is enough.
+  const stranded = row['fanoutTotal'] === undefined;
+  const reason = stranded ? 'stranded_pre_823' : 'roster_incomplete';
   await releaseFanoutLease({
     ref,
     workerId,
     patch: {
       fanoutState: 'failed' satisfies FanoutState,
-      fanoutFailure: 'roster_incomplete',
+      fanoutFailure: reason,
     },
     fnName: 'outboundFanoutSweep',
   });
@@ -109,7 +131,7 @@ async function failUnarmedRow(collection: string, id: string, workerId: string):
     severity: 'warn',
     function: 'outboundFanoutSweep',
     event: 'fanout.roster.incomplete',
-    extra: { collection, id },
+    extra: { collection, id, reason, dispatched: countOf(row, 'dispatched') },
   });
 }
 
@@ -175,7 +197,7 @@ async function sweepCollection(
 
     if (row.data['fanoutRosterReady'] !== true) {
       if (countOf(row.data, 'fanoutLeaseExpiresAtMs') > now) continue;
-      await failUnarmedRow(collection, row.id, workerId);
+      await failUnarmedRow(collection, row.id, row.data, workerId);
       return true;
     }
 

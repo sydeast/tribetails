@@ -441,6 +441,67 @@ describe('what the operator sees while a blast is sending (#823)', () => {
     expect(fanoutProgressState({ fanoutState: 'complete' }, clock)).toBe('complete');
   });
 
+  /**
+   * The rows #823 was actually filed about, met on the sweep's FIRST deploy.
+   *
+   * A blast the old build stranded says `running`, carries the counts it got to,
+   * and has no roster: there is nothing to resume, so the sweep has to fail it.
+   * What it must not do is fail it as though nothing was ever sent. A row that
+   * queued sixty-one copies is a send stopped part-way, and the stamped reason
+   * is what lets both screens say so.
+   */
+  it('tells a stranded pre-#823 row apart from one whose roster never armed', async () => {
+    freshDb(0, {
+      [`${BLASTS_COLLECTION}/legacy`]: {
+        key: 'newsletter.announcement',
+        fireAtMs: clock - HOUR,
+        createdAtMs: clock - HOUR,
+        criteria: { kind: 'all' },
+        audienceDescription: 'All active kinfolk',
+        matched: 900,
+        // The tell, and the only one: the pre-#823 build wrote counts and a
+        // state, never a roster total.
+        dispatched: 61,
+        suppressedByPrefs: 4,
+        failed: 0,
+        fanoutState: 'running',
+        cancelledAtMs: null,
+      },
+      [`${BLASTS_COLLECTION}/halfArmed`]: {
+        key: 'survey.event',
+        fireAtMs: clock - HOUR,
+        createdAtMs: clock - HOUR,
+        criteria: { kind: 'all' },
+        audienceDescription: 'All active kinfolk',
+        matched: 900,
+        dispatched: 0,
+        suppressedByPrefs: 0,
+        failed: 0,
+        fanoutState: 'running',
+        fanoutTotal: 900,
+        fanoutRosterReady: false,
+        cancelledAtMs: null,
+      },
+    });
+
+    // One row per tick, by design, so it takes two.
+    await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 12_000 });
+    await outboundFanoutSweepCore({ nowMs: clock, budgetMs: 12_000 });
+
+    expect(blastRow('legacy').fanoutState).toBe('failed');
+    expect(blastRow('legacy').fanoutFailure).toBe('stranded_pre_823');
+    expect(blastRow('halfArmed').fanoutState).toBe('failed');
+    expect(blastRow('halfArmed').fanoutFailure).toBe('roster_incomplete');
+
+    // And the list is honest about which is which: the stranded row keeps its
+    // counts, so the screens do not print "never queued" over 61 sent copies.
+    const listed = await listMarketingBlastsHandler(req({}));
+    const legacy = listed.blasts.find((b) => b.id === 'legacy');
+    expect(legacy?.status).toBe('failed');
+    expect(legacy?.dispatched).toBe(61);
+    expect(listed.blasts.find((b) => b.id === 'halfArmed')?.dispatched).toBe(0);
+  });
+
   it('sorts a cancelled and a cancelling blast apart', () => {
     expect(blastStatus(clock + HOUR, clock, clock, 'cancelled', true)).toBe('cancelled');
     expect(blastStatus(clock + HOUR, null, clock, 'running', true)).toBe('cancelling');
