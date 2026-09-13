@@ -43,6 +43,18 @@ import { drawAccountCredit } from '../lib/accountCredit';
  * the invoice can take a payment at all, whether anything is owed, whether any
  * credit is held. A trigger firing is not permission to move money; it is a
  * prompt to go and look.
+ *
+ * ── A SECOND DELIVERY OF THE SAME EVENT DRAWS NOTHING (#830) ──────────────
+ *
+ * Eventarc delivery is at-least-once, so this handler can run twice for one
+ * write no matter what the retry setting is, and the two copies can overlap.
+ * Neither copy can draw the credit a second time, and the reason is in
+ * `drawAccountCredit` rather than here: the pass is one transaction, and the
+ * draw is the SMALLER of what the invoice owes and what the household holds, so
+ * after the first copy commits, one of those two is exhausted. The second copy
+ * re-reads the committed payment row and the decremented balance and comes back
+ * `invoice_not_collectable` or `no_credit`. This trigger needs no dedupe key of
+ * its own, and adding one would only hide that.
  */
 
 type InvoiceDoc = {

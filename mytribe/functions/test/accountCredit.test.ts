@@ -165,10 +165,14 @@ describe('drawAccountCredit: the pass that finally spends the balance', () => {
       fromAccountCredit: true,
     });
 
-    // The family balance moves by an INCREMENT, not a read-then-write, so two
-    // invoices created in the same second cannot each spend the same credit.
+    // The family balance is written as an ABSOLUTE remainder, derived from the
+    // balance read inside the SAME transaction (#830). It used to be an
+    // increment, and an increment cannot be bounded: two passes in flight
+    // together each planned a draw from the same held credit and each applied
+    // it, leaving the household in debt. The race itself lives in
+    // `test/accountCreditRace.test.ts`.
     const fam = writeAt(ctx, 'families/fam1');
-    expect(fam?.data[ACCOUNT_BALANCE_FIELD]).toEqual({ __increment: -10000 });
+    expect(fam?.data[ACCOUNT_BALANCE_FIELD]).toBe(2000);
 
     const inv = ctx.writes.find((w) => w.path === 'invoices/inv1');
     expect(inv?.data).toMatchObject({ status: 'paid', paymentStatus: 'PAID', amountDueCents: 0 });

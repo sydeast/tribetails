@@ -179,12 +179,78 @@ export interface AutoApplyResult {
 }
 
 /**
+ * The balance a draw leaves behind, and the LAST GUARD in front of the write.
+ *
+ * An absolute figure, computed from the balance read in the same transaction,
+ * rather than `increment(-draw)`. An increment cannot be bounded: it applies
+ * whatever the stored value turns out to be, so a plan built on a stale read
+ * writes a negative balance and nothing anywhere refuses it. This returns a
+ * figure that is non-negative or it throws, and a throw inside the transaction
+ * aborts it, so an overdraw commits NOTHING rather than committing a debt.
+ *
+ * `planCreditDraw` already makes the throw unreachable by never planning a draw
+ * larger than the balance. That is the point: the arithmetic is what keeps it
+ * from happening, and this is what makes it impossible to store even if the
+ * arithmetic is one day changed by someone who does not read it.
+ */
+export function balanceAfterDraw(heldCents: number, drawCents: number): number {
+  const remaining = Math.round(heldCents) - Math.round(drawCents);
+  if (remaining < 0) {
+    throw new Error(
+      `accountCredit: refusing to overdraw a household balance (held ${heldCents}, draw ${drawCents})`,
+    );
+  }
+  return remaining;
+}
+
+/**
  * ONE PASS over one invoice: draw the household's credit down onto it.
  *
  * The invoice, its subcollection row and the family balance move together in a
- * single batch or not at all. A half-commit would spend a household's credit
- * without crediting their bill, which is the same money vanishing that the
- * dropped fee was.
+ * single transaction or not at all. A half-commit would spend a household's
+ * credit without crediting their bill, which is the same money vanishing that
+ * the dropped fee was.
+ *
+ * ── WHY A TRANSACTION AND NOT A BATCH (#830) ──────────────────────────────
+ *
+ * A batch is atomic and that was never the gap. The gap was that the plan was
+ * not conditioned on the balance still being what it was when it was read: the
+ * three reads, the plan and the commit were four separate round trips, and two
+ * passes could sit inside one another's window, both read the same held credit
+ * and both spend it. There are two callers — `admin/runAutoApply.ts` on demand
+ * and `triggers/onInvoiceAutoApply.ts` by itself — so that overlap needs no
+ * retry and no replay to happen; it is one operator pressing a button while the
+ * trigger for the same invoice is in flight.
+ *
+ * Everything now reads inside `runTransaction`, so the balance that decides the
+ * draw and the write that applies it share one snapshot. The serialisation
+ * point is BOTH documents: every pass reads and writes `invoices/{id}` and
+ * `families/{kinfolkId}`, so a second pass cannot commit against a snapshot the
+ * first has already moved — it re-runs and re-plans against what the first
+ * actually committed.
+ *
+ * ── WHAT THE SECOND PASS OF A RACE DOES ───────────────────────────────────
+ *
+ * It re-plans, and the plan is what decides. This is not a coin toss between
+ * "draw the rest" and "draw nothing": `planCreditDraw` takes the SMALLER of
+ * what is owed and what is held, so after any successful draw either the
+ * invoice owes nothing or the household holds nothing.
+ *
+ *   same invoice      the second pass draws ZERO, always. It finds the first
+ *                     pass's payment row and the decremented balance, and one
+ *                     of the two is exhausted, so it reports
+ *                     `invoice_not_collectable` or `no_credit`. That is what
+ *                     makes a duplicate trigger delivery, a double click and a
+ *                     retried pass all harmless.
+ *   another invoice   the second pass draws WHAT IS LEFT, which is the correct
+ *                     answer and the whole meaning of "future invoices",
+ *                     plural. Two bills racing over one balance now share it
+ *                     instead of each spending all of it.
+ *
+ * So a concurrent pair behaves exactly like the same pair run one after the
+ * other. Ordering decides which invoice gets the credit, never how much credit
+ * exists — and the balance can no longer go negative, because the decrement is
+ * an absolute figure `balanceAfterDraw` refuses to make negative.
  */
 export async function drawAccountCredit(
   firestore: Firestore,
@@ -203,103 +269,128 @@ export async function drawAccountCredit(
   });
 
   const invRef = firestore.collection('invoices').doc(input.invoiceId);
-  const invSnap = await invRef.get();
-  if (!invSnap.exists) return nothing('invoice_missing');
-  const doc = (invSnap.data() ?? {}) as InvoiceDoc;
 
-  const kinfolkId = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
-  if (kinfolkId === '') return nothing('no_household');
+  /** The committed outcome, plus what only the transaction knew, to log with. */
+  const pass = await firestore.runTransaction(async (tx) => {
+    // ALL READS BEFORE WRITES, the same order `redeemCredit` keeps: Firestore
+    // refuses a read after a write on the same transaction.
+    const invSnap = await tx.get(invRef);
+    if (!invSnap.exists) return { result: nothing('invoice_missing'), applied: null };
+    const doc = (invSnap.data() ?? {}) as InvoiceDoc;
 
-  const paymentsSnap = await invRef.collection('payments').get();
-  const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
-  if (!invoiceAcceptsCredit(doc, existingPayments)) return nothing('invoice_not_collectable');
+    const kinfolkId = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
+    if (kinfolkId === '') return { result: nothing('no_household'), applied: null };
 
-  const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
+    const paymentsSnap = await tx.get(invRef.collection('payments'));
+    const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
+    if (!invoiceAcceptsCredit(doc, existingPayments)) {
+      return { result: nothing('invoice_not_collectable'), applied: null };
+    }
 
-  const famRef = firestore.collection('families').doc(kinfolkId);
-  const famSnap = await famRef.get();
-  const heldCents = readAccountBalanceCents(
-    (famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD],
-  );
+    const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
 
-  const drawCents = planCreditDraw({
-    amountDueCents: before.amountDueCents,
-    accountBalanceCents: heldCents,
-  });
-  if (drawCents === 0) {
-    return nothing('no_credit', {
-      accountBalanceCents: heldCents,
+    const famRef = firestore.collection('families').doc(kinfolkId);
+    const famSnap = await tx.get(famRef);
+    const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
+
+    const drawCents = planCreditDraw({
       amountDueCents: before.amountDueCents,
+      accountBalanceCents: heldCents,
+    });
+    if (drawCents === 0) {
+      return {
+        result: nothing('no_credit', {
+          accountBalanceCents: heldCents,
+          amountDueCents: before.amountDueCents,
+        }),
+        applied: null,
+      };
+    }
+
+    // Throws rather than writes if this would ever be negative, which aborts
+    // the whole transaction: no payment row, no invoice update, no decrement.
+    const remainingCents = balanceAfterDraw(heldCents, drawCents);
+
+    const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
+    const settling = after.state === 'settled' || after.state === 'overpaid';
+
+    tx.set(invRef.collection('payments').doc(), {
+      amount: centsToDollars(drawCents),
+      amountCents: drawCents,
+      method: ACCOUNT_CREDIT_METHOD,
+      reference: null,
+      paidAt: new Date().toISOString(),
+      recordedBy: input.actorUid,
+      // The row says where the money came from. An operator asking "why is this
+      // bill already part paid" gets an answer from the row itself.
+      fromAccountCredit: true,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    // The ABSOLUTE remainder, not `increment(-drawCents)`. Inside the
+    // transaction the read that produced it is the read this write is
+    // conditioned on, which is exactly what `creditAccount` cannot say about
+    // its own increment — and unlike an increment, this cannot store a debt.
+    tx.set(
+      famRef,
+      {
+        [ACCOUNT_BALANCE_FIELD]: remainingCents,
+        accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    const invoiceUpdate = {
+      status: settling ? 'paid' : 'open',
+      paymentStatus: settling ? 'PAID' : 'PARTIAL',
+      totalCents: after.totalCents,
+      paidCents: after.paidCents,
+      amountDueCents: after.amountDueCents,
+      overpaidCents: after.overpaidCents,
+      amountDue: centsToDollars(after.amountDueCents),
+      ...(settling ? { paidAt: FieldValue.serverTimestamp(), paidBy: input.actorUid } : {}),
+      lastPaymentAt: FieldValue.serverTimestamp(),
+      lastPaymentBy: input.actorUid,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    tx.set(
+      invRef,
+      { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.paidCents) },
+      { merge: true },
+    );
+
+    return {
+      result: {
+        invoiceId: input.invoiceId,
+        skipped: null,
+        appliedCents: drawCents,
+        accountBalanceCents: remainingCents,
+        amountDueCents: after.amountDueCents,
+      } satisfies AutoApplyResult,
+      applied: { kinfolkId, state: after.state },
+    };
+  });
+
+  // AFTER the commit, never inside it. A transaction callback re-runs on
+  // contention, and a log line written from an attempt that was discarded would
+  // report money that never moved — which is the failure mode this whole change
+  // is about, wearing a different hat.
+  if (pass.applied !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'accountCredit',
+      event: 'payment.autoapply.applied',
+      uid: input.actorUid,
+      extra: {
+        invoiceId: input.invoiceId,
+        kinfolkId: pass.applied.kinfolkId,
+        appliedCents: pass.result.appliedCents,
+        accountBalanceCents: pass.result.accountBalanceCents,
+        amountDueCents: pass.result.amountDueCents,
+        state: pass.applied.state,
+      },
     });
   }
 
-  const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
-  const settling = after.state === 'settled' || after.state === 'overpaid';
-  const batch = firestore.batch();
-
-  batch.set(invRef.collection('payments').doc(), {
-    amount: centsToDollars(drawCents),
-    amountCents: drawCents,
-    method: ACCOUNT_CREDIT_METHOD,
-    reference: null,
-    paidAt: new Date().toISOString(),
-    recordedBy: input.actorUid,
-    // The row says where the money came from. An operator asking "why is this
-    // bill already part paid" gets an answer from the row itself.
-    fromAccountCredit: true,
-    createdAt: FieldValue.serverTimestamp(),
-  });
-
-  batch.set(
-    famRef,
-    {
-      [ACCOUNT_BALANCE_FIELD]: FieldValue.increment(-drawCents),
-      accountBalanceUpdatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-
-  const invoiceUpdate = {
-    status: settling ? 'paid' : 'open',
-    paymentStatus: settling ? 'PAID' : 'PARTIAL',
-    totalCents: after.totalCents,
-    paidCents: after.paidCents,
-    amountDueCents: after.amountDueCents,
-    overpaidCents: after.overpaidCents,
-    amountDue: centsToDollars(after.amountDueCents),
-    ...(settling ? { paidAt: FieldValue.serverTimestamp(), paidBy: input.actorUid } : {}),
-    lastPaymentAt: FieldValue.serverTimestamp(),
-    lastPaymentBy: input.actorUid,
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-  batch.set(
-    invRef,
-    { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.paidCents) },
-    { merge: true },
-  );
-
-  await batch.commit();
-
-  logEvent({
-    severity: 'info',
-    function: 'accountCredit',
-    event: 'payment.autoapply.applied',
-    uid: input.actorUid,
-    extra: {
-      invoiceId: input.invoiceId,
-      kinfolkId,
-      appliedCents: drawCents,
-      accountBalanceCents: heldCents - drawCents,
-      amountDueCents: after.amountDueCents,
-      state: after.state,
-    },
-  });
-
-  return {
-    invoiceId: input.invoiceId,
-    skipped: null,
-    appliedCents: drawCents,
-    accountBalanceCents: heldCents - drawCents,
-    amountDueCents: after.amountDueCents,
-  };
+  return pass.result;
 }
