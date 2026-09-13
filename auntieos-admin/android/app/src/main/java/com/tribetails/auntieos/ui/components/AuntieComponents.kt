@@ -522,12 +522,23 @@ fun AuntieSpinner(
     color: Color = AuntieTheme.colors.kinfolkOrange,
     strokeWidth: Dp = 2.5.dp,
 ) {
+    // REDUCED MOTION SLOWS THIS RING. IT DOES NOT STOP IT.
+    //
+    // `animationsEnabled()` (SlowWait.kt) is false when the operator has turned
+    // Animator duration scale off, or switched on "Remove animations" -- the two
+    // ways Android asks for what the web calls `prefers-reduced-motion: reduce`.
+    // A frozen ring is not a loading indicator, it is a picture of a hang, which
+    // is the exact reading the 2026-09-12 ruling exists to prevent. The setting
+    // asks for no large, vestibular or distracting motion, and a ring turning
+    // once every 2.4s is none of those. Matches the same correction made to
+    // Spinner.css and Buttons.css on the web side of this app.
+    val spinMs = if (animationsEnabled()) 750 else 2400
     val infiniteTransition = rememberInfiniteTransition(label = "spinner")
     val angle by infiniteTransition.animateFloat(
         initialValue  = 0f,
         targetValue   = 360f,
         animationSpec = infiniteRepeatable(
-            animation  = tween(durationMillis = 750, easing = LinearEasing),
+            animation  = tween(durationMillis = spinMs, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "rotation",
