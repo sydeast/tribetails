@@ -272,6 +272,14 @@ export { addKin, updateKin, archiveKin } from './portal/kinWrites';
 export { setActiveTribe } from './portal/setActiveTribe';
 export { signKinPhotoUpload, confirmKinPhotoUpload } from './portal/signKinPhotoUpload';
 export { addSecondaryContact } from './portal/addSecondaryContact';
+// The other half of the operator's 2026-09-12 ruling. `addSecondaryContact`
+// above INVITES a second kinfolk to the portal; these three record a household
+// contact who holds no portal account at all. Two actions, two outcomes.
+export {
+  listHouseholdContacts,
+  saveHouseholdContact,
+  removeHouseholdContact,
+} from './portal/householdContacts';
 export { getMyKinTaleMedia } from './portal/getMyKinTaleMedia';
 // #399 item 1: the whole household's photo archive, for the Tribe hub gallery.
 // getMyKinTaleMedia resolves ONE tale the caller already has the id of; this

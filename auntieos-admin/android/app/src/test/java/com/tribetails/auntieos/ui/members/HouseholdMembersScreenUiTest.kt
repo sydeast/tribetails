@@ -25,7 +25,9 @@ import org.robolectric.annotation.Config
  * contact and Secondary contacts with the mock's notes, a primary carries the
  * "granted by role" capsule and no switch, a secondary carries the permission
  * list with the Locked on chip. And the rulings that have been rebuilt wrong
- * before: no add-secondary control, no switch on a primary.
+ * before: no switch on a primary, no admin-minted secondary invite, and (since
+ * 2026-09-12) the two gestures the hero keeps apart, "Add secondary contact"
+ * (a person with no portal account) and "Invite to portal" (the claim link).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w1080dp-h4000dp-xhdpi")
@@ -49,10 +51,30 @@ class HouseholdMembersScreenUiTest {
         invitedEmail = email,
     )
 
-    private fun setContent(members: List<MembersRepository.Member>) {
+    private fun contact(
+        contactId: String = "c1",
+        name: String = "Ada Rivera",
+        label: String = "Sister",
+        phone: String? = "805 555 0143",
+        email: String? = null,
+    ) = MembersRepository.Contact(
+        contactId = contactId,
+        name = name,
+        label = label,
+        phone = phone,
+        email = email,
+        createdAt = null,
+        updatedAt = null,
+    )
+
+    private fun setContent(
+        members: List<MembersRepository.Member>,
+        contacts: List<MembersRepository.Contact> = emptyList(),
+    ) {
         val repo = mockk<MembersRepository>()
         coEvery { repo.listMembers("fam1") } returns Result.success(members)
         coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
+        coEvery { repo.listHouseholdContacts("fam1") } returns Result.success(contacts)
         composeRule.setContent {
             AuntieOSTheme {
                 HouseholdMembersBody(
@@ -88,7 +110,8 @@ class HouseholdMembersScreenUiTest {
         composeRule.onNodeWithText("Primary contact").assertIsDisplayed()
         composeRule.onNodeWithText("role: PRIMARY").assertIsDisplayed()
         composeRule.onNodeWithText("Secondary contacts").assertIsDisplayed()
-        composeRule.onNodeWithText("1 of role: SECONDARY").assertIsDisplayed()
+        composeRule.onNodeWithText("1 of role: SECONDARY · 0 contacts, no portal account")
+            .assertIsDisplayed()
         composeRule.onNodeWithText("Invites").assertIsDisplayed()
         // The old single Members panel and its "on file" pill are gone.
         assertEquals(0, composeRule.onAllNodesWithText("2 on file").fetchSemanticsNodes().size)
@@ -129,7 +152,10 @@ class HouseholdMembersScreenUiTest {
     fun `offers none of the mock controls the admin cannot use`() {
         setContent(listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")))
 
-        for (label in listOf("Add secondary contact", "Save label", "Swap contact info", "Invite a primary")) {
+        // "Add secondary contact" is NOT on this list any more: the 2026-09-12
+        // ruling restores it, and it mints no invite. What stays forbidden is
+        // the two PRIMARY-only callables and the typed-address primary invite.
+        for (label in listOf("Save label", "Swap contact info", "Invite a primary")) {
             assertEquals(
                 "HouseholdMembersScreen must not offer \"$label\"",
                 0,
@@ -148,6 +174,7 @@ class HouseholdMembersScreenUiTest {
         val repo = mockk<MembersRepository>()
         coEvery { repo.listMembers("fam1") } returns Result.failure(Exception("permission-denied"))
         coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
+        coEvery { repo.listHouseholdContacts("fam1") } returns Result.success(emptyList())
         composeRule.setContent {
             AuntieOSTheme {
                 HouseholdMembersBody(
@@ -165,8 +192,81 @@ class HouseholdMembersScreenUiTest {
         assertEquals(1, composeRule.onAllNodesWithText("permission-denied", substring = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithText("Secondary contacts unavailable", substring = true).assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("Nobody has claimed", substring = true).fetchSemanticsNodes().size)
-        assertEquals(0, composeRule.onAllNodesWithText("No secondary contacts yet", substring = true).fetchSemanticsNodes().size)
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithText("has been invited to the portal as a secondary", substring = true)
+                .fetchSemanticsNodes().size,
+        )
         // The where line stays the id alone: an unread roster has no count.
         composeRule.onNodeWithText("familyId: fam1").assertIsDisplayed()
+    }
+
+    /**
+     * RULING (2026-09-12): "a secondary contact does not have to be a portal
+     * user. primary kinfolk user will invite a second kinfolk to the household
+     * to manage and receive notifications." Two actions, and the #755 sweep
+     * shipped one of them wearing the other's label.
+     */
+    @Test
+    fun `the hero carries both gestures, and the mock's primary slot is the contact`() {
+        setContent(listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")))
+
+        composeRule.onNodeWithText("Invite to portal").assertIsDisplayed()
+        // Twice: the hero action and the mock's dashed row under the list.
+        assertEquals(
+            2,
+            composeRule.onAllNodesWithText("Add secondary contact").fetchSemanticsNodes().size,
+        )
+    }
+
+    @Test
+    fun `a contact draws with no portal account, no uid and no permission list`() {
+        setContent(
+            listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")),
+            contacts = listOf(contact()),
+        )
+
+        composeRule.onNodeWithText("Ada Rivera").assertIsDisplayed()
+        composeRule.onNodeWithText("NO PORTAL ACCOUNT").assertIsDisplayed()
+        composeRule.onNodeWithText("Sister · 805 555 0143").assertIsDisplayed()
+        composeRule.onNodeWithText("1 contact").assertIsDisplayed()
+        // The panel note counts both kinds.
+        composeRule.onNodeWithText("1 of role: SECONDARY · 1 contact, no portal account")
+            .assertIsDisplayed()
+        // One permission list on the page, and it belongs to the MEMBER.
+        assertEquals(1, composeRule.onAllNodesWithText("PERMISSIONS").fetchSemanticsNodes().size)
+    }
+
+    /** A contact list that failed must never read as a household with nobody. */
+    @Test
+    fun `an unreadable contact list is named and no empty state is drawn`() {
+        val repo = mockk<MembersRepository>()
+        coEvery { repo.listMembers("fam1") } returns Result.success(
+            listOf(member("u1", MembersRepository.MemberRole.SECONDARY, "marcus@example.com")),
+        )
+        coEvery { repo.listInvites("fam1") } returns Result.success(emptyList())
+        coEvery { repo.listHouseholdContacts("fam1") } returns Result.failure(Exception("backend down"))
+        composeRule.setContent {
+            AuntieOSTheme {
+                HouseholdMembersBody(
+                    kinfolkName = "the Walls",
+                    viewModel = HouseholdMembersViewModel(
+                        kinfolkId = "fam1",
+                        householdName = "the Walls",
+                        repository = repo,
+                    ),
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("backend down", substring = true).assertIsDisplayed()
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithText("No contact has been recorded", substring = true)
+                .fetchSemanticsNodes().size,
+        )
+        // The roster read is separate and still landed.
+        composeRule.onNodeWithText("marcus@example.com").assertIsDisplayed()
     }
 }

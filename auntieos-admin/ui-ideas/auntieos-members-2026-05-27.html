@@ -24,11 +24,26 @@
   AMENDED 2026-09-12 (#755, Members sweep) to carry the standing rulings, so a
   later pass does not restore what the operator has already ruled out:
   - "Add secondary contact" (the hero's primary action and the dashed row under
-    the list) is gone. The admin does not invite the secondary; the PRIMARY does,
-    from MyTribe (auntieos-admin/CLAUDE.md, "WHO INVITES WHOM", 2026-08-04).
-    The admin's one invite, inviteKinfolkToPortal, takes the hero's primary
-    action slot as "Invite to portal". The slot is the sweep's reading of that
-    ruling, not a ruling of its own.
+    the list) STANDS AS DRAWN. An earlier pass of this sweep removed it, reading
+    "WHO INVITES WHOM" (auntieos-admin/CLAUDE.md, 2026-08-04) as meaning this
+    button should become the admin's portal invite. The operator has since ruled
+    that these are two different things, verbatim:
+
+        "a secondary contact does not have to be a portal user. primary kinfolk
+         user will invite a second kinfolk to the household to manage and
+         receive notifications"
+
+    So the screen carries BOTH. "Add secondary contact" records a person on the
+    household through saveHouseholdContact: no portal account, no invite, no
+    MemberPermissions, and the callable's schema is strict and refuses
+    `permissions`, `invitedEmail` and `role`. "Invite to portal"
+    (inviteKinfolkToPortal, the admin's one invite) sits beside it as a ghost
+    action, and whoever opens that claim link manages the household and receives
+    its notifications. The 2026-08-04 wall is untouched: the admin still mints
+    no SECONDARY invite, because a contact is not one.
+    This row's argument list below reads (invitedEmail, secondaryLabel,
+    permissions), which predates the ruling; the built form takes a name, a
+    label, a phone and an OPTIONAL email that grants nothing.
   - The "admin only" flag on billing_full is gone. A PRIMARY may grant a
     SECONDARY any permission except admin, billing included (operator ruling,
     recorded in src/api/members.ts on PERMISSION_META).
@@ -239,8 +254,9 @@
       </div>
       <div class="actions">
         <button class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 3l5 5-5 5"/><path d="M21 8H9a4 4 0 0 0-4 4v0"/><path d="M8 21l-5-5 5-5"/><path d="M3 16h12a4 4 0 0 0 4-4v0"/></svg> Swap primary</button>
-        <!-- Was "Add secondary contact". Amended per WHO INVITES WHOM (see head comment): the admin's one invite. -->
-        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg> Invite to portal</button>
+        <!-- The admin's one invite, beside the mock's own primary action. Both, per the 2026-09-12 ruling (see head comment). -->
+        <button class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg> Invite to portal</button>
+        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact</button>
       </div>
     </div>
 
@@ -274,7 +290,7 @@
     <!-- SECONDARY list -->
     <div class="panel d2">
       <h3>Secondary contacts <span class="ct">2 of role: SECONDARY</span></h3>
-      <div class="ph-sub">Household members the primary invited from MyTribe. Each carries a label and a permission set. <b>kintales_only</b> is server-locked-on and cannot be turned off.</div>
+      <div class="ph-sub">Two kinds of people. A MEMBER was invited to the portal by their primary from MyTribe, and carries a label and a permission set; <b>kintales_only</b> is server-locked-on and cannot be turned off. A CONTACT holds no portal account at all and carries neither.</div>
 
       <!-- secondary 1 -->
       <div class="member">
@@ -358,7 +374,9 @@
         </div>
       </div>
 
-      <!-- The dashed "Add secondary contact" row stood here. Removed per WHO INVITES WHOM (see head comment). -->
+      <div class="addrow" style="margin-top:16px">
+        <button class="addbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact (name, label, phone, optional email)</button>
+      </div>
     </div>
 
     <p class="note">// concept mockup · Household members · palette from AuntieColors.kt · placeholder content</p>

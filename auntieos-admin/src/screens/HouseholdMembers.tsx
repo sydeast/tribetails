@@ -28,6 +28,16 @@ import {
   revokeInvite,
   setMemberPermissions,
 } from '../api/membersWrite';
+import {
+  CONTACT_LABEL_MAX,
+  CONTACT_NAME_MAX,
+  CONTACT_PHONE_MAX,
+  contactMetaLine,
+  listHouseholdContacts,
+  removeHouseholdContact,
+  saveHouseholdContact,
+  type HouseholdContact,
+} from '../api/householdContacts';
 import { linkOptions } from '@tanstack/react-router';
 import { type Async } from '../lib/async';
 import {
@@ -57,8 +67,31 @@ import './HouseholdMembers.css';
  *
  * WHO INVITES WHOM (ruling, 2026-08-04). The admin invites the PRIMARY. The
  * PRIMARY invites the secondary, from MyTribe, and this screen offers no way to
- * do it for them. The one admin invite, "Invite to portal" in the hero, mails
- * the primary claim link to the address on the kinfolk record.
+ * do it for them. The one admin invite, "Invite to portal", mails the primary
+ * claim link to the address on the kinfolk record.
+ *
+ * A CONTACT IS NOT AN INVITE (ruling, 2026-09-12): "a secondary contact does
+ * not have to be a portal user. primary kinfolk user will invite a second
+ * kinfolk to the household to manage and receive notifications." Two actions,
+ * two outcomes, and the hero carries both:
+ *
+ *   - "Add secondary contact" records a person on the household: a name, what
+ *     they are to the household, a phone, an email if there is one. No account,
+ *     no invite, no permission set. It is `saveHouseholdContact`, and it is the
+ *     mock's own primary action, restored to the slot the mock draws it in.
+ *   - "Invite to portal" is still `inviteKinfolkToPortal`: the claim link, and
+ *     whoever opens it manages the household and receives its notifications.
+ *
+ * The #755 Members sweep read the 2026-08-04 ruling as meaning the mock's "Add
+ * secondary contact" button SHOULD BE the invite, and replaced it. That took
+ * away the only way to record somebody who will never hold an account, which is
+ * most of the people a household is actually reached through. The two live side
+ * by side now, and neither is the other's label.
+ *
+ * The admin still mints no SECONDARY invite. A contact is not a member: it has
+ * no uid, no role and no `MemberPermissions`, the callable's argument schema is
+ * `.strict()` and refuses `permissions`, `invitedEmail` and `role` outright, and
+ * the 2026-08-04 wall stands where it stood.
  *
  * "Invite a primary by email" sent the same claim link to an address the
  * operator typed, for a household with the wrong email on file or none
@@ -183,6 +216,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
 
   const [members, setMembers] = useState<Async<HouseholdMember[]>>({ status: 'loading' });
   const [invites, setInvites] = useState<Async<HouseholdInvite[]>>({ status: 'loading' });
+  const [contacts, setContacts] = useState<Async<HouseholdContact[]>>({ status: 'loading' });
 
   // One error channel and one in-flight flag per write. Sharing them would make
   // a failed revoke look like a failed mint.
@@ -206,6 +240,18 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
   const [recoveryChoice, setRecoveryChoice] = useState('');
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
+  // Secondary contacts. The form mounts with the dialog and unmounts with it,
+  // like the recovery dialog above: this screen carries no input at rest, which
+  // is what the #684 negative asserts and what the operator asked for.
+  const [contactOpen, setContactOpen] = useState(false);
+  /** The contact being edited, or null while adding a new one. */
+  const [contactEditing, setContactEditing] = useState<HouseholdContact | null>(null);
+  const [contactForm, setContactForm] = useState({ name: '', label: '', phone: '', email: '' });
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactRemoveTarget, setContactRemoveTarget] = useState<HouseholdContact | null>(null);
+  const [contactRemoveError, setContactRemoveError] = useState<string | null>(null);
+  const [contactRemoving, setContactRemoving] = useState(false);
 
   const loadMembers = useCallback(() => {
     let live = true;
@@ -249,8 +295,30 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     };
   }, [kinfolkId]);
 
+  const loadContacts = useCallback(() => {
+    let live = true;
+    setContacts({ status: 'loading' });
+    listHouseholdContacts(kinfolkId)
+      .then((data) => {
+        if (live) setContacts({ status: 'ready', data });
+      })
+      .catch((err: unknown) => {
+        if (live) {
+          setContacts({
+            status: 'error',
+            message: `listHouseholdContacts failed: ${errText(err, 'Load failed')}`,
+            retry: loadContacts,
+          });
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [kinfolkId]);
+
   useEffect(() => loadMembers(), [loadMembers]);
   useEffect(() => loadInvites(), [loadInvites]);
+  useEffect(() => loadContacts(), [loadContacts]);
 
   async function togglePermission(member: HouseholdMember, key: PermissionKey, next: boolean) {
     if (members.status !== 'ready' || savingPerm !== null) return;
@@ -405,11 +473,97 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
     setRemoveTarget(member);
   }
 
+  /** Opens the contact form: empty to add, filled to edit the one passed. */
+  function openContact(contact: HouseholdContact | null) {
+    setContactEditing(contact);
+    setContactForm({
+      name: contact?.name ?? '',
+      label: contact?.label ?? '',
+      phone: contact?.phone ?? '',
+      email: contact?.email ?? '',
+    });
+    setContactError(null);
+    setContactOpen(true);
+  }
+
+  /**
+   * Saves the contact. A DIFF, not a rebuild: the form holds a control for every
+   * field the server stores except `createdAt` / `createdBy` / `updatedAt` /
+   * `updatedBy`, which are the server's own and are never sent from here. Every
+   * editable field goes in the payload including the emptied ones, so clearing a
+   * phone number actually clears it.
+   */
+  async function saveContact() {
+    if (contactSaving) return;
+    if (contactForm.name.trim() === '') {
+      setContactError('A contact needs a name.');
+      return;
+    }
+    setContactSaving(true);
+    setContactError(null);
+    try {
+      const { created } = await saveHouseholdContact(kinfolkId, {
+        ...(contactEditing !== null ? { contactId: contactEditing.contactId } : {}),
+        name: contactForm.name,
+        label: contactForm.label,
+        phone: contactForm.phone,
+        email: contactForm.email,
+      });
+      showToast(
+        created
+          ? `${contactForm.name.trim()} is a contact on ${householdName}. No portal account was created.`
+          : `Saved ${contactForm.name.trim()}.`,
+      );
+      setContactOpen(false);
+      loadContacts();
+    } catch (err: unknown) {
+      setContactError(
+        `saveHouseholdContact failed: ${errText(err, 'The contact was not saved.')}`,
+      );
+    } finally {
+      setContactSaving(false);
+    }
+  }
+
+  async function confirmRemoveContact() {
+    if (contactRemoveTarget === null || contactRemoving) return;
+    const target = contactRemoveTarget;
+    setContactRemoving(true);
+    setContactRemoveError(null);
+    try {
+      await removeHouseholdContact(kinfolkId, target.contactId);
+      showToast(`${target.name} is off ${householdName}.`);
+      setContactRemoveTarget(null);
+      loadContacts();
+    } catch (err: unknown) {
+      setContactRemoveError(
+        `removeHouseholdContact failed: ${errText(err, 'The contact was not removed.')}`,
+      );
+    } finally {
+      setContactRemoving(false);
+    }
+  }
+
   // The mock's `.ct` on the Secondary contacts panel: "2 of role: SECONDARY".
   // Written only from a read roster; a count is a claim.
   const secondaryCount =
     members.status === 'ready' ? members.data.filter((m) => m.role === 'SECONDARY').length : null;
   const inviteCount = invites.status === 'ready' ? invites.data.length : null;
+  const contactCount = contacts.status === 'ready' ? contacts.data.length : null;
+  /**
+   * The mock's `.ct` note, now counting both kinds the panel holds: members of
+   * role SECONDARY, and contacts with no account at all. Each half is written
+   * only once its own read has landed, so a failing roster cannot make the
+   * contacts read as zero or the other way round.
+   */
+  const secondaryMeta = [
+    secondaryCount === null ? null : `${secondaryCount} of role: SECONDARY`,
+    contactCount === null
+      ? null
+      : `${contactCount} ${contactCount === 1 ? 'contact' : 'contacts'}, no portal account`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
 
   return (
     <div className="screen hmembers">
@@ -432,7 +586,7 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
           // The mock's hero names the HOUSEHOLD, not the screen: the trail
           // above already says Members. The crest is the mock's 72px tile.
           title={householdName}
-          subtitle={`Who can reach ${householdName} in MyTribe, and what each of them may do. Invite to portal sends the household a primary claim link that expires in ${INVITE_TTL_DAYS} days; a household that already has an active primary is left alone rather than emailed again.`}
+          subtitle={`Who can reach ${householdName}, and what each of them may do. Add secondary contact records a person on the household: no portal account, no invite, nothing to sign in to. Invite to portal mails a primary claim link that expires in ${INVITE_TTL_DAYS} days, and whoever opens it manages the household and receives its notifications; a household that already has an active primary is left alone rather than emailed again.`}
           leading={
             <Avatar
               label={householdName}
@@ -451,14 +605,20 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                   primary to swap out: `executePrimaryRecovery` suspends
                   `oldUid`, and with nobody sitting there is nothing to do. */}
               {sittingPrimary !== null && <GhostButton label="Swap primary" onClick={openRecovery} />}
-              {/* The mock's primary action is "Add secondary contact". The
-                  admin does not invite the secondary (WHO INVITES WHOM,
-                  2026-08-04); the admin's one invite takes that slot. */}
-              <PrimaryButton
+              {/* Two actions, two outcomes (ruling, 2026-09-12). The invite
+                  hands somebody the household; the contact records somebody who
+                  will never sign in. The mock's primary slot is the contact,
+                  and the sweep that gave the slot to the invite lost the other
+                  gesture entirely. */}
+              <GhostButton
                 label={portalBusy ? 'Sending…' : 'Invite to portal'}
                 onClick={() => void invitePortal()}
                 disabled={portalBusy}
-                busy={portalBusy}
+              />
+              <PrimaryButton
+                label="Add secondary contact"
+                onClick={() => openContact(null)}
+                disabled={contactSaving}
               />
             </div>
           }
@@ -537,8 +697,8 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
       <DenPanel
         className="d2"
         title="Secondary contacts"
-        meta={secondaryCount === null ? '' : `${secondaryCount} of role: SECONDARY`}
-        subtitle="Household members the primary invited from MyTribe. Each carries a label and a permission set you can edit here. KinTales access is locked on by the server for everyone."
+        meta={secondaryMeta}
+        subtitle="Two kinds of people, both reachable for this household. A member was invited to the portal by their primary from MyTribe: they sign in, they carry a label and a permission set you can edit here, and KinTales access is locked on by the server for everyone. A contact holds no portal account at all: a name, a phone, sometimes an email, and nothing to sign in to."
       >
         {members.status === 'loading' && <AsyncLoading what="secondary contacts" />}
         {/* One named failure on the page, in the panel above. This one only
@@ -562,8 +722,62 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
                 ))}
             </ul>
           ) : (
-            <EmptyHint>No secondary contacts yet. The primary invites them from MyTribe.</EmptyHint>
+            <EmptyHint>
+              Nobody on this household has been invited to the portal as a secondary. Their primary
+              does that from MyTribe.
+            </EmptyHint>
           ))}
+
+        {/* The contacts half of the same panel. Separately loaded and
+            separately failed: an unreadable roster must not decide what the
+            contact list says, and neither must read as empty on the other's
+            behalf. */}
+        <div className="hmembers__contacts">
+          <div className="hmembers__group-head">
+            <h3 className="hmembers__group-title">No portal account</h3>
+            {contactCount !== null && (
+              <span className="hmembers__group-note">
+                {contactCount} {contactCount === 1 ? 'contact' : 'contacts'}
+              </span>
+            )}
+          </div>
+          <AsyncRegion
+            state={contacts}
+            what="contacts"
+            isEmpty={(rows) => rows.length === 0}
+            empty={
+              <EmptyHint>
+                No contact has been recorded for this household yet.
+              </EmptyHint>
+            }
+          >
+            {(rows) => (
+              <ul className="hmembers__list">
+                {rows.map((contact) => (
+                  <ContactRow
+                    key={contact.contactId}
+                    contact={contact}
+                    onEdit={() => openContact(contact)}
+                    onRemove={() => {
+                      setContactRemoveError(null);
+                      setContactRemoveTarget(contact);
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </AsyncRegion>
+          {/* The mock's dashed row under the list. It went with the sweep;
+              the 2026-09-12 ruling puts it back. */}
+          <button
+            type="button"
+            className="hmembers__addrow"
+            onClick={() => openContact(null)}
+            disabled={contactSaving}
+          >
+            Add secondary contact
+          </button>
+        </div>
       </DenPanel>
 
       <DenPanel
@@ -725,7 +939,185 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, onBack }: HouseholdMe
           )}
         </Dialog>
       )}
+
+      {contactOpen && (
+        <Dialog
+          title={contactEditing === null ? 'Add a secondary contact' : 'Edit this contact'}
+          onClose={() => {
+            if (!contactSaving) setContactOpen(false);
+          }}
+          footer={
+            <>
+              <GhostButton
+                label="Cancel"
+                onClick={() => setContactOpen(false)}
+                disabled={contactSaving}
+              />
+              <PrimaryButton
+                label={contactSaving ? 'Saving…' : 'Save contact'}
+                onClick={() => void saveContact()}
+                disabled={contactSaving || contactForm.name.trim() === ''}
+                busy={contactSaving}
+              />
+            </>
+          }
+        >
+          <p>
+            Somebody this household can be reached through. Saving this creates no portal account
+            and sends nothing: to give a person a sign-in, their primary invites them from MyTribe,
+            or use Invite to portal for the primary claim itself.
+          </p>
+          <fieldset className="hmembers__fieldset" disabled={contactSaving}>
+            <legend className="hmembers__legend">Contact details</legend>
+            {/* Label, control and hint are SIBLINGS. A <label> that wraps its
+                own hint takes the hint into the control's accessible name, so
+                the field announces a sentence instead of a field. */}
+            <div className="hmembers__field">
+              <label className="hmembers__field-label" htmlFor="hmcontact-name">
+                Name
+              </label>
+              <input
+                id="hmcontact-name"
+                type="text"
+                maxLength={CONTACT_NAME_MAX}
+                value={contactForm.name}
+                onChange={(e) => {
+                  setContactForm({ ...contactForm, name: e.target.value });
+                  setContactError(null);
+                }}
+              />
+            </div>
+            <div className="hmembers__field">
+              <label className="hmembers__field-label" htmlFor="hmcontact-label">
+                What they are to the household
+              </label>
+              <input
+                id="hmcontact-label"
+                type="text"
+                maxLength={CONTACT_LABEL_MAX}
+                placeholder="Folk"
+                aria-describedby="hmcontact-label-hint"
+                value={contactForm.label}
+                onChange={(e) => setContactForm({ ...contactForm, label: e.target.value })}
+              />
+              <span id="hmcontact-label-hint" className="hmembers__field-hint">
+                Sister, Co-parent, Neighbour. Left empty it reads Folk.
+              </span>
+            </div>
+            <div className="hmembers__field">
+              <label className="hmembers__field-label" htmlFor="hmcontact-phone">
+                Phone
+              </label>
+              <input
+                id="hmcontact-phone"
+                type="tel"
+                maxLength={CONTACT_PHONE_MAX}
+                value={contactForm.phone}
+                onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
+              />
+            </div>
+            <div className="hmembers__field">
+              <label className="hmembers__field-label" htmlFor="hmcontact-email">
+                Email
+              </label>
+              <input
+                id="hmcontact-email"
+                type="email"
+                aria-describedby="hmcontact-email-hint"
+                value={contactForm.email}
+                onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
+              />
+              <span id="hmcontact-email-hint" className="hmembers__field-hint">
+                Optional, and it invites nobody. An address here is somewhere to reach this person.
+              </span>
+            </div>
+          </fieldset>
+          {contactError !== null && (
+            <Banner tone="error" title="The contact was not saved">
+              {contactError}
+            </Banner>
+          )}
+        </Dialog>
+      )}
+
+      {contactRemoveTarget !== null && (
+        <Dialog
+          title="Remove this contact?"
+          onClose={() => {
+            if (!contactRemoving) setContactRemoveTarget(null);
+          }}
+          footer={
+            <>
+              <GhostButton
+                label="Cancel"
+                onClick={() => setContactRemoveTarget(null)}
+                disabled={contactRemoving}
+              />
+              <PrimaryButton
+                label={contactRemoving ? 'Removing…' : 'Remove'}
+                onClick={() => void confirmRemoveContact()}
+                disabled={contactRemoving}
+                busy={contactRemoving}
+              />
+            </>
+          }
+        >
+          <p>
+            {contactRemoveTarget.name} is deleted from {householdName}. There is no account to
+            suspend and no sign-in to revoke, so unlike removing a member this leaves no row behind.
+          </p>
+          {contactRemoveError !== null && (
+            <Banner tone="error" title="That did not work">
+              {contactRemoveError}
+            </Banner>
+          )}
+        </Dialog>
+      )}
     </div>
+  );
+}
+
+/**
+ * One contact: the mock's `.member` block without the halves a contact does not
+ * have. A 58px circle, the name, a capsule saying there is no portal account,
+ * the label and reachable details under it. No uid, no role capsule and no
+ * permission list, because a person with nothing to sign in to has no
+ * entitlements to draw.
+ */
+function ContactRow({
+  contact,
+  onEdit,
+  onRemove,
+}: {
+  contact: HouseholdContact;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <li className="hmembers__member" data-role="contact">
+      <div className="hmembers__member-top">
+        <Avatar
+          label={contact.name}
+          initials={contact.name.charAt(0)}
+          gradientSeed={contact.contactId}
+          size={58}
+          className="hmembers__photo"
+        />
+        <div className="hmembers__member-who">
+          <div className="hmembers__member-nameline">
+            <span className="hmembers__member-name">{contact.name}</span>
+            {/* Muted, not teal: this capsule is the absence of a thing, and it
+                must not read as a state a member could also be in. */}
+            <StatusPill label="No portal account" tone="muted" size="compact" />
+          </div>
+          <span className="hmembers__member-contact">{contactMetaLine(contact)}</span>
+        </div>
+        <div className="hmembers__member-actions">
+          <GhostButton label="Edit" onClick={onEdit} />
+          <GhostButton label="Remove" onClick={onRemove} className="hmembers__danger" />
+        </div>
+      </div>
+    </li>
   );
 }
 

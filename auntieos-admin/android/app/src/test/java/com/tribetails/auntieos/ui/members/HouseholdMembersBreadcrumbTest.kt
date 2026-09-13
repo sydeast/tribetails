@@ -52,6 +52,7 @@ class HouseholdMembersBreadcrumbTest {
         repo = mockk()
         coEvery { repo.listMembers(any()) } returns Result.success(emptyList())
         coEvery { repo.listInvites(any()) } returns Result.success(emptyList())
+        coEvery { repo.listHouseholdContacts(any()) } returns Result.success(emptyList())
     }
 
     @After fun tearDown() = Dispatchers.resetMain()

@@ -1146,6 +1146,62 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   carries no `email`.
 - Read only.
 
+### listHouseholdContacts / saveHouseholdContact / removeHouseholdContact (net-new 2026-09-12)
+
+A household's secondary CONTACTS: people it can be reached through who hold no
+portal account. Operator ruling, 2026-09-12, verbatim: "a secondary contact does
+not have to be a portal user. primary kinfolk user will invite a second kinfolk
+to the household to manage and receive notifications." Two actions with two
+outcomes, and until these three the codebase had only the second:
+`addSecondaryContact` is named for the contact and mints an invite.
+
+A contact is NOT a member and NOT an invite. It has no uid, no role, no
+`MemberPermissions` and no `inviteRequests` row, because there is nothing for it
+to sign in to and so nothing to authorise. Stored at
+`families/{kinfolkId}/contacts/{contactId}`, which `firestore.rules` closes to
+every client in both directions: these callables are the only door.
+
+- `listHouseholdContacts`
+  - req `{ kinfolkId?: string }`
+  - res `{ contacts: Array<{ contactId: string, name: string, label: string,
+    phone: string | null, email: string | null, createdAt: string | null /* ISO-8601 */,
+    updatedAt: string | null }> }`, sorted by name.
+  - A stored row with no `name` reads `(unnamed contact)` rather than being
+    dropped: the operator has to be able to see a half-written record in order
+    to fix or delete it.
+- `saveHouseholdContact`
+  - req `{ kinfolkId?: string, contactId?: string, name: string /* 1..80 */,
+    label?: string | null /* <= SECONDARY_LABEL_MAX (24), default "Folk" */,
+    phone?: string | null /* <= 32 */, email?: string | null /* valid address, lowercased */ }`
+  - res `{ contactId: string, created: boolean }`
+  - `contactId` absent CREATES; present EDITS that contact, and answers
+    `not-found` when it is not on this household.
+  - `''` and `null` mean the same thing on the way in and BOTH persist as
+    `null`, so a stale phone number can actually be cleared. An edit writes the
+    four editable fields plus `updatedAt`/`updatedBy` and never resends
+    `createdAt`/`createdBy`, so it cannot rewrite a record's provenance.
+- `removeHouseholdContact`
+  - req `{ kinfolkId?: string, contactId: string }`
+  - res `{ ok: true }`
+  - HARD, unlike `removeMember`: no account to suspend, no sign-in history to
+    keep, so the row is gone and none is left behind.
+- GATE, all three: `wrapCallable` + `resolveKinfolkAccess` +
+  `requireKinfolkPrimary`, the same pair `listMembers` and `addSecondaryContact`
+  use. Staff or the household PRIMARY; an ACTIVE SECONDARY is denied. Secrets
+  `SENTRY_DSN` and `AUNTIE_OPERATOR_UIDS` (the second because `isStaff` reads it,
+  and without it an allowlisted operator with no `admin` claim is denied in
+  production while every unit test passes).
+- EVERY ARGUMENT SCHEMA IS `.strict()`. A caller sending `permissions`,
+  `invitedEmail`, `role` or `uid` is refused with `invalid-argument` naming the
+  key, rather than having it silently stripped. That refusal is the wall between
+  a contact and an invite, and it is enforced here rather than only in a screen.
+- NEVER LOGGED: a contact's name, phone or email. `logEvent` carries the
+  household id, the contact id and counts, matching `listMembers`' refusal to
+  surface `displayName`.
+- Clients: `auntieos-admin/src/api/householdContacts.ts` (web) and
+  `MembersRepository.listHouseholdContacts / saveHouseholdContact /
+  removeHouseholdContact` (Android). Both drive the household members screen.
+
 ### expireStaleInvites (scheduled, NOT a callable)
 - `onSchedule('every day 02:00', 'America/New_York')`. There is no client trigger,
   and no admin "expire now" button exists or should be built: nothing in the

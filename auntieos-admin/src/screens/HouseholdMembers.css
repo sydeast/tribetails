@@ -404,3 +404,70 @@ button.hmembers__danger:hover:not(:disabled) {
     margin-top: 8px;
   }
 }
+
+/* ── secondary contacts with no portal account ───────────────────────────────
+ *
+ * The mock's second half of the Secondary contacts panel: the list of people a
+ * household can be reached through who never sign in, and under it the dashed
+ * row that adds one. The rows reuse `.hmembers__member` (same block, minus the
+ * permission list a contact has no use for); only the separator, the dashed
+ * row and the dialog's fields are new here.
+ */
+
+.hmembers__contacts {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) solid var(--color-border-soft);
+}
+
+/* The mock's `.addrow`: a dashed full-width row that reads as an empty slot
+   rather than as a button competing with the hero's. */
+
+.hmembers__addrow {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: var(--color-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hmembers__addrow:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.hmembers__addrow:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.hmembers__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hmembers__field-label {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.hmembers__field input {
+  width: 100%;
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.hmembers__field-hint {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}
