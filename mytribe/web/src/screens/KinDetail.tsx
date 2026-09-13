@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { archiveKin, getMyKin } from '../api/portal';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -10,7 +10,8 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { usePortalMutation } from '../lib/mutationState';
 
 const FALLBACK = 'Not set';
 
@@ -30,13 +31,15 @@ export function KinDetail() {
 
   const kinfolkId = getActiveKinfolkId();
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
-  const archive = useMutation({
+  // HOLD. `archiveKin` set/merges one fixed status ('active' or
+  // 'noLongerWithUs') onto a known doc id, so a replay writes the same value.
+  const archive = usePortalMutation({
     mutationFn: (reason: 'noLongerWithUs' | 'restore') => archiveKin(kinId, reason, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
       setConfirmingArchive(false);
     },
-  });
+  }, { policy: 'hold', what: 'this change' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -204,7 +207,9 @@ export function KinDetail() {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 16 }}>
                     <button className="btn coralout block" onClick={() => archive.mutate('restore')} disabled={archive.isPending}>
-                      {archive.isPending ? <BusyLabel>Restoring…</BusyLabel> : 'Restore as Active'}
+                      <MutationLabel mutation={archive} busy="Restoring…">
+                        Restore as Active
+                      </MutationLabel>
                     </button>
                   </div>
                 </>
@@ -222,7 +227,9 @@ export function KinDetail() {
                       <>
                         <p className="sub">Are you sure? This can be undone from this page.</p>
                         <button className="btn purple block" onClick={() => archive.mutate('noLongerWithUs')} disabled={archive.isPending}>
-                          {archive.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Yes, mark No Longer With Us'}
+                          <MutationLabel mutation={archive} busy="Saving…">
+                            Yes, mark No Longer With Us
+                          </MutationLabel>
                         </button>
                         <button className="btn ghost block" onClick={() => setConfirmingArchive(false)} disabled={archive.isPending}>
                           Cancel
@@ -236,7 +243,8 @@ export function KinDetail() {
                   </div>
                 </>
               )}
-              {archive.isError && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Couldn&rsquo;t save. Try again.</p>}
+              <OfflineMutationNotice phase={archive.phase} what="this change" check="this Kin" />
+              {archive.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Couldn&rsquo;t save. Try again.</p>}
             </section>
           </div>
         </div>

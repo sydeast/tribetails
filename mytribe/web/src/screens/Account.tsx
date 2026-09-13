@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyHome, getMyKin } from '../api/portal';
 import {
   addSecondaryContact,
@@ -26,6 +26,8 @@ import { viewOfQuery } from '../lib/queryState';
 import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import '../styles/account.css';
 import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { usePortalMutation } from '../lib/mutationState';
 
 type Status = { text: string; tone: 'ok' | 'err' };
 
@@ -131,7 +133,9 @@ export function Account() {
     setHydrated(true);
   }, [account.data, hydrated]);
 
-  const save = useMutation({
+  // HOLD. `saveMyAccount` set/merges clients/{uid} and calls
+  // `authAdmin().updateUser`, both idempotent. Nothing is appended.
+  const save = usePortalMutation({
     mutationFn: () =>
       saveMyAccount({
         displayName: displayName.trim(),
@@ -155,14 +159,19 @@ export function Account() {
     onError: (err: unknown) => {
       setStatus({ text: `Save failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' });
     },
-  });
+  }, { policy: 'hold', what: 'your changes' });
 
-  const invite = useMutation({
+  // HOLD. `addSecondaryContact` looks for a live PENDING inviteRequest for the
+  // same address first and returns it instead of minting a second
+  // (functions/src/portal/addSecondaryContact.ts), and it sends no email of its
+  // own — the create trigger is an explicit no-op. A resumed invite is the
+  // same invite.
+  const invite = usePortalMutation({
     mutationFn: () => addSecondaryContact(backupEmail.trim(), kinfolkId !== undefined ? { kinfolkId } : {}),
     onSuccess: () => setInviteStatus({ text: 'Invite sent.', tone: 'ok' }),
     onError: (err: unknown) =>
       setInviteStatus({ text: `Invite failed: ${err instanceof Error ? err.message : 'try again'}`, tone: 'err' }),
-  });
+  }, { policy: 'hold', what: 'this invite' });
 
   // ── Card management ────────────────────────────────────────────────────────
   //
@@ -177,7 +186,12 @@ export function Account() {
     retry: false,
   });
 
-  const startCardSetup = useMutation({
+  // ABANDON, and the reason is the redirect rather than the money.
+  // `createBillingSetupSession` opens Stripe in `mode: 'setup'`, so it charges
+  // nothing and a duplicate session is harmless. But success is
+  // `window.location.href`, and a held write resumes unattended — a phone put
+  // back in a pocket must not surface on a Stripe page.
+  const startCardSetup = usePortalMutation({
     mutationFn: async () => {
       const returnTo = `${window.location.origin}${window.location.pathname}`;
       return createBillingSetupSession(`${returnTo}?billing=saved`, returnTo, kinfolkId);
@@ -190,9 +204,11 @@ export function Account() {
       window.location.href = res.checkoutUrl;
     },
     onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'add a card'), tone: 'err' }),
-  });
+  }, { policy: 'abandon', what: 'the card setup' });
 
-  const removeCard = useMutation({
+  // HOLD. `removeMyPaymentMethod` answers `alreadyEmpty: true` the second
+  // time and touches no invoice, charge or ledger.
+  const removeCard = usePortalMutation({
     mutationFn: () => removeMyPaymentMethod(kinfolkId),
     onSuccess: async (res) => {
       setConfirmingCardRemoval(false);
@@ -201,7 +217,7 @@ export function Account() {
       await queryClient.invalidateQueries({ queryKey: ['myAccount', kinfolkId] });
     },
     onError: (err: unknown) => setBillingStatus({ text: billingErrorText(err, 'remove the card'), tone: 'err' }),
-  });
+  }, { policy: 'hold', what: 'the card removal' });
 
   // Coming back from Stripe. The webhook stores the card too, but it can arrive
   // after this screen has already rendered, so the browser asks for the answer
@@ -396,8 +412,12 @@ export function Account() {
                     onClick={() => invite.mutate()}
                     disabled={invite.isPending || !backupEmail.trim().includes('@') || readOnly}
                   >
-                    {'✉️'} {invite.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send Invite'}
+                    {'✉️'}{' '}
+                    <MutationLabel mutation={invite} busy="Sending…">
+                      Send Invite
+                    </MutationLabel>
                   </button>
+                  <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
                   {inviteStatus && (
                     <span className={`note${inviteStatus.tone === 'err' ? ' err' : ''}`}>
                       <span className="dot" />
@@ -467,11 +487,9 @@ export function Account() {
                           onClick={() => startCardSetup.mutate()}
                           disabled={startCardSetup.isPending || removeCard.isPending}
                         >
-                          {startCardSetup.isPending
-                            ? <BusyLabel>Opening Stripe…</BusyLabel>
-                            : cardOnFile
-                              ? 'Replace card'
-                              : 'Add a card'}
+                          <MutationLabel mutation={startCardSetup} busy="Opening Stripe…">
+                            {cardOnFile ? 'Replace card' : 'Add a card'}
+                          </MutationLabel>
                         </button>
                         {cardOnFile &&
                           (confirmingCardRemoval ? (
@@ -482,7 +500,9 @@ export function Account() {
                                 onClick={() => removeCard.mutate()}
                                 disabled={removeCard.isPending}
                               >
-                                {removeCard.isPending ? <BusyLabel>Removing…</BusyLabel> : 'Yes, take it off'}
+                                <MutationLabel mutation={removeCard} busy="Removing…">
+                                  Yes, take it off
+                                </MutationLabel>
                               </button>
                               <button
                                 className="btn ghost sm"
@@ -504,6 +524,8 @@ export function Account() {
                             </button>
                           ))}
                       </div>
+                      <OfflineMutationNotice phase={startCardSetup.phase} what="the card setup" />
+                      <OfflineMutationNotice phase={removeCard.phase} what="the card removal" check="your card on file" />
                       {confirmingCardRemoval && (
                         <p className="sub">
                           Removing the card leaves any unpaid invoices exactly as they are. You will settle them
@@ -596,10 +618,14 @@ export function Account() {
           )}
           {!readOnly && (
             <button className="btn grad" type="button" onClick={() => save.mutate()} disabled={save.isPending || !nameValid}>
-              {save.isPending ? <BusyLabel>Saving…</BusyLabel> : <>{'✓'} Save Changes</>}
+              <MutationLabel mutation={save} busy="Saving…">
+                {'✓'} Save Changes
+              </MutationLabel>
             </button>
           )}
         </div>
+
+        <OfflineMutationNotice phase={save.phase} what="your changes" check="your details" />
 
         <p className="footnote">
           Cared for by <b>{businessName}</b>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBusinessContact } from '../api/portal';
 import { SecretField } from '../components/SecretField';
 import {
@@ -30,6 +30,8 @@ import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { usePortalMutation } from '../lib/mutationState';
 
 
 /**
@@ -776,7 +778,11 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
   // household's primary gets the control the ruling says is theirs.
   const [canHandleBilling, setCanHandleBilling] = useState(member.permissions.billing_full);
 
-  const save = useMutation({
+  // HOLD. `updateSecondaryPermissions` is an `update()` of a fixed permissions
+  // map on families/{id}/members/{uid} — every field is sent every time, so a
+  // replay writes what is already there. It does append an audit entry per
+  // call, which is a duplicate line in a log, not a duplicate grant.
+  const save = usePortalMutation({
     mutationFn: () =>
       updateSecondaryPermissions({
         familyId: kinfolkId ?? '',
@@ -791,7 +797,7 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         },
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['members', kinfolkId] }),
-  });
+  }, { policy: 'hold', what: 'these permissions' });
 
   const title = member.secondaryLabel?.trim() || member.invitedEmail?.trim() || 'Member';
   const subParts = [member.invitedEmail && member.invitedEmail !== title ? member.invitedEmail : null, memberStatusLabel(member.status)].filter(Boolean);
@@ -839,10 +845,13 @@ function MemberPermissionRow(props: { kinfolkId: string | undefined; member: Mem
         </label>
       </div>
       <button className="btn ghost block" type="button" onClick={() => save.mutate()} disabled={save.isPending}>
-        {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save'}
+        <MutationLabel mutation={save} busy="Saving…">
+          Save
+        </MutationLabel>
       </button>
       {save.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 6 }}>Saved.</p>}
-      {save.isError && <p className="sub" style={{ color: 'var(--coral)', marginTop: 6 }}>Save failed. Try again.</p>}
+      <OfflineMutationNotice phase={save.phase} what="these permissions" check="this member" />
+      {save.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 6 }}>Save failed. Try again.</p>}
     </div>
   );
 }
@@ -855,7 +864,11 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
   const [canEditPets, setCanEditPets] = useState(false);
   const [canAccessHome, setCanAccessHome] = useState(false);
 
-  const invite = useMutation({
+  // HOLD. `addSecondaryContact` short-circuits on a live PENDING inviteRequest
+  // for the same address rather than minting a second, and sends no email of
+  // its own (the create trigger is an explicit no-op). A resumed invite is the
+  // same invite.
+  const invite = usePortalMutation({
     mutationFn: () =>
       addSecondaryContact({
         ...(kinfolkId !== undefined ? { kinfolkId } : {}),
@@ -869,7 +882,7 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
       setCanEditPets(false);
       setCanAccessHome(false);
     },
-  });
+  }, { policy: 'hold', what: 'this invite' });
 
   return (
     <section className="glass card d4">
@@ -909,10 +922,13 @@ function InviteKinfolkCard(props: { kinfolkId: string | undefined }) {
         </span>
       </label>
       <button className="btn grad block" type="button" style={{ marginTop: 12 }} onClick={() => invite.mutate()} disabled={invite.isPending || !email.includes('@')}>
-        {invite.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send Invite'}
+        <MutationLabel mutation={invite} busy="Sending…">
+          Send Invite
+        </MutationLabel>
       </button>
       {invite.isSuccess && <p className="sub" style={{ color: 'var(--teal)', marginTop: 8 }}>Invite sent.</p>}
-      {invite.isError && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
+      <OfflineMutationNotice phase={invite.phase} what="this invite" check="your Members list" />
+      {invite.phase === 'failed' && <p className="sub" style={{ color: 'var(--coral)', marginTop: 8 }}>Invite failed. Try again.</p>}
     </section>
   );
 }

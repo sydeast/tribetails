@@ -1,11 +1,12 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { addKin } from '../api/portal';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { buildNewKinPayload, emptyKinForm, hasErrors, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { usePortalMutation } from '../lib/mutationState';
 
 /**
  * Add New Kin (B3, punchlist item): the create counterpart to KinEdit.tsx.
@@ -23,13 +24,16 @@ export function KinAdd() {
 
   const [form, setForm] = useState<KinEditForm>(emptyKinForm());
 
-  const save = useMutation({
+  // ABANDON. `addKin` is a bare `.add()` on families/{id}/kin with no
+  // idempotency key and no name dedupe (functions/src/portal/kinWrites.ts), so
+  // a replay is a second Kin on the household's list.
+  const save = usePortalMutation({
     mutationFn: () => addKin(buildNewKinPayload(form), kinfolkId),
     onSuccess: (res) => {
       void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
       void navigate({ to: '/kin/$kinId', params: { kinId: res.kinId } });
     },
-  });
+  }, { policy: 'abandon', what: 'this Kin' });
 
   const errors = validateKinForm(form);
   const canSave = !hasErrors(errors) && !save.isPending;
@@ -129,17 +133,21 @@ export function KinAdd() {
           <section style={{ marginTop: 6 }}>
             <div className="savebar">
               <button className="btn grad" type="button" onClick={submit} disabled={!canSave}>
-                {'\u{1F43E}'} {save.isPending ? <BusyLabel>Adding…</BusyLabel> : 'Add Kin'}
+                {'\u{1F43E}'}{' '}
+                <MutationLabel mutation={save} busy="Adding…">
+                  Add Kin
+                </MutationLabel>
               </button>
               <Link className="btn ghost" to="/kin">
                 Cancel
               </Link>
-              {save.isError && (
+              {save.phase === 'failed' && (
                 <span className="status err">
                   <span className="dot" />
                   {save.error instanceof Error ? save.error.message : 'Could not add this kin. Try again.'}
                 </span>
               )}
+              <OfflineMutationNotice phase={save.phase} what="this Kin" check="your Kin list" />
               {hasErrors(errors) && <span className="sub">Fix the highlighted fields to save.</span>}
             </div>
           </section>

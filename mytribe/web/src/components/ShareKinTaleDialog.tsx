@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+
 import { createShareLink, revokeShareLink, type CreateShareLinkResult } from '../api/kinTalesApi';
 import '../styles/shareKinTaleDialog.css';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from './OfflineMutationNotice';
+import { errorLine, usePortalMutation } from '../lib/mutationState';
 
 const MIN_EXPIRES_DAYS = 1;
 const MAX_EXPIRES_DAYS = 90;
@@ -44,7 +45,11 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
   const [confirmingRevoke, setConfirmingRevoke] = useState(false);
   const [revoked, setRevoked] = useState(false);
 
-  const create = useMutation({
+  // ABANDON. `createShareLink` `.add()`s a new sharedKinTales document every
+  // call, so a replay mints a SECOND live public URL with its own passcode
+  // hash and TTL, and arrayUnions its id onto the tale. Two links nobody knows
+  // about is a worse failure than one that did not get made.
+  const create = usePortalMutation({
     mutationFn: () =>
       createShareLink(taleId, familyId, {
         includePhotos,
@@ -52,9 +57,12 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
         ...(passcode.trim() === '' ? {} : { passcode }),
       }),
     onSuccess: (result) => setCreated(result),
-  });
+  }, { policy: 'abandon', what: 'this share link' });
 
-  const revoke = useMutation({
+  // HOLD. `revokeShareLink` writes `revoked: true`, which converges: a replay
+  // re-stamps `revokedAt` and leaves the link just as dead. A revoke that
+  // arrives late still arrives, which is the direction to fail in for this one.
+  const revoke = usePortalMutation({
     mutationFn: () => {
       if (!created) throw new Error('No link to revoke.');
       return revokeShareLink(created.shareId);
@@ -63,7 +71,7 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
       setRevoked(true);
       setConfirmingRevoke(false);
     },
-  });
+  }, { policy: 'hold', what: 'this revoke' });
 
   const busy = create.isPending || revoke.isPending;
 
@@ -106,13 +114,9 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
 
   const formErrorMessage =
     clientError ??
-    (create.isError ? (create.error instanceof Error ? create.error.message : 'Could not create a share link. Try again.') : null);
+    errorLine(create, 'Could not create a share link. Try again.');
 
-  const revokeErrorMessage = revoke.isError
-    ? revoke.error instanceof Error
-      ? revoke.error.message
-      : 'Could not revoke the link. Try again.'
-    : null;
+  const revokeErrorMessage = errorLine(revoke, 'Could not revoke the link. Try again.');
 
   return (
     <div className="skd-overlay" role="presentation" onClick={handleBackdropClose}>
@@ -179,8 +183,11 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
             {formErrorMessage && <p className="skd-error">{formErrorMessage}</p>}
 
             <button type="button" className="btn block skd-submit" onClick={handleSubmit} disabled={busy}>
-              {create.isPending ? <BusyLabel>Creating…</BusyLabel> : 'Generate Link'}
+              <MutationLabel mutation={create} busy="Creating…">
+                Generate Link
+              </MutationLabel>
             </button>
+            <OfflineMutationNotice phase={create.phase} what="this share link" check="this KinTale" />
           </div>
         ) : (
           <div className="skd-result">
@@ -220,8 +227,11 @@ export function ShareKinTaleDialog({ taleId, familyId, onClose }: ShareKinTaleDi
                     <p className="sub">Revoking makes this link stop working right away. This can&rsquo;t be undone.</p>
                     {revokeErrorMessage && <p className="skd-error">{revokeErrorMessage}</p>}
                     <button type="button" className="btn skd-revokeconfirmbtn" onClick={() => revoke.mutate()} disabled={busy}>
-                      {revoke.isPending ? <BusyLabel>Revoking…</BusyLabel> : 'Yes, revoke'}
+                      <MutationLabel mutation={revoke} busy="Revoking…">
+                        Yes, revoke
+                      </MutationLabel>
                     </button>
+                    <OfflineMutationNotice phase={revoke.phase} what="this revoke" check="this link" />
                     <button type="button" className="btn ghost" onClick={() => setConfirmingRevoke(false)} disabled={busy}>
                       Keep link
                     </button>

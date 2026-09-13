@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CHANNEL_ORDER,
   categoryChannels,
@@ -25,7 +25,8 @@ import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
-import { BusyLabel } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { usePortalMutation } from '../lib/mutationState';
 import '../styles/notifications.css';
 
 /**
@@ -213,7 +214,16 @@ export function NotificationSettings() {
     });
   }, [edited, prefs.data]);
 
-  const save = useMutation({
+  // HOLD. The prefs write is a `mergeFields` set on clients/{uid}, replacing
+  // the whole `notificationPrefs` subtree, so a replay writes the same tree.
+  //
+  // ONE CAVEAT WORTH KNOWING BEFORE ANYBODY WIDENS THIS. Because it is a whole
+  // subtree replace, a QUEUED payload is a snapshot of what this screen held
+  // when the tap happened; a map added on the server in between would be
+  // deleted by the replay (prefsSchema.ts says so out loud). Same-device,
+  // same-session, that is the household's own intent arriving late, which is
+  // what they asked for.
+  const save = usePortalMutation({
     mutationFn: () => {
       if (!edited) return Promise.reject(new Error('Preferences not loaded yet.'));
       // All three maps, always, byte-for-byte what Compose sends. The handler
@@ -232,7 +242,7 @@ export function NotificationSettings() {
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 4000);
     },
-  });
+  }, { policy: 'hold', what: 'your preferences' });
 
   const { signOut, signingOut } = useSignOut();
 
@@ -511,14 +521,18 @@ export function NotificationSettings() {
 
             <div className="savebar">
               <button type="button" className="btn grad" onClick={() => save.mutate()} disabled={save.isPending}>
-                {'\u{1F4BE}'} {save.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Notification Preferences'}
+                {'\u{1F4BE}'}{' '}
+                <MutationLabel mutation={save} busy="Saving…">
+                  Save Notification Preferences
+                </MutationLabel>
               </button>
               <span className={`savedchip ${showSaved ? 'show' : ''}`}>{'✓'} Preferences saved.</span>
-              {save.isError && !showSaved && (
+              {save.phase === 'failed' && !showSaved && (
                 <span className="sub" style={{ color: 'var(--coral)' }}>
                   Couldn&rsquo;t save. Try again.
                 </span>
               )}
+              <OfflineMutationNotice phase={save.phase} what="your preferences" check="this page" />
               <span className="savehint">Changes apply across MyTribe push, email, and SMS.</span>
             </div>
           </>

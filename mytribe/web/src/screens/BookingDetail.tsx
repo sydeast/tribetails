@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyBookings } from '../api/portal';
 import { addBookingNote, requestBookingCancellation, requestBookingReschedule } from '../api/bookingApi';
 import { useSignOut } from '../lib/auth';
@@ -8,7 +8,9 @@ import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { BusyLabel, LoadingLine } from '../components/Loading';
+import { LoadingLine } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { phaseOfMutation, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_TIMELINE_STEPS,
@@ -61,7 +63,10 @@ export function BookingDetail() {
 
   const found = findBookingById(bookings.data, visitId);
 
-  const addNote = useMutation({
+  // ABANDON. `addBookingNote` is a bare `.add()` on the visit's notes
+  // subcollection with no dedupe key, and its only precondition (a 3-hour
+  // window) passes again on a replay, so a second attempt is a second note.
+  const addNote = usePortalMutation({
     mutationFn: (body: string) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so notes are not available.');
       return addBookingNote(found.kinfolkId, found.batchId, found.id, body);
@@ -70,9 +75,12 @@ export function BookingDetail() {
       setNoteSaved(true);
       setNoteBody('');
     },
-  });
+  }, { policy: 'abandon', what: 'your note' });
 
-  const cancelVisit = useMutation({
+  // HOLD. `requestBookingCancellation` returns `alreadyPending: true` without
+  // writing when a request is already open on the visit, and the write itself
+  // is a set/merge of fixed fields, so a replay cannot stack requests.
+  const cancelVisit = usePortalMutation({
     mutationFn: (reason: string) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be cancelled here.');
       return requestBookingCancellation(found.kinfolkId, found.batchId, found.id, reason);
@@ -82,9 +90,13 @@ export function BookingDetail() {
       setConfirmingCancel(false);
       setCancelReason('');
     },
-  });
+  }, { policy: 'hold', what: 'your cancellation request' });
 
-  const reschedule = useMutation({
+  // HOLD. `requestBookingReschedule` refuses a second pending request with
+  // `already-exists` rather than overwriting the first, so the worst a replay
+  // can do is surface that refusal — which is the right answer, and is already
+  // the sentence `onError` shows. It cannot stack two proposed times.
+  const reschedule = usePortalMutation({
     mutationFn: (proposedStartTimeMs: number) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
       return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, proposedStartTimeMs, rescheduleReason);
@@ -100,9 +112,14 @@ export function BookingDetail() {
       // The server writes these messages for a household to read
       // (invalid-argument on a past time, already-exists on a second ask), so
       // they are shown as they arrive rather than flattened to "try again".
+      // #807: not for an offline failure. The request never reached a server
+      // that could have an opinion, and `OfflineMutationNotice` says what did
+      // happen. Overwriting that with a server sentence nobody wrote is the
+      // same lie in a different place.
+      if (phaseOfMutation({ isPending: false, isPaused: false, isError: true, error: err }) !== 'failed') return;
       setRescheduleProblem(err instanceof Error ? err.message : 'Could not send the request. Try again.');
     },
-  });
+  }, { policy: 'hold', what: 'your new time' });
   if (bookings.isError) {
     return (
       <LaunchError
@@ -305,7 +322,8 @@ export function BookingDetail() {
                     }}
                     disabled={addNote.isPending}
                   />
-                  {addNote.isError && (
+                  <OfflineMutationNotice phase={addNote.phase} what="your note" check="the notes above" />
+                  {addNote.phase === 'failed' && (
                     <div className="note-err">
                       {`⚠ ${addNote.error instanceof Error ? addNote.error.message : 'Could not save your note. Try again.'}`}
                     </div>
@@ -317,7 +335,10 @@ export function BookingDetail() {
                       onClick={submitNote}
                       disabled={addNote.isPending || noteBody.trim().length === 0}
                     >
-                      {'\u{1F4DD}'} {addNote.isPending ? <BusyLabel>Saving…</BusyLabel> : 'Save Note'}
+                      {'\u{1F4DD}'}{' '}
+                      <MutationLabel mutation={addNote} busy="Saving…">
+                        Save Note
+                      </MutationLabel>
                     </button>
                     {noteSaved && !addNote.isError ? (
                       <span className="note-ok">{'✓'} Note saved</span>
@@ -401,6 +422,7 @@ export function BookingDetail() {
                             onChange={(e) => setRescheduleReason(e.target.value)}
                             disabled={reschedule.isPending}
                           />
+                          <OfflineMutationNotice phase={reschedule.phase} what="your new time" check="this visit" />
                           {rescheduleProblem && <div className="note-err">{`\u26A0 ${rescheduleProblem}`}</div>}
                           <button
                             className="btn purple block"
@@ -408,7 +430,9 @@ export function BookingDetail() {
                             onClick={() => submitReschedule()}
                             disabled={reschedule.isPending || proposedAt.trim().length === 0}
                           >
-                            {reschedule.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Send this time to Tribe Tails'}
+                            <MutationLabel mutation={reschedule} busy="Sending…">
+                              Send this time to Tribe Tails
+                            </MutationLabel>
                           </button>
                           <button
                             className="btn ghost block"
@@ -464,7 +488,12 @@ export function BookingDetail() {
                         onChange={(e) => setCancelReason(e.target.value)}
                         disabled={cancelVisit.isPending}
                       />
-                      {cancelVisit.isError && (
+                      <OfflineMutationNotice
+                        phase={cancelVisit.phase}
+                        what="your cancellation request"
+                        check="this visit"
+                      />
+                      {cancelVisit.phase === 'failed' && (
                         <div className="note-err">
                           {`⚠ ${cancelVisit.error instanceof Error ? cancelVisit.error.message : 'Could not send the request. Try again.'}`}
                         </div>
@@ -475,7 +504,9 @@ export function BookingDetail() {
                         onClick={() => cancelVisit.mutate(cancelReason)}
                         disabled={cancelVisit.isPending}
                       >
-                        {cancelVisit.isPending ? <BusyLabel>Sending…</BusyLabel> : 'Yes, request cancellation'}
+                        <MutationLabel mutation={cancelVisit} busy="Sending…">
+                          Yes, request cancellation
+                        </MutationLabel>
                       </button>
                       <button
                         className="btn ghost block"

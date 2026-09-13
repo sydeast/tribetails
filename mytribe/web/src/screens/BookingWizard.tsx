@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { getBookingPolicy, getBusinessClosures, getServiceCatalog, requestBooking } from '../api/bookingApi';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
@@ -14,7 +14,9 @@ import { PortalNav } from '../components/PortalNav';
 import { BookingMonthPicker } from '../components/BookingMonthPicker';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { BusyLabel, LoadingLine } from '../components/Loading';
+import { LoadingLine } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
+import { errorLine, useIsMounted, usePortalMutation } from '../lib/mutationState';
 import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_HORIZON_DAYS,
@@ -400,7 +402,17 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     }
   })();
 
-  const submit = useMutation({
+  // HOLD, and this is the create that earns it. #819's rule was that a create
+  // gets no re-send affordance, because nothing client-side can abort a
+  // request already away. This one carries an `idempotencyKey` minted ONCE per
+  // submission and held in `submissionKey` across every attempt at it, and the
+  // envelope at families/{id}/bookings/{batchId} IS the dedupe record
+  // (functions/src/lib/bookingIdempotency.ts). A re-send of the same
+  // submission is the same booking, not a second one — so a household who
+  // taps Create in a dead zone gets the booking they asked for when their
+  // signal comes back, rather than losing the whole wizard's work.
+  const isMounted = useIsMounted();
+  const submit = usePortalMutation({
     mutationFn: async () => {
       if (slots.length === 0) throw new Error('Choose a KinCare Duration first.');
       // The SAME array the rail, step 3 and Review have been showing.
@@ -421,9 +433,16 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
       // gets a new key.
       submissionKey.current = null;
       void queryClient.invalidateQueries({ queryKey: ['myBookings', kinfolkId] });
-      props.onComplete(result);
+      // Guarded because this write is HELD and `onComplete` NAVIGATES. The
+      // options callback lives on the Mutation rather than the observer, so it
+      // runs when the queued booking resumes whether or not the wizard is
+      // still open — and being thrown onto Schedule while reading something
+      // else, twenty minutes after the tap, connects to nothing. The cache
+      // invalidation above is the part that still matters from a dead screen:
+      // the booking shows up next time Schedule is opened.
+      if (isMounted()) props.onComplete(result);
     },
-  });
+  }, { policy: 'hold', what: 'your booking' });
 
   if (kinQuery.isError || servicesQuery.isError) {
     return (
@@ -472,7 +491,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     );
   }
 
-  const submitErrorMessage = submit.error ? (submit.error instanceof Error ? submit.error.message : 'Could not create booking') : null;
+  // #807: null for the offline phases, which carry their own sentence under
+  // the button. `errorLine` is where that rule lives for every screen.
+  const submitErrorMessage = errorLine(submit, 'Could not create booking');
 
   return (
     <div className="wrap">
@@ -599,10 +620,13 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
                   disabled={submit.isPending || slots.length === 0 || !scheduleReady || plannedVisits.length === 0}
                   onClick={() => submit.mutate()}
                 >
-                  {submit.isPending ? <BusyLabel>Creating…</BusyLabel> : 'Create Booking'}
+                  <MutationLabel mutation={submit} busy="Creating…">
+                    Create Booking
+                  </MutationLabel>
                 </button>
               )}
             </div>
+            <OfflineMutationNotice phase={submit.phase} what="your booking" check="your schedule" />
           </div>
 
           {/*

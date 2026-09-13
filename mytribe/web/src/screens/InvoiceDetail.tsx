@@ -1,5 +1,5 @@
 import { Link, useParams } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   acceptQuote,
   denyQuote,
@@ -25,8 +25,10 @@ import { PortalNav } from '../components/PortalNav';
 import { PayOptions } from '../components/PayOptions';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { BusyLabel, LoadingLine } from '../components/Loading';
+import { LoadingLine } from '../components/Loading';
+import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { viewOfQuery } from '../lib/queryState';
+import { errorLine, usePortalMutation } from '../lib/mutationState';
 import '../styles/invoices.css';
 
 /**
@@ -65,27 +67,39 @@ export function InvoiceDetail() {
   // answers here, and this screen must keep working across that window.
   const home = useQuery({ queryKey: ['myHome', kinfolkId], queryFn: () => getMyHome(kinfolkId), staleTime: 5 * 60_000 });
 
-  const pay = useMutation({
+  // ABANDON. See lib/mutationState.ts for what was established from the
+  // callable: the server has no invoice-level guard against two checkout
+  // sessions, and holding this one would walk a pocketed phone to Stripe on
+  // reconnect.
+  const pay = usePortalMutation({
     mutationFn: () =>
       payInvoice(invoiceId, `${window.location.origin}/invoices/${invoiceId}`, `${window.location.origin}/invoices/${invoiceId}`, kinfolkId),
     onSuccess: (res) => {
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
-  });
+  }, { policy: 'abandon', what: 'your payment' });
 
-  const downloadPdf = useMutation({
+  // ABANDON, though it reads like a download. `getMyInvoicePdf` re-renders the
+  // document and mints a fresh `firebaseStorageDownloadTokens` on every call
+  // (functions/src/lib/invoicePdf.ts), which kills the URL an earlier attempt
+  // handed out. Resuming it later would also fire `window.open` at a moment
+  // nobody asked for a popup.
+  const downloadPdf = usePortalMutation({
     mutationFn: () => getMyInvoicePdf(invoiceId, kinfolkId),
     onSuccess: (res) => {
       if (res.pdfUrl) window.open(res.pdfUrl, '_blank', 'noopener');
     },
-  });
+  }, { policy: 'abandon', what: 'your PDF' });
 
-  const redeem = useMutation({
+  // HOLD. The credit guard, the balance increment and the `creditRedeemedAt`
+  // stamp are one Firestore transaction, so a second redeem re-reads the
+  // committed stamp and is refused. It cannot double-credit.
+  const redeem = usePortalMutation({
     mutationFn: () => redeemCredit(invoiceId, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
     },
-  });
+  }, { policy: 'hold', what: 'this credit' });
 
   /**
    * THE HOUSEHOLD'S ANSWER TO A QUOTE (issue #385). One mutation for both
@@ -97,20 +111,28 @@ export function InvoiceDetail() {
    * without the refetch the household would press Accept and watch nothing
    * change.
    */
-  const decideQuote = useMutation({
+  // HOLD. Both answers run in one transaction that refuses an already-decided
+  // quote with `quote_already_decided`, so the answer cannot land twice.
+  const decideQuote = usePortalMutation({
     mutationFn: (decision: 'accept' | 'decline') =>
       decision === 'accept' ? acceptQuote(invoiceId, kinfolkId) : denyQuote(invoiceId, kinfolkId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['myInvoices', kinfolkId] });
     },
-  });
+  }, { policy: 'hold', what: 'your answer' });
 
   // These three used to fail silently — a rejected mutation just stopped the
   // spinner with nothing telling the kinfolk why (same class of bug KinTales'
   // comment-post had before it was fixed). Surface each distinctly.
-  function mutationErrorMessage(err: unknown, fallback: string): string {
-    return err instanceof Error && err.message ? err.message : fallback;
-  }
+  //
+  // #807: `errorLine` answers null for the three OFFLINE phases, which carry
+  // their own sentence now. A red "Couldn't open checkout. Try again." over a
+  // payment whose fate is not known is the one line this screen must not
+  // print.
+  const payError = errorLine(pay, "Couldn't open checkout. Try again.");
+  const pdfError = errorLine(downloadPdf, "Couldn't prepare the PDF. Try again.");
+  const quoteError = errorLine(decideQuote, "Couldn't send your answer. Try again.");
+  const redeemError = errorLine(redeem, "Couldn't redeem this credit. Try again.");
 
   const { signOut, signingOut } = useSignOut();
 
@@ -376,22 +398,19 @@ export function InvoiceDetail() {
                       methods={payMethods}
                       amountDue={amountDueCents}
                       onCheckout={() => pay.mutate()}
-                      checkingOut={pay.isPending}
+                      checkoutPhase={pay.phase}
                     />
                   )}
                   <button className="btn ghost" onClick={() => downloadPdf.mutate()} disabled={downloadPdf.isPending}>
-                    {'⬇'} {downloadPdf.isPending ? <BusyLabel>Preparing PDF…</BusyLabel> : 'Download PDF'}
+                    {'⬇'}{' '}
+                    <MutationLabel mutation={downloadPdf} busy="Preparing PDF…">
+                      Download PDF
+                    </MutationLabel>
                   </button>
-                  {pay.isError && (
-                    <p className="doc-err">
-                      {mutationErrorMessage(pay.error, "Couldn't open checkout. Try again.")}
-                    </p>
-                  )}
-                  {downloadPdf.isError && (
-                    <p className="doc-err">
-                      {mutationErrorMessage(downloadPdf.error, "Couldn't prepare the PDF. Try again.")}
-                    </p>
-                  )}
+                  <OfflineMutationNotice phase={pay.phase} what="your payment" check="this invoice" />
+                  <OfflineMutationNotice phase={downloadPdf.phase} what="your PDF" />
+                  {payError && <p className="doc-err">{payError}</p>}
+                  {pdfError && <p className="doc-err">{pdfError}</p>}
                 </div>
               </div>
             </section>
@@ -425,7 +444,12 @@ export function InvoiceDetail() {
                     onClick={() => decideQuote.mutate('accept')}
                     disabled={decideQuote.isPending}
                   >
-                    {decideQuote.isPending && decideQuote.variables === 'accept' ? <BusyLabel>Working…</BusyLabel> : 'Accept quote'}
+                    <MutationLabel
+                      mutation={{ phase: decideQuote.variables === 'accept' ? decideQuote.phase : 'idle' }}
+                      busy="Working…"
+                    >
+                      Accept quote
+                    </MutationLabel>
                   </button>
                   <button
                     type="button"
@@ -433,16 +457,20 @@ export function InvoiceDetail() {
                     onClick={() => decideQuote.mutate('decline')}
                     disabled={decideQuote.isPending}
                   >
-                    {decideQuote.isPending && decideQuote.variables === 'decline' ? <BusyLabel>Working…</BusyLabel> : 'Decline'}
+                    <MutationLabel
+                      mutation={{ phase: decideQuote.variables === 'decline' ? decideQuote.phase : 'idle' }}
+                      busy="Working…"
+                    >
+                      Decline
+                    </MutationLabel>
                   </button>
                 </div>
-                {decideQuote.isError && (
+                <OfflineMutationNotice phase={decideQuote.phase} what="your answer" check="this quote" />
+                {quoteError && (
                   /* The SERVER'S sentence, not a generic one: it is the side
                      that knows whether this quote expired, was already answered
                      in another tab, or belongs to somebody else. */
-                  <p className="doc-err">
-                    {mutationErrorMessage(decideQuote.error, "Couldn't send your answer. Try again.")}
-                  </p>
+                  <p className="doc-err">{quoteError}</p>
                 )}
               </section>
             )}
@@ -475,11 +503,14 @@ export function InvoiceDetail() {
                 </div>
 
                 <button type="button" className="btn credit-btn" onClick={() => redeem.mutate()} disabled={redeem.isPending}>
-                  {redeem.isPending ? <BusyLabel>Working…</BusyLabel> : 'Save to Account Balance'}
+                  <MutationLabel mutation={redeem} busy="Working…">
+                    Save to Account Balance
+                  </MutationLabel>
                 </button>
-                {redeem.isError && (
+                <OfflineMutationNotice phase={redeem.phase} what="this credit" check="your account balance" />
+                {redeemError && (
                   <p className="cnote" style={{ marginTop: 10 }}>
-                    {'⚠️'} {mutationErrorMessage(redeem.error, "Couldn't redeem this credit. Try again.")}
+                    {'⚠️'} {redeemError}
                   </p>
                 )}
               </section>
