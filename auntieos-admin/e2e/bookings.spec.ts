@@ -111,24 +111,33 @@ test('the empty-section copy names what the section is waiting for', async ({ pa
   await expect(pending.getByText('Nothing is waiting on a reply.')).toBeVisible();
 });
 
-test('a real booking row takes the hover fill', async ({ page }) => {
-  // The counterpart to `cascade-bookings.spec.ts`'s probe pair, on a row the app truly
-  // rendered. That spec proves the static override wins its ordering fight
-  // against a mounted probe; this one proves the rule it overrides is live on
-  // a real screen, so neither half can rot into a test of nothing.
-  const row = page.locator('.bookings__row-main').first();
-  await expect(row).toHaveClass(/lift/);
+test('a real booking card takes the hover hairline, and its row button takes no fill', async ({
+  page,
+}) => {
+  // The counterpart to `cascade-bookings.spec.ts`'s probe pair, on a card the
+  // app truly rendered. Since #755 the card is the mock's `.bk` (the `<li>`),
+  // and its hover treatment is the mock's own: the hairline turns brand orange
+  // at 30%, through `lift`'s `--lift-border-color`. There is no hover FILL on
+  // the row any more, on the card or on the button inside it, so this proves
+  // both halves: the border changes, the button does not paint.
+  const card = page.locator('.bookings__row').first();
+  await expect(card).toHaveClass(/lift/);
 
-  const surface2 = await page.evaluate(() => {
+  const orangeHairline = await page.evaluate(() => {
     const probe = document.createElement('div');
     probe.style.display = 'none';
-    probe.style.backgroundColor = 'var(--color-surface-2)';
+    probe.style.borderColor = 'color-mix(in srgb, var(--tt-kinfolk-orange) 30%, transparent)';
     document.body.append(probe);
-    const value = getComputedStyle(probe).backgroundColor;
+    const value = getComputedStyle(probe).borderTopColor;
     probe.remove();
     return value;
   });
 
-  await row.hover();
-  await expect(row).toHaveCSS('background-color', surface2);
+  await card.hover();
+  await expect(card).toHaveCSS('border-top-color', orangeHairline);
+  // `background: none` on the row button computes to a transparent colour.
+  await expect(card.locator('.bookings__row-main')).toHaveCSS(
+    'background-color',
+    'rgba(0, 0, 0, 0)',
+  );
 });

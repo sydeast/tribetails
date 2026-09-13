@@ -27,6 +27,8 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 
 
 /**
@@ -174,6 +176,11 @@ export function TribeProfile() {
     return <LaunchError onRetry={() => void profile.refetch()} retrying={profile.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
+  // The form below is built from `profile.data`. Paused, `profile.isLoading`
+  // was false and the whole editor rendered over an empty profile, which is a
+  // save button sitting above blanks that would overwrite what is on file.
+  const profileView = viewOfQuery(profile);
+  const membersView = viewOfQuery(membersQ, { isEmpty: (d) => d.members.filter((m) => m.role !== 'PRIMARY').length === 0 });
   const profileSchema = profileSchemaQ.data;
   const homeSchema = homeSchemaQ.data;
 
@@ -349,7 +356,11 @@ export function TribeProfile() {
             </section>
           )}
 
-          {profile.isLoading ? (
+          {profileView.kind === 'offline' ? (
+            <section className="glass card">
+              <OfflineNotice what="your Tribe profile" />
+            </section>
+          ) : profileView.kind !== 'data' ? (
             <p className="sub">Loading your Tribe profile…</p>
           ) : (
             <>
@@ -605,11 +616,13 @@ export function TribeProfile() {
                     <p className="sub">Adjust what each member of your Tribe can see and do.</p>
                   </div>
                 </div>
-                {membersQ.isLoading ? (
-                  <p className="sub">Loading household members…</p>
-                ) : membersQ.isError ? (
+                {membersView.kind === 'offline' ? (
+                  <OfflineNotice what="your household members" />
+                ) : membersView.kind === 'error' ? (
                   <p className="sub">Couldn&rsquo;t load household members right now.</p>
-                ) : members.length === 0 ? (
+                ) : membersView.kind !== 'data' && membersView.kind !== 'empty' ? (
+                  <p className="sub">Loading household members…</p>
+                ) : membersView.kind === 'empty' ? (
                   <p className="sub">No other members yet. Invite a partner, family member, or trusted friend below.</p>
                 ) : (
                   members.map((m) => <MemberPermissionRow key={m.uid} kinfolkId={kinfolkId} member={m} />)

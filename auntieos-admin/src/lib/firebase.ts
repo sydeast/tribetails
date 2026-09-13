@@ -5,8 +5,15 @@ import {
   ReCaptchaEnterpriseProvider,
 } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
+import {
+  connectFirestoreEmulator,
+  initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
+import { firestoreCacheMode } from './firestoreCache';
 import { reportError } from './sentry';
 
 /**
@@ -246,7 +253,69 @@ export function activateAppCheck(): void {
 }
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+/**
+ * WHICH CACHE THIS SESSION GOT, `persistent` or `memory`. Decided by
+ * `lib/firestoreCache.ts`; exported so a surface can DISCLOSE a memory-only
+ * session rather than let the operator find out by losing a write.
+ */
+export const firestoreCache = firestoreCacheMode(
+  typeof indexedDB !== 'undefined',
+  // The same expression `E2E_EMULATOR_HOST` is built from, read again here
+  // because that constant is declared further down this file, after `db` needs
+  // the answer. Both fold to a constant in a hosting build.
+  ((import.meta.env.VITE_E2E_EMULATOR as string | undefined) ?? '') !== '',
+);
+
+/**
+ * FIRESTORE, WITH AN OFFLINE WRITE QUEUE.
+ *
+ * This was `getFirestore(app)` until 2026-09-12, which is the SDK's memory
+ * cache. Two things made that wrong:
+ *
+ *   MOBILE WEB IS THE FIELD FALLBACK (operator ruling). This admin gets opened
+ *   on a phone, at a door, on whatever coverage the street has. It is not the
+ *   office screen the old code assumed.
+ *   THE VISIT CLOCK IS A DIRECT WRITE NOW (`api/sessionsWrite.ts`). "Arrived"
+ *   used to be a callable, so it either reached the server or failed visibly.
+ *   It is a document write today, and a document write is exactly the thing
+ *   Firestore's queue exists to carry across a dead zone.
+ *
+ * WHAT THE PERSISTENT CACHE ACTUALLY BUYS: a write started with no signal is
+ * held in IndexedDB and replayed when the connection returns, INCLUDING ACROSS
+ * A RELOAD OR A KILLED TAB. With the memory cache the same write lives only in
+ * RAM and is lost the moment the page goes away.
+ *
+ * WHAT IT DOES NOT BUY, and every one of these has bitten somebody somewhere:
+ *
+ *   THE PROMISE STILL WAITS FOR THE SERVER. `await updateDoc(...)` resolves on
+ *   the server ack, not on the local write, so offline the clock button stays
+ *   "saving" until signal comes back. The local document — and any live
+ *   listener on it — updates immediately, so the ROW repaints while the BUTTON
+ *   spins. Painting the button optimistically instead is a separate operator
+ *   decision and is deliberately not taken here.
+ *   A QUEUED WRITE IS NOT A PROMISE IT WILL LAND. It still meets
+ *   `firestore.rules` when it replays, and it can still be refused then, hours
+ *   later, with nobody watching.
+ *   THE AUDIT AND THE HOUSEHOLD PUSH ARE CALLABLES AND CALLABLES DO NOT QUEUE.
+ *   Offline they simply fail, which is why `sessionsWrite.ts` fires both
+ *   fire-and-forget: the visit is still clocked, and the trail and the push are
+ *   what an offline tap costs.
+ *   MULTI-TAB IS HANDLED, NOT FREE. `persistentMultipleTabManager` lets several
+ *   admin tabs share one IndexedDB queue instead of the first tab taking an
+ *   exclusive lock and the rest silently failing to persist. It is the right
+ *   default for an app whose users keep the board and a detail sheet open at
+ *   once.
+ *   IT CAN BE UNAVAILABLE ENTIRELY. Private windows, blocked site data and test
+ *   runners have no usable IndexedDB; `firestoreCache` says which one this
+ *   session got, and `memory` means none of the above applies.
+ */
+export const db = initializeFirestore(
+  app,
+  firestoreCache === 'persistent'
+    ? { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }
+    : { localCache: memoryLocalCache() },
+);
 // us-central1 to match the wasm bridge and every deployed callable.
 export const functions = getFunctions(app, 'us-central1');
 

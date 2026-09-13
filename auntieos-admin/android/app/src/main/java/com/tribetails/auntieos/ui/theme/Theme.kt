@@ -30,7 +30,13 @@ private val LocalAuntieDimensions = staticCompositionLocalOf { DefaultAuntieDime
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
-val LocalThemeMode = staticCompositionLocalOf { ThemeMode.SYSTEM }
+/**
+ * DARK, not SYSTEM (#751, operator ruling 2026-09-11). A composable that reads
+ * this local with no provider above it must not be told the app follows the
+ * phone: on a light-mode phone that answer paints the cream scheme, which is
+ * the complaint the ruling answers.
+ */
+val LocalThemeMode = staticCompositionLocalOf { ThemeMode.DARK }
 
 object AuntieTheme {
     val colors:     AuntieColors     @Composable @ReadOnlyComposable get() = LocalAuntieColors.current
@@ -56,9 +62,20 @@ private fun AuntieTypography.toM3() = Typography(
     labelSmall     = labelSmall,
 )
 
+/**
+ * The default is DARK (#751). It used to be SYSTEM, which meant every call site
+ * that named no mode, and every preview and test, followed the phone and could
+ * land on the cream scheme. The mocks' glass world is what this app paints.
+ *
+ * SYSTEM is still honoured when it ARRIVES, because then it is a choice the
+ * operator made and stored: the Settings screen lists all three modes and
+ * MainActivity passes whatever ThemePrefs resolved. What changed is only the
+ * answer when nobody has said anything, and both halves of that now agree, since
+ * DEFAULT_THEME_MODE in ThemePrefs.kt is DARK and parseThemeMode fails safe to it.
+ */
 @Composable
 fun AuntieOSTheme(
-    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    themeMode: ThemeMode = ThemeMode.DARK,
     personalization: ThemePersonalization = ThemePersonalization(),
     content:   @Composable () -> Unit,
 ) {

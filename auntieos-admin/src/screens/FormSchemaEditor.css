@@ -1,8 +1,15 @@
 /**
  * Form Schema Editor styling. Scoped to this screen and imported directly by
  * FormSchemaEditor.tsx, mirroring the FormSchemas.css convention (nothing
- * here belongs in the shared styles/screens.css). Every value comes from
- * styles/tokens.css, no literal colours, radii, or durations.
+ * here belongs in the shared styles/screens.css). Every colour comes from
+ * styles/tokens.css; the pixel sizes are the mock's own numbers, the way
+ * DenScreenKit.css carries the hero's 22px.
+ *
+ * The skin is `ui-ideas/auntieos-formschema-editor-2026-05-27.html` inside the
+ * wizard the operator chose on 2026-08-08 (see the header of
+ * FormSchemaEditor.tsx): bottom-border inputs, the section card on the panel
+ * gradient, the field card on navy-3, the type chip row, the Yes / No
+ * segmented picker. The wizard frame, rail and footer are WizardModal's.
  */
 
 .fse__hint {
@@ -16,10 +23,25 @@
   gap: var(--space-4);
 }
 
+/* The mock's `.grid2`: key and label side by side, 14px apart. */
+.fse__grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* The mock's `.stack`: helper text, placeholder, default, group and the
+   Required row one under the other, 12px apart. */
+.fse__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .fse__field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -39,45 +61,69 @@
   grid-column: 1 / -1;
 }
 
-.fse__field--checkbox {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-2);
-  justify-content: flex-start;
-}
-
+/* The mock's `.fld label`: Hanken 11.5 at 600, a little tracked, dim. */
 .fse__label {
-  font-size: var(--type-body-sm-size);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: var(--color-text-dim);
 }
 
+/* The mock marks a required field with " *" after its label. Drawn by the
+   stylesheet so the control's accessible name stays the label's own words. */
+.fse__label--required::after {
+  content: ' *';
+}
+
+/* The mock's `.bb`: no fill, a hairline under the text, orange when focused,
+   coral when invalid, dashed and dim when the field is locked. */
 .fse__input {
   width: 100%;
   box-sizing: border-box;
+  margin: 0;
   font: inherit;
-  font-size: var(--type-body-md-size);
+  font-size: 14.5px;
   color: var(--color-text-primary);
-  background: var(--color-surface);
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card);
-  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  border-bottom: var(--border-hairline) solid var(--color-hairline);
+  border-radius: 0;
+  padding: 7px 2px;
   transition: border-color var(--dur-base) var(--ease-standard);
 }
 .fse__input:focus-visible {
   outline: none;
-  border-color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+.fse__input::placeholder {
+  color: var(--color-text-faint);
 }
 .fse__input[aria-invalid='true'] {
-  border-color: var(--color-error);
+  border-bottom-color: var(--color-error);
+}
+.fse__input:disabled {
+  color: var(--color-text-dim);
+  cursor: not-allowed;
+  border-bottom-style: dashed;
+}
+.fse__input--multiline {
+  resize: vertical;
+  min-height: 46px;
+  line-height: 1.5;
 }
 
+/* The mock's `.immut`: the "(immutable once persisted)" note in 10px mono. */
 .fse__note {
-  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--color-text-faint);
 }
 
 .fse__error {
-  font-size: 0.72rem;
+  font-size: 12.5px;
+  line-height: 1.4;
   color: var(--color-error);
 }
 
@@ -87,46 +133,147 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 10px;
 }
 
+/* The mock's `.fieldcard`: navy-3 on the soft line at 12px, 13px 14px inside;
+   the whole card's edge turns coral when one of its fields is invalid. */
 .fse__field-card {
-  border: var(--border-hairline) solid var(--color-border);
+  border: var(--border-hairline) solid var(--color-border-soft);
   border-radius: var(--radius-card-lg);
-  background: var(--color-surface-glass);
-  padding: var(--space-4);
+  background: var(--color-hero-bottom);
+  padding: 13px 14px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+.fse__field-card--invalid {
+  border-color: var(--color-error);
+}
+
+/* The mock's `.fchead`: the tag on the left, the tools on the right. */
+.fse__field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
 }
 
-.fse__field-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-3);
-}
-.fse__field-row .fse__field {
-  flex: 1 1 9rem;
+/* The mock's field tag: 10.5px mono, uppercase, tracked, dim. */
+.fse__field-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
 }
 
 .fse__field-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  margin-left: auto;
+  gap: 6px;
+}
+
+/* The mock's type chips: mono 11px capsules on navy-2 with a hairline, the
+   chosen one filled orange with navy text. */
+.fse__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fse__chip {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 5px 11px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  background: var(--color-panel-top);
+  color: var(--color-text-primary);
+  border: var(--border-hairline) solid var(--color-hairline);
+  transition:
+    border-color var(--dur-base) var(--ease-standard),
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.fse__chip:hover {
+  border-color: var(--color-primary);
+}
+.fse__chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.fse__chip--on {
+  background: var(--color-primary-dim);
+  color: var(--tt-brand-navy);
+  border-color: var(--color-primary-dim);
+  font-weight: 600;
+}
+
+/* The mock's `.reqrow`: the word on the left, the segmented picker on the
+   right, a little air above it. */
+.fse__required {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: 4px;
+}
+
+.fse__required-label {
+  font-size: var(--type-body-md-size);
+  color: var(--color-text-primary);
+}
+
+/* The mock's `.seg`: one box on navy-2 with a hairline, the chosen half cream
+   on navy. Cream, not orange: orange is the button colour, and a second orange
+   block beside the chips would read as another call to action. */
+.fse__seg {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--color-panel-top);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card);
+  padding: 3px;
+}
+
+.fse__seg-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  background: none;
+  border: none;
+  border-radius: var(--radius-chip);
+  padding: 5px 16px;
+  cursor: pointer;
+  transition:
+    background var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
+}
+.fse__seg-btn:hover {
+  color: var(--color-text-primary);
+}
+.fse__seg-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.fse__seg-btn--on {
+  background: var(--tt-brand-cream);
+  color: var(--tt-brand-navy);
 }
 
 /* There is no `.fse__advanced` any more, and its absence is the point: helper
    text, placeholder, default value and group are drawn in the card. See the
    header of FormSchemaEditor.tsx for the ruling. */
 
-/* The step's own header-row action ("Add field" / "Add section"), where
-   DenPanel's `trailing` slot used to put it before the sections became steps. */
+/* The mock's `.secbar` action: "Add section" at the head of the list, on the
+   right, over the cards. */
 .fse__step-actions {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: var(--space-3);
+  margin-bottom: 10px;
 }
 
 /* ── the Sections step: one SectionCard per real section (issue #397, M17) ── */
@@ -139,17 +286,20 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 14px;
 }
 
+/* The mock's `.seccard`: the panel gradient on a hairline at the panel radius
+   (the mock says 18), 18px inside. Not a DenPanel: it has no title, its head
+   is the "Section n" tag and the reorder tools. */
 .fse__section-card {
-  border: var(--border-hairline) solid var(--color-border);
-  border-radius: var(--radius-card-lg);
-  background: var(--color-surface-glass);
-  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-18);
+  background: linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 12px;
 }
 
 .fse__section-header {
@@ -157,30 +307,36 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  margin-bottom: 2px;
 }
 
+/* The mock's section tag: Hanken 12.5 at 600, dim. */
 .fse__section-tag {
-  font-size: var(--type-body-sm-size);
+  font-size: 12.5px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--color-text-dim);
 }
 
 .fse__section-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
+/* The mock's `.fldsbar`: "Fields (n)" left, "Add field" right, over the
+   field cards. */
 .fse__section-fields-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: var(--space-2);
+  gap: var(--space-3);
+  margin-top: 4px;
 }
 
 .fse__section-fields-heading {
   margin: 0;
-  font-size: var(--type-body-md-size);
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -251,6 +407,14 @@
   font-size: 0.78rem;
   color: var(--color-text-dim);
 }
+
+/* Phone width: the key / label pair stacks. */
+@media (max-width: 40rem) {
+  .fse__grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── the live preview column ───────────────────────────────────────────────── */
 /* `.fse__layout` / `.fse__main` / `.fse__preview` are gone, not lost. The
    editor's panels on the left and the kinfolk-facing preview on the right is

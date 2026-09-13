@@ -10,9 +10,12 @@ import {
   kinTaleHousehold,
   kinTaleState,
   kinTaleStateInfo,
+  kinTaleTimeOf,
   kinTaleWhen,
   sentViaLabel,
+  type KinTaleState,
 } from '../lib/kinTaleFormat';
+import { formatWhenFull } from '../lib/time';
 import {
   getKinTaleComments,
   addKinTaleComment,
@@ -37,7 +40,14 @@ import {
 } from '../lib/kinTaleDetailFormat';
 import { useCollection } from '../lib/firestore';
 import { type Async } from '../lib/async';
-import { DenScreenHeading, DenPanel, EmptyHint, ServicePill } from '../components/DenScreenKit';
+import {
+  DenScreenHeading,
+  DenPanel,
+  EmptyHint,
+  ServicePill,
+  StatusPill,
+  type DenTone,
+} from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
@@ -99,6 +109,28 @@ export interface KinTaleDetailProps {
   onClose: () => void;
 }
 
+/**
+ * The pill tone per state, the same swatch the list's bucket tile takes:
+ * sent success, failed error, draft neutral, unknown warning.
+ */
+export function kinTaleStateTone(state: KinTaleState): DenTone {
+  switch (state) {
+    case 'sent':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'draft':
+      return 'neutral';
+    case 'unknown':
+      return 'warning';
+  }
+}
+
+/** A visit or delivery instant as the rail draws it, or the honest blank. */
+function railWhen(iso: string): string {
+  return formatWhenFull(kinTaleTimeOf(iso)) ?? 'Not recorded';
+}
+
 export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps) {
   const reports = useCollection<KinTaleEntry>(KINTALES_QUERY);
   const kin = useCollection<Kin>(KIN_QUERY);
@@ -109,35 +141,40 @@ export function KinTaleDetail({ kinTaleId, onEdit, onClose }: KinTaleDetailProps
   // template's id.
   const templateRows = useCollection<Record<string, unknown>>(KINTALE_TEMPLATES_QUERY);
 
+  // Resolved HERE rather than inside the region, because the hero is the
+  // report: the mock's cover carries the headline, the author line and the
+  // status pill, and a band that rendered before the read landed would have
+  // to show a placeholder title for as long as the read takes. So the body
+  // owns the band once there is a report, and the screen draws a bare one
+  // (crumbs, "KinTale", Close) only while there is not.
+  const entry = reports.status === 'ready' ? reports.data.find((r) => r._id === kinTaleId) : undefined;
+
+  if (entry !== undefined) {
+    return (
+      <div className="screen kintale-detail">
+        <KinTaleDetailBody
+          entry={entry}
+          kin={kin}
+          templateRows={templateRows}
+          onClose={onClose}
+          {...(onEdit ? { onEdit } : {})}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="screen kintale-detail">
       <DenScreenHeading
-        // The last step stays "KinTale detail" rather than the report's title:
-        // the report is resolved inside the AsyncRegion below, so a title-shaped
-        // crumb here would have to render blank, or a placeholder, for as long
-        // as the read takes. `onClose` already drops `?kinTaleId=` on the way
-        // out, which a route link to /kintales would not.
-        crumbs={[{ label: 'KinTales', onSelect: onClose }, { label: 'KinTale detail' }]}
+        // `onClose` already drops `?kinTaleId=` on the way out, which a route
+        // link to /kintales would not.
+        crumbs={[{ label: 'KinTales', onSelect: onClose }, { label: 'KinTale' }]}
         title="KinTale"
-        accentTail="detail."
         subtitle="The recap, the comment thread, and the reaction, all in one place."
         trailing={<GhostButton label="Close" onClick={onClose} />}
       />
       <AsyncRegion state={reports} what="the KinTale" isEmpty={() => false} empty={null}>
-        {(data) => {
-          const entry = data.find((r) => r._id === kinTaleId);
-          if (!entry) {
-            return <EmptyHint>No KinTale found with id &ldquo;{kinTaleId}&rdquo;.</EmptyHint>;
-          }
-          return (
-            <KinTaleDetailBody
-              entry={entry}
-              kin={kin}
-              templateRows={templateRows}
-              {...(onEdit ? { onEdit } : {})}
-            />
-          );
-        }}
+        {() => <EmptyHint>No KinTale found with id &ldquo;{kinTaleId}&rdquo;.</EmptyHint>}
       </AsyncRegion>
     </div>
   );
@@ -151,11 +188,12 @@ interface KinTaleDetailBodyProps {
   /** Raw `kintale_templates` docs; decoded here, see `moods` below. */
   templateRows: Async<Record<string, unknown>[]>;
   onEdit?: (kinTaleId: string) => void;
+  onClose: () => void;
 }
 
 type DetailBanner = { tone: 'error' | 'success'; text: string };
 
-function KinTaleDetailBody({ entry, kin, templateRows, onEdit }: KinTaleDetailBodyProps) {
+function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onClose }: KinTaleDetailBodyProps) {
   // Every read off `entry` is defaulted. KinTaleEntry is a CAST over raw
   // Firestore data, not a validation of it: `title` is absent on 89 of the 92
   // live kin_care_reports, and reading one blind throws through React's error
@@ -437,356 +475,437 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit }: KinTaleDetailBo
     }
   }
 
+  const headline = kinfolkPreviewHeadline({
+    title,
+    bodyCopy,
+    authorDisplayName,
+    kinfolkName: entry.kinfolkName ?? '',
+  });
+  const tone = kinTaleStateTone(state);
+
+  // The rail's kin list, the same resolution the mood pills use: an id that
+  // does not resolve renders as the id, never as a fabricated name.
+  const kinList = (
+    <AsyncRegion
+      state={kin}
+      what="kin"
+      isEmpty={() => false}
+      empty={null}
+      loading={<p className="kintale-detail__hint">Loading kin&hellip;</p>}
+    >
+      {(kinData) => (
+        <ul className="kintale-detail__kin-list">
+          {kinIds.map((kinId) => {
+            const found = kinData.find((k) => k._id === kinId);
+            // `Kin` is the same kind of cast over raw document data as
+            // KinTaleEntry: a resolved kin doc can still be missing
+            // name/species, which must degrade to the existing
+            // 'Unnamed kin' / no-species rendering, never throw.
+            const foundName = found?.name ?? '';
+            const foundSpecies = found?.species ?? '';
+            return (
+              <li key={kinId} className="kintale-detail__kin-chip">
+                {found ? (
+                  <>
+                    {foundName.trim() !== '' ? foundName : 'Unnamed kin'}
+                    {foundSpecies.trim() !== '' ? ` (${foundSpecies})` : ''}
+                  </>
+                ) : (
+                  <code>{kinId}</code>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </AsyncRegion>
+  );
+
   return (
     <>
-      <DenPanel
-        title="The tale"
+      {/* The mock's cover, drawn by the kit band: the headline as the title,
+          the visit's time as the detail, "From Auntie for the Wrens" under it,
+          the status and service pills as the badges. The trail replaces the
+          mock's "KinTale · Visit Recap" eyebrow (a heading carries one or the
+          other, never both), and its last step is the headline so the crumb
+          names the page. */}
+      <DenScreenHeading
+        crumbs={[{ label: 'KinTales', onSelect: onClose }, { label: headline }]}
+        title={headline}
         detail={when}
-        trailing={onEdit ? <GhostButton label="Edit" onClick={() => onEdit(entry._id)} /> : undefined}
+        subtitle="The recap, the comment thread, and the reaction, all in one place."
+        badges={
+          <>
+            <StatusPill label={info.chipLabel} tone={tone} />
+            {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
+          </>
+        }
+        trailing={
+          <div className="kintale-detail__actions">
+            {onEdit ? <GhostButton label="Edit" onClick={() => onEdit(entry._id)} /> : null}
+            <GhostButton label="Close" onClick={onClose} />
+          </div>
+        }
       >
-        <div className="kintale-detail__tale-head">
-          <span className="kintale-detail__household">{household}</span>
-          {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
-          <span className={`kintale-detail__chip kintale-detail__chip--${info.cssClass}`}>{info.chipLabel}</span>
-        </div>
-        {(authorDisplayName.trim() !== '' || channel) && (
-          <p className="kintale-detail__meta-line">
-            {authorDisplayName.trim() !== '' ? `by ${authorDisplayName}` : null}
-            {channel ? ` · sent via ${channel}` : null}
-          </p>
-        )}
-        {title.trim() !== '' && <h2 className="kintale-detail__title">{title}</h2>}
-        <p className="kintale-detail__body">{bodyCopy.trim() !== '' ? bodyCopy : '(empty body)'}</p>
-      </DenPanel>
+        <p className="kintale-detail__from">
+          {authorDisplayName.trim() !== '' ? (
+            <>
+              From <b>{authorDisplayName}</b> for <b>{household}</b>
+            </>
+          ) : (
+            <>
+              For <b>{household}</b>
+            </>
+          )}
+        </p>
+      </DenScreenHeading>
 
-      {/* Only a SENT report has anything a kinfolk should read, so the whole
-          panel is absent on a draft rather than offering a control whose only
-          possible outcome is a refusal (the Buttons.tsx ControlShell rule this
-          screen already applies to Edit: no live no-op). Both other admins gate
-          the same way: Android's ShareSection call site and the wasm's
-          ViewAsKinfolkBar each render only in the SENT view. */}
-      {state === 'sent' && (
-        <DenPanel
-          title="Share with kinfolk"
-          subtitle="Preview how the kinfolk reads this update, or create a link to share it."
-        >
-          <div className="kintale-detail__share-actions">
-            <GhostButton
-              label={viewAsKinfolk ? 'Hide kinfolk view' : 'View as kinfolk'}
-              onClick={() => setViewAsKinfolk((on) => !on)}
-            />
-            <PrimaryButton
-              label={isSharing ? 'Creating…' : 'Share link'}
-              onClick={() => void handleShare()}
-              disabled={isSharing}
-              busy={isSharing}
-            />
-          </div>
+      {/* The mock's `.sentbanner`, its words verbatim from the source screen. */}
+      {state === 'sent' && <Banner tone="success">This KinTale has been sent.</Banner>}
 
-          {shareError && <Banner tone="error">{shareError}</Banner>}
+      <div className="kintale-detail__cols">
+        <div className="kintale-detail__col">
+          <DenPanel title="The tale" detail={channel ? `Sent via ${channel}.` : undefined}>
+            <p className="kintale-detail__body">{bodyCopy.trim() !== '' ? bodyCopy : '(empty body)'}</p>
+          </DenPanel>
 
-          {shareUrl !== null && (
-            <div className="kintale-detail__share-result">
-              <span className="kintale-detail__label">Share link</span>
-              {/* Readonly rather than plain text: the url stays selectable and
-                  copyable by hand when the clipboard API is unavailable. */}
-              <input
-                className="kintale-detail__share-url"
-                type="text"
-                readOnly
-                value={shareUrl}
-                aria-label="Share link"
-                onFocus={(e) => e.currentTarget.select()}
-              />
-              <div className="kintale-detail__share-copy">
-                <GhostButton label={shareCopied ? 'Copied' : 'Copy link'} onClick={() => void handleCopyShareUrl()} />
-              </div>
-            </div>
+          {mediaCount > 0 && (
+            <DenPanel title="Photos" meta={`${String(mediaCount)} attached`}>
+              <AsyncRegion
+                state={media}
+                what="photos"
+                isEmpty={(data) => data.length === 0}
+                empty={<EmptyHint>No photos could be resolved for this recap.</EmptyHint>}
+              >
+                {(data) => (
+                  <ul className="kintale-detail__media-grid">
+                    {data.map((item) => (
+                      <li key={item.id} className="kintale-detail__media-tile">
+                        {kinTaleMediaKindOf(item.contentType) === 'image' ? (
+                          <a href={item.url} target="_blank" rel="noreferrer">
+                            <img
+                              src={item.url}
+                              alt="KinTale attachment"
+                              loading="lazy"
+                              className="kintale-detail__media-img"
+                            />
+                          </a>
+                        ) : (
+                          <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
+                            View attachment
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </AsyncRegion>
+            </DenPanel>
           )}
 
-          {viewAsKinfolk && (
-            // The kinfolk-facing read of this recap: headline, narrative, photos.
-            // No Edit, no Send, no reaction control, and no admin-only record of
-            // any kind. Dossiers and 411 notes are admin-only, and are neither
-            // read nor rendered anywhere on this screen.
-            <section className="kintale-detail__preview" aria-label="Kinfolk view">
-              <p className="kintale-detail__preview-eyebrow">KINFOLK VIEW</p>
-              <h3 className="kintale-detail__preview-headline">
-                {kinfolkPreviewHeadline({ title, bodyCopy, authorDisplayName, kinfolkName: entry.kinfolkName ?? '' })}
-              </h3>
-              <p className="kintale-detail__preview-body">{kinfolkPreviewBody({ bodyCopy })}</p>
-              {media.status === 'ready' && media.data.length > 0 && (
-                <ul className="kintale-detail__media-grid">
-                  {media.data.map((item) => (
-                    <li key={item.id} className="kintale-detail__media-tile">
-                      {kinTaleMediaKindOf(item.contentType) === 'image' ? (
-                        <img src={item.url} alt="KinTale attachment" loading="lazy" className="kintale-detail__media-img" />
-                      ) : (
-                        <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
-                          View attachment
-                        </a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-        </DenPanel>
-      )}
+          {/* PET MOOD, drawn from the report mock's own "Pet mood" block: one
+              pill per kin, `MoodOption.emoji + label`, with the kin's name
+              trailing in the muted mono style. The flag defaults TRUE on all
+              three clients (`lib/kinTale/model.ts` DEFAULT_KINTALE_TEMPLATE,
+              desktop `KinTaleModels.kt:145`, android `KinTaleTemplate.kt:38`),
+              and this is the live rendering.
 
-      <DenPanel title="Who this covers" subtitle="Household, session, and kin this recap belongs to.">
-        <dl className="kintale-detail__who">
-          <div className="kintale-detail__who-row">
-            <dt>Household</dt>
-            <dd>{household}</dd>
-          </div>
-          <div className="kintale-detail__who-row">
-            <dt>Session</dt>
-            <dd>
-              <code>{entry.sessionId}</code>
-            </dd>
-          </div>
-        </dl>
-        {kinIds.length > 0 ? (
-          <AsyncRegion
-            state={kin}
-            what="kin"
-            isEmpty={() => false}
-            empty={null}
-            loading={<p className="kintale-detail__hint">Loading kin&hellip;</p>}
-          >
-            {(kinData) => (
-              <ul className="kintale-detail__kin-list">
-                {kinIds.map((kinId) => {
-                  const found = kinData.find((k) => k._id === kinId);
-                  // `Kin` is the same kind of cast over raw document data as
-                  // KinTaleEntry: a resolved kin doc can still be missing
-                  // name/species, which must degrade to the existing
-                  // 'Unnamed kin' / no-species rendering, never throw.
+              NO SECTION when the template has moods off, when nothing was
+              recorded, or when every recorded entry was malformed. An empty
+              "Pet mood" panel would read as "no pet had a mood", which is a
+              claim the data does not make; the desktop read view refuses the
+              same way ("Renders nothing when there are no selections (no faked
+              pills)").
+
+              The `petMoodEnabled` half is a DELIBERATE DIVERGENCE from that
+              desktop read view, which checks only the flag and the selections.
+              Both COMPOSERS check `petMoodEnabled` before offering the section
+              at all (android `KinTaleReportScreen.kt:295`, desktop
+              `KinTaleComposeScreen.kt`), so a template with moods off is one
+              the auntie was never asked the question under. Stale selections
+              a previous template left behind are not evidence the section
+              belongs. */}
+          {moods.length > 0 && (
+            <DenPanel title="Pet mood" subtitle="How each pet was on this visit.">
+              <ul className="kintale-detail__moods">
+                {moods.map((row) => {
+                  // Same kin resolution the rail uses, and the same refusal:
+                  // an id that does not resolve renders as the id, never as a
+                  // fabricated name. The stream still loading is that case too.
+                  const found = (kin.status === 'ready' ? kin.data : []).find((k) => k._id === row.kinId);
                   const foundName = found?.name ?? '';
-                  const foundSpecies = found?.species ?? '';
                   return (
-                    <li key={kinId} className="kintale-detail__kin-chip">
-                      {found ? (
-                        <>
-                          {foundName.trim() !== '' ? foundName : 'Unnamed kin'}
-                          {foundSpecies.trim() !== '' ? ` (${foundSpecies})` : ''}
-                        </>
-                      ) : (
-                        <code>{kinId}</code>
-                      )}
+                    <li key={row.kinId} className="kintale-detail__mood" data-resolved={row.resolved ? 'true' : 'false'}>
+                      <span className="kintale-detail__mood-label">{row.label}</span>
+                      <span className="kintale-detail__mood-kin">
+                        {found && foundName.trim() !== '' ? foundName : <code>{row.kinId}</code>}
+                      </span>
                     </li>
                   );
                 })}
               </ul>
-            )}
-          </AsyncRegion>
-        ) : (
-          <EmptyHint>No kin recorded on this recap.</EmptyHint>
-        )}
-      </DenPanel>
+            </DenPanel>
+          )}
 
-      {/* PET MOOD, drawn from the report mock's own "Pet mood" block
-          (`ui-ideas/auntieos-kintale-report-2026-05-27.html:327-335`): one pill
-          per kin, `MoodOption.emoji + label`, with the kin's name trailing in
-          the muted mono style. The mock's SUGGESTION tag and its note that "the
-          default template ships petMoodEnabled=false" are both stale as of this
-          change: the flag defaults TRUE on all three clients
-          (`lib/kinTale/model.ts` DEFAULT_KINTALE_TEMPLATE, desktop
-          `KinTaleModels.kt:145`, android `KinTaleTemplate.kt:38`), and this is
-          the live rendering, so nothing here is marked as a suggestion.
+          {/* CUSTOM FIELDS: answers to admin-authored `form_schemas` placed on
+              KinTales. NO MOCK COVERS THIS BLOCK (the report mock draws mood
+              pills but nothing for form_schemas answers), so it deliberately
+              invents no new visual language: it borrows Android's section
+              title verbatim ("Custom fields", `KinTaleReportScreen.kt:275`)
+              and reuses the rail's definition-list markup.
 
-          NO SECTION when the template has moods off, when nothing was recorded,
-          or when every recorded entry was malformed. An empty "Pet mood" panel
-          would read as "no pet had a mood", which is a claim the data does not
-          make; the desktop read view refuses the same way ("Renders nothing when
-          there are no selections (no faked pills)").
+              The panel exists only when the report stored answers, so a recap
+              with none costs no callable and shows no empty shell. A schema
+              that fails to load is surfaced, never swallowed, matching how the
+              Android composer treats the same failure. */}
+          {hasFormValues && (
+            <DenPanel title="Custom fields" subtitle="Answers to the KinTale form this Den authored.">
+              <AsyncRegion state={schemas} what="the custom fields" isEmpty={() => false} empty={null}>
+                {(data) => {
+                  const rows = customFieldRows(entry.formValues, data);
+                  // Every stored key failed to resolve to a field that still
+                  // exists. Say that, rather than printing raw keys beside the
+                  // answers as though they were the questions.
+                  if (rows.length === 0) {
+                    return <EmptyHint>No custom field on this Den&rsquo;s KinTale form matches what this recap recorded.</EmptyHint>;
+                  }
+                  return (
+                    <dl className="kintale-detail__who">
+                      {rows.map((row) => (
+                        <div key={row.key} className="kintale-detail__who-row">
+                          <dt>{row.label}</dt>
+                          <dd>{row.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  );
+                }}
+              </AsyncRegion>
+            </DenPanel>
+          )}
 
-          The `petMoodEnabled` half is a DELIBERATE DIVERGENCE from that desktop
-          read view, which checks only the flag and the selections. Both
-          COMPOSERS check `petMoodEnabled` before offering the section at all
-          (android `KinTaleReportScreen.kt:295`, desktop `KinTaleComposeScreen.kt`),
-          so a template with moods off is one the auntie was never asked the
-          question under. Stale selections a previous template left behind are
-          not evidence the section belongs. */}
-      {moods.length > 0 && (
-        <DenPanel title="Pet mood" subtitle="How each pet was on this visit.">
-          <ul className="kintale-detail__moods">
-            {moods.map((row) => {
-              // Same kin resolution the list above uses, and the same refusal:
-              // an id that does not resolve renders as the id, never as a
-              // fabricated name. The stream still loading is that case too.
-              const found = (kin.status === 'ready' ? kin.data : []).find((k) => k._id === row.kinId);
-              const foundName = found?.name ?? '';
-              return (
-                <li key={row.kinId} className="kintale-detail__mood" data-resolved={row.resolved ? 'true' : 'false'}>
-                  <span className="kintale-detail__mood-label">{row.label}</span>
-                  <span className="kintale-detail__mood-kin">
-                    {found && foundName.trim() !== '' ? foundName : <code>{row.kinId}</code>}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </DenPanel>
-      )}
+          {/* Only a SENT report has anything a kinfolk should read, so the
+              whole panel is absent on a draft rather than offering a control
+              whose only possible outcome is a refusal (the Buttons.tsx
+              ControlShell rule this screen already applies to Edit: no live
+              no-op). Both other admins gate the same way: Android's
+              ShareSection call site and the wasm's ViewAsKinfolkBar each
+              render only in the SENT view. */}
+          {state === 'sent' && (
+            <DenPanel
+              title="Share with kinfolk"
+              subtitle="Preview how the kinfolk reads this update, or create a link to share it."
+            >
+              <div className="kintale-detail__share-actions">
+                <GhostButton
+                  label={viewAsKinfolk ? 'Hide kinfolk view' : 'View as kinfolk'}
+                  onClick={() => setViewAsKinfolk((on) => !on)}
+                />
+                <PrimaryButton
+                  label={isSharing ? 'Creating…' : 'Share link'}
+                  onClick={() => void handleShare()}
+                  disabled={isSharing}
+                  busy={isSharing}
+                />
+              </div>
 
-      {/* CUSTOM FIELDS: answers to admin-authored `form_schemas` placed on
-          KinTales. NO MOCK COVERS THIS BLOCK (the report mock draws mood pills
-          but nothing for form_schemas answers), so it deliberately invents no
-          new visual language: it borrows Android's section title verbatim
-          ("Custom fields", `KinTaleReportScreen.kt:275`) and reuses the same
-          definition-list markup "Who this covers" already uses on this screen.
+              {shareError && <Banner tone="error">{shareError}</Banner>}
 
-          The panel exists only when the report stored answers, so a recap with
-          none costs no callable and shows no empty shell. A schema that fails
-          to load is surfaced, never swallowed, matching how the Android
-          composer treats the same failure. */}
-      {hasFormValues && (
-        <DenPanel title="Custom fields" subtitle="Answers to the KinTale form this Den authored.">
-          <AsyncRegion state={schemas} what="the custom fields" isEmpty={() => false} empty={null}>
-            {(data) => {
-              const rows = customFieldRows(entry.formValues, data);
-              // Every stored key failed to resolve to a field that still
-              // exists. Say that, rather than printing raw keys beside the
-              // answers as though they were the questions.
-              if (rows.length === 0) {
-                return <EmptyHint>No custom field on this Den&rsquo;s KinTale form matches what this recap recorded.</EmptyHint>;
-              }
-              return (
-                <dl className="kintale-detail__who">
-                  {rows.map((row) => (
-                    <div key={row.key} className="kintale-detail__who-row">
-                      <dt>{row.label}</dt>
-                      <dd>{row.value}</dd>
-                    </div>
+              {shareUrl !== null && (
+                <div className="kintale-detail__share-result">
+                  <span className="kintale-detail__label">Share link</span>
+                  {/* Readonly rather than plain text: the url stays selectable and
+                      copyable by hand when the clipboard API is unavailable. */}
+                  <input
+                    className="kintale-detail__share-url"
+                    type="text"
+                    readOnly
+                    value={shareUrl}
+                    aria-label="Share link"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <div className="kintale-detail__share-copy">
+                    <GhostButton label={shareCopied ? 'Copied' : 'Copy link'} onClick={() => void handleCopyShareUrl()} />
+                  </div>
+                </div>
+              )}
+
+              {viewAsKinfolk && (
+                // The kinfolk-facing read of this recap: headline, narrative, photos.
+                // No Edit, no Send, no reaction control, and no admin-only record of
+                // any kind. Dossiers and 411 notes are admin-only, and are neither
+                // read nor rendered anywhere on this screen.
+                <section className="kintale-detail__preview" aria-label="Kinfolk view">
+                  <p className="kintale-detail__preview-eyebrow">KINFOLK VIEW</p>
+                  <h3 className="kintale-detail__preview-headline">{headline}</h3>
+                  <p className="kintale-detail__preview-body">{kinfolkPreviewBody({ bodyCopy })}</p>
+                  {media.status === 'ready' && media.data.length > 0 && (
+                    <ul className="kintale-detail__media-grid">
+                      {media.data.map((item) => (
+                        <li key={item.id} className="kintale-detail__media-tile">
+                          {kinTaleMediaKindOf(item.contentType) === 'image' ? (
+                            <img src={item.url} alt="KinTale attachment" loading="lazy" className="kintale-detail__media-img" />
+                          ) : (
+                            <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
+                              View attachment
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
+            </DenPanel>
+          )}
+
+          <DenPanel title="Reaction">
+            <AsyncRegion state={reaction} what="the reaction" isEmpty={() => false} empty={null}>
+              {(data) => (
+                <div className="kintale-detail__reaction-row">
+                  <PrimaryButton
+                    label={data.loved ? 'Loved' : 'Love this'}
+                    onClick={() => void handleToggleLove()}
+                    disabled={isToggling}
+                    busy={isToggling}
+                  />
+                  <span className="kintale-detail__reaction-summary">{loveSummaryLabel(data.loved, data.loveCount)}</span>
+                </div>
+              )}
+            </AsyncRegion>
+            {reactionError && <Banner tone="error">{reactionError}</Banner>}
+          </DenPanel>
+
+          {/* The mock's "Replies": the thread, then the reply composer under it. */}
+          <DenPanel title="Replies">
+            <AsyncRegion
+              state={comments}
+              what="comments"
+              isEmpty={(data) => data.length === 0}
+              empty={<EmptyHint>No comments yet.</EmptyHint>}
+            >
+              {(data) => (
+                <ul className="kintale-detail__comment-list">
+                  {/* One level of nesting, the depth both other admins render and
+                      the only depth their Reply affordance can create. */}
+                  {buildCommentThread(data).map(({ comment: c, isReply }) => (
+                    <li
+                      key={c.id}
+                      className={`kintale-detail__comment-row${isReply ? ' kintale-detail__comment-row--reply' : ''}`}
+                      data-reply={isReply ? 'true' : 'false'}
+                      data-reply-target={replyTargetId === c.id ? 'true' : 'false'}
+                    >
+                      <span className="kintale-detail__comment-head">
+                        <span className="kintale-detail__comment-author">{commentAuthorLabel(c)}</span>
+                        <time className="kintale-detail__comment-when" dateTime={commentMachineTime(c.createdAtMs)}>
+                          {commentWhen(c.createdAtMs)}
+                        </time>
+                        <span className="kintale-detail__comment-reply">
+                          <GhostButton
+                            label={replyTargetId === c.id ? 'Replying' : 'Reply'}
+                            onClick={() => setReplyTargetId(c.id)}
+                            disabled={isPosting}
+                          />
+                        </span>
+                      </span>
+                      <p className="kintale-detail__comment-body">{c.body}</p>
+                    </li>
                   ))}
-                </dl>
-              );
-            }}
-          </AsyncRegion>
-        </DenPanel>
-      )}
+                </ul>
+              )}
+            </AsyncRegion>
 
-      {mediaCount > 0 && (
-        <DenPanel title="Photos" detail={`${mediaCount} attached.`}>
-          <AsyncRegion
-            state={media}
-            what="photos"
-            isEmpty={(data) => data.length === 0}
-            empty={<EmptyHint>No photos could be resolved for this recap.</EmptyHint>}
-          >
-            {(data) => (
-              <ul className="kintale-detail__media-grid">
-                {data.map((item) => (
-                  <li key={item.id} className="kintale-detail__media-tile">
-                    {kinTaleMediaKindOf(item.contentType) === 'image' ? (
-                      <a href={item.url} target="_blank" rel="noreferrer">
-                        <img
-                          src={item.url}
-                          alt="KinTale attachment"
-                          loading="lazy"
-                          className="kintale-detail__media-img"
-                        />
-                      </a>
-                    ) : (
-                      <a href={item.url} target="_blank" rel="noreferrer" className="kintale-detail__media-link">
-                        View attachment
-                      </a>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </AsyncRegion>
-        </DenPanel>
-      )}
-
-      <DenPanel title="Reaction">
-        <AsyncRegion state={reaction} what="the reaction" isEmpty={() => false} empty={null}>
-          {(data) => (
-            <div className="kintale-detail__reaction-row">
-              <PrimaryButton
-                label={data.loved ? 'Loved' : 'Love this'}
-                onClick={() => void handleToggleLove()}
-                disabled={isToggling}
-                busy={isToggling}
-              />
-              <span className="kintale-detail__reaction-summary">{loveSummaryLabel(data.loved, data.loveCount)}</span>
+            <div className="kintale-detail__add-comment" data-replying-to={replyTargetId ?? ''}>
+              {replyTargetId !== null && (
+                <div className="kintale-detail__reply-target">
+                  <span>{replyTargetLine}</span>
+                  <GhostButton label="Cancel reply" onClick={() => setReplyTargetId(null)} disabled={isPosting} />
+                </div>
+              )}
+              <label className="kintale-detail__field">
+                <span className="kintale-detail__label">{replyTargetId !== null ? 'Your reply' : 'Add a comment'}</span>
+                <textarea
+                  value={commentBody}
+                  onChange={(e) => setCommentBody(e.target.value)}
+                  placeholder="Say something back…"
+                  className="kintale-detail__textarea"
+                  rows={3}
+                  disabled={isPosting}
+                />
+              </label>
+              {commentBanner && <Banner tone={commentBanner.tone}>{commentBanner.text}</Banner>}
+              <div className="kintale-detail__add-comment-actions">
+                <PrimaryButton
+                  label={isPosting ? 'Posting…' : replyTargetId !== null ? 'Post reply' : 'Post comment'}
+                  onClick={() => void handlePostComment()}
+                  disabled={commentBody.trim() === '' || isPosting}
+                  busy={isPosting}
+                />
+              </div>
             </div>
-          )}
-        </AsyncRegion>
-        {reactionError && <Banner tone="error">{reactionError}</Banner>}
-      </DenPanel>
-
-      <DenPanel title="Comments">
-        <AsyncRegion
-          state={comments}
-          what="comments"
-          isEmpty={(data) => data.length === 0}
-          empty={<EmptyHint>No comments yet.</EmptyHint>}
-        >
-          {(data) => (
-            <ul className="kintale-detail__comment-list">
-              {/* One level of nesting, the depth both other admins render and
-                  the only depth their Reply affordance can create. */}
-              {buildCommentThread(data).map(({ comment: c, isReply }) => (
-                <li
-                  key={c.id}
-                  className={`kintale-detail__comment-row${isReply ? ' kintale-detail__comment-row--reply' : ''}`}
-                  data-reply={isReply ? 'true' : 'false'}
-                  data-reply-target={replyTargetId === c.id ? 'true' : 'false'}
-                >
-                  <span className="kintale-detail__comment-head">
-                    <span className="kintale-detail__comment-author">{commentAuthorLabel(c)}</span>
-                    <time className="kintale-detail__comment-when" dateTime={commentMachineTime(c.createdAtMs)}>
-                      {commentWhen(c.createdAtMs)}
-                    </time>
-                    <span className="kintale-detail__comment-reply">
-                      <GhostButton
-                        label={replyTargetId === c.id ? 'Replying' : 'Reply'}
-                        onClick={() => setReplyTargetId(c.id)}
-                        disabled={isPosting}
-                      />
-                    </span>
-                  </span>
-                  <p className="kintale-detail__comment-body">{c.body}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </AsyncRegion>
-
-        <div className="kintale-detail__add-comment" data-replying-to={replyTargetId ?? ''}>
-          {replyTargetId !== null && (
-            <div className="kintale-detail__reply-target">
-              <span>{replyTargetLine}</span>
-              <GhostButton label="Cancel reply" onClick={() => setReplyTargetId(null)} disabled={isPosting} />
-            </div>
-          )}
-          <label className="kintale-detail__field">
-            <span className="kintale-detail__label">{replyTargetId !== null ? 'Your reply' : 'Add a comment'}</span>
-            <textarea
-              value={commentBody}
-              onChange={(e) => setCommentBody(e.target.value)}
-              placeholder="Say something back…"
-              className="kintale-detail__textarea"
-              rows={3}
-              disabled={isPosting}
-            />
-          </label>
-          {commentBanner && <Banner tone={commentBanner.tone}>{commentBanner.text}</Banner>}
-          <div className="kintale-detail__add-comment-actions">
-            <PrimaryButton
-              label={isPosting ? 'Posting…' : replyTargetId !== null ? 'Post reply' : 'Post comment'}
-              onClick={() => void handlePostComment()}
-              disabled={commentBody.trim() === '' || isPosting}
-              busy={isPosting}
-            />
-          </div>
+          </DenPanel>
         </div>
-      </DenPanel>
+
+        {/* The mock's right rail: who it goes to, the visit's own facts, then
+            the delivery receipt on a SENT report. All three are read straight
+            off the report doc, so a blank field says "Not recorded" rather
+            than rendering an empty value that looks like a bug. */}
+        <aside className="kintale-detail__col kintale-detail__rail" aria-label="Who and when">
+          <DenPanel title="Goes to" subtitle="Household, kin, and author of this recap.">
+            <dl className="kintale-detail__who">
+              <div className="kintale-detail__who-row">
+                <dt>Household</dt>
+                <dd>{household}</dd>
+              </div>
+              {authorDisplayName.trim() !== '' && (
+                <div className="kintale-detail__who-row">
+                  <dt>Author</dt>
+                  <dd>{authorDisplayName}</dd>
+                </div>
+              )}
+            </dl>
+            {kinIds.length > 0 ? kinList : <EmptyHint>No kin recorded on this recap.</EmptyHint>}
+          </DenPanel>
+
+          <DenPanel title="Visit" subtitle="The Kin Care this recap belongs to.">
+            <dl className="kintale-detail__who">
+              <div className="kintale-detail__who-row">
+                <dt>Service</dt>
+                <dd>{serviceType.trim() !== '' ? serviceType : 'Not recorded'}</dd>
+              </div>
+              <div className="kintale-detail__who-row">
+                <dt>Visit date</dt>
+                <dd className="kintale-detail__mono">{railWhen(entry.visitDate ?? '')}</dd>
+              </div>
+              <div className="kintale-detail__who-row">
+                <dt>Arrived</dt>
+                <dd className="kintale-detail__mono">{railWhen(entry.arrivedAt ?? '')}</dd>
+              </div>
+              <div className="kintale-detail__who-row">
+                <dt>Session</dt>
+                <dd>
+                  <code>{entry.sessionId}</code>
+                </dd>
+              </div>
+            </dl>
+          </DenPanel>
+
+          {state === 'sent' && (
+            <DenPanel title="Delivery" subtitle="When and how this recap went out.">
+              <dl className="kintale-detail__who">
+                <div className="kintale-detail__who-row">
+                  <dt>Sent at</dt>
+                  <dd className="kintale-detail__mono">{railWhen(entry.sentAt ?? '')}</dd>
+                </div>
+                <div className="kintale-detail__who-row">
+                  <dt>Sent via</dt>
+                  <dd className="kintale-detail__mono">{channel ?? 'Not recorded'}</dd>
+                </div>
+              </dl>
+            </DenPanel>
+          )}
+        </aside>
+      </div>
     </>
   );
 }

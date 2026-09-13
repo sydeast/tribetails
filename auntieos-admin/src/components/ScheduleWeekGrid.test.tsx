@@ -182,6 +182,28 @@ describe('ScheduleWeekGrid', () => {
     expect(busy.closest('button')).toBeNull();
   });
 
+  /**
+   * #755: the mock tints every block by its service type and says where a
+   * busy block came from. The tone rides `data-tone`, the attribute the kit
+   * resolves to `--den-tone`, so the block, the month cell and the legend
+   * swatch all read one mapping.
+   */
+  it('a visit block carries its service tone, and a busy block its start and source', () => {
+    renderGrid(
+      [session({ serviceType: 'House Sit' })],
+      [
+        { _id: 'g', date: '2026-07-16', startTime: '11:00', endTime: '12:00', slotType: 'BLOCKED', source: 'GOOGLE_BUSY_IMPORT' },
+        { _id: 'm', date: '2026-07-16', startTime: '13:00', endTime: '14:00', slotType: 'BLOCKED', source: 'INTERNAL_MANUAL' },
+      ],
+    );
+    expect(block()).toHaveAttribute('data-tone', 'purple');
+    const [mirror, manual] = Array.from(document.querySelectorAll('.schedule-grid__busy')) as [HTMLElement, HTMLElement];
+    expect(mirror).toHaveTextContent('11:00');
+    expect(mirror).toHaveTextContent('From Google Calendar');
+    expect(manual).toHaveTextContent('13:00');
+    expect(manual).not.toHaveTextContent('From Google Calendar');
+  });
+
   it('a visit already being written cannot be grabbed again', () => {
     const byDay = new Map([['2026-07-16', [session()]]]);
     render(

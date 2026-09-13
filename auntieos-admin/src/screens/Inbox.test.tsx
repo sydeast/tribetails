@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ConversationSummary } from '../api/inbox';
 import { type NotificationEntry } from '../api/notifications';
@@ -840,5 +840,140 @@ describe('Inbox channels', () => {
     render(<Inbox />);
     await screen.findByText('Channels');
     expect(screen.getByText('+15559998888')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The #755 sweep, against `ui-ideas/auntieos-inbox-2026-05-27.html`: the
+ * chips carry their glyph and light up as a wash rather than a fill, every row
+ * is a card led by the kit IconTile in the row's tone, the name is followed by
+ * the counterpart, the pips sit under the preview with a glyph each, and the
+ * clock is the mock's "Mon D · HH:mm".
+ */
+describe('Inbox on the glass ground (#755)', () => {
+  const voicemail = (over: Record<string, unknown> = {}) => ({
+    _id: 'vm1',
+    kinfolkName: 'The Alvarez Household',
+    callerNumber: '+15551234567',
+    transcript: 'Can you come Thursday?',
+    audioUrl: 'https://api.twilio.com/rec1',
+    timestamp: '2026-07-20T14:00:00.000Z',
+    replyStatus: 'unread',
+    ...over,
+  });
+
+  it('puts a glyph on every channel chip and lights the active one as a wash, never a solid fill', async () => {
+    listConversations.mockResolvedValue([]);
+    streams();
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    const chips = within(screen.getByRole('tablist', { name: 'Filter channels' })).getAllByRole('tab');
+    expect(chips.map((c) => c.textContent)).toEqual(['All channels', 'Voicemails', 'Calls', 'SMS', 'Emails']);
+    for (const chip of chips) expect(chip.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(chips[0]).toHaveClass('inbox__tab--active');
+    await userEvent.click(chips[2] as HTMLElement);
+    expect(chips[2]).toHaveClass('inbox__tab--active');
+    expect(chips[0]).not.toHaveClass('inbox__tab--active');
+  });
+
+  it('draws each channel row as a card led by the kit tile in the row tone', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      voicemails: ready([voicemail()]),
+      calls_log: ready([
+        {
+          _id: 'c1',
+          kinfolkName: 'Okafor Household',
+          counterpartNumber: '+17375550192',
+          status: 'missed',
+          timestamp: '2026-07-20T13:00:00.000Z',
+        },
+      ]),
+      sms_messages: ready([
+        {
+          _id: 's1',
+          kinfolkName: 'Bell Household',
+          counterpartNumber: '+15125550177',
+          body: 'See you then',
+          direction: 'inbound',
+          timestamp: '2026-07-20T12:00:00.000Z',
+        },
+      ]),
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    const rowOf = (name: string) => screen.getByText(name).closest('.inbox__row') as HTMLElement;
+
+    const vm = rowOf('The Alvarez Household');
+    expect(vm).toHaveClass('inbox__row--card');
+    expect(vm).toHaveAttribute('data-channel', 'voicemail');
+    expect(vm.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'warning');
+
+    const call = rowOf('Okafor Household');
+    expect(call.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'error');
+    expect(within(call).getByText('· +17375550192')).toHaveClass('inbox__row-counterpart');
+
+    const sms = rowOf('Bell Household');
+    expect(sms.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'orange');
+    // No tag text left anywhere: the tile carries the channel now.
+    expect(screen.queryByText('VM')).toBeNull();
+    expect(screen.queryByText('MAIL')).toBeNull();
+  });
+
+  it('shows the pips under the preview with a glyph each, in the mock order, and the mock clock', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({
+      sms_messages: ready([
+        {
+          _id: 's1',
+          kinfolkName: 'Bell Household',
+          counterpartNumber: '+15125550177',
+          body: 'Photo attached',
+          direction: 'inbound',
+          mediaUrls: ['https://x/1.jpg'],
+          timestamp: '2026-07-20T14:00:00.000Z',
+        },
+      ]),
+    });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    const row = screen.getByText('Bell Household').closest('.inbox__row') as HTMLElement;
+    const pips = [...row.querySelectorAll('.inbox__pip')];
+    expect(pips.map((p) => p.textContent)).toEqual(['received', '1 attached']);
+    for (const pip of pips) expect(pip.querySelector('svg')).not.toBeNull();
+    // Under the preview, inside the body column, not beside the time.
+    expect(row.querySelector('.inbox__row-who .inbox__pips')).not.toBeNull();
+    // 14:00Z is 09:00 in America/Chicago (the TZ pinned above).
+    expect(within(row).getByText('Jul 20 · 09:00')).toHaveClass('inbox__row-time');
+  });
+
+  it('skips the counterpart when it is already the name (a caller who matched no household)', async () => {
+    listConversations.mockResolvedValue([]);
+    streams({ voicemails: ready([voicemail({ kinfolkId: null, kinfolkName: '', callerNumber: '+15559998888' })]) });
+    render(<Inbox />);
+    await screen.findByText('Channels');
+    const row = screen.getByText('+15559998888').closest('.inbox__row') as HTMLElement;
+    expect(row.querySelector('.inbox__row-counterpart')).toBeNull();
+  });
+
+  it('gives the thread rows the same card, and the unread one its tint', async () => {
+    listConversations.mockResolvedValue([
+      thread({ kinfolkId: 'k1', kinfolkName: 'Unread Household', unreadForAdmin: true }),
+      thread({ kinfolkId: 'k2', kinfolkName: 'Read Household', unreadForAdmin: false }),
+    ]);
+    render(<Inbox />);
+    const unread = (await screen.findByText('Unread Household')).closest('.inbox__row');
+    const read = screen.getByText('Read Household').closest('.inbox__row');
+    expect(unread).toHaveClass('inbox__row--card', 'inbox__row--unread');
+    expect(read).toHaveClass('inbox__row--card');
+    expect(read).not.toHaveClass('inbox__row--unread');
+  });
+
+  it('explains the screen with the mock sentence, as the heading tooltip', async () => {
+    listConversations.mockResolvedValue([]);
+    render(<Inbox />);
+    expect(
+      screen.getByText('Voicemails, calls, SMS and emails, everywhere kinfolk reach out.', { selector: '[role="tooltip"]' }),
+    ).toBeInTheDocument();
   });
 });

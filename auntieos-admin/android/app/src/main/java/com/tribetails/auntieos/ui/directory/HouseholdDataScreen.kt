@@ -2,28 +2,40 @@ package com.tribetails.auntieos.ui.directory
 
 import com.composables.icons.lucide.*
 import com.composables.icons.lucide.Lucide
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.ui.components.*
-import com.tribetails.auntieos.ui.components.LoadingButton
 import com.tribetails.auntieos.ui.components.LoadingScreen
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
+/**
+ * The household record's edit form, matched to
+ * `ui-ideas/auntieos-household-data-2026-05-27.html` (#755): the kit hero
+ * with the trail and "<Name> Household", three `DenPanel` sections with the
+ * mock's titles, and the mock's footer of Back beside Save. The three orange
+ * uppercase kickers on plain cards were the pre-kit world.
+ *
+ * [onDirectory] is the trail's first step, all the way out to the Directory
+ * list. [onBack] pops ONE entry, to the household profile this was opened
+ * from, which is the trail's second step, so the first needs its own way
+ * past that. Defaults to [onBack] so a caller with no deeper stack still gets
+ * a step that does something.
+ */
 @Composable
 fun HouseholdDataScreen(
     kinfolkId: String,
     kinfolkName: String,
     viewModel: HouseholdDataViewModel = viewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onDirectory: () -> Unit = onBack,
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -51,6 +63,22 @@ fun HouseholdDataScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(vertical = 16.dp)
             ) {
+                item {
+                    DenScreenHeading(
+                        // The trail takes the kicker's place on a nested
+                        // screen. Android's Directory tab is already labelled
+                        // "Kinfolk", so the mock's separate Kinfolk step would
+                        // name a screen that does not exist here.
+                        kicker = "The Den · Directory",
+                        crumbs = listOf(
+                            DenCrumb("Directory", onDirectory),
+                            DenCrumb(kinfolkName, onBack),
+                            DenCrumb("Household"),
+                        ),
+                        title = "$kinfolkName Household",
+                        subtitle = "The shared record behind this household: vet, supplies and routines, for every pet in the home.",
+                    )
+                }
                 // Phase 2: read-only dossier notes shown as a fill-in reference when present.
                 if (state.dossierNotes.isNotBlank()) {
                     item { DossierReferenceCard(state.dossierNotes) }
@@ -71,30 +99,41 @@ fun HouseholdDataScreen(
                 // where the emergency-contact half is headed next; do not delete these
                 // fields off the model when you don't see a card using them here.
 
-                // Error Message
+                // Fail loud, in the kit's banner. The view model's message
+                // already says which it was ("Failed to load household data:"
+                // or "Failed to save household data:"), so the banner carries
+                // no title of its own that could contradict it.
                 if (state.error != null) {
                     item {
-                        AuntieCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            containerColor = AuntieTheme.colors.errorContainer,
-                            border = null,
-                        ) {
+                        AuntieBanner(tone = AuntieBannerTone.Error) {
                             Text(
                                 text = state.error!!,
-                                modifier = Modifier.padding(16.dp),
-                                color = AuntieTheme.colors.error
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.textPrimary,
                             )
                         }
                     }
                 }
 
+                // The mock's footer: Back and Save side by side, equal widths.
                 item {
-                    LoadingButton(
-                        onClick   = viewModel::saveHouseholdData,
-                        text      = "Save Household Data",
-                        isLoading = state.isSaving,
-                        modifier  = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        GhostButton(
+                            label = "Back",
+                            onClick = onBack,
+                            modifier = Modifier.weight(1f),
+                        )
+                        PrimaryButton(
+                            label = "Save Household Data",
+                            onClick = viewModel::saveHouseholdData,
+                            loading = state.isSaving,
+                            enabled = !state.isSaving,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
@@ -109,22 +148,27 @@ fun HouseholdDataScreen(
 private fun fieldLabel(base: String, value: String): String =
     if (value.isBlank()) "$base · empty" else base
 
-/** Phase 2: read-only dossier notes shown as a fill-in reference above the editor fields. */
+/**
+ * Phase 2: read-only dossier notes shown as a fill-in reference above the
+ * editor fields. "admin only" is a statement about the panel, so it is the
+ * mock's right-aligned mono note; the sentence that used to sit under the
+ * title is the explanation, so it is the info button's tooltip (#758).
+ */
 @Composable
 private fun DossierReferenceCard(notes: String) {
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("FROM DOSSIER (REFERENCE)", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.kinfolkOrange)
+    DenPanel(
+        title = "From the dossier",
+        subtitle = "Loose notes written before this record existed. Copy what belongs into the fields below, then clear it on the profile; the dossier keeps its own copy either way.",
+        trailing = {
             Text(
-                "Admin only / internal. Copy details into the fields below, then clear it on the profile.",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.textDim
+                "admin only",
+                style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
+                color = AuntieTheme.colors.textDim,
             )
-            Text(notes, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
-        }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(notes, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
     }
 }
 
@@ -152,20 +196,13 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
     val vet = state.vet
     val leftovers = legacyVetLeftovers(state.householdData)
     var confirmingClear by remember { mutableStateOf(false) }
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "VETERINARY INFORMATION",
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.kinfolkOrange,
-                    modifier = Modifier.weight(1f),
-                )
-                GhostButton(label = "Edit on the profile", onClick = onOpenProfile)
-            }
+    DenPanel(
+        title = "Veterinary Information",
+        subtitle = "Who to call, and who to call at 2am. Chosen from the shared vet bank on the household profile.",
+        trailing = { GhostButton(label = "Edit on the profile", onClick = onOpenProfile) },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when {
                 // Fail loud: an unreadable vet must not look like a household
                 // that simply has not chosen one.
@@ -301,17 +338,12 @@ private fun HouseholdItemsCard(viewModel: HouseholdDataViewModel) {
     val state by viewModel.uiState.collectAsState()
     val data = state.householdData
 
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "HOUSEHOLD ITEMS & LOCATIONS",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange
-            )
-
+    DenPanel(
+        title = "Household Items & Locations",
+        subtitle = "Where everything lives, so nobody has to open every cupboard.",
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AuntieField(
                     value = data.foodLocation,
@@ -372,17 +404,12 @@ private fun RoutinesCard(viewModel: HouseholdDataViewModel) {
     val state by viewModel.uiState.collectAsState()
     val data = state.householdData
 
-    AuntieCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "ROUTINES & PREFERENCES",
-                style = AuntieTheme.typography.labelSmall,
-                color = AuntieTheme.colors.kinfolkOrange
-            )
-
+    DenPanel(
+        title = "Routines & Preferences",
+        subtitle = "How this household runs when Auntie is the one running it.",
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(
                 value = data.householdRules,
                 onValueChange = viewModel::updateHouseholdRules,

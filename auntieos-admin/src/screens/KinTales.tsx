@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { kinTaleMatchesSearch, kinTalesPageQuery, type KinTaleEntry } from '../api/kinTales';
 import {
   GENERATED_DRAFTS_QUERY,
@@ -7,7 +8,6 @@ import {
 } from '../api/drafts';
 import { KINFOLK_QUERY, kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import {
-  kinTaleHeadline,
   kinTaleHousehold,
   kinTaleState,
   kinTaleStateInfo,
@@ -20,9 +20,14 @@ import { type Async } from '../lib/async';
 import { createdAtProvenanceNote } from '../lib/createdAtProvenance';
 import { useCollection } from '../lib/firestore';
 import { usePagedCollection } from '../lib/usePagedCollection';
-import { asyncScalar } from '../lib/async';
-import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading, DenPanel, StatCard, ServicePill, EmptyHint } from '../components/DenScreenKit';
+import {
+  DenScreenHeading,
+  DenPanel,
+  StatusPill,
+  EmptyHint,
+  type DenTone,
+} from '../components/DenScreenKit';
+import { IconTile } from '../components/IconTile';
 import {
   ListToolbar,
   DATE_RANGE_PRESETS,
@@ -31,39 +36,77 @@ import {
   type DateRangeKey,
 } from '../components/ListToolbar';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { GhostButton } from '../components/Buttons';
 import { NeedsTriageSection } from '../components/NeedsTriageSection';
 import './KinTales.css';
 
-function PlusGlyph() {
+// The logs mock (`ui-ideas/auntieos-kintale-logs-2026-05-27.html`) puts a
+// Lucide line icon on the heading tile, on every row's status tile and on every
+// meta pip. No icon package is installed here (the Inbox.tsx / NavGlyphs.tsx
+// precedent), so the paths are inline: 24-unit viewBox, `currentColor` stroke,
+// `aria-hidden`. Keyed by the Lucide name the mock's comments use.
+type GlyphKey = 'clipboardList' | 'settings' | 'mailCheck' | 'triangleAlert' | 'fileText' | 'image' | 'send';
+
+const GLYPH_PATHS: Record<GlyphKey, string> = {
+  clipboardList:
+    'M8 2h8v4H8zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M12 11h4M12 16h4M8 11h.01M8 16h.01',
+  settings:
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
+  mailCheck:
+    'M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8M22 7l-10 5L2 7M16 19l2 2 4-4',
+  triangleAlert:
+    'm10.29 3.86-8.18 14A2 2 0 0 0 3.84 21h16.32a2 2 0 0 0 1.73-3.14l-8.18-14a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01',
+  fileText: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
+  image: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm6 6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm10 6-5-5L5 21',
+  send: 'm22 2-7 20-4-9-9-4ZM22 2 11 13',
+};
+
+function Glyph({ name, size = 14 }: { name: GlyphKey; size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-      <path d="M12 5v14M5 12h14" />
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={GLYPH_PATHS[name]} />
     </svg>
   );
 }
 
 /**
- * The Den filter tabs. Every predicate is a POSITIVE membership test against
- * the enumerated `KinTaleState` (the Sessions/Invoices `FILTERS` / AO-12
- * convention), never a negation of another bucket. A row whose status
- * matches none of the three known codes (`'unknown'`) still shows under
- * "All"; it simply has no dedicated tab of its own, same as Sessions' own
- * `'unknown'` state.
+ * The mock's bucket groups, in the order it draws them: "Needs another look"
+ * (failed), "Drafts", "Sent". Every predicate is a POSITIVE membership test
+ * against the enumerated `KinTaleState` (the Sessions/Invoices `FILTERS` /
+ * AO-12 convention), never a negation of another bucket. A row whose status
+ * matches none of the three known codes (`'unknown'`) has no bucket in the
+ * mock, and folding it into Drafts by negation is exactly the fabricated-state
+ * bug AO-12 names, so it gets a fourth group, last, and is never hidden.
+ *
+ * Each bucket also carries the row's tone and status glyph: the mock tints the
+ * status tile and the pill from one swatch per state, and this is the one place
+ * that swatch is named.
  */
-type FilterKey = 'all' | 'draft' | 'sent' | 'failed';
+type BucketKey = 'failed' | 'draft' | 'sent' | 'unknown';
 
-interface FilterDef {
-  key: FilterKey;
+interface BucketDef {
+  key: BucketKey;
   label: string;
   test: (state: KinTaleState) => boolean;
+  tone: DenTone;
+  glyph: GlyphKey;
 }
 
-const FILTERS: readonly FilterDef[] = [
-  { key: 'all', label: 'All', test: () => true },
-  { key: 'draft', label: 'Drafts', test: (s) => s === 'draft' },
-  { key: 'sent', label: 'Sent', test: (s) => s === 'sent' },
-  { key: 'failed', label: 'Failed', test: (s) => s === 'failed' },
+const BUCKETS: readonly BucketDef[] = [
+  { key: 'failed', label: 'Needs another look', test: (s) => s === 'failed', tone: 'error', glyph: 'triangleAlert' },
+  { key: 'draft', label: 'Drafts', test: (s) => s === 'draft', tone: 'neutral', glyph: 'fileText' },
+  { key: 'sent', label: 'Sent', test: (s) => s === 'sent', tone: 'success', glyph: 'mailCheck' },
+  { key: 'unknown', label: 'Unknown status', test: (s) => s === 'unknown', tone: 'warning', glyph: 'fileText' },
 ];
 
 /**
@@ -89,15 +132,6 @@ interface KinTalesProps {
    * detail route wires the handler.
    */
   onSelect?: (kinTaleId: string) => void;
-  /**
-   * Opens the compose/create surface (`KinTaleCompose.tsx`). This screen exists
-   * and is wired by `routes/KinTalesView.tsx`. Called with no arguments to start
-   * a brand-new KinTale; the compose screen then asks which Kin Care session it
-   * belongs to. The handler is optional here so the component stays reusable when
-   * composition is not yet hooked up. Same "omit -> static, never a live no-op"
-   * rule as `onSelect`: see the trailing button below.
-   */
-  onNew?: () => void;
 }
 
 /**
@@ -159,8 +193,7 @@ interface KinTalesProps {
  * list's date-windowed, 25-per-page query is the wrong source for them (see
  * `NeedsTriageSection.tsx`'s own header for why).
  */
-export function KinTales({ onSelect, onNew }: KinTalesProps) {
-  const [filter, setFilter] = useState<FilterKey>('all');
+export function KinTales({ onSelect }: KinTalesProps) {
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<DateRangeKey>(DEFAULT_DATE_RANGE);
   const [kinfolkId, setKinfolkId] = useState('');
@@ -205,42 +238,13 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
     [households],
   );
 
-  // Roving-tabindex keyboard nav for the filter tablist below (Left/Right,
-  // Home/End, roving tabIndex); called unconditionally at the top level per
-  // the Rules of Hooks, since the tabs themselves render inside AsyncRegion's
-  // conditionally-invoked render prop.
-  const { getTabProps } = useRovingTabs({
-    count: FILTERS.length,
-    activeIndex: FILTERS.findIndex((f) => f.key === filter),
-  });
-
-  const sentCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status ?? '') === 'sent').length,
-  );
-  const draftCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status ?? '') === 'draft').length,
-  );
-  const failedCount = asyncScalar(rows, (data) =>
-    data.filter((e) => kinTaleState(e.status ?? '') === 'failed').length,
-  );
-
-  // Non-null: FILTERS lists all four FilterKey members above, and `filter` only
-  // ever holds a key set via setFilter(f.key) from that same array (Sessions.tsx's
-  // identical .find()! comment).
-  const activeFilter = FILTERS.find((f) => f.key === filter)!;
-
   // The rows the list is actually showing, computed ONCE here rather than inside
-  // the AsyncRegion render prop, because the count chip on the panel header and
-  // the <ul> below have to be two views of one number. Null, never zero, while
-  // the first page is in flight or has failed.
+  // the AsyncRegion render prop, because the count chip beside the toolbar and
+  // the buckets below have to be two views of one number. Null, never zero,
+  // while the first page is in flight or has failed.
   const visible = useMemo(
-    () =>
-      rows.status === 'ready'
-        ? rows.data
-            .filter((e) => activeFilter.test(kinTaleState(e.status ?? '')))
-            .filter((e) => kinTaleMatchesSearch(e, search))
-        : null,
-    [rows, activeFilter, search],
+    () => (rows.status === 'ready' ? rows.data.filter((e) => kinTaleMatchesSearch(e, search)) : null),
+    [rows, search],
   );
 
   const windowLabel = rangeLabel(range);
@@ -270,9 +274,9 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
   // and an honest one: the denominator is known.
   //
   // The two forms are chosen by whether anything was actually excluded, not by
-  // whether a control is set, so a search that happens to match every loaded row
-  // reads as the plain count rather than as the noise "2 of 2". Android's
-  // `resultCountLabel` decides it the same way, off the same rule.
+  // whether the box has text in it, so a search that happens to match every
+  // loaded row reads as the plain count rather than as the noise "2 of 2".
+  // Android's `resultCountLabel` decides it the same way, off the same rule.
   const countLabel =
     loaded === null || visible === null
       ? null
@@ -299,76 +303,39 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           : '';
 
   return (
-    <div className="screen">
+    <div className="screen kintales">
       {/* d1 / d2 / d3: the Den entrance stagger (styles/base.css). Three blocks
-          in reading order, which is the shape the mocks were drawn around. */}
+          in reading order, which is the shape the mock is drawn in: the head,
+          the search row, then the triage queue and the buckets. */}
       <div className="d1">
         <DenScreenHeading
           kicker="The Den · KinTales"
-          title="Every recap that goes"
-          accentTail="home."
-          subtitle="Every KinTale a Kinfolk receives after care, and every draft still waiting to go. Newest first."
+          title="KinTales"
+          subtitle="Every recap that goes home to a Kinfolk after care, and every draft still waiting to go. Newest first."
+          // The mock's `.head .ico`: the ClipboardList tile in the orange wash,
+          // 42px, before the title block.
+          leading={<IconTile icon={<Glyph name="clipboardList" size={20} />} size={42} tone="orange" />}
+          // The mock's one head control. There is no "New KinTale" here: a
+          // KinTale is only ever started from a Kin Care (operator ruling
+          // 2026-09-10, #676: "KinTales can only be created from KinCares"),
+          // which is Auntie Time's "Complete KinTale" (#703). The mock never
+          // drew one either.
           trailing={
-            <PrimaryButton label="New KinTale" {...(onNew ? { onClick: () => onNew() } : {})} leading={<PlusGlyph />} />
+            <Link to="/kintale-templates" className="auntie-btn auntie-btn--ghost">
+              <span className="auntie-btn__leading" aria-hidden="true">
+                <Glyph name="settings" />
+              </span>
+              <span className="auntie-btn__label">Edit templates</span>
+            </Link>
           }
         />
-        {/* REPORTS ONLY, never the joined list. This section triages orphaned
-            `kin_care_reports` migration rows through callables keyed on that
-            collection's document ids; handing it a `generated_drafts` row would
-            offer an Assign/Archive action against a document those callables
-            cannot address. */}
-        <NeedsTriageSection
-          kinfolk={households}
-          candidateReports={reports.status === 'ready' ? reports.data : []}
-        />
       </div>
 
-      <div className="d2">
-        <div className="kintales__summary">
-          <StatCard label="Sent" value={sentCount} trend="delivered to a Kinfolk" tone="success" />
-          <StatCard label="Drafts" value={draftCount} trend="not yet sent" tone="teal" />
-          <StatCard
-            label="Needs another look"
-            value={failedCount}
-            trend="failed to send"
-            tone={failedCount.kind === 'value' && failedCount.value > 0 ? 'error' : 'muted'}
-            feature={failedCount.kind === 'value' && failedCount.value > 0}
-          />
-        </div>
-
-        {/* What the three numbers above actually count. They are a fact about the
-            rows that have been LOADED, which is the whole window only once the
-            cursor is exhausted, so the line reads off `hasMore` rather than
-            guessing from the page size. */}
-        {loaded !== null && (
-          <p className="kintales__stats-note">
-            {hasMore
-              ? `These counts cover the ${String(loaded)} KinTale${plural} loaded so far, not all of ${windowLabel}.`
-              : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`}
-          </p>
-        )}
-
-        {draftsNote !== '' && (
-          <p className="kintales__stats-note" {...(drafts.status === 'error' ? { role: 'alert' } : {})}>
-            {draftsNote}
-          </p>
-        )}
-      </div>
-
-      <DenPanel
-        title="KinTales"
-        subtitle="Newest first. Sent recaps arrive a page at a time; drafts sit alongside them."
-        className="d3"
-        {...(countLabel !== null
-          ? {
-              trailing: (
-                <span className="kintales__count" role="status">
-                  {countLabel}
-                </span>
-              ),
-            }
-          : {})}
-      >
+      {/* The mock's search row sits on the ground under the head, with the
+          result chip beside it. The range and household controls ride along:
+          the list is a date window, and the chip's "loaded" is only honest
+          beside the control that chose the window. */}
+      <div className="d2 kintales__toolbar">
         <ListToolbar
           label="Filter KinTales"
           search={search}
@@ -387,6 +354,11 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           ]}
           note={
             <>
+              {countLabel !== null && (
+                <span className="kintales__count" role="status">
+                  {countLabel}
+                </span>
+              )}
               {scopeNote}
               {/* A facet whose options failed to load is a control that silently
                   offers nothing. Say so beside it rather than rendering an
@@ -401,6 +373,36 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
           }
         />
 
+        {/* What the bucket counts below actually count. They are a fact about the
+            rows that have been LOADED, which is the whole window only once the
+            cursor is exhausted, so the line reads off `hasMore` rather than
+            guessing from the page size. */}
+        {loaded !== null && (
+          <p className="kintales__stats-note">
+            {hasMore
+              ? `These counts cover the ${String(loaded)} KinTale${plural} loaded so far, not all of ${windowLabel}.`
+              : `These counts cover ${everyOne} KinTale${plural} in ${windowLabel}.`}
+          </p>
+        )}
+
+        {draftsNote !== '' && (
+          <p className="kintales__stats-note" {...(drafts.status === 'error' ? { role: 'alert' } : {})}>
+            {draftsNote}
+          </p>
+        )}
+      </div>
+
+      <div className="d3 kintales__body">
+        {/* REPORTS ONLY, never the joined list. This section triages orphaned
+            `kin_care_reports` migration rows through callables keyed on that
+            collection's document ids; handing it a `generated_drafts` row would
+            offer an Assign/Archive action against a document those callables
+            cannot address. */}
+        <NeedsTriageSection
+          kinfolk={households}
+          candidateReports={reports.status === 'ready' ? reports.data : []}
+        />
+
         <AsyncRegion
           state={rows}
           what="KinTales"
@@ -410,7 +412,7 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
         >
           {(data) => {
             // Computed at the top of the screen, off this same `rows` state, so
-            // the header chip and this list are one number. This branch only
+            // the count chip and these buckets are one number. This branch only
             // runs while that state is ready, which is exactly when it is
             // non-null; the fallback keeps that a type fact rather than a
             // belief.
@@ -418,34 +420,36 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
 
             return (
               <>
-                <div className="kintales__tabs" role="tablist" aria-label="Filter KinTales">
-                  {FILTERS.map((f, index) => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={filter === f.key}
-                      className={filter === f.key ? 'kintales__tab kintales__tab--active' : 'kintales__tab'}
-                      onClick={() => setFilter(f.key)}
-                      {...getTabProps(index)}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-
                 {shown.length === 0 ? (
                   <EmptyHint>
-                    {`Nothing in the loaded KinTales matches this filter.${
+                    {`Nothing in the loaded KinTales matches this search.${
                       hasMore ? ' Load more to reach further back.' : ''
                     }`}
                   </EmptyHint>
                 ) : (
-                  <ul className="kintales__list">
-                    {shown.map((entry) => (
-                      <KinTaleRow key={entry._id} entry={entry} onSelect={onSelect} />
-                    ))}
-                  </ul>
+                  // The mock's three bucket groups, in its order, each a panel
+                  // headed by the bucket label with the count as the mono note
+                  // on the rule. A bucket with nothing in it is not drawn: an
+                  // empty "Needs another look" panel would read as a warning
+                  // about nothing.
+                  BUCKETS.map((bucket) => {
+                    const members = shown.filter((e) => bucket.test(kinTaleState(e.status ?? '')));
+                    if (members.length === 0) return null;
+                    return (
+                      <DenPanel
+                        key={bucket.key}
+                        title={bucket.label}
+                        meta={String(members.length)}
+                        className="kintales__bucket"
+                      >
+                        <ul className="kintales__list" aria-label={bucket.label}>
+                          {members.map((entry) => (
+                            <KinTaleRow key={entry._id} entry={entry} bucket={bucket} onSelect={onSelect} />
+                          ))}
+                        </ul>
+                      </DenPanel>
+                    );
+                  })
                 )}
 
                 {/* A FAILED PAGE IS NOT A FAILED LIST. The rows above stayed
@@ -477,21 +481,29 @@ export function KinTales({ onSelect, onNew }: KinTalesProps) {
             );
           }}
         </AsyncRegion>
-      </DenPanel>
+      </div>
     </div>
   );
 }
 
 interface KinTaleRowProps {
   entry: KinTaleListRow;
+  bucket: BucketDef;
   onSelect?: ((kinTaleId: string) => void) | undefined;
 }
 
-function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
+/**
+ * The mock's `.row`: a 36px status tile in the bucket's tone, then the
+ * household in Fraunces, the "service · when" line under it, then the mono
+ * pips, and the status pill at the right edge. No headline line: the mock's
+ * row carries none and neither does Android's, so the tale's title is read on
+ * the detail screen rather than guessed from a clamp here.
+ */
+function KinTaleRow({ entry, bucket, onSelect }: KinTaleRowProps) {
   const state = kinTaleState(entry.status ?? '');
   const info = kinTaleStateInfo(state);
-  const household = kinTaleHousehold(entry.kinfolkName ?? '');
-  const headline = kinTaleHeadline(entry.title ?? '', entry.bodyCopy ?? '');
+  const rawName = (entry.kinfolkName ?? '').trim();
+  const household = kinTaleHousehold(rawName);
   const when = kinTaleWhen({
     visitDate: entry.visitDate ?? '',
     arrivedAt: entry.arrivedAt ?? '',
@@ -505,8 +517,8 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
   const mediaCount = (entry.mediaFileIds ?? []).length;
   const kinCount = (entry.kinIds ?? []).length;
   const sentVia = entry.sentVia ?? '';
-  const serviceType = entry.serviceType ?? '';
-  const authorDisplayName = entry.authorDisplayName ?? '';
+  const serviceType = (entry.serviceType ?? '').trim();
+  const authorDisplayName = (entry.authorDisplayName ?? '').trim();
   // Only a SENT (or otherwise dispatched) row carries a real channel; a
   // draft's blank sentVia would otherwise read as the misleading "imported"
   // sentViaLabel default (see lib/kinTaleFormat.ts#sentViaLabel's doc comment).
@@ -526,31 +538,44 @@ function KinTaleRow({ entry, onSelect }: KinTaleRowProps) {
 
   const body = (
     <>
-      <span className="kintales__row-head">
-        <span className="kintales__row-name">{household}</span>
-        {serviceType.trim() !== '' ? <ServicePill serviceType={serviceType} /> : null}
-        <span className={`kintales__chip kintales__chip--${info.cssClass}`}>{info.chipLabel}</span>
+      <IconTile icon={<Glyph name={bucket.glyph} size={16} />} size={36} tone={bucket.tone} className="kintales__tile" />
+      <span className="kintales__row-text">
+        {/* The mock's `.nm.unnamed`: the fallback reads italic and dim, so a
+            blank household never passes for a household called that. */}
+        <span className={rawName === '' ? 'kintales__row-name kintales__row-name--unnamed' : 'kintales__row-name'}>
+          {household}
+        </span>
+        <span className="kintales__row-submeta">
+          {serviceType !== '' && (
+            <>
+              <span>{serviceType}</span>
+              <span className="kintales__dot" aria-hidden="true">
+                ·
+              </span>
+            </>
+          )}
+          <span className="kintales__row-when">{when}</span>
+        </span>
+        <span className="kintales__row-pips">
+          {kinCount > 0 ? <span className="kintales__row-pip">{kinCount} kin</span> : null}
+          {mediaCount > 0 ? (
+            <span className="kintales__row-pip">
+              <Glyph name="image" size={11} /> {mediaCount} photo{mediaCount === 1 ? '' : 's'}
+            </span>
+          ) : null}
+          {channel ? (
+            <span className="kintales__row-pip">
+              <Glyph name="send" size={11} /> {channel}
+            </span>
+          ) : null}
+          {authorDisplayName !== '' ? <span className="kintales__row-pip">by {authorDisplayName}</span> : null}
+          {draftType !== '' ? <span className="kintales__row-pip">{draftType}</span> : null}
+          {provenanceNote !== '' ? (
+            <span className="kintales__row-pip kintales__row-pip--provenance">{provenanceNote}</span>
+          ) : null}
+        </span>
       </span>
-
-      <span className="kintales__row-headline">{headline}</span>
-
-      <span className="kintales__row-meta">
-        <span className="kintales__row-when">{when}</span>
-        {authorDisplayName.trim() !== '' ? (
-          <span className="kintales__row-author">by {authorDisplayName}</span>
-        ) : null}
-        {kinCount > 0 ? <span className="kintales__row-pip">{kinCount} kin</span> : null}
-        {mediaCount > 0 ? (
-          <span className="kintales__row-pip">
-            {mediaCount} photo{mediaCount === 1 ? '' : 's'}
-          </span>
-        ) : null}
-        {channel ? <span className="kintales__row-pip">{channel}</span> : null}
-        {draftType !== '' ? <span className="kintales__row-pip">{draftType}</span> : null}
-        {provenanceNote !== '' ? (
-          <span className="kintales__row-pip kintales__row-pip--provenance">{provenanceNote}</span>
-        ) : null}
-      </span>
+      <StatusPill label={info.chipLabel} tone={bucket.tone} size="compact" />
     </>
   );
 

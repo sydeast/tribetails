@@ -240,6 +240,93 @@ describe('Directory screen, Kinfolk tab', () => {
   });
 });
 
+describe('Directory screen, the mock on the glass ground (#755)', () => {
+  it('draws the tab count in its own mono span, so the tab still reads "Kinfolk"', () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({}), kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' })] };
+    kinAsync = { status: 'ready', data: [kinRow({})] };
+    render(<Directory />);
+    const kinfolkTab = screen.getByRole('tab', { name: /^kinfolk/i });
+    const count = kinfolkTab.querySelector('.directory__tab-count');
+    expect(count).not.toBeNull();
+    expect(count?.textContent).toBe('2');
+    expect(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }).querySelector('.directory__tab-count')?.textContent).toBe('1');
+  });
+
+  it('never fabricates a tab count while its stream is still loading', () => {
+    kinfolkAsync = { status: 'loading' };
+    kinAsync = { status: 'loading' };
+    render(<Directory />);
+    expect(document.querySelector('.directory__tab-count')).toBeNull();
+  });
+
+  it('leaves an active household unbadged, and badges the exception in the kit pill', () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({}),
+        kinfolkRow({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams', status: 'archived' }),
+      ],
+    };
+    render(<Directory />);
+    const active = screen.getByRole('button', { name: /Jamie Halbrook/i });
+    expect(active.querySelector('.directory__badge')).toBeNull();
+    const archived = screen.getByRole('button', { name: /Amy Adams/i });
+    const badge = archived.querySelector('.directory__badge .den-statuspill');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('archived');
+    expect(badge?.getAttribute('data-tone')).toBe('warning');
+    // At the kit's compact size (#780): the mock's `.badge` is 9.5px, and the
+    // default capsule sat larger in the corner than the mock draws it.
+    expect(badge?.classList.contains('den-statuspill--compact')).toBe(true);
+    // The screen-local pill is gone; the kit's is the only one on the card.
+    expect(document.querySelector('.directory__status-pill')).toBeNull();
+  });
+
+  it('leads each kin chip with the pet\'s own photo when it has one', () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
+    kinAsync = {
+      status: 'ready',
+      data: [
+        kinRow({ profilePictureUrl: 'https://res.cloudinary.com/x/biscuit.jpg' }),
+        kinRow({ _id: 'k2', name: 'Gravy' }),
+      ],
+    };
+    render(<Directory />);
+    const chips = document.querySelectorAll('.directory__pet-chip');
+    expect(chips).toHaveLength(2);
+    expect(within(chips[0] as HTMLElement).getByRole('img', { name: 'Biscuit' }).tagName).toBe('IMG');
+    // No photo: the paw glyph on the gradient, under the same accessible name.
+    expect(within(chips[1] as HTMLElement).getByRole('img', { name: 'Gravy' }).tagName).toBe('SPAN');
+  });
+
+  it('puts the phone and mail glyphs beside the contact lines, and the search glyph in its box', () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
+    render(<Directory />);
+    const card = screen.getByRole('button', { name: /Jamie Halbrook/i });
+    const items = card.querySelectorAll('.directory__card-contact-item');
+    expect(items).toHaveLength(2);
+    expect(items[0]?.querySelector('svg')).not.toBeNull();
+    expect(items[0]?.textContent).toBe('(512) 555-1234');
+    expect(items[1]?.querySelector('svg')).not.toBeNull();
+    expect(items[1]?.textContent).toBe('jamie@example.com');
+    const search = screen.getByRole('searchbox').closest('.directory__search');
+    expect(search?.querySelector('.directory__search-glyph svg')).not.toBeNull();
+  });
+
+  it('renders the proven-empty state as the kit hint, not a screen-local one', () => {
+    render(<Directory />);
+    expect(screen.getByText(/no kinfolk on file yet/i).className).toBe('den-hint');
+    expect(document.querySelector('.directory__hint')).toBeNull();
+  });
+
+  it('renders the no-match state as the kit hint too', async () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({})] };
+    render(<Directory />);
+    await userEvent.type(screen.getByRole('searchbox'), 'zzz');
+    expect(screen.getByText('No matches for "zzz".').className).toBe('den-hint');
+  });
+});
+
 describe('Directory screen, Kin tab', () => {
   async function openKinTab() {
     await userEvent.click(screen.getByRole('tab', { name: /^kin(\s|·|$)/i }));

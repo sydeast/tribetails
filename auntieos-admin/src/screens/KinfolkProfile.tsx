@@ -9,7 +9,7 @@ import { directionsHref } from '../lib/directions';
 import { formatJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { useHistoryBack } from '../lib/useHistoryBack';
-import { DenBreadcrumbs, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { DenPanel, DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { HouseholdVetPanels } from '../components/HouseholdVetPanels';
 import { AuntieNotesPanel } from '../components/AuntieNotesPanel';
@@ -249,7 +249,14 @@ export function KinfolkProfile({
   }
   if (view === 'household') {
     return (
-      <HouseholdData kinfolkId={kinfolkId} kinfolkName={kinfolkName} onBack={() => setView('profile')} />
+      <HouseholdData
+        kinfolkId={kinfolkId}
+        kinfolkName={kinfolkName}
+        onBack={() => setView('profile')}
+        // The trail's Kinfolk step is this profile's own Back: the list's
+        // kinfolk tab.
+        onKinfolkList={onBack}
+      />
     );
   }
   // B1, members and invites, used to be a fourth sub-view here. It is now
@@ -264,22 +271,6 @@ export function KinfolkProfile({
   return (
     <div className="screen">
       {/*
-        Directory is a real anchor: this profile only ever mounts under
-        `/directory/{id}`, so `/directory` is somewhere else and the step can be
-        middle-clicked and copied like any link. "Kinfolk" is the LIST'S OWN
-        kinfolk tab, a sibling view rather than a second route, so it is the
-        button `DenBreadcrumbs` renders for exactly that case. The mock's trail
-        is these three steps.
-      */}
-      <DenBreadcrumbs
-        crumbs={[
-          { label: 'Directory', link: linkOptions({ to: '/directory' }) },
-          { label: 'Kinfolk', onSelect: onBack },
-          { label: heroName },
-        ]}
-      />
-
-      {/*
         The mock's hero, and the reason the old "Household" panel is gone: this
         screen used to print the household's name in the page heading and then
         print it again, with the avatar, in the first panel below it. One
@@ -289,83 +280,110 @@ export function KinfolkProfile({
         It sits OUTSIDE the AsyncRegion on purpose. The Directory hands the name
         down, so the hero can name the household before the doc lands, and Back
         stays reachable while the read is in flight or failing.
+
+        It IS the kit's `DenScreenHeading` (#780): the band, the trail, the
+        title, and since #780 the avatar (`leading`), the joined line
+        (`detail`) and the row of pills (`badges`) are all the band's own
+        slots, so this screen composes nothing of its own around it. The trail
+        rides inside the band, where the kin detail's already does.
+
+        Directory is a real anchor: this profile only ever mounts under
+        `/directory/{id}`, so `/directory` is somewhere else and the step can be
+        middle-clicked and copied like any link. "Kinfolk" is the LIST'S OWN
+        kinfolk tab, a sibling view rather than a second route, so it is the
+        button `DenBreadcrumbs` renders for exactly that case. The mock's trail
+        is these three steps.
       */}
-      <header className="kprofile__hero">
-        <Avatar
-          label={heroName}
-          {...(loaded !== null ? { imageUrl: loaded.profilePictureUrl } : {})}
-          initials={initialsOf(heroName)}
-          size={72}
-          shape="rounded"
-          gradientSeed={kinfolkId}
-        />
-        <div className="kprofile__hero-text">
-          <h1 className="kprofile__hero-name">{heroName}</h1>
-          {loaded !== null && loaded.joinDate.trim() !== '' && (
-            /*
-              Read in the operator's locale, not in storage's. A legacy value
-              `formatJoinDate` cannot read prints exactly as stored, which is
-              honest, and is why this never renders "Invalid Date".
-            */
-            <p className="kprofile__hero-where">Joined {formatJoinDate(loaded.joinDate)}</p>
-          )}
-          <div className="kprofile__chips">
-            {loaded !== null && (
-              <span className="kprofile__chip" data-tone={loaded.status.toLowerCase()}>
-                {loaded.status.trim() === '' ? 'no status' : loaded.status.toLowerCase()}
-              </span>
-            )}
-            {/* Tenure, from the join date. Absent when the stored date is one
-                nobody can read, rather than a fabricated "0 months". */}
-            {tenure !== null && <span className="kprofile__chip kprofile__chip--tenure">{tenure}</span>}
-            {/* Household tags, read-only pills next to the name and status
-                (#681). The mock's hero draws its `.tags` row this way; editing
-                them is a Kinfolk edit rather than a hero action, so it lives on
-                the Edit form (`KinfolkEdit`'s own Tags panel), not here. */}
-            {loaded !== null &&
-              loaded.tags.map((tag) => (
-                <span key={tag} className="kprofile__chip kprofile__chip--tag">
-                  {tag}
-                </span>
-              ))}
-          </div>
-        </div>
-        <div className="kinfolk-profile__actions">
-          {/* Call and Text: `tel:` and `sms:` anchors, the same two quick actions
-              the Android profile has had in its QuickContactBar. Rendered only
-              once a real number has been read, never as dead controls. */}
-          {phone !== '' && (
+      <DenScreenHeading
+        className="kprofile__hero"
+        crumbs={[
+          { label: 'Directory', link: linkOptions({ to: '/directory' }) },
+          { label: 'Kinfolk', onSelect: onBack },
+          { label: heroName },
+        ]}
+        title={heroName}
+        /*
+          Read in the operator's locale, not in storage's. A legacy value
+          `formatJoinDate` cannot read prints exactly as stored, which is
+          honest, and is why this never renders "Invalid Date".
+        */
+        {...(loaded !== null && loaded.joinDate.trim() !== ''
+          ? { detail: `Joined ${formatJoinDate(loaded.joinDate)}` }
+          : {})}
+        leading={
+          <Avatar
+            label={heroName}
+            {...(loaded !== null ? { imageUrl: loaded.profilePictureUrl } : {})}
+            initials={initialsOf(heroName)}
+            size={84}
+            shape="rounded"
+            gradientSeed={kinfolkId}
+          />
+        }
+        /* The mock's `.tags` row, every entry the kit's status pill: the
+           mock's `.tag` IS that capsule (teal, mono, uppercase, a hairline
+           of its own hue), and `.tag.loyal` is the same capsule in purple.
+           Teal is the mock's colour for a household in good standing, so it
+           is reserved for an active status; any other status word wears
+           the neutral tone rather than a colour the mock never drew. */
+        badges={
+          loaded !== null && (
             <>
-              <a href={`tel:${phone}`} className="auntie-btn auntie-btn--ghost">
-                <span className="auntie-btn__label">Call</span>
-              </a>
-              <a href={`sms:${phone}`} className="auntie-btn auntie-btn--ghost">
-                <span className="auntie-btn__label">Text</span>
-              </a>
+              <StatusPill
+                label={loaded.status.trim() === '' ? 'no status' : loaded.status.toLowerCase()}
+                tone={loaded.status.trim().toLowerCase() === 'active' ? 'teal' : 'neutral'}
+              />
+              {/* Tenure, from the join date. Absent when the stored date is one
+                  nobody can read, rather than a fabricated "0 months". */}
+              {tenure !== null && <StatusPill label={tenure} tone="purple" />}
+              {/* Household tags, read-only pills next to the name and status
+                  (#681). The mock's hero draws its `.tags` row this way; editing
+                  them is a Kinfolk edit rather than a hero action, so it lives on
+                  the Edit form (`KinfolkEdit`'s own Tags panel), not here. */}
+              {loaded.tags.map((tag) => (
+                <StatusPill key={tag} label={tag} tone="teal" />
+              ))}
             </>
-          )}
-          <GhostButton label="Household data" onClick={() => setView('household')} />
-          {/* B1 has its own route, so it gets a real anchor rather than a state
-              swap: the operator can link it, bookmark it, and open it in a new
-              tab, and browser Back returns here. It borrows GhostButton's
-              classes so the row still reads as one control group. */}
-          <Link
-            to="/household-members/$kinfolkId"
-            params={{ kinfolkId }}
-            className="auntie-btn auntie-btn--ghost"
-          >
-            <span className="auntie-btn__label">Members and invites</span>
-          </Link>
-          <GhostButton label="Edit" onClick={() => setView('edit')} />
-          <GhostButton label={back.label} onClick={back.goBack} />
-          {/* The hero used to end with a "New KinTale" primary. Operator ruling
-              (#676, walk admin-2026-09-10): a KinTale is only ever started from
-              a KinCare session, so a standalone entry point on the household
-              profile is gone. The KinTales list screen keeps its own "New
-              KinTale" button under the same ruling; that button is unaffected
-              by this change. */}
-        </div>
-      </header>
+          )
+        }
+        trailing={
+          <div className="kinfolk-profile__actions">
+            {/* Call and Text: `tel:` and `sms:` anchors, the same two quick actions
+                the Android profile has had in its QuickContactBar. Rendered only
+                once a real number has been read, never as dead controls. */}
+            {phone !== '' && (
+              <>
+                <a href={`tel:${phone}`} className="auntie-btn auntie-btn--ghost">
+                  <span className="auntie-btn__label">Call</span>
+                </a>
+                <a href={`sms:${phone}`} className="auntie-btn auntie-btn--ghost">
+                  <span className="auntie-btn__label">Text</span>
+                </a>
+              </>
+            )}
+            <GhostButton label="Household data" onClick={() => setView('household')} />
+            {/* B1 has its own route, so it gets a real anchor rather than a state
+                swap: the operator can link it, bookmark it, and open it in a new
+                tab, and browser Back returns here. It borrows GhostButton's
+                classes so the row still reads as one control group. */}
+            <Link
+              to="/household-members/$kinfolkId"
+              params={{ kinfolkId }}
+              className="auntie-btn auntie-btn--ghost"
+            >
+              <span className="auntie-btn__label">Members and invites</span>
+            </Link>
+            <GhostButton label="Edit" onClick={() => setView('edit')} />
+            <GhostButton label={back.label} onClick={back.goBack} />
+            {/* The hero used to end with a "New KinTale" primary. Operator ruling
+                (#676, walk admin-2026-09-10): a KinTale is only ever started from
+                a KinCare session, so a standalone entry point on the household
+                profile is gone. The KinTales list screen keeps its own "New
+                KinTale" button under the same ruling; that button is unaffected
+                by this change. */}
+          </div>
+        }
+      />
 
       <div className="kprofile__cols">
         <div className="kprofile__col">
@@ -501,20 +519,28 @@ export function KinfolkProfile({
                     .filter((s) => s !== '')
                     .join(' · ');
                   const note = kinNotes[k._id] ?? '';
+                  // ONE line under the name, the way the mock's `small` runs
+                  // "Labrador · 5 yrs · loves sticks, hates the mailman": the
+                  // facts and the pet's own line dotted together, not stacked.
                   const body = (
                     <>
                       <Avatar
                         label={name}
                         imageUrl={k.profilePictureUrl}
                         initials={initialsOf(name)}
-                        size={44}
+                        size={52}
                         shape="circle"
                         gradientSeed={k._id !== '' ? k._id : name}
                       />
                       <span className="kprofile__kin-text">
                         <span className="kprofile__kin-name">{name}</span>
-                        {detail !== '' && <span className="kprofile__kin-detail">{detail}</span>}
-                        {note !== '' && <span className="kprofile__kin-note">{note}</span>}
+                        {(detail !== '' || note !== '') && (
+                          <span className="kprofile__kin-detail">
+                            {detail}
+                            {detail !== '' && note !== '' && ' · '}
+                            {note !== '' && <span className="kprofile__kin-note">{note}</span>}
+                          </span>
+                        )}
                       </span>
                     </>
                   );

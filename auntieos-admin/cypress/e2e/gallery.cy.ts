@@ -1,7 +1,8 @@
 /**
  * The global Gallery (`/gallery`): the grid rebuilt toward its mock (#692,
- * PR #739) and the fullscreen viewer freed from its 512px stage (#691, same
- * PR).
+ * PR #739), the fullscreen viewer freed from its 512px stage (#691, same
+ * PR), and the glass sweep's skin pass (#755): the kit hero and the tile
+ * wearing the shared lift.
  *
  * ONE MEDIA DOC IS SEEDED THROUGH A DIRECT FIRESTORE WRITE, not through the
  * real Upload dialog. `e2e/seed.ts` carries no `media_files` row at all, and
@@ -140,6 +141,14 @@ describe('gallery', () => {
     cy.contains('.gallery__tile-caption-strip', FILE_NAME).should('have.css', 'opacity', '0');
   });
 
+  it('#755 draws the kit hero with the nav kicker and the mock-shaped title, and a tile that lifts', () => {
+    cy.get('.den-heading .den-heading-kicker').should('have.text', 'The Den · Gallery');
+    cy.get('.den-heading h1').should('have.text', 'All media');
+    cy.get('.den-heading h1 .den-heading-accent').should('have.text', 'media');
+    // The tile is the shared `lift` wearer; the delete control beside it is not.
+    cy.contains('.gallery__cell', FILE_NAME).find('> .gallery__tile').should('have.class', 'lift');
+    cy.contains('.gallery__cell', FILE_NAME).find('> .gallery__tile-actions button').should('not.have.class', 'lift');
+  });
   it('#692 carries the count chip and the upload action in one heading row', () => {
     cy.get('.gallery__header-actions').within(() => {
       cy.get('.gallery__count-chip').should('exist');

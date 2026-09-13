@@ -1,9 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+  `data-theme="dark"` is written here, in the shipped HTML, rather than set by
+  the app at runtime: it has to be true of the very first paint, before any
+  module loads, and there is no stored state to resolve it from. The mocks'
+  glass world is the only scheme the admin paints (issue #751, operator ruling
+  2026-09-11), so the attribute is a constant. tokens.css already carries that
+  set on bare `:root`; this line is what the scheme-scoped selectors elsewhere
+  in the CSS need in order to resolve.
+-->
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131F" />
+    <!--
+      Home-screen icons. `apple-touch-icon` is the one iOS reads when the admin
+      is added to a home screen: Safari ignores the web manifest's icon list
+      entirely, so without this line an installed admin shows a screenshot of
+      the page where its mark should be. Both files are drawn by
+      `scripts/make-icons.mjs` from the same brand tokens as the rail.
+    -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>AuntieOS Admin</title>
   </head>
   <body>

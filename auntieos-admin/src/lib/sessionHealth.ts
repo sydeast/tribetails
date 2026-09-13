@@ -113,6 +113,54 @@ function schedule(ms: number): void {
   }, ms);
 }
 
+/**
+ * Record a token refresh that has ALREADY failed, wherever it failed.
+ *
+ * The probe below is not the only thing in this app that asks Firebase to mint
+ * a token, and until #812 it was the only one that told anybody when the answer
+ * was no. `router.tsx`'s admin gate mints one on every navigation
+ * (`resolveAccess` -> `getIdTokenResult`), and on a cold offline deep link that
+ * is the FIRST refresh of the page's life, a full minute before the probe's
+ * own first tick. Handing the failure here, rather than letting the gate invent
+ * copy of its own, means the operator gets the banner this module already owns
+ * on the first paint, and the retry loop starts from the same instant.
+ *
+ * Returns which of the two degraded states it settled on, because the gate has
+ * to branch on it: `unreachable` is admitted read-only, `expired` is sent to
+ * sign in again.
+ */
+export function noteRefreshFailure(err: unknown): 'unreachable' | 'expired' {
+  if (classifyRefreshFailure(err) === 'expired') {
+    // Retrying cannot mint a token this session. Stop probing and say so.
+    cancel();
+    publish({ status: 'expired' });
+    reportError(err, 'sessionHealthExpired');
+    return 'expired';
+  }
+  const failures = current.status === 'unreachable' ? current.failures + 1 : 1;
+  // Reported once per episode, not once per retry: a five-minute outage
+  // should be one Sentry event, not sixty.
+  if (failures === 1) reportError(err, 'sessionHealthUnreachable');
+  publish({ status: 'unreachable', failures });
+  schedule(retryDelayMs(failures));
+  return 'unreachable';
+}
+
+/**
+ * Record a token refresh that has already SUCCEEDED somewhere else (#812).
+ *
+ * The counterpart to the above, and it exists for one visible defect: the gate
+ * recovers the moment a navigation resolves access again, but this module would
+ * go on saying `unreachable` until its own backoff next fired, up to a minute
+ * later. So the operator would get the full app back with a banner still
+ * telling them their saves may be refused. Mints nothing of its own: the gate
+ * has just proven the session can mint a token.
+ */
+export function noteRefreshSucceeded(): void {
+  if (current.status === 'ok') return;
+  publish({ status: 'ok' });
+  schedule(PROBE_INTERVAL_MS);
+}
 async function probe(): Promise<void> {
   const user = auth.currentUser;
   if (!user) {
@@ -124,18 +172,7 @@ async function probe(): Promise<void> {
     publish({ status: 'ok' });
     schedule(PROBE_INTERVAL_MS);
   } catch (err) {
-    if (classifyRefreshFailure(err) === 'expired') {
-      // Retrying cannot mint a token this session. Stop probing and say so.
-      publish({ status: 'expired' });
-      reportError(err, 'sessionHealthExpired');
-      return;
-    }
-    const failures = current.status === 'unreachable' ? current.failures + 1 : 1;
-    // Reported once per episode, not once per retry: a five-minute outage
-    // should be one Sentry event, not sixty.
-    if (failures === 1) reportError(err, 'sessionHealthUnreachable');
-    publish({ status: 'unreachable', failures });
-    schedule(retryDelayMs(failures));
+    noteRefreshFailure(err);
   }
 }
 
@@ -158,6 +195,16 @@ function subscribe(listener: () => void): () => void {
 
 function getSnapshot(): SessionHealth {
   return current;
+}
+
+/**
+ * Non-component subscription, for `router.tsx`'s recovery watch (#812). The
+ * router is not a component and cannot use the hook below, but it is the one
+ * thing that has to act when a degraded session heals: re-running the gate is
+ * what turns the read-only entry back into the real app.
+ */
+export function subscribeSessionHealth(listener: () => void): () => void {
+  return subscribe(listener);
 }
 
 /** Reactive session health for components (the shell banner). */

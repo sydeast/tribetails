@@ -107,7 +107,7 @@ class AuntieRepository(
             val token = auth.currentUser?.getIdToken(true)?.await()
             if (token?.claims?.get("admin") != true) {
                 endSession()
-                error("This account does not have the admin claim.")
+                error("This account does not have admin access.")
             }
             AuntieLog.i("Admin sign-in successful: ${auth.currentUser?.uid}")
         }
@@ -945,6 +945,75 @@ class AuntieRepository(
         com.tribetails.auntieos.ui.communicate.decodeBroadcastResult(raw)
     }.onFailure { AuntieLog.e("broadcastMessage failed", it) }
 
+    // ── Marketing blasts (scheduled campaigns) ────────────────────────────────
+    // Four admin-gated callables in MyTribe
+    // (functions/src/admin/{scheduleMarketingBlast,marketingBlasts}.ts). The
+    // audience is the SAME CriteriaSchema a broadcast speaks, plus an explicit
+    // account-id path; exactly one goes on the wire and the server refuses two.
+    // Fail-loud: no_recipients / audience_too_large / already_fired surface
+    // verbatim through the Result failure for blastErrorText to render.
+
+    /** Who a blast would reach, without writing anything. */
+    suspend fun previewMarketingBlastAudience(
+        key: com.tribetails.auntieos.ui.marketing.MarketingKey,
+        audience: com.tribetails.auntieos.ui.marketing.BlastAudience,
+    ): Result<com.tribetails.auntieos.ui.marketing.BlastReach> = runCatching {
+        authGate.ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            put("key", key.wire)
+            putAll(audience.toPayload())
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("previewMarketingBlastAudience")
+            .call(payload).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeBlastReach(raw)
+    }.onFailure { AuntieLog.e("previewMarketingBlastAudience failed", it) }
+
+    /**
+     * Schedules a campaign. [data] is the merge context the operator's template
+     * for [key] is rendered against, not the message copy itself; [title] is the
+     * operator's own name for the campaign and is omitted when blank, because
+     * the server's zod requires min(1) when the field is present.
+     */
+    suspend fun scheduleMarketingBlast(
+        key: com.tribetails.auntieos.ui.marketing.MarketingKey,
+        fireAtMs: Long,
+        audience: com.tribetails.auntieos.ui.marketing.BlastAudience,
+        data: Map<String, Any?>,
+        title: String?,
+    ): Result<com.tribetails.auntieos.ui.marketing.ScheduleBlastResult> = runCatching {
+        authGate.ensureAuthenticated()
+        val payload = buildMap<String, Any?> {
+            put("key", key.wire)
+            put("fireAtMs", fireAtMs)
+            putAll(audience.toPayload())
+            put("data", data)
+            if (!title.isNullOrBlank()) put("title", title.trim())
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("scheduleMarketingBlast")
+            .call(payload).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeScheduleResult(raw)
+    }.onFailure { AuntieLog.e("scheduleMarketingBlast failed", it) }
+
+    /** Scheduled and sent campaigns, newest fire time first. */
+    suspend fun listMarketingBlasts(): Result<List<com.tribetails.auntieos.ui.marketing.MarketingBlastRow>> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("listMarketingBlasts")
+            .call(emptyMap<String, Any?>()).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeBlasts(raw)
+    }.onFailure { AuntieLog.e("listMarketingBlasts failed", it) }
+
+    /** Calls a queued campaign back. Returns how many scheduled copies were deleted. */
+    suspend fun cancelMarketingBlast(blastId: String): Result<Int> = runCatching {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("cancelMarketingBlast")
+            .call(mapOf("blastId" to blastId)).awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.marketing.decodeCancelledCount(raw)
+    }.onFailure { AuntieLog.e("cancelMarketingBlast failed", it) }
+
     // ── Stage 2 step 7 (Inbox conversations / Message Auntie 16.4) ────────────
     // Two-way kinfolk<->auntie threads via admin-gated callables. Fail-loud:
     // errors surface verbatim through the Result failure.
@@ -1282,9 +1351,17 @@ class AuntieRepository(
             "updatedAt" to getCurrentTimestamp(),
             "updatedBy" to updatedBy,
         )
+        // A whole-map field (the KinCare rate card) must REPLACE what is stored,
+        // or a removed key survives the key-by-key merge. See
+        // BUSINESS_SETTINGS_WHOLE_MAP_FIELDS.
+        val options = if (businessSettingsReplacesWholeFields(changes)) {
+            com.google.firebase.firestore.SetOptions.mergeFields(payload.keys.toList())
+        } else {
+            com.google.firebase.firestore.SetOptions.merge()
+        }
         firestore.collection("business_settings")
             .document("business_settings")
-            .set(payload, com.google.firebase.firestore.SetOptions.merge())
+            .set(payload, options)
             .await()
         AuntieLog.d("Business settings saved successfully")
         Unit

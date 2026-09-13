@@ -165,8 +165,12 @@
   cursor: pointer;
   transition: border-color var(--dur-base) var(--ease-standard);
 }
+/* The mock's `.chip.on`: the picked chip fills orange with navy text, rather
+   than only taking an orange rim. */
 .personalize__chip:has(input:checked) {
-  border-color: var(--color-primary);
+  background: var(--color-primary);
+  border-color: transparent;
+  color: var(--color-background);
 }
 .personalize__chip:has(input:disabled) {
   opacity: 0.6;
@@ -247,4 +251,26 @@
   margin: 0;
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
+}
+
+/* ── Auntie AI ───────────────────────────────────────────────────────────── */
+/* The mock's `.gen`: purple to pink, on the generator alone. Role tokens, not
+   the brand constants, so the wash follows the theme; never `--gradient-tribe`,
+   which tokens.css reserves for the two hero surfaces. */
+.auntie-btn.personalize__generate {
+  background-image: linear-gradient(135deg, var(--color-tertiary), var(--color-secondary));
+  border-color: transparent;
+  color: var(--tt-brand-cream);
+}
+/* The mock's `.draft`: the AI draft sits in a purple-rimmed card with a purple
+   radial from the top-left corner, so it reads as Auntie's, not the operator's. */
+.den-panel.personalize__draft {
+  border-color: color-mix(in srgb, var(--color-tertiary) 45%, transparent);
+  background:
+    radial-gradient(
+      120% 140% at 0% 0%,
+      color-mix(in srgb, var(--color-tertiary) 25%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
 }

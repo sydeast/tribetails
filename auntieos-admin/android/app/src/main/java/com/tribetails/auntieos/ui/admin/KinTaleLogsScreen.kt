@@ -46,6 +46,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MailCheck
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Send
+import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.TriangleAlert
 import com.composables.icons.lucide.UserPlus
 import com.composables.icons.lucide.X
@@ -93,6 +94,12 @@ fun KinTaleLogsScreen(
     viewModel: AdminDataViewModel = viewModel(),
     onBack: () -> Unit,
     onOpenReport: (sessionId: String) -> Unit = {},
+    /**
+     * The logs mock's one head control, "Edit templates", which opens the
+     * KinTale template editor. Null renders no control at all rather than a
+     * button that no-ops (the Buttons.tsx ControlShell rule, applied here).
+     */
+    onOpenTemplates: (() -> Unit)? = null,
 ) {
     val reports by viewModel.kinCareReports.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -157,10 +164,31 @@ fun KinTaleLogsScreen(
                         kicker   = "The Den · KinTales",
                         title    = "KinTales",
                         subtitle = "Every recap that goes home to a Kinfolk after care",
-                        // The result-count chip (mock SUGGESTION 3). Absent, not
-                        // zero, until there is something real to count.
-                        trailing = countLabel?.let {
-                            { AuntieStatusPill(label = it, mono = true) }
+                        // The mock's `.head .ico`: the ClipboardList tile in the
+                        // orange wash, 42dp, before the title block.
+                        leading = {
+                            AuntieIconTile(icon = Lucide.ClipboardList, tone = AuntieStatusTone.Orange, size = 42.dp)
+                        },
+                        // The result-count chip (mock SUGGESTION 3), on the band's
+                        // badge row now that the trailing slot holds the mock's
+                        // control. Absent, not zero, until there is something
+                        // real to count.
+                        badges = countLabel?.let {
+                            { AuntieStatusPill(label = it, mono = true, compact = true) }
+                        },
+                        // The mock's one head control. There is no "New KinTale"
+                        // here: a KinTale is only ever started from a Kin Care
+                        // (operator ruling 2026-09-10, #676).
+                        trailing = onOpenTemplates?.let { open ->
+                            {
+                                GhostButton(
+                                    label = "Edit templates",
+                                    onClick = open,
+                                    leading = {
+                                        Icon(Lucide.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    },
+                                )
+                            }
                         },
                     )
 
@@ -594,9 +622,11 @@ private fun BucketGroup(
     reports: List<KinCareReport>,
     onOpenReport: (sessionId: String) -> Unit = {},
 ) {
+    // The mock's `.bucket-head`: the label, then the count as the mono note on
+    // the rule (`DenPanel.meta`), never a pill that reads as a status.
     DenPanel(
         title = bucket.label,
-        trailing = { AuntieStatusPill(label = "${reports.size}", mono = true) },
+        meta = "${reports.size}",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             reports.forEach { ReportRow(it, onOpenReport) }
@@ -663,9 +693,11 @@ private fun ReportRow(report: KinCareReport, onOpenReport: (sessionId: String) -
             SubMetaColumn(report)
         }
 
+        // The mock's `.pill`: the compact capsule at the row's right edge.
         AuntieStatusPill(
             label = report.status.lowercase().replace('_', ' '),
             tone = tone,
+            compact = true,
         )
     }
 }
@@ -800,7 +832,7 @@ private fun bucketFor(r: KinCareReport): Bucket = when (r.status.uppercase()) {
     else     -> Bucket.Drafts
 }
 
-/** KT1: the sort selector — one chip per ReportSort, wraps on a narrow screen. */
+/** KT1: the sort selector: one chip per ReportSort, wraps on a narrow screen. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SortChipRow(selected: ReportSort, onSelect: (ReportSort) -> Unit) {

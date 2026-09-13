@@ -399,11 +399,140 @@ describe('Bookings screen', () => {
     });
     render(<Bookings />);
     await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    // Scoped to the sheet: the card carries its own Approve now (#755), and
+    // this test is about the sheet's.
+    const sheet = screen.getByTestId('booking-detail-modal');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Approve' }));
     expect(approveBooking).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Yes, approve it' }));
     expect(approveBooking).toHaveBeenCalledWith('ses-42');
     expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+  });
+
+  /**
+   * The mock's own card buttons (#755): Approve / Reject on a pending card,
+   * Cancel on a scheduled one, none on history. Each opens the fuller record
+   * with that question already posed, never a write from the list.
+   */
+  describe('the card\'s own transition buttons', () => {
+    const three = [
+      entry({ _id: 'p', kinfolkName: 'Waiting Wren', status: 'PENDING' }),
+      entry({ _id: 's', kinfolkName: 'Booked Devlin', status: 'SCHEDULED' }),
+      entry({ _id: 'h', kinfolkName: 'Finished Sparrow', status: 'COMPLETED' }),
+    ];
+
+    it('draws Approve and Reject on a pending card, Cancel on a scheduled one, nothing on history', () => {
+      useCollection.mockReturnValue({ status: 'ready', data: three });
+      render(<Bookings />);
+      const wren = screen.getByRole('group', { name: 'Actions for Waiting Wren' });
+      expect(within(wren).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+      expect(within(wren).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+      const devlin = screen.getByRole('group', { name: 'Actions for Booked Devlin' });
+      expect(within(devlin).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+      expect(within(devlin).queryByRole('button', { name: 'Approve' })).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Actions for Finished Sparrow' })).toBeNull();
+    });
+
+    it('Approve on the card opens the sheet with the question posed, and writes only on the confirm', async () => {
+      useCollection.mockReturnValue({ status: 'ready', data: three });
+      render(<Bookings />);
+      const wren = screen.getByRole('group', { name: 'Actions for Waiting Wren' });
+      await userEvent.click(within(wren).getByRole('button', { name: 'Approve' }));
+      const sheet = screen.getByTestId('booking-detail-modal');
+      expect(sheet.dataset['entryId']).toBe('p');
+      expect(within(sheet).getByText('Approve this booking?')).toBeInTheDocument();
+      expect(approveBooking).not.toHaveBeenCalled();
+      await userEvent.click(within(sheet).getByRole('button', { name: 'Yes, approve it' }));
+      expect(approveBooking).toHaveBeenCalledWith('p');
+      expect(screen.queryByTestId('booking-detail-modal')).toBeNull();
+    });
+
+    it('Cancel on a scheduled card poses the cancel question; a plain row click afterwards poses none', async () => {
+      useCollection.mockReturnValue({ status: 'ready', data: three });
+      render(<Bookings />);
+      const devlin = screen.getByRole('group', { name: 'Actions for Booked Devlin' });
+      await userEvent.click(within(devlin).getByRole('button', { name: 'Cancel' }));
+      let sheet = screen.getByTestId('booking-detail-modal');
+      expect(within(sheet).getByText('Cancel this scheduled visit?')).toBeInTheDocument();
+      expect(cancelBooking).not.toHaveBeenCalled();
+      await userEvent.click(within(sheet).getByRole('button', { name: 'stub close' }));
+      // The question does not leak into the next open.
+      await userEvent.click(screen.getByRole('button', { name: /Booked Devlin/i }));
+      sheet = screen.getByTestId('booking-detail-modal');
+      expect(within(sheet).queryByText('Cancel this scheduled visit?')).toBeNull();
+      expect(within(sheet).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    });
+
+    it('the buttons leave the cards while Select is on: the bulk bar owns the transitions then', async () => {
+      useCollection.mockReturnValue({ status: 'ready', data: three });
+      render(<Bookings />);
+      await userEvent.click(selectToggle());
+      expect(screen.queryByRole('group', { name: /^Actions for/ })).toBeNull();
+    });
+
+    it('an external onSelectBooking owns the sheet, so the cards draw no buttons', () => {
+      useCollection.mockReturnValue({ status: 'ready', data: three });
+      render(<Bookings onSelectBooking={vi.fn()} />);
+      expect(screen.queryByRole('group', { name: /^Actions for/ })).toBeNull();
+    });
+  });
+
+  /**
+   * The skin of the list on the navy ground (#755), against
+   * `auntieos-manage-bookings-2026-05-27-*.html`: serif section heads with a
+   * quiet count, one glass card per booking that lifts, and the kit's status
+   * pill in the state's own tone.
+   */
+  describe('the mock\'s shape on the navy ground', () => {
+    it('each section is a staggered block with a serif heading and a plain count', () => {
+      useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'PENDING' })] });
+      render(<Bookings />);
+      const pending = screen.getByRole('group', { name: /^Pending approval/ });
+      expect(pending.className).toContain('d1');
+      expect(screen.getByRole('group', { name: /^Scheduled/ }).className).toContain('d2');
+      expect(screen.getByRole('group', { name: /^History/ }).className).toContain('d3');
+      const head = within(pending).getByRole('heading', { level: 2 });
+      expect(head.className).toBe('bookings__section-head');
+      expect(head.querySelector('.bookings__section-count')?.textContent).toBe('1');
+    });
+
+    it('a card that opens the sheet is the surface that lifts; its buttons sit beside the row, not inside it', () => {
+      useCollection.mockReturnValue({ status: 'ready', data: [entry({ status: 'PENDING' })] });
+      render(<Bookings />);
+      const card = screen.getByText('The Whitfields').closest('.bookings__row') as HTMLElement;
+      expect(card.className).toContain('lift');
+      const rowButton = screen.getByRole('button', { name: /The Whitfields/i });
+      expect(rowButton.className).not.toContain('lift');
+      expect(rowButton.querySelector('button')).toBeNull();
+      expect(card.querySelector('.bookings__row-acts')).not.toBeNull();
+    });
+
+    it('the status pill is the kit\'s, in the state\'s own tone, with no screen-local chip class', () => {
+      useCollection.mockReturnValue({
+        status: 'ready',
+        data: [
+          entry({ _id: 'a', kinfolkName: 'Draft Dune', status: 'DRAFT' }),
+          entry({ _id: 'b', kinfolkName: 'Waiting Wren', status: 'PENDING' }),
+          entry({ _id: 'c', kinfolkName: 'Booked Devlin', status: 'SCHEDULED' }),
+          entry({ _id: 'd', kinfolkName: 'Finished Sparrow', status: 'COMPLETED' }),
+          entry({ _id: 'e', kinfolkName: 'Called Off Mercer', status: 'CANCELLED' }),
+        ],
+      });
+      render(<Bookings />);
+      function pillOf(name: string): HTMLElement {
+        const who = screen.getByText(name).closest('.bookings__row-who') as HTMLElement;
+        return who.querySelector('.den-statuspill') as HTMLElement;
+      }
+      expect(pillOf('Draft Dune').dataset['tone']).toBe('error');
+      expect(pillOf('Waiting Wren').dataset['tone']).toBe('orange');
+      expect(pillOf('Booked Devlin').dataset['tone']).toBe('teal');
+      expect(pillOf('Finished Sparrow').dataset['tone']).toBe('purple');
+      // Muted and NOT struck: this mock's `.pill.cancelled` is a plain capsule.
+      const cancelled = pillOf('Called Off Mercer');
+      expect(cancelled.dataset['tone']).toBe('muted');
+      expect(cancelled.className).not.toContain('struck');
+      expect(document.querySelector('.bookings__chip')).toBeNull();
+    });
   });
 
   it('the sheet\'s kinfolk and KinTale links reach the router', async () => {

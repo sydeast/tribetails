@@ -135,7 +135,15 @@ const SCREENS: readonly Screen[] = [
   // through the `listConversations` callable and renders its error state under
   // this harness, so it shares the fix and not the proof.
   { slug: 'inbox', kicker: 'The Den · Inbox', row: '.inbox__row-main', identity: '.inbox__row-who' },
-  { slug: 'activity', kicker: 'The Den · Admin', row: '.log__row', identity: '.log__body' },
+  // The Activity log row is the disclosure button since #755 (time, glyph
+  // tile, meta, and a seq column the phone rule hides); the meta column is the
+  // one carrying the action and its context.
+  {
+    slug: 'activity',
+    kicker: 'The Den · Activity log',
+    row: '.activity__summary',
+    identity: '.activity__meta',
+  },
   {
     slug: 'notifications',
     kicker: 'The Den · Notifications',
@@ -592,7 +600,14 @@ test('the form-schema wizard, its rail and its footer fit at 390px', async ({ pa
 test('the KinTale template wizard, its five-step rail and its item cards fit at 390px', async ({
   page,
 }) => {
-  await openScreen(page, 'kintale-templates', 'The Den · KinTales');
+  // Since the #755 KinTale sweep this screen is nested under KinTales and
+  // carries the trail (KinTales / Templates) in the kicker's place, so the
+  // cold-boot wait is on the current crumb rather than on `openScreen`'s
+  // kicker. Same 30s budget, for the reason `openScreen` gives.
+  await page.goto('/kintale-templates');
+  await expect(
+    page.getByRole('navigation', { name: 'Breadcrumb' }).getByText('Templates'),
+  ).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'New template', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
 

@@ -7,6 +7,8 @@ import { relativeDay } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import '../styles/gallery.css';
 
 const PAGE_SIZE = 12;
@@ -57,7 +59,11 @@ export function Gallery() {
   // rather than flattening every page.
   const portraits = photos.data?.pages[0]?.portraits ?? [];
   const tiles = (photos.data?.pages ?? []).flatMap((p) => p.photos);
-  const loading = photos.isLoading;
+  // `useInfiniteQuery`'s result carries the same `status` / `fetchStatus` /
+  // `data` triple as a plain query, so it satisfies QuerySnapshot unchanged;
+  // `data` is the pages wrapper rather than one page, which is all `isEmpty`
+  // needs to look at.
+  const photosView = viewOfQuery(photos, { isEmpty: (d) => d.pages.every((p) => p.photos.length === 0) });
 
   return (
     <>
@@ -106,11 +112,13 @@ export function Gallery() {
               From your KinTales <Link to="/kintales">All tales</Link>
             </div>
 
-            {loading ? (
+            {photosView.kind === 'offline' ? (
+              <OfflineNotice what="your photos" />
+            ) : photosView.kind !== 'data' && photosView.kind !== 'empty' ? (
               <p className="sub" data-testid="gallery-loading">
                 Loading your photos…
               </p>
-            ) : tiles.length === 0 ? (
+            ) : photosView.kind === 'empty' ? (
               <p className="sub" data-testid="gallery-empty">
                 No photos yet. Every KinTale your Auntie sends brings its pictures here.
               </p>

@@ -27,6 +27,7 @@ import './styles/screens.css';
 import './lib/firebase'; // initialize Firebase before anything touches auth
 import { initSentry } from './lib/sentry';
 import { router } from './router';
+import { resumeVisitTracking } from './lib/visitTracking';
 import { ToastProvider } from './components/Toast';
 
 // Start crash reporting before the app renders, so an error during first paint
@@ -138,6 +139,9 @@ function CrashFallback() {
   );
 }
 
+// A tab that clocked a visit in and was reloaded picks its watch back up
+// (#772). Waits for auth inside; no prompt is shown from here.
+void resumeVisitTracking();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

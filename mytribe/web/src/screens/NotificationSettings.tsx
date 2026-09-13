@@ -23,6 +23,8 @@ import {
 import { useSignOut } from '../lib/auth';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import '../styles/notifications.css';
 
 /**
@@ -246,7 +248,13 @@ export function NotificationSettings() {
     );
   }
 
-  const loading = catalog.isLoading || prefs.isLoading || edited === null;
+  // `edited` is seeded from prefs in an effect, so while a read is paused it
+  // stays null and `loading` stays true forever: a settings page that spins
+  // with no reason given. The offline arm below is rendered in its place.
+  const catalogView = viewOfQuery(catalog);
+  const prefsView = viewOfQuery(prefs);
+  const offline = catalogView.kind === 'offline' || prefsView.kind === 'offline';
+  const loading = !offline && (catalog.isLoading || prefs.isLoading || edited === null);
   const categories = catalog.data?.categories ?? [];
   const mainCategories = categories.filter((c) => !ASIDE_CATEGORY_IDS.has(c.id));
   const asideCategories = categories.filter((c) => ASIDE_CATEGORY_IDS.has(c.id));
@@ -487,7 +495,11 @@ export function NotificationSettings() {
           </h1>
         </header>
 
-        {loading ? (
+        {offline ? (
+          <section className="glass card">
+            <OfflineNotice what="your notification preferences" />
+          </section>
+        ) : loading ? (
           <p className="sub">Loading your notification preferences&hellip;</p>
         ) : (
           <>

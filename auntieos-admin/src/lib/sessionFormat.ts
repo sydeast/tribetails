@@ -185,7 +185,7 @@ export interface SessionStateInfo {
   cssClass: string;
 }
 
-/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. */
+/** Friendly label + chip class per state. Pure 1:1 map, ported from the wasm's `statusLabel`/`statusTone`. The pill tone is `SESSION_STATE_TONE` below, one map for the board card and the detail hero. */
 export function sessionStateInfo(state: SessionState): SessionStateInfo {
   switch (state) {
     case 'scheduled':
@@ -205,6 +205,33 @@ export function sessionStateInfo(state: SessionState): SessionStateInfo {
   }
 }
 
+/**
+ * The brand tone each session state wears in the kit's `StatusPill`, the one
+ * capsule every screen that shows a visit is moving onto.
+ *
+ * A total record over `SessionState` rather than a switch with a default, so a
+ * state added to the lifecycle fails the typecheck here instead of quietly
+ * rendering in whatever colour the default happened to be. The values are the
+ * `auntieos-auntie-time-2026-05-27` mock's own pill palette, state by state:
+ * the scheduled pill is the dim hairline capsule, on-my-way is orange, arrived
+ * and completed are teal, departed is purple, and cancelled is the dim capsule
+ * again. `DenTone` is a string union in the kit, so it is named here as its
+ * members rather than imported: a lib file has no business pulling a component
+ * module in, and the kit's `data-tone` CSS resolves each word to a token.
+ */
+export type SessionStateTone = 'neutral' | 'orange' | 'teal' | 'purple' | 'muted' | 'warning';
+
+export const SESSION_STATE_TONE: Record<SessionState, SessionStateTone> = {
+  scheduled: 'neutral',
+  onMyWay: 'orange',
+  arrived: 'teal',
+  departed: 'purple',
+  // Teal, not success green: the mock paints a wrap in the same hue as an
+  // arrival, one shade quieter, and the label is what tells them apart.
+  completed: 'teal',
+  cancelled: 'muted',
+  unknown: 'warning',
+};
 /** True for the three "in flight" states (ports the wasm `Phase.Active` / `isInFlight` grouping). A positive membership test, not a negation of the other four. */
 export function isSessionActive(state: SessionState): boolean {
   return state === 'onMyWay' || state === 'arrived' || state === 'departed';

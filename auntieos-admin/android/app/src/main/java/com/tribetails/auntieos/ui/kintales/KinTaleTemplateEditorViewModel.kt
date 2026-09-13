@@ -100,6 +100,11 @@ class KinTaleTemplateEditorViewModel(
 
     fun updateServiceTypeKeys(keys: List<String>) = mutate { it.copy(serviceTypeKeys = keys) }
 
+    // The mock's "Active" row. `isActive` was decoded and shown as the Inactive
+    // tag on the picker but had no control here; the web editor has one, and a
+    // persisted field that one platform can read but not edit is a defect.
+    fun toggleIsActive(on: Boolean) = mutate { it.copy(isActive = on) }
+
     // --- Display section toggles ---
 
     fun togglePhotoShowcase(on: Boolean)    = mutate { it.copy(photoShowcaseEnabled = on) }

@@ -7,6 +7,8 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_TIMELINE_STEPS,
   bookingStatusChip,
@@ -111,7 +113,22 @@ export function BookingDetail() {
     );
   }
 
-  if (bookings.isLoading) {
+  // Paused, this gate used to be false and the screen fell through to the
+  // "not on your schedule" card below, about a schedule it never read.
+  const bookingsView = viewOfQuery(bookings);
+  if (bookingsView.kind === 'offline') {
+    return (
+      <>
+        <PortalNav active="schedule" />
+        <div className="wrap">
+          <section className="glass card">
+            <OfflineNotice what="this booking" />
+          </section>
+        </div>
+      </>
+    );
+  }
+  if (bookingsView.kind !== 'data') {
     return (
       <>
         <PortalNav active="schedule" />

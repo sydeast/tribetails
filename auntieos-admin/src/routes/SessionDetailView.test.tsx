@@ -36,7 +36,10 @@ vi.mock('../lib/firestore', () => ({ useDocById, useCollection }));
 const { usePagedCollection } = vi.hoisted(() => ({ usePagedCollection: vi.fn() }));
 vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 vi.mock('../api/sessionsWrite', () => ({
-  setVisitLifecycle: vi.fn(),
+  // `patchVisitLifecycle`, not the callable: this view's clock writes Firestore
+  // directly. A mock still naming the old export would satisfy the import and
+  // then let a real regression through silently.
+  patchVisitLifecycle: vi.fn(),
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus: vi.fn() }));
@@ -119,8 +122,10 @@ describe('/sessions/$sessionId', () => {
     render(<RouterProvider router={router} />);
 
     // The visit, read by the id in the path. No board was mounted first, so this
-    // is exactly the refresh the operator asked for.
-    expect(await screen.findByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
+    // is exactly the refresh the operator asked for. The hero names it by its
+    // Kin and service (#755); the household is on the line under it.
+    expect(await screen.findByRole('heading', { name: 'Biscuit · Dog Walk' })).toBeInTheDocument();
+    expect(screen.getByText(/· The Whitfields$/)).toHaveClass('den-heading-detail');
     expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_1');
     expect(screen.getByText('ARRIVED')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sessions/vis_1');
@@ -129,7 +134,7 @@ describe('/sessions/$sessionId', () => {
   it('reads the id from the path, so two links open two different visits', async () => {
     useDocById.mockReturnValue({ status: 'ready', data: entry({ _id: 'vis_old' }) });
     render(<RouterProvider router={makeRouter('/sessions/vis_old')} />);
-    await screen.findByRole('heading', { name: 'The Whitfields' });
+    await screen.findByRole('heading', { name: 'Biscuit · Dog Walk' });
     expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'vis_old');
   });
 
@@ -139,7 +144,8 @@ describe('/sessions/$sessionId', () => {
     expect(
       await screen.findByText(/no Kin Care session is on file under this id/i),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /back to auntie time/i })).toBeInTheDocument();
+    // The way back is the crumb: the mock's hero carries no Back button.
+    expect(screen.getByRole('button', { name: 'Auntie Time' })).toBeInTheDocument();
   });
 
   it('does not report a session still loading as a session that is gone', async () => {
@@ -149,11 +155,11 @@ describe('/sessions/$sessionId', () => {
     expect(screen.queryByText(/not on file/i)).toBeNull();
   });
 
-  it('Back returns to the board at /sessions', async () => {
+  it('the Auntie Time crumb returns to the board at /sessions', async () => {
     useDocById.mockReturnValue({ status: 'ready', data: entry() });
     const router = makeRouter('/sessions/vis_1');
     render(<RouterProvider router={router} />);
-    await userEvent.click(await screen.findByRole('button', { name: /back to auntie time/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Auntie Time' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/sessions');
     });
@@ -172,6 +178,6 @@ describe('/sessions, opening a card', () => {
       expect(router.state.location.pathname).toBe('/sessions/sess-42');
     });
     // And the detail is what the new URL rendered, not a view the board kept.
-    expect(await screen.findByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Biscuit · Dog Walk' })).toBeInTheDocument();
   });
 });

@@ -64,13 +64,21 @@ body {
    Colours are role tokens, so the wash re-tints itself in dark mode with no
    second rule. `.orb.b` previously named `--color-teal`, which no file declares,
    so it silently took an `#6ab0a6` literal and was the one element on the page
-   that ignored the theme entirely. */
+   that ignored the theme entirely.
+
+   2026-09-11 (#751): the numbers are now the mocks' own, where they used to be
+   near neighbours of them. `.blob` in every mock reads `opacity:.42;
+   mix-blend-mode:screen; filter:blur(74px)` and drifts over 30s, and the hues
+   run orange, teal, pink from the top-left corner outward. The kit had purple,
+   orange, teal: the same three-hue idea in the wrong order. The orange belongs
+   at the top-left, because that is the corner the hero band sits in and the
+   band's own radial wash is meant to read as a continuation of it. */
 .orb {
   position: fixed;
   z-index: -1;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.45;
+  filter: blur(74px);
+  opacity: 0.42;
   pointer-events: none;
   /* Additive-ish mixing where two orbs overlap, which is what produces the
      third colour the mocks show at the seams. */
@@ -78,13 +86,16 @@ body {
   /* Negative delays start the three mid-cycle so they are permanently out of
      phase; without them all three turn at the same instant and the wash
      pulses instead of drifting. */
-  animation: orb-drift 29s var(--ease-standard) infinite alternate;
+  animation: orb-drift 30s var(--ease-standard) infinite alternate;
 }
 
-/* `screen` lightens, which is right on the dark navy but washes out the cream
-   page. Light mode multiplies instead, so the orbs deepen the cream rather than
-   bleaching it. */
-:root:not([data-theme='dark']) .orb {
+/* `screen` lightens, which is right on the navy and bleaches a cream page, so
+   the cream page multiplies instead. Nothing selects the cream page any more
+   (#751), and this rule is narrowed to the opt-in attribute rather than deleted:
+   the selector it used to carry matched every document WITHOUT the dark
+   attribute, which, now that navy is the bare default, would have muted the
+   wash anywhere the attribute is missing, jsdom included. */
+[data-theme='light'] .orb {
   mix-blend-mode: multiply;
   opacity: 0.25;
 }
@@ -94,14 +105,14 @@ body {
   height: 42vw;
   top: -12vw;
   left: -8vw;
-  background: radial-gradient(circle, var(--color-tertiary), transparent 62%);
+  background: radial-gradient(circle, var(--color-primary), transparent 62%);
 }
 .orb.b {
   width: 40vw;
   height: 40vw;
   top: 10vw;
   right: -10vw;
-  background: radial-gradient(circle, var(--color-primary), transparent 60%);
+  background: radial-gradient(circle, var(--color-accent), transparent 60%);
   animation-delay: -10s;
 }
 .orb.c {
@@ -109,14 +120,38 @@ body {
   height: 34vw;
   bottom: -14vw;
   left: 30vw;
-  background: radial-gradient(circle, var(--color-accent), transparent 60%);
+  background: radial-gradient(circle, var(--color-secondary), transparent 60%);
   animation-delay: -16s;
 }
 
 @keyframes orb-drift {
   to {
-    transform: translate3d(-4vmax, 3vmax, 0) scale(1.1) rotate(-9deg);
+    transform: translate3d(4vmax, 3vmax, 0) scale(1.1) rotate(8deg);
   }
+}
+
+/* ── Grain ───────────────────────────────────────────────────────────────────
+   The other half of the mocks' ground, and the half the admin never had. A
+   fixed sheet of fractal noise at 5% over the viewport, which is what stops
+   three enormous blurred discs from reading as a flat gradient: the noise gives
+   the navy a surface, so the wash sits under something instead of being the
+   only thing on the page.
+
+   An inline SVG data URI, verbatim from the mocks, rather than an image asset:
+   it is under 200 bytes, it cannot 404, and it needs no network round trip
+   before the paint it exists to texture.
+
+   `z-index: -1` puts it beside the orbs, and it comes after them in the markup,
+   so it paints over the wash and under the screen. The mocks stack it the same
+   way (mesh 0, grain 1, content 2): grain is atmosphere behind the page, never
+   a film over the text. Decorative, so RootLayout marks it aria-hidden. */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 code {

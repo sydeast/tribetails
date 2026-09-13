@@ -51,7 +51,16 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('.signin__card')).toBeVisible();
 });
 
-test('.signin__card fill beats .glass-surface, so no field label sits on the gradient', async ({ page }) => {
+/**
+ * What the card draws changed under this test (#780, 2026-09-11: the mock wins,
+ * the sign-in card is the kit's panel glass rather than an opaque sheet), but
+ * the rule under test did not. `.glass-surface` still sets a flat
+ * `--color-surface-glass` fill and a 12px radius, GlassSurface.css still emits
+ * after signin.css, and `.signin .signin__card` still has to win that tie to
+ * draw the panel gradient at the 20px panel radius. The win is read the same
+ * way as before, off the computed style.
+ */
+test('.signin__card fill beats .glass-surface, so the card draws the panel glass', async ({ page }) => {
   const card = page.locator('.signin__card');
 
   // Both classes really are on the element. If a refactor drops
@@ -60,19 +69,23 @@ test('.signin__card fill beats .glass-surface, so no field label sits on the gra
   await expect(card).toHaveClass(/glass-surface/);
   await expect(card).toHaveClass(/signin__card/);
 
-  const [actual, opaque, glass] = await Promise.all([
+  const [color, image, radius, glass, panelRadius] = await Promise.all([
     card.evaluate((el) => getComputedStyle(el).backgroundColor),
-    resolveColorToken(page, '--color-surface'),
+    card.evaluate((el) => getComputedStyle(el).backgroundImage),
+    card.evaluate((el) => getComputedStyle(el).borderRadius),
     resolveColorToken(page, '--color-surface-glass'),
+    page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--radius-lg').trim()),
   ]);
 
+  // The gradient is a background-image; a card that lost the tie has none and
+  // carries the flat glass token as its background-color instead.
   expect(
-    actual,
-    'the card took GlassSurface.css\'s translucent fill, so the Tribe gradient reads through every label and input on this screen',
-  ).toBe(opaque);
-  expect(actual).not.toBe(glass);
-  // Independent of the token values: a translucent card is the defect, whatever
-  // colour it happens to be. `--color-surface-glass` is 0.8 alpha in light and
-  // 0.6 in dark, so alpha alone separates win from loss in either theme.
-  expect(actual, 'the sign-in card must be fully opaque').not.toMatch(/rgba\([^)]*,\s*0?\.\d+\s*\)/);
+    image,
+    'the card took GlassSurface.css\'s flat fill instead of the panel gradient the mock draws',
+  ).toMatch(/linear-gradient\(160deg/);
+  expect(color).not.toBe(glass);
+  // The radius is the second half of the same fight: 20px is the panel step,
+  // 12px is `.glass-surface`'s own.
+  expect(panelRadius).toBe('20px');
+  expect(radius).toBe(panelRadius);
 });

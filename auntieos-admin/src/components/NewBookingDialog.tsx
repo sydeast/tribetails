@@ -70,10 +70,18 @@ interface NewBookingDialogProps {
 
 /**
  * The admin "New booking request" surface, as the five-step wizard the
- * operator's PNGs specify (`ui-ideas/BookingWorkFlow/`):
+ * operator's PNGs specify (`ui-ideas/BookingWorkFlow/`, scrubbed from the tree
+ * in a47632d; commit 1e97815 records what they showed):
  *
  *   1 Select Kinfolk & Kin   2 Choose Service   3 Schedule Dates
  *   4 Invoice Options        5 Review & Confirm
+ *
+ * Those PNGs are the operator's own override of the single-panel
+ * `ui-ideas/auntieos-create-booking-2026-05-27.html` concept, which is why the
+ * steps, the stepper and the Next / Create footer stay where the HTML mock
+ * draws Cancel / Save draft / Submit request. The HTML mock is still the SKIN
+ * (#755): its fields, chips, calendar and panels are what
+ * `NewBookingDialog.css` and `AuntieDatePicker.css` paint.
  *
  * It replaces the single page that shipped for AO-25, which asked for a
  * household, one service, one shared start time and a set of dates, all at

@@ -11,7 +11,9 @@ import { type VetClinic } from '../api/vetClinics';
  * The behaviours worth pinning here are the ones that make the screen safe to
  * use rather than merely present: the household count that tells the operator
  * how far a save will travel, the retire-not-delete wiring, and the refusal to
- * claim "no households" while the count is still unknown.
+ * claim "no households" while the count is still unknown. The last block pins
+ * the shape the #755 sweep matched to the mock: hero, controls row, the bank on
+ * the ground, the queue and the archive in kit panels.
  */
 function render(ui: React.ReactElement) {
   return rtlRender(<ToastProvider>{ui}</ToastProvider>);
@@ -38,6 +40,19 @@ vi.mock('../api/vetClinicsWrite', async (orig) => ({
 import { VetClinics } from './VetClinics';
 
 const user = userEvent.setup();
+
+/**
+ * The count is the mock's `.linked`: the number sits in its own `<b>` beside
+ * the noun, so a text query on the whole phrase has to read the badge's
+ * textContent rather than one text node.
+ */
+async function usageBadge(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const el = document.querySelector<HTMLElement>('.vetcard-usage');
+    if (el === null) throw new Error('no usage badge yet');
+    return el;
+  });
+}
 
 const RIVERSIDE: VetClinic = {
   _id: 'c1',
@@ -146,7 +161,7 @@ describe('VetClinics: the household count', () => {
   it('counts a household linked by id', async () => {
     seed({ households: [{ _id: 'h1', primaryVetClinicId: 'c1' }] });
     render(<VetClinics />);
-    expect(await screen.findByText(/1 linked/)).toBeInTheDocument();
+    expect(await usageBadge()).toHaveTextContent(/1 linked/);
   });
 
   it('names a name-only household separately, since a save cannot reach it', async () => {
@@ -154,8 +169,9 @@ describe('VetClinics: the household count', () => {
       households: [{ _id: 'h1', primaryVetClinicId: '', primaryVetName: 'Riverside Animal Hospital' }],
     });
     render(<VetClinics />);
-    expect(await screen.findByText(/1 by name only/)).toBeInTheDocument();
-    expect(screen.getByText(/not updated by a save/)).toBeInTheDocument();
+    const badge = await usageBadge();
+    expect(badge).toHaveTextContent(/1 by name only/);
+    expect(badge).toHaveTextContent(/not updated by a save/);
   });
 
   it('says no households when there genuinely are none', async () => {
@@ -351,5 +367,118 @@ describe('VetClinics: adding', () => {
     await user.click(screen.getByRole('button', { name: 'Add to bank' }));
 
     expect(await screen.findByText(/was already in the bank/)).toBeInTheDocument();
+  });
+});
+
+describe('VetClinics: the mock shape (#755)', () => {
+  it('opens on the kit hero with the mock kicker, title and Add clinic', async () => {
+    seed();
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+    expect(document.querySelector('.den-heading-kicker')).toHaveTextContent('The Den · Directory');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Vet clinics');
+    expect(screen.getByRole('button', { name: 'Add clinic' })).toBeInTheDocument();
+  });
+
+  it('carries the explanation as a tooltip, never as a banner or a blurb', async () => {
+    seed({ clinics: [RIVERSIDE, PENDING, RETIRED] });
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+    expect(document.querySelector('.banner')).toBeNull();
+    expect(document.querySelector('.vetbank-blurb')).toBeNull();
+
+    // Heading, pending panel and retired panel: three tips, none open.
+    const tips = screen.getAllByRole('tooltip', { hidden: true });
+    expect(tips).toHaveLength(3);
+    for (const tip of tips) expect(tip).not.toBeVisible();
+    expect(tips.map((t) => t.textContent)).toEqual([
+      expect.stringMatching(/shared bank every household/),
+      expect.stringMatching(/Approving publishes a clinic/),
+      expect.stringMatching(/kept, not deleted/),
+    ]);
+  });
+
+  it('draws the controls row: the search box and the count pill', async () => {
+    seed({ clinics: [RIVERSIDE, { _id: 'c2', name: 'The Mill Vet' }] });
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+
+    const search = screen.getByRole('searchbox', { name: /Search clinics/ });
+    expect(search.closest('.vetbank-search')).not.toBeNull();
+    const count = document.querySelector('.vetbank-count');
+    expect(count).toHaveTextContent(/^Catalog2 clinics$/);
+
+    // "the mill" rather than "mill": Riverside's address is on Mill St.
+    await user.type(search, 'the mill');
+    await waitFor(() => expect(count).toHaveTextContent(/^Catalog1 of 2 clinics$/));
+  });
+
+  it('lays the bank on the ground and the queue and the archive in panels', async () => {
+    seed({ clinics: [RIVERSIDE, PENDING, RETIRED] });
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+
+    const catalog = screen.getByRole('list', { name: 'Clinic catalog' });
+    expect(catalog.closest('.den-panel')).toBeNull();
+
+    const pending = screen.getByRole('list', { name: 'Clinics pending approval' });
+    const retired = screen.getByRole('list', { name: 'Retired clinics' });
+    const panels = [...document.querySelectorAll('.den-panel')];
+    expect(panels).toHaveLength(2);
+    expect(panels[0]).toContainElement(pending);
+    expect(panels[1]).toContainElement(retired);
+    expect(screen.getByRole('heading', { level: 2, name: 'Pending approval' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Retired' })).toBeInTheDocument();
+    expect([...document.querySelectorAll('.den-panel-meta')].map((m) => m.textContent)).toEqual([
+      '1 submitted',
+      '1 out of the bank',
+    ]);
+
+    // Mock order: queue, controls, bank, archive.
+    const order = [panels[0]!, document.querySelector('.vetbank-controls')!, catalog, panels[1]!];
+    for (let i = 1; i < order.length; i++) {
+      const follows = order[i - 1]!.compareDocumentPosition(order[i]!);
+      expect(follows & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it('draws the card as the mock: gradient tile, id line, glyph rows, lock count, icon actions', async () => {
+    seed({
+      clinics: [{ ...RIVERSIDE, isEmergency: true, website: 'https://riverside.vet' }],
+      households: [{ _id: 'h1', primaryVetClinicId: 'c1' }],
+    });
+    render(<VetClinics />);
+    await screen.findByText('Riverside Animal Hospital');
+    const card = document.querySelector('.vetcard')!;
+
+    // The tile is the kit avatar on its seeded gradient, named for the clinic.
+    const tile = card.querySelector('.avatar');
+    expect(tile).not.toBeNull();
+    expect(tile!.querySelector('[role="img"]')).toHaveAttribute('aria-label', 'Riverside Animal Hospital');
+    expect(tile!.querySelector('.avatar-glyph')).not.toBeNull();
+    expect(card.querySelector('.vetcard-id')).toHaveTextContent('vet_clinics/c1');
+
+    // The emergency flag is a kit pill, compact, in the header.
+    const pill = card.querySelector('.den-statuspill');
+    expect(pill).toHaveTextContent('24 hour');
+    expect(pill).toHaveClass('den-statuspill--compact');
+
+    // Glyph rows keep their labels for assistive tech, in the mock's order.
+    const labels = [...card.querySelectorAll('.vetcard-row-label')].map((d) => d.textContent);
+    expect(labels).toEqual(['Phone', 'Address', 'Hours', 'Website']);
+    expect(card.querySelectorAll('.vetcard-row-glyph svg')).toHaveLength(4);
+
+    // The count wears the lock and the number in its own bold run.
+    const usage = card.querySelector('.vetcard-usage')!;
+    expect(usage.querySelector('svg')).not.toBeNull();
+    expect(usage.querySelector('b')).toHaveTextContent('1');
+
+    // Edit and Retire are icon buttons named by aria-label, no visible word.
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    const retire = screen.getByRole('button', { name: 'Retire' });
+    expect(edit).toHaveClass('auntie-icon-btn');
+    expect(retire).toHaveClass('auntie-icon-btn', 'auntie-icon-btn--destructive');
+    expect(edit.textContent).toBe('');
+    expect(retire.textContent).toBe('');
   });
 });

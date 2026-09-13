@@ -14,16 +14,17 @@ import kotlinx.coroutines.launch
  *
  * WHAT WAS MISSING. [HouseholdMembersViewModel] beside this one is always about
  * ONE household, because `listInvites` takes a `familyId`. So the operator's
- * real question — "who did we invite who never came in" — could only be
+ * real question, "who did we invite who never came in", could only be
  * answered by opening every household by hand. `listAllInvites` is that
  * question, and this is its screen state.
  *
- * IT IS A READ, AND IT STAYS ONE. Per the invite ruling the admin's only invite
- * is inviting a PRIMARY to the portal, and both callables that do it are
- * household-scoped; the PRIMARY invites the secondary from MyTribe. There is no
- * mint here, no revoke, and no permission write — not because they were left
- * for later, but because an admin-WIDE surface has no household to act on.
- * Every action lives one tap away on [HouseholdMembersScreen].
+ * IT IS A READ, AND IT STAYS ONE. Per the invite ruling (CLAUDE.md, "WHO
+ * INVITES WHOM", 2026-08-04) the admin's only invite is inviting a PRIMARY to
+ * the portal, and both callables that do it are household-scoped; the PRIMARY
+ * invites the secondary from MyTribe. There is no mint here, no revoke, and no
+ * permission write. They were not left for later: an admin-WIDE surface has no
+ * household to act on. Every action lives one tap away on
+ * [HouseholdMembersScreen].
  *
  * FAIL LOUD, AND DO NOT DEMOTE WHAT WAS READ. [InvitesUiState.loaded] is what
  * earns the empty state, and a failed RELOAD leaves it alone: an unreadable
@@ -42,7 +43,7 @@ enum class InviteFilter(val label: String) {
  *
  * OUTSTANDING answers "who never accepted", so an EXPIRED invite belongs in it:
  * that is still somebody who never came in, and it is the row most likely to
- * need a second send. REVOKED does not — that one was a decision already taken.
+ * need a second send. REVOKED does not: that one was a decision already taken.
  */
 private fun statusesFor(filter: InviteFilter): Set<MembersRepository.InviteStatus>? = when (filter) {
     InviteFilter.OUTSTANDING -> setOf(
@@ -73,28 +74,37 @@ internal fun filterInvites(
 
 data class InviteSection(
     val heading: String,
+    /** The mock's `.ct`: the raw status codes the section collects, joined with a slash. */
+    val statusNote: String,
     val rows: List<MembersRepository.AdminInvite>,
 )
 
 /**
  * Sections in a FIXED order, empty ones included, so a section that empties out
- * between reads cannot shuffle the ones below it. Expired sits above Accepted
- * because on this screen those are the rows needing a decision.
+ * between reads cannot shuffle the ones below it. The order is the mock's
+ * (`auntieos-invites-2026-05-27.html`: Pending, Accepted, Expired, Revoked),
+ * which is also the order [HouseholdMembersScreen] stacks the same four. An
+ * earlier version promoted Expired above Accepted; the mock is the authority
+ * for order and it does not.
  */
-private val SECTION_ORDER: List<Pair<String, Set<MembersRepository.InviteStatus>>> = listOf(
-    "Pending" to setOf(
+private val SECTION_ORDER: List<Pair<String, List<MembersRepository.InviteStatus>>> = listOf(
+    "Pending" to listOf(
         MembersRepository.InviteStatus.PENDING,
         MembersRepository.InviteStatus.EMAIL_SENT,
     ),
-    "Expired" to setOf(MembersRepository.InviteStatus.EXPIRED),
-    "Accepted" to setOf(MembersRepository.InviteStatus.ACCEPTED),
-    "Revoked" to setOf(MembersRepository.InviteStatus.REVOKED),
+    "Accepted" to listOf(MembersRepository.InviteStatus.ACCEPTED),
+    "Expired" to listOf(MembersRepository.InviteStatus.EXPIRED),
+    "Revoked" to listOf(MembersRepository.InviteStatus.REVOKED),
 )
 
 internal fun groupInvitesByStatus(
     rows: List<MembersRepository.AdminInvite>,
 ): List<InviteSection> = SECTION_ORDER.map { (heading, statuses) ->
-    InviteSection(heading, rows.filter { it.invite.effectiveStatus in statuses })
+    InviteSection(
+        heading = heading,
+        statusNote = "status: " + statuses.joinToString(" / ") { it.name },
+        rows = rows.filter { it.invite.effectiveStatus in statuses },
+    )
 }
 
 data class InvitesUiState(

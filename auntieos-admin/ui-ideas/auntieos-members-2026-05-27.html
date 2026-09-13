@@ -20,6 +20,31 @@
   secondaryLabel default "Folk", max 24 chars (SECONDARY_LABEL_MAX).
   Note: billing_full is admin-only (setMemberPermissions, severity warn);
   updateSecondaryPermissions covers only messaging_direct/messaging_group/kin_edit.
+
+  AMENDED 2026-09-12 (#755, Members sweep) to carry the standing rulings, so a
+  later pass does not restore what the operator has already ruled out:
+  - "Add secondary contact" (the hero's primary action and the dashed row under
+    the list) is gone. The admin does not invite the secondary; the PRIMARY does,
+    from MyTribe (auntieos-admin/CLAUDE.md, "WHO INVITES WHOM", 2026-08-04).
+    The admin's one invite, inviteKinfolkToPortal, takes the hero's primary
+    action slot as "Invite to portal". The slot is the sweep's reading of that
+    ruling, not a ruling of its own.
+  - The "admin only" flag on billing_full is gone. A PRIMARY may grant a
+    SECONDARY any permission except admin, billing included (operator ruling,
+    recorded in src/api/members.ts on PERMISSION_META).
+  - The "new admin surface" banner is concept-time provenance, not screen
+    content; the built screen does not render it.
+  Kept as drawn, with the constraint noted: the secondaryLabel input and "Save
+  label" (updateMemberLabel calls requirePrimary) and "Swap contact info"
+  (swapPrimaryContact edits the caller's own client record) are PRIMARY-only on
+  the server. The admin screen shows the label read-only in this shape and
+  offers "Swap primary" (executePrimaryRecovery) in the hero instead.
+  The server's MemberPermissions also carries home_access, which this concept
+  predates; the built screen lists six rows.
+  This hero's corner wash is purple; the kit paints every hero band in Kinfolk
+  Orange (DenScreenKit.css, since #759) and the kit wins, as on the kinfolk
+  profile sweep. The crest is the kit avatar on its seeded gradient rather than
+  the conic mark, which is reserved for the feature stat and sign-in.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -214,7 +239,8 @@
       </div>
       <div class="actions">
         <button class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 3l5 5-5 5"/><path d="M21 8H9a4 4 0 0 0-4 4v0"/><path d="M8 21l-5-5 5-5"/><path d="M3 16h12a4 4 0 0 0 4-4v0"/></svg> Swap primary</button>
-        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact</button>
+        <!-- Was "Add secondary contact". Amended per WHO INVITES WHOM (see head comment): the admin's one invite. -->
+        <button class="act primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h16v16H4z"/><path d="m4 7 8 6 8-6"/></svg> Invite to portal</button>
       </div>
     </div>
 
@@ -248,7 +274,7 @@
     <!-- SECONDARY list -->
     <div class="panel d2">
       <h3>Secondary contacts <span class="ct">2 of role: SECONDARY</span></h3>
-      <div class="ph-sub">Invited household members. Each carries an editable label and a permission set. <b>kintales_only</b> is server-locked-on and cannot be turned off.</div>
+      <div class="ph-sub">Household members the primary invited from MyTribe. Each carries a label and a permission set. <b>kintales_only</b> is server-locked-on and cannot be turned off.</div>
 
       <!-- secondary 1 -->
       <div class="member">
@@ -277,7 +303,7 @@
 
         <div class="perms">
           <div class="permhdr">permissions · MemberPermissions</div>
-          <div class="trow"><div class="tx"><b>billing_full<span class="adminflag">admin only</span></b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog on"></div></div>
+          <div class="trow"><div class="tx"><b>billing_full</b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog on"></div></div>
           <div class="trow"><div class="tx"><b>messaging_direct</b><small>One to one messages with the Auntie.</small></div><div class="tog on"></div></div>
           <div class="trow"><div class="tx"><b>messaging_group</b><small>Participate in the household group thread.</small></div><div class="tog on"></div></div>
           <div class="trow"><div class="tx"><b>kin_edit</b><small>Add or edit pet (kin) records for the household.</small></div><div class="tog on"></div></div>
@@ -318,7 +344,7 @@
 
         <div class="perms">
           <div class="permhdr">permissions · MemberPermissions</div>
-          <div class="trow"><div class="tx"><b>billing_full<span class="adminflag">admin only</span></b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog"></div></div>
+          <div class="trow"><div class="tx"><b>billing_full</b><small>Full access to invoices and payment methods. Granted via setMemberPermissions (logged with severity warn).</small></div><div class="tog"></div></div>
           <div class="trow"><div class="tx"><b>messaging_direct</b><small>One to one messages with the Auntie.</small></div><div class="tog on"></div></div>
           <div class="trow"><div class="tx"><b>messaging_group</b><small>Participate in the household group thread.</small></div><div class="tog on"></div></div>
           <div class="trow"><div class="tx"><b>kin_edit</b><small>Add or edit pet (kin) records for the household.</small></div><div class="tog"></div></div>
@@ -332,9 +358,7 @@
         </div>
       </div>
 
-      <div class="addrow" style="margin-top:16px">
-        <button class="addbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-5.5 6-5.5"/><path d="M18 9v6M21 12h-6"/></svg> Add secondary contact (invitedEmail, secondaryLabel, permissions)</button>
-      </div>
+      <!-- The dashed "Add secondary contact" row stood here. Removed per WHO INVITES WHOM (see head comment). -->
     </div>
 
     <p class="note">// concept mockup · Household members · palette from AuntieColors.kt · placeholder content</p>

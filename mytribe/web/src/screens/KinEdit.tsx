@@ -10,6 +10,8 @@ import { breedCatalogForSpecies, speciesWantsBreedBank } from '../lib/breedSearc
 import { BreedField } from '../components/BreedField';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import { buildKinChanges, hasErrors, kinFormFromDto, validateKinForm, type KinEditForm } from '../lib/kinEditForm';
 
 /**
@@ -62,7 +64,23 @@ export function KinEdit() {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
   }
 
-  if (kin.isLoading || (found && form === null)) {
+  // Paused, this fell through to the `!found` card: an edit screen telling a
+  // household their Kin is not in a list that was never fetched.
+  const kinView = viewOfQuery(kin);
+  const breedsView = viewOfQuery(breeds);
+  if (kinView.kind === 'offline') {
+    return (
+      <>
+        <PortalNav active="tribe" />
+        <div className="wrap">
+          <section className="glass card">
+            <OfflineNotice what="this profile" />
+          </section>
+        </div>
+      </>
+    );
+  }
+  if (kinView.kind !== 'data' || (found && form === null)) {
     return (
       <>
         <PortalNav active="tribe" />
@@ -163,9 +181,16 @@ export function KinEdit() {
                 )}
                 error={errors.breed}
                 note={
-                  speciesWantsBreedBank(current.species) && breeds.isError
-                    ? 'Breed list unavailable right now, type it in.'
-                    : null
+                  // The breed bank is its own query, so it can be paused while
+                  // the Kin roster came from cache. Without this arm the field
+                  // just offers nothing and says nothing.
+                  !speciesWantsBreedBank(current.species)
+                    ? null
+                    : breedsView.kind === 'offline'
+                      ? 'You are offline, so the breed list is unavailable. Type it in.'
+                      : breedsView.kind === 'error'
+                        ? 'Breed list unavailable right now, type it in.'
+                        : null
                 }
               />
               {textField('ageYears', 'Age (years)', { type: 'text' })}

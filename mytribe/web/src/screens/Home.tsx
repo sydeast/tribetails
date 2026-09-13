@@ -5,9 +5,10 @@ import { getMyBookings, getMyHome, getMyKin, getMyKinTales } from '../api/portal
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { LaunchError } from './LaunchError';
-import { AddToHomeScreen } from '../components/AddToHomeScreen';
-import { PushPrompt } from '../components/PushPrompt';
+import { InstallAndAlerts } from '../components/InstallAndAlerts';
 import { PortalNav } from '../components/PortalNav';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import {
   bookingChip,
   calTile,
@@ -36,6 +37,15 @@ import {
  * operator actually configures something); a non-empty config renders the
  * configured order/limits in a single column, exactly like the Kotlin
  * `custom` branch.
+ *
+ * Every branch reads lib/queryState.ts rather than `isLoading` plus a length.
+ * A signal drop with the tab open pauses these queries: `isLoading` goes false
+ * without `isError` going true, so this screen used to greet the household
+ * "Hi , your tribe is in good hands." over three sections claiming there was
+ * nothing on the calendar, no KinTales and no kin. The three gated queries make
+ * it worse than most screens: while `home` is paused they are `enabled: false`,
+ * so they never even reach 'paused' and sit at pending/idle. `gate: home` is
+ * what makes them answer with home's reason instead of with silence.
  */
 export function Home() {
   const kinfolkId = getActiveKinfolkId();
@@ -62,6 +72,18 @@ export function Home() {
 
   const displayName = home.data?.displayName ?? '';
   const liveVisit = bookings.data?.liveVisit ?? null;
+  // `home.isError` is answered by the early return above, and `home` is not
+  // gated, so homeView is only ever data / offline / loading. The other three
+  // are best-effort (see the header): each can fail on its own while the rest of
+  // the screen is fine, so each gets its own error arm below. Folding an error
+  // into the loading arm would swap the old false-empty for a false spinner
+  // that never ends, which is the same lie wearing a different hat.
+  const homeView = viewOfQuery(home);
+  const bookingsView = viewOfQuery(bookings, { isEmpty: (d) => d.upcoming.length === 0, gate: home });
+  const talesView = viewOfQuery(kinTales, { isEmpty: (d) => d.tales.length === 0, gate: home });
+  // The roster has no empty state to protect: it always ends with the Add Kin
+  // row, which reads correctly whether or not there is anybody above it.
+  const kinView = viewOfQuery(kin, { gate: home });
 
   const sections = home.data?.portal.home ?? [];
   const layout = resolveHomeLayout(sections);
@@ -85,7 +107,11 @@ export function Home() {
         <header className="hero-greet">
           <div className="kick">{greetingKick()}</div>
           <h1>
-            {home.isLoading ? (
+            {homeView.kind === 'offline' ? (
+              // Not "Hi , your tribe is in good hands." We do not know whose
+              // tribe this is right now, so we do not claim to.
+              <>We can&rsquo;t reach your tribe right now.</>
+            ) : homeView.kind !== 'data' ? (
               'Fetching your tribe…'
             ) : (
               <>
@@ -96,7 +122,13 @@ export function Home() {
         </header>
 
         {(() => {
-          const liveVisitSection = liveVisit && (
+          // No loading cue in this slot, unlike Schedule's. There the hero comes
+          // from `getMyVisits` while the lists come from `getMyBookings`, so it
+          // needs to speak for itself; here the Up next card below is fed by
+          // this same query and already says what is happening.
+          const liveVisitSection = !liveVisit ? (
+            bookingsView.kind === 'offline' ? <OfflineNotice compact what="whether a visit is under way" /> : null
+          ) : (
             <section className="live">
               <div className="lrow">
                 <span className="pulse" />
@@ -133,10 +165,14 @@ export function Home() {
               <div className="sectlabel">
                 Up next <Link to="/schedule">Full schedule</Link>
               </div>
-              {bookings.isLoading ? (
-                <p className="sub">Loading your schedule…</p>
-              ) : upcoming.length === 0 ? (
+              {bookingsView.kind === 'offline' ? (
+                <OfflineNotice what="your schedule" />
+              ) : bookingsView.kind === 'empty' ? (
                 <p className="sub">Nothing on the calendar yet.</p>
+              ) : bookingsView.kind === 'error' ? (
+                <p className="sub">Your schedule is unavailable right now.</p>
+              ) : bookingsView.kind !== 'data' ? (
+                <p className="sub">Loading your schedule…</p>
               ) : (
                 upcoming.map((b, i) => {
                   const tile = b.startTimeMs !== null ? calTile(b.startTimeMs) : { month: '—', day: '—' };
@@ -163,10 +199,14 @@ export function Home() {
           const talesSection = (
             <section className="glass card d2">
               <div className="sectlabel">Recent KinTales</div>
-              {kinTales.isLoading ? (
-                <p className="sub">Loading recent KinTales…</p>
-              ) : tales.length === 0 ? (
+              {talesView.kind === 'offline' ? (
+                <OfflineNotice what="your KinTales" />
+              ) : talesView.kind === 'empty' ? (
                 <p className="sub">Your first KinTale will show up here after a visit.</p>
+              ) : talesView.kind === 'error' ? (
+                <p className="sub">KinTales unavailable right now.</p>
+              ) : talesView.kind !== 'data' ? (
+                <p className="sub">Loading recent KinTales…</p>
               ) : (
                 tales.map((t, i) => (
                   <div className={`tale a${(i % 3) + 1}`} key={t.id}>
@@ -189,7 +229,11 @@ export function Home() {
               <div className="sectlabel">
                 Your tribe <Link to="/kin">The Kin</Link>
               </div>
-              {kin.isLoading ? (
+              {kinView.kind === 'offline' ? (
+                <OfflineNotice what="your kin" />
+              ) : kinView.kind === 'error' ? (
+                <p className="sub">Your kin list is unavailable right now.</p>
+              ) : kinView.kind !== 'data' ? (
                 <p className="sub">Loading your kin…</p>
               ) : (
                 activeKin.map((k, i) => (
@@ -276,8 +320,9 @@ export function Home() {
           );
         })()}
 
-        <PushPrompt />
-        <AddToHomeScreen />
+        {/* Which of the two banners shows, and in what order, is a decision
+            of its own on iOS. See components/InstallAndAlerts.tsx. */}
+        <InstallAndAlerts />
 
         <p className="footnote">
           Cared for by <b>{home.data?.businessName || 'Tribe Tails Pet Care'}</b>

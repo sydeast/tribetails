@@ -34,6 +34,7 @@ fun AdminDashboardScreen(
     onNavigateToServices: () -> Unit = {},
     onNavigateToKinTaleTemplates: () -> Unit = {},
     onNavigateToTemplates: () -> Unit = {},
+    onNavigateToMarketingBlasts: () -> Unit = {},
     onNavigateToFeatureFlags: () -> Unit = {},
     onNavigateToCoveragePackages: () -> Unit = {},
     onNavigateToInvites: () -> Unit = {},
@@ -139,6 +140,15 @@ fun AdminDashboardScreen(
                     title       = "Templates",
                     description = "Author email templates and bind them to notification triggers.",
                     onClick     = onNavigateToTemplates,
+                )
+            }
+            item {
+                AdminDashTile(
+                    icon        = Lucide.Megaphone,
+                    accentColor = AuntieTheme.colors.packPink,
+                    title       = "Marketing Blasts",
+                    description = "Schedule a newsletter, survey or opt-in nudge to an audience, and see what is queued.",
+                    onClick     = onNavigateToMarketingBlasts,
                 )
             }
 

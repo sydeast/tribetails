@@ -94,6 +94,24 @@ class KinTaleTemplateEditorViewModelTest {
     }
 
     /**
+     * The mock's "Active" row. The picker read `isActive` for its Inactive tag
+     * while the editor had no control for it; a persisted field one platform can
+     * read but not edit is a defect, so the toggle exists and writes that one key.
+     */
+    @Test
+    fun `turning Active off asks for isActive and nothing else`() = runTest(testDispatcher) {
+        val vm = loadedEditor()
+        advanceUntilIdle()
+
+        vm.toggleIsActive(false)
+        vm.persist()
+        advanceUntilIdle()
+
+        assertEquals(setOf("isActive"), capturedChanges().keys)
+        assertEquals(false, capturedChanges()["isActive"])
+    }
+
+    /**
      * The rows a kinfolk sees. `getMyKinTales.parseTemplateChecklistItems`
      * resolves a checked key's label from THIS list and drops a key it cannot
      * find, so writing back a stale copy does not merely look wrong in the

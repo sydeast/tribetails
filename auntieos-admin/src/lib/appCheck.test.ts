@@ -39,7 +39,12 @@ const {
 vi.mock('firebase/app', () => ({ initializeApp: vi.fn(() => ({ name: 'admin-app' })) }));
 vi.mock('firebase/auth', () => ({ getAuth: vi.fn(() => ({})), connectAuthEmulator: vi.fn() }));
 vi.mock('firebase/firestore', () => ({
-  getFirestore: vi.fn(() => ({})),
+  // `lib/firebase.ts` picks its own local cache rather than taking the SDK's
+  // silent fallback, so the four cache symbols have to exist here too.
+  initializeFirestore: vi.fn(() => ({})),
+  memoryLocalCache: vi.fn(() => ({ kind: 'memory' })),
+  persistentLocalCache: vi.fn(() => ({ kind: 'persistent' })),
+  persistentMultipleTabManager: vi.fn(() => ({ kind: 'multi-tab' })),
   connectFirestoreEmulator: vi.fn(),
 }));
 vi.mock('firebase/functions', () => ({

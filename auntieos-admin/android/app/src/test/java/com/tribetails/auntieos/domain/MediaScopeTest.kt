@@ -42,6 +42,18 @@ class MediaScopeTest {
         assertSame(base, base.withSandboxScope("   "))
     }
 
+    // #802: `withSandboxScope` is a `.copy(kinfolkId = ...)`, so every OTHER
+    // field -- durationSeconds included -- must survive untouched. This is the
+    // diff-vs-rebuild guarantee `saveMediaFile` relies on: a `.copy()` can
+    // never silently zero a field it does not name, the way a screen rebuilding
+    // a whole model from form state can.
+    @Test
+    fun withSandboxScope_preservesDurationSeconds() {
+        val base = MediaFile(entityId = "sess1", entityType = MediaEntityType.VISIT_LOG.name, durationSeconds = 75)
+        assertEquals(75, base.withSandboxScope("test-kinfolk-001").durationSeconds)
+        assertEquals(75, base.withSandboxScope(null).durationSeconds)
+    }
+
     // Operator ruling 2026-07-31: Kinfolk do not "own" media. A KIN/BUSINESS/...
     // upload's kinfolkId must end up ABSENT from the persisted doc, never blank
     // (HANDOFF_2026-07-25's equality-on-empty-string trap). saveMediaFile decides

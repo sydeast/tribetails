@@ -284,8 +284,9 @@ async function fillValidSchema() {
 describe('FormSchemaEditor: the workflow modal', () => {
   it('is a labelled modal, opening on the first step', () => {
     render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByRole('dialog')).toHaveAccessibleName('New Form Schema');
-    expect(screen.getByRole('navigation', { name: 'New Form Schema steps' })).toBeInTheDocument();
+    // The mock's SectionHeader copy, sentence case.
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('New form schema');
+    expect(screen.getByRole('navigation', { name: 'New form schema steps' })).toBeInTheDocument();
     expect(screen.getByText('Step 1 of 3')).toBeInTheDocument();
   });
 
@@ -342,6 +343,101 @@ describe('FormSchemaEditor: the workflow modal', () => {
     expect(onCancel).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: /discard changes/i }));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('draws the mock schema step: required marks, the locked-id note, the mock placeholders, a two-line description', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    const idInput = await screen.findByLabelText(/schema id/i);
+    expect(idInput).toBeDisabled();
+    expect(idInput).toHaveAttribute('placeholder', 'tribeProfile');
+    // The mock's "(immutable once persisted)" note sits inside the label, so
+    // the control's own name says the id is locked.
+    expect(idInput).toHaveAccessibleName('Schema id (immutable once persisted)');
+    expect(screen.getByLabelText(/^name$/i)).toHaveAttribute('placeholder', 'Tribe Profile');
+    const description = screen.getByLabelText(/^description$/i);
+    expect(description.tagName).toBe('TEXTAREA');
+    expect(description).toHaveAttribute('placeholder', 'Optional admin-facing description');
+    // The required mark is the stylesheet's, so the names stay the label's words.
+    expect(screen.getByText('Name')).toHaveClass('fse__label--required');
+    expect(screen.getByText('Description')).not.toHaveClass('fse__label--required');
+    // The mock's `.bb` inputs, not boxed ones.
+    expect(idInput).toHaveClass('fse__input');
+  });
+
+  it('says nothing under a step heading: the three step blurbs are gone (2026-09-11 ruling)', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    expect(document.querySelector('.wiz__step-blurb')).toBeNull();
+    await goToStep('Sections');
+    expect(document.querySelector('.wiz__step-blurb')).toBeNull();
+    await goToStep('Review');
+    expect(document.querySelector('.wiz__step-blurb')).toBeNull();
+  });
+
+  it('draws the mock field card: Field n tag with its tools, key and label side by side, the type chips, the stack, and Yes / No for required', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Sections');
+    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+
+    const card = document.querySelector('.fse__field-card')!;
+    expect(card).not.toBeNull();
+    expect(card.querySelector('.fse__field-head .fse__field-tag')).toHaveTextContent('Field 1');
+    expect(within(card as HTMLElement).getByRole('button', { name: /remove field/i })).toBeInTheDocument();
+    // Key and label share the mock's two-column grid.
+    const grid2 = card.querySelector('.fse__grid2')!;
+    expect(within(grid2 as HTMLElement).getByLabelText(/^key$/i)).toBeInTheDocument();
+    expect(within(grid2 as HTMLElement).getByLabelText(/^label$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^key$/i)).toHaveAttribute('placeholder', 'householdName');
+
+    // The nine supported types as chips, "text" chosen on a new field. No <select>.
+    const types = screen.getByRole('radiogroup', { name: 'Type' });
+    const chips = within(types).getAllByRole('radio');
+    expect(chips.map((c) => c.textContent)).toEqual([
+      'text', 'textarea', 'select', 'multiselect', 'date', 'number', 'checkbox', 'phone', 'email',
+    ]);
+    expect(within(types).getByRole('radio', { name: 'text' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(types).getByRole('radio', { name: 'text' })).toHaveClass('fse__chip--on');
+    expect(card.querySelector('select')).toBeNull();
+
+    // Required is the mock's Yes / No segmented picker, No on a new field, never a checkbox.
+    const required = screen.getByRole('radiogroup', { name: 'Required' });
+    expect(within(required).getByRole('radio', { name: 'No' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(required).getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'false');
+    expect(card.querySelector('input[type="checkbox"]')).toBeNull();
+    await userEvent.click(within(required).getByRole('radio', { name: 'Yes' }));
+    expect(within(required).getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(required).getByRole('radio', { name: 'Yes' })).toHaveClass('fse__seg-btn--on');
+
+    // The four optional fields stack under the chips, inside the card.
+    const stack = card.querySelector('.fse__stack')!;
+    expect(within(stack as HTMLElement).getByLabelText(/helper text/i)).toBeInTheDocument();
+    expect(within(stack as HTMLElement).getByLabelText(/^group$/i)).toBeInTheDocument();
+  });
+
+  it('lays the sections step out as the mock: Add section at the head of the list, Add field in the fields bar of each card', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await goToStep('Sections');
+    const body = document.querySelector('.wiz__step')!;
+    const order = Array.from(body.querySelectorAll('.fse__step-actions, .fse__sections')).map((el) => el.className);
+    expect(order).toEqual(['fse__step-actions', 'fse__sections']);
+    expect(within(body.querySelector('.fse__step-actions') as HTMLElement).getByRole('button', { name: /add section/i })).toBeInTheDocument();
+    const bar = document.querySelector('.fse__section-fields-row')!;
+    expect(bar).toHaveTextContent('Fields (0)');
+    expect(within(bar as HTMLElement).getByRole('button', { name: /add field/i })).toBeInTheDocument();
+    // The section card is the mock's gradient card, not a DenPanel.
+    expect(document.querySelector('.fse__section-card .fse__section-tag')).toHaveTextContent('Section 1');
+    expect(document.querySelector('.den-panel')).toBeNull();
+  });
+
+  it('marks the card, not only the input, when one of its fields is invalid', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    expect(document.querySelector('.fse__field-card--invalid')).toBeNull();
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'multiselect' }));
+    expect(document.querySelector('.fse__field-card--invalid')).not.toBeNull();
+    expect(screen.getByLabelText(/options/i)).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('summarises what will be written on the review step', async () => {
@@ -620,6 +716,15 @@ describe('FormSchemaEditor: a new schema is not accused of being empty', () => {
 });
 
 describe('FormSchemaEditor: edit mode', () => {
+  it('shows the version on the review step, the mock subtitle line moved into the wizard', async () => {
+    getFormSchema.mockResolvedValue(schema({ version: 3 }));
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Review');
+    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.getByText('v3')).toBeInTheDocument();
+  });
+
   it('loads via getFormSchema and renders the existing name, id (locked), and field', async () => {
     getFormSchema.mockResolvedValue(schema());
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
@@ -790,7 +895,7 @@ describe('FormSchemaEditor: edit mode', () => {
     await goToStep('Sections');
     expect(screen.queryByLabelText(/options/i)).toBeNull();
 
-    await userEvent.selectOptions(screen.getByLabelText(/^type$/i), 'select');
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
     expect(await screen.findByLabelText(/options/i)).toBeInTheDocument();
     // The problem belongs to the Sections step, and the rail says so from anywhere.
     expect(screen.getByRole('button', { name: /^2 Sections/ })).toHaveAccessibleName(
@@ -803,6 +908,45 @@ describe('FormSchemaEditor: edit mode', () => {
     await userEvent.type(screen.getByLabelText(/options/i), 'Dog, Cat');
     await goToStep('Review');
     expect(screen.getByRole('button', { name: /save schema/i })).toBeEnabled();
+  });
+
+  it('does not eat a typed comma in the options field (#801)', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    saveFormSchema.mockResolvedValue({ id: 'tribeProfile', version: 4 });
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
+
+    const input = await screen.findByLabelText(/options/i);
+    await userEvent.type(input, 'a,b,c');
+    // Re-parsing on every keystroke used to consume the comma the instant it
+    // was typed. While the operator is still typing, the field must show
+    // exactly what they typed, comma included.
+    expect(input).toHaveValue('a,b,c');
+
+    // Commit happens on blur, not on keystroke.
+    await userEvent.tab();
+    expect(input).toHaveValue('a, b, c');
+
+    await goToStep('Review');
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+
+    await waitFor(() => expect(saveFormSchema).toHaveBeenCalledTimes(1));
+    const sent = saveFormSchema.mock.calls[0]?.[0] as FormSchemaDetail;
+    expect(sent.sections[0]?.fields[0]?.options).toEqual(['a', 'b', 'c']);
+  });
+
+  it('commits the options field on Enter as well as on blur', async () => {
+    getFormSchema.mockResolvedValue(schema());
+    render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByLabelText(/schema id/i);
+    await goToStep('Sections');
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Type' })).getByRole('radio', { name: 'select' }));
+
+    const input = await screen.findByLabelText(/options/i);
+    await userEvent.type(input, 'x,y{enter}');
+    expect(input).toHaveValue('x, y');
   });
 
   it('disables all actions while a save is in flight', async () => {

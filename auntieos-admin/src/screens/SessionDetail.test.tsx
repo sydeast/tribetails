@@ -8,11 +8,11 @@ import { type SessionEntry } from '../api/sessions';
  * mocked at the module this screen actually imports, so a spec drives the same
  * call the browser would make.
  */
-const { setVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
-  setVisitLifecycle: vi.fn(),
+const { patchVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
+  patchVisitLifecycle: vi.fn(),
   updateKinCareSession: vi.fn(),
 }));
-vi.mock('../api/sessionsWrite', () => ({ setVisitLifecycle, updateKinCareSession }));
+vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, updateKinCareSession }));
 // `useDocById` joined the list with #760: the Route panel's purple house marker
 // reads `kinfolk/{id}.serviceLocation` through `lib/householdLocation.ts`, which
 // subscribes to that document. Mocked at `lib/firestore` rather than at
@@ -34,9 +34,20 @@ vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/breadcrumbs')>();
   return { ...actual, useBreadcrumbs };
 });
+// The browser tracker (#772), mocked whole for the same reason as the live
+// listener: jsdom has no `navigator.geolocation`, and the sheet's cases are
+// about what each tracker phase reads as, not about the watch.
+const { useVisitTracking } = vi.hoisted(() => ({ useVisitTracking: vi.fn() }));
+vi.mock('../lib/visitTracking', () => ({
+  useVisitTracking,
+  beginVisitTracking: vi.fn(),
+  endVisitTracking: vi.fn(),
+  stopVisitTracking: vi.fn(),
+}));
 import { SessionDetail } from './SessionDetail';
 beforeEach(() => {
-  setVisitLifecycle.mockReset();
+  useVisitTracking.mockReturnValue({ phase: 'idle' });
+  patchVisitLifecycle.mockReset();
   updateKinCareSession.mockReset();
   useCollection.mockReset();
   useCollection.mockReturnValue({ status: 'ready', data: [] });
@@ -68,23 +79,84 @@ function entry(over: Partial<SessionEntry> = {}): SessionEntry {
   };
 }
 
+/** The lifecycle node carrying this label, so a spec can read its mood. */
+function stepNode(name: string): HTMLElement {
+  const label = screen.getByText(name, { selector: '.sdetail__step-name' });
+  const li = label.closest('li');
+  if (li === null) throw new Error(`${name} is not inside a lifecycle step`);
+  return li;
+}
+
+/** The panel and heading titles in document order, for the order assertions. */
+function panelTitles(container: HTMLElement): (string | null)[] {
+  return [...container.querySelectorAll('h1, h2, h3, h4')].map((h) => h.textContent);
+}
+
 describe('SessionDetail', () => {
   it('renders the session fields from the passed entry (by value, no fetch)', () => {
     render(<SessionDetail entry={entry({ notes: 'Bring the long leash.' })} onBack={vi.fn()} />);
-    // By ROLE, not by text: the breadcrumb's last step names this session too,
-    // exactly as `auntieos-kincare-detail-2026-05-27.html` shows it, so the
-    // household name is legitimately on the page twice.
-    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
-    expect(screen.getByText('Dog Walk')).toBeInTheDocument();
+    // The mock's hero names the visit by its Kin and its service, not by the
+    // household: "Biscuit & Gravy · 30-min walk". The household moves to the
+    // detail line under it.
+    expect(screen.getByRole('heading', { name: 'Biscuit & Gravy · Dog Walk' })).toBeInTheDocument();
     expect(screen.getByText('SCHEDULED')).toBeInTheDocument();
-    // Timing (start/end parseable), Kin, and Notes sections all show.
-    expect(screen.getByText('Timing')).toBeInTheDocument();
     expect(screen.getByText('Kin covered')).toBeInTheDocument();
     expect(screen.getByText('Bring the long leash.')).toBeInTheDocument();
   });
 
-  // R1: a KinCare session covers every Kin in the home, so the panel NAMES them
-  // rather than reporting a bare count an operator cannot check against a home.
+  /**
+   * #755: the screen is `auntieos-kincare-detail-2026-05-27.html`'s, panel for
+   * panel. Hero band, then Visit lifecycle, Route, the two note boxes, Details.
+   * The five panels the screen used to stack (Status, Visit clock, Timing, Kin,
+   * Notes) are gone as panels and present as content.
+   */
+  it('lays the panels out in the mock’s order and nothing else', () => {
+    const { container } = render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(panelTitles(container)).toEqual([
+      'Biscuit & Gravy · Dog Walk',
+      'Visit lifecycle',
+      'Route',
+      'Kinfolk-facing note',
+      'Admin-internal note',
+      'Details',
+    ]);
+  });
+
+  it('hangs the status pill off the hero band and puts the day, window and household under the title', () => {
+    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    const hero = screen.getByRole('banner');
+    expect(within(hero).getByText('ARRIVED')).toHaveClass('den-statuspill');
+    // The detail line: day · window · household. The address joins it only
+    // when the household record carries one (below).
+    const detail = within(hero).getByText(/The Whitfields/);
+    expect(detail).toHaveClass('den-heading-detail');
+    expect(detail).toHaveTextContent(/·\s*The Whitfields$/);
+  });
+
+  it('adds the door to the hero line from the household record, and never invents one', () => {
+    useDocById.mockImplementation((path: string) =>
+      path === 'kinfolk'
+        ? { status: 'ready', data: { serviceAddress: '82 Creekside Ln' } }
+        : { status: 'ready', data: null },
+    );
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(useDocById).toHaveBeenCalledWith('kinfolk', 'kf1');
+    expect(screen.getByText(/The Whitfields · 82 Creekside Ln$/)).toBeInTheDocument();
+  });
+
+  it('strikes the pill through on a cancelled visit, the way every mock draws it', () => {
+    render(<SessionDetail entry={entry({ status: 'CANCELLED' })} onBack={vi.fn()} />);
+    expect(screen.getByText('CANCELLED')).toHaveClass('den-statuspill--struck');
+  });
+
+  it('falls back to the household when the record names no Kin and no service', () => {
+    render(<SessionDetail entry={entry({ kinNames: [], serviceType: '' })} onBack={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
+  });
+
+  // R1: a KinCare session covers every Kin in the home, so the Details row
+  // NAMES them rather than reporting a bare count an operator cannot check
+  // against a home.
   it('names the Kin this session covers', () => {
     render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
     expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
@@ -92,8 +164,7 @@ describe('SessionDetail', () => {
 
   it('discloses Kin that are covered but carry no name, instead of under-reporting', () => {
     render(<SessionDetail entry={entry({ kinNames: ['Biscuit'] })} onBack={vi.fn()} />);
-    expect(screen.getByText('Biscuit')).toBeInTheDocument();
-    expect(screen.getByText('Unnamed Kin')).toBeInTheDocument();
+    expect(screen.getByText('Biscuit · 1 without a name on file')).toBeInTheDocument();
   });
 
   it('falls back to a count when a pre-R1 doc has ids but no names', () => {
@@ -101,31 +172,63 @@ describe('SessionDetail', () => {
     expect(screen.getByText('2 (names not on file)')).toBeInTheDocument();
   });
 
-  // R1 regression: the Kin panel used to be HIDDEN whenever kinIds was empty,
-  // and empty was exactly how a whole-household booking was stored. The panel
+  // R1 regression: the Kin facts used to be HIDDEN whenever kinIds was empty,
+  // and empty was exactly how a whole-household booking was stored. The row
   // now always renders and says what it does and does not know.
-  it('still shows the Kin panel when the record carries no Kin at all', () => {
+  it('still shows the Kin row when the record carries no Kin at all', () => {
     render(<SessionDetail entry={entry({ kinIds: [], kinNames: [] })} onBack={vi.fn()} />);
-    expect(screen.getByText('Kin')).toBeInTheDocument();
-    expect(screen.getByText(/No Kin are recorded on this session/i)).toBeInTheDocument();
+    expect(screen.getByText('Kin covered')).toBeInTheDocument();
+    expect(screen.getByText(/Every Kin in the home/i)).toBeInTheDocument();
   });
 
-  it('omits the all-blank Timing panel, and keeps Notes because Notes is now a write surface', () => {
+  it('keeps the lifecycle and both note boxes on a record with nothing in them', () => {
     render(
       <SessionDetail
         entry={entry({ startTime: '', endTime: '', arrivedAt: '', completedAt: '', kinIds: [], kinNames: [], notes: '' })}
         onBack={vi.fn()}
       />,
     );
-    // The head still renders (household + chip), and a Timing panel with no
-    // timing on file still hides.
-    expect(screen.getByRole('heading', { name: 'The Whitfields' })).toBeInTheDocument();
-    expect(screen.queryByText('Timing')).toBeNull();
-    // Notes DELIBERATELY no longer hides when empty: it carries the note
-    // composer, and a panel that vanished when there was nothing to read would
-    // take the only way to write one with it. It says it is empty instead.
-    expect(screen.getByText('Notes')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Dog Walk' })).toBeInTheDocument();
+    // Every node still draws; the ones still to come read "--".
+    expect(screen.getAllByText('--')).toHaveLength(4);
+    // The note boxes DELIBERATELY do not hide when empty: the admin one
+    // carries the composer, and a panel that vanished when there was nothing
+    // to read would take the only way to write one with it. Each says it is
+    // empty instead.
+    expect(screen.getByText('Admin-internal note')).toBeInTheDocument();
     expect(screen.getByText(/no notes on this visit yet/i)).toBeInTheDocument();
+    expect(screen.getByText('Kinfolk-facing note')).toBeInTheDocument();
+    expect(screen.getByText(/no note from the household/i)).toBeInTheDocument();
+  });
+
+  it('shows the household’s own note read-only, marked as what they see', () => {
+    render(
+      <SessionDetail entry={entry({ kinfolkNotes: 'Side gate, harness on the hook.' })} onBack={vi.fn()} />,
+    );
+    expect(screen.getByText('Side gate, harness on the hook.')).toHaveClass('sdetail__nbox');
+    expect(screen.getByText('visible to The Whitfields')).toHaveClass('den-panel-meta');
+    expect(screen.getByText('private')).toHaveClass('den-panel-meta');
+  });
+
+  it('prices the visit from the rate card by exact service name, and says nothing when there is no match', async () => {
+    getBusinessSettings.mockResolvedValue({
+      serviceRates: { 'Dog Walk': '28', 'Drop-in': '20' },
+      serviceDurations: {},
+    });
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(await screen.findByText('$28')).toBeInTheDocument();
+    expect(screen.getByText('Rate')).toBeInTheDocument();
+  });
+
+  it('lists the invoice and the sent KinTales only once there are any', () => {
+    const { rerender } = render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(screen.queryByText('Invoice')).toBeNull();
+    expect(screen.queryByText('KinTales sent')).toBeNull();
+    rerender(<SessionDetail entry={entry({ invoiceId: 'inv1', reportIds: ['r1', 'r2'] })} onBack={vi.fn()} />);
+    expect(screen.getByText('Invoice')).toBeInTheDocument();
+    expect(screen.getByText('Linked')).toBeInTheDocument();
+    expect(screen.getByText('KinTales sent')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
   });
 
   /**
@@ -138,7 +241,9 @@ describe('SessionDetail', () => {
     render(<SessionDetail entry={entry()} onBack={onBack} />);
 
     const nav = screen.getByRole('navigation', { name: 'Breadcrumb' });
-    expect(within(nav).getByText('The Whitfields')).toHaveAttribute('aria-current', 'page');
+    // The last step is the Kin, as the mock's "Schedule / Wed May 27 / Biscuit
+    // & Gravy" trail ends. The household is context, on the hero line.
+    expect(within(nav).getByText('Biscuit & Gravy')).toHaveAttribute('aria-current', 'page');
     // "Auntie Time" is what the rail calls /sessions; naming it anything else
     // would point at a screen the operator cannot find.
     await userEvent.click(within(nav).getByRole('button', { name: 'Auntie Time' }));
@@ -181,11 +286,97 @@ describe('SessionDetail', () => {
     expect(screen.queryByText('SCHEDULED')).toBeNull();
   });
 
-  it('calls onBack from the Back control', async () => {
-    const onBack = vi.fn();
-    render(<SessionDetail entry={entry()} onBack={onBack} />);
-    await userEvent.click(screen.getByRole('button', { name: /back to auntie time/i }));
-    expect(onBack).toHaveBeenCalledOnce();
+  it('offers no Back button: the crumb is the way back, as the mock’s hero has no button', () => {
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /back to auntie time/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Auntie Time' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The mock's "Visit lifecycle": five nodes, each lit from its OWN stamp. The
+ * defect this guards: "Clocked out" used to read `completedAt`, so every visit
+ * completed from the Bookings screen looked as though someone had clocked out
+ * of it. Departing and completing are different events.
+ */
+describe('SessionDetail: the lifecycle stepper', () => {
+  it('lights Scheduled as the current node on a fresh visit and the rest as still to come', () => {
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(stepNode('Scheduled')).toHaveAttribute('data-mood', 'now');
+    for (const name of ['On my way', 'Arrived', 'Departed', 'Completed']) {
+      expect(stepNode(name)).toHaveAttribute('data-mood', 'todo');
+    }
+    expect(screen.getAllByText('--')).toHaveLength(4);
+  });
+
+  it('marks each stamped step done, the current one now, and stamps them with the local clock', () => {
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'ARRIVED',
+          onMyWayAt: '2026-07-16T13:48:00Z',
+          arrivedAt: '2026-07-16T14:02:00Z',
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(stepNode('Scheduled')).toHaveAttribute('data-mood', 'done');
+    expect(stepNode('On my way')).toHaveAttribute('data-mood', 'done');
+    expect(stepNode('Arrived')).toHaveAttribute('data-mood', 'now');
+    expect(stepNode('Departed')).toHaveAttribute('data-mood', 'todo');
+    expect(stepNode('Completed')).toHaveAttribute('data-mood', 'todo');
+    // A stamp is the AO-18 local moment, never a raw ISO string.
+    expect(within(stepNode('Arrived')).getByText(/\d\d:\d\d/)).not.toHaveTextContent('T14:02');
+    // The bar runs to the Arrived node: two of four gaps.
+    expect(document.querySelector('.sdetail__lifebar')).toHaveStyle({ width: '40%' });
+  });
+
+  it('shows departedAt as the departure and completedAt as the completion', () => {
+    render(
+      <SessionDetail
+        entry={entry({
+          status: 'COMPLETED',
+          arrivedAt: '2026-07-16T14:02:00Z',
+          departedAt: '2026-07-16T14:45:00Z',
+          completedAt: '2026-07-16T18:00:00Z',
+        })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(stepNode('Arrived')).toHaveAttribute('data-mood', 'done');
+    expect(stepNode('Departed')).toHaveAttribute('data-mood', 'done');
+    expect(stepNode('Completed')).toHaveAttribute('data-mood', 'now');
+  });
+
+  it('leaves Departed unlit on a visit completed from the office without a clock-out', () => {
+    render(
+      <SessionDetail
+        entry={entry({ status: 'COMPLETED', departedAt: '', completedAt: '2026-07-16T18:00:00Z' })}
+        onBack={vi.fn()}
+      />,
+    );
+    // Not "done": nobody clocked out. Reading done from "every step before the
+    // current one" is exactly the old defect wearing a new shape.
+    expect(stepNode('Departed')).toHaveAttribute('data-mood', 'todo');
+    expect(stepNode('Arrived')).toHaveAttribute('data-mood', 'todo');
+    expect(stepNode('Completed')).toHaveAttribute('data-mood', 'now');
+  });
+
+  it('lights no current node on a cancelled visit: the pill names it, the stepper shows what was stamped', () => {
+    render(
+      <SessionDetail
+        entry={entry({ status: 'CANCELLED', onMyWayAt: '2026-07-16T13:48:00Z' })}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(document.querySelector('.sdetail__step[data-mood="now"]')).toBeNull();
+    expect(stepNode('On my way')).toHaveAttribute('data-mood', 'done');
+    expect(stepNode('Arrived')).toHaveAttribute('data-mood', 'todo');
+  });
+
+  it('keeps the unknown-status hint inside the lifecycle panel', () => {
+    render(<SessionDetail entry={entry({ status: 'some_new_code' })} onBack={vi.fn()} />);
+    expect(screen.getByText(/isn’t recognized, so it is shown as UNKNOWN/)).toBeInTheDocument();
   });
 });
 /**
@@ -194,15 +385,24 @@ describe('SessionDetail', () => {
  * clocked-in/out as read-only `Fact`s and `Sessions.tsx` said the write flows
  * were "still NOT built here".
  */
-const clockOk = (over: Record<string, unknown> = {}) => ({
-  ok: true,
+/**
+ * What a direct in-visit write resolves with. `notified` is a shorthand for the
+ * `notification` promise the real write returns: it settles AFTER the write, so
+ * the screen says the status change first and amends the sentence when the push
+ * lands. That ordering has its own spec in `lib/useVisitLifecycle.test.ts`;
+ * here it just has to settle.
+ */
+const clockOk = ({
+  notified = true,
+  notifySkipped = null,
+  ...over
+}: Record<string, unknown> & { notified?: boolean; notifySkipped?: string | null } = {}) => ({
   sessionId: 'sess1',
   action: 'ARRIVED',
   from: 'ON_MY_WAY',
   status: 'ARRIVED',
   changed: true,
-  notified: true,
-  notifySkipped: null,
+  notification: Promise.resolve({ notified, notifySkipped }),
   ...over,
 });
 /** Press a clock button and confirm the dialog it opens. */
@@ -221,19 +421,23 @@ describe('SessionDetail: the visit clock', () => {
     // ruling is a second place for it to drift, not a missing control.
     expect(screen.queryByRole('button', { name: /complete/i })).toBeNull();
   });
-  it('clocks in through the callable, with a whole-second instant', async () => {
-    setVisitLifecycle.mockResolvedValue(clockOk());
+  // Straight to Firestore now, not through the callable: the tap used to wait
+  // out a measured 7.9 s Cloud Run cold start. The row itself is handed to the
+  // write, which is what lets it decide legality and routing without a read.
+  it('clocks in with a direct write, on the whole row, with a whole-second instant', async () => {
+    patchVisitLifecycle.mockResolvedValue(clockOk());
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
     await clock(/^clock in$/i, /yes, clock in/i);
-    expect(setVisitLifecycle).toHaveBeenCalledTimes(1);
-    const [id, action, opts] = setVisitLifecycle.mock.calls[0]!;
-    expect(id).toBe('sess1');
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    const [session, action, opts] = patchVisitLifecycle.mock.calls[0]!;
+    expect(session._id).toBe('sess1');
+    expect(session.status).toBe('ON_MY_WAY');
     expect(action).toBe('ARRIVED');
-    expect(opts.atIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(opts.nowIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     expect(await screen.findByText(/ON_MY_WAY → ARRIVED/)).toBeInTheDocument();
   });
   it('says whether the household was actually told, rather than implying it', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ notified: false, notifySkipped: 'session_has_no_routing_ids' }),
     );
     render(<SessionDetail entry={entry({ status: 'ON_MY_WAY' })} onBack={vi.fn()} />);
@@ -241,11 +445,11 @@ describe('SessionDetail: the visit clock', () => {
     expect(await screen.findByText(/household was not notified/i)).toBeInTheDocument();
   });
   it('clocks out from ARRIVED and offers the undo beside it', async () => {
-    setVisitLifecycle.mockResolvedValue(clockOk({ action: 'DEPARTED', from: 'ARRIVED', status: 'DEPARTED' }));
+    patchVisitLifecycle.mockResolvedValue(clockOk({ action: 'DEPARTED', from: 'ARRIVED', status: 'DEPARTED' }));
     render(<SessionDetail entry={entry({ status: 'ARRIVED', arrivedAt: '2026-07-16T14:02:00Z' })} onBack={vi.fn()} />);
     expect(screen.getByRole('button', { name: /^undo arrival$/i })).toBeInTheDocument();
     await clock(/^clock out$/i, /yes, clock out/i);
-    expect(setVisitLifecycle.mock.calls[0]![1]).toBe('DEPARTED');
+    expect(patchVisitLifecycle.mock.calls[0]![1]).toBe('DEPARTED');
   });
   // The refusal the server owns. The button is not offered here (the courtesy
   // half), and this pins the courtesy so a state cannot quietly start
@@ -254,8 +458,8 @@ describe('SessionDetail: the visit clock', () => {
     render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /^clock out$/i })).toBeNull();
   });
-  it('surfaces the server’s own refusal verbatim, and does not claim a write', async () => {
-    setVisitLifecycle.mockRejectedValue(
+  it('surfaces the refusal verbatim, and does not claim a write', async () => {
+    patchVisitLifecycle.mockRejectedValue(
       new Error('Cannot clock out of this visit while it is SCHEDULED. Allowed from: ARRIVED.'),
     );
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
@@ -268,7 +472,7 @@ describe('SessionDetail: the visit clock', () => {
   // screen must not report it as a fresh clock-in, or an operator will believe
   // the arrival time moved.
   it('reports a no-op as a no-op, naming the time as unchanged', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ from: 'ARRIVED', status: 'ARRIVED', changed: false, notified: false }),
     );
     render(<SessionDetail entry={entry({ status: 'SCHEDULED' })} onBack={vi.fn()} />);
@@ -281,45 +485,14 @@ describe('SessionDetail: the visit clock', () => {
     expect(screen.getByText(/its clock is closed/i)).toBeInTheDocument();
   });
   it('undoes an arrival without pretending anyone is told', async () => {
-    setVisitLifecycle.mockResolvedValue(
+    patchVisitLifecycle.mockResolvedValue(
       clockOk({ action: 'UNDO_ARRIVAL', from: 'ARRIVED', status: 'SCHEDULED', notified: false }),
     );
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^undo arrival$/i }));
     expect(screen.getByText(/nobody is notified/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /yes, undo the arrival/i }));
-    expect(setVisitLifecycle.mock.calls[0]![1]).toBe('UNDO_ARRIVAL');
-  });
-});
-describe('SessionDetail: timing reads the right fields', () => {
-  // The defect this closes: "Clocked out" used to read `completedAt`, so every
-  // visit completed from the Bookings screen looked as though someone had
-  // clocked out of it. They are different events.
-  it('shows departedAt as the clock-out and completedAt as the completion', () => {
-    render(
-      <SessionDetail
-        entry={entry({
-          status: 'COMPLETED',
-          arrivedAt: '2026-07-16T14:02:00Z',
-          departedAt: '2026-07-16T14:45:00Z',
-          completedAt: '2026-07-16T18:00:00Z',
-        })}
-        onBack={vi.fn()}
-      />,
-    );
-    expect(screen.getByText('Clocked in')).toBeInTheDocument();
-    expect(screen.getByText('Clocked out')).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
-  });
-  it('shows no clock-out on a visit completed from the office without one', () => {
-    render(
-      <SessionDetail
-        entry={entry({ status: 'COMPLETED', departedAt: '', completedAt: '2026-07-16T18:00:00Z' })}
-        onBack={vi.fn()}
-      />,
-    );
-    expect(screen.queryByText('Clocked out')).toBeNull();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(patchVisitLifecycle.mock.calls[0]![1]).toBe('UNDO_ARRIVAL');
   });
 });
 describe('SessionDetail: editing the visit', () => {
@@ -475,6 +648,37 @@ describe('SessionDetail: GPS', () => {
     unmount();
     render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
     expect(screen.getByText('No GPS breadcrumbs were recorded for this Kin Care.')).toBeInTheDocument();
+  });
+  // #772: the sheet must not leave a denied browser "waiting for the first
+  // ping" from a field app that is not running. The tracker's status decides
+  // the sentence, and the live line under the clock says the same thing.
+  it('says tracking is off for this visit when this browser was denied location', () => {
+    useVisitTracking.mockReturnValue({
+      phase: 'off',
+      reason: 'denied',
+      message: 'location was denied in this browser.',
+    });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    expect(
+      screen.getByText(
+        'No route is being recorded from this browser. Tracking is off for this visit: location was denied in this browser.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/waiting for the first gps ping/i)).toBeNull();
+    expect(
+      screen.getByText('Tracking off for this visit: location was denied in this browser.'),
+    ).toBeInTheDocument();
+  });
+  it('shows the live line under the clock and waits on this browser while it is tracking', () => {
+    useVisitTracking.mockReturnValue({ phase: 'on', fixes: 0 });
+    render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
+    expect(screen.getByText('Tracking on from this browser')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for the first GPS ping from this browser.')).toBeInTheDocument();
+  });
+  it('shows no tracker line on a visit that is not ARRIVED, whatever the store says', () => {
+    useVisitTracking.mockReturnValue({ phase: 'on', fixes: 3 });
+    render(<SessionDetail entry={entry({ status: 'DEPARTED' })} onBack={vi.fn()} />);
+    expect(screen.queryByTestId('visit-tracking')).toBeNull();
   });
   // #754: a finished visit with no breadcrumbs AND no gpsSummary was never
   // tracked (never clocked in from Android with location on). The old copy
@@ -650,8 +854,9 @@ describe('SessionDetail: the route header strip', () => {
     expect(screen.queryByText(/Completed in/)).toBeNull();
   });
   // Placement, which is the whole of the operator's sentence: the map is
-  // "usually listed under the arrival departure times". The Route panel already
-  // follows the Timing panel, so this asserts the order rather than trusting it.
+  // "usually listed under the arrival departure times". Those times are the
+  // Visit lifecycle stepper's stamps since #755, and the Route panel follows
+  // it, so this asserts the order rather than trusting it.
   it('sits after the panel that carries the arrival and departure times', () => {
     useBreadcrumbs.mockReturnValue({
       points: [crumb(30.2, -97.7, 1), crumb(30.3, -97.8, 2)],
@@ -664,11 +869,11 @@ describe('SessionDetail: the route header strip', () => {
         onBack={vi.fn()}
       />,
     );
-    const timing = screen.getByText('Timing');
+    const lifecycle = screen.getByText('Visit lifecycle');
     const strip = screen.getByText(/Arrived at 12:05pm/);
-    expect(timing.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lifecycle.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // And nothing else sits between the two panels.
-    const panels = [...container.querySelectorAll('h2, h3, h4')].map((h) => h.textContent);
-    expect(panels.indexOf('Route')).toBe(panels.indexOf('Timing') + 1);
+    const panels = panelTitles(container);
+    expect(panels.indexOf('Route')).toBe(panels.indexOf('Visit lifecycle') + 1);
   });
 });

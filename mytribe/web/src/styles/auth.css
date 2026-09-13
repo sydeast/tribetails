@@ -173,6 +173,10 @@ h3.title.errmsg { font-size: 25px; line-height: 1.18; justify-content: center; d
 .a2hs .step p { font-size: 16px; line-height: 1.5; padding-top: 5px; }
 .a2hs .step p b { font-weight: 700; }
 .a2hs .step .glyph { font-size: 20px; vertical-align: -3px; }
+/* The two iOS-only sentences under the steps: why adding the app is what turns
+   notifications on, and the one extra sign-in it costs. Sized like the card's
+   subheading so they read as explanation and not as a third step to follow. */
+.a2hs .note { font-size: 14px; line-height: 1.55; color: var(--navy-muted); margin-top: 14px; }
 .a2hs .btn, .push-prompt .btn { margin-top: 16px; font-size: 16px; }
 .a2hs .dismissrow, .push-prompt .dismissrow { text-align: center; margin-top: 10px; }
 .push-prompt .err { font-size: 13px; color: var(--coral); margin-top: 10px; }

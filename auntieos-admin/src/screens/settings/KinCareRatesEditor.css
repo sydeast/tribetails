@@ -2,28 +2,219 @@
  * KinCare rates sub-editor styling. Scoped to this component, imported
  * directly (the SettingsEdit.css convention). Every value comes from
  * styles/tokens.css.
+ *
+ * The shape is the mock's (`ui-ideas/auntieos-kincare-types-2026-05-27.html`):
+ * a `.rhead` column line over grid rows of name / duration / rate / remove, a
+ * dashed add button, and a save bar with an orange light while dirty. The
+ * booking chip in the preview panel is the wizard's own `.nbw__service` and is
+ * styled where it lives, in NewBookingDialog.css.
  */
+
+.kinCareRates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── Sort (a view, never a write) ─────────────────────────────────────────── */
+
+.kinCareRates__sort {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.kinCareRates__sortLabel {
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.kinCareRates__sortButton {
+  font: inherit;
+  font-size: var(--type-label-md-size);
+  font-weight: var(--type-label-md-weight);
+  color: var(--color-text-dim);
+  background: transparent;
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-pill);
+  padding: 0.25rem var(--space-3);
+  cursor: pointer;
+  transition:
+    color var(--dur-base) var(--ease-standard),
+    background var(--dur-base) var(--ease-standard);
+}
+.kinCareRates__sortButton:hover {
+  color: var(--color-text-primary);
+}
+.kinCareRates__sortButton[aria-pressed='true'] {
+  color: var(--color-background);
+  background: var(--color-text-primary);
+  border-color: transparent;
+}
+
+/* ── The table ────────────────────────────────────────────────────────────── */
+
+/* Name wide, duration and rate fixed, then the remove tile. The header line
+   and every row share the one template so the columns cannot drift apart. */
+.kinCareRates__head,
+.kinCareRates__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 9rem 8rem auto;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.kinCareRates__head {
+  padding: 0 var(--space-1) var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
 
 .kinCareRates__list {
   list-style: none;
-  margin: 0 0 var(--space-3);
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-}
-
-.kinCareRates__row,
-.kinCareRates__addRow {
-  display: flex;
-  align-items: flex-end;
   gap: var(--space-2);
 }
 
-.kinCareRates__typeField {
-  flex: 2;
+.kinCareRates__row {
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-card-lg);
+  transition: border-color var(--dur-base) var(--ease-standard);
+}
+.kinCareRates__row:hover {
+  border-color: var(--color-primary-dim);
 }
 
-.kinCareRates__rateField {
+/* The inputs sit on the row card, so they take the deeper surface the mock's
+   `.input` does rather than the row's own. */
+.kinCareRates__row .settingsEdit__input {
+  background: var(--color-panel-top);
+}
+
+.kinCareRates__mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-size);
+}
+
+/* ── Add ──────────────────────────────────────────────────────────────────── */
+
+.kinCareRates__addRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.kinCareRates__add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  color: var(--color-text-primary);
+  background: transparent;
+  border: var(--border-hairline) dashed var(--color-border);
+  border-radius: var(--radius-card-lg);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-base) var(--ease-standard),
+    border-color var(--dur-base) var(--ease-standard);
+}
+.kinCareRates__add:hover:not(:disabled) {
+  color: var(--color-primary);
+  border-color: var(--color-primary-dim);
+}
+.kinCareRates__add:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── Preview ──────────────────────────────────────────────────────────────── */
+
+.kinCareRates__previewLabel {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--type-label-sm-size);
+  letter-spacing: var(--type-label-sm-tracking);
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  margin-bottom: var(--space-3);
+}
+
+/* The wizard's chip is a button with a hover border. Here it is a picture of
+   one, so the pointer never gets to promise a click. */
+.kinCareRates__chips {
+  pointer-events: none;
+}
+.kinCareRates__chips .nbw__service {
+  flex: 0 1 auto;
+  min-width: 6rem;
+}
+
+/* ── Save bar ─────────────────────────────────────────────────────────────── */
+
+.kinCareRates__saveBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.kinCareRates__spacer {
   flex: 1;
+}
+
+.kinCareRates__dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--color-primary);
+}
+
+.kinCareRates__led {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary);
+}
+
+@media (max-width: 720px) {
+  .kinCareRates__head {
+    display: none;
+  }
+  .kinCareRates__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .kinCareRates__row .settingsEdit__input {
+    grid-column: 1 / -1;
+  }
+  /* Name and its remove tile share the first line; duration and rate take a
+     full line each underneath. */
+  .kinCareRates__row .settingsEdit__input:first-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .kinCareRates__row .auntie-icon-btn {
+    grid-column: 2;
+    grid-row: 1;
+  }
 }

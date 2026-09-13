@@ -98,7 +98,7 @@
   color: var(--color-success);
 }
 
-/* ── Toggle rows (Booking behavior, MyTribe portal) ─────────────────────── */
+/* ── Toggle rows (Scheduling, MyTribe portal) ────────────────────────────── */
 
 .settingsEdit__toggleList {
   list-style: none;
@@ -119,6 +119,42 @@
 .settingsEdit__toggleLabel {
   font-size: var(--type-body-md-size);
   color: var(--color-text-primary);
+}
+
+/* The settings mock's `.trow` (issue #755 pass): a bold 14.5px label with a
+   12.5px dim note under it, 13px of air above and below, a faint rule
+   between rows and none after the last. A modifier on the shared row rather
+   than a change to it: Booking rules, Payments and the portal editor still
+   draw the plain row. */
+.settingsEdit__toggleList--ruled {
+  gap: 0;
+}
+.settingsEdit__toggleRow--ruled {
+  gap: 14px;
+  padding: 13px 0;
+  border-bottom: var(--border-hairline) solid
+    color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+.settingsEdit__toggleRow--ruled:first-child {
+  padding-top: 0;
+}
+.settingsEdit__toggleRow--ruled:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.settingsEdit__toggleText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settingsEdit__toggleRow--ruled .settingsEdit__toggleLabel {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.settingsEdit__toggleNote {
+  font-size: 12.5px;
+  color: var(--color-text-dim);
 }
 
 .settingsEdit__subsection {

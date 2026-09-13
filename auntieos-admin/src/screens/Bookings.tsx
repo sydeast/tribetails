@@ -13,14 +13,14 @@ import {
 } from '../lib/bookingFormat';
 import { getBusinessSettings } from '../api/settings';
 import { useCollection, useDocById } from '../lib/firestore';
-import { DenScreenHeading, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, EmptyHint, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { BookingDetailModal } from '../components/BookingDetailModal';
-import { BookingStatusActions } from './BookingActions';
+import { BookingStatusActions, type BookingActionKind } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
 import { VisitRequestsSection } from '../components/VisitRequestsSection';
 import {
@@ -141,6 +141,39 @@ const SECTIONS: readonly SectionDef[] = [
     sort: 'mostRecent',
   },
 ];
+
+/**
+ * The brand tone each booking state wears in the kit's status pill, read off
+ * the mock's own five `.pill.*` rules: pending orange, draft coral, scheduled
+ * teal, completed purple, cancelled the dim neutral capsule. A total record
+ * over `BookingState`, so a state added to the lifecycle fails the typecheck
+ * here instead of rendering in whatever colour a default happened to be. The
+ * six screen-local `.bookings__chip--*` rules this replaces drew pending in
+ * WARNING amber, which no mock does.
+ *
+ * Cancelled is NOT struck through here, and that is this mock's own choice:
+ * `.pill.cancelled` in `auntieos-manage-bookings-*.html` draws a plain muted
+ * capsule, where the schedule agenda and the session sheet strike theirs. The
+ * pill follows the screen's mock.
+ */
+const BOOKING_STATE_TONE: Record<BookingState, DenTone> = {
+  draft: 'error',
+  pending: 'orange',
+  scheduled: 'teal',
+  completed: 'purple',
+  cancelled: 'muted',
+  unknown: 'warning',
+};
+
+/**
+ * The entrance stagger for the three sections, in the mock's own order
+ * (`.sec.d1`, `.d2`, `.d3`): each block rises a beat after the one above it.
+ */
+const SECTION_STAGGER: Record<BookingSectionKey, string> = {
+  pending: 'd1',
+  scheduled: 'd2',
+  history: 'd3',
+};
 
 /**
  * Orders one section's rows by the visit's own start time (falling through
@@ -292,7 +325,27 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
   // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
   // deep link so `/bookings?bookingId=<id>` opens the sheet on arrival.
   const [detailId, setDetailId] = useState<string | null>(initialBookingId ?? null);
-  const handleSelectBooking = onSelectBooking ?? setDetailId;
+  /**
+   * The transition a card's own button asked for, carried into the sheet.
+   *
+   * The mock draws Approve / Reject on a pending card and Cancel on a scheduled
+   * one, and the operator's filename directive says a card opens the fuller
+   * record. Both hold: the card's button opens the same detail sheet a row
+   * click does, with that transition's confirm question already posed in its
+   * Actions panel, so the write still happens beside the full record and still
+   * behind the one confirm every other path to it has. Cleared whenever the
+   * sheet closes, so a later row click opens the record with no question up.
+   */
+  const [detailAction, setDetailAction] = useState<BookingActionKind | null>(null);
+  function openDetail(bookingId: string, action: BookingActionKind | null = null) {
+    setDetailAction(action);
+    setDetailId(bookingId);
+  }
+  function closeDetail() {
+    setDetailAction(null);
+    setDetailId(null);
+  }
+  const handleSelectBooking = onSelectBooking ?? openDetail;
 
   // The "New booking request" create surface (AO-25). It writes the envelope
   // model ('requested'), a DIFFERENT collection from the kin_care_sessions this
@@ -612,6 +665,9 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
               limit={section.key === 'history' ? historyShown : null}
               onShowMore={() => setHistoryShown((n) => n + HISTORY_PAGE_SIZE)}
               onSelectBooking={handleSelectBooking}
+              // The card's own transition buttons open THIS screen's sheet at
+              // the confirm step, so they exist only while the screen owns it.
+              onAct={onSelectBooking ? undefined : openDetail}
               selecting={selecting}
               selectedIds={selectedIds}
               onTogglePick={toggleRow}
@@ -651,7 +707,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
       {!onSelectBooking &&
         detailId !== null &&
         (detailPending ? (
-          <Dialog title="Opening booking" onClose={() => setDetailId(null)}>
+          <Dialog title="Opening booking" onClose={closeDetail}>
             <p className="bookings__hint">Looking this booking up…</p>
           </Dialog>
         ) : detailEntry === null && deepLinkId !== null && deepLinked.status === 'error' ? (
@@ -663,8 +719,8 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           // hook hands back.
           <Dialog
             title="Couldn't open this booking"
-            onClose={() => setDetailId(null)}
-            footer={<GhostButton label="Done" onClick={() => setDetailId(null)} />}
+            onClose={closeDetail}
+            footer={<GhostButton label="Done" onClick={closeDetail} />}
           >
             <p className="bookings__hint" role="alert">
               This booking couldn&rsquo;t be read. {deepLinked.message}
@@ -678,8 +734,8 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         ) : detailEntry === null ? (
           <Dialog
             title="Booking unavailable"
-            onClose={() => setDetailId(null)}
-            footer={<GhostButton label="Done" onClick={() => setDetailId(null)} />}
+            onClose={closeDetail}
+            footer={<GhostButton label="Done" onClick={closeDetail} />}
           >
             {/* THE THIRD READING MATTERS as much as the other two, and it is the
                 one a notification produces: a visit that is still REQUESTED has
@@ -696,9 +752,13 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
         ) : (
           <BookingDetailModal
             entry={detailEntry}
-            onClose={() => setDetailId(null)}
+            onClose={closeDetail}
             actions={
-              <BookingStatusActions entry={detailEntry} onDone={() => setDetailId(null)} />
+              <BookingStatusActions
+                entry={detailEntry}
+                initialAction={detailAction}
+                onDone={closeDetail}
+              />
             }
             onOpenKinfolk={(kinfolkId) =>
               void navigate({ to: '/directory/$kinfolkId', params: { kinfolkId } })
@@ -728,6 +788,8 @@ interface BookingSectionBlockProps {
   limit: number | null;
   onShowMore: () => void;
   onSelectBooking: (bookingId: string) => void;
+  /** Opens the sheet at a transition's confirm step. Absent when the screen does not own the sheet. */
+  onAct: ((bookingId: string, action: BookingActionKind) => void) | undefined;
   selecting: boolean;
   selectedIds: ReadonlySet<string>;
   onTogglePick: (bookingId: string) => void;
@@ -764,6 +826,7 @@ function BookingSectionBlock({
   limit,
   onShowMore,
   onSelectBooking,
+  onAct,
   selecting,
   selectedIds,
   onTogglePick,
@@ -775,7 +838,11 @@ function BookingSectionBlock({
   const remaining = section.rows.length - shown.length;
 
   return (
-    <section className="bookings__section" role="group" aria-labelledby={headingId}>
+    <section
+      className={`bookings__section ${SECTION_STAGGER[section.key]}`}
+      role="group"
+      aria-labelledby={headingId}
+    >
       <h2 className="bookings__section-head" id={headingId}>
         {section.label} <span className="bookings__section-count">{section.rows.length}</span>
       </h2>
@@ -789,6 +856,7 @@ function BookingSectionBlock({
               view={v}
               catalog={catalog}
               onSelectBooking={onSelectBooking}
+              onAct={onAct}
               selecting={selecting}
               picked={selectedIds.has(v.entry._id)}
               onTogglePick={onTogglePick}
@@ -1021,6 +1089,8 @@ interface BookingRowProps {
   view: RowView;
   catalog: BookingCatalog;
   onSelectBooking?: ((bookingId: string) => void) | undefined;
+  /** The card's own transition buttons. Absent, the card draws none. */
+  onAct?: ((bookingId: string, action: BookingActionKind) => void) | undefined;
   /** Select mode is on: the row shows its checkbox. */
   selecting: boolean;
   picked: boolean;
@@ -1028,28 +1098,56 @@ interface BookingRowProps {
 }
 
 /**
+ * The card's own transition buttons, per state, as the mock draws them:
+ * Approve / Reject on a pending or draft card, Cancel on a scheduled one, none
+ * on history. A positive per-state map, the same discipline `actionsFor` in
+ * BookingActions.tsx follows, and the two are kept in step by the sheet: a kind
+ * named here that the sheet does not offer for the state opens the sheet with
+ * no question posed, never a write.
+ */
+const CARD_ACTIONS: Record<BookingState, readonly { kind: BookingActionKind; label: string }[]> = {
+  draft: [
+    { kind: 'approve', label: 'Approve' },
+    { kind: 'reject', label: 'Reject' },
+  ],
+  pending: [
+    { kind: 'approve', label: 'Approve' },
+    { kind: 'reject', label: 'Reject' },
+  ],
+  scheduled: [{ kind: 'cancel', label: 'Cancel' }],
+  completed: [],
+  cancelled: [],
+  unknown: [],
+};
+
+/**
  * One booking card, in the mock's own order (#704): the select checkbox, a
  * coloured accent stripe in the status's own hue, the initials avatar, then the
  * name, the one service/date/window line, the status pill DIRECTLY UNDER the
- * name, and the note.
+ * name, the note, and the card's transition buttons at its right edge.
  *
  * The pill used to sit at the far right of the row, pushed there by the
  * name block's `flex: 1`. That put the one fact that decides what to do with a
  * booking at the opposite end of the card from the booking's name, and left the
  * stripe's job (status at a glance, down the left edge) undone entirely.
  *
- * NO INLINE ACTION BUTTONS, and this is a DEPARTURE FROM THE MOCK held on
- * purpose. The mock draws Approve / Reject on a pending card and Cancel on a
- * scheduled one; commit cd594d4 took them off when the card started opening
- * `BookingDetailModal`, which carries all four transitions with the full record
- * in front of the operator. #704 lists that difference and explicitly does not
- * rule on it, so it stays as cd594d4 chose rather than being reinstated by a
- * pass that was asked to fix the list's shape.
+ * THE BUTTONS OPEN THE SHEET, they do not write. The mock draws Approve /
+ * Reject on a pending card and Cancel on a scheduled one; commit cd594d4 took
+ * them off when the card started opening `BookingDetailModal`, and #704 listed
+ * that as a difference without ruling on it. The 2026-09-11 sweep (#755) puts
+ * them back in the shape that honours both the mock and the filename directive:
+ * pressing one opens the fuller record with that transition's confirm question
+ * already posed in its Actions panel, so the write still happens beside the
+ * full record and still behind a confirm. They sit OUTSIDE the row's own
+ * button (a button inside a button is invalid markup the outer one swallows the
+ * clicks of) and are hidden while Select is on, when the bulk bar owns the
+ * transitions, the same rule the Android card follows.
  */
 function BookingRow({
   view,
   catalog,
   onSelectBooking,
+  onAct,
   selecting,
   picked,
   onTogglePick,
@@ -1086,7 +1184,7 @@ function BookingRow({
       <span className="bookings__row-who">
         <span className="bookings__row-name">{displayName}</span>
         <span className="bookings__row-meta">{meta}</span>
-        <span className={`bookings__chip bookings__chip--${info.cssClass}`}>{info.chipLabel}</span>
+        <StatusPill label={info.chipLabel} tone={BOOKING_STATE_TONE[state]} />
         {notePreview.trim() !== '' && (
           <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
         )}
@@ -1094,17 +1192,25 @@ function BookingRow({
     </>
   );
 
+  const cardActions = onAct === undefined || selecting ? [] : CARD_ACTIONS[state];
+
   // Static, non-interactive row unless a detail handler is wired: a handler-less
   // <button> is still a focusable, tabbable dead control, so when unwired the
   // row is a plain <div>, no button role, no cursor, no hover.
   //
-  // The checkbox is a SIBLING of that button, never inside it: nesting an input
-  // in a button gives one hit area two meanings, and the label would be swallowed
-  // by the button's own accessible name. Opening a booking stays possible while
-  // Select is on, which is the point of a per-row checkbox rather than a mode
-  // that hijacks the whole row's click.
+  // The checkbox and the action buttons are SIBLINGS of that button, never
+  // inside it: nesting a control in a button gives one hit area two meanings,
+  // and the label would be swallowed by the button's own accessible name.
+  // Opening a booking stays possible while Select is on, which is the point of
+  // a per-row checkbox rather than a mode that hijacks the whole row's click.
+  //
+  // The <li> is the mock's `.bk` glass card and it is what wears `lift` when
+  // the row opens something: the card is the clickable unit the operator sees
+  // rise, and its hover border is the mock's own orange hairline. The class
+  // names sit on the `className` line itself: `tokenUsage.test.ts` discovers
+  // who wears `lift` by scanning exactly those lines.
   return (
-    <li className={picked ? 'bookings__row bookings__row--picked' : 'bookings__row'}>
+    <li className={['bookings__row', picked && 'bookings__row--picked', onSelectBooking && 'lift'].filter(Boolean).join(' ')}>
       {selecting && (
         <label className="bookings__row-pick">
           <input
@@ -1116,11 +1222,24 @@ function BookingRow({
         </label>
       )}
       {onSelectBooking ? (
-        <button type="button" className="bookings__row-main lift" onClick={() => onSelectBooking(entry._id)}>
+        <button type="button" className="bookings__row-main" onClick={() => onSelectBooking(entry._id)}>
           {body}
         </button>
       ) : (
         <div className="bookings__row-main bookings__row-main--static">{body}</div>
+      )}
+      {cardActions.length > 0 && (
+        // A named group, so "Approve" on the fourth card is announced under
+        // the household it acts on rather than as one of six identical buttons.
+        <span className="bookings__row-acts" role="group" aria-label={`Actions for ${displayName}`}>
+          {cardActions.map(({ kind, label }) =>
+            kind === 'approve' ? (
+              <PrimaryButton key={kind} label={label} onClick={() => onAct?.(entry._id, kind)} />
+            ) : (
+              <GhostButton key={kind} label={label} onClick={() => onAct?.(entry._id, kind)} />
+            ),
+          )}
+        </span>
       )}
     </li>
   );

@@ -394,6 +394,53 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.queryByRole('link', { name: 'Call' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Text' })).toBeNull();
   });
+  it('wears the kit hero band, and pills the status, tenure and tags as the kit status capsule (#755)', async () => {
+    const joined = new Date();
+    joined.setMonth(joined.getMonth() - 14);
+    const iso = `${joined.getFullYear()}-${String(joined.getMonth() + 1).padStart(2, '0')}-${String(joined.getDate()).padStart(2, '0')}`;
+    getKinfolkProfile.mockResolvedValue(profile({ joinDate: iso, tags: ['Cams on premise'] }));
+    const { container } = render(
+      <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />,
+    );
+    await screen.findByText('14 months');
+    // The band is the kit's `.den-heading`, not a flat local card, and the h1
+    // takes the kit's title face with it.
+    const hero = container.querySelector('header.den-heading');
+    expect(hero).not.toBeNull();
+    expect(within(hero as HTMLElement).getByRole('heading', { level: 1 })).toHaveClass('den-heading-title');
+    // #780: the band is the kit's `DenScreenHeading` outright. The trail rides
+    // inside it, the avatar is its `leading` slot at the mock's 84px, and the
+    // pills are its `badges` row; nothing is laid out around the band.
+    expect(within(hero as HTMLElement).getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
+    const avatar = hero!.querySelector('.den-heading-leading .avatar') as HTMLElement;
+    expect(avatar).not.toBeNull();
+    expect(avatar.style.getPropertyValue('--avatar-size')).toBe('84px');
+    expect(avatar).toHaveAttribute('data-shape', 'rounded');
+    const badges = hero!.querySelector('.den-heading-badges') as HTMLElement;
+    expect(badges).not.toBeNull();
+    // The mock's `.tag` row: status and tags teal, tenure purple (`.tag.loyal`).
+    const pill = (text: string) => {
+      const el = within(badges).getByText(text);
+      expect(el).toHaveClass('den-statuspill');
+      return el;
+    };
+    expect(pill('active')).toHaveAttribute('data-tone', 'teal');
+    expect(pill('14 months')).toHaveAttribute('data-tone', 'purple');
+    expect(pill('Cams on premise')).toHaveAttribute('data-tone', 'teal');
+    // The actions ride in the band's trailing slot.
+    expect(
+      within(hero!.querySelector('.den-heading-trailing') as HTMLElement).getByRole('button', { name: 'Edit' }),
+    ).toBeInTheDocument();
+    // Nothing local is left painting a chip or laying the hero out.
+    expect(container.querySelector('.kprofile__chip')).toBeNull();
+    expect(container.querySelector('.kprofile__chips')).toBeNull();
+    expect(container.querySelector('.kprofile__hero-text')).toBeNull();
+  });
+  it('gives a status other than active the neutral tone rather than a colour the mock never drew', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ status: 'prospect' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('prospect')).toHaveAttribute('data-tone', 'neutral');
+  });
   it('chips the status and the tenure, and claims no tenure it cannot read', async () => {
     const joined = new Date();
     joined.setMonth(joined.getMonth() - 14);
@@ -480,6 +527,11 @@ describe('KinfolkProfile: the mock', () => {
       <KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[kin()]} onBack={vi.fn()} />,
     );
     expect(await screen.findByText('Loves sticks, hates the mailman.')).toBeInTheDocument();
+    // ONE line under the name, the mock's `small`: the facts and the pet's own
+    // line dotted together rather than stacked as two.
+    expect(screen.getByText('Willow').nextElementSibling).toHaveTextContent(
+      'Dog · Lab · 4 yrs · Loves sticks, hates the mailman.',
+    );
     unmount();
     // Negative: the row still renders, and the gap is announced rather than
     // silently looking like a pet nobody has written about.
@@ -500,6 +552,17 @@ describe('KinfolkProfile: the mock', () => {
     render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Home & access' })).toBeInTheDocument();
     expect(screen.getByText('No entry details on file.')).toBeInTheDocument();
+  });
+  it('lays each contact fact out as the mock field row: label, then value, one per line (#755)', async () => {
+    getKinfolkProfile.mockResolvedValue(profile({ email: 'jamie@example.com' }));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    const contact = (await screen.findByRole('heading', { name: 'Contact' })).closest('.den-panel');
+    const rows = Array.from((contact as HTMLElement).querySelectorAll('.kprofile__fact'));
+    expect(rows.map((r) => r.querySelector('dt')?.textContent)).toEqual(['Phone', 'Email']);
+    // A row is a definition pair, label first, so the value sits opposite it.
+    expect(rows[1]!.children[0]!.tagName).toBe('DT');
+    expect(rows[1]!.children[1]!.tagName).toBe('DD');
+    expect(rows[1]!.children[1]).toHaveTextContent('jamie@example.com');
   });
   it('folds the service address into Contact, not a separate panel (#679)', async () => {
     getKinfolkProfile.mockResolvedValue(profile({ serviceAddress: '18609 Salt River Bay Dr' }));

@@ -27,10 +27,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -289,14 +299,14 @@ fun ScheduleViewScreen(
             item {
                 // Reframed as a calendar (spec 13 item 1): label follows active view +
                 // range, not "this week's runs". The mislabeled route/active/upcoming
-                // subtitle moved to Auntie Time (spec 14). The range rides on `detail`
-                // rather than `subtitle` since #752: `subtitle` is the explanation and
-                // is a tooltip now, and a date range is a value the screen owes you.
+                // subtitle moved to Auntie Time (spec 14). The range reads off the
+                // navigator below (#755), the way the mock draws it, so it is not
+                // repeated on `detail`; the explanation is the info tooltip.
                 DenScreenHeading(
                     kicker = "The Den · Schedule",
                     title = "Schedule",
                     accentTail = "${state.viewMode.displayName.lowercase(Locale.US)}.",
-                    detail = rangeLabel,
+                    subtitle = "Every Kin Care visit on the books, with Google Calendar busy windows and your own blocked time laid over them.",
                 )
             }
 
@@ -354,7 +364,7 @@ fun ScheduleViewScreen(
             // ── Controls: week nav + view picker + select toggle ──
             item {
                 ScheduleControls(
-                    selectedDate = state.selectedDate,
+                    rangeLabel = rangeLabel,
                     viewMode = state.viewMode,
                     selecting = selecting,
                     onToggleSelect = toggleSelecting,
@@ -391,12 +401,11 @@ fun ScheduleViewScreen(
                 distinctServiceTypes(bookingsInView.map { it.baseServiceTitle }),
                 state.businessSettings.serviceDurations,
             )
+            // #755: a bare row, not a "Service key" panel. The mock draws the
+            // legend between the head and the calendar with no box around it,
+            // and the web screen does the same.
             if (legendTypes.isNotEmpty()) {
-                item {
-                    DenPanel(title = "Service key") {
-                        ScheduleLegend(legendTypes)
-                    }
-                }
+                item { ScheduleLegend(legendTypes) }
             }
 
             // Bulk action bar (Stage 2 tail): when selecting, apply ONE transition to
@@ -672,82 +681,88 @@ fun ScheduleViewScreen(
                 }
             }
 
+            // ── The three booking sections (#755) ──
+            // The mock (`auntieos-manage-bookings-2026-05-27-*.html`) draws each
+            // status block as a bare serif heading with a quiet mono count and
+            // the cards straight under it on the page: no panel around them.
+            // These used to be three DenPanels, a glass box around glass cards,
+            // and each carried an explanation the mock's `.sec h3` never has.
+            // The head keeps the controls the operator put on the block (#701:
+            // Select beside the rows it reveals checkboxes on; AO-25: the new
+            // request button on the queue it feeds).
+
             // ── Pending approval (DRAFT requests) ──
             item {
-                DenPanel(
+                BookingSectionHead(
                     title = pendingSection.label,
-                    subtitle = "New booking requests waiting on your call.",
+                    count = pendingSection.rows.size,
                     trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // AO-25: create a multi-date / recurring request (envelope model).
-                            AuntieTextBtn(onClick = { viewModel.showNewRequestDialog() }) { Text("+ New request") }
-                            // #701: on the block it acts on, not only in the screen toolbar.
-                            AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
-                            SectionCount(pendingSection.rows.size.toString())
-                        }
+                        // AO-25: create a multi-date / recurring request (envelope model).
+                        AuntieTextBtn(onClick = { viewModel.showNewRequestDialog() }) { Text("+ New request") }
+                        // #701: on the block it acts on, not only in the screen toolbar.
+                        AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
                     },
-                ) {
-                    if (pendingBookings.isEmpty()) {
-                        EmptyHint("No requests waiting. New bookings land here for approval.")
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            pendingBookings.forEach { booking ->
-                                BookingSectionCard(
-                                    booking = booking,
-                                    onClick = { viewModel.selectBooking(booking) },
-                                    onApprove = { viewModel.approveBooking(booking) },
-                                    onReject = { viewModel.cancelBooking(booking) },
-                                    onCancel = null,
-                                    timeBlockLabel = timeBlockLabelFor(booking),
-                                    selecting = selecting,
-                                    selected = booking.id in selectedBookingIds,
-                                    onToggleSelect = {
-                                        selectedBookingIds = if (booking.id in selectedBookingIds)
-                                            selectedBookingIds - booking.id else selectedBookingIds + booking.id
-                                    },
-                                )
-                            }
-                        }
-                    }
+                )
+            }
+            if (pendingBookings.isEmpty()) {
+                item { EmptyHint("No requests waiting. New bookings land here for approval.") }
+            } else {
+                // Keyed by doc id when there is one, by position when there is
+                // not: a LazyColumn throws on two equal keys, and a booking built
+                // locally before its write lands has a blank `@DocumentId`.
+                items(pendingBookings.size, key = { i -> "pending-" + pendingBookings[i].id.ifBlank { "at-$i" } }) { i ->
+                    val booking = pendingBookings[i]
+                    BookingSectionCard(
+                        booking = booking,
+                        onClick = { viewModel.selectBooking(booking) },
+                        onApprove = { viewModel.approveBooking(booking) },
+                        onReject = { viewModel.cancelBooking(booking) },
+                        onCancel = null,
+                        timeBlockLabel = timeBlockLabelFor(booking),
+                        selecting = selecting,
+                        selected = booking.id in selectedBookingIds,
+                        onToggleSelect = {
+                            selectedBookingIds = if (booking.id in selectedBookingIds)
+                                selectedBookingIds - booking.id else selectedBookingIds + booking.id
+                        },
+                    )
                 }
             }
 
             // ── Scheduled (ACCEPTED) ──
             item {
-                DenPanel(
+                BookingSectionHead(
                     title = scheduledSection.label,
-                    subtitle = "Approved visits on the calendar.",
+                    count = scheduledSection.rows.size,
                     trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // #701: the scheduled cards are selectable too, so the control
-                            // that reveals their checkboxes sits on their own heading.
-                            AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
-                            SectionCount(scheduledSection.rows.size.toString())
-                        }
+                        // #701: the scheduled cards are selectable too, so the control
+                        // that reveals their checkboxes sits on their own heading.
+                        AuntieTextBtn(onClick = toggleSelecting) { Text(if (selecting) "Done" else "Select") }
                     },
-                ) {
-                    if (scheduledBookings.isEmpty()) {
-                        EmptyHint("Nothing scheduled. Approved requests appear here.")
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            scheduledBookings.forEach { booking ->
-                                BookingSectionCard(
-                                    booking = booking,
-                                    onClick = { viewModel.selectBooking(booking) },
-                                    onApprove = null,
-                                    onReject = null,
-                                    onCancel = { viewModel.cancelBooking(booking) },
-                                    timeBlockLabel = timeBlockLabelFor(booking),
-                                    selecting = selecting,
-                                    selected = booking.id in selectedBookingIds,
-                                    onToggleSelect = {
-                                        selectedBookingIds = if (booking.id in selectedBookingIds)
-                                            selectedBookingIds - booking.id else selectedBookingIds + booking.id
-                                    },
-                                )
-                            }
-                        }
-                    }
+                )
+            }
+            if (scheduledBookings.isEmpty()) {
+                item { EmptyHint("Nothing scheduled. Approved requests appear here.") }
+            } else {
+                // Keyed by doc id when there is one, by position when there is
+                // not: a LazyColumn throws on two equal keys, and a booking built
+                // locally before its write lands has a blank `@DocumentId`.
+                items(scheduledBookings.size, key = { i -> "scheduled-" + scheduledBookings[i].id.ifBlank { "at-$i" } }) { i ->
+                    val booking = scheduledBookings[i]
+                    BookingSectionCard(
+                        booking = booking,
+                        onClick = { viewModel.selectBooking(booking) },
+                        onApprove = null,
+                        onReject = null,
+                        onCancel = { viewModel.cancelBooking(booking) },
+                        timeBlockLabel = timeBlockLabelFor(booking),
+                        selecting = selecting,
+                        selected = booking.id in selectedBookingIds,
+                        onToggleSelect = {
+                            selectedBookingIds = if (booking.id in selectedBookingIds)
+                                selectedBookingIds - booking.id else selectedBookingIds + booking.id
+                        },
+                    )
                 }
             }
 
@@ -755,18 +770,18 @@ fun ScheduleViewScreen(
             // Auntie's complaint was "raw rows". Split by outcome, cap each subsection
             // (Show more), and show the real count instead of a literal "recent".
             item {
-                DenPanel(
+                BookingSectionHead(
                     title = historySection.label,
-                    subtitle = "Completed and cancelled visits, most recent first.",
-                    trailing = { SectionCount(historySection.rows.size.toString()) },
-                ) {
-                    if (historyBookings.isEmpty()) {
-                        EmptyHint("No past visits yet.")
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            HistorySubsection("Completed", completedHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
-                            HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
-                        }
+                    count = historySection.rows.size,
+                )
+            }
+            if (historyBookings.isEmpty()) {
+                item { EmptyHint("No past visits yet.") }
+            } else {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        HistorySubsection("Completed", completedHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
+                        HistorySubsection("Cancelled", cancelledHistory, timeBlockLabelFor) { viewModel.selectBooking(it) }
                     }
                 }
             }
@@ -937,7 +952,7 @@ fun ScheduleViewScreen(
 }
 
 /**
- * Den schedule controls: a mono range navigator (‹ Month yyyy ›), the view
+ * Den schedule controls: a mono range navigator (‹ May 25 to 31 ›), the view
  * SegmentedPicker, a Today reset, and a Select toggle for the (gated) bulk path.
  * #701: that toggle is no longer the ONLY one. The Pending approval and Scheduled
  * panels carry their own, beside the cards it acts on; all three drive one mode.
@@ -945,7 +960,7 @@ fun ScheduleViewScreen(
  */
 @Composable
 private fun ScheduleControls(
-    selectedDate: LocalDate,
+    rangeLabel: String,
     viewMode: CalendarViewMode,
     selecting: Boolean,
     onToggleSelect: () -> Unit,
@@ -961,7 +976,10 @@ private fun ScheduleControls(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Range navigator: ‹  Month yyyy  ›
+            // Range navigator: ‹  May 25 to 31  ›. The label is the same
+            // view-aware range the heading used to carry on `detail` (#755):
+            // the mock puts the range here and nowhere else, and a navigator
+            // that said "May 2026" over a week view named the wrong thing.
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(13.dp))
@@ -975,7 +993,7 @@ private fun ScheduleControls(
                     Icon(Lucide.ChevronLeft, contentDescription = "Previous", tint = c.textDim)
                 }
                 Text(
-                    text = selectedDate.format(DateTimeFormatter.ofPattern("MMM yyyy", Locale.US)),
+                    text = rangeLabel,
                     style = AuntieTheme.typography.mono.copy(fontSize = 12.5.sp),
                     color = c.textPrimary,
                     modifier = Modifier.padding(horizontal = 4.dp),
@@ -1243,11 +1261,48 @@ private fun BulkRescheduleSheet(
     }
 }
 
-/** Trailing mono count chip for a DenPanel header. */
+/** The mock's `.ct`: a quiet mono count beside a section title. */
 @Composable
 private fun SectionCount(count: String) {
     if (count.isBlank()) return
     Text(count, style = AuntieTheme.typography.mono, color = AuntieTheme.colors.textDim)
+}
+
+/**
+ * The mock's `.sec h3` (#755): the section's name in the serif headline with
+ * the count in quiet mono beside it, and the block's own controls at the right
+ * edge. It sits on the page, not in a panel: the cards under it are the glass,
+ * and a glass box around glass cards is what the three DenPanels here used to
+ * draw. No explanation line, because the mock's heading carries none.
+ */
+@Composable
+private fun BookingSectionHead(
+    title: String,
+    count: Int,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        // The title block takes the weight, so on a narrow phone the name
+        // wraps under the controls rather than pushing them off the edge.
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Text(
+                title,
+                style = AuntieTheme.typography.headlineMedium,
+                color = AuntieTheme.colors.textPrimary,
+                modifier = Modifier.weight(1f, fill = false).semantics { heading() },
+            )
+            SectionCount(count.toString())
+        }
+        if (trailing != null) trailing()
+    }
 }
 
 /**
@@ -1455,6 +1510,11 @@ private fun HistorySubsection(
  * piece this card did not already carry, and the mock draws one on every card.
  * `AuntieAvatar` derives the monogram from the name itself, the same way the
  * Invoices row does.
+ *
+ * #755, the skin pass: the name is the mock's `.nm`, the serif at titleLarge
+ * (it was Hanken titleMedium), and the pill and the note sit INSIDE the info
+ * column under the service line, where the mock's `.info` puts them, rather
+ * than as a full-width row under the whole card.
  */
 @Composable
 private fun BookingSectionCard(
@@ -1476,14 +1536,23 @@ private fun BookingSectionCard(
 
     GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth().clickable(onClick = cardClick)) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+            // `IntrinsicSize.Min` on the row so the accent bar can stretch to
+            // the card's full height (the mock's `align-self: stretch`): a card
+            // with a note is taller than one without, and a 46dp bar beside a
+            // four-line column stopped short of the note it belonged to.
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Min),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(13.dp),
+            ) {
                 if (selecting && onToggleSelect != null) {
                     AuntieCheckbox(checked = selected, onCheckedChange = { onToggleSelect() })
                 }
                 Box(
                     Modifier
                         .width(4.dp)
-                        .height(46.dp)
+                        .fillMaxHeight()
+                        .defaultMinSize(minHeight = 46.dp)
                         .clip(RoundedCornerShape(999.dp))
                         .background(tone.color(c)),
                 )
@@ -1496,8 +1565,8 @@ private fun BookingSectionCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = if (hasName) booking.kinfolkName else "Unnamed Kinfolk",
-                        style = if (hasName) AuntieTheme.typography.titleMedium
-                                else AuntieTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic),
+                        style = if (hasName) AuntieTheme.typography.titleLarge
+                                else AuntieTheme.typography.titleLarge.copy(fontStyle = FontStyle.Italic),
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
@@ -1506,6 +1575,17 @@ private fun BookingSectionCard(
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
+                    Spacer(Modifier.height(7.dp))
+                    AuntieStatusPill(label = bookingStatusBadge(booking), tone = tone, mono = true)
+                    val notePreview = booking.specialInstructions.ifBlank { booking.notes }
+                    if (notePreview.isNotBlank()) {
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            text = "Note: ${notePreview.take(120)}",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = c.textDim,
+                        )
+                    }
                 }
                 when {
                     // Per-card actions are suppressed in select mode (the bulk bar drives transitions).
@@ -1517,17 +1597,6 @@ private fun BookingSectionCard(
                     onCancel != null -> GhostButton(label = "Cancel", onClick = onCancel)
                     else -> Unit
                 }
-            }
-            Spacer(Modifier.height(9.dp))
-            AuntieStatusPill(label = bookingStatusBadge(booking), tone = tone, mono = true)
-            val notePreview = booking.specialInstructions.ifBlank { booking.notes }
-            if (notePreview.isNotBlank()) {
-                Spacer(Modifier.height(7.dp))
-                Text(
-                    text = "Note: ${notePreview.take(120)}",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textDim,
-                )
             }
         }
     }
@@ -1542,29 +1611,70 @@ private fun BookingSectionCard(
 @Composable
 private fun ScheduleLegend(serviceTypes: List<String>) {
     val c = AuntieTheme.colors
+    // The mock's legend: one swatch per service type on screen, then Busy.
+    // The "Other / unmapped" row that used to follow is gone (#755): the mock
+    // has no such entry, and `serviceTone` gives every type a colour, so the
+    // row keyed a swatch nothing on the calendar wore.
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        serviceTypes.forEach { type -> LegendItem(serviceTone(type).color(c), type) }
-        LegendItem(c.textFaint, "Other / unmapped")
-        LegendItem(c.textFaint.copy(alpha = 0.45f), "Busy")
+        serviceTypes.forEach { type -> LegendItem(type) { Box(Modifier.size(11.dp).clip(RoundedCornerShape(4.dp)).background(serviceTone(type).color(c))) } }
+        LegendItem("Busy") { BusySwatch(Modifier.size(11.dp)) }
     }
 }
 
 @Composable
-private fun LegendItem(swatch: Color, label: String) {
+private fun LegendItem(label: String, swatch: @Composable () -> Unit) {
     val c = AuntieTheme.colors
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Box(
-            modifier = Modifier
-                .size(11.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(swatch),
-        )
+        swatch()
         Text(label, style = AuntieTheme.typography.bodySmall, color = c.textDim)
     }
+}
+
+/**
+ * The hatch every busy mark on this screen wears (#755): the legend swatch,
+ * the agenda band and the month cell's marker. The mock draws a busy block as
+ * cream-dim stripes at 45 degrees over navy-3 inside a dashed hairline, and a
+ * legend swatch that does not match the mark it stands for keys nothing.
+ * Drawn behind the caller's own content, clipped to the box.
+ */
+private fun Modifier.busyHatch(fill: Color, stripe: Color, edge: Color, cornerDp: Float): Modifier = drawBehind {
+    val corner = CornerRadius(cornerDp.dp.toPx(), cornerDp.dp.toPx())
+    drawRoundRect(color = fill, cornerRadius = corner)
+    clipRect {
+        val step = 6.dp.toPx()
+        val stroke = 3.dp.toPx()
+        var x = -size.height
+        while (x < size.width) {
+            drawLine(color = stripe, start = Offset(x, size.height), end = Offset(x + size.height, 0f), strokeWidth = stroke)
+            x += step * 2
+        }
+    }
+    val strokePx = 1.dp.toPx()
+    val inset = strokePx / 2f
+    drawRoundRect(
+        brush = SolidColor(edge),
+        topLeft = Offset(inset, inset),
+        size = Size(size.width - strokePx, size.height - strokePx),
+        cornerRadius = corner,
+        style = Stroke(width = strokePx, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()), 0f)),
+    )
+}
+
+@Composable
+private fun BusySwatch(modifier: Modifier = Modifier) {
+    val c = AuntieTheme.colors
+    Box(
+        modifier.busyHatch(
+            fill = c.surface2,
+            stripe = c.textFaint.copy(alpha = 0.26f),
+            edge = c.textDim.copy(alpha = 0.4f),
+            cornerDp = 4f,
+        ),
+    )
 }
 
 /** Service-type tint for a booking, faded when cancelled, via the shared serviceTone. */
@@ -1583,10 +1693,14 @@ private fun bookingStatusTone(booking: EnhancedBooking): AuntieStatusTone = when
     BookingStatus.REJECTED  -> AuntieStatusTone.Muted
 }
 
-/** SCREAMING_SNAKE status badge label, mirroring the web schedule statusBadge. */
+/**
+ * Uppercase status badge label, the same words the web pill shows. ACCEPTED
+ * reads SCHEDULED (#755): the mock's pill says Scheduled, `bookingStateInfo`
+ * on web says SCHEDULED, and "CONFIRMED" was a third word for one state.
+ */
 private fun bookingStatusBadge(booking: EnhancedBooking): String = when (booking.status) {
     BookingStatus.COMPLETED -> "COMPLETED"
-    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) "ACTIVE" else "CONFIRMED"
+    BookingStatus.ACCEPTED  -> if (isBookingActiveNow(booking)) "ACTIVE" else "SCHEDULED"
     BookingStatus.DRAFT     -> "PENDING"
     BookingStatus.REJECTED  -> "CANCELLED"
 }
@@ -1637,6 +1751,11 @@ private fun KinfolkScheduleHero(
  * Den week strip: 7 day cells with a mono day-of-week kicker. The selected day
  * fills primary, today carries the coral accent, and a small dot marks days with
  * visits. Sits inside a DenPanel so it carries no card chrome of its own.
+ *
+ * #755: today is the mock's `.dcol.today`: the weekday goes coral and the
+ * serif number sits in a 34dp coral square, one radius step under the cell.
+ * Selected has no mark in the mock (it draws no agenda), so it keeps the
+ * primary fill this strip has always used for the day the agenda is showing.
  */
 @Composable
 private fun AndroidWeekStrip(
@@ -1675,23 +1794,32 @@ private fun AndroidWeekStrip(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Text(
-                    text  = day.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US),
+                    text  = day.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.US).uppercase(Locale.US),
                     style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 1.sp),
                     color = when {
                         selected -> c.background
                         isToday  -> c.coral
-                        else     -> c.textFaint
+                        else     -> c.textDim
                     },
                 )
-                Text(
-                    text  = day.dayOfMonth.toString(),
-                    style = AuntieTheme.typography.titleMedium,
-                    color = when {
-                        selected -> c.background
-                        isToday  -> c.coral
-                        else     -> c.textPrimary
+                Box(
+                    modifier = if (isToday && !selected) {
+                        Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(c.coral)
+                    } else {
+                        Modifier.height(34.dp)
                     },
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text  = day.dayOfMonth.toString(),
+                        style = AuntieTheme.typography.headlineSmall.copy(fontSize = 21.sp, fontWeight = FontWeight.Medium),
+                        color = when {
+                            selected -> c.background
+                            isToday  -> BrandCream
+                            else     -> c.textPrimary
+                        },
+                    )
+                }
                 if (hasItems(day)) {
                     Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(if (selected) c.background.copy(alpha = 0.7f) else c.primary))
                 } else {
@@ -1829,31 +1957,55 @@ private fun BusyBand(slot: BookingTimeSlot, placement: BusyPlacement) {
     val bandHeight = (placement.heightMinutes * 0.9f).dp.coerceIn(28.dp, 120.dp)
     val range = busyRangeLabel(slot.startTime, slot.endTime)
 
-    Column(
+    // #755: the mock's `.ev.blocked`. Hatched over navy-3 inside a dashed
+    // hairline, a lock in the corner, the window in mono, and the source line
+    // for a Google Calendar mirror (the remedy for one of those is in Google
+    // Calendar, not here). The flat faint fill this used to take read as an
+    // empty slot rather than a taken one.
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(bandHeight)
             .clip(RoundedCornerShape(11.dp))
-            .background(c.textFaint.copy(alpha = if (c.isDark) 0.18f else 0.12f).compositeOver(c.surface))
-            .border(AuntieTheme.dims.borderHairline, c.textFaint.copy(alpha = 0.45f), RoundedCornerShape(11.dp))
+            .busyHatch(
+                fill = c.surface2,
+                stripe = c.textFaint.copy(alpha = 0.26f),
+                edge = c.textDim.copy(alpha = 0.4f),
+                cornerDp = 11f,
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = "Busy",
-            style = AuntieTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = c.textDim,
-            maxLines = 1,
-        )
-        if (range.isNotBlank()) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (range.isNotBlank()) {
+                Text(
+                    text = range,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp, letterSpacing = 0.4.sp),
+                    color = c.textDim,
+                    maxLines = 1,
+                )
+            }
             Text(
-                text = range,
-                style = AuntieTheme.typography.labelSmall,
-                color = c.textDim.copy(alpha = 0.8f),
+                text = "Busy",
+                style = AuntieTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = c.textPrimary.copy(alpha = 0.9f),
                 maxLines = 1,
             )
+            if (slot.source == TimeSlotSource.GOOGLE_BUSY_IMPORT) {
+                Text(
+                    text = "Google Calendar",
+                    style = AuntieTheme.typography.mono.copy(fontSize = 9.5.sp, letterSpacing = 0.5.sp),
+                    color = c.textDim.copy(alpha = 0.7f),
+                    maxLines = 1,
+                )
+            }
         }
+        Icon(
+            imageVector = Lucide.Lock,
+            contentDescription = "Read only",
+            tint = c.textDim.copy(alpha = 0.6f),
+            modifier = Modifier.align(Alignment.TopEnd).size(11.dp),
+        )
     }
 }
 
@@ -1878,10 +2030,20 @@ fun EnhancedMonthView(
     val daysInMonth   = yearMonth.lengthOfMonth()
     val firstDayOfWeek = yearMonth.atDay(1).dayOfWeek.value % 7
 
+    val c = AuntieTheme.colors
     Column {
+        // #755: the mock's `.dow` row, mono, tracked, dim. This used to draw in
+        // whatever colour the Material default resolved to, which on the navy
+        // ground was the one line on the calendar not in the palette.
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf("S", "M", "T", "W", "T", "F", "S").forEach { day ->
-                Text(day, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
+                Text(
+                    day,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp, letterSpacing = 1.sp),
+                    color = c.textDim,
+                )
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -1928,71 +2090,67 @@ fun EnhancedDayCell(
     onBookingClick: (EnhancedBooking) -> Unit,
     onTimeSlotClick: (BookingTimeSlot) -> Unit
 ) {
+    val c = AuntieTheme.colors
     val isToday        = date == LocalDate.now()
     val blockedSlots   = timeSlots.filter { !it.isAvailable }
     val hasBlockedSlots = blockedSlots.isNotEmpty()
-    val blockedDensity = (blockedSlots.size / 4f).coerceIn(0f, 1f)
 
+    // #755: every colour off the theme. This cell drew `Color.Red` for a
+    // blocked day and `Color.Green` for an accepted visit, neither of which
+    // is in the palette, and filled today orange when the mock puts today's
+    // number in a coral square and tints nothing else. The dots read the same
+    // `serviceTone` the legend and the agenda rows use, faded when cancelled,
+    // and a blocked day wears the hatch every other busy mark wears.
     Column(
         modifier = modifier
             .aspectRatio(1f)
             .padding(2.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(
-                when {
-                    isToday         -> AuntieTheme.colors.kinfolkOrange.copy(alpha = 0.2f)
-                    hasBlockedSlots -> Color.Red.copy(alpha = 0.1f)
-                    else            -> AuntieTheme.colors.surface
-                }
-            )
+            .background(c.surface2)
+            .border(AuntieTheme.dims.borderHairline, c.borderSoft, RoundedCornerShape(8.dp))
             .clickable { onDateClick(date) }
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (hasBlockedSlots) {
-            Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color.Red.copy(alpha = 0.25f + (blockedDensity * 0.45f))))
-            Spacer(Modifier.height(2.dp))
+        Box(
+            modifier = if (isToday) Modifier.size(22.dp).clip(RoundedCornerShape(7.dp)).background(c.coral) else Modifier.height(22.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text       = date.dayOfMonth.toString(),
+                style      = AuntieTheme.typography.titleSmall,
+                color      = if (isToday) BrandCream else c.textPrimary,
+                fontWeight = if (isToday) FontWeight.Medium else FontWeight.Normal,
+            )
         }
-        Text(
-            text       = date.dayOfMonth.toString(),
-            color      = when {
-                isToday         -> AuntieTheme.colors.kinfolkOrange
-                hasBlockedSlots -> Color.Red
-                else            -> AuntieTheme.colors.textPrimary
-            },
-            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
-        )
         if (bookings.isNotEmpty()) {
             Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 bookings.take(3).forEach { booking ->
                     Box(
-                        modifier = Modifier.size(4.dp).clip(CircleShape).background(
-                            when (booking.status) {
-                                BookingStatus.ACCEPTED  -> Color.Green
-                                BookingStatus.DRAFT     -> AuntieTheme.colors.warning
-                                BookingStatus.COMPLETED -> AuntieTheme.colors.kinfolkOrange
-                                BookingStatus.REJECTED  -> Color.Red
-                            }
-                        ).clickable { onBookingClick(booking) }
+                        modifier = Modifier.size(4.dp).clip(CircleShape)
+                            .background(bookingServiceTint(booking))
+                            .clickable { onBookingClick(booking) }
                     )
                 }
                 if (bookings.size > 3) {
-                    Text(text = "+${bookings.size - 3}", style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textPrimary.copy(alpha = 0.6f))
+                    Text(text = "+${bookings.size - 3}", style = AuntieTheme.typography.labelSmall, color = c.textDim)
                 }
             }
         }
         if (hasBlockedSlots) {
-            Spacer(Modifier.height(1.dp))
+            Spacer(Modifier.height(2.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
                 verticalAlignment     = Alignment.CenterVertically,
                 modifier              = Modifier.clickable { blockedSlots.firstOrNull()?.let(onTimeSlotClick) }
             ) {
-                repeat(minOf(3, blockedSlots.size)) { index ->
-                    Box(modifier = Modifier.size(width = 5.dp, height = 2.dp).clip(RoundedCornerShape(2.dp)).background(Color.Red.copy(alpha = 0.45f + (index * 0.15f))))
-                }
-                Text(text = "${blockedSlots.size}blk", style = AuntieTheme.typography.labelSmall, color = Color.Red.copy(alpha = 0.8f))
+                BusySwatch(Modifier.size(width = 12.dp, height = 7.dp))
+                Text(
+                    text = if (blockedSlots.size == 1) "Busy" else "Busy ×${blockedSlots.size}",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = c.textDim,
+                )
             }
         }
     }
@@ -2547,7 +2705,10 @@ fun BookingDetailsDialog(
                         .padding(horizontal = 18.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("Archive", style = AuntieTheme.typography.labelLarge, color = Color.White)
+                    // Navy on the filled warning, the way every filled brand
+                    // button paints its label (#755). `Color.White` was the one
+                    // literal colour left on this dialog.
+                    Text("Archive", style = AuntieTheme.typography.labelLarge, color = AuntieTheme.colors.background)
                 }
             },
             dismissButton    = {
@@ -2595,7 +2756,7 @@ fun AgendaView(currentDate: LocalDate, events: List<Event>) {
     val sortedEvents = events.sortedBy { it.startTime }
     if (sortedEvents.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No events scheduled.", color = Color.Gray)
+            Text("No events scheduled.", color = AuntieTheme.colors.textDim)
         }
     } else {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {

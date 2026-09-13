@@ -188,6 +188,28 @@ interface DenScreenHeadingBase {
    * where "Every Kin Care visit on the books" is telling you what a schedule is.
    */
   detail?: string | undefined;
+  /**
+   * What sits BEFORE the title block: the profile mocks' hero photo or avatar
+   * tile (`.hero .photo`, `.hero .ava`), or a glyph tile on a list screen.
+   * The caller sizes it (the kin detail mock draws 120px, the kinfolk profile
+   * 84px, a list head 56px); the band only lays it out and keeps it from
+   * shrinking. Until #780 the two profile screens composed their own hero
+   * around the band because it had nowhere to put this.
+   */
+  leading?: ReactNode;
+  /**
+   * A second line of hero content under the detail line: the kin detail's
+   * "belongs to the Wrens", the kinfolk profile's "the Wrens · Riverside".
+   * Prose, not pills; pills go in `badges`.
+   */
+  children?: ReactNode;
+  /**
+   * The mocks' `.hero .tags`: a wrapping row of `StatusPill` under everything
+   * else in the title block. A row, so the caller passes the pills (and at
+   * most a small text control that edits them, the kin detail's "Edit tags")
+   * and no wrapper of its own; the band draws the gap between them.
+   */
+  badges?: ReactNode;
   trailing?: ReactNode;
   className?: string;
 }
@@ -210,10 +232,25 @@ type DenScreenHeadingProps = DenScreenHeadingBase &
   );
 
 /**
+ * A slot counts as filled only when there is something to draw. A screen that
+ * writes `leading={loaded !== null && <Avatar />}` hands the slot `false` while
+ * the read is in flight, and a wrapper around nothing would still draw its own
+ * gap and top margin.
+ */
+function slotFilled(node: ReactNode): boolean {
+  return node !== undefined && node !== null && node !== false;
+}
+
+/**
  * The standard Den page heading: uppercase mono kicker (or a breadcrumb trail
  * in its place), serif title with an optional italic accent tail, an info
  * button carrying the explanation, an optional `detail` value line, optional
  * trailing slot.
+ *
+ * Since #780 it is also the whole of the profile mocks' hero: `leading` for
+ * the photo, `children` for the line under the detail, `badges` for the tag
+ * row. Every slot is optional and renders nothing at all when absent, so the
+ * forty-odd list headings that pass none of them are unchanged.
  *
  * The explanation is a tooltip rather than a line of copy. See KitTooltip.
  */
@@ -224,12 +261,16 @@ export function DenScreenHeading({
   accentTail,
   subtitle,
   detail,
+  leading,
+  children,
+  badges,
   trailing,
   className,
 }: DenScreenHeadingProps) {
   const tipId = useId();
   return (
     <header className={className ? `den-heading ${className}` : 'den-heading'}>
+      {slotFilled(leading) && <div className="den-heading-leading">{leading}</div>}
       <div className="den-heading-main">
         {/* Uppercased in CSS, not here, so the accessible name keeps the author's
             casing instead of being read out as shouting by a screen reader. */}
@@ -255,6 +296,8 @@ export function DenScreenHeading({
           )}
         </div>
         {detail !== undefined && <p className="den-heading-detail">{detail}</p>}
+        {slotFilled(children) && <div className="den-heading-extra">{children}</div>}
+        {slotFilled(badges) && <div className="den-heading-badges">{badges}</div>}
       </div>
       {trailing !== undefined && <div className="den-heading-trailing">{trailing}</div>}
     </header>
@@ -565,6 +608,52 @@ export function ServicePill({ serviceType, tone }: ServicePillProps) {
   const label = serviceType.trim() === '' ? 'visit' : serviceType;
   return (
     <span className="den-pill" data-tone={tone ?? serviceTone(serviceType)}>
+      {label}
+    </span>
+  );
+}
+
+// ── status pill ─────────────────────────────────────────────────────────────
+
+interface StatusPillProps {
+  /** Already in the words the operator reads. The CSS uppercases it. */
+  label: string;
+  /** Teal is the mocks' own capsule, and the state most of them draw. */
+  tone?: DenTone;
+  /** Strikes the label through, for a state that is the absence of a visit. */
+  struck?: boolean;
+  /**
+   * `compact` is the mocks' `.badge` and `.pill`: the same capsule at 9.5px on
+   * 4px 9px, for a card corner (Directory) or a card row (Auntie Time), where
+   * the 11px capsule sat larger than the mock draws it. The default is the
+   * `.statuspill` the detail screens and the hero band draw.
+   */
+  size?: 'default' | 'compact';
+}
+
+/**
+ * The mocks' `.statuspill`: where a visit has got to, in one uppercase mono
+ * capsule tinted to its tone.
+ *
+ * It lives in the kit rather than on a screen because it is the same object on
+ * every screen that shows a session or a booking, and until now it was not:
+ * SessionDetail, Sessions, Directory and HouseholdMembers each drew their own,
+ * with four different sizes and three different shapes. This is the one they
+ * all move onto; SessionDetail is the first, being the screen the mock draws.
+ *
+ * The label is the caller's, not a lookup here. The kit has no business knowing
+ * the session lifecycle, and `sessionStateInfo` already names every state once.
+ */
+export function StatusPill({ label, tone, struck = false, size = 'default' }: StatusPillProps) {
+  const classes = [
+    'den-statuspill',
+    struck ? 'den-statuspill--struck' : null,
+    size === 'compact' ? 'den-statuspill--compact' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <span className={classes} data-tone={tone ?? 'teal'}>
       {label}
     </span>
   );

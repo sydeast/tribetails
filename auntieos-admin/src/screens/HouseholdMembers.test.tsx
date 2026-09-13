@@ -59,7 +59,7 @@ vi.mock('../api/membersWrite', async (orig) => ({
 }));
 
 import { ToastProvider } from '../components/Toast';
-import { HouseholdMembers, inviteMetaLine } from './HouseholdMembers';
+import { HouseholdMembers, householdInitial, inviteMetaLine, whereLine } from './HouseholdMembers';
 import type { HouseholdInvite, HouseholdMember, RecoveryCandidate } from '../api/members';
 
 function render(ui: ReactElement) {
@@ -198,7 +198,7 @@ describe('HouseholdMembers HAPPY', () => {
     mount({ members: [] });
 
     await user.click(
-      await screen.findByRole('button', { name: 'Invite this household to the portal' }),
+      await screen.findByRole('button', { name: 'Invite to portal' }),
     );
 
     await waitFor(() => expect(api.inviteKinfolkToPortal).toHaveBeenCalledWith('fam1'));
@@ -208,13 +208,14 @@ describe('HouseholdMembers HAPPY', () => {
 
 /**
  * RULING (issue #684): "Invite a primary by email is unnecessary. We already
- * have the Portal Access button." The Portal access button already sends the
- * same primary claim link, so the typed-address form and its `submitInvite`
- * handler are gone. `mintInvite` stays registered (PRIMARY-only, per the
- * 2026-08-04 invite ruling) with no caller left in this screen.
+ * have the Portal Access button." That button, "Invite to portal" in the hero
+ * since #755, already sends the same primary claim link, so the typed-address
+ * form and its `submitInvite` handler are gone. `mintInvite` stays registered
+ * (PRIMARY-only, per the 2026-08-04 invite ruling) with no caller left in this
+ * screen.
  */
 describe('HouseholdMembers invite by email is gone', () => {
-  it('renders no typed-email invite form, only the Portal access button', async () => {
+  it('renders no typed-email invite form, only the portal invite button', async () => {
     mount();
 
     await screen.findByText('marcus@example.com');
@@ -222,7 +223,7 @@ describe('HouseholdMembers invite by email is gone', () => {
     expect(screen.queryByLabelText('Email address')).not.toBeInTheDocument();
     expect(screen.queryByText('Invite a primary by email')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Invite this household to the portal' }),
+      screen.getByRole('button', { name: 'Invite to portal' }),
     ).toBeInTheDocument();
   });
 });
@@ -266,13 +267,20 @@ describe('HouseholdMembers PRIMARY entitlements are not switches', () => {
     expect(screen.queryAllByRole('switch')).toHaveLength(0);
   });
 
-  it('says the entitlements are held by role, and shows each one as granted', async () => {
+  it('says the entitlements are held by role, as the mock footnote and the panel tooltip', async () => {
     mount({ members: [primary()] });
 
+    // The sentence moved into the Primary contact panel's tooltip (#758): it
+    // is in the DOM for the accessible description, hidden until hovered.
     expect(await screen.findByText(/Held by role, not by setting/)).toBeInTheDocument();
-    // Every permission still appears; it reads as state rather than as control.
+    // The mock's `.cbar` chip stands where the six "Granted" rows stood: one
+    // capsule that reads as state rather than as six controls.
     const row = (await screen.findByText('loretta@example.com')).closest('li');
-    expect(within(row as HTMLElement).getAllByText('Granted')).toHaveLength(6);
+    const chip = within(row as HTMLElement).getByText('All permissions granted by role');
+    expect(chip).toHaveClass('den-statuspill', 'den-statuspill--compact');
+    expect(chip).toHaveAttribute('data-tone', 'success');
+    expect(within(row as HTMLElement).queryByText('Granted')).toBeNull();
+    expect(within(row as HTMLElement).queryByText('permissions')).toBeNull();
   });
 
   it('keeps the secondary rows fully editable in the same list', async () => {
@@ -372,7 +380,7 @@ describe('HouseholdMembers NEGATIVE', () => {
     mount();
 
     await user.click(
-      await screen.findByRole('button', { name: 'Invite this household to the portal' }),
+      await screen.findByRole('button', { name: 'Invite to portal' }),
     );
 
     // A success response that emailed nobody must never read as an invite sent.
@@ -387,7 +395,7 @@ describe('HouseholdMembers NEGATIVE', () => {
     mount();
 
     await user.click(
-      await screen.findByRole('button', { name: 'Invite this household to the portal' }),
+      await screen.findByRole('button', { name: 'Invite to portal' }),
     );
 
     expect(await screen.findByText(/no email address on file/)).toBeInTheDocument();
@@ -422,7 +430,7 @@ describe('HouseholdMembers ERROR', () => {
     mount();
 
     await user.click(
-      await screen.findByRole('button', { name: 'Invite this household to the portal' }),
+      await screen.findByRole('button', { name: 'Invite to portal' }),
     );
 
     expect(await screen.findByText(/inviteKinfolkToPortal failed/)).toBeInTheDocument();
@@ -491,7 +499,7 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
     const user = userEvent.setup();
     api.listRecoveryCandidates.mockResolvedValue(candidates);
     mount({ members: roster });
-    await user.click(await screen.findByRole('button', { name: 'Start primary recovery' }));
+    await user.click(await screen.findByRole('button', { name: 'Swap primary' }));
     return { user, dialog: await screen.findByRole('dialog') };
   }
 
@@ -566,7 +574,7 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
     api.listRecoveryCandidates.mockRejectedValue(new Error('permission-denied: Admin claim required.'));
     const user = userEvent.setup();
     mount({ members: roster });
-    await user.click(await screen.findByRole('button', { name: 'Start primary recovery' }));
+    await user.click(await screen.findByRole('button', { name: 'Swap primary' }));
 
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText(/listRecoveryCandidates failed/)).toBeInTheDocument();
@@ -576,7 +584,7 @@ describe('HouseholdMembers PRIMARY RECOVERY', () => {
   it('offers no recovery at all on a household with no active primary', async () => {
     mount({ members: [member()] });
     expect(await screen.findByText('marcus@example.com')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Start primary recovery' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Swap primary' })).toBeNull();
     expect(screen.getByText(/no active primary to recover/i)).toBeInTheDocument();
   });
 });
@@ -653,6 +661,169 @@ describe('HouseholdMembers breadcrumbs', () => {
     render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
     expect(within(nav).getByRole('link', { name: 'fam1' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #755, checklist line Members. The screen is laid out as
+ * `ui-ideas/auntieos-members-2026-05-27.html` draws it: the hero names the
+ * household with its crest and a mono line of counts, the actions sit in the
+ * band, and the members are split by role into two panels, each member a
+ * block wearing the kit's compact capsules. The invites half is the invites
+ * mock's row. These pin the structure so a later pass cannot undo it quietly.
+ */
+describe('HouseholdMembers mock structure', () => {
+  const primary = () =>
+    member({ uid: 'p1', role: 'PRIMARY', secondaryLabel: null, invitedEmail: 'lost@example.com' });
+
+  it('heads the page with the household crest, its name, the where line and the band actions', async () => {
+    mount({ members: [primary(), member()] });
+    await screen.findByText('marcus@example.com');
+    const hero = document.querySelector('.den-heading') as HTMLElement;
+    expect(within(hero).getByRole('heading', { level: 1 })).toHaveTextContent('the Walls');
+    // The crest: the mock's letter tile, "W" for the Walls, in the leading slot.
+    expect(hero.querySelector('.den-heading-leading .avatar')).not.toBeNull();
+    expect(within(hero).getByRole('img', { name: 'the Walls' })).toHaveTextContent('W');
+    expect(
+      within(hero).getByText('familyId: fam1 · 2 members · 1 PRIMARY, 1 SECONDARY'),
+    ).toHaveClass('hmembers__where');
+    // The actions live in the band, in the mock's order: Back, Swap primary,
+    // then the admin's one invite where the mock's primary action sat.
+    const actions = hero.querySelector('.hmembers__actions') as HTMLElement;
+    expect(within(actions).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Back to the Walls',
+      'Swap primary',
+      'Invite to portal',
+    ]);
+  });
+
+  it('writes the id alone while the roster is unread, never a zero count', () => {
+    expect(whereLine('fam1', { status: 'loading' })).toBe('familyId: fam1');
+    expect(whereLine('fam1', { status: 'error', message: 'x' })).toBe('familyId: fam1');
+    expect(whereLine('fam1', { status: 'ready', data: [primary()] })).toBe(
+      'familyId: fam1 · 1 member · 1 PRIMARY, 0 SECONDARY',
+    );
+  });
+
+  it('takes the crest letter after a leading article', () => {
+    expect(householdInitial('the Wrens')).toBe('W');
+    expect(householdInitial('Pruitt')).toBe('P');
+    expect(householdInitial('fam1')).toBe('F');
+  });
+
+  it('splits the roster by role into Primary contact and Secondary contacts, then Invites, with the mock meta', async () => {
+    mount({ members: [primary(), member()] });
+    await screen.findByText('marcus@example.com');
+    const titles = Array.from(document.querySelectorAll('.den-panel-title')).map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual(['Primary contact', 'Secondary contacts', 'Invites']);
+    const metas = Array.from(document.querySelectorAll('.den-panel-meta')).map(
+      (el) => el.textContent,
+    );
+    expect(metas).toEqual(['role: PRIMARY', '1 of role: SECONDARY', '1 total']);
+    const panels = document.querySelectorAll('.den-panel');
+    expect(within(panels[0] as HTMLElement).getByText('lost@example.com')).toBeInTheDocument();
+    expect(within(panels[0] as HTMLElement).queryByText('marcus@example.com')).toBeNull();
+    expect(within(panels[1] as HTMLElement).getByText('marcus@example.com')).toBeInTheDocument();
+    // No Portal access panel and no recovery panel: both are band actions now.
+    expect(screen.queryByText('Portal access')).toBeNull();
+    expect(screen.queryByText(/Hand the primary role/)).toBeNull();
+  });
+
+  it('draws each member as the mock block: circle, name, compact capsules, the uid in mono', async () => {
+    mount({ members: [primary(), member()] });
+    const row = (await screen.findByText('marcus@example.com')).closest('li') as HTMLElement;
+    expect(row).toHaveClass('hmembers__member');
+    expect(row).toHaveAttribute('data-role', 'secondary');
+    expect(within(row).getByRole('img', { name: 'marcus@example.com' })).toHaveTextContent('M');
+    const role = within(row).getByText('Secondary');
+    expect(role).toHaveClass('den-statuspill', 'den-statuspill--compact');
+    expect(role).toHaveAttribute('data-tone', 'teal');
+    expect(within(row).getByText('Active')).toHaveAttribute('data-tone', 'teal');
+    expect(within(row).getByText('u1')).toHaveClass('hmembers__member-contact');
+    // The label, read-only: `updateMemberLabel` is PRIMARY-only on the server.
+    expect(within(row).getByText('secondaryLabel')).toHaveClass('hmembers__labeled');
+    expect(within(row).getByText('Spouse')).toHaveClass('hmembers__labelval');
+    expect(within(row).queryByRole('textbox')).toBeNull();
+
+    const prow = (await screen.findByText('lost@example.com')).closest('li') as HTMLElement;
+    expect(within(prow).getByText('Primary')).toHaveAttribute('data-tone', 'purple');
+    expect(within(prow).queryByText('secondaryLabel')).toBeNull();
+  });
+
+  it('paints an invited member orange and a suspended one coral', async () => {
+    mount({
+      members: [
+        member({ uid: 'a', status: 'INVITED', invitedEmail: 'a@example.com' }),
+        member({ uid: 'b', status: 'SUSPENDED', invitedEmail: 'b@example.com' }),
+      ],
+    });
+    expect(await screen.findByText('Invited')).toHaveAttribute('data-tone', 'orange');
+    expect(screen.getByText('Suspended')).toHaveAttribute('data-tone', 'error');
+  });
+
+  it('heads the permission list with the mock kicker and sets Locked on beside the kintales switch', async () => {
+    mount();
+    const row = (await screen.findByText('marcus@example.com')).closest('li') as HTMLElement;
+    expect(within(row).getByText('permissions')).toHaveClass('hmembers__permhdr');
+    const locked = within(row).getByText('Locked on');
+    expect(locked).toHaveClass('den-statuspill--compact');
+    expect(locked).toHaveAttribute('data-tone', 'teal');
+    // On the last row, beside its switch, as the mock's lock chip sits.
+    const lastRow = locked.closest('li') as HTMLElement;
+    expect(within(lastRow).getByText('KinTales feed')).toBeInTheDocument();
+    expect(within(lastRow).getByRole('switch')).toBeDisabled();
+    expect(within(row).getAllByText('Locked on')).toHaveLength(1);
+  });
+
+  it('offers none of the mock controls the admin cannot use', async () => {
+    mount();
+    await screen.findByText('marcus@example.com');
+    // Add secondary contact: the admin does not invite the secondary.
+    expect(screen.queryByRole('button', { name: /add secondary/i })).toBeNull();
+    // Save label and Swap contact info: PRIMARY-only callables.
+    expect(screen.queryByRole('button', { name: /save label/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /swap contact/i })).toBeNull();
+  });
+
+  it('draws an invite as the invites mock row: stripe, circle, address, provenance, compact pills', async () => {
+    mount();
+    const row = (await screen.findByText('jane@example.com')).closest('li') as HTMLElement;
+    expect(row).toHaveClass('hmembers__invite');
+    expect(row.querySelector('.hmembers__invite-accent')).toHaveAttribute('data-tone', 'orange');
+    expect(within(row).getByRole('img', { name: 'jane@example.com' })).toHaveTextContent('J');
+    expect(within(row).getByText(/Sent 2026-05-26/)).toHaveClass('hmembers__invite-meta');
+    const pills = Array.from(row.querySelectorAll('.den-statuspill--compact')).map((p) => [
+      p.textContent,
+      p.getAttribute('data-tone'),
+    ]);
+    expect(pills).toEqual([
+      ['Email sent', 'orange'],
+      ['Secondary', 'purple'],
+      ['Sister', 'neutral'],
+    ]);
+    // The group heading and its mono note, the note a sibling of the h3 so the
+    // section's accessible name stays the one word.
+    expect(screen.getByRole('heading', { level: 3, name: 'Pending' })).toBeInTheDocument();
+    expect(screen.getByText('PENDING / EMAIL_SENT · 1')).toHaveClass('hmembers__group-note');
+  });
+
+  it('says the secondaries are unknown, once, while the member read is failing', async () => {
+    api.listHouseholdMembers.mockRejectedValue(new Error('permission-denied'));
+    api.listHouseholdInvites.mockResolvedValue([]);
+    render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
+    expect(await screen.findByText(/listMembers failed/)).toBeInTheDocument();
+    expect(screen.getByText(/Secondary contacts unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/No secondary contacts yet/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Swap primary' })).toBeNull();
+  });
+
+  it('draws every capsule with the kit pill; the local pill class is gone', async () => {
+    mount({ members: [primary(), member()] });
+    await screen.findByText('marcus@example.com');
+    expect(document.querySelector('.hmembers__pill')).toBeNull();
+    expect(document.querySelectorAll('.den-statuspill').length).toBeGreaterThan(0);
   });
 });
 

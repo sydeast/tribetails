@@ -21,7 +21,8 @@ import {
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { useRovingTabs } from '../lib/useRovingTabs';
-import { DenScreenHeading } from '../components/DenScreenKit';
+import { DenScreenHeading, StatusPill, EmptyHint, type DenTone } from '../components/DenScreenKit';
+import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { Avatar } from '../components/Avatar';
@@ -56,19 +57,72 @@ function PlusGlyph() {
   );
 }
 
-function statusTone(status: string): string {
+/** The mock's search glyph (`.search svg`), inline for the same reason as PawGlyph. */
+function SearchGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3-3" />
+    </svg>
+  );
+}
+
+/** The mock's card-footer phone glyph (`.krow .contact svg`, first). */
+function PhoneGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M4 5c0 9 6 15 15 15l2-3-4-2-2 2c-3-1-6-4-7-7l2-2-2-4z" />
+    </svg>
+  );
+}
+
+/** The mock's card-footer mail glyph (`.krow .contact svg`, second). */
+function MailGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
+}
+
+/** The mock's sort-pill chevron (`.sortpill svg`). */
+function ChevronGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function statusTone(status: string): DenTone {
   const s = status.toLowerCase();
   if (s === 'active') return 'success';
   if (s === 'inactive') return 'muted';
   if (s === 'archived') return 'warning';
+  if (s === 'prospect') return 'teal';
   return 'neutral';
 }
 
-/** Screen-local status pill. No shared Pill/Chip primitive exists yet (see the report note). */
-function StatusPill({ status }: { status: string }) {
+/**
+ * The card's status badge, in the mock's top-right corner (`.badge`).
+ *
+ * The mock draws a badge only on the exception: five active households carry no
+ * status word at all, and the sixth wears "New". So an active row is silent
+ * here, and a row in any other state (inactive, archived, prospect, or a status
+ * this screen does not know) wears the kit's StatusPill where the mock puts its
+ * badge. Blank stays blank: an absent status is not a state to announce.
+ *
+ * The compact size (#780) is the mock's `.badge` itself, 9.5px on 4px 9px; the
+ * kit's default capsule is the detail screens' `.statuspill` and sat larger in
+ * the corner than the mock draws it.
+ */
+function CardBadge({ status }: { status: string }) {
+  const label = status.trim().toLowerCase();
+  if (label === '' || label === 'active') return null;
   return (
-    <span className="directory__status-pill" data-tone={statusTone(status)}>
-      {status.trim() === '' ? '-' : status.toLowerCase()}
+    <span className="directory__badge">
+      <StatusPill label={label} tone={statusTone(label)} size="compact" />
     </span>
   );
 }
@@ -98,6 +152,7 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
 
   const body = (
     <>
+        <CardBadge status={str(kf.status)} />
         <span className="directory__card-head">
           <Avatar
             label={displayName}
@@ -122,10 +177,13 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
             <>
               {shown.map((k) => (
                 <span key={k._id} className="directory__pet-chip">
+                  {/* The mock's chip leads with the pet's own photo, framed in a
+                      circle; the paw sits underneath for a pet with none. */}
                   <Avatar
                     label={str(k.name)}
+                    imageUrl={k.profilePictureUrl}
                     glyph={<PawGlyph />}
-                    size={22}
+                    size={28}
                     ring={false}
                     gradientSeed={k._id !== '' ? k._id : str(k.name)}
                   />
@@ -150,13 +208,18 @@ function KinfolkCard({ kf, kin, kinPending, onClick }: KinfolkCardProps) {
               exactly as it was for a doc with a blank field.
             */}
             {str(kf.phoneNumber) !== '' && (
-              <span className="directory__card-contact-item">{str(kf.phoneNumber)}</span>
+              <span className="directory__card-contact-item">
+                <PhoneGlyph />
+                {str(kf.phoneNumber)}
+              </span>
             )}
             {str(kf.email) !== '' && (
-              <span className="directory__card-contact-item">{str(kf.email)}</span>
+              <span className="directory__card-contact-item">
+                <MailGlyph />
+                {str(kf.email)}
+              </span>
             )}
           </span>
-          <StatusPill status={str(kf.status)} />
         </span>
     </>
   );
@@ -193,6 +256,7 @@ function KinCard({ kin, onClick }: KinCardProps) {
 
   const body = (
     <>
+        <CardBadge status={str(kin.status)} />
         <span className="directory__card-head">
           <Avatar
             label={str(kin.name)}
@@ -214,7 +278,6 @@ function KinCard({ kin, onClick }: KinCardProps) {
               <span className="directory__card-contact-item">{str(kin.sex)}</span>
             )}
           </span>
-          <StatusPill status={str(kin.status)} />
         </span>
     </>
   );
@@ -516,7 +579,8 @@ export function Directory({
             onClick={() => selectTab('kinfolk')}
             {...getTabProps(0)}
           >
-            Kinfolk{kinfolkCount !== null ? ` · ${kinfolkCount}` : ''}
+            Kinfolk{' '}
+            {kinfolkCount !== null && <span className="directory__tab-count">{kinfolkCount}</span>}
           </button>
           <button
             type="button"
@@ -526,26 +590,33 @@ export function Directory({
             onClick={() => selectTab('kin')}
             {...getTabProps(1)}
           >
-            Kin{kinCount !== null ? ` · ${kinCount}` : ''}
+            Kin{' '}
+            {kinCount !== null && <span className="directory__tab-count">{kinCount}</span>}
           </button>
         </div>
 
-        <input
-          type="search"
-          className="directory__search-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={
-            tab === 'kinfolk'
-              ? 'Search by name, phone, or email'
-              : 'Search by name, species, or breed'
-          }
-          aria-label={
-            tab === 'kinfolk'
-              ? 'Search kinfolk by name, phone, or email'
-              : 'Search kin by name, species, or breed'
-          }
-        />
+        {/* The mock's `.search`: a glyph leading the field inside one bordered box. */}
+        <label className="directory__search">
+          <span className="directory__search-glyph">
+            <SearchGlyph />
+          </span>
+          <input
+            type="search"
+            className="directory__search-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={
+              tab === 'kinfolk'
+                ? 'Search by name, phone, or email'
+                : 'Search by name, species, or breed'
+            }
+            aria-label={
+              tab === 'kinfolk'
+                ? 'Search kinfolk by name, phone, or email'
+                : 'Search kin by name, species, or breed'
+            }
+          />
+        </label>
 
         {/*
           The tag filter. Rendered only once the tab's stream is ready AND some
@@ -574,6 +645,9 @@ export function Directory({
                 </option>
               ))}
             </select>
+            <span className="directory__sort-chevron">
+              <ChevronGlyph />
+            </span>
           </label>
         )}
 
@@ -591,6 +665,9 @@ export function Directory({
               </option>
             ))}
           </select>
+          <span className="directory__sort-chevron">
+            <ChevronGlyph />
+          </span>
         </label>
       </div>
 
@@ -611,13 +688,13 @@ export function Directory({
           state={kinfolkState}
           what="kinfolk"
           isEmpty={(rows) => rows.length === 0}
-          loading={<p className="directory__hint">Loading kinfolk…</p>}
-          empty={<p className="directory__hint">No kinfolk on file yet.</p>}
+          loading={<LoadingRow label="Loading kinfolk…" className="den-hint" />}
+          empty={<EmptyHint>No kinfolk on file yet.</EmptyHint>}
         >
           {(rows) => {
             const visible = filterSortKinfolk(rows, query, sort, activeKinfolkTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">{noMatchHint(query, activeKinfolkTag)}</p>;
+              return <EmptyHint>{noMatchHint(query, activeKinfolkTag)}</EmptyHint>;
             }
             return (
               <EntityCardGrid label="Kinfolk" minCardWidth="290px" align="start">
@@ -643,13 +720,13 @@ export function Directory({
           state={kinState}
           what="kin"
           isEmpty={(rows) => rows.length === 0}
-          loading={<p className="directory__hint">Loading kin…</p>}
-          empty={<p className="directory__hint">No kin on file yet.</p>}
+          loading={<LoadingRow label="Loading kin…" className="den-hint" />}
+          empty={<EmptyHint>No kin on file yet.</EmptyHint>}
         >
           {(rows) => {
             const visible = filterSortKin(rows, query, sort, activeKinTag);
             if (visible.length === 0) {
-              return <p className="directory__hint">{noMatchHint(query, activeKinTag)}</p>;
+              return <EmptyHint>{noMatchHint(query, activeKinTag)}</EmptyHint>;
             }
             return (
               <EntityCardGrid label="Kin" minCardWidth="290px" align="start">

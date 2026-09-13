@@ -163,16 +163,71 @@ describe('KinTaleDetail: report resolution', () => {
     expect(await screen.findByText('permission-denied', { selector: '.async-error-detail' })).toBeInTheDocument();
   });
 
-  it('renders the household, title, body, and status chip once the report resolves', async () => {
+  it('renders the headline as the hero title, the body, and the status pill once the report resolves', async () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    expect(await screen.findByText('A great day at the park')).toBeInTheDocument();
-    // Household name renders in BOTH "The tale" and "Who this covers", so
-    // this asserts presence, not uniqueness.
+    expect(await screen.findByRole('heading', { level: 1, name: 'A great day at the park' })).toHaveClass(
+      'den-heading-title',
+    );
+    // Household name renders in BOTH the hero's "From" line and the rail's
+    // "Goes to", so this asserts presence, not uniqueness.
     expect(screen.getAllByText('The Whitfields').length).toBeGreaterThan(0);
     expect(screen.getByText('Biscuit had a wonderful time at the park today.')).toBeInTheDocument();
-    expect(screen.getByText('SENT')).toBeInTheDocument();
-    expect(screen.getByText(/by auntie jo/i)).toBeInTheDocument();
+    expect(screen.getByText('SENT')).toHaveClass('den-statuspill');
+    expect(screen.getByText('SENT')).toHaveAttribute('data-tone', 'success');
     expect(screen.getByText(/sent via email/i)).toBeInTheDocument();
+  });
+
+  it('draws the mock cover in the kit band: author line, visit time, status and service pills', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    const hero = document.querySelector('.den-heading') as HTMLElement;
+    expect(within(hero).getByText('From', { exact: false }).textContent).toBe('From Auntie Jo for The Whitfields');
+    expect(hero.querySelector('.den-heading-detail')).toHaveTextContent('07-16');
+    const badges = hero.querySelector('.den-heading-badges') as HTMLElement;
+    expect(within(badges).getByText('SENT')).toHaveClass('den-statuspill');
+    expect(within(badges).getByText('Dog Walk')).toHaveClass('den-pill');
+    // The band has no kicker: a nested screen carries the trail instead.
+    expect(hero.querySelector('.den-heading-kicker')).toBeNull();
+  });
+
+  it('says the recap has gone out, in the source screen\'s words, on a sent report only', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.getByText('This KinTale has been sent.')).toBeInTheDocument();
+  });
+
+  it('shows no sent banner and no Delivery panel on a draft', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ status: 'DRAFT', sentAt: '', sentVia: '' })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.queryByText('This KinTale has been sent.')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Delivery' })).toBeNull();
+    expect(screen.getByText('DRAFT')).toHaveAttribute('data-tone', 'neutral');
+  });
+
+  it('lays the recap out in two columns with the mock rail: Goes to, Visit, Delivery', async () => {
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    const rail = screen.getByRole('complementary', { name: 'Who and when' });
+    const railTitles = Array.from(rail.querySelectorAll('.den-panel-title')).map((el) => el.textContent);
+    expect(railTitles).toEqual(['Goes to', 'Visit', 'Delivery']);
+    const left = document.querySelector('.kintale-detail__col:not(.kintale-detail__rail)') as HTMLElement;
+    const leftTitles = Array.from(left.querySelectorAll(':scope > .den-panel > .den-panel-header .den-panel-title')).map(
+      (el) => el.textContent,
+    );
+    expect(leftTitles).toEqual(['The tale', 'Share with kinfolk', 'Reaction', 'Replies']);
+    // The rail's facts, each off the report doc.
+    expect(within(rail).getByText('Author').nextElementSibling).toHaveTextContent('Auntie Jo');
+    expect(within(rail).getByText('Service').nextElementSibling).toHaveTextContent('Dog Walk');
+    expect(within(rail).getByText('Sent via').nextElementSibling).toHaveTextContent('email');
+  });
+
+  it('draws the photo count as the panel\'s mono note, the mock\'s "Photos · N attached"', async () => {
+    getMyKinTaleMedia.mockResolvedValue([]);
+    mockStreams({ reports: { status: 'ready', data: [report({ mediaFileIds: ['m1', 'm2', 'm3'] })] } });
+    render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
+    expect(screen.getByText('3 attached')).toHaveClass('den-panel-meta');
   });
 
   it('shows an honest "(empty body)" placeholder for a blank recap, never a fabricated summary', async () => {
@@ -204,7 +259,7 @@ describe('KinTaleDetail: who this covers (kin resolution)', () => {
 describe('KinTaleDetail: photos', () => {
   it('renders no Photos panel and calls no media callable when mediaFileIds is empty', async () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByText('Photos')).toBeNull();
     expect(getMyKinTaleMedia).not.toHaveBeenCalled();
   });
@@ -361,7 +416,7 @@ describe('KinTaleDetail: share link', () => {
   it('offers no share or preview control at all on a draft, rather than a control that can only refuse', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ status: 'DRAFT', sentVia: '' })] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByText('Share with kinfolk')).toBeNull();
     expect(screen.queryByRole('button', { name: /share link/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /view as kinfolk/i })).toBeNull();
@@ -394,7 +449,7 @@ describe('KinTaleDetail: share link', () => {
 describe('KinTaleDetail: view as kinfolk', () => {
   it('renders no preview until the operator asks for one', async () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('region', { name: 'Kinfolk view' })).toBeNull();
   });
 
@@ -549,7 +604,7 @@ describe('KinTaleDetail: replying to one comment', () => {
 describe('KinTaleDetail: Edit / Close wiring', () => {
   it('renders no Edit control when onEdit is omitted (no live no-op, Buttons.tsx ControlShell convention)', async () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
   });
 
@@ -576,7 +631,8 @@ describe('KinTaleDetail: breadcrumbs', () => {
   it('names this report as the current page under a KinTales step', async () => {
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
     const nav = await screen.findByRole('navigation', { name: 'Breadcrumb' });
-    expect(within(nav).getByText('KinTale detail')).toHaveAttribute('aria-current', 'page');
+    // The last step is the headline, so the trail names the page.
+    expect(within(nav).getByText('A great day at the park')).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText(/The Den/i)).not.toBeInTheDocument();
   });
   /**
@@ -644,7 +700,7 @@ describe('KinTaleDetail: per-pet mood', () => {
       templates: { status: 'ready', data: [templateDoc({ petMoodEnabled: false })] },
     });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
     expect(screen.queryByText('😊 Happy')).not.toBeInTheDocument();
   });
@@ -652,7 +708,7 @@ describe('KinTaleDetail: per-pet mood', () => {
   it('renders NO mood section when nothing was recorded, rather than an empty panel', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ templateId: 'tmpl1' })] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
   });
 
@@ -664,7 +720,7 @@ describe('KinTaleDetail: per-pet mood', () => {
       },
     });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('heading', { name: 'Pet mood' })).not.toBeInTheDocument();
   });
 });
@@ -737,7 +793,7 @@ describe('KinTaleDetail: custom form_schemas answers', () => {
   it('renders NO custom fields panel, and calls no schema API, when the report stored none', async () => {
     mockStreams({ reports: { status: 'ready', data: [report()] } });
     render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
-    await screen.findByText('A great day at the park');
+    await screen.findByRole('heading', { level: 1, name: 'A great day at the park' });
     expect(screen.queryByRole('heading', { name: 'Custom fields' })).not.toBeInTheDocument();
     expect(listFormSchemas).not.toHaveBeenCalled();
   });

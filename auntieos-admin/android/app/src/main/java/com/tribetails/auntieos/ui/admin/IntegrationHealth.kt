@@ -170,3 +170,28 @@ fun integrationsCheckedLabel(iso: String): String {
     }.getOrNull() ?: return "Checked at a time that could not be read ($iso)."
     return "Checked $at."
 }
+
+/**
+ * The settings mock's `.logo` letter (issue #755 pass): the first character
+ * of the service's name, upper-cased, or a question mark for a blank name.
+ * Mirrors `monogram` in the web `IntegrationsSection.tsx`.
+ */
+fun integrationMonogram(name: String): String {
+    val first = name.trim().firstOrNull() ?: return "?"
+    return first.uppercaseChar().toString()
+}
+
+/**
+ * Which brand gradient a service's monogram tile takes: a stable pick by the
+ * name, so the same service reads with the same colour signature every time
+ * the panel opens. The hash is `avatarPaletteFor`'s (the one the web
+ * `gradientForSeed` ports), kept non-negative by the mask so the modulo is
+ * always in range. A blank name takes the first gradient.
+ */
+fun integrationGradientIndex(name: String, count: Int): Int {
+    require(count > 0) { "count must be positive" }
+    if (name.isEmpty()) return 0
+    var h = 0
+    for (ch in name) h = (h * 31 + ch.code) and 0x7FFFFFFF
+    return h % count
+}

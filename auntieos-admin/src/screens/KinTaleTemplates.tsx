@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { linkOptions } from '@tanstack/react-router';
 import { useCollection } from '../lib/firestore';
 import { type Async } from '../lib/async';
 import {
@@ -55,7 +56,7 @@ import {
   valuePlaceholder,
 } from '../lib/kinTaleTemplateEdit';
 import { ConditionOp } from '../lib/kinTale/model';
-import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { DenScreenHeading, DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { WizardModal, type WizardStep } from '../components/WizardModal';
 import { GhostButton, IconButton } from '../components/Buttons';
@@ -202,7 +203,7 @@ export function KinTaleTemplates() {
   // Highlight a sensible row once data lands, and never again: this only fires
   // while nothing is selected yet, so a later stream tick (e.g. our own save
   // landing) never moves the selection under the operator. Mirrors the Compose
-  // editor's one-shot `LaunchedEffect(templatesRes)` default-selection — but it
+  // editor's one-shot `LaunchedEffect(templatesRes)` default-selection, but it
   // only selects now, it does not open an editor.
   useEffect(() => {
     if (stream.status !== 'ready' || selectedId !== null) return;
@@ -237,8 +238,11 @@ export function KinTaleTemplates() {
 
   return (
     <div className="screen kintale-templates">
+      {/* The template-editor mock's trail, "KinTales / Templates": this screen
+          is reached from the list's Edit templates control, so it is nested
+          under KinTales and carries the trail in the kicker's place. */}
       <DenScreenHeading
-        kicker="The Den · KinTales"
+        crumbs={[{ label: 'KinTales', link: linkOptions({ to: '/kintales' }) }, { label: 'Templates' }]}
         title="KinTale"
         accentTail="templates."
         subtitle="Shape the recap that goes home: which sections show, and the checklist Auntie fills out each visit."
@@ -323,8 +327,11 @@ function TemplatePicker({ templates, selectedId, onSelect, onAddNew }: TemplateP
                   onClick={() => onSelect(tpl)}
                 >
                   <span className="ktt__picker-name">{tpl.name.trim() || 'Untitled template'}</span>
-                  {tpl.isDefault && <span className="ktt__tag ktt__tag--default">Default</span>}
-                  {!tpl.isActive && <span className="ktt__tag ktt__tag--muted">Inactive</span>}
+                  {/* The mock's `.tag.def` / `.tag.ina`: the kit capsule at
+                      the compact size, orange for the default, muted for an
+                      inactive one. */}
+                  {tpl.isDefault && <StatusPill label="Default" tone="orange" size="compact" />}
+                  {!tpl.isActive && <StatusPill label="Inactive" tone="muted" size="compact" />}
                 </button>
               </li>
             );

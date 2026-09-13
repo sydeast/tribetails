@@ -11,7 +11,10 @@
   today (serviceRates is referenced only in FirestoreClient.kt), so this screen is net-new UI over that map.
   This is the list the create-booking KinCare-type selector pulls from. Operator usually goes by TIME
   (30 min, 45 min, 60 min, Overnight, Drop-in) but the list is freely editable.
-  Anything beyond name->rate (duration minutes, color) is isolated in a labeled Suggestion block.
+  AMENDED 2026-09-11 (issue #755 sweep): mark 15 of the 2026-08-17 walk ruled a KinCare type has a
+  name/title, a DURATION and a price, so the rows carry a third column and the duration idea left the
+  Suggestion block (serviceDurations, keyed by the same name, is real). The same walk asked for a sorter
+  by name and rate; it is a view over the rows, never a write. Colour per type is still only a suggestion.
   No em dashes. Palette from AuntieColors.kt. Placeholder content.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -73,9 +76,9 @@
 
   /* editable rows: serviceRates entry = name -> rate */
   .rows{display:flex;flex-direction:column;gap:10px}
-  .rhead{display:grid;grid-template-columns:1fr 180px 88px;gap:12px;padding:0 4px 2px;
+  .rhead{display:grid;grid-template-columns:1fr 150px 150px 88px;gap:12px;padding:0 4px 2px;
     font-family:"Spline Sans Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cream-dim);opacity:.6}
-  .row{display:grid;grid-template-columns:1fr 180px 88px;gap:12px;align-items:center;padding:12px;
+  .row{display:grid;grid-template-columns:1fr 150px 150px 88px;gap:12px;align-items:center;padding:12px;
     border:1px solid var(--line);border-radius:14px;background:var(--navy-3);transition:.16s var(--ease)}
   .row:hover{border-color:rgba(223,132,49,.32)}
   .row.gone{opacity:.4}
@@ -84,7 +87,16 @@
   .input{width:100%;background:var(--navy-2);border:1px solid var(--line);border-radius:11px;padding:11px 13px;
     color:var(--cream);font-family:inherit;font-size:14.5px;outline:none;transition:.16s var(--ease)}
   .input:focus{border-color:rgba(223,132,49,.5)}
-  .input.rate{font-family:"Spline Sans Mono",monospace;font-size:13.5px}
+  .input.rate,.input.dur{font-family:"Spline Sans Mono",monospace;font-size:13.5px}
+  .input.dur::placeholder{color:var(--cream-dim);opacity:.55}
+
+  /* sort row: a view over the rows, never a write */
+  .sort{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+  .sort .cap{margin:0}
+  .sort button{font-family:"Hanken Grotesk";font-weight:600;font-size:12px;color:var(--cream-dim);background:transparent;
+    border:1px solid var(--line);border-radius:999px;padding:4px 12px;cursor:pointer;transition:.16s var(--ease)}
+  .sort button:hover{color:var(--cream)}
+  .sort button[aria-pressed="true"]{background:var(--cream);color:var(--navy);border-color:transparent}
   .rowacts{display:flex;justify-content:flex-end;gap:7px}
   .iconbtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--navy-2);
     color:var(--cream-dim);cursor:pointer;display:grid;place-items:center;transition:.16s var(--ease)}
@@ -124,7 +136,7 @@
   .note{margin-top:28px;font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--cream-dim);opacity:.45}
   @media(max-width:820px){
     .cols{grid-template-columns:1fr}.secnav{position:static}
-    .rhead,.row{grid-template-columns:1fr 120px 78px}
+    .rhead,.row{grid-template-columns:1fr 110px 110px 78px}
   }
   @media(max-width:560px){
     .rhead{display:none}
@@ -158,10 +170,18 @@
       <div class="content">
         <div class="panel d1">
           <h3>Your KinCare types</h3>
-          <div class="ph-sub">Add, rename, re-rate, or remove. Most operators go by length of visit (30 min, 60 min, Overnight) but you can name them anything. Saving updates the booking screen for new requests.</div>
+          <div class="ph-sub">Add, rename, re-rate, or remove. Most operators go by length of visit (30 min, 60 min, Overnight) but you can name them anything. Saving updates the booking screen for new requests. A greyed duration is what the name implies; it is never saved unless you type it.</div>
+
+          <div class="sort" role="group" aria-label="Sort KinCare types">
+            <label class="cap">Sort by</label>
+            <button type="button" aria-pressed="true">As saved</button>
+            <button type="button" aria-pressed="false">Name</button>
+            <button type="button" aria-pressed="false">Duration</button>
+            <button type="button" aria-pressed="false">Rate</button>
+          </div>
 
           <div class="rows" id="rows">
-            <div class="rhead"><span>Type name</span><span>Rate</span><span></span></div>
+            <div class="rhead"><span>Type name</span><span>Duration (min)</span><span>Rate</span><span></span></div>
             <!-- rows injected by script from the placeholder serviceRates map -->
           </div>
 
@@ -180,11 +200,11 @@
 
         <div class="panel d3">
           <div class="suggest">
-            <div class="stag"><span class="dot"></span>Suggestion · not in serviceRates yet</div>
-            <h4>Optional: duration and color per type</h4>
+            <div class="stag"><span class="dot"></span>Suggestion · not in BusinessSettings yet</div>
+            <h4>Optional: a color per type</h4>
             <p>
-              Today a KinCare type is just a <b>name</b> and a <b>rate string</b> (the real <span style="font-family:'Spline Sans Mono',monospace">serviceRates</span> map). If you want, a future version could attach a
-              <b>default duration in minutes</b> (auto-blocks the calendar) and a <b>color</b> (so types are easy to scan on the schedule). These would need new fields on BusinessSettings and are shown here only as a preview, they are not saved by this screen.
+              A KinCare type is a <b>name</b>, a <b>duration</b> (the real <span style="font-family:'Spline Sans Mono',monospace">serviceDurations</span> map, keyed by the same name) and a <b>rate string</b> (the real <span style="font-family:'Spline Sans Mono',monospace">serviceRates</span> map). A future version could attach a
+              <b>color</b> so types are easy to scan on the schedule. That would need a new field on BusinessSettings and is shown here only as a preview, it is not saved by this screen.
             </p>
             <div class="sgrid">
               <div class="scard"><div class="sname"><span class="swatch" style="background:var(--orange)"></span>30 min</div><div class="smeta">30 min · $28</div></div>
@@ -210,18 +230,27 @@
   <script>
     // Placeholder serviceRates : Map<String,String> (name -> rate string), mirroring BusinessSettings.
     // Operator usually goes by TIME; freely editable.
+    // serviceDurations is the parallel map, keyed by the same name; a blank one
+    // writes no key, so the name parse keeps standing in for it.
     let serviceRates = [
-      { name: "30 min",    rate: "$28" },
-      { name: "45 min",    rate: "$38" },
-      { name: "60 min",    rate: "$48" },
-      { name: "Overnight", rate: "$85" },
-      { name: "Drop-in",   rate: "$22" },
+      { name: "30 min",    duration: "30",  rate: "$28" },
+      { name: "45 min",    duration: "45",  rate: "$38" },
+      { name: "60 min",    duration: "",    rate: "$48" },
+      { name: "Overnight", duration: "720", rate: "$85" },
+      { name: "Drop-in",   duration: "",    rate: "$22" },
     ];
 
     const rowsEl   = document.getElementById('rows');
     const previewEl= document.getElementById('preview');
     const dirtyEl  = document.getElementById('dirty');
-    const headHTML = '<div class="rhead"><span>Type name</span><span>Rate</span><span></span></div>';
+    const headHTML = '<div class="rhead"><span>Type name</span><span>Duration (min)</span><span>Rate</span><span></span></div>';
+
+    // What the name implies, shown greyed when nothing is stored. Never saved on its own.
+    function impliedMinutes(name){
+      const m = /(\d+)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)/i.exec(name);
+      if(!m) return null;
+      return /^h/i.test(m[2]) ? Number(m[1]) * 60 : Number(m[1]);
+    }
 
     function markDirty(){ dirtyEl.style.visibility = 'visible'; }
 
@@ -237,13 +266,16 @@
           <div class="grip">${gripIcon}
             <input class="input name" type="text" value="${entry.name.replace(/"/g,'&quot;')}" placeholder="e.g. 30 min" />
           </div>
+          <input class="input dur" type="text" inputmode="numeric" value="${(entry.duration || '').replace(/"/g,'&quot;')}" placeholder="${impliedMinutes(entry.name) === null ? 'Not set' : impliedMinutes(entry.name) + ' (from the name)'}" />
           <input class="input rate" type="text" value="${entry.rate.replace(/"/g,'&quot;')}" placeholder="e.g. $28" />
           <div class="rowacts">
             <button class="iconbtn del" title="Remove">${trashIcon}</button>
           </div>`;
         const nameI = row.querySelector('.name');
+        const durI  = row.querySelector('.dur');
         const rateI = row.querySelector('.rate');
         nameI.addEventListener('input', ()=>{ serviceRates[i].name = nameI.value; markDirty(); renderPreview(); });
+        durI.addEventListener('input', ()=>{ serviceRates[i].duration = durI.value; markDirty(); });
         rateI.addEventListener('input', ()=>{ serviceRates[i].rate = rateI.value; markDirty(); renderPreview(); });
         row.querySelector('.del').addEventListener('click', ()=>{
           serviceRates.splice(i,1); markDirty(); render();
@@ -270,7 +302,7 @@
     function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
     document.getElementById('addBtn').addEventListener('click', ()=>{
-      serviceRates.push({ name: "", rate: "" });
+      serviceRates.push({ name: "", duration: "", rate: "" });
       markDirty();
       render();
       const inputs = rowsEl.querySelectorAll('.row .name');
@@ -278,7 +310,8 @@
     });
 
     document.getElementById('saveBtn').addEventListener('click', ()=>{
-      // Mockup only: in the real app this maps rows -> Map<String,String> and calls saveBusinessSettings.
+      // Mockup only: in the real app this folds rows -> serviceRates and serviceDurations (blank names dropped,
+      // blank durations written as no key) and calls saveBusinessSettings.
       dirtyEl.style.visibility = 'hidden';
     });
 

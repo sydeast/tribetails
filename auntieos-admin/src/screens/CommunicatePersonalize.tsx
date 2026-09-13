@@ -20,7 +20,7 @@ import {
 import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
 import { sendExternalMessage } from '../api/externalSend';
-import { DenPanel, EmptyHint } from '../components/DenScreenKit';
+import { DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
@@ -207,8 +207,12 @@ export function CommunicatePersonalize() {
         const matches = filterRecipients(rows, query);
         const approveLabel = def.deliverable !== false ? 'Approve and send' : 'Approve draft';
 
+        // `.communicate__main` is the left column of the two-column grid
+        // `Communicate` draws (the mock's `.cols`); the confirm Dialog is
+        // `position: fixed` and takes no cell, so it sits outside the wrapper.
         return (
           <>
+            <div className="communicate__main">
             <DenPanel
               title="Personalize"
               subtitle="A one-to-one note that uses the recipient's dossier and kin context."
@@ -385,11 +389,15 @@ export function CommunicatePersonalize() {
                 )}
 
                 <div className="personalize__actions">
+                  {/* The mock's `.gen`: the generator wears the purple-to-pink
+                      wash, the one button on the screen that is Auntie AI
+                      rather than the operator. */}
                   <PrimaryButton
                     label={draft === null ? 'Generate draft' : 'Regenerate'}
                     busy={generating}
                     disabled={busy}
                     onClick={() => void handleGenerate(kf, draft !== null)}
+                    className="personalize__generate"
                   />
                 </div>
               </div>
@@ -401,7 +409,16 @@ export function CommunicatePersonalize() {
                 state taking up the screen. */}
             {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
             {draft !== null && (
-              <DenPanel title="Auntie AI draft" detail={draftSubtitle(draft)}>
+              // The mock's `.draft` card: purple rim and wash, "Auntie AI
+              // draft" with the "needs approval" capsule on the header rule.
+              // The capsule leaves once the draft is approved; it states a
+              // fact about the draft, and that fact stops being true.
+              <DenPanel
+                title="Auntie AI draft"
+                detail={draftSubtitle(draft)}
+                className="personalize__draft"
+                trailing={approved === null ? <StatusPill label="needs approval" tone="purple" /> : undefined}
+              >
                 <div className="personalize__form">
                   {draft.draftWriteFailed && (
                     <Banner tone="warning" title="Draft not saved">
@@ -455,6 +472,7 @@ export function CommunicatePersonalize() {
                 </div>
               </DenPanel>
             )}
+            </div>
 
             {confirmOpen && (
               <Dialog

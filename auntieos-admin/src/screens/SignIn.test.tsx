@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
  * What the sign-in screen has to say about a session that ended without the
@@ -12,10 +12,11 @@ import { render, screen, waitFor } from '@testing-library/react';
  * so the key the writer uses and the key the reader uses cannot drift apart.
  */
 
-const { useAuth, signIn, signOutSilent } = vi.hoisted(() => ({
+const { useAuth, signIn, signOutSilent, sendReset } = vi.hoisted(() => ({
   useAuth: vi.fn(),
   signIn: vi.fn(),
   signOutSilent: vi.fn().mockResolvedValue(undefined),
+  sendReset: vi.fn().mockResolvedValue(undefined),
 }));
 const { useNavigate } = vi.hoisted(() => {
   const navigate = vi.fn();
@@ -24,7 +25,7 @@ const { useNavigate } = vi.hoisted(() => {
 const { resolveAccess } = vi.hoisted(() => ({ resolveAccess: vi.fn() }));
 const { getAppCheckStatus } = vi.hoisted(() => ({ getAppCheckStatus: vi.fn(() => 'inactive') }));
 
-vi.mock('../lib/auth', () => ({ useAuth, signIn, signOutSilent }));
+vi.mock('../lib/auth', () => ({ useAuth, signIn, signOutSilent, sendReset }));
 vi.mock('@tanstack/react-router', () => ({ useNavigate }));
 vi.mock('../lib/access', () => ({ resolveAccess }));
 vi.mock('../lib/firebase', () => ({ auth: { name: 'test-auth' }, getAppCheckStatus }));
@@ -39,7 +40,7 @@ import {
 } from '../lib/revokedSession';
 import { SIGN_IN_NOTICE_STORAGE_KEY } from '../lib/signInNotice';
 
-const DENIED_MSG = 'This account is not authorized for the AuntieOS admin app.';
+const DENIED_MSG = 'This account does not have admin access.';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,6 +49,88 @@ beforeEach(() => {
   useAuth.mockReturnValue({ status: 'signedOut' });
   getAppCheckStatus.mockReturnValue('inactive');
   signOutSilent.mockResolvedValue(undefined);
+  sendReset.mockResolvedValue(undefined);
+});
+/**
+ * The structure the mock draws (`ui-ideas/auntieos-sign-in-2026-05-27.html`,
+ * #755): mark, wordmark, then one card carrying the greeting, two bottom-rule
+ * fields, the full-width primary and a ghost at the right. Every visible
+ * string is the mock's.
+ */
+describe('SignIn, the mock structure', () => {
+  it('stacks the mark, the wordmark and the card in that order', () => {
+    const { container } = render(<SignIn />);
+    const stage = container.querySelector('.signin__stage');
+    expect(stage).not.toBeNull();
+    const blocks = Array.from(stage!.children).map((el) =>
+      ['signin__mark', 'signin__brand', 'signin__card'].find((c) => el.classList.contains(c)),
+    );
+    expect(blocks).toEqual(['signin__mark', 'signin__brand', 'signin__card']);
+    // The card is the kit's GlassSurface, not a local re-creation of one.
+    expect(container.querySelector('.signin__card')).toHaveClass('glass-surface');
+    // The paw is decoration; the wordmark is the only "AuntieOS" on the page.
+    expect(container.querySelector('.signin__mark')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getAllByText('AuntieOS')).toHaveLength(1);
+  });
+  it('greets from inside the card, with the mock line under the heading', () => {
+    render(<SignIn />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Welcome home, Auntie');
+    expect(screen.getByText('Sign in to keep the Kinfolk taken care of.')).toBeInTheDocument();
+    expect(screen.queryByText('Operator sign-in')).toBeNull();
+  });
+  it('labels the fields the way the mock does, placeholders included', () => {
+    render(<SignIn />);
+    const email = screen.getByLabelText('Email');
+    const password = screen.getByLabelText('Password');
+    expect(email).toHaveAttribute('placeholder', 'you@auntieos.com');
+    expect(password).toHaveAttribute('type', 'password');
+    expect(password).toHaveAttribute('placeholder', '••••••••');
+  });
+  it('reveals and re-masks the password from the control inside its rule', () => {
+    render(<SignIn />);
+    const password = screen.getByLabelText('Password');
+    const reveal = screen.getByRole('button', { name: 'Show password' });
+    expect(reveal).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(reveal);
+    expect(password).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(password).toHaveAttribute('type', 'password');
+  });
+  it('names the two controls as the mock does', () => {
+    render(<SignIn />);
+    expect(screen.getByRole('button', { name: 'Jump back in!' })).toHaveClass('auntie-btn--primary');
+    expect(screen.getByRole('button', { name: 'Forgot password?' })).toHaveClass('auntie-btn--ghost');
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+  });
+  it('refuses an empty submit with the mock line, before Firebase is asked', async () => {
+    render(<SignIn />);
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back in!' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email and password are required.');
+    expect(signIn).not.toHaveBeenCalled();
+  });
+  it('sends the reset to the typed email and says so in the mock words', async () => {
+    render(<SignIn />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' auntie@tribetails.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
+    expect(await screen.findByText('Reset link sent. Check your inbox.')).toBeInTheDocument();
+    expect(sendReset).toHaveBeenCalledWith('auntie@tribetails.com');
+    // A notice, not an alarm: the confirmation is not an error.
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+  it('asks for the email first when the reset has nowhere to go', async () => {
+    render(<SignIn />);
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Type your email above first.');
+    expect(sendReset).not.toHaveBeenCalled();
+  });
+  it('shows a refused reset as an error, in the words the auth layer gave', async () => {
+    sendReset.mockRejectedValueOnce(new Error('Couldn\'t send reset email.'));
+    render(<SignIn />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'auntie@tribetails.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Forgot password?' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn\'t send reset email.');
+  });
 });
 
 describe('SignIn, involuntary sign-out notice', () => {

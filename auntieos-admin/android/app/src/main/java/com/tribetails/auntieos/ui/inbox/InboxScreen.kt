@@ -5,6 +5,7 @@ import com.composables.icons.lucide.Lucide
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -20,7 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.AuntieOSApp
@@ -40,6 +43,14 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
 // surface. Bulk mark-read covers the MESSAGE THREADS, via markAllThreadsRead.
 // The four Twilio channels still have no shared per-entry read model, so they
 // keep the per-entry reply / mark path and no bulk control.
+//
+// Matched to `ui-ideas/auntieos-inbox-2026-05-27.html` in the #755 sweep: the
+// channel chips carry their Lucide glyph and light as an orange wash, every
+// row is a navy card led by the channel tile in the row's tone, the name is
+// followed by the counterpart, the meta pips sit under the preview, and the
+// clock is top-right. The four-count StatRow that used to sit under the
+// heading is gone: the mock draws no stat cards, and a count "in this view"
+// was a claim the filter chips already make.
 // ─────────────────────────────────────────────────────────────────────────────
 
 internal enum class Channel(val label: String, val icon: ImageVector) {
@@ -135,17 +146,6 @@ fun InboxScreen(
                     )
                 }
 
-                // Summary stat cards, one per channel, stacked in a wrapping row for
-                // phone width. Counts come straight from the four real VM streams.
-                item {
-                    InboxStatRow(
-                        voicemailCount = voicemails.size,
-                        callCount      = calls.size,
-                        smsCount       = sms.size,
-                        emailCount     = emails.size,
-                    )
-                }
-
                 // Stage 2 step 7: two-way kinfolk<->auntie message threads.
                 item {
                     MessagesSection(
@@ -182,9 +182,12 @@ fun InboxScreen(
                         .sortedByDescending { it.timestamp }
                         .filter { filter == Channel.All || it.channel == filter }
 
+                    // "Channels", the web section's name (lib/inboxSections.ts).
+                    // "Conversations" collided with the Messages panel's own noun
+                    // for a thread.
                     DenPanel(
-                        title = "Conversations",
-                        subtitle = "Tap a thread to reply, call, or play a voicemail.",
+                        title = "Channels",
+                        subtitle = "Voicemails, calls, texts and email, everywhere kinfolk reach out. Open a row to answer it.",
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             ChannelFilterRow(selected = filter, onSelect = { filter = it })
@@ -197,10 +200,9 @@ fun InboxScreen(
                                     EmptyState(filter)
 
                                 else ->
-                                    entries.forEachIndexed { index, entry ->
+                                    entries.forEach { entry ->
                                         InboxRow(
                                             entry = entry,
-                                            showDivider = index < entries.lastIndex,
                                             onClick = {
                                                 selectedEntry = entry
                                                 replyBody = ""
@@ -331,50 +333,6 @@ fun InboxScreen(
 }
 
 @Composable
-private fun InboxStatRow(
-    voicemailCount: Int,
-    callCount: Int,
-    smsCount: Int,
-    emailCount: Int,
-) {
-    // Stacked vertically as two rows of two for phone width.
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(
-                label = "Voicemails",
-                value = voicemailCount.toString(),
-                trend = "in this view",
-                tone = AuntieStatusTone.Orange,
-                modifier = Modifier.weight(1f),
-            )
-            StatCard(
-                label = "Calls",
-                value = callCount.toString(),
-                trend = "in this view",
-                tone = AuntieStatusTone.Teal,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(
-                label = "SMS",
-                value = smsCount.toString(),
-                trend = "in this view",
-                tone = AuntieStatusTone.Purple,
-                modifier = Modifier.weight(1f),
-            )
-            StatCard(
-                label = "Emails",
-                value = emailCount.toString(),
-                trend = "in this view",
-                tone = AuntieStatusTone.Success,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
 private fun ChannelFilterRow(selected: Channel, onSelect: (Channel) -> Unit) {
     Row(
         modifier = Modifier
@@ -384,75 +342,153 @@ private fun ChannelFilterRow(selected: Channel, onSelect: (Channel) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Channel.entries.forEach { channel ->
-            AuntieChip(
+            ChannelChip(
+                channel = channel,
                 selected = channel == selected,
-                onClick  = { onSelect(channel) },
-                label    = channel.label,
+                onClick = { onSelect(channel) },
             )
         }
     }
 }
 
+/**
+ * The mock's `.chip`: glyph then word on a navy-3 pill with a hairline, and
+ * the selected one an orange WASH with an orange rim and orange text, not a
+ * solid fill. Drawn here rather than through [AuntieChip] because that chip
+ * has no glyph slot and fills solid orange when selected; the web screen keeps
+ * its own `.inbox__tab` for the same reason.
+ */
 @Composable
-private fun InboxRow(entry: InboxEntry, showDivider: Boolean, onClick: () -> Unit) {
-    AuntieEntityRow(
-        title = entry.kinfolkName.ifBlank { entry.counterpart.ifBlank { "Unknown" } },
-        subtitle = entry.preview.ifBlank { null },
-        showDivider = showDivider,
-        onClick = onClick,
-        leading = {
-            AuntieIconTile(
-                icon = channelIcon(entry),
-                size = 38.dp,
-                tone = accentTone(entry),
-            )
-        },
-        trailing = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text  = shortDateTime(entry.timestamp),
-                    style = AuntieTheme.typography.labelSmall,
-                    color = AuntieTheme.colors.textFaint,
-                )
-                MetaRow(entry)
-            }
-        },
-    )
+private fun ChannelChip(channel: Channel, selected: Boolean, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    val shape = RoundedCornerShape(999.dp)
+    val fg = if (selected) c.primary else c.textDim
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .background(if (selected) c.primary.copy(alpha = 0.12f) else c.surface2)
+            .border(1.dp, if (selected) c.primary else c.border, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Icon(channel.icon, contentDescription = null, tint = fg, modifier = Modifier.size(14.dp))
+        Text(channel.label, style = AuntieTheme.typography.labelMedium, color = fg)
+    }
 }
 
+/**
+ * The mock's `.row`: a navy-2 card on a hairline at 12dp, 13/15 inside. The
+ * channel tile leads, the body holds the name row, a two-line preview and the
+ * meta pips, and the clock sits top-right in mono. Cards are 8dp apart, so the
+ * divider the old entity row drew is gone.
+ */
+@Composable
+private fun InboxRow(entry: InboxEntry, onClick: () -> Unit) {
+    val c = AuntieTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    val title = entry.kinfolkName.ifBlank { entry.counterpart.ifBlank { "Unknown contact" } }
+    // The mock's `.cp`: skipped when the counterpart IS the name (a caller who
+    // matched no household), or the row would print the number twice.
+    val counterpart = entry.counterpart.takeIf { it.isNotBlank() && it != title }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(c.surface)
+            .border(1.dp, c.border, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 15.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        AuntieIconTile(
+            icon = channelIcon(entry),
+            size = 36.dp,
+            tone = accentTone(entry),
+            modifier = Modifier.padding(top = 2.dp),
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = title,
+                    style = AuntieTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium),
+                    color = c.textPrimary,
+                )
+                if (counterpart != null) {
+                    Text(
+                        text = "· $counterpart",
+                        style = AuntieTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                        color = c.textDim.copy(alpha = 0.7f),
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (entry.preview.isNotBlank()) {
+                Text(
+                    text = entry.preview,
+                    style = AuntieTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                    color = c.textDim,
+                    maxLines = 2,
+                )
+            }
+            MetaRow(entry)
+        }
+        Text(
+            text = shortDateTime(entry.timestamp),
+            style = AuntieTheme.typography.mono.copy(fontSize = 10.5.sp),
+            color = c.textDim.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 3.dp),
+        )
+    }
+}
+
+/**
+ * The mock's `.meta` pips: a tiny glyph and a dim word each, under the
+ * preview. Not status pills. The two states that need answering keep their
+ * tone: a missed call is error, an unanswered voicemail is warning.
+ */
 @Composable
 private fun MetaRow(entry: InboxEntry) {
+    val c = AuntieTheme.colors
     val pips = buildList<Triple<ImageVector, String, AuntieStatusTone>> {
         when (entry.direction) {
-            "outbound" -> add(Triple(Lucide.PhoneOutgoing, "sent", AuntieStatusTone.Muted))
+            "outbound" -> add(Triple(Lucide.ArrowUpRight, "sent", AuntieStatusTone.Muted))
             "inbound"  -> if (entry.channel != Channel.Voicemail) {
-                add(Triple(Lucide.PhoneIncoming, "received", AuntieStatusTone.Muted))
+                add(Triple(Lucide.Check, "received", AuntieStatusTone.Muted))
             }
             else       -> Unit
         }
         if (entry.statusHint == "missed") add(Triple(Lucide.PhoneMissed, "missed", AuntieStatusTone.Error))
-        if (entry.statusHint == "unread") add(Triple(Lucide.Voicemail, "unread", AuntieStatusTone.Warning))
+        // "waiting on a reply", the web's noun (lib/inboxChannels.ts): the nav
+        // rail already owns "unread" for message threads, and a voicemail's
+        // replyStatus is a different fact from a thread's unreadForAdmin.
+        if (entry.statusHint == "unread") add(Triple(Lucide.Voicemail, "waiting on a reply", AuntieStatusTone.Warning))
+        if (entry.statusHint == "replied") add(Triple(Lucide.Reply, "replied", AuntieStatusTone.Success))
         // Muted, and the row stays in the list. Dismissing marks a voicemail;
         // it does not delete it from the operator's view, and this pip is how
         // the next person scrolling past can tell a closed-out row from an
         // untouched one.
         if (entry.statusHint == "dismissed") add(Triple(Lucide.CircleSlash, "dismissed", AuntieStatusTone.Muted))
-        if (entry.mediaCount > 0)         add(Triple(Lucide.Paperclip, "${entry.mediaCount}", AuntieStatusTone.Muted))
+        if (entry.mediaCount > 0)         add(Triple(Lucide.Image, "${entry.mediaCount} attached", AuntieStatusTone.Muted))
     }
     if (pips.isEmpty()) return
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        modifier = Modifier.padding(top = 3.dp),
     ) {
         pips.forEach { (icon, label, tone) ->
-            AuntieStatusPill(
-                label = label,
-                tone = tone,
-                leadingIcon = icon,
-            )
+            val toned = tone != AuntieStatusTone.Muted
+            val color = if (toned) tone.color(c) else c.textDim.copy(alpha = 0.65f)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(11.dp))
+                Text(label, style = AuntieTheme.typography.labelSmall.copy(fontSize = 11.sp), color = color)
+            }
         }
     }
 }
@@ -723,11 +759,16 @@ private fun MessagesSection(
                   }
                   section.threads.forEach { conv ->
                     val selected = conv.kinfolkId == selectedId
+                    // The same card the channel rows below wear (the mock's
+                    // `.row`), so the two lists read as one Den; the open
+                    // thread takes the mock's `.row.on` orange rim.
+                    val threadShape = RoundedCornerShape(12.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(threadShape)
                             .background(if (selected) c.primary.copy(alpha = 0.08f) else c.surface)
+                            .border(1.dp, if (selected) c.primary.copy(alpha = 0.55f) else c.border, threadShape)
                             .clickable { reply = ""; onOpen(conv.kinfolkId) }
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,

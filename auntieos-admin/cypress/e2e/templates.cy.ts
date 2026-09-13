@@ -146,12 +146,14 @@ describe('templates', () => {
       cy.contains('button', 'Edit').click();
     });
 
-    cy.get('[role="dialog"] .dialog__title', { timeout: BUDGET_MS.RENDER }).should(
+    // The editor is a page since the #755 sweep, not a modal: the mock's
+    // "Template bank / Edit template" trail with the second crumb current.
+    cy.get('.template-editor .den-crumbs [aria-current="page"]', { timeout: BUDGET_MS.RENDER }).should(
       'have.text',
       'Edit template',
     );
     // Pre-filled from the same row the card showed, not a blank create form.
-    cy.get('[role="dialog"] #template-editor-id').should('have.text', TEMPLATE.templateId);
-    cy.get('[role="dialog"] #template-editor-subject').should('have.value', TEMPLATE.subject);
+    cy.get('.template-editor #template-editor-id').should('have.text', TEMPLATE.templateId);
+    cy.get('.template-editor #template-editor-subject').should('have.value', TEMPLATE.subject);
   });
 });

@@ -178,3 +178,15 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 
 /* reduced-motion fallback: freeze orbs + entrance animation */
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+/* ===== offline notice (paused reads) =====
+   Drawn inside a .glass card, in the slot a list or an empty state would have
+   taken. Same icon + heading + body block as .session-notice above, minus the
+   sticky pinning: this one belongs to the one region whose read is paused, not
+   to the whole viewport. Tokens only, nothing new. See lib/queryState.ts. */
+.offline-notice { display: flex; align-items: flex-start; gap: 10px; padding: 18px 4px 8px; }
+.offline-notice .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  font-size: 20px; background: rgba(213, 83, 90, .14); flex: 0 0 auto; }
+.offline-notice b { font-family: var(--serif); font-size: 16px; font-weight: 400; }
+.offline-notice p { font-size: 13px; color: var(--navy-muted); margin-top: 4px; line-height: 1.5; max-width: 46ch; }
+.offline-line { font-size: 13px; color: var(--navy-muted); line-height: 1.5; display: flex; align-items: center; gap: 7px; }

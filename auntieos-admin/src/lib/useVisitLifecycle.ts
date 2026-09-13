@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
-import { setVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
+import { useEffect, useRef, useState } from 'react';
+import { patchVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
 import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
+import { type VisitLifecycleSession } from './visitLifecyclePatch';
+import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visitTracking';
 
 /**
  * The visit clock, as one hook, shared by the two surfaces that drive it.
@@ -13,18 +15,29 @@ import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
  * operator a household was notified when it was not.
  *
  * WHAT IT OWNS, and what it deliberately does not:
- *   owns   the confirm gate (`ask` / `dismiss` / `confirm`), the callable, and
- *          the sentence the operator reads afterwards.
+ *   owns   the confirm gate (`ask` / `dismiss` / `confirm`), the write, and the
+ *          sentence the operator reads afterwards.
  *   not    the dialog markup or the buttons. Both callers render their own,
  *          because a sheet's action row and a card's inline row are not the
  *          same layout, and a hook that returned JSX would decide that for them.
  *
- * THE BUTTONS ARE A COURTESY, THE SERVER IS THE GUARD, unchanged and worth
- * repeating here since this is now the shared seam:
+ * IT TAKES THE SESSION, NOT AN ID, and that is the change that removed the cold
+ * start. `api/sessionsWrite.ts#patchVisitLifecycle` writes the status straight
+ * to Firestore, so the decision -- is this legal, is it a no-op, where does an
+ * undo rewind to, who gets the push -- is made against the row the screen is
+ * already holding. Handing the hook a bare id would have meant reading the
+ * document back first, and a `getDoc` in a dead zone waits out the SDK's own
+ * "is the backend reachable" timeout before it falls back to cache: a different
+ * stall, in exactly the conditions this change exists for. Android does not
+ * read either; `runOnSession(sessionId) { card -> }` decides from the card.
+ *
+ * THE BUTTONS ARE A COURTESY. THE RULES ARE THE GUARD.
  * `lib/sessionLifecycle.ts#lifecycleActionsFor` only OFFERS what applies to the
- * state being rendered, and `functions/src/lib/visitLifecycle.ts` is what
- * refuses an illegal action from a stale row or a second operator, and audits
- * the attempt.
+ * state being rendered, `lib/visitLifecyclePatch.ts` refuses the rest before a
+ * write leaves the browser, and `mytribe/firestore.rules:487` is what actually
+ * stops a client writing anything terminal. COMPLETE and CANCEL never come
+ * through here at all: `transitionBookingStatus` owns them, server-side, and
+ * the screens call it directly.
  */
 
 export type LifecycleWriteState =
@@ -54,7 +67,7 @@ function messageOf(err: unknown): string {
 }
 
 /**
- * @param sessionId the visit being clocked, or `null` when none is resolved yet
+ * @param session   the visit being clocked, or `null` when none is resolved yet
  *                  (a deep link whose read has not landed). Every call is a
  *                  no-op while it is null rather than a write to a guessed id.
  * @param household the name the confirm copy and the result sentence use.
@@ -65,41 +78,75 @@ function messageOf(err: unknown): string {
  *                  while its buttons offered the transitions of that old state.
  */
 export function useVisitLifecycle(
-  sessionId: string | null,
+  session: VisitLifecycleSession | null,
   household: string,
   onWritten?: () => void,
 ): VisitLifecycleController {
   const [pending, setPending] = useState<LifecycleActionDef | null>(null);
   const [write, setWrite] = useState<LifecycleWriteState>({ status: 'idle' });
+  const sessionId = session?._id ?? null;
+
+  /**
+   * Which write the notification sentence is still allowed to finish.
+   *
+   * The push settles AFTER the write does, by design, so by the time it lands
+   * the operator may have pressed something else or opened another visit.
+   * Stamping each write and checking the stamp is what stops a stale dispatch
+   * from overwriting a newer sentence -- or from appending "the Wrens were
+   * notified" underneath a visit that is not theirs.
+   */
+  const writeSeq = useRef(0);
 
   // A different visit inherits nothing: neither a half-open confirm nor the
   // sentence the LAST visit's clock-in produced. Keyed on the id alone, which
   // is the same rule SessionDetail's own form re-seed already follows.
   useEffect(() => {
+    writeSeq.current += 1;
     setPending(null);
     setWrite({ status: 'idle' });
   }, [sessionId]);
 
-  async function run(action: VisitLifecycleAction) {
-    if (sessionId === null) return;
+  /** Resolves true once the row is where the action put it. */
+  async function run(action: VisitLifecycleAction): Promise<boolean> {
+    if (session === null) return false;
+    const seq = (writeSeq.current += 1);
     setWrite({ status: 'saving' });
     try {
-      const res = await setVisitLifecycle(sessionId, action, { atIso: lifecycleNowIso() });
-      // `changed: false` is a real outcome, not a failure: the server found the
-      // action already true and wrote NOTHING, which is what stops a double
+      const res = await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
+
+      // `changed: false` is a real outcome, not a failure: the action was
+      // already true and NOTHING was written, which is what stops a double
       // clock-in from moving the arrival time. Saying "clocked in" there would
       // claim a write that did not happen.
-      setWrite({
-        status: 'done',
-        message: res.changed
-          ? `${res.from} → ${res.status}.${
-              res.notified ? ` ${household} was notified.` : ' The household was not notified.'
-            }`
-          : `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
+      if (!res.changed) {
+        setWrite({
+          status: 'done',
+          message: `Already ${res.status}. Nothing was changed, and the time already on file is unchanged.`,
+        });
+        return true;
+      }
+
+      // THE STATUS SENTENCE LANDS THE MOMENT THE WRITE DOES, and says nothing
+      // about the household yet. The push is still in flight; claiming it here
+      // would be exactly the lie this hook exists to prevent.
+      setWrite({ status: 'done', message: `${res.from} → ${res.status}.` });
+      if (onWritten) onWritten();
+
+      // The second half, once the dispatch actually settles. It never rejects,
+      // so there is no catch: a failed push comes back as `notified: false`.
+      void res.notification.then((outcome) => {
+        if (writeSeq.current !== seq) return;
+        setWrite({
+          status: 'done',
+          message: `${res.from} → ${res.status}.${
+            outcome.notified ? ` ${household} was notified.` : ' The household was not notified.'
+          }`,
+        });
       });
-      if (res.changed && onWritten) onWritten();
+      return true;
     } catch (err) {
-      setWrite({ status: 'error', message: messageOf(err) });
+      if (writeSeq.current === seq) setWrite({ status: 'error', message: messageOf(err) });
+      return false;
     }
   }
 
@@ -116,7 +163,20 @@ export function useVisitLifecycle(
       if (pending === null) return;
       const action = pending.action;
       setPending(null);
-      void run(action);
+      const accepted = run(action);
+      // Still inside the confirm click, on purpose (#772): the browser ties
+      // its location prompt to a user gesture, and `beginVisitTracking` asks
+      // for the first fix synchronously. The write above runs alongside;
+      // a denied location still arrives the visit, untracked. Departing writes
+      // the last fix and stops the watch; an undo stops it with no fix.
+      if (sessionId === null) return;
+      if (action === 'ARRIVED') beginVisitTracking(sessionId, accepted);
+      else if (action === 'DEPARTED') endVisitTracking(sessionId, accepted);
+      else if (action === 'UNDO_ARRIVAL') {
+        void accepted.then((ok) => {
+          if (ok) stopVisitTracking(sessionId);
+        });
+      }
     },
   };
 }

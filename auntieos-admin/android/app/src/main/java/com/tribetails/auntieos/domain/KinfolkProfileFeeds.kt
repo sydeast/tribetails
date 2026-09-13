@@ -53,6 +53,28 @@ fun upcomingVisitsFor(
         .take(limit)
         .toList()
 
+/**
+ * Whether a row that names the pets it covers ([kinIds] on a session or a
+ * KinTale) covers THIS pet. The kin detail screen narrows the household's feeds
+ * through this; the household profile passes no pet and never calls it.
+ *
+ * AN EMPTY LIST COVERS EVERY PET, and that is R1, not leniency. `CLAUDE.md`
+ * RULING R1: "a KinCare session covers every kin in the home … an empty
+ * `kinIds` never meant 'nobody', and nothing may persist that emptiness"
+ * (`mytribe/functions/src/lib/kinRoster.ts` materializes the roster at write
+ * time). A row naming no pets is therefore a pre-roster legacy row, and
+ * dropping it would empty a pet's history for a bookkeeping reason.
+ *
+ * The web twin (`lib/kinfolkProfileFeeds.ts#coversKin`) splits the same question
+ * in two, because TypeScript can see the difference between an absent `kinIds`
+ * (legacy, covers) and an explicit `[]` (the writer looked and found none).
+ * Firestore's `toObject` cannot: both decode to this model's `emptyList()`
+ * default. Under R1 the explicit-empty branch describes nothing that may exist,
+ * so the two collapse to one and legacy is what survives.
+ */
+fun coversKin(kinIds: List<String>, kinId: String): Boolean =
+    kinIds.isEmpty() || kinIds.contains(kinId)
+
 /** SENT KinTales for [kinfolkId], most recent first (sentAt, falling back to visitDate). */
 fun recentTalesFor(
     reports: List<KinCareReport>,

@@ -13,6 +13,8 @@ import { kinVariant, speciesEmoji } from '../lib/portalFormat';
 import { PortalNav } from '../components/PortalNav';
 import { BookingMonthPicker } from '../components/BookingMonthPicker';
 import { LaunchError } from './LaunchError';
+import { OfflineNotice } from '../components/OfflineNotice';
+import { viewOfQuery } from '../lib/queryState';
 import {
   BOOKING_HORIZON_DAYS,
   bookingHorizonEnd,
@@ -436,7 +438,23 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     );
   }
 
-  if (kinQuery.isLoading || servicesQuery.isLoading) {
+  // A paused read used to fall straight through this gate, because
+  // `isLoading` is false while a query is paused. The wizard then drew itself
+  // over an empty kin roster and an empty service catalog: a booking form a
+  // household could fill in and submit against nothing it had actually read.
+  // Offline, the wizard does not open.
+  const kinView = viewOfQuery(kinQuery);
+  const servicesView = viewOfQuery(servicesQuery);
+  if (kinView.kind === 'offline' || servicesView.kind === 'offline') {
+    return (
+      <div className="wrap">
+        <section className="glass card">
+          <OfflineNotice what="the booking wizard" />
+        </section>
+      </div>
+    );
+  }
+  if (kinView.kind !== 'data' || servicesView.kind !== 'data') {
     return (
       <div className="wrap">
         <p className="sub">Loading the booking wizard…</p>

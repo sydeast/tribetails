@@ -104,6 +104,22 @@ describe('form schemas', () => {
     });
   });
 
+  it('#755 draws the mock on the ground: the clipboard tile in the hero, no panel around the table', () => {
+    openFormSchemas();
+
+    cy.get('.den-heading .den-heading-leading .icon-tile-gradient').should('exist');
+    cy.get('.den-heading-kicker').should('have.text', 'The Den · Admin');
+    cy.get('.schemas__controls .schemas__search input').should('exist');
+    cy.get('.schemas__count').should('have.text', '3 schemas');
+    // Scoped to the screen: the shell around it may draw panels of its own.
+    cy.get('.screen .den-panel').should('not.exist');
+    // The mock's `.ver` is mono text, not a capsule.
+    cy.contains('tr.schemas__row', 'Zeta form (e2e)').within(() => {
+      cy.get('td.schemas__td--version .schemas__version').should('have.text', 'v2');
+      cy.get('.den-pill').should('not.exist');
+    });
+  });
+
   it('#717 sorts Updated descending by default, newest row first and a blank row last', () => {
     openFormSchemas();
 
